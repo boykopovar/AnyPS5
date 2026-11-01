@@ -44,10 +44,67 @@ bool SupportsSparseFiles() {
     Require(handle != INVALID_HANDLE_VALUE, "open test directory failed");
     DWORD flags = 0;
     const bool queried = GetVolumeInformationByHandleW(handle, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0);
+    const DWORD error = GetLastError();
     CloseHandle(handle);
-    Require(queried, "query test volume failed");
+    if (!queried) {
+        std::printf("query test volume failed (Windows error %lu); allocation assertions skipped\n", error);
+        return false;
+    }
     return (flags & FILE_SUPPORTS_SPARSE_FILES) != 0;
 }
+
+unsigned int failedVolumeQueries = 0;
+
+BOOL WINAPI FailVolumeQuery(HANDLE, LPWSTR, DWORD, LPDWORD, LPDWORD, LPDWORD, LPWSTR, DWORD) {
+    ++failedVolumeQueries;
+    SetLastError(ERROR_INVALID_FUNCTION);
+    return FALSE;
+}
+
+class VolumeQueryPatch {
+public:
+    VolumeQueryPatch() {
+        const auto module = GetModuleHandleW(L"libkernel.prx");
+        Require(module != nullptr, "find loaded libkernel failed");
+        const auto base = reinterpret_cast<unsigned char*>(module);
+        const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        Require(dos->e_magic == IMAGE_DOS_SIGNATURE, "libkernel DOS signature invalid");
+        const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+        Require(nt->Signature == IMAGE_NT_SIGNATURE, "libkernel PE signature invalid");
+        const auto importRva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+        Require(importRva != 0, "libkernel imports missing");
+        const auto realQuery = reinterpret_cast<ULONG_PTR>(&GetVolumeInformationByHandleW);
+        for (auto import = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + importRva); import->Name != 0; ++import) {
+            for (auto thunk = reinterpret_cast<IMAGE_THUNK_DATA*>(base + import->FirstThunk); thunk->u1.Function != 0; ++thunk) {
+                if (thunk->u1.Function != realQuery) continue;
+                Require(slot == nullptr, "multiple libkernel volume query IAT entries found");
+                slot = &thunk->u1.Function;
+            }
+        }
+        Require(slot != nullptr, "libkernel volume query IAT entry not found");
+        original = *slot;
+        replace(reinterpret_cast<ULONG_PTR>(&FailVolumeQuery));
+    }
+
+    ~VolumeQueryPatch() {
+        replace(original);
+    }
+
+    VolumeQueryPatch(const VolumeQueryPatch&) = delete;
+    VolumeQueryPatch& operator=(const VolumeQueryPatch&) = delete;
+
+private:
+    void replace(ULONG_PTR value) {
+        DWORD protection = 0;
+        Require(VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &protection), "make volume query IAT entry writable failed");
+        *slot = value;
+        DWORD previous = 0;
+        Require(VirtualProtect(slot, sizeof(*slot), protection, &previous), "restore volume query IAT protection failed");
+    }
+
+    ULONG_PTR* slot = nullptr;
+    ULONG_PTR original = 0;
+};
 
 void CheckSparseAllocation(bool supported) {
     if (!supported) return;
@@ -63,9 +120,10 @@ void CheckSparseAllocation(bool supported) {
         "extended file must have FILE_ATTRIBUTE_SPARSE_FILE");
 }
 
-void CheckSparseExtension(int mode, bool supported) {
+void CheckSparseExtension(int mode, bool supported, bool queryFails = false) {
     Cleanup();
     std::printf("sparse extension path: %s\n", mode == 0 ? "descriptor" : mode == 1 ? "append-only reopened writer" : "path");
+    const auto queriesBefore = failedVolumeQueries;
     int descriptor = open_nid_postfix(FileName, Create | ReadWrite, 0644);
     Require(descriptor >= 0, "open sparse test file failed");
     Require(write_nid_postfix(descriptor, "head", 4) == 4, "write sparse test prefix failed");
@@ -95,6 +153,11 @@ void CheckSparseExtension(int mode, bool supported) {
         Require(lseek_nid_postfix(descriptor, 0, 1) == 137, "extension changed the file position");
         Require(lseek_nid_postfix(checker, 0, 2) == Length, "sparse extension has wrong size");
         CheckSparseAllocation(supported);
+        if (queryFails) {
+            const DWORD attributes = GetFileAttributesW(L"anyps5_truncate_extend_file");
+            Require(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_SPARSE_FILE) == 0,
+                "unknown volume capabilities must not mark the file sparse");
+        }
         char prefix[4]{};
         const int prefixSize = round == 0 ? 4 : 2;
         Require(pread_nid_postfix(checker, prefix, prefixSize, 0) == prefixSize && std::memcmp(prefix, "head", prefixSize) == 0,
@@ -117,6 +180,10 @@ void CheckSparseExtension(int mode, bool supported) {
     }
     Require(close_nid_postfix(checker) == 0, "close verification descriptor failed");
     Require(close_nid_postfix(descriptor) == 0, "close sparse descriptor failed");
+    if (queryFails) {
+        std::printf("failed capability query regression: %u calls\n", failedVolumeQueries - queriesBefore);
+        Require(failedVolumeQueries > queriesBefore, "libkernel must call the failing volume capability query");
+    }
     Cleanup();
 }
 #endif
@@ -137,6 +204,10 @@ int main() {
     const bool sparseSupported = SupportsSparseFiles();
     std::printf("test volume sparse support: %s\n", sparseSupported ? "yes" : "no; allocation assertions skipped");
     for (int mode = 0; mode < 3; ++mode) CheckSparseExtension(mode, sparseSupported);
+    {
+        const VolumeQueryPatch patch;
+        for (int mode = 0; mode < 3; ++mode) CheckSparseExtension(mode, false, true);
+    }
 #endif
     Cleanup();
     const int descriptor = open_nid_postfix(FileName, Create | ReadWrite, 0644);

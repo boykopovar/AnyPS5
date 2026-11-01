@@ -142,10 +142,10 @@ static int NativeFchmod(int descriptor, int mode) {
 }
 static bool PrepareSparseExtension(HANDLE handle, std::int64_t length) {
     LARGE_INTEGER size{};
-    if (!GetFileSizeEx(handle, &size)) return false;
+    if (!GetFileSizeEx(handle, &size)) return true;
     if (length <= size.QuadPart) return true;
     DWORD flags = 0;
-    if (!GetVolumeInformationByHandleW(handle, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0)) return false;
+    if (!GetVolumeInformationByHandleW(handle, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0)) return true;
     if ((flags & FILE_SUPPORTS_SPARSE_FILES) == 0) return true;
     DWORD returned = 0;
     return DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr);
