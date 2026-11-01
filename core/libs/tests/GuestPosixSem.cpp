@@ -199,4 +199,11 @@ int main(int argc, char** argv) {
     Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "reinitialized semaphore must initialize");
     Require(sem_setname_nid_postfix(&sem, "again") == 0, "a reinitialized semaphore can be named again");
     Require(sem_destroy_nid_postfix(&sem) == 0, "reinitialized semaphore destroy must succeed");
+    *__error_nid_postfix() = 0;
+    Require(sem_getvalue_nid_postfix(nullptr, &value) == -1 && *__error_nid_postfix() == 22, "getvalue with null semaphore pointer must return EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_getvalue_nid_postfix(&sem, nullptr) == -1 && *__error_nid_postfix() == 22, "getvalue with null value pointer must return EINVAL");
+    std::uintptr_t invalidSem = 0;
+    *__error_nid_postfix() = 0;
+    Require(sem_getvalue_nid_postfix(&invalidSem, &value) == -1 && *__error_nid_postfix() == 22, "getvalue with invalid semaphore descriptor must return EINVAL");
 }
