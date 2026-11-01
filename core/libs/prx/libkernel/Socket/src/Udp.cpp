@@ -665,6 +665,7 @@ struct PollFlag {
 };
 constexpr short GuestPollPriority = 0x2;
 constexpr short GuestPollInvalid = 0x20;
+constexpr int SocketCloseCheckMilliseconds = 10;
 constexpr short GuestPollAccepted = 0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100;
 #ifdef _WIN32
 constexpr short NativePollIn = POLLRDNORM;
@@ -1191,12 +1192,28 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
         held.push_back(std::move(socket));
     }
     if (native.empty()) return 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMilliseconds < 0 ? 0 : timeoutMilliseconds);
+    int result = 0;
+    for (;;) {
+        for (std::size_t index = 0; index < held.size(); ++index) {
+            if (Find(entries[index].descriptor) != held[index]) return -9;
+        }
+        int slice = SocketCloseCheckMilliseconds;
+        if (timeoutMilliseconds >= 0) {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+            slice = static_cast<int>(std::clamp<long long>(left, 0, SocketCloseCheckMilliseconds));
+        }
 #ifdef _WIN32
-    const int result = WSAPoll(native.data(), static_cast<ULONG>(native.size()), timeoutMilliseconds);
+        result = WSAPoll(native.data(), static_cast<ULONG>(native.size()), slice);
 #else
-    const int result = ::poll(native.data(), static_cast<nfds_t>(native.size()), timeoutMilliseconds);
+        result = ::poll(native.data(), static_cast<nfds_t>(native.size()), slice);
 #endif
-    if (result < 0) return -NativeError();
+        if (result < 0) return -NativeError();
+        for (std::size_t index = 0; index < held.size(); ++index) {
+            if (Find(entries[index].descriptor) != held[index]) return -9;
+        }
+        if (result != 0 || (timeoutMilliseconds >= 0 && std::chrono::steady_clock::now() >= deadline)) break;
+    }
     int ready = 0;
     for (int index = 0; index < count; ++index) {
         const short events = native[static_cast<std::size_t>(index)].revents;
@@ -2260,6 +2277,13 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
         if (const int error = SendIovecs(*socket, trailerIovecs.data(), static_cast<int>(trailerIovecs.size()), sent)) return finish(error);
     return finish(0);
 }
+static bool SocketStillHeld(int descriptor, const void* owner) {
+    if (auto socket = Find(descriptor)) return socket.get() == owner;
+    std::shared_ptr<void> current;
+    std::uintptr_t value = 0;
+    return KernelFindSocketNative_nid_no_patch(descriptor, &current, &value) && current.get() == owner;
+}
+
 static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
     if (timeout < -1) return Fail(22);
     if (count && !descriptors) return Fail(14);
@@ -2343,6 +2367,10 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
     }
     const auto collect = [&](std::size_t i, bool pipe) {
         auto& entry = descriptors[owners[i]];
+        if (entry.revents == GuestPollInvalid) {
+            ++ready;
+            return;
+        }
 #if defined(_WIN32) || defined(__APPLE__)
         if (!pipe) native[i].revents = ClosedStreamEvents(entry.descriptor, native[i].revents, native[i].events);
 #endif
@@ -2373,10 +2401,12 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
     constexpr bool waitsForUrgent = false;
 #endif
 #ifdef _WIN32
-    const bool sliced = !pipes.empty() || !kqueues.empty();
+    const bool fastSlices = !pipes.empty() || !kqueues.empty();
 #else
-    const bool sliced = !kqueues.empty() || waitsForUrgent;
+    const bool fastSlices = !kqueues.empty() || waitsForUrgent;
 #endif
+    const bool sliced = fastSlices || !held.empty();
+    const int step = fastSlices ? 1 : SocketCloseCheckMilliseconds;
     const auto anyUrgentPending = [&]() -> bool {
 #ifdef __APPLE__
         for (std::size_t i = 0; i < socketCount; ++i) {
@@ -2388,6 +2418,12 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
     };
     for (;;) {
         int checkedReady = 0;
+        bool closed = false;
+        for (std::size_t i = 0; i < held.size(); ++i) {
+            if (SocketStillHeld(descriptors[owners[i]].descriptor, held[i].get())) continue;
+            descriptors[owners[i]].revents = GuestPollInvalid;
+            closed = true;
+        }
         const bool urgent = anyUrgentPending();
 #ifdef _WIN32
         for (const auto index : pipes) {
@@ -2408,12 +2444,12 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
             if (entry.revents) ++checkedReady;
         }
         int slice = 0;
-        if (!ready && !checkedReady && !urgent) {
+        if (!ready && !checkedReady && !urgent && !closed) {
             if (!sliced) slice = timeout;
-            else if (timeout < 0) slice = 1;
+            else if (timeout < 0) slice = step;
             else {
                 const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
-                slice = static_cast<int>(std::clamp<long long>(left, 0, 1));
+                slice = static_cast<int>(std::clamp<long long>(left, 0, step));
             }
         }
         if (!native.empty()) {
@@ -2427,11 +2463,16 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
             const auto wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
             PreciseSleepUntil(timeout < 0 ? wake : std::min(deadline, wake));
         }
+        for (std::size_t i = 0; i < held.size(); ++i) {
+            if (SocketStillHeld(descriptors[owners[i]].descriptor, held[i].get())) continue;
+            descriptors[owners[i]].revents = GuestPollInvalid;
+            closed = true;
+        }
         int socketReady = 0;
         for (const auto& request : native)
             if (request.revents) ++socketReady;
         const bool expired = timeout >= 0 && std::chrono::steady_clock::now() >= deadline;
-        if (ready || checkedReady || urgent || socketReady || expired || !sliced) {
+        if (ready || checkedReady || urgent || socketReady || expired || closed || !sliced) {
             ready += checkedReady;
 #ifdef _WIN32
             for (std::size_t i = 0; i < native.size(); ++i) collect(i, false);
