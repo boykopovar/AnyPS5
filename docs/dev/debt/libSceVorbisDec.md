@@ -2,37 +2,13 @@
 
 ### Unknown function info
 
-- [sceVorbisDecBitrate](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecBitrateInstant](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecClear](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecComment](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecCrossLap](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
+- [sceVorbisDecOpenCallbacks, sceVorbisDecRead and the other libvorbisfile exports](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - the 31 exports named after libvorbisfile functions are taken to be the libvorbisfile API with a `sceVorbisDec` prefix (`Read` is `ov_read`, `CrossLap` is `ov_crosslap`, `HalfrateP` is `ov_halfrate_p`). `ReadFilter`, `ReadFloat` and `Halfrate` exist in libvorbis (`ov_read_filter` since 1.2.2, with the same `vorbisfile.h` signatures through 1.3.7 apart from `const`) but not in Tremor, so times are `double` and `ov_read` takes `bigendianp`, `word` and `sgned`. Guest `long` arguments and results are 64-bit. They run the bundled libvorbis 1.3.7 and libogg 1.3.6; the console's libvorbis version, any Sony changes to its behaviour or error codes, and the signatures themselves are unverified on a PS5.
 - [sceVorbisDecGetDecodePriority](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
 - [sceVorbisDecGetLastDecodeError](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecHalfrate](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecHalfrateP](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecInfo](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecOpenCallbacks](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecPcmSeek](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecPcmSeekLap](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecPcmSeekPage](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecPcmSeekPageLap](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecPcmTell](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecPcmTotal](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecRawSeek](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecRawSeekLap](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecRawTell](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecRawTotal](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecRead](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecReadFilter](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecReadFloat](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecSeekable](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecSerialNumber](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
 - [sceVorbisDecSetDecodePriority](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecStreams](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecTimeSeek](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecTimeSeekLap](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecTimeSeekPage](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecTimeSeekPageLap](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecTimeTell](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
-- [sceVorbisDecTimeTotal](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - declared without parameters, signature unknown; name from the NID database
+
+### Functional
+
+- [libSceVorbisDec](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - the guest `OggVorbis_File` is never written: the decoder state lives on the host, keyed by the struct's address, so fields a title reads directly keep what it stored, and a struct never opened, cleared or failed to open behaves as libvorbisfile's zeroed struct. `sceVorbisDecInfo` returns a copy of each link's `vorbis_info` with 64-bit `long` fields, refreshed after every call on the struct and valid until `sceVorbisDecClear`. Reopening a struct that is still open frees its old state without calling its close callback; libvorbisfile leaks it.
+- [sceVorbisDecClear and sceVorbisDecCrossLap](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - a null `vf` throws, as libvorbisfile dereferences it, except that `sceVorbisDecClear` and `sceVorbisDecCrossLap` with the same pointer twice return 0, and `sceVorbisDecCrossLap` with a null second pointer after a first that is not open returns `OV_EINVAL`, as libvorbisfile does. `sceVorbisDecClear` frees the state before it calls the close callback, as `ov_clear` does, so when that callback throws the struct is already cleared, where libvorbisfile leaves it freed but not zeroed.
+- [sceVorbisDecOpenCallbacks and sceVorbisDecBitrate](../../../core/libs/prx/libSceVorbisDec/Export.cpp) (libSceVorbisDec) - on Windows the host `long` is 32-bit: a tell result outside it, or an initial byte count outside it with a non-null `initial`, throws; a sample rate of 2^31 Hz or more is rejected as a bad header; and `sceVorbisDecBitrate` rounds halves up instead of to even.

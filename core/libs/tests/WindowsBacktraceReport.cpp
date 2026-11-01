@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -5,8 +6,6 @@
 #include <windows.h>
 #include "../prx/libc/include/general/VabiMacros.hpp"
 #include "../prx/libc/include/FailureReport.hpp"
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 

@@ -1,3 +1,4 @@
+#include "prx/libScePlayerInvitationDialog/libScePlayerInvitationDialog.h"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
