@@ -667,7 +667,7 @@ def render(libraries, shaders, shader_source=None, detail=False):
     width, height = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT + LEGEND
     body = treemap("System libraries*", libraries, 0, detail=detail)
     if shader_source:
-        body += treemap("Shader forms decoded", shader_forms_panel(shader_source), PANEL_WIDTH + GAP)
+        body += treemap("Shader forms decoded", shader_forms_panel(shader_source), PANEL_WIDTH + GAP, states=False)
     else:
         body += treemap("GPU shader instructions", shaders, PANEL_WIDTH + GAP, states=False)
     body += legend(4, HEADER + MAP_HEIGHT)
