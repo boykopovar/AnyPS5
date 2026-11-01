@@ -60,7 +60,9 @@ constexpr int GuestSigunblock = 2;
 constexpr int GuestSigsetmask = 3;
 constexpr int GuestEintr = 4;
 constexpr int GuestEagain = 35;
-constexpr int GuestSiuser = 0;
+constexpr std::int32_t GuestSiUser = 0x10001;
+constexpr std::int32_t GuestSiKernel = 0x10006;
+constexpr std::int32_t GuestSiLwp = 0x10007;
 struct GuestSiginfo {
     std::int32_t signo;
     std::int32_t error;
@@ -116,6 +118,7 @@ struct PendingSignals {
     std::mutex lock;
     TimedWait::Condition changed;
     std::atomic<std::uint32_t> words[4]{};
+    std::atomic<std::int32_t> codes[MaxSignal + 1]{};
 };
 
 PendingSignals& Pending() {
@@ -123,12 +126,13 @@ PendingSignals& Pending() {
     return *state;
 }
 
-void MarkPending(int guest) {
+void MarkPending(int guest, std::int32_t code) {
     auto& pending = Pending();
     {
         // under the same lock the waits check the set with: without it a signal raised
         // between the check and the wait is lost and the wait never returns
         std::lock_guard lock(pending.lock);
+        pending.codes[guest].store(code, std::memory_order_relaxed);
         pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
     }
     pending.changed.NotifyAll();
@@ -146,10 +150,11 @@ void DiscardPendingIfIgnored(int guest, const GuestSigaction& action) {
     if (action.handler == 1 || (action.handler == 0 && IgnoredByDefault(guest))) TakePending(guest);
 }
 
-bool PendingInSet(const GuestSignalSet& set, int* guest) {
+bool PendingInSet(const GuestSignalSet& set, int* guest, std::int32_t* code) {
     for (int candidate = 1; candidate <= MaxSignal; ++candidate) {
         if (!SignalInSet(set, candidate) || !TakePending(candidate)) continue;
         *guest = candidate;
+        *code = Pending().codes[candidate].load(std::memory_order_relaxed);
         return true;
     }
     return false;
@@ -219,7 +224,7 @@ void Dispatch(int native) {
     std::signal(native, Dispatch);
 #endif
     if (SignalBlocked(guest)) {
-        MarkPending(guest);
+        MarkPending(guest, GuestSiLwp);
         return;
     }
     const auto callback = handlers[guest].load();
@@ -319,26 +324,26 @@ std::optional<std::uint64_t> SignalWaitDeadline(const KernelTimespec& timeout) {
     return now + static_cast<std::uint64_t>(timeout.tv_sec) * 1000000000ULL + static_cast<std::uint64_t>(timeout.tv_nsec);
 }
 
-int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const KernelTimespec* timeout, int* guest) {
+int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const KernelTimespec* timeout, int* guest, std::int32_t* code) {
     auto& pending = Pending();
     std::unique_lock lock(pending.lock);
     const std::optional<std::uint64_t> deadline = waitForever ? std::nullopt : SignalWaitDeadline(*timeout);
     for (;;) {
-        if (PendingInSet(set, guest)) return 0;
+        if (PendingInSet(set, guest, code)) return 0;
         if (!deadline) {
             pending.changed.Wait(lock);
             continue;
         }
         if (pending.changed.WaitUntil(lock, *deadline)) continue;
-        return PendingInSet(set, guest) ? 0 : GuestEagain;
+        return PendingInSet(set, guest, code) ? 0 : GuestEagain;
     }
 }
 
-bool FillSiginfo(GuestSiginfo* info, int guest) {
+bool FillSiginfo(GuestSiginfo* info, int guest, std::int32_t code) {
     GuestSiginfo local{};
     local.signo = guest;
-    local.code = GuestSiuser;
-    local.pid = getpid_nid_postfix();
+    local.code = code;
+    local.pid = local.code == GuestSiKernel ? 0 : getpid_nid_postfix();
     return GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
 }
 
@@ -389,7 +394,7 @@ void ExpireAlarm(std::chrono::microseconds interval) {
     }
     if (handler == 1) return;
     if (SignalBlocked(GuestSigalrm)) {
-        MarkPending(GuestSigalrm);
+        MarkPending(GuestSigalrm, GuestSiKernel);
         std::atomic_thread_fence(std::memory_order_seq_cst);
         if (SignalBlocked(GuestSigalrm) || !TakePending(GuestSigalrm)) return;
         handler = Disposition(GuestSigalrm).handler;
@@ -658,14 +663,14 @@ int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, Gue
 int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
     return sigaction_nid_postfix(guest, action, previous);
 }
-int APS5_VABI raise_nid_postfix(int guest) {
+static int RaiseWithCode(int guest, std::int32_t code) {
     if (guest == 0) return 0;
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const GuestSigaction action = Disposition(guest);
     if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("raise: SA_SIGINFO handlers are not delivered");
     if (action.handler == 1 || (action.handler == 0 && guest != GuestSigcont && IgnoredByDefault(guest))) return 0;
     if (SignalBlocked(guest)) {
-        MarkPending(guest);
+        MarkPending(guest, code);
         return 0;
     }
     if (action.handler == 0 && IgnoredByDefault(guest)) return 0;
@@ -681,11 +686,15 @@ int APS5_VABI raise_nid_postfix(int guest) {
     DeliverUnblockedPending();
     return 0;
 }
+int APS5_VABI raise_nid_postfix(int guest) {
+    return RaiseWithCode(guest, GuestSiLwp);
+}
 int APS5_VABI kill_nid_postfix(int pid, int guest) {
     if (guest < 0 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const int self = getpid_nid_postfix();
     if (pid != self && pid != 0 && pid != -self) { *__error_nid_postfix() = 3; return -1; }
-    return guest == 0 ? 0 : raise_nid_postfix(guest);
+    if (guest == 0) return 0;
+    return RaiseWithCode(guest, GuestSiUser);
 }
 int APS5_VABI killpg_nid_postfix(int pgrp, int guest) {
     if (pgrp < 0) { *__error_nid_postfix() = 22; return -1; }
@@ -697,7 +706,7 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (thread == scePthreadSelf()) return guest == 0 || raise_nid_postfix(guest) == 0 ? 0 : *__error_nid_postfix();
     if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     if (guest == 0) return 0;
-    if (Disposition(guest).handler != 1) MarkPending(guest);
+    if (Disposition(guest).handler != 1) MarkPending(guest, GuestSiLwp);
     return 0;
 }
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous) {
@@ -751,9 +760,10 @@ int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, co
         }
     }
     int guest = 0;
-    const int result = WaitForPendingInSet(requestedSet, timeout == nullptr, timeout != nullptr ? &requestedTimeout : nullptr, &guest);
+    std::int32_t code = 0;
+    const int result = WaitForPendingInSet(requestedSet, timeout == nullptr, timeout != nullptr ? &requestedTimeout : nullptr, &guest, &code);
     if (result != 0) { *__error_nid_postfix() = result; return -1; }
-    if (info != nullptr && !FillSiginfo(static_cast<GuestSiginfo*>(info), guest)) {
+    if (info != nullptr && !FillSiginfo(static_cast<GuestSiginfo*>(info), guest, code)) {
         *__error_nid_postfix() = 14;
         return -1;
     }
@@ -766,8 +776,9 @@ int APS5_VABI sigwaitinfo_nid_postfix(const GuestSignalSet* set, void* info) {
     if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) { *__error_nid_postfix() = 14; return -1; }
     if (!SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
     int guest = 0;
-    if (WaitForPendingInSet(requestedSet, true, nullptr, &guest) != 0) { *__error_nid_postfix() = GuestEagain; return -1; }
-    if (info != nullptr && !FillSiginfo(static_cast<GuestSiginfo*>(info), guest)) {
+    std::int32_t code = 0;
+    if (WaitForPendingInSet(requestedSet, true, nullptr, &guest, &code) != 0) { *__error_nid_postfix() = GuestEagain; return -1; }
+    if (info != nullptr && !FillSiginfo(static_cast<GuestSiginfo*>(info), guest, code)) {
         *__error_nid_postfix() = 14;
         return -1;
     }
@@ -787,7 +798,8 @@ int APS5_VABI sigwait_nid_postfix(const GuestSignalSet* set, int* received) {
         return 22;
     }
     int guest = 0;
-    const int result = WaitForPendingInSet(requestedSet, true, nullptr, &guest);
+    std::int32_t code = 0;
+    const int result = WaitForPendingInSet(requestedSet, true, nullptr, &guest, &code);
     if (result != 0) {
         *__error_nid_postfix() = saved;
         return result;
