@@ -159,6 +159,11 @@ static void CheckReceiveMessageFaults() {
     message = {readOnly + 128, 0, readOnlyVector, 1, nullptr, 0, -1};
     Require(Queue(pair[0], pair[1], "gh") && recvmsg_nid_postfix(pair[1], &message, 0) == 2);
     Require(std::memcmp(data, "gh", 2) == 0 && message.nameLength == 0);
+    message = {nullptr, 0, &good, 1, nullptr, 0, -1};
+    for (const int flag : {1, 4, 0x100, 0x40000, -1, Peek | 1, 0x80 | 4}) {
+        *__error_nid_postfix() = 0;
+        Require(recvmsg_nid_postfix(pair[1], &message, flag) == -1 && *__error_nid_postfix() == 45);
+    }
 
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 3) == 0);
