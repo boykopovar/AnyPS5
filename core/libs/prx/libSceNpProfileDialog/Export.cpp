@@ -1,4 +1,5 @@
 #include "prx/libSceNpProfileDialog/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -16,6 +17,7 @@ constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
 constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
 constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
+constexpr int COMMON_DIALOG_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B8000Au);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 
@@ -137,10 +139,14 @@ int APS5_VABI sceNpProfileDialogGetResult(SceNpProfileDialogResult* result) {
         return COMMON_DIALOG_ERROR_NOT_FINISHED;
     }
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    *result = SceNpProfileDialogResult{};
-    result->result = COMMON_DIALOG_OK;
-    result->userAction = COMMON_DIALOG_RESULT_USER_CANCELED;
-    result->userData = dialog.userData;
+    SceNpProfileDialogResult out{};
+    out.result = COMMON_DIALOG_OK;
+    out.userAction = COMMON_DIALOG_RESULT_USER_CANCELED;
+    out.userData = dialog.userData;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &out, sizeof(out));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
     return COMMON_DIALOG_OK;
 }
 
