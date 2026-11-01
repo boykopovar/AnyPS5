@@ -1,4 +1,5 @@
 #include "prx/libSceNpManager/include/Api.hpp"
+#include "prx/libSceNpManager/include/InGameMessageIds.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
@@ -23,6 +24,8 @@ constexpr int IdMapperRefusedArgument = static_cast<int>(0x80553083u);
 constexpr int IdMapperRefusedRequestId = static_cast<int>(0x80553085u);
 constexpr int ManagerIntTableFull = static_cast<int>(0x80559D05u);
 constexpr int ManagerIntNotInTable = static_cast<int>(0x80559D0Au);
+constexpr int InGameMessageContextNotFound = static_cast<int>(0x80552B03u);
+constexpr int InGameMessageHandleNotFound = static_cast<int>(0x80552B05u);
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -683,5 +686,46 @@ int main() {
     std::memset(&untouchedPremiumResult, 0x5a, sizeof(untouchedPremiumResult));
     Require(sceNpCheckPremium(1, &premiumParameter, &premiumResult) == SignedOut, "sceNpCheckPremium must report the user as signed out");
     Require(std::memcmp(&premiumResult, &untouchedPremiumResult, sizeof(premiumResult)) == 0, "sceNpCheckPremium must leave the result untouched");
+    const int messageContext = sceNpInGameMessageInitialize(0x4000, nullptr);
+    Require(messageContext > 0, "sceNpInGameMessageInitialize must return a context id");
+    const int otherMessageContext = sceNpInGameMessageInitialize(0x4000, nullptr);
+    Require(otherMessageContext > 0 && otherMessageContext != messageContext, "sceNpInGameMessageInitialize must return a new id for each context");
+    Require(sceNpInGameMessageCreateHandle(-1) == InGameMessageContextNotFound, "sceNpInGameMessageCreateHandle must reject an unknown context");
+    const int messageHandle = sceNpInGameMessageCreateHandle(messageContext);
+    Require(messageHandle > 0, "sceNpInGameMessageCreateHandle must return a handle id");
+    const int secondMessageHandle = sceNpInGameMessageCreateHandle(messageContext);
+    Require(secondMessageHandle > 0 && secondMessageHandle != messageHandle, "sceNpInGameMessageCreateHandle must return a new id for each handle");
+    Require(sceNpInGameMessageDeleteHandle(messageContext, secondMessageHandle) == 0, "sceNpInGameMessageDeleteHandle must delete the second handle");
+    Require(sceNpInGameMessageDeleteHandle(otherMessageContext, messageHandle) == InGameMessageHandleNotFound, "a handle must belong to the context that created it");
+    Require(sceNpInGameMessageAbortHandle(-1, messageHandle) == InGameMessageContextNotFound, "sceNpInGameMessageAbortHandle must reject an unknown context");
+    Require(sceNpInGameMessageAbortHandle(messageContext, -1) == InGameMessageHandleNotFound, "sceNpInGameMessageAbortHandle must reject an unknown handle");
+    Require(sceNpInGameMessageAbortHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageAbortHandle must accept a live handle");
+    try {
+        sceNpInGameMessagePrepareA();
+        Require(false, "sceNpInGameMessagePrepareA must report that it is not implemented");
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == "sceNpInGameMessagePrepareA not implemented", "sceNpInGameMessagePrepareA threw");
+    }
+    try {
+        sceNpInGameMessageSendDataA();
+        Require(false, "sceNpInGameMessageSendDataA must report that it is not implemented");
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == "sceNpInGameMessageSendDataA not implemented", "sceNpInGameMessageSendDataA threw");
+    }
+    Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageDeleteHandle must delete the handle");
+    Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == InGameMessageHandleNotFound, "a deleted handle must not be found");
+    Require(sceNpInGameMessageTerminate(messageContext) == 0, "sceNpInGameMessageTerminate must end the context");
+    Require(sceNpInGameMessageTerminate(messageContext) == InGameMessageContextNotFound, "a terminated context must not be found");
+    Require(sceNpInGameMessageCreateHandle(messageContext) == InGameMessageContextNotFound, "a terminated context must not create handles");
+    Require(sceNpInGameMessageTerminate(otherMessageContext) == 0, "sceNpInGameMessageTerminate must end the second context");
+    std::int32_t nextMessageId = std::numeric_limits<std::int32_t>::max() - 1;
+    Require(TakeInGameMessageId(nextMessageId, "ids") == std::numeric_limits<std::int32_t>::max() - 1, "the last in-game message id below the limit must be handed out");
+    try {
+        TakeInGameMessageId(nextMessageId, "ids");
+        Require(false, "the in-game message ids must not pass the 32-bit limit");
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == "ids: the in-game message ids are exhausted", "the exhausted in-game message ids threw");
+    }
+    Require(nextMessageId == std::numeric_limits<std::int32_t>::max(), "an exhausted in-game message id must not wrap");
     return 0;
 }
