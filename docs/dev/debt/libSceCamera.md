@@ -2,6 +2,8 @@
 
 ### Unknown function info
 
+- [sceCameraIsVrCaptureEnable](../../../core/libs/prx/libSceCamera/InventoryExports.cpp) (NID `bpet5OSAr1E`) has an unknown signature and behaviour. The parameterless `int` declaration is an import-resolution placeholder, not a confirmed ABI signature, and every call throws through `NotImplemented_nid_no_patch`. Only the name and NID are established by the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscecamera-4529c174dc.jsonl); not measured on a console.
+
 - [libSceCamera additional exports](../../../core/libs/prx/libSceCamera/InventoryExports.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
 
 | Name | NID |
@@ -88,3 +90,13 @@
 - [sceCamera2SetAutoExposureGain](../../../core/libs/prx/libSceCamera/Export.cpp) (libSceCamera, NID `vx9MQYicBVQ`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceCamera.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
 - [sceCameraIsConfigChangeDone](../../../core/libs/prx/libSceCamera/Export.cpp) (libSceCamera, NID `wQfd7kfRZvo`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceCamera.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
 - [sceCameraSetVideoSync](../../../core/libs/prx/libSceCamera/Export.cpp) (libSceCamera, NID `wpeyFwJ+UEI`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceCamera.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceCamera/InventoryExports.cpp) - 3 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `AnqFx-nAxZM` |
+| `Unknown` | `azeU8qML4VM` |
+| `Unknown` | `kgRnfleNYNo` |

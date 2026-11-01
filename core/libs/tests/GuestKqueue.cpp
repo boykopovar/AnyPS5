@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -129,6 +130,46 @@ template <typename TCall> static std::string ThrownMessage(TCall call) {
         return error.what();
     }
     return {};
+}
+
+static void BadPointersFaultAndBatchesFill() {
+    constexpr int fault = 14;
+    const int kq = kqueue_nid_postfix();
+    for (std::uintptr_t ident = 100; ident < 112; ++ident) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    KernelEvent events[16]{};
+    Require(Poll(kq, events, 16) == 12);
+    std::uint32_t seen = 0;
+    for (int i = 0; i < 12; ++i) seen |= 1u << (events[i].ident - 100);
+    Require(seen == 0xfff);
+    std::vector<KernelEvent> many(100);
+    Require(Poll(kq, many.data(), 100) == 12);
+    Require(Poll(kq, events, 9) == 9);
+    Require(Poll(kq, events, 5) == 5);
+    auto* unmapped = reinterpret_cast<KernelEvent*>(std::uintptr_t{0x10});
+    const KernelTimespec zero{0, 0};
+    RequireFailure(kevent_nid_postfix(kq, unmapped, 1, nullptr, 0, nullptr), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, 16, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, unmapped, 16, &zero), fault);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<KernelEvent*>(page);
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, readOnly, 16, &zero), fault);
+    Require(readOnly[0].ident == 0 && readOnly[0].filter == 0);
+    const KernelEvent bad = Change(200, EvfiltUser, 0, NoteTrigger);
+    RequireFailure(kevent_nid_postfix(kq, &bad, 1, readOnly, 1, &zero), fault);
+    Require(Poll(kq, events, INT_MAX) == 12);
+    for (std::uintptr_t ident = 1000; ident < 2030; ++ident) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    std::vector<KernelEvent> plenty(2000);
+    Require(Poll(kq, plenty.data(), 2000) == 1024);
+    for (std::uintptr_t ident = 1000; ident < 2030; ++ident) Require(Apply(kq, Change(ident, EvfiltUser, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
 }
 
 static void CreateAndClose() {
@@ -1628,5 +1669,6 @@ int main(int argc, char** argv) {
     DeniedParentWatch();
 #endif
     Timeout();
+    BadPointersFaultAndBatchesFill();
     return 0;
 }

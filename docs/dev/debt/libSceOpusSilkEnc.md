@@ -2,6 +2,8 @@
 
 ### Unknown function info
 
+- [sceOpusSilkEncGetAjmContext](../../../core/libs/prx/libSceOpusSilkEnc/Export.cpp) has an unknown signature and behaviour. Only its name and NID are established by the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceopussilkenc-5db8f0bbee.jsonl). The parameterless `int` declaration is an import-resolution placeholder, not a confirmed ABI signature, and every call throws through `NotImplemented_nid_no_patch`.
+
 - [sceOpusSilkEncCancel, sceOpusSilkEncCtl, sceOpusSilkEncEncodeFloatWithPriority, sceOpusSilkEncEncodeFloatWithPriorityAndTimeout, sceOpusSilkEncEncodeWithPriority and sceOpusSilkEncEncodeWithPriorityAndTimeout](../../../core/libs/prx/libSceOpusSilkEnc/Export.cpp) (libSceOpusSilkEnc) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusSilkEnc.c). The prototypes mirror the sibling encoder declarations and libopus's own ctl, priority and batch-id entry points, but the console's request codes, priority, timeout and batch semantics were not recovered. They throw through `NotImplemented_nid_no_patch`; this is not an ABI claim.
 
 ### Functional
