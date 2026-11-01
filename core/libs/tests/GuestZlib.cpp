@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <cstdio>
 #include <source_location>
@@ -47,6 +48,9 @@ int main() {
         Require(id == 0);
     }
     Require(sceZlibInflate(nullptr, compressed.size(), output, 8192, &id) == static_cast<std::int32_t>(0x81120016));
+    errno = 71;
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<std::int32_t>(0x81120016));
+    Require(errno == 71);
     Require(sceZlibWaitForDone(nullptr, nullptr) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibGetResult(0, nullptr, &status) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibGetResult(0, &produced, nullptr) == static_cast<std::int32_t>(0x81120016));
@@ -58,12 +62,21 @@ int main() {
         Require(id > previous);
         previous = id;
         std::uint64_t completed;
+        errno = 71;
+        Require(sceZlibWaitForDone(reinterpret_cast<std::uint64_t*>(0x10), nullptr) == static_cast<std::int32_t>(0x81120016));
+        Require(errno == 71);
         Require(sceZlibWaitForDone(&completed, nullptr) == 0);
         Require(completed == id);
         std::uint32_t timeout = 0;
         Require(sceZlibWaitForDone(&completed, &timeout) == static_cast<std::int32_t>(0x81120027));
         Require(sceZlibGetResult(id + 1, &produced, &status) == static_cast<std::int32_t>(0x81120002));
         Require(sceZlibGetResult(id, nullptr, &status) == static_cast<std::int32_t>(0x81120016));
+        errno = 71;
+        Require(sceZlibGetResult(id, reinterpret_cast<std::uint32_t*>(0x10), &status) == static_cast<std::int32_t>(0x81120016));
+        Require(errno == 71);
+        errno = 71;
+        Require(sceZlibGetResult(id, &produced, reinterpret_cast<std::int32_t*>(0x10)) == static_cast<std::int32_t>(0x81120016));
+        Require(errno == 71);
         Require(sceZlibGetResult(id, &produced, &status) == 0);
         if (status != expectedStatus) std::fprintf(stderr, "input=%u capacity=%u status=%x expected=%x produced=%u\n", inputLength, capacity, static_cast<unsigned>(status), static_cast<unsigned>(expectedStatus), produced);
         Require(status == expectedStatus && produced <= capacity);
@@ -92,6 +105,9 @@ int main() {
     Require(ids[0] < ids[1] && ids[1] < ids[2]);
     for (std::uint64_t expected : ids) {
         std::uint64_t completed = 0;
+        errno = 71;
+        Require(sceZlibWaitForDone(reinterpret_cast<std::uint64_t*>(0x10), nullptr) == static_cast<std::int32_t>(0x81120016));
+        Require(errno == 71);
         Require(sceZlibWaitForDone(&completed, nullptr) == 0);
         Require(completed == expected);
     }

@@ -2,7 +2,9 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
+#include <cerrno>
 #include <cstdint>
+#include "prx/libc/include/General.hpp"
 #include <deque>
 #include <limits>
 #include <mutex>
@@ -79,10 +81,13 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     const int ended = inflateEnd(&stream);
     if (ended != Z_OK) throw std::runtime_error("sceZlibInflate: decoder cleanup failed");
     const std::uint64_t id = nextId++;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) return INVALID_ARGUMENT;
     results[id] = InflateResult{produced, status};
     completed.push_back(id);
     completion.NotifyOne();
-    *requestId = id;
     return 0;
 }
 
@@ -95,7 +100,11 @@ std::int32_t APS5_VABI sceZlibWaitForDone(std::uint64_t* requestId, std::uint32_
     if (!timeout) completion.Wait(lock, finished);
     else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(*timeout), finished)) return TIMED_OUT;
     if (session != waitSession) throw std::runtime_error("sceZlibWaitForDone: finalization during a wait semantics unknown");
-    *requestId = completed.front();
+    const std::uint64_t id = completed.front();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &id, sizeof(id));
+    errno = savedErrno;
+    if (!copied) return INVALID_ARGUMENT;
     completed.pop_front();
     return 0;
 }
@@ -106,8 +115,11 @@ std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t requestId, std::uint32_t* 
     if (!destinationLength || !status) return INVALID_ARGUMENT;
     const auto found = results.find(requestId);
     if (found == results.end()) return NOT_FOUND;
-    *destinationLength = found->second.produced;
-    *status = found->second.status;
+    const int savedErrno = errno;
+    bool copied = GuestCopyOut_nid_no_patch(destinationLength, &found->second.produced, sizeof(found->second.produced));
+    if (copied) copied = GuestCopyOut_nid_no_patch(status, &found->second.status, sizeof(found->second.status));
+    errno = savedErrno;
+    if (!copied) return INVALID_ARGUMENT;
     return 0;
 }
 
