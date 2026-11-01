@@ -77,6 +77,7 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
     for (std::uint64_t offset = 0; offset < *size; offset += 8) {
         const auto entry = readWord(tableOffset + offset);
         if ((entry & 1) == 0) {
+            if (entry % 8 != 0) throw Domain::RelinkerException("Misaligned RELR target address", *address + offset);
             append(entry);
             cursor = entry + 8;
         } else {
