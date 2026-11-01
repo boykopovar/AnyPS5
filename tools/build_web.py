@@ -109,6 +109,19 @@ def library_assets(release):
     return assets
 
 
+def write_manifest(path, text):
+    path = path.resolve()
+    mode = path.stat().st_mode & 0o777 if path.exists() else None
+    if mode is not None and not mode & 0o222:
+        raise PermissionError(f"Manifest is read-only: {path}")
+    with tempfile.TemporaryDirectory(dir=path.parent, prefix=".release-") as directory:
+        temporary = Path(directory) / "release.json"
+        temporary.write_text(text, encoding="utf-8")
+        if mode is not None:
+            temporary.chmod(mode)
+        temporary.replace(path)
+
+
 def load_release(response):
     try:
         return json.load(response)
@@ -182,7 +195,7 @@ def publish_libraries(output, release=None):
             raise ValueError(f"Invalid release archive {asset['name']}: {error}") from error
         finally:
             temporary.unlink(missing_ok=True)
-    (output / "release.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    write_manifest(output / "release.json", json.dumps(manifest, indent=2) + "\n")
     print(f"Published library assets from {tag}")
 
 
@@ -225,7 +238,8 @@ def publish_release(output):
             if len(files) != len(filenames) or "web-release.json" not in filenames:
                 raise ValueError("Invalid web release archive layout")
             try:
-                metadata = load_release(archive.open("web-release.json"))
+                with archive.open("web-release.json") as response:
+                    metadata = load_release(response)
             except (json.JSONDecodeError, UnicodeDecodeError) as error:
                 raise ValueError("Invalid web release metadata") from error
             if (not isinstance(metadata, dict) or metadata.get("tag") != tag

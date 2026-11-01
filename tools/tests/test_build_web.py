@@ -183,6 +183,63 @@ class LibraryPublicationTests(unittest.TestCase):
         self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
 
 
+    def test_failed_manifest_replacement_preserves_the_previous_release_and_retries(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        original = Path.replace
+        def fail_manifest(source, destination):
+            if destination == self.manifest.resolve():
+                self.assertNotEqual(source, destination)
+                self.assertEqual(source.parent.parent, destination.parent)
+                self.assertIn("platforms", json.loads(source.read_text(encoding="utf-8")))
+                raise OSError("manifest is busy")
+            return original(source, destination)
+        with patch.object(Path, "replace", fail_manifest), self.assertRaisesRegex(OSError, "manifest is busy"):
+            self.publish(valid, valid)
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertFalse(list(self.output.glob(".release-*")))
+        self.publish(valid, valid)
+        self.assertEqual(json.loads(self.manifest.read_text(encoding="utf-8"))["tag"], "v1")
+
+    @unittest.skipUnless(os.name == "posix" and os.geteuid() != 0, "POSIX permission bits")
+    def test_read_only_manifest_is_rejected_without_replacement(self):
+        self.manifest.chmod(0o444)
+        with self.assertRaises(PermissionError):
+            build_web.write_manifest(self.manifest, "replacement\n")
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertEqual(self.manifest.stat().st_mode & 0o777, 0o444)
+        self.assertFalse(list(self.output.glob(".release-*")))
+
+    def test_partial_manifest_write_preserves_the_previous_file(self):
+        original = Path.write_text
+        def interrupted(path, text, *args, **kwargs):
+            if path.name == "release.json":
+                original(path, text[:5], *args, **kwargs)
+                raise OSError("disk full")
+            return original(path, text, *args, **kwargs)
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        with patch.object(Path, "write_text", interrupted), self.assertRaisesRegex(OSError, "disk full"):
+            self.publish(valid, valid)
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertFalse(list(self.output.glob(".release-*")))
+
+    def test_manifest_replacement_preserves_permissions_and_follows_existing_links(self):
+        if os.name == "posix":
+            self.manifest.chmod(0o640)
+        build_web.write_manifest(self.manifest, "complete\n")
+        if os.name == "posix":
+            self.assertEqual(self.manifest.stat().st_mode & 0o777, 0o640)
+        target = self.output / "linked.json"
+        target.write_text("previous", encoding="utf-8")
+        self.manifest.unlink()
+        try:
+            self.manifest.symlink_to(target)
+        except OSError:
+            return
+        build_web.write_manifest(self.manifest, "replacement\n")
+        self.assertTrue(self.manifest.is_symlink())
+        self.assertEqual(target.read_text(encoding="utf-8"), "replacement\n")
+
+
     def test_browser_incompatible_compression_and_special_files_preserve_old_release(self):
         valid = library_zip([("libs/libc.prx", b"valid")])
         for compression in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
@@ -304,6 +361,9 @@ class ReleaseMetadataTests(unittest.TestCase):
                     self.assertEqual(existing.read_bytes(), b"previous manifest")
                     self.assertEqual(list(root.iterdir()), [existing])
 
+
+
+
     def test_deeply_nested_api_responses_are_cli_errors_without_site_changes(self):
         deep_json = b"[" * 200000 + b"]" * 200000
         with tempfile.TemporaryDirectory() as directory:
@@ -359,7 +419,6 @@ class ReleaseMetadataTests(unittest.TestCase):
             self.assertIn("release metadata", errors.getvalue())
             self.assertEqual(preserved.read_bytes(), b"previous site")
             self.assertEqual(list(root.iterdir()), [web])
-
 
 class WebReleaseLayoutTests(unittest.TestCase):
     TAG, REVISION = "v1", "a" * 40
