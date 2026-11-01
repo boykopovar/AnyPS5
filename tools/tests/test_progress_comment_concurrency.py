@@ -11,7 +11,7 @@ CONCURRENCY = re.compile(
 
 class ProgressCommentConcurrencyTests(unittest.TestCase):
     def test_comments_for_one_head_share_a_group_that_cancels_superseded_runs(self):
-        self.assertRegex(WORKFLOW.read_text(encoding="utf-8"), CONCURRENCY)
+        self.assertIsNotNone(CONCURRENCY.search(WORKFLOW.read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":
