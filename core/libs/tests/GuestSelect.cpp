@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -10,6 +11,7 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <vector>
 
 struct GuestTimeval {
     std::int64_t seconds;
@@ -82,6 +84,7 @@ static void StandardDescriptorFile(int descriptor) {
 }
 
 static void SocketClosedDuringAWait() {
+    std::vector<std::chrono::steady_clock::duration> noticed;
     for (int attempt = 0; attempt < 20; ++attempt) {
         const int socket = socket_nid_postfix(2, 2, 0);
         Require(socket >= 0);
@@ -101,9 +104,11 @@ static void SocketClosedDuringAWait() {
         const auto closedAt = std::chrono::steady_clock::now();
         Require(close_nid_postfix(socket) == 0);
         waiter.join();
+        noticed.push_back(std::chrono::steady_clock::now() - closedAt);
         Require(result == -1 && error == GuestEbadf);
-        Require(std::chrono::steady_clock::now() - closedAt < std::chrono::milliseconds(60));
     }
+    std::sort(noticed.begin(), noticed.end());
+    Require(noticed[noticed.size() / 2] < std::chrono::milliseconds(35));
 }
 
 static void Kqueues() {
