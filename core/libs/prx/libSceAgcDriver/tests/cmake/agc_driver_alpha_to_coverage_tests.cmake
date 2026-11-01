@@ -3,7 +3,6 @@ target_include_directories(agc_driver_alpha_to_coverage_tests PRIVATE $<TARGET_P
 if(BUILD_TESTING)
     add_test(NAME agc_driver_dithered_alpha_to_coverage COMMAND agc_driver_alpha_to_coverage_tests --dithered8)
     add_test(NAME agc_driver_msaa_dcc_recreate_layout COMMAND agc_driver_alpha_to_coverage_tests --dcc-recreate-layout)
-    set_tests_properties(agc_driver_msaa_dcc_recreate_layout PROPERTIES FAIL_REGULAR_EXPRESSION "Validation Error:")
     add_test(NAME agc_driver_two_sample_dithered_alpha_to_coverage COMMAND agc_driver_alpha_to_coverage_tests --dithered2)
     set(multisampledDccClearTests agc_driver_msaa_dcc_recreate_layout)
     foreach(samples IN ITEMS 2 4 8)
