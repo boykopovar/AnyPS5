@@ -562,6 +562,64 @@ int main() {
     Require(memmem_nid_postfix(hay, 11, "world", 0) == hay);
     Require(memmem_nid_postfix(hay, 5, "world", 5) == nullptr);
     Require(memmem_nid_postfix(hay, 11, "xyz", 3) == nullptr);
+    std::uint32_t seed = 12345;
+    const auto next = [&seed](std::uint32_t bound) {
+        seed = seed * 1103515245u + 12345u;
+        return (seed >> 16) % bound;
+    };
+    for (int round = 0; round < 4000; ++round) {
+        const std::uint32_t alphabet = 1 + next(3);
+        unsigned char haystack[1536];
+        unsigned char needle[40];
+        const std::size_t haystackLength = next(2) == 0 ? next(64) : next(sizeof(haystack) + 1);
+        const std::size_t needleLength = next(sizeof(needle) + 1);
+        for (std::size_t i = 0; i < haystackLength; ++i) haystack[i] = static_cast<unsigned char>(next(alphabet) * 0x7f);
+        for (std::size_t i = 0; i < needleLength; ++i) needle[i] = static_cast<unsigned char>(next(alphabet) * 0x7f);
+        if (needleLength != 0 && needleLength <= haystackLength && next(2) == 0) {
+            std::memcpy(haystack + next(static_cast<std::uint32_t>(haystackLength - needleLength + 1)), needle, needleLength);
+        }
+        const void* expected = needleLength == 0 ? haystack : nullptr;
+        for (std::size_t i = 0; expected == nullptr && i + needleLength <= haystackLength; ++i) {
+            if (std::memcmp(haystack + i, needle, needleLength) == 0) expected = haystack + i;
+        }
+        Require(memmem_nid_postfix(haystack, haystackLength, needle, needleLength) == expected);
+    }
+    for (int round = 0; round < 4000; ++round) {
+        unsigned char word[4];
+        const std::size_t wordLength = 1 + next(4);
+        for (std::size_t i = 0; i < wordLength; ++i) word[i] = static_cast<unsigned char>(next(3));
+        std::string needle;
+        const std::size_t needleLength = 2 + next(60);
+        for (std::size_t i = 0; i < needleLength; ++i) needle.push_back(static_cast<char>(word[i % wordLength]));
+        needle.back() = static_cast<char>(next(4));
+        std::string haystack;
+        const std::size_t haystackLength = 300 + next(3000);
+        while (haystack.size() < haystackLength) {
+            if (next(64) == 0) {
+                haystack += needle;
+            } else if (next(16) == 0) {
+                haystack.push_back(static_cast<char>(next(4)));
+            } else {
+                haystack.push_back(static_cast<char>(word[haystack.size() % wordLength]));
+            }
+        }
+        const void* expected = nullptr;
+        for (std::size_t i = 0; expected == nullptr && i + needle.size() <= haystack.size(); ++i) {
+            if (std::memcmp(haystack.data() + i, needle.data(), needle.size()) == 0) expected = haystack.data() + i;
+        }
+        Require(memmem_nid_postfix(haystack.data(), haystack.size(), needle.data(), needle.size()) == expected);
+    }
+    std::string boundedHaystack(2000, 'a');
+    boundedHaystack.push_back('b');
+    const std::string tail = std::string(40, 'a') + "b";
+    Require(memmem_nid_postfix(boundedHaystack.data(), boundedHaystack.size() - 1, tail.data(), tail.size()) == nullptr);
+    Require(memmem_nid_postfix(boundedHaystack.data(), boundedHaystack.size(), tail.data(), tail.size()) == boundedHaystack.data() + boundedHaystack.size() - tail.size());
+    std::string periodic(1 << 20, 'a');
+    std::string unmatched(1 << 12, 'a');
+    unmatched.back() = 'b';
+    Require(memmem_nid_postfix(periodic.data(), periodic.size(), unmatched.data(), unmatched.size()) == nullptr);
+    periodic.back() = 'b';
+    Require(memmem_nid_postfix(periodic.data(), periodic.size(), unmatched.data(), unmatched.size()) == periodic.data() + periodic.size() - unmatched.size());
     char dest[16] = {};
     Require(memccpy_nid_postfix(dest, "abc:def", ':', 8) == dest + 4);
     Require(std::memcmp(dest, "abc:", 4) == 0);

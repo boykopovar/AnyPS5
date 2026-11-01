@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -43,6 +44,93 @@ size_t Length(const char16_t* s) {
     size_t length = 0;
     while (s[length] != 0) ++length;
     return length;
+}
+
+constexpr size_t NaiveSearchSlack = 256;
+
+template<typename TUnit, typename TBefore>
+size_t MaximalSuffix(const TUnit* needle, size_t length, size_t& period, TBefore before) {
+    size_t suffix = SIZE_MAX;
+    size_t candidate = 0;
+    size_t offset = 1;
+    period = 1;
+    while (candidate + offset < length) {
+        const TUnit next = needle[candidate + offset];
+        const TUnit current = needle[suffix + offset];
+        if (before(next, current)) {
+            candidate += offset;
+            offset = 1;
+            period = candidate - suffix;
+        } else if (next == current) {
+            if (offset != period) {
+                ++offset;
+            } else {
+                candidate += period;
+                offset = 1;
+            }
+        } else {
+            suffix = candidate++;
+            offset = period = 1;
+        }
+    }
+    return suffix;
+}
+
+template<typename TUnit>
+size_t CriticalFactorization(const TUnit* needle, size_t length, size_t& period) {
+    if (length < 3) {
+        period = 1;
+        return length - 1;
+    }
+    size_t forwardPeriod = 1;
+    size_t reversePeriod = 1;
+    const size_t forward = MaximalSuffix(needle, length, forwardPeriod, [](TUnit a, TUnit b) { return a < b; });
+    const size_t reverse = MaximalSuffix(needle, length, reversePeriod, [](TUnit a, TUnit b) { return b < a; });
+    if (reverse + 1 < forward + 1) {
+        period = forwardPeriod;
+        return forward + 1;
+    }
+    period = reversePeriod;
+    return reverse + 1;
+}
+
+template<typename TUnit, typename TAvailable>
+const TUnit* TwoWaySearch(const TUnit* haystack, const TUnit* needle, size_t length, TAvailable available) {
+    size_t period = 1;
+    const size_t suffix = CriticalFactorization(needle, length, period);
+    size_t start = 0;
+    if (std::equal(needle, needle + suffix, needle + period)) {
+        size_t memory = 0;
+        while (available(start + length)) {
+            size_t index = std::max(suffix, memory);
+            while (index < length && needle[index] == haystack[index + start]) ++index;
+            if (index < length) {
+                start += index - suffix + 1;
+                memory = 0;
+                continue;
+            }
+            index = suffix - 1;
+            while (memory < index + 1 && needle[index] == haystack[index + start]) --index;
+            if (index + 1 < memory + 1) return haystack + start;
+            start += period;
+            memory = length - period;
+        }
+        return nullptr;
+    }
+    period = std::max(suffix, length - suffix) + 1;
+    while (available(start + length)) {
+        size_t index = suffix;
+        while (index < length && needle[index] == haystack[index + start]) ++index;
+        if (index < length) {
+            start += index - suffix + 1;
+            continue;
+        }
+        index = suffix - 1;
+        while (index != SIZE_MAX && needle[index] == haystack[index + start]) --index;
+        if (index == SIZE_MAX) return haystack + start;
+        start += period;
+    }
+    return nullptr;
 }
 
 std::string AsciiPrefix(const char16_t* text) {
@@ -357,11 +445,19 @@ void* APS5_VABI memmem_nid_postfix(const void* haystack, size_t haystacklen, con
     if (haystacklen < needlelen) return nullptr;
     const auto* h = static_cast<const unsigned char*>(haystack);
     const auto* n = static_cast<const unsigned char*>(needle);
-    const unsigned char first = n[0];
     const size_t limit = haystacklen - needlelen;
-    for (size_t i = 0; i <= limit; ++i) {
-        if (h[i] == first && std::memcmp(h + i, n, needlelen) == 0) {
-            return const_cast<unsigned char*>(h + i);
+    size_t wasted = 0;
+    for (size_t start = 0; start <= limit; ++start) {
+        const void* candidate = std::memchr(h + start, n[0], limit - start + 1);
+        if (candidate == nullptr) return nullptr;
+        start = static_cast<size_t>(static_cast<const unsigned char*>(candidate) - h);
+        size_t matched = 1;
+        while (matched < needlelen && h[start + matched] == n[matched]) ++matched;
+        if (matched == needlelen) return const_cast<unsigned char*>(h + start);
+        wasted += matched;
+        if (wasted > start + NaiveSearchSlack) {
+            const size_t rest = haystacklen - start - 1;
+            return const_cast<unsigned char*>(TwoWaySearch(h + start + 1, n, needlelen, [rest](size_t end) { return end <= rest; }));
         }
     }
     return nullptr;
@@ -776,10 +872,23 @@ const char16_t* APS5_VABI wcsrchr_nid_postfix(const char16_t* s, char16_t c) {
 const char16_t* APS5_VABI wcsstr_nid_postfix(const char16_t* haystack, const char16_t* needle) {
     const size_t length = Length(needle);
     if (length == 0) return haystack;
-    for (; *haystack != 0; ++haystack) {
-        size_t matched = 0;
-        while (matched < length && haystack[matched] == needle[matched]) ++matched;
-        if (matched == length) return haystack;
+    size_t wasted = 0;
+    for (size_t start = 0; haystack[start] != 0; ++start) {
+        if (haystack[start] != needle[0]) continue;
+        size_t matched = 1;
+        while (matched < length && haystack[start + matched] == needle[matched]) ++matched;
+        if (matched == length) return haystack + start;
+        wasted += matched;
+        if (wasted > start + NaiveSearchSlack) {
+            const char16_t* rest = haystack + start + 1;
+            size_t known = 0;
+            return TwoWaySearch(rest, needle, length, [rest, &known](size_t end) {
+                for (; known < end; ++known) {
+                    if (rest[known] == 0) return false;
+                }
+                return true;
+            });
+        }
     }
     return nullptr;
 }
