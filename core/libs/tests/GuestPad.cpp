@@ -663,6 +663,18 @@ static void CheckTriggerEffect(int user, int handle) {
     const std::array<std::uint8_t, 11> weapon{0x25, 0x24, 0x00, 0x07};
     const std::array<std::uint8_t, 11> feedback{0x21, 0x80, 0x03, 0x00, 0x00, 0x40, 0x12};
     const std::array<std::uint8_t, 11> off{0x05};
+    Require(scePadSetTriggerEffect(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, param.data()) == PAD_ERROR_INVALID_HANDLE);
+    for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    param[0] = 0x4;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
+    param[0] = 0;
+    command(0, 7, {0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
+    command(0, 0, {0, 0, 0});
+    command(1, 7, {0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
+    command(1, 0, {0, 0, 0});
     command(0, 2, {2, 5, 8});
     command(1, 1, {7, 3, 0});
     param[0] = 0x1;
@@ -1091,6 +1103,12 @@ int main() {
     Require(scePadSetLightBar(handle2 + 99, &lightColor) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetLightBar(-1, &lightColor) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetLightBar(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+
+    const std::array<std::uint8_t, 120> triggerZero{};
+    Require(scePadSetTriggerEffect(handle2, triggerZero.data()) == PAD_OK);
+    Require(scePadSetTriggerEffect(handle2 + 99, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetTriggerEffect(-1, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetTriggerEffect(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
 
     PadInputState p0MotionSample{};
     p0MotionSample.hasMotion = true;
