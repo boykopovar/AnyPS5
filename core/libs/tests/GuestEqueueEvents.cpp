@@ -271,7 +271,26 @@ static void VerifyReportedEventsMoveBehindWaitingOnes() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyEventQueueBounds() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(nullptr, "bounds") == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(sceKernelAddUserEvent(0, 0) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddUserEvent(0, 1) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddUserEvent(-1, 1) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddUserEvent(999999, 1) == SCE_KERNEL_ERROR_EBADF);
+
+    KernelEqueue closedEq = 0;
+    Require(sceKernelCreateEqueue(&closedEq, "closed") == SCE_OK);
+    Require(sceKernelDeleteEqueue(closedEq) == SCE_OK);
+    Require(sceKernelAddUserEvent(closedEq, 0) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddUserEvent(closedEq, 1) == SCE_KERNEL_ERROR_EBADF);
+}
+
 int main() {
+    VerifyEventQueueBounds();
     VerifyPeriodicTimer();
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
