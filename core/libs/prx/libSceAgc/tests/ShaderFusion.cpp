@@ -130,6 +130,9 @@ void testFusion(std::size_t misalignment, std::uint32_t terminator = SSetpcS6) {
     SizeAlign size{};
     check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "fused size query failed");
     check(size.m_size == 6 * sizeof(ShaderRegister) && size.m_align == 4, "fused size is not the back half's register list");
+    SizeAlign unversioned{~0ull, ~std::size_t{0}};
+    check(sceAgcGetFusedShaderSize(&unversioned, &halves.front, &halves.back) == 0, "unversioned fused size query failed");
+    check(unversioned.m_size == size.m_size && unversioned.m_align == (~std::size_t{0} << 32u | 4u), "unversioned fused size must store a 32-bit alignment");
     std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
     auto* scratch = aligned(storage, 256) + misalignment;
     Shader fused{};
@@ -259,10 +262,12 @@ void testRejections() {
     SizeAlign size{};
     Shader fused{};
     expectFailure([&] { sceAgcGetFusedShaderSize_0080(nullptr, &halves.front, &halves.back); });
+    expectFailure([&] { sceAgcGetFusedShaderSize(nullptr, &halves.front, &halves.back); });
     expectFailure([&] { sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, nullptr); });
     {
         Halves swapped;
         check(sceAgcGetFusedShaderSize_0080(&size, &swapped.back, &swapped.front) == InvalidShaderHalves, "swapped halves were accepted by the size query");
+        check(sceAgcGetFusedShaderSize(nullptr, &swapped.back, &swapped.front) == InvalidShaderHalves, "the unversioned size query checked its output before the halves");
         check(sceAgcFuseShaderHalves_0200(&fused, &swapped.back, &swapped.front, nullptr) == InvalidShaderHalves, "swapped halves were fused");
     }
     {
@@ -320,6 +325,21 @@ void testHullHalves() {
     check(backSh[4].value == 0u, "hull fusion wrote the back half's registers");
 }
 
+void testUnversionedSize() {
+    Halves halves;
+    SizeAlign size{};
+    check(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == 0, "unversioned fused size query failed");
+    check(size.m_size == halves.back.num_sh_registers * sizeof(ShaderRegister) && size.m_align == 4, "unversioned fused size did not cover the back half's register list");
+    halves.front.num_sh_registers += 7;
+    SizeAlign again{};
+    check(sceAgcGetFusedShaderSize(&again, &halves.front, &halves.back) == 0 && again.m_size == size.m_size, "unversioned fused size followed the front half's register list");
+    check(sceAgcGetFusedShaderSize(&size, &halves.back, &halves.front) == InvalidShaderHalves, "unversioned query accepted swapped halves");
+    halves.front.type = static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::HsFront);
+    check(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == InvalidShaderHalves, "unversioned query accepted mismatched stage halves");
+    halves.back.type = static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::HsBack);
+    check(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == 0 && size.m_size == halves.back.num_sh_registers * sizeof(ShaderRegister), "unversioned query rejected hull halves");
+}
+
 }
 
 int main() {
@@ -335,6 +355,7 @@ int main() {
         testResourceMerging();
         testRejections();
         testHullHalves();
+        testUnversionedSize();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC shader fusion tests passed");
         return 0;
