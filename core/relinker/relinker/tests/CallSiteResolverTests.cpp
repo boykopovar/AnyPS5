@@ -48,6 +48,18 @@ int main() {
         check("final REX.W after DS widens a load", {0x48, 0x3e, 0x48, 0x8b, 0x05, 0xf7, 0, 0, 0}, true);
         check("final REX.W after REPNE widens a load", {0x48, 0xf2, 0x48, 0x8b, 0x05, 0xf7, 0, 0, 0}, true);
         check("NOTRACK preserves final narrow REX", {0x3e, 0x48, 0x40, 0x8b, 0x05, 0xf7, 0, 0, 0}, false);
+        check("CS-prefixed indirect call", {0x2e, 0xff, 0x15, 0xf9, 0, 0, 0}, true);
+        check("SS-prefixed indirect tail jump", {0x36, 0xff, 0x25, 0xf9, 0, 0, 0}, true);
+        check("ES-prefixed pointer load", {0x26, 0x48, 0x8b, 0x05, 0xf8, 0, 0, 0}, true);
+        check("REP-prefixed indirect call", {0xf3, 0xff, 0x15, 0xf9, 0, 0, 0}, true);
+        check("operand-size indirect call", {0x66, 0xff, 0x15, 0xf9, 0, 0, 0}, true);
+        check("operand-size push memory", {0x66, 0xff, 0x35, 0xf9, 0, 0, 0}, true);
+        check("REX.W overrides operand size on a pointer load", {0x66, 0x48, 0x8b, 0x05, 0xf8, 0, 0, 0}, true);
+        check("operand-size load without REX.W", {0x66, 0x8b, 0x05, 0xf9, 0, 0, 0}, false);
+        check("operand-size after REX.W leaves a narrow load", {0x48, 0x66, 0x8b, 0x05, 0xf8, 0, 0, 0}, false);
+        check("CS-prefixed increment is not an import access", {0x2e, 0xff, 0x05, 0xf9, 0, 0, 0}, false);
+        check("LOCK-prefixed call is not an import access", {0xf0, 0xff, 0x15, 0xf9, 0, 0, 0}, false);
+        check("FS after CS is not a flat GOT reference", {0x2e, 0x64, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
         check("FS call is not a flat GOT reference", {0x64, 0xf2, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
         check("GS jump is not a flat GOT reference", {0x3e, 0x65, 0xff, 0x25, 0xf8, 0, 0, 0}, false);
         check("address-size override is not a RIP64 reference", {0x3e, 0x67, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
