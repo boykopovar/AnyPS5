@@ -149,6 +149,7 @@ enum class IrOpcode : std::uint16_t {
     PackFloat2x16Rtz,
     FPAdd16x2,
     FPMul16x2,
+    FPFma16x2,
     FPAbs32,
     FPNeg32,
     FPSaturate32,
