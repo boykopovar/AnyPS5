@@ -1,10 +1,10 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
-#include <cstddef>
+#include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cstdio>
 #include <source_location>
 #include <stdexcept>
 
@@ -17,171 +17,184 @@ void Require(bool value, std::source_location at = std::source_location::current
     }
 }
 
-constexpr int kNotSignedIn = static_cast<int>(0x80552907);
-constexpr int kAlreadyInitialized = static_cast<int>(0x8055350f);
-constexpr int kNotInitialized = static_cast<int>(0x80553510);
-constexpr std::size_t kParameterSize = 0x10;
-constexpr std::size_t kGuardSize = 0x10;
-constexpr unsigned char kFill = 0xA5;
-
-struct Storage {
-    alignas(8) unsigned char bytes[kParameterSize + kGuardSize];
-};
-
-bool GuardIntact(const Storage& storage) {
-    for (std::size_t index = kParameterSize; index < sizeof(storage.bytes); ++index) {
-        if (storage.bytes[index] != kFill) return false;
-    }
-    return true;
+template <typename T>
+T Read(const std::uint8_t* object, const std::size_t offset) {
+    T value;
+    std::memcpy(&value, object + offset, sizeof(value));
+    return value;
 }
 
-using SimpleFn = int (APS5_VABI*)(void*);
-using InitFn = int (APS5_VABI*)(void*, const std::uint64_t*);
-
-const SimpleFn kSignedOut[] = {
-    _ZN3sce2Np9CppWebApi7Matches2V118AddedPlayerFactory6createEPNS1_6Common10LibContextEPKcNS3_10PlayerTypeEPNS5_12IntrusivePtrINS3_11AddedPlayerEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V120RemovedPlayerFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_13RemovedPlayerEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V120RequestMemberFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_13RequestMemberEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V123JoinMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_11AddedPlayerEEEEEPNS9_INS3_16JoinMatchRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V123RequestMatchTeamFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_16RequestMatchTeamEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_13RemovedPlayerEEEEEPNS9_INS3_17LeaveMatchRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V125CreateMatchRequestFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_18CreateMatchRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V125RequestMatchPlayerFactory6createEPNS1_6Common10LibContextEPKcNS3_10PlayerTypeEPNS5_12IntrusivePtrINS3_18RequestMatchPlayerEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V125RequestTeamResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_18RequestTeamResultsEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V126AdditionalStatisticFactory6createEPNS1_6Common10LibContextEPKcS9_PNS5_12IntrusivePtrINS3_19AdditionalStatisticEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V126RequestInGameRosterFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_19RequestInGameRosterEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V126RequestMatchResultsFactory6createEPNS1_6Common10LibContextENS3_14ResultsVersionEPNS5_12IntrusivePtrINS3_19RequestMatchResultsEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V127ReportResultsRequestFactory6createEPNS1_6Common10LibContextENS5_12IntrusivePtrINS3_19RequestMatchResultsEEEPNS8_INS3_20ReportResultsRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V127RequestPlayerResultsFactory6createEPNS1_6Common10LibContextEPKciPNS5_12IntrusivePtrINS3_20RequestPlayerResultsEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V127RequestTeamStatisticFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_20RequestTeamStatisticEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V129RequestMatchStatisticsFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_22RequestMatchStatisticsEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V129RequestPlayerStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_22RequestPlayerStatisticEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V130RequestTeamMemberResultFactory6createEPNS1_6Common10LibContextEPKcdPNS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V131RequestCompetitiveResultFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_24RequestCompetitiveResultEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V131UpdateMatchDetailRequestFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_24UpdateMatchDetailRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V131UpdateMatchStatusRequestFactory6createEPNS1_6Common10LibContextENS3_12UpdateStatusEPNS5_12IntrusivePtrINS3_24UpdateMatchStatusRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V133RequestTeamMemberStatisticFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEEPNSB_INS3_26RequestTeamMemberStatisticEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi10leaveMatchEiRKNS4_21ParameterToLeaveMatchERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi11createMatchEiRKNS4_22ParameterToCreateMatchERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_19CreateMatchResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi13reportResultsEiRKNS4_24ParameterToReportResultsERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi17updateMatchDetailEiRKNS4_28ParameterToUpdateMatchDetailERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi17updateMatchStatusEiRKNS4_28ParameterToUpdateMatchStatusERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi9joinMatchEiRKNS4_20ParameterToJoinMatchERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE,
-};
-const SimpleFn kAccessors[] = {
-    _ZNK3sce2Np9CppWebApi7Matches2V119CreateMatchResponse10getMatchIdEv,
-    _ZNK3sce2Np9CppWebApi7Matches2V119RequestInGameRoster10teamsIsSetEv,
-    _ZNK3sce2Np9CppWebApi7Matches2V119RequestInGameRoster12playersIsSetEv,
-};
-const SimpleFn kSetters[] = {
-    _ZN3sce2Np9CppWebApi7Matches2V111AddedPlayer12setAccountIdEPKc,
-    _ZN3sce2Np9CppWebApi7Matches2V111AddedPlayer13setPlayerNameEPKc,
-    _ZN3sce2Np9CppWebApi7Matches2V111AddedPlayer9setTeamIdEPKc,
-    _ZN3sce2Np9CppWebApi7Matches2V113RemovedPlayer9setReasonERKNS3_11LeaveReasonE,
-    _ZN3sce2Np9CppWebApi7Matches2V116JoinMatchRequest17setNpServiceLabelERKi,
-    _ZN3sce2Np9CppWebApi7Matches2V116RequestMatchTeam10setMembersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_13RequestMemberEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V116RequestMatchTeam11setTeamNameEPKc,
-    _ZN3sce2Np9CppWebApi7Matches2V117LeaveMatchRequest17setNpServiceLabelERKi,
-    _ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest15setInGameRosterERKNS1_6Common12IntrusivePtrINS3_19RequestInGameRosterEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest17setExpirationTimeERKi,
-    _ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest17setNpServiceLabelERKi,
-    _ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest9setZoneIdEPKc,
-    _ZN3sce2Np9CppWebApi7Matches2V118RequestMatchPlayer12setAccountIdEPKc,
-    _ZN3sce2Np9CppWebApi7Matches2V118RequestMatchPlayer13setPlayerNameEPKc,
-    _ZN3sce2Np9CppWebApi7Matches2V118RequestTeamResults20setTeamMemberResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V118RequestTeamResults8setScoreERKd,
-    _ZN3sce2Np9CppWebApi7Matches2V119RequestInGameRoster10setPlayersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestMatchPlayerEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V119RequestInGameRoster8setTeamsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_16RequestMatchTeamEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V119RequestMatchResults20setCompetitiveResultERKNS1_6Common12IntrusivePtrINS3_24RequestCompetitiveResultEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V119RequestMatchResults20setCooperativeResultERKNS3_24RequestCooperativeResultE,
-    _ZN3sce2Np9CppWebApi7Matches2V120ReportResultsRequest17setNpServiceLabelERKi,
-    _ZN3sce2Np9CppWebApi7Matches2V120ReportResultsRequest18setMatchStatisticsERKNS1_6Common12IntrusivePtrINS3_22RequestMatchStatisticsEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V120RequestPlayerResults8setScoreERKd,
-    _ZN3sce2Np9CppWebApi7Matches2V120RequestTeamStatistic23setTeamMemberStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_26RequestTeamMemberStatisticEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V120RequestTeamStatistic8setStatsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics17setTeamStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestTeamStatisticEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics19setPlayerStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_22RequestPlayerStatisticEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult14setTeamResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestTeamResultsEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult16setPlayerResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestPlayerResultsEEEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest15setInGameRosterERKNS1_6Common12IntrusivePtrINS3_19RequestInGameRosterEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest17setExpirationTimeERKi,
-    _ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest17setNpServiceLabelERKi,
-    _ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest9setZoneIdEPKc,
-    _ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchStatusRequest17setNpServiceLabelERKi,
-};
-const SimpleFn kConstructors[] = {
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatchC1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi21ParameterToLeaveMatchC1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi22ParameterToCreateMatchC1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi24ParameterToReportResultsC1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchDetailC1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchStatusC1Ev,
-};
-const SimpleFn kDestructors[] = {
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatchD1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi21ParameterToLeaveMatchD1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi22ParameterToCreateMatchD1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi24ParameterToReportResultsD1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchDetailD1Ev,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchStatusD1Ev,
-};
-const SimpleFn kTerminators[] = {
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch9terminateEv,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi21ParameterToLeaveMatch9terminateEv,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi22ParameterToCreateMatch9terminateEv,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi24ParameterToReportResults9terminateEv,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchStatus9terminateEv,
-};
-const InitFn kInitializers[] = {
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_16JoinMatchRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi21ParameterToLeaveMatch10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_17LeaveMatchRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi22ParameterToCreateMatch10initializeEPNS1_6Common10LibContextENS6_12IntrusivePtrINS3_18CreateMatchRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi24ParameterToReportResults10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_20ReportResultsRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchDetail10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_24UpdateMatchDetailRequestEEE,
-    _ZN3sce2Np9CppWebApi7Matches2V18MatchApi28ParameterToUpdateMatchStatus10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_24UpdateMatchStatusRequestEEE,
-};
-
-template <typename TCall>
-void RequireThrows(TCall call) {
-    bool threw = false;
-    try { call(); } catch (const std::runtime_error&) { threw = true; }
-    Require(threw);
+template <typename T>
+void Write(std::uint8_t* object, const std::size_t offset, const T value) {
+    std::memcpy(object + offset, &value, sizeof(value));
 }
 
 }
 
 int main() {
-    for (const auto fn : kSignedOut) Require(fn(nullptr) == kNotSignedIn);
-    for (const auto fn : kAccessors) RequireThrows([&] { (void)fn(nullptr); });
-    for (const auto fn : kSetters) Require(fn(nullptr) == 0);
+    alignas(8) std::array<std::uint8_t, 0x200> request{};
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V111AddedPlayer12setAccountIdEPKc(request.data(), "value") == 0);
+    Require(Read<const char*>(request.data(), 96 + 0x08) != nullptr && std::strcmp(Read<const char*>(request.data(), 96 + 0x08), "value") == 0);
+    Require(request[128] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V111AddedPlayer13setPlayerNameEPKc(request.data(), "value") == 0);
+    Require(Read<const char*>(request.data(), 56 + 0x08) != nullptr && std::strcmp(Read<const char*>(request.data(), 56 + 0x08), "value") == 0);
+    Require(request[88] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V111AddedPlayer9setTeamIdEPKc(request.data(), "value") == 0);
+    Require(Read<const char*>(request.data(), 136 + 0x08) != nullptr && std::strcmp(Read<const char*>(request.data(), 136 + 0x08), "value") == 0);
+    Require(request[168] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V116RequestMatchTeam11setTeamNameEPKc(request.data(), "value") == 0);
+    Require(Read<const char*>(request.data(), 48 + 0x08) != nullptr && std::strcmp(Read<const char*>(request.data(), 48 + 0x08), "value") == 0);
+    Require(request[80] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest9setZoneIdEPKc(request.data(), "value") == 0);
+    Require(Read<const char*>(request.data(), 56 + 0x08) != nullptr && std::strcmp(Read<const char*>(request.data(), 56 + 0x08), "value") == 0);
+    Require(request[88] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118RequestMatchPlayer12setAccountIdEPKc(request.data(), "value") == 0);
+    Require(Read<const char*>(request.data(), 96 + 0x08) != nullptr && std::strcmp(Read<const char*>(request.data(), 96 + 0x08), "value") == 0);
+    Require(request[128] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118RequestMatchPlayer13setPlayerNameEPKc(request.data(), "value") == 0);
+    Require(Read<const char*>(request.data(), 56 + 0x08) != nullptr && std::strcmp(Read<const char*>(request.data(), 56 + 0x08), "value") == 0);
+    Require(request[88] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest9setZoneIdEPKc(request.data(), "value") == 0);
+    Require(Read<const char*>(request.data(), 24 + 0x08) != nullptr && std::strcmp(Read<const char*>(request.data(), 24 + 0x08), "value") == 0);
+    Require(request[56] == 1);
+    std::memset(request.data(), 0, request.size());
+    const int intValue = 0x1234;
+    Require(_ZN3sce2Np9CppWebApi7Matches2V113RemovedPlayer9setReasonERKNS3_11LeaveReasonE(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 48) == intValue && request[52] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V116JoinMatchRequest17setNpServiceLabelERKi(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 16) == intValue && request[20] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V117LeaveMatchRequest17setNpServiceLabelERKi(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 16) == intValue && request[20] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest17setExpirationTimeERKi(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 92) == intValue && request[96] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest17setNpServiceLabelERKi(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 16) == intValue && request[20] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V119RequestMatchResults20setCooperativeResultERKNS3_24RequestCooperativeResultE(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 20) == intValue && request[24] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V120ReportResultsRequest17setNpServiceLabelERKi(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 16) == intValue && request[20] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest17setExpirationTimeERKi(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 60) == intValue && request[64] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest17setNpServiceLabelERKi(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 16) == intValue && request[20] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchStatusRequest17setNpServiceLabelERKi(request.data(), &intValue) == 0);
+    Require(Read<std::int32_t>(request.data(), 16) == intValue && request[20] == 1);
+    std::memset(request.data(), 0, request.size());
+    const double doubleValue = 1.5;
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118RequestTeamResults8setScoreERKd(request.data(), &doubleValue) == 0);
+    Require(Read<double>(request.data(), 56) == doubleValue && request[64] == 1);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V120RequestPlayerResults8setScoreERKd(request.data(), &doubleValue) == 0);
+    Require(Read<double>(request.data(), 56) == doubleValue && request[64] == 1);
+    alignas(8) std::array<std::uint8_t, 0x40> objectBody{};
+    Write<std::int32_t>(objectBody.data(), 0x00, 1);
+    const IntrusivePtr objectValue{objectBody.data(), nullptr, nullptr};
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118CreateMatchRequest15setInGameRosterERKNS1_6Common12IntrusivePtrINS3_19RequestInGameRosterEEE(request.data(), &objectValue) == 0);
+    Require(Read<void*>(request.data(), 152) == objectBody.data() && request[176] == 1);
+    Require(Read<std::int32_t>(objectBody.data(), 0x00) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V119RequestMatchResults20setCompetitiveResultERKNS1_6Common12IntrusivePtrINS3_24RequestCompetitiveResultEEE(request.data(), &objectValue) == 0);
+    Require(Read<void*>(request.data(), 32) == objectBody.data() && request[56] == 1);
+    Require(Read<std::int32_t>(objectBody.data(), 0x00) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V120ReportResultsRequest18setMatchStatisticsERKNS1_6Common12IntrusivePtrINS3_22RequestMatchStatisticsEEE(request.data(), &objectValue) == 0);
+    Require(Read<void*>(request.data(), 48) == objectBody.data() && request[72] == 1);
+    Require(Read<std::int32_t>(objectBody.data(), 0x00) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124UpdateMatchDetailRequest15setInGameRosterERKNS1_6Common12IntrusivePtrINS3_19RequestInGameRosterEEE(request.data(), &objectValue) == 0);
+    Require(Read<void*>(request.data(), 112) == objectBody.data() && request[136] == 1);
+    Require(Read<std::int32_t>(objectBody.data(), 0x00) >= 2);
+    alignas(8) std::array<std::uint8_t, 0x40> vectorBody{};
+    Write<std::int32_t>(vectorBody.data(), 0x30, 1);
+    const IntrusivePtr vectorValue{vectorBody.data(), nullptr, nullptr};
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V116RequestMatchTeam10setMembersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_13RequestMemberEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 88) == vectorBody.data() && request[112] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118RequestTeamResults20setTeamMemberResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 72) == vectorBody.data() && request[96] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V119RequestInGameRoster10setPlayersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestMatchPlayerEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 16) == vectorBody.data() && request[40] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V119RequestInGameRoster8setTeamsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_16RequestMatchTeamEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 48) == vectorBody.data() && request[72] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V120RequestTeamStatistic23setTeamMemberStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_26RequestTeamMemberStatisticEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 80) == vectorBody.data() && request[104] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V120RequestTeamStatistic8setStatsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 48) == vectorBody.data() && request[72] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics17setTeamStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestTeamStatisticEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 48) == vectorBody.data() && request[72] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics19setPlayerStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_22RequestPlayerStatisticEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 16) == vectorBody.data() && request[40] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult14setTeamResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestTeamResultsEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 48) == vectorBody.data() && request[72] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult16setPlayerResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestPlayerResultsEEEEE(request.data(), &vectorValue) == 0);
+    Require(Read<void*>(request.data(), 16) == vectorBody.data() && request[40] == 1);
+    Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::memset(request.data(), 0, request.size());
+    Write<std::uint8_t>(request.data(), 0x48, 1);
+    Require(_ZNK3sce2Np9CppWebApi7Matches2V119RequestInGameRoster10teamsIsSetEv(request.data()));
+    Write<std::uint8_t>(request.data(), 0x28, 1);
+    Require(_ZNK3sce2Np9CppWebApi7Matches2V119RequestInGameRoster12playersIsSetEv(request.data()));
+    Require(_ZNK3sce2Np9CppWebApi7Matches2V119CreateMatchResponse10getMatchIdEv(request.data()) == request.data() + 0x30);
+    alignas(8) std::array<std::uint8_t, 0x10> joinParameter{};
+    alignas(8) std::array<std::uint8_t, 0x40> joinBodyObject{};
+    Write<std::int32_t>(joinBodyObject.data(), 0x00, 1);
+    const IntrusivePtr joinBody{joinBodyObject.data(), nullptr, nullptr};
+    std::uint64_t context = 1;
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_16JoinMatchRequestEEE(joinParameter.data(), &context, "room", &joinBody) == 0);
+    Require(Read<void*>(joinParameter.data(), 0x08) != nullptr);
+    Require(Read<std::int32_t>(joinBodyObject.data(), 0x00) == 2);
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_16JoinMatchRequestEEE(joinParameter.data(), &context, "room", &joinBody) == static_cast<int>(0x8055350f));
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch9terminateEv(joinParameter.data()) == 0);
+    Require(Read<std::int32_t>(joinBodyObject.data(), 0x00) == 1);
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch9terminateEv(joinParameter.data()) == static_cast<int>(0x80553510));
 
-    for (const auto fn : kConstructors) {
-        Storage storage;
-        std::memset(storage.bytes, kFill, sizeof(storage.bytes));
-        Require(fn(storage.bytes) == 0);
-        Require(GuardIntact(storage));
-    }
-    for (const auto fn : kDestructors) {
-        Storage storage;
-        std::memset(storage.bytes, kFill, sizeof(storage.bytes));
-        Require(fn(storage.bytes) == 0);
-        Require(GuardIntact(storage));
-    }
-    for (const auto fn : kTerminators) {
-        Storage storage;
-        std::memset(storage.bytes, 0, sizeof(storage.bytes));
-        Require(fn(storage.bytes) == kNotInitialized);
-    }
-    for (const auto fn : kInitializers) {
-        Storage storage;
-        std::memset(storage.bytes, kFill, sizeof(storage.bytes));
-        std::memset(storage.bytes, 0, kParameterSize);
-        std::uint64_t context = 1;
-        Require(fn(storage.bytes, &context) == 0);
-        Require(fn(storage.bytes, &context) == kAlreadyInitialized);
-        Require(kTerminators[0](storage.bytes) == 0);
-        Require(kTerminators[0](storage.bytes) == kNotInitialized);
-        Require(GuardIntact(storage));
-    }
+    alignas(8) std::array<std::uint8_t, 0x10> emptyParameter{};
+    const IntrusivePtr emptyBody{nullptr, nullptr, nullptr};
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_16JoinMatchRequestEEE(emptyParameter.data(), &context, "room", &emptyBody) == static_cast<int>(0x80553512));
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_16JoinMatchRequestEEE(emptyParameter.data(), nullptr, "room", &joinBody) == static_cast<int>(0x80553503));
+    std::uint64_t zero = 0;
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_16JoinMatchRequestEEE(emptyParameter.data(), &zero, "room", &joinBody) == static_cast<int>(0x80553502));
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi20ParameterToJoinMatch10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_16JoinMatchRequestEEE(emptyParameter.data(), &context, nullptr, &joinBody) == static_cast<int>(0x80553503));
+
+    alignas(8) std::array<std::uint8_t, 0x10> createParameter{};
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi22ParameterToCreateMatch10initializeEPNS1_6Common10LibContextENS6_12IntrusivePtrINS3_18CreateMatchRequestEEE(createParameter.data(), &context, &joinBody) == 0);
+    Require(_ZN3sce2Np9CppWebApi7Matches2V18MatchApi22ParameterToCreateMatch9terminateEv(createParameter.data()) == 0);
+
     return 0;
 }
