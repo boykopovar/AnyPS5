@@ -16,6 +16,7 @@ constexpr std::uint16_t NP_PARTY_STATE_NOT_IN_PARTY = 2;
 std::atomic<bool> g_initialized{false};
 
 int notInParty(const void* out) {
+    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (!out) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return NP_PARTY_ERROR_NOT_IN_PARTY;
 }
@@ -25,6 +26,7 @@ int notInParty(const void* out) {
 extern "C" {
 
 int APS5_VABI sceNpPartyGetState(std::uint16_t* state) {
+    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
     if (!state) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     *state = NP_PARTY_STATE_NOT_IN_PARTY;
     return 0;
@@ -78,7 +80,9 @@ int APS5_VABI sceNpPartyGetStateAsUser(void) {
     return 0;
 }
 
-int APS5_VABI sceNpPartyGetStateAsUserA(std::int32_t, std::uint16_t* state) {
+int APS5_VABI sceNpPartyGetStateAsUserA(std::int32_t userId, std::uint16_t* state) {
+    if (!g_initialized) return NP_PARTY_ERROR_NOT_INITIALIZED;
+    if (userId == -1) return NP_PARTY_ERROR_INVALID_ARGUMENT;
     return sceNpPartyGetState(state);
 }
 

@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_write_watch_coverage_tests tests/WriteWatchCoverage.cpp)
+    target_include_directories(agc_write_watch_coverage_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_write_watch_coverage_tests PRIVATE libc)
+    configure_windows_unwind(agc_write_watch_coverage_tests)
+    add_test(NAME agc_write_watch_coverage COMMAND agc_write_watch_coverage_tests)
+    if(WIN32)
+        set_tests_properties(agc_write_watch_coverage PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

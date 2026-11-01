@@ -599,7 +599,14 @@ static void CheckAccountQueriesAndPremiumCallback() {
     Require(sceNpUnregisterPremiumEventCallback() == 0, "unregistering the premium event callback");
 }
 
+void CheckUnregisteredClientError() {
+    const std::uint32_t others[] = {0, 0x82e0104c, 0x82e0104e, 0x80550000, 0x82e1104d, 0xffffffff};
+    Require(sceNpManagerIntIsUnregisteredClientError(static_cast<int>(0x82e0104d)), "0x82E0104D must be the unregistered client error");
+    for (const std::uint32_t error : others) Require(!sceNpManagerIntIsUnregisteredClientError(static_cast<int>(error)), "only 0x82E0104D is the unregistered client error");
+}
+
 int main() {
+    CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();
     CheckUserIdQueries();

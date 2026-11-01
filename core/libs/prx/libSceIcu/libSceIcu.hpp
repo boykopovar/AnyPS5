@@ -1,6 +1,8 @@
 #pragma once
+#include "prx/libSceIcu/include/LegacyExports.hpp"
 #include "Invariant.hpp"
 #include "Iterator.hpp"
+#include "prx/libSceIcu/include/InventoryDispatch.hpp"
 #include "Utf8.hpp"
 #include "Version.hpp"
 #include "ConverterCallbacks.hpp"
