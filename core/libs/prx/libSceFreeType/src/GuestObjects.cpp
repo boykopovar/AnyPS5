@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 
 #include <cstddef>
+#include <stdexcept>
 
 namespace FreeType {
 
@@ -51,20 +52,48 @@ void SyncFace(GuestFace& face) {
     rec.underline_position = host->underline_position;
     rec.underline_thickness = host->underline_thickness;
     rec.glyph = host->glyph ? &face.slot : nullptr;
-    rec.size = host->size ? &face.size : nullptr;
     rec.internal = &face;
     SyncSize(face);
     SyncSlot(face);
 }
 
-void SyncSize(GuestFace& face) {
-    face.size.face = &face.rec;
-    if (!face.host->size) {
-        face.size.metrics = {};
+void SyncSizeRecord_nid_no_patch(GuestFace& face, GuestSizeRec& rec, FT_Size host) {
+    rec.face = &face.rec;
+    rec.internal = host;
+    if (!host) {
+        rec.metrics = {};
         return;
     }
-    const auto& metrics = face.host->size->metrics;
-    face.size.metrics = {metrics.x_ppem, metrics.y_ppem, metrics.x_scale, metrics.y_scale, metrics.ascender, metrics.descender, metrics.height, metrics.max_advance};
+    const auto& metrics = host->metrics;
+    rec.metrics = {metrics.x_ppem, metrics.y_ppem, metrics.x_scale, metrics.y_scale, metrics.ascender, metrics.descender, metrics.height, metrics.max_advance};
+}
+
+void SyncSizePointer_nid_no_patch(GuestFace& face) {
+    const FT_Size active = face.host->size;
+    if (!active) {
+        face.rec.size = nullptr;
+        return;
+    }
+    if (active == face.initialSize) {
+        face.rec.size = &face.size;
+        return;
+    }
+    for (auto& size : face.sizes) {
+        if (size.host != active) continue;
+        face.rec.size = &size.rec;
+        return;
+    }
+    throw std::runtime_error("FreeType: an active size created outside the guest bridge is not implemented");
+}
+
+void SyncSize(GuestFace& face) {
+    if (!face.sizeInitialized) {
+        face.initialSize = face.host->size;
+        face.sizeInitialized = true;
+        SyncSizeRecord_nid_no_patch(face, face.size, face.initialSize);
+    }
+    SyncSizePointer_nid_no_patch(face);
+    if (face.rec.size) SyncSizeRecord_nid_no_patch(face, *face.rec.size, face.host->size);
 }
 
 void SyncSlot(GuestFace& face) {

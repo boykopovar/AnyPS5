@@ -47,9 +47,13 @@ void testSizes() {
     }
 }
 
-void testRejections() {
-    expectFailure([] { sceAgcDcbContextStateOpGetSize(4); });
-    expectFailure([] { sceAgcDcbContextStateOpGetSize(0xffffffffu); });
+void testInvalidOperations() {
+    for (const std::uint32_t operation : {4u, 15u, 16u, 0xffu, 0x100u, 0x103u, 0xffffffffu}) {
+        check(sceAgcDcbContextStateOpGetSize(operation) == 0, "an invalid context state operation did not return size 0");
+    }
+    std::array<std::uint32_t, 64> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    expectFailure([&] { sceAgcDcbContextStateOp_0100(&buffer, 4); });
 }
 
 }
@@ -57,7 +61,7 @@ void testRejections() {
 int main() {
     try {
         testSizes();
-        testRejections();
+        testInvalidOperations();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC context state size tests passed");
         return 0;

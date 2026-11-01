@@ -12,10 +12,13 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -30,6 +33,19 @@ constexpr NativeSocket NativeInvalid = -1;
 static void CloseNative(NativeSocket socket) { close(socket); }
 #endif
 static void Require(bool value) { if (!value) std::abort(); }
+#ifndef _WIN32
+static std::atomic<std::size_t> failAllocationOfSize{0};
+void* operator new(std::size_t bytes) {
+    if (bytes != 0 && failAllocationOfSize.load() == bytes) {
+        failAllocationOfSize = 0;
+        throw std::bad_alloc();
+    }
+    if (void* pointer = std::malloc(bytes != 0 ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+#endif
 constexpr short In = 0x1;
 constexpr short Priority = 0x2;
 constexpr short ReadBand = 0x80;
@@ -102,6 +118,26 @@ static void PollsFilesAndDirectories(int socket) {
     Require(mixed[0].revents == 0 && mixed[1].revents == Out && mixed[2].revents == ReadNormal);
     Require(close_nid_postfix(directory) == 0 && close_nid_postfix(file) == 0);
     Require(rmdir_nid_postfix(directoryPath.c_str()) == 0 && unlink_nid_postfix(filePath.c_str()) == 0);
+}
+
+static void StandardDescriptorFile(int descriptor) {
+    const int saved = dup_nid_postfix(descriptor);
+    const std::string path = "anyps5-poll-input-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int file = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+    Require(file >= 0);
+    Require(dup2_nid_postfix(file, descriptor) == descriptor);
+    if (file != descriptor) Require(close_nid_postfix(file) == 0);
+    GuestPollDescriptor input{descriptor, static_cast<short>(In | Out | ReadNormal | Priority), -1};
+    const int ready = poll_nid_postfix(&input, 1, 0);
+    if (ready != 1) std::fprintf(stderr, "poll on a regular file at descriptor %d returned %d instead of 1\n", descriptor, ready);
+    Require(ready == 1 && input.revents == (In | Out | ReadNormal));
+    input.events = Priority;
+    Require(poll_nid_postfix(&input, 1, 0) == 0 && input.revents == 0);
+    if (saved >= 0) {
+        Require(dup2_nid_postfix(saved, descriptor) == descriptor);
+        Require(close_nid_postfix(saved) == 0);
+    } else Require(close_nid_postfix(descriptor) == 0);
+    Require(unlink_nid_postfix(path.c_str()) == 0);
 }
 
 static void TestPipes(int socket) {
@@ -242,12 +278,18 @@ static void PollsAStreamWhosePeerClosed() {
     Require(server >= 0);
 
     Require(shutdown_nid_postfix(client, 1) == 0);
-    GuestPollDescriptor wait{server, In, 0};
+    GuestPollDescriptor wait{client, static_cast<short>(In | Out), 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == Out);
+    wait = {server, In, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == In);
     wait = {server, static_cast<short>(In | Out), 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == (In | Out));
     wait = {server, ReadNormal, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == ReadNormal);
+#ifndef _WIN32
+    wait = {server, static_cast<short>(In | Priority | ReadBand), 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == In);
+#endif
     wait = {server, Out, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == Out);
     char byte;
@@ -286,6 +328,7 @@ static void PollsAHungUpSocketWithoutPollout() {
 #endif
 
 int main() {
+    for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
 #ifndef _WIN32
@@ -329,6 +372,42 @@ int main() {
     Require(shortWait >= std::chrono::milliseconds(20) && shortWait < std::chrono::milliseconds(200));
     Require(poll_nid_postfix(nullptr, 1, 0) == -1 && *__error_nid_postfix() == 14);
     Require(poll_nid_postfix(&single, 1, -2) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(reinterpret_cast<GuestPollDescriptor*>(std::uintptr_t{0x10}), 1, 0) == -1 && *__error_nid_postfix() == 14);
+    GuestResourceLimit fileLimit{};
+    Require(getrlimit_nid_postfix(8, &fileLimit) == 0);
+    if (fileLimit.rlim_max < 0xffffffff) {
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(&single, 0xffffffffu, 0) == -1 && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, 0xffffffffu, 0) == -1 && *__error_nid_postfix() == 22);
+    }
+    if (fileLimit.rlim_max >= 1024 && fileLimit.rlim_max < 100000) {
+        const auto atLimit = static_cast<std::uint32_t>(fileLimit.rlim_max);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, atLimit, 0) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, atLimit + 1, 0) == -1 && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(reinterpret_cast<GuestPollDescriptor*>(std::uintptr_t{0x10}), atLimit + 1, 0) == -1 && *__error_nid_postfix() == 22);
+    }
+#ifndef _WIN32
+    GuestPollDescriptor allocated[3]{{-1, In, 5}, {-1, In, 6}, {-1, In, 7}};
+    failAllocationOfSize = sizeof(allocated);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(allocated, 3, 0) == -1 && *__error_nid_postfix() == 12);
+    Require(failAllocationOfSize == 0);
+    Require(allocated[0].revents == 5 && allocated[1].revents == 6 && allocated[2].revents == 7);
+    Require(poll_nid_postfix(allocated, 3, 0) == 0 && allocated[0].revents == 0);
+#endif
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<GuestPollDescriptor*>(page);
+    *readOnly = {-1, In, 7};
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(readOnly, 1, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(readOnly->descriptor == -1 && readOnly->revents == 7);
     TestPipes(listener);
     PollsFilesAndDirectories(listener);
     Require(close_nid_postfix(server) == 0);

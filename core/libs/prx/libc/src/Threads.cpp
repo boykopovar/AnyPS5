@@ -204,6 +204,10 @@ int APS5_VABI _Mtx_init_with_name_nid_postfix(void** handle, int type, const cha
     return _Mtx_init_nid_postfix(handle, type);
 }
 
+int APS5_VABI _Mtx_init_with_default_name_override_nid_postfix(void** handle, int type, const char* name) {
+    return _Mtx_init_with_name_nid_postfix(handle, type, name);
+}
+
 void APS5_VABI _Mtx_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Mtx_destroy: null mutex handle pointer");
@@ -380,8 +384,16 @@ int SignalCondition_nid_no_patch(void** handle) {
     return threadSuccess;
 }
 
+static std::atomic<unsigned> registeredProcessorCount{0};
+
+void RegisterProcessorCount_nid_no_patch(unsigned count) {
+    registeredProcessorCount.store(count, std::memory_order_release);
+}
+
 unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
-    return std::thread::hardware_concurrency();
+    const unsigned count = registeredProcessorCount.load(std::memory_order_acquire);
+    if (count == 0) throw std::runtime_error("std::thread::hardware_concurrency: libkernel has not registered the processor count");
+    return count;
 }
 
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
@@ -498,13 +510,21 @@ void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(GuestPad* pad) {
     RequireThrd(_Mtx_unlock_nid_postfix(&pad->mutex), "_Pad::_Release: _Mtx_unlock");
 }
 
-void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread) {
+static void LaunchPad_nid_no_patch(GuestPad* pad, void** attrSlot, void** thread) {
     if (!pad || !thread) APS5_INVALID_ARG_EX;
     const auto create = registeredPthreadCreate.load(std::memory_order_acquire);
     if (!create) throw std::runtime_error("_Pad::_Launch: pthread_create is not registered");
-    const int created = create(thread, nullptr, PadEntry_nid_no_patch, pad);
+    const int created = create(thread, attrSlot, PadEntry_nid_no_patch, pad);
     if (created != 0) ThrowCppError_nid_no_patch(6);
     while (!pad->started) RequireThrd(_Cnd_wait_nid_postfix(&pad->condition, &pad->mutex), "_Pad::_Launch: _Cnd_wait");
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(GuestPad* pad, void** thread) {
+    LaunchPad_nid_no_patch(pad, nullptr, thread);
+}
+
+void APS5_VABI _ZNSt4_Pad7_LaunchEPP12pthread_attrPP7pthread_nid_postfix(GuestPad* pad, void** attrSlot, void** thread) {
+    LaunchPad_nid_no_patch(pad, attrSlot, thread);
 }
 
 int APS5_VABI _Thrd_join_nid_postfix(void* thread, int* code) {
@@ -560,6 +580,10 @@ int APS5_VABI _Tss_set_nid_postfix(int key, void* value) {
 
 int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
     return ThreadForwards(__func__).equal(first, second);
+}
+
+int APS5_VABI _Thrd_lt_nid_postfix(void* first, void* second) {
+    return reinterpret_cast<std::uintptr_t>(first) < reinterpret_cast<std::uintptr_t>(second);
 }
 
 void* APS5_VABI _Thrd_current_nid_postfix(void) {
