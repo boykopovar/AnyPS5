@@ -1932,18 +1932,28 @@ void TestAt9RunDecodesWholeInput(std::uint32_t context) {
 }
 
 void TestStrError() {
-    const int implemented[] = {static_cast<int>(0x80930002), static_cast<int>(0x80930003), static_cast<int>(0x80930004), static_cast<int>(0x80930005), static_cast<int>(0x80930007)};
-    for (int code : implemented) {
+    const char* const expected[] = {
+        "context does not exist", "instance does not exist", "batch does not exist", "invalid parameter",
+        "not enough memory", "not enough resources", "codec is not supported",
+        "codec is already registered in the context", "codec is not registered in the context",
+        "wrong revision in the flags", "flag is not supported", "busy", "priority is invalid", "in progress",
+        "operation cannot be performed at the moment", "malformed batch", "error at job creation",
+        "invalid opcode", "priority violation", "buffer is too big", "invalid address", "batch was cancelled",
+        "specified memory area is already registered", "specified memory area is not registered",
+    };
+    static_assert(sizeof(expected) / sizeof(expected[0]) == 24);
+    for (std::uint32_t i = 0; i < 24; ++i) {
+        const int code = static_cast<int>(0x80930002u + i);
         const char* text = sceAjmStrError(code);
-        Require(text != nullptr && std::strlen(text) > 0);
+        Require(text != nullptr && std::strcmp(text, expected[i]) == 0);
         Require(sceAjmStrError(code) == text);
     }
-    const char* fallback = sceAjmStrError(0);
-    Require(fallback != nullptr && std::strlen(fallback) > 0);
-    for (int code : {static_cast<int>(0x80930001), 0x7fffffff})
-        Require(sceAjmStrError(code) == fallback);
-    for (int code : implemented)
-        Require(sceAjmStrError(code) != fallback);
+    const char* ok = sceAjmStrError(0);
+    Require(ok != nullptr && std::strcmp(ok, "ok") == 0);
+    for (std::uint32_t code : {0x80930000u, 0x80930001u, 0x8093001au, 0x8093001bu, 0x8092ffffu, 1u, 0xffffffffu, 0x80020001u, 0x8a6e0001u, 0x7fffffffu}) {
+        const char* text = sceAjmStrError(static_cast<int>(code));
+        Require(text != nullptr && std::strcmp(text, "(unknown)") == 0);
+    }
 }
 
 void TestAt9FlagRules(std::uint32_t context) {
