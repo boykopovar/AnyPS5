@@ -10,7 +10,7 @@ int APS5_VABI sceMouseClose(std::int32_t handle);
 int APS5_VABI sceMouseRead(std::int32_t handle, MouseData* data, std::int32_t num);
 int APS5_VABI sceMouseResetAbsolutePosition(std::int32_t handle, std::uint16_t x, std::uint16_t y);
 int APS5_VABI sceMouseConnectPort();
-int APS5_VABI sceMouseDebugGetDeviceId();
+int APS5_VABI sceMouseDebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId);
 int APS5_VABI sceMouseDeviceOpen();
 int APS5_VABI sceMouseDisconnectDevice();
 int APS5_VABI sceMouseDisconnectPort();

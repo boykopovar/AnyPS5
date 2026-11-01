@@ -35,6 +35,6 @@ int APS5_VABI sceDbgKeyboardGetKey2Char();
 int APS5_VABI sceDbgKeyboardInit();
 int APS5_VABI sceDbgKeyboardOpen();
 int APS5_VABI sceDbgKeyboardRead();
-int APS5_VABI sceDbgKeyboardReadState();
+int APS5_VABI sceDbgKeyboardReadState(std::int32_t handle, KeyboardData* data);
 
 }

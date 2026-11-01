@@ -37,9 +37,8 @@ int APS5_VABI sceMouseConnectPort() {
     return 0;
 }
 
-int APS5_VABI sceMouseDebugGetDeviceId() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMouseDebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
+    return Mouse::DebugGetDeviceId(handle, deviceId);
 }
 
 int APS5_VABI sceMouseDeviceOpen() {

@@ -17,6 +17,7 @@ constexpr int MOUSE_ERROR_ALREADY_OPENED = static_cast<int>(0x80df0004u);
 constexpr int MOUSE_ERROR_NOT_INITIALIZED = static_cast<int>(0x80df0005u);
 constexpr int MOUSE_MAX_DATA_NUM = 64;
 constexpr int MOUSE_HANDLE = 1;
+constexpr int MOUSE_DEVICE_ID = 1;
 constexpr std::uint8_t MOUSE_OPEN_PARAM_MERGED = 1;
 
 static_assert(sizeof(MouseOpenParam) == 8);
