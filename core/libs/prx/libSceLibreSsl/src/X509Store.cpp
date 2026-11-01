@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <stdexcept>
+#include <string>
 
 static_assert(sizeof(LibreSslX509VerifyParamId) == 56);
 static_assert(offsetof(LibreSslX509VerifyParamId, hostFlags) == 8);
@@ -151,7 +153,7 @@ void FreeVerifyParam(LibreSslX509VerifyParam* param, const char* function) {
     if (HoldsElements(policies, function)) NotImplemented_nid_no_patch("X509_VERIFY_PARAM policy objects");
     FreeStack(policies);
     auto* id = param->id;
-    if (!id) NotImplemented_nid_no_patch(function);
+    if (!id) throw std::invalid_argument(std::string(function) + ": missing verify parameter identity");
     FreeStrings(static_cast<Stack*>(id->hosts), function);
     free_nid_postfix(id->peerName);
     free_nid_postfix(id->email);
@@ -215,17 +217,17 @@ LibreSslX509LookupMethod* APS5_VABI X509_LOOKUP_file_nid_postfix(void) {
 }
 
 LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Store* store, LibreSslX509LookupMethod* method) {
-    if (!store) NotImplemented_nid_no_patch(__func__);
+    if (!store) throw std::invalid_argument(std::string(__func__) + ": null store");
     auto* lookupMethods = static_cast<Stack*>(store->lookupMethods);
     if (lookupMethods && lookupMethods->num > 0) {
         char** const lookups = Elements(lookupMethods, __func__);
         for (int index = 0; index < lookupMethods->num; ++index) {
             auto* lookup = reinterpret_cast<LibreSslX509Lookup*>(lookups[index]);
-            if (!lookup) NotImplemented_nid_no_patch(__func__);
+            if (!lookup) throw std::invalid_argument(std::string(__func__) + ": listed lookup is null");
             if (lookup->method == method) return lookup;
         }
     }
-    if (!method) NotImplemented_nid_no_patch(__func__);
+    if (!method) throw std::invalid_argument(std::string(__func__) + ": null method");
     if (method->newItem) NotImplemented_nid_no_patch("X509_LOOKUP new_item callback");
     auto* lookup = static_cast<LibreSslX509Lookup*>(malloc_nid_postfix(sizeof(LibreSslX509Lookup)));
     if (!lookup) return nullptr;
