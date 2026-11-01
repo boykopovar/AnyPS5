@@ -630,8 +630,6 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
 
 extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     if (!descriptors) return PosixFailure(GUEST_EFAULT);
-    const GuestArena::HostWrite destination(descriptors, 2 * sizeof(int));
-    if (!destination.Open()) return PosixFailure(GUEST_EFAULT);
     int native[2];
 #ifdef _WIN32
     const int result = ::_pipe(native, 65536, _O_BINARY);
@@ -641,7 +639,11 @@ extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     if (result != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     File::RememberPipe(native[0]);
     File::RememberPipe(native[1]);
-    std::memcpy(descriptors, native, sizeof(native));
+    if (!GuestCopyOut_nid_no_patch(descriptors, native, sizeof(native))) {
+        close_nid_postfix(native[0]);
+        close_nid_postfix(native[1]);
+        return PosixFailure(GUEST_EFAULT);
+    }
     return 0;
 }
 
