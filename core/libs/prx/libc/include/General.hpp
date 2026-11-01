@@ -94,6 +94,15 @@ struct PthreadSyncForwards_nid_no_patch {
     int (APS5_VABI* condWait)(void**, void**);
     int (APS5_VABI* condSignal)(void**);
     int (APS5_VABI* condBroadcast)(void**);
+    int (APS5_VABI* rwlockInit)(void**, void* const*, const char*);
+    int (APS5_VABI* rwlockDestroy)(void**);
+    int (APS5_VABI* rwlockRdlock)(void**);
+    int (APS5_VABI* rwlockWrlock)(void**);
+    int (APS5_VABI* rwlockTryrdlock)(void**);
+    int (APS5_VABI* rwlockTrywrlock)(void**);
+    int (APS5_VABI* rwlockTimedrdlock)(void**, unsigned int);
+    int (APS5_VABI* rwlockTimedwrlock)(void**, unsigned int);
+    int (APS5_VABI* rwlockUnlock)(void**);
     int (APS5_VABI* detach)(void*);
     int (APS5_VABI* join)(void*, void**);
     void (APS5_VABI* yield)();
