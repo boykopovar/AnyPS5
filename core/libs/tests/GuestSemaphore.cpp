@@ -59,6 +59,19 @@ static void RequireInvalidArguments() {
     Require(sceKernelDeleteSema(sem) == SCE_OK);
     Require(ksem_wait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
     Require(ksem_trywait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
+    int val = -1;
+    Require(sem_getvalue_nid_postfix(nullptr, &val) == -1 && *__error_nid_postfix() == 22);
+    Require(sem_getvalue_nid_postfix(nullptr, nullptr) == -1 && *__error_nid_postfix() == 22);
+    std::uintptr_t invalidSem = 0;
+    Require(sem_getvalue_nid_postfix(&invalidSem, &val) == -1 && *__error_nid_postfix() == 22);
+    Require(sem_getvalue_nid_postfix(&invalidSem, nullptr) == -1 && *__error_nid_postfix() == 22);
+    std::uintptr_t validSem = 0;
+    Require(sem_init_nid_postfix(&validSem, 0, 1) == 0);
+    Require(sem_getvalue_nid_postfix(&validSem, nullptr) == -1 && *__error_nid_postfix() == 22);
+    Require(sem_getvalue_nid_postfix(&validSem, &val) == 0 && val == 1);
+    Require(sem_destroy_nid_postfix(&validSem) == 0);
+    Require(ksem_getvalue_nid_postfix(-1, &val) == -1 && *__error_nid_postfix() == 22);
+    Require(ksem_getvalue_nid_postfix(-1, nullptr) == -1 && *__error_nid_postfix() == 22);
 }
 
 int main() {
