@@ -225,6 +225,7 @@ std::size_t FindEmbeddedDataTableEnd(std::span<const std::uint8_t> code, Virtual
     }
     if (!firstDecodeFailure) return 0;
 
+    auto tableEnd = code.size();
     for (std::size_t pos = *firstDecodeFailure + 1; pos < code.size();) {
         if (code[pos] != 0xcc && code[pos] != 0x90 && code[pos] != 0x00) {
             ++pos;
@@ -236,15 +237,17 @@ std::size_t FindEmbeddedDataTableEnd(std::span<const std::uint8_t> code, Virtual
             if (code[pos] == 0x00) hasZeroPad = true;
             ++pos;
         }
-        if (pos < code.size() && analysis.DecodesAsTrailingCodeBlock(pos))
-            return hasZeroPad ? pos : padStart;
+        if (pos < code.size() && analysis.DecodesAsTrailingCodeBlock(pos)) {
+            tableEnd = hasZeroPad ? pos : padStart;
+            break;
+        }
     }
-    for (std::size_t pos = *firstDecodeFailure + 1; pos < code.size(); ++pos) {
+    for (std::size_t pos = *firstDecodeFailure + 1; pos < tableEnd; ++pos) {
         bool hasSyscall = false;
         if (analysis.DecodesAsTrailingCodeBlock(pos, &hasSyscall) && hasSyscall)
             return pos;
     }
-    return code.size();
+    return tableEnd;
 }
 
 }
