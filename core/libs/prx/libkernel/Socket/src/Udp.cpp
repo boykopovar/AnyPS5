@@ -412,6 +412,7 @@ void ReleaseNumber(int number) {
 }
 #endif
 int Install(std::shared_ptr<Socket> socket) {
+    if (acceptInstallFault == 1) { acceptInstallFault = 0; return Fail(24); }
 #ifdef _WIN32
     unsigned long nonblocking = 1;
     if (ioctlsocket(socket->value, FIONBIO, &nonblocking)) return Fail(NativeError());
