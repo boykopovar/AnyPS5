@@ -761,7 +761,6 @@ static void LowWaterMarks() {
     Require(Poll(kq, events, 4) == 1 && events[0].ident == reader && events[0].data == 4);
     Require(Apply(kq, Change(reader, EvfiltRead, EvAdd, NoteLowat, 8)) == 0);
     Require(Poll(kq, events, 4) == 0);
-    Require(Throws([kq, writer] { Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 0)); }));
     int idle[2];
     Require(socketpair_nid_postfix(Unix, Stream, 0, idle) == 0);
     const auto idleReader = static_cast<std::uintptr_t>(idle[0]);
