@@ -226,7 +226,7 @@ bool foldRedundantMask(IrValue& value) {
 
 bool feedsMultiply(const IrValue& value) {
     const auto& uses = value.Uses();
-    return std::any_of(uses.begin(), uses.end(), [](const IrValue* use) { return use->Opcode() == IrOpcode::IMul32; });
+    return std::any_of(uses.begin(), uses.end(), [](const IrValue* use) { return use->Opcode() == IrOpcode::IMul32 || (use->Opcode() == IrOpcode::BitwiseXor32 && (isImmediate(*use->Argument(0)->Resolve(), IrType::U32) || isImmediate(*use->Argument(1)->Resolve(), IrType::U32)) && feedsMultiply(*use)); });
 }
 
 bool isImmediateU32(const IrValue& value, std::uint32_t immediate) {
