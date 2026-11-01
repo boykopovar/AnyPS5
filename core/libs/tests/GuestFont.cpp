@@ -633,6 +633,8 @@ int main() {
     Require(sceFontOpenFontSet(nullptr, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_INVALID_LIBRARY);
     const unsigned char notAFont[64] = {1, 2, 3, 4};
     Require(sceFontOpenFontMemory(library, notAFont, sizeof(notAFont), nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FUNCTION && font == nullptr);
+    Require(sceFontSupportExternalFonts(library, 0x04000000u, 0x52) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontSupportExternalFonts(library, 0xffffffffu, 0x52) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontSupportExternalFonts(library, 4, 0x52) == SCE_FONT_OK);
     Require(sceFontSupportExternalFonts(library, 4, 0x52) == SCE_FONT_ERROR_ALREADY_SPECIFIED);
     font = reinterpret_cast<FontHandle>(&memory);
