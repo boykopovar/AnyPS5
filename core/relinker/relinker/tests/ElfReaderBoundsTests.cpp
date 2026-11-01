@@ -1,4 +1,5 @@
 #include <relinker/parsing/ElfReader.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -100,6 +101,39 @@ void RejectProgramHeaders(Bytes bytes) {
         return;
     }
     throw std::runtime_error("Invalid program header was accepted");
+}
+
+void RejectDynamicTags(Bytes bytes, const Relinker::ProgramHeader& header) {
+    try {
+        Relinker::ElfReader(std::move(bytes)).ReadDynamicTags(header);
+    } catch (const Relinker::RelinkerException&) {
+        return;
+    }
+    throw std::runtime_error("Invalid dynamic segment was accepted");
+}
+
+Bytes DynamicFixture(const std::vector<std::pair<std::int64_t, std::uint64_t>>& tags) {
+    Bytes bytes(0x100 + tags.size() * 16);
+    const std::uint8_t magic[] = {0x7f, 'E', 'L', 'F', 2, 1, 1};
+    std::memcpy(bytes.data(), magic, sizeof(magic));
+    Write<std::uint16_t>(bytes, 16, 3);
+    Write<std::uint16_t>(bytes, 18, 62);
+    Write<std::uint32_t>(bytes, 20, 1);
+    const std::size_t dynOffset = 0x80;
+    for (std::size_t i = 0; i < tags.size(); ++i) {
+        Write<std::int64_t>(bytes, dynOffset + i * 16, tags[i].first);
+        Write<std::uint64_t>(bytes, dynOffset + i * 16 + 8, tags[i].second);
+    }
+    return bytes;
+}
+
+Relinker::ProgramHeader DynamicHeader(const std::size_t tagCount) {
+    Relinker::ProgramHeader header{};
+    header.Type = 2;
+    header.Offset = 0x80;
+    header.FileSize = tagCount * 16;
+    header.MemorySize = tagCount * 16;
+    return header;
 }
 
 }
@@ -358,6 +392,36 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x1000) == 0x240);
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
+        }},
+        {"DT_SYMENT size mismatch with Elf64_Sym", [] {
+            constexpr std::uint64_t sizes[] = {0, 1, 8, 16, 20, 23, 25, 28, 32, 48, 64, std::numeric_limits<std::uint64_t>::max()};
+            for (const std::uint64_t size : sizes) {
+                const std::vector<std::pair<std::int64_t, std::uint64_t>> tags = {
+                    {Elfpatcher::DT_SYMENT, size},
+                    {0, 0}
+                };
+                RejectDynamicTags(DynamicFixture(tags), DynamicHeader(tags.size()));
+            }
+        }},
+        {"DT_OS_SYMENT size mismatch with Elf64_Sym", [] {
+            constexpr std::uint64_t sizes[] = {0, 1, 8, 16, 20, 23, 25, 28, 32, 48, 64, std::numeric_limits<std::uint64_t>::max()};
+            for (const std::uint64_t size : sizes) {
+                const std::vector<std::pair<std::int64_t, std::uint64_t>> tags = {
+                    {Elfpatcher::DT_OS_SYMENT, size},
+                    {0, 0}
+                };
+                RejectDynamicTags(DynamicFixture(tags), DynamicHeader(tags.size()));
+            }
+        }},
+        {"valid DT_SYMENT and DT_OS_SYMENT symbol entry size", [] {
+            for (const std::int64_t tag : {Elfpatcher::DT_SYMENT, Elfpatcher::DT_OS_SYMENT}) {
+                const std::vector<std::pair<std::int64_t, std::uint64_t>> tags = {
+                    {tag, 24},
+                    {0, 0}
+                };
+                const auto parsed = Relinker::ElfReader(DynamicFixture(tags)).ReadDynamicTags(DynamicHeader(tags.size()));
+                Require(parsed.size() == 1 && parsed[0].Tag == tag && parsed[0].Value == 24);
+            }
         }},
     };
     std::size_t failures = 0;

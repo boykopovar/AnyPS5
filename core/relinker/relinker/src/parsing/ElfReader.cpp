@@ -283,6 +283,10 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
             return tags;
         }
 
+        if ((tag.Tag == DT_SYMENT || tag.Tag == DT_OS_SYMENT) && tag.Value != 24) {
+            throw RelinkerException("Unsupported DT_SYMENT value: " + std::to_string(tag.Value) + "; expected 24 bytes", offset);
+        }
+
         tags.push_back(tag);
         offset += 16;
     }
