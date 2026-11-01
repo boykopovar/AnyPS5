@@ -669,11 +669,30 @@ std::uint32_t ExportRawComponent(SpirvValueEmitContext& ctx, std::uint32_t vecto
     return value;
 }
 
+std::uint32_t WidenedHalfWord(SpirvEmitterState& state, std::uint32_t half) {
+    const auto u32 = TypeU32(state);
+    const auto op = [&](spv::Op opcode, std::uint32_t lhs, std::uint32_t rhs) { return Binary(state, opcode, u32, lhs, rhs); };
+    const auto is = [&](std::uint32_t value, std::uint32_t constant) { return Binary(state, spv::OpIEqual, TypeBool(state), value, ConstantU32(state, constant)); };
+    const auto sign = op(spv::OpShiftLeftLogical, op(spv::OpBitwiseAnd, half, ConstantU32(state, 0x8000u)), ConstantU32(state, 16u));
+    const auto exponent = op(spv::OpBitwiseAnd, op(spv::OpShiftRightLogical, half, ConstantU32(state, 10u)), ConstantU32(state, 0x1fu));
+    const auto mantissa = op(spv::OpBitwiseAnd, half, ConstantU32(state, 0x3ffu));
+    const auto fraction = op(spv::OpShiftLeftLogical, mantissa, ConstantU32(state, 13u));
+    const auto normal = op(spv::OpBitwiseOr, op(spv::OpShiftLeftLogical, op(spv::OpIAdd, exponent, ConstantU32(state, 127u - 15u)), ConstantU32(state, 23u)), fraction);
+    const auto quiet = Select(state, u32, is(mantissa, 0u), ConstantU32(state, 0u), ConstantU32(state, 0x400000u));
+    const auto special = op(spv::OpBitwiseOr, op(spv::OpBitwiseOr, ConstantU32(state, 0x7f800000u), fraction), quiet);
+    const auto msb = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, u32, msb, GlslStd450(state), GLSLstd450FindUMsb, op(spv::OpBitwiseOr, mantissa, ConstantU32(state, 1u)));
+    const auto subnormal = op(spv::OpBitwiseOr, op(spv::OpShiftLeftLogical, op(spv::OpIAdd, msb, ConstantU32(state, 127u - 24u)), ConstantU32(state, 23u)), op(spv::OpBitwiseAnd, op(spv::OpShiftLeftLogical, mantissa, op(spv::OpISub, ConstantU32(state, 23u), msb)), ConstantU32(state, 0x7fffffu)));
+    const auto small = Select(state, u32, is(mantissa, 0u), ConstantU32(state, 0u), subnormal);
+    return op(spv::OpBitwiseOr, sign, Select(state, u32, is(exponent, 0u), small, Select(state, u32, is(exponent, 0x1fu), special, normal)));
+}
+
 std::uint32_t ExportVector(SpirvValueEmitContext& ctx, std::uint32_t data, const ExportInfo& exp, bool uintOutput) {
     auto& state = ctx.state;
     if (exp.compr && !uintOutput) {
         const auto mode = MrtOutputMode(state, exp);
         const auto unpack = mode == 5u ? GLSLstd450UnpackUnorm2x16 : mode == 6u ? GLSLstd450UnpackSnorm2x16 : GLSLstd450UnpackHalf2x16;
+        const auto words = mode == 4u ? EmitCompareU32Constant(state, spv::OpUGreaterThanEqual, state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ExportPackingBase + exp.index, static_cast<std::uint32_t>(ColorExportPacking::None)), static_cast<std::uint32_t>(ColorExportPacking::Uint)) : 0u;
         std::array<std::uint32_t, 4> f32 {ConstantF32(state, 0u), ConstantF32(state, 0u), ConstantF32(state, 0u), ConstantF32(state, 0x3f800000u)};
         for (std::uint32_t pair = 0; pair < 2u; pair++) {
             if ((exp.en & (3u << (pair * 2u))) == 0u) {
@@ -688,6 +707,11 @@ std::uint32_t ExportVector(SpirvValueEmitContext& ctx, std::uint32_t data, const
                 if (((exp.en >> component) & 1u) != 0u) {
                     f32.at(component) = state.module.AllocateId();
                     state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), f32.at(component), unpacked, lane);
+                    if (words != 0u) {
+                        const auto half = state.module.AllocateId();
+                        state.module.AddFunction(spv::OpBitFieldUExtract, TypeU32(state), half, packed, ConstantU32(state, lane * 16u), ConstantU32(state, 16u));
+                        f32.at(component) = Select(state, TypeF32(state), words, Unary(state, spv::OpBitcast, TypeF32(state), WidenedHalfWord(state, half)), f32.at(component));
+                    }
                 }
             }
         }

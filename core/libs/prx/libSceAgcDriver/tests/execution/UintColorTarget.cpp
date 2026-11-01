@@ -83,7 +83,7 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 256> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 128> Programs{};
 std::size_t programCount = 0;
 
 std::span<const std::uint32_t> Program(const std::array<std::uint32_t, 4>& vgprs, bool compressed) {
@@ -103,6 +103,10 @@ std::span<const std::uint32_t> Program(const std::array<std::uint32_t, 4>& vgprs
 std::span<const std::uint32_t> WordProgram(const std::array<std::uint32_t, 4>& words) {
     return Program(words, false);
 }
+
+alignas(256) constexpr std::array<std::uint32_t, 5> UserDataHalvesProgram{
+    0x7e080200u, 0x7e0a0201u, 0xf8001c0fu, 0x00000504u, 0xbf810000u,
+};
 
 struct Block {
     explicit Block(std::size_t bytes) : bytes(bytes), watched(AgcDriver::GuestMemory::WriteWatched()) {
@@ -177,7 +181,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::size_t by
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, const ExportCase& exported, std::span<const std::uint32_t> pixelCode) {
+std::uint64_t Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, const ExportCase& exported, std::span<const std::uint32_t> pixelCode, std::span<const std::uint32_t> pixelUserData = {}) {
     const auto exportFormat = exported.format;
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
@@ -219,7 +223,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{codeAddress, std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, codeAddress, pixelCode, 0, {}},
-        {waveSize, 0, {}, std::nullopt, AgcDriver::Graphics::DecodePixelStageInfo(context, {}), std::nullopt, pixelMemory},
+        {waveSize, 0, pixelUserData, std::nullopt, AgcDriver::Graphics::DecodePixelStageInfo(context, {}), std::nullopt, pixelMemory},
         target,
         PixelPushLayout(vertexPush, target)
     };
@@ -229,7 +233,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     fragment.shader.code = snapshot.code;
     fragment.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(context, AgcDriver::Graphics::ExportMappings(state));
     fragment.context.pixel->targetExportPacking = AgcDriver::Graphics::ExportPackings(state);
-    const ShaderRecompiler::SrtRuntime runtime{};
+    const ShaderRecompiler::SrtRuntime runtime{pixelUserData};
     const auto materialize = [&](const ShaderRecompiler::RecompileRequest& request) {
         const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request);
         return invocation.Materialize(*invocation.Capture(runtime));
@@ -251,6 +255,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     }};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
+    return pixelResult->PipelineVariantId();
 }
 
 std::vector<std::uint8_t> ReadBack(AgcDriver::VulkanDevice& device, const Block& block) {
@@ -301,7 +306,7 @@ std::uint32_t WidenedHalf(std::uint32_t half) {
     const auto sign = (half & 0x8000u) << 16u;
     const auto exponent = (half >> 10u) & 0x1fu;
     auto mantissa = half & 0x3ffu;
-    if (exponent == 0x1fu) return sign | 0x7f800000u | (mantissa << 13u);
+    if (exponent == 0x1fu) return sign | 0x7f800000u | (mantissa << 13u) | (mantissa != 0u ? 0x400000u : 0u);
     if (exponent != 0u) return sign | ((exponent + 112u) << 23u) | (mantissa << 13u);
     if (mantissa == 0u) return sign;
     std::uint32_t shift = 0;
@@ -312,8 +317,8 @@ std::uint32_t WidenedHalf(std::uint32_t half) {
     return sign | ((113u - shift) << 23u) | ((mantissa & 0x3ffu) << 13u);
 }
 
-std::array<std::uint32_t, 4> HalfExpected(const TargetFormat& target, const std::array<std::uint32_t, 4>& vgprs) {
-    const auto limit = target.channelBytes == 4u ? 0xffffffffu : (1u << (8u * target.channelBytes)) - 1u;
+std::array<std::uint32_t, 4> HalfExpected(ShaderRecompiler::ColorExportPacking packing, const std::array<std::uint32_t, 4>& vgprs) {
+    const auto limit = packing == ShaderRecompiler::ColorExportPacking::UintClamp8 ? 0xffu : packing == ShaderRecompiler::ColorExportPacking::UintClamp16 ? 0xffffu : 0xffffffffu;
     std::array<std::uint32_t, 4> expected{};
     for (std::uint32_t channel = 0; channel < expected.size(); ++channel) expected[channel] = std::min(WidenedHalf((vgprs[channel / 2u] >> (16u * (channel % 2u))) & 0xffffu), limit);
     return expected;
@@ -326,11 +331,15 @@ void TargetTests(AgcDriver::VulkanDevice& device, const TargetFormat& target, co
     const auto color = DecodeTarget(block, layout.Bytes(), target, mode == ColorTileMode::Linear ? LinearAttrib3 : TiledAttrib3, packing);
     const bool halves = exported.format == ExportFp16ABGR.format;
     auto before = Fill(block);
+    std::uint64_t variant = 0;
     for (const auto& vgprs : values) {
-        Draw(device, color, exported, Program(vgprs, halves));
-        char what[160];
-        std::snprintf(what, sizeof(what), "a %s export of 0x%08x 0x%08x 0x%08x 0x%08x into a %s %s target", exported.name, vgprs[0], vgprs[1], vgprs[2], vgprs[3], kind, target.name);
-        ExpectSurface(device, block, target, layout, before, exported, halves ? HalfExpected(target, vgprs) : Expected(exported, vgprs), what);
+        const std::array<std::uint32_t, 2> userData{vgprs[0], vgprs[1]};
+        const auto drawn = halves ? Draw(device, color, exported, UserDataHalvesProgram, userData) : Draw(device, color, exported, WordProgram(vgprs));
+        Require(!halves || variant == 0 || drawn == variant, "the exported halves were folded into the pixel shader instead of read at run time");
+        variant = drawn;
+        char what[192];
+        std::snprintf(what, sizeof(what), "a %s export of 0x%08x 0x%08x 0x%08x 0x%08x into a %s %s target with packing %u", exported.name, vgprs[0], vgprs[1], vgprs[2], vgprs[3], kind, target.name, static_cast<unsigned>(packing));
+        ExpectSurface(device, block, target, layout, before, exported, halves ? HalfExpected(packing, vgprs) : Expected(exported, vgprs), what);
         before = ReadBack(device, block);
     }
 }
@@ -357,7 +366,7 @@ int main() {
         FormatTests(*device, R32G32B32A32, Export32ABGR, wide);
         const std::vector<std::array<std::uint32_t, 4>> narrow{{0u, 0x11111111u, 0x22222222u, 0x33333333u}, {1u, 0u, 0u, 0u}, {0x7fu, 0u, 0u, 0u}, {0xa5u, 0u, 0u, 0u}, {0xffu, 0u, 0u, 0u}};
         FormatTests(*device, R8, Export32R, narrow);
-        constexpr std::array<std::uint32_t, 10> halves{{0x0000u, 0x8000u, 0x3c00u, 0xbc00u, 0x3800u, 0x0001u, 0x83ffu, 0x7bffu, 0x7c00u, 0xfc00u}};
+        constexpr std::array<std::uint32_t, 13> halves{{0x0000u, 0x8000u, 0x3c00u, 0xbc00u, 0x3800u, 0x0001u, 0x83ffu, 0x03ffu, 0x7bffu, 0x7c00u, 0xfc00u, 0x7c01u, 0xfe00u}};
         std::vector<std::array<std::uint32_t, 4>> packed;
         for (std::size_t index = 0; index < halves.size(); ++index) {
             const auto half = [&](std::size_t offset) { return halves[(index + offset) % halves.size()]; };
@@ -365,6 +374,8 @@ int main() {
         }
         using ShaderRecompiler::ColorExportPacking;
         FormatTests(*device, R32, ExportFp16ABGR, packed);
+        FormatTests(*device, R32, ExportFp16ABGR, packed, ColorExportPacking::UintClamp8);
+        FormatTests(*device, R32, ExportFp16ABGR, packed, ColorExportPacking::UintClamp16);
         FormatTests(*device, R32G32B32A32, ExportFp16ABGR, packed);
         FormatTests(*device, R16, ExportFp16ABGR, packed, ColorExportPacking::UintClamp16);
         FormatTests(*device, R16G16B16A16, ExportFp16ABGR, packed, ColorExportPacking::UintClamp16);
