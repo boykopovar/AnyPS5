@@ -462,13 +462,6 @@ static int AddBlocks(std::uintptr_t voice, const void* data, std::uint32_t flags
 }
 
 template <typename TError, typename TAction>
-static void RequireThrows(TAction action) {
-    bool thrown = false;
-    try { action(); } catch (const TError&) { thrown = true; }
-    Require(thrown);
-}
-
-template <typename TError, typename TAction>
 static void ExpectRejected(unsigned& accepted, const char* name, TAction action) {
     bool thrown = false;
     try { action(); } catch (const TError&) { thrown = true; }
@@ -492,7 +485,6 @@ static void TestCaptureValidation() {
     const auto configured = MonoSampler(setup.system);
     const auto stream = MonoSampler(setup.system);
     Require(AddBlocks(stream, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, {0, 64, 0, 0, 4096, 0, 0}) == SCE_NGS2_OK);
-    const auto f32 = MonoSampler(setup.system, SCE_NGS2_WAVEFORM_TYPE_PCM_F32L);
     const auto atrac9 = Sampler(setup.system, false);
     const auto fresh = Sampler(setup.system, false);
     unsigned checked = 0;
@@ -500,11 +492,9 @@ static void TestCaptureValidation() {
     peer.action = [&](unsigned tick) {
         if (tick != 0) return;
         ExpectRejected<std::invalid_argument>(accepted, "a block whose data does not fit", [&] { AddBlocks(configured, pcm.data(), 0, {0, 1, 0, 0, 2, 0, 0}); });
-        ExpectRejected<std::invalid_argument>(accepted, "an append with no waveform", [&] { AddBlocks(configured, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND, {0, 2, 0, 0, 0, 0, 0}); });
         ExpectRejected<std::runtime_error>(accepted, "a partial-frame append", [&] {
             AddBlocks(stream, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, {64, 3, 0, 0, 0, 0, 0});
         });
-        ExpectRejected<std::runtime_error>(accepted, "a dataless silence block on a float voice", [&] { AddBlocks(f32, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_SILENCE, {0, 0, 0, 0, 16, 0, 0}); });
         ExpectRejected<std::invalid_argument>(accepted, "an ATRAC9 setup with a mismatched config", [&] {
             Control(atrac9, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_ATRAC9, 1, 48000, 0, 0, 0}});
         });
@@ -512,6 +502,8 @@ static void TestCaptureValidation() {
         ExpectRejected<std::invalid_argument>(accepted, "a block that does not fit a buffered setup", [&] { AddBlocks(fresh, pcm.data(), 0, {0, 1, 0, 0, 2, 0, 0}); });
         Require(accepted == 0);
         Require(AddBlocks(fresh, pcm.data(), 0, {0, 4, 0, 0, 2, 0, 0}) == SCE_NGS2_OK);
+        Require(AddBlocks(configured, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND, {0, 2, 0, 0, 0, 0, 0}) == SCE_NGS2_OK);
+        Require(AddBlocks(configured, pcm.data(), 0, {0, 4, 0, 0, 2, 0, 0}) == static_cast<int>(0x804A8054u));
         Require(AddBlocks(stream, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, {64, 4, 0, 0, 0, 0, 0}) == SCE_NGS2_OK);
         ++checked;
     };
@@ -520,7 +512,57 @@ static void TestCaptureValidation() {
     ResetBuffers(firstBuffer);
 }
 
-static void TestApplyFailureRecovers() {
+static int AddNoBlocks(std::uintptr_t voice, std::uint32_t flags) {
+    const Ngs2WaveformBlock unused{};
+    Ngs2SamplerVoiceWaveformBlocksParam param{{sizeof(param), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS}, &unused, flags, 0, &unused};
+    return sceNgs2VoiceControl(voice, &param.header);
+}
+
+static void TestBufferedWaveformCodes() {
+    const auto firstBuffer = usedBuffers;
+    constexpr int full = static_cast<int>(0x804A8054u);
+    constexpr std::uint32_t playing = SCE_NGS2_VOICE_STATE_FLAG_INUSE | SCE_NGS2_VOICE_STATE_FLAG_PLAYING;
+    std::array<std::int16_t, 128> pcm{};
+    pcm.fill(1000);
+    PeerAction peer;
+    const auto setup = CreatePeerSystem(peer);
+    const auto never = Sampler(setup.system, false);
+    const auto ignored = MonoSampler(setup.system);
+    const auto leading = MonoSampler(setup.system);
+    const auto reopened = MonoSampler(setup.system);
+    for (const auto voice : {ignored, leading, reopened}) Patch(voice, setup.master);
+    unsigned checked = 0;
+    peer.action = [&](unsigned tick) {
+        if (tick != 0) return;
+        Require(AddNoBlocks(never, 0) == SCE_NGS2_OK);
+        Require(AddNoBlocks(never, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) == full);
+        Require(AddBlocks(never, pcm.data(), 0, {0, 128, 0, 0, 64, 0, 0}) == full);
+        Require(AddBlocks(ignored, pcm.data(), 0x9, {0, 128, 0, 0, 64, 0, 0}) == SCE_NGS2_OK);
+        Require(AddNoBlocks(ignored, 0x20) == SCE_NGS2_OK);
+        Require(AddBlocks(ignored, pcm.data(), 1, {0, 128, 0, 0, 64, 0, 0}) == full);
+        Require(AddBlocks(leading, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, {0, 128, 0, 0, 64, 0, 0}) == SCE_NGS2_OK);
+        Require(AddBlocks(leading, pcm.data(), 1, {0, 128, 0, 0, 64, 0, 0}) == SCE_NGS2_OK);
+        Require(AddBlocks(reopened, pcm.data(), 1, {0, 128, 0, 0, 64, 0, 0}) == SCE_NGS2_OK);
+        Require(AddNoBlocks(reopened, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) == SCE_NGS2_OK);
+        Require(AddBlocks(reopened, pcm.data(), SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, {0, 128, 0, 0, 64, 0, 0}) == SCE_NGS2_OK);
+        ++checked;
+    };
+    RenderGrain(setup.system);
+    Require(checked == 1 && Flags(ignored) == 0 && Flags(leading) == 0 && Flags(reopened) == 0);
+    Event(ignored, SCE_NGS2_VOICE_EVENT_PLAY);
+    Event(leading, SCE_NGS2_VOICE_EVENT_PLAY);
+    Event(reopened, SCE_NGS2_VOICE_EVENT_PLAY);
+    RenderGrain(setup.system);
+    Require(Flags(ignored) == playing);
+    RenderGrain(setup.system);
+    Require(Flags(ignored) == 0);
+    for (unsigned grain = 0; grain < 3; ++grain) RenderGrain(setup.system);
+    Require(Flags(leading) == (playing | SCE_NGS2_VOICE_STATE_FLAG_EMPTY) && Flags(reopened) == (playing | SCE_NGS2_VOICE_STATE_FLAG_EMPTY) && Flags(never) == 0);
+    Require(sceNgs2SystemDestroy(setup.system, nullptr) == SCE_NGS2_OK);
+    ResetBuffers(firstBuffer);
+}
+
+static void TestBufferedAppendAfterDrain() {
     const auto firstBuffer = usedBuffers;
     std::array<std::int16_t, 64> pcm{};
     pcm.fill(1000);
@@ -537,10 +579,11 @@ static void TestApplyFailureRecovers() {
         Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
     };
     RenderGrain(setup.system);
-    RequireThrows<std::invalid_argument>([&] { RenderGrain(setup.system); });
-    Require(Flags(voice) == SCE_NGS2_VOICE_STATE_FLAG_INUSE);
     RenderGrain(setup.system);
+    constexpr std::uint32_t waiting = SCE_NGS2_VOICE_STATE_FLAG_INUSE | SCE_NGS2_VOICE_STATE_FLAG_PLAYING | SCE_NGS2_VOICE_STATE_FLAG_EMPTY;
+    Require(Flags(voice) == waiting);
     RenderGrain(setup.system);
+    Require(Flags(voice) == waiting);
     Ngs2VoicePortInfo info{};
     Require(sceNgs2VoiceGetPortInfo(voice, 0, &info, sizeof(info)) == SCE_NGS2_OK && info.volume == 0.5f && info.dest_handle == setup.master);
     Require(sceNgs2SystemDestroy(setup.system, nullptr) == SCE_NGS2_OK);
@@ -691,7 +734,7 @@ static void TestBlockQueueRace() {
 
 int main(int argc, char** argv) {
     if (argc > 1) {
-        const std::pair<const char*, void (*)()> scenarios[] = {{"validation", TestCaptureValidation}, {"recover", TestApplyFailureRecovers},
+        const std::pair<const char*, void (*)()> scenarios[] = {{"validation", TestCaptureValidation}, {"drained", TestBufferedAppendAfterDrain},
             {"emptysetup", TestEmptySetupPort}, {"destroyed", TestPendingPatchDestroyedDest}, {"race", TestBlockQueueRace}};
         for (const auto& [name, run] : scenarios) {
             if (std::strcmp(argv[1], name) != 0) continue;
@@ -741,11 +784,12 @@ int main(int argc, char** argv) {
     TestBufferedSamplerSetup();
     ++cases;
     TestCaptureValidation();
-    TestApplyFailureRecovers();
+    TestBufferedWaveformCodes();
+    TestBufferedAppendAfterDrain();
     TestEmptySetupPort();
     TestPendingPatchDestroyedDest();
     TestBlockQueueRace();
-    cases += 5;
+    cases += 6;
     std::printf("NGS2 worker buffering: %u scenarios passed\n", cases + 1);
     return 0;
 }

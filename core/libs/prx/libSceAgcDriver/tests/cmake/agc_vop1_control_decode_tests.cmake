@@ -1,0 +1,8 @@
+add_test_executable(agc_vop1_control_decode_tests EXCLUDE_FROM_ALL tests/Vop1ControlDecode.cpp)
+target_link_libraries(agc_vop1_control_decode_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_vop1_control_decode_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_vop1_control_decode_tests)
+
+if(BUILD_TESTING)
+    agc_add_default_test(agc_vop1_control_decode_tests)
+endif()
