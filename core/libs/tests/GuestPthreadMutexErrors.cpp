@@ -105,6 +105,9 @@ static void CheckLoops(PthreadMutexattr* attr) {
     Require(pthread_mutex_setyieldloops_np_nid_postfix(&mutex, 1) == POSIX_EINVAL);
     Require(mutex == DestroyedMutex);
 
+    for (const int type : {-1, 0, 4, 5}) {
+        Require(scePthreadMutexattrSettype(attr, type) == SCE_KERNEL_ERROR_EINVAL);
+    }
     for (const int type : {1, 2, 3}) {
         Require(scePthreadMutexattrSettype(attr, type) == SCE_OK);
         Require(scePthreadMutexInit(&mutex, attr, nullptr) == SCE_OK);
