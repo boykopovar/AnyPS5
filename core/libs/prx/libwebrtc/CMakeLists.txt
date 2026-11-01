@@ -2,12 +2,23 @@ add_library(libwebrtc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export
 target_include_directories(libwebrtc PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libwebrtc)
 
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioCodecInfo.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ExpFilter.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtcpCommonHeader.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Opus.cpp)
 target_link_libraries(libwebrtc PRIVATE opus)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_audio_codec_info_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/AudioCodecInfo.cpp)
+    target_include_directories(guest_webrtc_audio_codec_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_webrtc_audio_codec_info_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_audio_codec_info_tests)
+    add_test(NAME guest_webrtc_audio_codec_info COMMAND guest_webrtc_audio_codec_info_tests)
+    set_tests_properties(guest_webrtc_audio_codec_info PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_audio_codec_info PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
     add_test_executable(guest_webrtc_fast_int_to_buffer_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/FastIntToBuffer.cpp)
     target_include_directories(guest_webrtc_fast_int_to_buffer_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_webrtc_fast_int_to_buffer_tests PRIVATE libwebrtc libc)
