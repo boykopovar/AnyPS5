@@ -56,7 +56,6 @@ namespace AgcDriver::Graphics {
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
         std::uint32_t CmaskErrors();
         void DispatchMultisampleReadback(VkCommandBuffer commands, VkFormat format, VkBuffer destination, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
-        void DispatchDepthSample(VkCommandBuffer commands, VkImageView depth, bool multisampled, VkImageView target, std::uint32_t width, std::uint32_t height, std::uint32_t sample);
         void DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
 
     private:
@@ -80,16 +79,13 @@ namespace AgcDriver::Graphics {
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkShaderModule module = VK_NULL_HANDLE;
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
+        std::vector<std::pair<std::uint32_t, GcnTileGeometry>> gcnGeometries;
+        std::uint32_t layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer);
         DescriptorRing descriptorSets;
         VkDescriptorSetLayout cmaskDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout cmaskPipelineLayout = VK_NULL_HANDLE;
         VkPipeline cmaskPipeline = VK_NULL_HANDLE;
         DescriptorRing cmaskDescriptorSets;
-        VkDescriptorSetLayout depthSampleLayout = VK_NULL_HANDLE;
-        VkPipelineLayout depthSamplePipelineLayout = VK_NULL_HANDLE;
-        std::array<VkPipeline, 2> depthSamplePipelines{};
-        VkSampler depthSampler = VK_NULL_HANDLE;
-        DescriptorRing depthSampleSets;
         std::unique_ptr<Buffer> cmaskErrors;
         VkDescriptorSetLayout imageDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout imagePipelineLayout = VK_NULL_HANDLE;

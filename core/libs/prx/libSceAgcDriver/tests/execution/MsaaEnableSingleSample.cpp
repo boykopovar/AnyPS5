@@ -52,7 +52,7 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-std::vector<std::uint32_t> DrawBoth() {
+std::vector<std::uint32_t> DrawBoth(std::uint32_t primitive) {
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
     const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
@@ -81,7 +81,7 @@ std::vector<std::uint32_t> DrawBoth() {
         {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 1u << 1u}, {0x00c, std::bit_cast<std::uint32_t>(1.0f)},
     };
     std::vector<std::uint32_t> commands;
-    Append(commands, 0x79, {0x242, 4});
+    Append(commands, 0x79, {0x242, primitive});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
     for (const auto& [offset, value] : shader) Append(commands, 0x76, {offset, value});
     const auto draw = [&](std::array<std::byte, 1024>& memory, std::uint32_t scanMode) {
@@ -96,20 +96,26 @@ std::vector<std::uint32_t> DrawBoth() {
     return commands;
 }
 
-void MsaaEnableDrawsLikeDisabled() {
+void DrawsLikeDisabled(std::uint32_t primitive, const char* name) {
     ClearMemory.fill(Kept);
     EnabledMemory.fill(Kept);
-    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
-    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
-    auto commands = DrawBoth();
+    auto commands = DrawBoth(primitive);
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
     AgcDriverWaitIdle_nid_postfix();
     const auto kept = static_cast<std::size_t>(std::count(ClearMemory.begin(), ClearMemory.end(), Kept));
-    Require(kept != 0 && kept != ClearMemory.size(), "the triangle without MSAA_ENABLE covered " + std::to_string(ClearMemory.size() - kept) + " of " + std::to_string(ClearMemory.size()) + " bytes, expected an edge through the target");
+    Require(kept != 0 && kept != ClearMemory.size(), std::string("the ") + name + " without MSAA_ENABLE covered " + std::to_string(ClearMemory.size() - kept) + " of " + std::to_string(ClearMemory.size()) + " bytes, expected an edge through the target");
     for (std::size_t index = 0; index < ClearMemory.size(); ++index) {
-        Require(EnabledMemory[index] == ClearMemory[index], "byte " + std::to_string(index) + " is " + std::to_string(static_cast<unsigned>(EnabledMemory[index])) + " with MSAA_ENABLE on a single-sample target and " + std::to_string(static_cast<unsigned>(ClearMemory[index])) + " without it");
+        Require(EnabledMemory[index] == ClearMemory[index], std::string("the ") + name + ": byte " + std::to_string(index) + " is " + std::to_string(static_cast<unsigned>(EnabledMemory[index])) + " with MSAA_ENABLE on a single-sample target and " + std::to_string(static_cast<unsigned>(ClearMemory[index])) + " without it");
     }
+}
+
+void MsaaEnableDrawsLikeDisabled() {
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    DrawsLikeDisabled(4, "triangle");
+    DrawsLikeDisabled(2, "line list");
+    DrawsLikeDisabled(3, "line strip");
 }
 
 }
@@ -122,7 +128,7 @@ int main() {
         }
         MsaaEnableDrawsLikeDisabled();
         AgcDriverShutdown_nid_postfix();
-        std::puts("MSAA_ENABLE on a single-sample target drew the same pixels as the state without it");
+        std::puts("MSAA_ENABLE on a single-sample target drew the same triangle, line list and line strip pixels as the state without it");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

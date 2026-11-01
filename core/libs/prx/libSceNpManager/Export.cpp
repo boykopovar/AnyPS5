@@ -1,24 +1,38 @@
+#include "prx/libSceNpManager/include/LegacyExports.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpManager/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
+#include <cstring>
 #include <atomic>
 #include <mutex>
 #include <unordered_set>
 
 // PSN is not emulated: the user is reported as signed out and online queries fail.
 static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
+static constexpr int SCE_NP_ERROR_INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
+static constexpr int SCE_NP_ERROR_OUT_OF_MEMORY = static_cast<int>(0x80550005);
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
 static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>(0x80550008);
 static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
+static constexpr int SCE_NP_ERROR_INVALID_SIZE = static_cast<int>(0x80550011);
 static constexpr int SCE_NP_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80550014);
+static constexpr int SCE_NP_ERROR_INVALID_ID = static_cast<int>(0x80550015);
 static constexpr int SCE_NP_ERROR_CALLBACK_MAX = static_cast<int>(0x8055001D);
+static constexpr int NP_ID_MAPPER_REFUSED_ARGUMENT = static_cast<int>(0x80553083);
+static constexpr int NP_ID_MAPPER_REFUSED_REQUEST_ID = static_cast<int>(0x80553085);
+static constexpr int NP_MANAGER_INT_REQUEST_DUPLICATE = static_cast<int>(0x80559D03);
+static constexpr int NP_MANAGER_INT_REQUEST_TABLE_FULL = static_cast<int>(0x80559D05);
+static constexpr int NP_MANAGER_INT_REQUEST_NOT_IN_TABLE = static_cast<int>(0x80559D0A);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
+static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
 static std::atomic<int> g_nextRequest{1};
 
@@ -36,8 +50,19 @@ int AddRequest() {
     return reqId;
 }
 
-using NpStateCallbackA = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
-using NpStateCallback = void (APS5_VABI *)(int userId, uint32_t state, NpId* npId, void* userdata);
+std::mutex idMapperMutex;
+std::uint32_t nextIdMapperRequest = 1;
+std::unordered_set<int> idMapperRequests;
+constexpr std::size_t NP_MANAGER_INT_REQUEST_SLOTS = 64;
+std::mutex managerIntMutex;
+std::uint32_t nextManagerIntRequest = 1;
+std::unordered_set<int> managerIntRequests;
+
+int SignedOutRequest(int reqId) {
+    if (reqId == 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(requestMutex);
+    return liveRequests.count(reqId) ? SCE_NP_ERROR_SIGNED_OUT : SCE_NP_ERROR_REQUEST_NOT_FOUND;
+}
 
 constexpr int NP_STATE_CALLBACK_MAX = 8;
 
@@ -252,33 +277,36 @@ int APS5_VABI sceNpAsmTerminate(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpCheckNpAvailabilityA(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpCheckNpAvailabilityA(int reqId, int userId) {
+    if (userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SignedOutRequest(reqId);
+}
+int APS5_VABI sceNpGetAccountDateOfBirthA(int userId, void* dateOfBirth) {
+    if (!dateOfBirth || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+int APS5_VABI sceNpGetAccountLanguageA(int reqId, int userId, void* language) {
+    if (!language || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SignedOutRequest(reqId);
+}
+int APS5_VABI sceNpGetGamePresenceStatus(const NpOnlineId* onlineId, uint32_t* status) {
+    if (!onlineId || !status) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    *status = NP_GAME_PRESENCE_STATUS_OFFLINE;
     return 0;
 }
-int APS5_VABI sceNpGetAccountDateOfBirthA(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpGetGamePresenceStatusA(int userId, uint32_t* status) {
+    if (!status || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    *status = NP_GAME_PRESENCE_STATUS_OFFLINE;
     return 0;
 }
-int APS5_VABI sceNpGetAccountLanguageA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpGetParentalControlInfoA(int reqId, int userId, int8_t* age, void* info) {
+    if (!age || !info || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SignedOutRequest(reqId);
 }
-int APS5_VABI sceNpGetGamePresenceStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpGetGamePresenceStatusA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpGetParentalControlInfoA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpIdMapperAbortRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperAbortRequest(int reqId) {
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    std::lock_guard lock(idMapperMutex);
+    return idMapperRequests.count(reqId) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
 int APS5_VABI sceNpIdMapperAccountIdToNpId(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -289,20 +317,29 @@ int APS5_VABI sceNpIdMapperAccountIdToOnlineId(void) {
     return 0;
 }
 int APS5_VABI sceNpIdMapperCreateRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::lock_guard lock(idMapperMutex);
+    const int reqId = static_cast<int>(nextIdMapperRequest++);
+    idMapperRequests.insert(reqId);
+    return reqId;
 }
-int APS5_VABI sceNpIdMapperDeleteRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperDeleteRequest(int reqId) {
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    std::lock_guard lock(idMapperMutex);
+    return idMapperRequests.erase(reqId) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
-int APS5_VABI sceNpIdMapperNpIdToAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperNpIdToAccountId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra) {
+    (void)flag;
+    (void)extra;
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpIdMapperOnlineIdToAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperOnlineIdToAccountId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra) {
+    (void)flag;
+    (void)extra;
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpInGameMessageAbortHandle(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -348,13 +385,14 @@ int APS5_VABI sceNpIntRegisterGamePresenceCallback(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpIsPlusMember(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpIsPlusMember(int, bool* isMember) {
+    if (!isMember) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    *isMember = false;
     return 0;
 }
-int APS5_VABI sceNpManagerIntAbortRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntAbortRequest(int reqId) {
+    std::lock_guard lock(managerIntMutex);
+    return managerIntRequests.count(reqId) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
 int APS5_VABI sceNpManagerIntAddActiveSigninStateCallback(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -372,13 +410,18 @@ int APS5_VABI sceNpManagerIntAddSigninStateCallback(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntAuthGetAuthorizationCode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntAuthGetAuthorizationCode(int reqId, int userId, const void* parameter, const void* optionalParameter, std::uint32_t firstValue, std::uint32_t secondValue, std::uint8_t flag, void* output) {
+    (void)reqId;
+    (void)optionalParameter;
+    (void)flag;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !parameter || !output || firstValue > 3 || secondValue < 1 || secondValue > 3) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntAuthGetIdToken(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntAuthGetIdToken(int reqId, int userId, const void* firstParameter, const void* secondParameter, const void* thirdParameter, std::uint64_t value, void* output) {
+    (void)reqId;
+    (void)value;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !firstParameter || !secondParameter || !thirdParameter || !output) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntCheckNpAvailability(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -429,32 +472,37 @@ int APS5_VABI sceNpManagerIntCreateLoginRequest(void) {
     return 0;
 }
 int APS5_VABI sceNpManagerIntCreateRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::lock_guard lock(managerIntMutex);
+    if (managerIntRequests.size() >= NP_MANAGER_INT_REQUEST_SLOTS) return NP_MANAGER_INT_REQUEST_TABLE_FULL;
+    const int reqId = static_cast<int>(nextManagerIntRequest++);
+    if (reqId <= 0) return reqId;
+    if (!managerIntRequests.insert(reqId).second) return NP_MANAGER_INT_REQUEST_DUPLICATE;
+    return reqId;
 }
 int APS5_VABI sceNpManagerIntDeleteLoginContext(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntDeleteRequest(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntDeleteRequest(int reqId) {
+    std::lock_guard lock(managerIntMutex);
+    return managerIntRequests.erase(reqId) ? 0 : NP_MANAGER_INT_REQUEST_NOT_IN_TABLE;
 }
 int APS5_VABI sceNpManagerIntGetAccessTokenViaImplicitFlow(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetAccountAge(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountAge(int reqId, int userId, std::uint8_t* age) {
+    (void)reqId;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !age) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetAccountCountry(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetAccountCountryA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountCountryA(int userId, void* countryCode) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !countryCode) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetAccountCountrySdk(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -476,9 +524,10 @@ int APS5_VABI sceNpManagerIntGetAccountLanguage(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetAccountLanguageA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAccountLanguageA(int reqId, int userId, void* language) {
+    (void)reqId;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !language) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetAccountNpEnv(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -496,13 +545,22 @@ int APS5_VABI sceNpManagerIntGetAuthServerErrorFlag(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetAuthorizationCode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAuthorizationCode(int reqId, int userId, const void* firstParameter, const void* secondParameter, const void* optionalParameter, std::uint32_t mode, std::uint8_t flag, void* optionalOutput, void* output) {
+    (void)reqId;
+    (void)optionalParameter;
+    (void)flag;
+    (void)optionalOutput;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !firstParameter || !secondParameter || !output) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (mode != 0 && mode != 3 && mode != 5) return SCE_NP_ERROR_INVALID_PLATFORM_TYPE;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetAuthorizationCodeWithPsnoUri(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetAuthorizationCodeWithPsnoUri(int reqId, int userId, const char* uri, std::uint32_t mode, void* output, std::size_t size) {
+    (void)reqId;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !uri || !output) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (size < 1 || size > 0x801) return SCE_NP_ERROR_INVALID_SIZE;
+    if (mode != 0 && mode != 3 && mode != 5) return SCE_NP_ERROR_INVALID_PLATFORM_TYPE;
+    if (!std::memchr(uri, 0, 0x2000)) return SCE_NP_ERROR_OUT_OF_MEMORY;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetClientCredentialAccessToken(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -524,9 +582,9 @@ int APS5_VABI sceNpManagerIntGetNpEnv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetNpId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetNpId(int userId, NpId* npId) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !npId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetNpIdByOnlineId(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -540,9 +598,9 @@ int APS5_VABI sceNpManagerIntGetOfflineAccountId(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetOnlineId(int userId, NpOnlineId* onlineId) {
+    if (userId == USER_SERVICE_USER_ID_INVALID || !onlineId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetOnlineIdChangeFlag(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -600,13 +658,13 @@ int APS5_VABI sceNpManagerIntGetUserIdByAccountId(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetUserIdByNpId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetUserIdByNpId(const NpId* npId, int* userId) {
+    if (!npId || !userId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpManagerIntGetUserIdByOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpManagerIntGetUserIdByOnlineId(const NpOnlineId* onlineId, int* userId) {
+    if (!onlineId || !userId) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpManagerIntGetUserIdByOnlineIdSdk(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -640,9 +698,8 @@ int APS5_VABI sceNpManagerIntIsTemporarySignout(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntIsUnregisteredClientError(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceNpManagerIntIsUnregisteredClientError(int error) {
+    return static_cast<std::uint32_t>(error) == 0x82e0104d;
 }
 int APS5_VABI sceNpManagerIntLoginAuthenticate(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -662,8 +719,8 @@ int APS5_VABI sceNpManagerIntLoginGetAccessToken(void) {
 }
 
 int APS5_VABI sceNpAbortRequest(int req_id) {
-    (void)req_id;
-    return 0;
+    std::lock_guard lock(requestMutex);
+    return liveRequests.count(req_id) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
 
 int APS5_VABI sceNpCheckCallback(void) {
@@ -683,9 +740,9 @@ int APS5_VABI sceNpCheckCallback(void) {
     return 0;
 }
 
-int APS5_VABI sceNpCheckNpAvailability(int req_id, const NpOnlineId* online_id) {
- (void)req_id;
- if (!online_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+int APS5_VABI sceNpCheckNpAvailability(std::int32_t requestId, const NpOnlineId* onlineId, std::uint8_t* available) {
+ if (requestId == 0 || onlineId == nullptr) return SCE_NP_ERROR_INVALID_ARGUMENT;
+ if (available != nullptr) *available = 0;
  return SCE_NP_ERROR_USER_NOT_FOUND;
 }
 
@@ -713,6 +770,7 @@ int APS5_VABI sceNpCreateRequest(void) {
 
 int APS5_VABI sceNpDeleteRequest(int req_id) {
     std::lock_guard lock(requestMutex);
+    if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     liveRequests.erase(req_id);
     return 0;
 }
@@ -823,9 +881,19 @@ int APS5_VABI sceNpHasSignedUp(int user_id, bool* has_signed_up) {
 }
 
 int APS5_VABI sceNpPollAsync(int req_id, int* result) {
-    (void)req_id;
-    if (result) *result = SCE_NP_ERROR_SIGNED_OUT;
+    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(requestMutex);
+    if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
+    *result = SCE_NP_ERROR_SIGNED_OUT;
     return NP_POLL_ASYNC_FINISHED;
+}
+
+int APS5_VABI sceNpWaitAsync(int req_id, int* result) {
+    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(requestMutex);
+    if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
+    *result = SCE_NP_ERROR_SIGNED_OUT;
+    return 0;
 }
 
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
@@ -871,9 +939,19 @@ int APS5_VABI sceNpRegisterStateCallback(NpStateCallback callback, void* userdat
 }
 
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction) {
- (void)restriction;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    struct Fields {
+        std::uint64_t size;
+        std::int8_t defaultAgeRestriction;
+        std::uint8_t padding[3];
+        std::int32_t ageRestrictionCount;
+        const void* ageRestrictions;
+    };
+    if (!restriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    const auto* fields = reinterpret_cast<const Fields*>(restriction);
+    if (fields->size != sizeof(Fields)) return SCE_NP_ERROR_INVALID_SIZE;
+    if (fields->defaultAgeRestriction < 0 || fields->ageRestrictionCount > 0x100) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (fields->ageRestrictionCount > 0 && !fields->ageRestrictions) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 int APS5_VABI sceNpSetNpTitleId(const NpTitleId* title_id, const NpTitleSecret* title_secret) {
@@ -933,7 +1011,7 @@ int APS5_VABI sceNpRegisterStateCallbackA(NpStateCallbackA callback, void* userd
 }
 
 int APS5_VABI sceNpUnregisterStateCallbackA(int callbackId) {
-    if (callbackId < 1 || callbackId > NP_STATE_CALLBACK_MAX) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (static_cast<uint32_t>(callbackId) - 1u >= static_cast<uint32_t>(NP_STATE_CALLBACK_MAX)) return SCE_NP_ERROR_INVALID_ID;
     std::lock_guard lock(stateMutex);
     auto& entry = stateCallbacksA[callbackId - 1];
     if (!entry.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
@@ -961,7 +1039,7 @@ int APS5_VABI sceNpGetSandboxInfo(void* sandbox_info) {
 }
 
 APS5_EXPORT("8weiQyIdI3A", sceNpUnknown_8weiQyIdI3A);
-int APS5_VABI sceNpUnknown_8weiQyIdI3A(int userId, void* buffer) {
+int APS5_VABI sceNpUnknown_8weiQyIdI3A(int userId, const NpOnlineId* buffer) {
     (void)userId;
     (void)buffer;
     NotImplemented_nid_no_patch(__func__);
@@ -974,10 +1052,96 @@ int APS5_VABI sceNpUnknown_WxLcN76q19o(void) {
     return 0;
 }
 
-
 int APS5_VABI sceNpCheckCallbackForLib() {
+    return sceNpCheckCallback();
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceNpInGameMessageCreateHandle() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI sceNpInGameMessageDeleteHandle() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessageInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessagePrepare() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessageSendData() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessageTerminate() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSnsFacebookCreateRequest() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSnsFacebookDeleteRequest() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSnsFacebookGetAccessToken() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI npManagerLegacyUnknown_70N4VzVCpQg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("70N4VzVCpQg", npManagerLegacyUnknown_70N4VzVCpQg_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_SSuF3qPYjgA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SSuF3qPYjgA", npManagerLegacyUnknown_SSuF3qPYjgA_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_ZKqJVpTOtW0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZKqJVpTOtW0", npManagerLegacyUnknown_ZKqJVpTOtW0_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_jBLJpaqaV1A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jBLJpaqaV1A", npManagerLegacyUnknown_jBLJpaqaV1A_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_mtowPSR0JN8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mtowPSR0JN8", npManagerLegacyUnknown_mtowPSR0JN8_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_qp_minus_DvqvPOYM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qp-DvqvPOYM", npManagerLegacyUnknown_qp_minus_DvqvPOYM_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_tmnDjDmI3AI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tmnDjDmI3AI", npManagerLegacyUnknown_tmnDjDmI3AI_nid_no_patch);
 
 }
