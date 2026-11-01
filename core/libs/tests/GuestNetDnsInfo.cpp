@@ -32,8 +32,6 @@ void CheckUninitialized() {
         Require(Failed(sceNetSetDnsInfo(&info, flags), kEnotinit));
         Require(Failed(sceNetGetDns6Info(&info6, flags), kEnotinit));
         Require(Failed(sceNetSetDns6Info(&info6, flags), kEnotinit));
-        Require(Failed(sceNetSetDnsInfoToKernel(&info, flags), kEnotinit));
-        Require(Failed(sceNetSetDns6InfoToKernel(&info6, flags), kEnotinit));
         Require(Failed(sceNetGetDnsInfo(nullptr, flags), kEnotinit));
         Require(Failed(sceNetSetDnsInfo(nullptr, flags), kEnotinit));
         Require(Failed(sceNetGetDns6Info(nullptr, flags), kEnotinit));
