@@ -26,6 +26,9 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <span>
+#include <string>
+#include <vector>
 #include <utility>
 
 namespace AgcDriver {
@@ -61,6 +64,7 @@ public:
     GuestBlock& operator=(const GuestBlock&) = delete;
 
     std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
+    std::span<std::byte> Bytes() const { return {block, BlockBytes}; }
 
 private:
     std::byte* block = nullptr;
@@ -219,9 +223,53 @@ bool TwinFormatsShareTheirSamples(AgcDriver::VulkanDevice& device) {
         FillTakenThroughTwin(device, context, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM, 0xff0000ffu);
     }
     auto& other = NewBlock();
-    const auto unorm = Acquire(device, context, MultisampledTarget(other, VK_FORMAT_R8G8B8A8_UNORM));
-    const auto floating = Acquire(device, context, MultisampledTarget(other, VK_FORMAT_R16G16_SFLOAT));
-    Require(floating.image != unorm.image, "a multisampled surface used in an unrelated format of the same size shares the other format's samples");
+    constexpr std::uint32_t guestPattern = 0x3c003800u;
+    constexpr std::uint32_t hostPattern = 0xff0000ffu;
+    for (std::size_t offset = 0; offset < other.Bytes().size(); offset += sizeof(guestPattern)) std::memcpy(other.Bytes().data() + offset, &guestPattern, sizeof(guestPattern));
+    const std::vector<std::byte> before(other.Bytes().begin(), other.Bytes().end());
+    const auto unormTarget = MultisampledTarget(other, VK_FORMAT_R8G8B8A8_UNORM);
+    const auto floatTarget = MultisampledTarget(other, VK_FORMAT_R16G16_SFLOAT);
+    const auto unorm = Acquire(device, context, unormTarget);
+    const auto colorBytes = static_cast<std::size_t>(AgcDriver::Graphics::MultisampledColorBytes(unormTarget));
+    Require(AgcDriver::Graphics::MultisampledColorFillAbsorbs(other.Address(), colorBytes, hostPattern), "the unrelated-format reuse control did not retain its fill on the host");
+    AgcDriver::Graphics::NoteColorMetadataFill(other.Address(), colorBytes, hostPattern);
+    const auto filled = Acquire(device, context, unormTarget);
+    Require(filled.image == unorm.image && filled.owner == unorm.owner, "the host fill replaced its resident owner");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Require(UniformTexel(context, filled.image, unormTarget.format) == Bytes(hostPattern), "the old owner did not retain its distinct host samples");
+    }
+    const auto floating = Acquire(device, context, floatTarget);
+    Require(floating.image != unorm.image && floating.owner != unorm.owner, "an unrelated-format bind reused the previous owner's samples");
+    const auto floatAgain = Acquire(device, context, floatTarget);
+    Require(floatAgain.image == floating.image && floatAgain.view == floating.view && floatAgain.owner == floating.owner, "the current floating-point owner was not retained");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Require(UniformTexel(context, floating.image, floatTarget.format) == Bytes(guestPattern), "the replacement did not initialize its samples from the original guest bytes");
+        Require(UniformTexel(context, unorm.image, unormTarget.format) == Bytes(hostPattern), "the retained old allocation's samples changed during replacement");
+    }
+    const auto replacedUnorm = Acquire(device, context, unormTarget);
+    Require(replacedUnorm.image != unorm.image && replacedUnorm.owner != unorm.owner, "an unrelated-format bind left its previous owner resident");
+    Require(replacedUnorm.image != floating.image && replacedUnorm.owner != floating.owner, "returning to UNORM reused the floating-point owner's samples");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Require(UniformTexel(context, replacedUnorm.image, unormTarget.format) == Bytes(guestPattern), "returning to UNORM did not initialize from the original guest bytes");
+    }
+    const auto replacedFloat = Acquire(device, context, floatTarget);
+    Require(replacedFloat.image != floating.image && replacedFloat.owner != floating.owner, "returning to floating point found its retired owner");
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Require(UniformTexel(context, replacedFloat.image, floatTarget.format) == Bytes(guestPattern), "the second floating-point owner lost the initial guest samples");
+    }
+    Require(std::equal(before.begin(), before.end(), other.Bytes().begin()), "unrelated-format replacement changed guest bytes or padding");
+    std::string refusal;
+    try {
+        AgcDriver::Graphics::RequireNoMultisampleTarget(other.Address(), colorBytes, "a read after unrelated-format replacement");
+    } catch (const std::runtime_error& error) {
+        refusal = error.what();
+    }
+    Require(refusal.find("overlaps multisampled color target") != std::string::npos, "the replacement's host-only samples are not guarded");
+    std::cout << "unrelated-format binding retires old owners, preserves guest bytes and initializes distinct guarded samples\n";
     return true;
 }
 

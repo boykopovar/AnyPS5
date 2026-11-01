@@ -493,9 +493,10 @@ public:
             Require(promoted.generation != old.generation && Alive(oldImage, old), "MSAA storage promotion did not retain its source image");
             Require(ImageFor(sampledView).generation == old.generation, "MSAA storage promotion destroyed a held sampled view");
             Require(held->View() == sampledView, "MSAA storage promotion changed a held sampled alias");
-            totalBytes = AllocationBytesOf(old) + AllocationBytesOf(promoted);
+            totalBytes = AllocationBytesOf(old) + AllocationBytesOf(promoted) + MultisampledColorBytes(target);
             const auto kept = context.recorder->OpenKeptBytes();
-            Require(kept == keptBefore + totalBytes, "MSAA storage promotion did not account for exactly both allocations");
+            std::printf("MSAA storage promotion budget: retained=%llu expected=%llu initial=%llu\n", static_cast<unsigned long long>(kept - keptBefore), static_cast<unsigned long long>(totalBytes), static_cast<unsigned long long>(MultisampledColorBytes(target)));
+            Require(kept == keptBefore + totalBytes, "MSAA storage promotion did not account for both allocations and initial color bytes");
             Require(MultisampleTargetStorageView(context, resource) == storageView, "a repeated MSAA storage lookup changed its view");
             Require(context.recorder->OpenKeptBytes() == kept, "a repeated MSAA storage lookup double-counts its allocations");
         }
@@ -508,7 +509,7 @@ public:
             const auto keptBefore = context.recorder->OpenKeptBytes();
             Require(MultisampleTargetStorageView(context, resource) == storageView, "a later MSAA storage lookup changed its promoted image");
             const auto kept = context.recorder->OpenKeptBytes();
-            Require(kept == keptBefore + totalBytes, "an already-storable MSAA target is missing allocations from the new batch budget");
+            Require(kept == keptBefore + totalBytes, "an already-storable MSAA target is missing retained bytes from the new batch budget");
             Require(MultisampleTargetStorageView(context, resource) == storageView, "a repeated promoted MSAA lookup changed its view");
             Require(context.recorder->OpenKeptBytes() == kept, "an already-storable MSAA target double-counts its allocations in one batch");
         }
