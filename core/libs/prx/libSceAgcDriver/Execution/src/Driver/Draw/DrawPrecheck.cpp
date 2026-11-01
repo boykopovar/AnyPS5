@@ -6,11 +6,21 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
 
 namespace {
+
+bool indirectRecordsDraw(const Pm4::DrawParameters::IndirectDraw& indirect) {
+    const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
+    for (std::uint32_t record = 0; record < count; ++record) {
+        const auto arguments = Pm4::ReadDrawArguments(indirect, record);
+        if (arguments.count != 0 && arguments.instances != 0) return true;
+    }
+    return false;
+}
 
 QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass& copy) {
     const bool multisampled = copy.source.samples != 1u;
@@ -44,15 +54,19 @@ bool Driver::drawPrecheck() {
 
 std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
     if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
-    if (const auto pass = Graphics::DecodeColorMetadataPass(queue)) {
-        require(!drawParameters.indirect, "indirect CB metadata passes are unsupported");
-        if (DrawPipeline::Active() && DrawPipeline::MetadataPassesPipelined() && deferredLabels().labels.empty()) {
-            auto writes = Graphics::PipelinedColorMetadataPassWrites(*pass);
+    const auto metadata = Graphics::DecodeColorMetadataPass(queue);
+    std::optional<Graphics::DepthExpandPass> expand;
+    if (!metadata) expand = Graphics::DecodeDepthExpandPass(queue);
+    if (metadata || expand) {
+        require(!metadata || !drawParameters.indirect, "indirect CB metadata passes are unsupported");
+        if (expand && !drawParameters.indirect && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
+        if (metadata && DrawPipeline::Active() && DrawPipeline::MetadataPassesPipelined() && deferredLabels().labels.empty()) {
+            auto writes = Graphics::PipelinedColorMetadataPassWrites(*metadata);
             const auto localDevice = device.Load();
             if (!writes.empty() && localDevice != nullptr) {
                 const auto queueId = submission.queue;
                 const auto opcode = (packet[0] >> 8u) & 0xffu;
-                DrawPipeline::Queue0().Enqueue([this, localDevice, queueId, opcode, pass = *pass] {
+                DrawPipeline::Queue0().Enqueue([this, localDevice, queueId, opcode, pass = *metadata] {
                     GuestMemory::SetCurrentPacket(opcode, queueId);
                     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
                     std::lock_guard gpuLock(GuestMemory::GpuMutex());
@@ -66,12 +80,17 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
             }
         }
         if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
+        if (expand && drawParameters.indirect) {
+            recordQueuedLabelsBeforeRead(submission.queue);
+            if (!indirectRecordsDraw(*drawParameters.indirect)) return DrawVerdict::Nothing;
+        }
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         if (device == nullptr) device = std::make_shared<VulkanDevice>();
         const std::shared_ptr<VulkanDevice> localDevice = device;
         recordLabelsForPacket(localDevice.get(), submission.queue);
-        localDevice->ColorMetadataPass(*pass);
+        if (metadata) localDevice->ColorMetadataPass(*metadata);
+        else localDevice->DepthExpandPass(*expand);
         return DrawVerdict::Drawn;
     }
     if (const auto copy = Graphics::DecodeDepthCopyPass(queue)) {

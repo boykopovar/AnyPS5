@@ -730,6 +730,12 @@ if(BUILD_TESTING)
                 OUTPUT_NAME GuestMemoryFixture SUFFIX ".prx" CXX_EXTENSIONS OFF
                 BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
     endif()
+    add_test(NAME agc_driver_depth_expand_out_of_place_inline COMMAND agc_driver_depth_expand_out_of_place_tests)
+    set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=0" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_buffer_copy)
         set_tests_properties(${partialStoreTest} PROPERTIES
