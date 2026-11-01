@@ -35,16 +35,18 @@ def _name(prefixes):
 @functools.lru_cache(maxsize=None)
 def forms(prefixes=PREFIXES):
     name = _name(prefixes)
+    default = (r'(?P<default>[+-]?(?:0[xX][0-9a-fA-F](?:\x27?[0-9a-fA-F])*|'
+               r'0[bB][01](?:\x27?[01])*|[0-9](?:\x27?[0-9])*))[uUlL]*(?=\s*[,\)])')
     readers = (
         ("getenv", re.compile(r'(?:std::)?getenv\(\s*"(?P<name>' + name + r')"\s*\)')),
         ("_wgetenv", re.compile(r'(?:std::)?_?wgetenv\(\s*L"(?P<name>' + name + r')"\s*\)')),
         ("IsEnvironmentSet", re.compile(r'IsEnvironmentSet\(\s*"(?P<name>' + name + r')"\s*\)')),
         ("MaskFromEnvironment", re.compile(r'MaskFromEnvironment\(\s*"(?P<name>' + name + r')"\s*\)')),
-        ("kibSetting", re.compile(r'kibSetting\(\s*"(?P<name>' + name + r')"\s*,\s*(?P<default>[0-9]+)')),
-        ("EnvInt", re.compile(r'EnvInt\(\s*"(?P<name>' + name + r')"\s*,\s*(?P<default>-?[0-9]+)')),
-        ("configured", re.compile(r'\b(?:configured|PipelineSwitch)\(\s*"(?P<name>' + name + r')"'
-                                  r'(?:\s*,\s*(?P<default>[0-9]+)[uUlL]*)?')),
-        ("environmentCount", re.compile(r'\benvironmentCount\(\s*"(?P<name>' + name + r')"\s*,\s*(?P<default>[0-9]+)')),
+        ("kibSetting", re.compile(r'kibSetting\(\s*"(?P<name>' + name + r')"(?=\s*[,\)])(?:\s*,\s*' + default + r')?')),
+        ("EnvInt", re.compile(r'EnvInt\(\s*"(?P<name>' + name + r')"(?=\s*[,\)])(?:\s*,\s*' + default + r')?')),
+        ("configured", re.compile(r'\b(?:configured|PipelineSwitch)\(\s*"(?P<name>' + name + r')"(?=\s*[,\)])'
+                                  r'(?:\s*,\s*' + default + r')?')),
+        ("environmentCount", re.compile(r'\benvironmentCount\(\s*"(?P<name>' + name + r')"(?=\s*[,\)])(?:\s*,\s*' + default + r')?')),
         ("EnvironmentNumber", re.compile(r'\bEnvironmentNumber\(\s*"(?P<name>' + name + r')"\s*\)')),
         ("GetEnvironmentVariableA", re.compile(r'GetEnvironmentVariableA\(\s*"(?P<name>' + name + r')"')),
         ("GetEnvironmentVariableW", re.compile(r'GetEnvironmentVariableW\(\s*L"(?P<name>' + name + r')"')),
@@ -76,9 +78,8 @@ def kind_of(reader, window):
 
 
 def default_of(match, window):
-    default = match.groupdict().get("default")
-    if default:
-        return default
+    if "default" in match.groupdict():
+        return match.groupdict()["default"] or ""
     found = re.search(r"\?[\s\S]*?:\s*([0-9]+)", window)
     return found.group(1) if found else ""
 
