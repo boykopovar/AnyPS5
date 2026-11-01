@@ -22,10 +22,11 @@ using OptionSetter = bool (*)(int descriptor, int level, int option, const void*
 using OptionGetter = bool (*)(int descriptor, int level, int option, void* value, std::uint32_t* length, int* error);
 using StatusControl = bool (*)(int descriptor, int command, int flags, int* result, int* error);
 struct Forwards {
-    bool (*bind)(int descriptor, const void* address, std::uint32_t length, int* error);
-    bool (*getsockname)(int descriptor, void* address, std::uint32_t* length, int* error);
-    bool (*sendto)(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, std::int64_t* result, int* error);
-    bool (*recvfrom)(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, std::int64_t* result, int* error);
+    int (*family)(int descriptor);
+    int (*bind)(int descriptor, const void* address, std::uint32_t length);
+    int (*getsockname)(int descriptor, void* address, std::uint32_t* length);
+    std::int64_t (*sendto)(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error);
+    std::int64_t (*recvfrom)(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, int* error);
 };
 struct NativeOwner {
     int (*transfer)(NativeOwner* owner, bool send, void* buffer, int length) = nullptr;
