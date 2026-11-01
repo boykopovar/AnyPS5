@@ -156,7 +156,8 @@ public:
     MultisampleTarget(const Context& context, const ColorTarget& target, std::optional<VkClearColorValue> knownClear = std::nullopt) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
         this->context.bufferPool.reset();
         if (target.dccAddress != 0) metadataValid = std::make_shared<std::atomic<bool>>(true);
-        const auto initial = knownClear.has_value() ? knownClear : target.dccAddress != 0 || target.cmaskFastClear ? std::optional{initialDccClear(target)} : initialColorContents(target);
+        std::shared_ptr<Buffer> initialUpload;
+        const auto initial = knownClear.has_value() ? knownClear : target.dccAddress != 0 || target.cmaskFastClear ? std::optional{initialDccClear(target)} : initialColorContents(context, target, initialUpload);
         const auto samples = static_cast<VkSampleCountFlagBits>(target.samples);
         Require((context.limits.framebufferColorSampleCounts & samples) != 0, "the device cannot render color with the target's sample count");
         VkFormatProperties properties{};
@@ -236,6 +237,7 @@ public:
                         const auto count = std::min(stride, bytes - offset);
                         context.detiler->DispatchMultisampleImage(commands, target.elementBytes, initialUpload->Handle(), offset, (count + 3u) & ~VkDeviceSize{3}, initialView, target.extent.width, target.extent.height, 1u, target.samples, static_cast<std::uint32_t>(offset / target.elementBytes), static_cast<std::uint32_t>(count / target.elementBytes));
                     }
+                    if (recorder != nullptr) recorder->Keep(initialUpload, initialUpload->Bytes().size());
                     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
                     if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 3);
                 }
@@ -374,7 +376,7 @@ public:
     void Keep() {
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == context.device) {
             recorder->Keep(shared_from_this());
-            recorder->KeepBytes(this, allocationBytes + initialColor.size() + (initialUpload ? initialUpload->Bytes().size() : 0u));
+            recorder->KeepBytes(this, allocationBytes);
         }
     }
 
@@ -689,17 +691,15 @@ private:
         return true;
     }
 
-    std::vector<std::byte> initialColor;
-    std::unique_ptr<Buffer> initialUpload;
     VkImageView initialView = VK_NULL_HANDLE;
 
-    std::optional<VkClearColorValue> initialColorContents(const ColorTarget& use) {
+    std::optional<VkClearColorValue> initialColorContents(const Context& uploadContext, const ColorTarget& use, std::shared_ptr<Buffer>& initialUpload) {
         Require(use.cmaskAddress == 0, "initial multisample color samples with CMASK require a modeled metadata import");
         Require(use.layers == 1u && use.arraySlice == 0u && use.arrayLastSlice == 0u && use.depth == 1u && use.depthSlice == 0u && use.mipCount == 1u && use.mip == 0u && !use.mipTail, "initial multisample array, volume or mip contents are not implemented");
         Require(FindGuestColorTargetFormat(use.format, use.elementBytes).has_value(), "initial multisample color format or element size is unsupported");
         const auto bytes = MultisampledColorBytes(use);
         Require(bytes != 0 && bytes <= std::numeric_limits<std::size_t>::max(), "initial multisample color footprint is not implemented");
-        initialColor.resize(static_cast<std::size_t>(bytes));
+        std::vector<std::byte> initialColor(static_cast<std::size_t>(bytes));
         GuestMemory::Read(use.address, initialColor);
         const auto repeated = std::equal(initialColor.begin() + use.elementBytes, initialColor.end(), initialColor.begin());
         if (repeated) {
@@ -716,7 +716,7 @@ private:
         Require(elements != 0 && elements <= std::numeric_limits<std::uint32_t>::max(), "initial multisample color element count is unsupported");
         const auto alignedBytes = (layout.LinearBytes() + 3u) & ~std::uint64_t{3};
         Require(alignedBytes <= std::numeric_limits<std::size_t>::max(), "initial multisample color exceeds host address space");
-        initialUpload = std::make_unique<Buffer>(context, static_cast<std::size_t>(alignedBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        initialUpload = std::make_shared<Buffer>(uploadContext, static_cast<std::size_t>(alignedBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         layout.Detile(initialColor, initialUpload->Bytes().first(static_cast<std::size_t>(layout.LinearBytes())));
         return std::nullopt;
     }
