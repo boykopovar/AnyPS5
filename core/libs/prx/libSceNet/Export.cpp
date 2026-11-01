@@ -164,6 +164,7 @@ constexpr int NET_SO_SNDBUF = 0x1001;
 constexpr int NET_SO_RCVBUF = 0x1002;
 constexpr int NET_SO_SCE_SNDTIMEO = 0x1105;
 constexpr int NET_SO_SCE_RCVTIMEO = 0x1106;
+constexpr int NET_SO_SCE_CONNECTTIMEO = 0x1109;
 constexpr int NET_SO_TYPE = 0x1008;
 constexpr int NET_SO_ACCEPTCONN = 0x2;
 constexpr int NET_MSG_PEEK = 0x2;
@@ -208,6 +209,7 @@ struct NativeSocketHandle : KernelSocketPoll::NativeOwner {
     std::atomic<bool> nonblock{false};
     std::atomic<int> receiveTimeout{0};
     std::atomic<int> sendTimeout{0};
+    std::atomic<int> connectTimeout{0};
     NativeSocketHandle(NativeSocket socket, bool stream) : value(socket), stream(stream) {
 #ifdef _WIN32
         transfer = &TransferSocketForKernel;
@@ -494,6 +496,25 @@ int timeout_option(int optname) {
     if (optname == NET_SO_SCE_RCVTIMEO) return NET_SO_RCVTIMEO;
     return optname;
 }
+
+#ifndef _WIN32
+constexpr int CONNECT_EXPIRED = -1;
+
+int connect_within(NativeSocket native, const sockaddr* address, NativeLength length, int microseconds) {
+    const int flags = fcntl(native, F_GETFL, 0);
+    if (flags < 0 || fcntl(native, F_SETFL, flags | O_NONBLOCK) != 0) return native_error();
+    int error = ::connect(native, address, length) == 0 ? 0 : errno;
+    if (error == EINPROGRESS) {
+        pollfd descriptor{native, POLLOUT, 0};
+        const int ready = ::poll(&descriptor, 1, static_cast<int>((static_cast<std::int64_t>(microseconds) + 999) / 1000));
+        NativeLength size = sizeof(error);
+        if (ready < 0 || (ready > 0 && ::getsockopt(native, SOL_SOCKET, SO_ERROR, &error, &size) != 0)) error = errno;
+        else if (ready == 0) error = CONNECT_EXPIRED;
+    }
+    fcntl(native, F_SETFL, flags);
+    return error == 0 || error == CONNECT_EXPIRED ? error : net_error(error);
+}
+#endif
 
 #ifdef _WIN32
 short closed_stream_events(const Sock& socket, short native, short requested) {
@@ -1188,6 +1209,18 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         const auto current = g_socks.find(s);
         if (current != g_socks.end() && current->second.native == socket.native) current->second.connectAttempted = true;
     }
+    const int connectTimeout = socket.native->connectTimeout;
+#ifndef _WIN32
+    if (socket.type == NET_SOCK_STREAM && connectTimeout > 0 && !socket.native->nonblock) {
+        const int error = connect_within(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length, connectTimeout);
+        if (error == CONNECT_EXPIRED) throw std::runtime_error("sceNetConnect: the connect timeout expired");
+        if (error != 0) return fail(error);
+#ifdef __APPLE__
+        note_local_address(s, socket);
+#endif
+        return 0;
+    }
+#endif
     if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) {
 #if defined(_WIN32) || defined(__APPLE__)
         note_local_address(s, socket);
@@ -1203,7 +1236,10 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         FD_ZERO(&failed);
         FD_SET(socket.native->value, &writable);
         FD_SET(socket.native->value, &failed);
-        if (::select(0, nullptr, &writable, &failed, nullptr) < 0) return fail(native_error());
+        timeval limit{connectTimeout / 1000000, connectTimeout % 1000000};
+        const int ready = ::select(0, nullptr, &writable, &failed, connectTimeout > 0 ? &limit : nullptr);
+        if (ready < 0) return fail(native_error());
+        if (ready == 0) throw std::runtime_error("sceNetConnect: the connect timeout expired");
         int error = 0;
         int size = sizeof(error);
         if (::getsockopt(socket.native->value, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &size) != 0)
@@ -1543,6 +1579,8 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         if (socket.type == NET_SOCK_STREAM &&
             ::setsockopt(socket.native->value, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char*>(&enabled), sizeof(enabled)) != 0)
             return fail(native_error());
+    } else if (optname == NET_SO_SCE_CONNECTTIMEO) {
+        if (value < 0) return fail(NET_EINVAL);
     } else if (optname == NET_SO_ONESBCAST) {
     } else {
         return fail(NET_EOPNOTSUPP);
@@ -1554,6 +1592,7 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         if (optname == NET_SO_NBIO) it->second.native->nonblock = value != 0;
         if (optname == NET_SO_RCVTIMEO) it->second.native->receiveTimeout = value;
         if (optname == NET_SO_SNDTIMEO) it->second.native->sendTimeout = value;
+        if (optname == NET_SO_SCE_CONNECTTIMEO) it->second.native->connectTimeout = value;
         if (optname == NET_SO_SNDBUF) it->second.snd_buffer = value;
         if (optname == NET_SO_RCVBUF) it->second.rcv_buffer = value;
         if (optname == NET_SO_ONESBCAST) it->second.onesbcast = value;
@@ -1666,6 +1705,7 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         case NET_SO_NBIO: value = socket.native->nonblock ? 1 : 0; break;
         case NET_SO_RCVTIMEO: value = socket.native->receiveTimeout; break;
         case NET_SO_SNDTIMEO: value = socket.native->sendTimeout; break;
+        case NET_SO_SCE_CONNECTTIMEO: value = socket.native->connectTimeout; break;
         case NET_SO_ONESBCAST: value = socket.onesbcast; break;
         case NET_SO_ERROR: {
             int pending = 0;
