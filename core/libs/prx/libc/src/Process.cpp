@@ -1,6 +1,5 @@
 #include "prx/libc/include/Api.hpp"
 #include <csignal>
-#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -367,44 +366,5 @@ extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, un
     }
 }
 #endif
-
-}
-
-namespace {
-constexpr int SaRestart = 0x2;
-std::atomic<SigactionFn_nid_no_patch> registeredSigaction{nullptr};
-std::atomic<std::uint32_t*> registeredInterruptSet{nullptr};
-
-struct InterruptSigaction {
-    std::uintptr_t handler;
-    int flags;
-    std::uint32_t mask[4];
-};
-static_assert(sizeof(InterruptSigaction) == 32 && offsetof(InterruptSigaction, flags) == 8 && offsetof(InterruptSigaction, mask) == 12);
-}
-
-extern "C" {
-
-void RegisterSigaction_nid_no_patch(SigactionFn_nid_no_patch fn, std::uint32_t* interruptSet) {
-    registeredInterruptSet.store(interruptSet, std::memory_order_release);
-    registeredSigaction.store(fn, std::memory_order_release);
-}
-
-int APS5_VABI siginterrupt_nid_postfix(int guest, int flag) {
-    const auto sigaction = registeredSigaction.load(std::memory_order_acquire);
-    auto* const interruptSet = registeredInterruptSet.load(std::memory_order_acquire);
-    if (sigaction == nullptr || interruptSet == nullptr) throw std::runtime_error("siginterrupt: libkernel has not registered sigaction");
-    InterruptSigaction action{};
-    if (sigaction(guest, nullptr, &action) != 0) return -1;
-    const auto index = static_cast<std::uint32_t>(guest - 1);
-    if (flag) {
-        interruptSet[index >> 5] |= 1u << (index & 31);
-        action.flags &= ~SaRestart;
-    } else {
-        interruptSet[index >> 5] &= ~(1u << (index & 31));
-        action.flags |= SaRestart;
-    }
-    return sigaction(guest, &action, nullptr);
-}
 
 }
