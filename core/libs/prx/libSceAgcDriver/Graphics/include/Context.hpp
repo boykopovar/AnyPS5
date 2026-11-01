@@ -151,6 +151,16 @@ inline std::uint64_t& DeviceProcLookups() {
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
+bool SwapReclaimHostFallback(bool fallback);
+
+struct ReclaimFallbackScope {
+    bool previous;
+    explicit ReclaimFallbackScope(bool fallback) : previous(SwapReclaimHostFallback(fallback)) {}
+    ~ReclaimFallbackScope() { SwapReclaimHostFallback(previous); }
+    ReclaimFallbackScope(const ReclaimFallbackScope&) = delete;
+    ReclaimFallbackScope& operator=(const ReclaimFallbackScope&) = delete;
+};
+
 struct Context {
     VkDevice device;
     VkPhysicalDevice physical;
@@ -348,6 +358,7 @@ struct Context {
         if (!host) return type;
         if (cacheReclaim != nullptr) {
             const auto wanted = bytes + (usage > budget ? usage - budget : 0u);
+            const ReclaimFallbackScope fallback(true);
             const auto released = cacheReclaim(wanted, true);
             if (released >= wanted) return type;
             if (released != 0) {

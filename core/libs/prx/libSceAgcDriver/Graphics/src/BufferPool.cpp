@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <utility>
 #include <atomic>
 #include <bit>
 #include <chrono>
@@ -20,14 +21,6 @@ struct ReclaimFallbackStorage {};
 bool& reclaimFallback() {
     return HostThreadLocal<bool, ReclaimFallbackStorage>();
 }
-
-struct ReclaimFallbackScope {
-    bool previous;
-    explicit ReclaimFallbackScope(bool fallback) : previous(reclaimFallback()) { reclaimFallback() = fallback; }
-    ~ReclaimFallbackScope() { reclaimFallback() = previous; }
-    ReclaimFallbackScope(const ReclaimFallbackScope&) = delete;
-    ReclaimFallbackScope& operator=(const ReclaimFallbackScope&) = delete;
-};
 
 // APS5_BUFFER_POOL_SHARED=1: one tier for every size, as before the split.
 bool sharedTiers() {
@@ -605,6 +598,10 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
 
 bool ReclaimHasHostFallback() {
     return reclaimFallback();
+}
+
+bool SwapReclaimHostFallback(bool fallback) {
+    return std::exchange(reclaimFallback(), fallback);
 }
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context) {
