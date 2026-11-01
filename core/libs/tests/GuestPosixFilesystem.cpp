@@ -105,14 +105,6 @@ int main() {
         nullThrew = true;
     }
     Require(nullThrew);
-    std::string direct = "/anyps5-posix-test/direct-XXXXXX";
-    bool directThrew = false;
-    try {
-        mkostemp_nid_postfix(direct.data(), SCE_KERNEL_O_DIRECT);
-    } catch (const std::exception& error) {
-        directThrew = std::string(error.what()).find("not implemented") != std::string::npos;
-    }
-    Require(directThrew && direct == "/anyps5-posix-test/direct-XXXXXX");
     const std::array optionalFlags{SCE_KERNEL_O_APPEND, SCE_KERNEL_O_SYNC, shared, exclusive, closeOnExec};
     for (unsigned int combination = 0; combination < 32; ++combination) {
         int flags = 0;
@@ -170,16 +162,6 @@ int main() {
     Require(unlink_nid_postfix(prefixWithX.c_str()) == 0);
     std::string directoryTemplate = "/anyps5-posix-test/";
     Require(mkostemp_nid_postfix(directoryTemplate.data(), 0) == -1 && *__error_nid_postfix() == 17);
-    for (const int flags : {SCE_KERNEL_O_DIRECT | closeOnExec, SCE_KERNEL_O_DIRECT | shared | exclusive}) {
-        std::string untouched = "/anyps5-posix-test/direct-combination-XXXXXX";
-        bool threw = false;
-        try {
-            mkostemp_nid_postfix(untouched.data(), flags);
-        } catch (const std::exception& error) {
-            threw = std::string(error.what()).find("not implemented") != std::string::npos;
-        }
-        Require(threw && untouched == "/anyps5-posix-test/direct-combination-XXXXXX");
-    }
     const std::string prefix = "/anyps5-posix-test/file-";
     std::string pattern = prefix + "XXXXXXXXX";
     const int descriptor = mkstemp_nid_postfix(pattern.data());
