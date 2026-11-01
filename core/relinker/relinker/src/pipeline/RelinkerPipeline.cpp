@@ -40,11 +40,19 @@ const NidReference* FindPathconfImport(const std::vector<NidReference>& nidRefs)
             name = name.substr(0, hashPos);
         }
         if (name == "pathconf" || name == "oc98+zOImus" || name == "pathconf_nid_postfix") {
+            if (ref.Addend != 0) {
+                continue;
+            }
+            if (ref.SymbolType != STT_FUNC && ref.SymbolType != STT_NOTYPE) {
+                continue;
+            }
             if (ref.RelocationTypeValue == R_X86_64_JUMP_SLOT) {
                 return &ref;
             }
-            if (!candidate) {
-                candidate = &ref;
+            if (ref.RelocationTypeValue == R_X86_64_GLOB_DAT || ref.RelocationTypeValue == R_X86_64_64) {
+                if (!candidate || (candidate->RelocationTypeValue == R_X86_64_64 && ref.RelocationTypeValue == R_X86_64_GLOB_DAT)) {
+                    candidate = &ref;
+                }
             }
         }
     }
