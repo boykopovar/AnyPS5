@@ -1156,7 +1156,11 @@ int main() {
     Require(scePadClose_nid_postfix(handle2) == 0);
     Require(scePadGetHandle(user2, 0, 0) == noHandle);
     Require(!scePadIsValidHandle(handle2, PAD_PORT_TYPE_STANDARD));
-    Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
-    Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetAngularVelocityDeadbandState(handle2 + 99, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetAngularVelocityDeadbandState(-1, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadResetOrientation(handle2) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadResetOrientation(handle2 + 99) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadResetOrientation(-1) == PAD_ERROR_INVALID_HANDLE);
     CheckPortZeroWithdrawn();
 }
