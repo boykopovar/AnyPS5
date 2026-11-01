@@ -2,6 +2,7 @@
 
 ### Silent stubs
 
+- [sceInvitationDialogOpen](../../../core/libs/prx/libSceInvitationDialog/Export.cpp) (libSceInvitationDialog) - with `ANYPS5_PSN_DIALOGS=show`, a successful open shows AnyPS5's notice that the feature needs PlayStation Network; the console's own display without PlayStation Network is not measured, and the notice wording is AnyPS5's.
 - [sceInvitationDialogOpen, sceInvitationDialogGetResult](../../../core/libs/prx/libSceInvitationDialog/Export.cpp) (libSceInvitationDialog, PS4) - no dialog is shown and no invitation is sent: `Open` moves the dialog straight to `FINISHED`, and `GetResult` returns 0 with `errorCode` 0, `result` `USER_CANCELED` (1), the `callbackArg` of the last `Open` and a recipient count of 0, as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/2cdefaa1298c6e4ece6c74bd84e90f3906282d51/src/core/libraries/invitation_dialog/invitation_dialog.cpp) reports when its window is dismissed and as [libSceNpProfileDialog](libSceNpProfileDialog.md) does. Not measured on a console.
 
 ### Unknown function info
