@@ -6419,6 +6419,7 @@ void verifySingleLaneDomainWave() {
     };
     static constexpr std::array<std::uint32_t, 11> waterfall{0xbe80047eu, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
     static constexpr std::array<std::uint32_t, 6> lane31{0xd7600006u, 0x00013f05u, 0x7e020206u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 7> selectedLane{0x7e040505u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
 
     for (const auto code : {std::span<const std::uint32_t>(laneOps), std::span<const std::uint32_t>(waterfall)}) {
         const auto withSubgroups = compiled(code, 32u, true);
@@ -6436,6 +6437,8 @@ void verifySingleLaneDomainWave() {
     }
     expectFailure([&] { static_cast<void>(compiled(lane31, 32u, false)); }, "v_readlane_b32 of lane 31 is outside the 1-lane host subgroup", "single-lane domain wave: a domain program without tessellation evaluation subgroups read lane 31");
     require(!compiled(lane31, 32u, true).empty(), "single-lane domain wave: lane 31 of a 32-lane tessellation evaluation subgroup did not build");
+    expectFailure([&] { static_cast<void>(compiled(selectedLane, 32u, false)); }, "v_readlane_b32 of a register-selected lane is outside the 1-lane host subgroup", "single-lane domain wave: a domain program without tessellation evaluation subgroups read the lane v_readfirstlane_b32 took from v5");
+    require(!compiled(selectedLane, 32u, true).empty(), "single-lane domain wave: the lane v_readfirstlane_b32 took from v5 did not build on a 32-lane tessellation evaluation subgroup");
 
     auto request = domain(laneOps, 32u, false);
     const auto replay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(request));
