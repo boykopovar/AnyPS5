@@ -795,10 +795,10 @@ void TestSharedStringHash() {
     _ZN3WTF6StringC1EPKDsj(&nonLatin1String, nonLatin1, 2);
     Check(hashString(&nonLatin1String) == 0x77f0e865u);
     const char16_t deletedValue[] = {3163, 53528};
-    Check(hash16(deletedValue, 2) == 0xffffffffu);
+    Check(hash16(deletedValue, 2) == 0x7fffffffu);
     String deletedString;
     _ZN3WTF6StringC1EPKDsj(&deletedString, deletedValue, 2);
-    Check(hashString(&deletedString) == 0xffffffffu);
+    Check(hashString(&deletedString) == 0x7fffffffu);
     String absent;
     Check(hashString(&absent) == 0x04ec889eu);
     Check(hash16(nullptr, 0) == 0x04ec889eu);
