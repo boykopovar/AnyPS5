@@ -1,8 +1,9 @@
 #include "prx/libScePlayerSelectionDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
-#include <stdexcept>
+#include <cstring>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 
@@ -21,27 +22,36 @@ constexpr int kResultUserCanceled = 1;
 
 int main() {
     Require(sceUserServiceInitialize(nullptr) == 0);
-    PlayerSelectionDialogParam param{};
-    param.base.size = sizeof(param.base);
-    param.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u;
-    param.size = sizeof(param);
-    param.userId = USER_SERVICE_INITIAL_USER_ID;
+    struct GuardedParam {
+        PlayerSelectionDialogParam param;
+        std::uint8_t guard[8];
+    };
+    GuardedParam guarded;
+    std::memset(&guarded, 0xA5, sizeof(guarded));
+    auto& param = guarded.param;
     PlayerSelectionDialogResult result{-1, 99, nullptr, 77, 55};
 
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
+    Require(scePlayerSelectionDialogParamInitialize(&param) == 0);
+    Require(param.base.size == sizeof(param.base));
+    Require(param.base.magic == static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u);
+    Require(param.size == sizeof(param));
+    Require(std::all_of(std::begin(param.base.reserved), std::end(param.base.reserved), [](std::uint8_t value) { return value == 0; }));
+    Require(param.userId == 0);
+    Require(std::all_of(std::begin(param.title), std::end(param.title), [](char value) { return value == 0; }));
+    Require(param.maxPlayers == 0);
+    Require(param.mode == 0);
+    Require(param.padding0 == 0);
+    Require(param.players == nullptr);
+    Require(param.playerCount == 0);
+    Require(std::all_of(std::begin(param.reserved), std::end(param.reserved), [](std::uint8_t value) { return value == 0; }));
+    Require(param.padding1 == 0);
+    Require(std::all_of(std::begin(guarded.guard), std::end(guarded.guard), [](std::uint8_t value) { return value == 0xA5; }));
+    param.userId = USER_SERVICE_INITIAL_USER_ID;
     Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
-    Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
-    bool threw = false;
-    try {
-        scePlayerSelectionDialogParamInitialize(&param);
-
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
-    Require(param.size == sizeof(param));
     Require(scePlayerSelectionDialogGetResult(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogGetResult(&result) == kErrNotInitialized);
     Require(scePlayerSelectionDialogGetStatus() == 0);
@@ -54,6 +64,8 @@ int main() {
 
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogGetResult(&result) == kErrNotFinished);
+    Require(scePlayerSelectionDialogOpen(&param) == 0);
+    Require(scePlayerSelectionDialogGetStatus() == kStatusFinished);
 
     param.size = 0;
     Require(scePlayerSelectionDialogOpen(&param) == static_cast<int>(0x80B8000Au));
