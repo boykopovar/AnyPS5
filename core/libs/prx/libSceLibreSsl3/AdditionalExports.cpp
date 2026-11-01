@@ -685,10 +685,6 @@ int APS5_VABI ASN1_TYPE_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ASN1_TIME_diff_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ECDSA_SIG_set0_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
