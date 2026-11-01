@@ -5,7 +5,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
-#include "CurlHost.hpp"
+
+typedef void CURL;
+typedef void CURLSH;
+typedef void CURLM;
+typedef struct Curl_URL CURLU;
+typedef struct curl_mime curl_mime;
+typedef struct curl_mimepart curl_mimepart;
+struct curl_pushheaders;
 
 struct guest_curl_waitfd {
     int fd;
@@ -19,11 +26,11 @@ static_assert(offsetof(guest_curl_waitfd, events) == 4);
 static_assert(offsetof(guest_curl_waitfd, revents) == 6);
 
 struct guest_CURLMsg {
-    CURLMSG msg;
+    std::int32_t msg;
     CURL* easy_handle;
     union {
         void* whatever;
-        CURLcode result;
+        std::int32_t result;
     } data;
 };
 
@@ -33,7 +40,7 @@ static_assert(offsetof(guest_CURLMsg, easy_handle) == 8);
 static_assert(offsetof(guest_CURLMsg, data) == 16);
 
 struct guest_curl_version_info_data {
-    CURLversion age;
+    std::int32_t age;
     const char* version;
     unsigned int version_num;
     const char* host;
@@ -87,8 +94,8 @@ static_assert(offsetof(guest_curl_version_info_data, zstd_version) == 176);
 
 struct guest_curl_easyoption {
     const char* name;
-    CURLoption id;
-    curl_easytype type;
+    std::int32_t id;
+    std::int32_t type;
     unsigned int flags;
 };
 
@@ -152,7 +159,7 @@ static_assert(offsetof(guest_curl_httppost, userp) == 96);
 static_assert(offsetof(guest_curl_httppost, contentlen) == 104);
 
 struct guest_curl_forms {
-    CURLformoption option;
+    std::int32_t option;
     const char* value;
 };
 
@@ -187,45 +194,16 @@ static_assert(sizeof(guest_fd_set) == 128);
 
 static_assert(offsetof(guest_curl_version_info_data, hyper_version) == 184);
 static_assert(offsetof(guest_curl_version_info_data, gsasl_version) == 192);
-static_assert(sizeof(curl_blob) == sizeof(guest_curl_blob));
-static_assert(offsetof(curl_blob, data) == offsetof(guest_curl_blob, data));
-static_assert(offsetof(curl_blob, len) == offsetof(guest_curl_blob, len));
-static_assert(offsetof(curl_blob, flags) == offsetof(guest_curl_blob, flags));
-static_assert(sizeof(curl_khkey) == 24);
-static_assert(offsetof(curl_khkey, key) == 0);
-static_assert(offsetof(curl_khkey, len) == 8);
-static_assert(offsetof(curl_khkey, keytype) == 16);
-static_assert(sizeof(curl_index) == 16);
-static_assert(offsetof(curl_index, index) == 0);
-static_assert(offsetof(curl_index, total) == 8);
-static_assert(sizeof(curl_tlssessioninfo) == 16);
-static_assert(offsetof(curl_tlssessioninfo, backend) == 0);
-static_assert(offsetof(curl_tlssessioninfo, internals) == 8);
-static_assert(sizeof(curl_off_t) == 8);
+static_assert(sizeof(std::int64_t) == 8);
 static_assert(sizeof(std::time_t) == 8);
-static_assert(sizeof(curl_easyoption) == sizeof(guest_curl_easyoption));
-static_assert(offsetof(curl_easyoption, name) == 0);
-static_assert(offsetof(curl_easyoption, id) == 8);
-static_assert(offsetof(curl_easyoption, type) == 12);
-static_assert(offsetof(curl_easyoption, flags) == 16);
-static_assert(sizeof(curl_slist) == sizeof(guest_curl_slist));
-static_assert(offsetof(curl_slist, data) == 0);
-static_assert(offsetof(curl_slist, next) == 8);
-static_assert(sizeof(CURLMsg) == sizeof(guest_CURLMsg));
-static_assert(offsetof(CURLMsg, msg) == 0);
-static_assert(offsetof(CURLMsg, easy_handle) == 8);
-static_assert(offsetof(CURLMsg, data) == 16);
 
 struct guest_curl_ssl_backend {
-    curl_sslbackend id;
+    std::int32_t id;
     const char* name;
 };
 
 static_assert(sizeof(guest_curl_ssl_backend) == 16);
 static_assert(offsetof(guest_curl_ssl_backend, id) == 0);
 static_assert(offsetof(guest_curl_ssl_backend, name) == 8);
-static_assert(sizeof(curl_ssl_backend) == 16);
-static_assert(offsetof(curl_ssl_backend, id) == 0);
-static_assert(offsetof(curl_ssl_backend, name) == 8);
 
 #endif

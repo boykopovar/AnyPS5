@@ -1,4 +1,6 @@
+#include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include <chrono>
 #include <climits>
@@ -119,6 +121,7 @@ static void TestHstsThroughDuplicates(const std::string& url) {
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     Require(curl_global_init_nid_postfix(CURL_GLOBAL_DEFAULT) == CURLE_OK);
     auto path = std::filesystem::temp_directory_path() /
         ("anyps5-curl-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

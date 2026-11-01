@@ -1,4 +1,6 @@
+#include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +20,7 @@ static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     CURL* easy = curl_easy_init_nid_postfix();
     Require(easy != nullptr);
     curl_mime* mime = curl_mime_init_nid_postfix(easy);

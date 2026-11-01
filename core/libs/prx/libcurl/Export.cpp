@@ -1,3 +1,4 @@
+#include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -670,7 +671,7 @@ char* APS5_VABI curl_pushheader_byname_nid_postfix(struct curl_pushheaders* h, c
     return ::curl_pushheader_byname(h, name);
 }
 
-CURLFORMcode APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** httppost, struct guest_curl_httppost** last_post, ...) {
+std::int32_t APS5_VABI curl_formadd_nid_postfix(struct guest_curl_httppost** httppost, struct guest_curl_httppost** last_post, ...) {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -682,28 +683,28 @@ void APS5_VABI curl_formfree_nid_postfix(struct guest_curl_httppost* form) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLMcode APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {
+std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle, int s, int ev_bitmask, int* running_handles) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLMcode APS5_VABI curl_multi_socket_all_nid_postfix(CURLM* multi_handle, int* running_handles) {
+std::int32_t APS5_VABI curl_multi_socket_all_nid_postfix(CURLM* multi_handle, int* running_handles) {
     return ::curl_multi_socket_all(multi_handle, running_handles);
 }
 
-CURLMcode APS5_VABI curl_multi_socket_nid_postfix(CURLM* multi_handle, int s, int* running_handles) {
+std::int32_t APS5_VABI curl_multi_socket_nid_postfix(CURLM* multi_handle, int s, int* running_handles) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLMcode APS5_VABI curl_multi_assign_nid_postfix(CURLM* multi_handle, int sockfd, void* sockptr) {
+std::int32_t APS5_VABI curl_multi_assign_nid_postfix(CURLM* multi_handle, int sockfd, void* sockptr) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLcode APS5_VABI curl_easy_recv_nid_postfix(CURL* curl, void* buffer, size_t buflen, size_t* n) {
+std::int32_t APS5_VABI curl_easy_recv_nid_postfix(CURL* curl, void* buffer, size_t buflen, size_t* n) {
     GuestArena::HostWrite write(buffer, buflen);
     return ::curl_easy_recv(curl, buffer, buflen, n);
 }
 
-CURLcode APS5_VABI curl_easy_send_nid_postfix(CURL* curl, const void* buffer, size_t buflen, size_t* n) {
+std::int32_t APS5_VABI curl_easy_send_nid_postfix(CURL* curl, const void* buffer, size_t buflen, size_t* n) {
     return ::curl_easy_send(curl, buffer, buflen, n);
 }
 
@@ -767,7 +768,7 @@ char* APS5_VABI curl_maprintf_nid_postfix(const char* format, ...) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLSHcode APS5_VABI curl_share_cleanup_nid_postfix(CURLSH* share_handle) {
+std::int32_t APS5_VABI curl_share_cleanup_nid_postfix(CURLSH* share_handle) {
     auto context = FindShare(share_handle);
     const auto result = ::curl_share_cleanup(share_handle);
     if (result == CURLSHE_OK) {
@@ -778,19 +779,20 @@ CURLSHcode APS5_VABI curl_share_cleanup_nid_postfix(CURLSH* share_handle) {
     return result;
 }
 
-CURLcode APS5_VABI curl_easy_perform_nid_postfix(CURL* handle) {
+std::int32_t APS5_VABI curl_easy_perform_nid_postfix(CURL* handle) {
     return ::curl_easy_perform(handle);
 }
 
-CURLMcode APS5_VABI curl_multi_remove_handle_nid_postfix(CURLM* multi_handle, CURL* easy_handle) {
+std::int32_t APS5_VABI curl_multi_remove_handle_nid_postfix(CURLM* multi_handle, CURL* easy_handle) {
     return ::curl_multi_remove_handle(multi_handle, easy_handle);
 }
 
-CURLsslset APS5_VABI curl_global_sslset_nid_postfix(curl_sslbackend id, const char* name, const guest_curl_ssl_backend*** avail) {
+std::int32_t APS5_VABI curl_global_sslset_nid_postfix(std::int32_t guestId, const char* name, const guest_curl_ssl_backend*** avail) {
+    const auto id = static_cast<curl_sslbackend>(guestId);
     return ::curl_global_sslset(id, name, reinterpret_cast<const curl_ssl_backend***>(avail));
 }
 
-CURLMcode APS5_VABI curl_multi_perform_nid_postfix(CURLM* multi_handle, int* running_handles) {
+std::int32_t APS5_VABI curl_multi_perform_nid_postfix(CURLM* multi_handle, int* running_handles) {
     return ::curl_multi_perform(multi_handle, running_handles);
 }
 
@@ -810,11 +812,13 @@ int APS5_VABI curl_strnequal() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLUcode APS5_VABI curl_url_get_nid_postfix(CURLU* handle, CURLUPart what, char** part, unsigned int flags) {
+std::int32_t APS5_VABI curl_url_get_nid_postfix(CURLU* handle, std::int32_t guestWhat, char** part, unsigned int flags) {
+    const auto what = static_cast<CURLUPart>(guestWhat);
     return ::curl_url_get(handle, what, part, flags);
 }
 
-CURLUcode APS5_VABI curl_url_set_nid_postfix(CURLU* handle, CURLUPart what, const char* part, unsigned int flags) {
+std::int32_t APS5_VABI curl_url_set_nid_postfix(CURLU* handle, std::int32_t guestWhat, const char* part, unsigned int flags) {
+    const auto what = static_cast<CURLUPart>(guestWhat);
     return ::curl_url_set(handle, what, part, flags);
 }
 
@@ -830,19 +834,23 @@ CURLU* APS5_VABI curl_url_dup_nid_postfix(CURLU* in) {
     return ::curl_url_dup(in);
 }
 
-const char* APS5_VABI curl_multi_strerror_nid_postfix(CURLMcode error) {
+const char* APS5_VABI curl_multi_strerror_nid_postfix(std::int32_t guestError) {
+    const auto error = static_cast<CURLMcode>(guestError);
     return ::curl_multi_strerror(error);
 }
 
-const char* APS5_VABI curl_easy_strerror_nid_postfix(CURLcode error) {
+const char* APS5_VABI curl_easy_strerror_nid_postfix(std::int32_t guestError) {
+    const auto error = static_cast<CURLcode>(guestError);
     return ::curl_easy_strerror(error);
 }
 
-const char* APS5_VABI curl_share_strerror_nid_postfix(CURLSHcode error) {
+const char* APS5_VABI curl_share_strerror_nid_postfix(std::int32_t guestError) {
+    const auto error = static_cast<CURLSHcode>(guestError);
     return ::curl_share_strerror(error);
 }
 
-CURLcode APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, CURLoption option, ...) {
+std::int32_t APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, std::int32_t guestOption, ...) {
+    const auto option = static_cast<CURLoption>(guestOption);
     if (!handle) return CURLE_BAD_FUNCTION_ARGUMENT;
     switch (option) {
     case CURLOPT_HTTPPOST:
@@ -864,7 +872,7 @@ CURLcode APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, CURLoption option,
     }
     if (!::curl_easy_option_by_id(option)) return ::curl_easy_setopt(handle, option);
     auto context = FindEasy(handle);
-    CURL_ARGS_START(option);
+    CURL_ARGS_START(guestOption);
     CURLcode result;
     switch (static_cast<int>(option) / 10000) {
     case 0: {
@@ -882,10 +890,11 @@ CURLcode APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, CURLoption option,
     return result;
 }
 
-CURLcode APS5_VABI curl_easy_getinfo_nid_postfix(CURL* handle, CURLINFO info, ...) {
+std::int32_t APS5_VABI curl_easy_getinfo_nid_postfix(CURL* handle, std::int32_t guestInfo, ...) {
+    const auto info = static_cast<CURLINFO>(guestInfo);
     if (!handle) return CURLE_UNKNOWN_OPTION;
     if (info == CURLINFO_ACTIVESOCKET || info == CURLINFO_LASTSOCKET) NotImplemented_nid_no_patch(__func__);
-    CURL_ARGS_START(info);
+    CURL_ARGS_START(guestInfo);
     void* output = CURL_ARG(void*);
     CURL_ARGS_END();
     if ((info & CURLINFO_TYPEMASK) == CURLINFO_LONG) {
@@ -897,11 +906,11 @@ CURLcode APS5_VABI curl_easy_getinfo_nid_postfix(CURL* handle, CURLINFO info, ..
     return ::curl_easy_getinfo(handle, info, output);
 }
 
-CURLcode APS5_VABI curl_mime_data_nid_postfix(curl_mimepart* part, const char* data, size_t datasize) {
+std::int32_t APS5_VABI curl_mime_data_nid_postfix(curl_mimepart* part, const char* data, size_t datasize) {
     return ::curl_mime_data(part, data, datasize);
 }
 
-CURLMcode APS5_VABI curl_multi_poll_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
+std::int32_t APS5_VABI curl_multi_poll_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
     if (extra_nfds) NotImplemented_nid_no_patch(__func__);
     return ::curl_multi_poll(multi_handle, nullptr, 0, timeout_ms, ret);
 }
@@ -913,11 +922,11 @@ void APS5_VABI curl_easy_cleanup_nid_postfix(CURL* handle) {
     easies.erase(handle);
 }
 
-CURLcode APS5_VABI curl_mime_name_nid_postfix(curl_mimepart* part, const char* name) {
+std::int32_t APS5_VABI curl_mime_name_nid_postfix(curl_mimepart* part, const char* name) {
     return ::curl_mime_name(part, name);
 }
 
-CURLcode APS5_VABI curl_global_init_nid_postfix(long long flags) {
+std::int32_t APS5_VABI curl_global_init_nid_postfix(long long flags) {
     std::lock_guard lock(globalMutex);
     return GlobalInitWithGuestAllocator(HostLong(flags));
 }
@@ -958,7 +967,7 @@ char* APS5_VABI curl_getenv_nid_postfix(const char* variable) {
     return ::curl_getenv(variable);
 }
 
-CURLcode APS5_VABI curl_mime_type_nid_postfix(curl_mimepart* part, const char* mimetype) {
+std::int32_t APS5_VABI curl_mime_type_nid_postfix(curl_mimepart* part, const char* mimetype) {
     return ::curl_mime_type(part, mimetype);
 }
 
@@ -993,19 +1002,19 @@ CURL* APS5_VABI curl_easy_init_nid_postfix() {
     return easy;
 }
 
-CURLcode APS5_VABI curl_mime_data_cb_nid_postfix(curl_mimepart* part, curl_off_t datasize, guest_curl_read_callback readfunc, guest_curl_seek_callback seekfunc, guest_curl_free_callback freefunc, void* arg) {
+std::int32_t APS5_VABI curl_mime_data_cb_nid_postfix(curl_mimepart* part, std::int64_t datasize, guest_curl_read_callback readfunc, guest_curl_seek_callback seekfunc, guest_curl_free_callback freefunc, void* arg) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLMcode APS5_VABI curl_multi_fdset_nid_postfix(CURLM* multi_handle, guest_fd_set* read_fd_set, guest_fd_set* write_fd_set, guest_fd_set* exc_fd_set, int* max_fd) {
+std::int32_t APS5_VABI curl_multi_fdset_nid_postfix(CURLM* multi_handle, guest_fd_set* read_fd_set, guest_fd_set* write_fd_set, guest_fd_set* exc_fd_set, int* max_fd) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLMcode APS5_VABI curl_multi_wakeup_nid_postfix(CURLM* multi_handle) {
+std::int32_t APS5_VABI curl_multi_wakeup_nid_postfix(CURLM* multi_handle) {
     return ::curl_multi_wakeup(multi_handle);
 }
 
-CURLMcode APS5_VABI curl_multi_wait_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
+std::int32_t APS5_VABI curl_multi_wait_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
     if (extra_nfds) NotImplemented_nid_no_patch(__func__);
     return ::curl_multi_wait(multi_handle, nullptr, 0, timeout_ms, ret);
 }
@@ -1021,7 +1030,8 @@ void APS5_VABI curl_global_cleanup_nid_postfix() {
     if (globalInitCount) --globalInitCount;
 }
 
-CURLSHcode APS5_VABI curl_share_setopt_nid_postfix(CURLSH* share_handle, CURLSHoption option, ...) {
+std::int32_t APS5_VABI curl_share_setopt_nid_postfix(CURLSH* share_handle, std::int32_t guestOption, ...) {
+    const auto option = static_cast<CURLSHoption>(guestOption);
     auto context = FindShare(share_handle);
     if (!context) return ::curl_share_setopt(share_handle, option);
 #ifdef _WIN32
@@ -1074,11 +1084,12 @@ struct guest_CURLMsg* APS5_VABI curl_multi_info_read_nid_postfix(CURLM* multi_ha
     return reinterpret_cast<guest_CURLMsg*>(::curl_multi_info_read(multi_handle, msgs_in_queue));
 }
 
-CURLcode APS5_VABI curl_easy_upkeep_nid_postfix(CURL* handle) {
+std::int32_t APS5_VABI curl_easy_upkeep_nid_postfix(CURL* handle) {
     return ::curl_easy_upkeep(handle);
 }
 
-CURLMcode APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, CURLMoption option, ...) {
+std::int32_t APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, std::int32_t guestOption, ...) {
+    const auto option = static_cast<CURLMoption>(guestOption);
     std::shared_ptr<MultiContext> context;
     {
         std::lock_guard lock(contextMutex);
@@ -1105,7 +1116,7 @@ CURLMcode APS5_VABI curl_multi_setopt_nid_postfix(CURLM* multi_handle, CURLMopti
     default:
         return ::curl_multi_setopt(multi_handle, option, nullptr);
     }
-    CURL_ARGS_START(option);
+    CURL_ARGS_START(guestOption);
     CURLMcode result;
     if (option == CURLMOPT_TIMERFUNCTION) {
         auto* value = CURL_ARG(void*);
@@ -1146,11 +1157,11 @@ std::time_t APS5_VABI curl_getdate_nid_postfix(const char* p, const std::time_t*
     return ::curl_getdate(p, unused);
 }
 
-CURLcode APS5_VABI curl_mime_filedata_nid_postfix(curl_mimepart* part, const char* filename) {
+std::int32_t APS5_VABI curl_mime_filedata_nid_postfix(curl_mimepart* part, const char* filename) {
     return ::curl_mime_filedata(part, filename);
 }
 
-CURLMcode APS5_VABI curl_multi_timeout_nid_postfix(CURLM* multi_handle, int64_t* milliseconds) {
+std::int32_t APS5_VABI curl_multi_timeout_nid_postfix(CURLM* multi_handle, int64_t* milliseconds) {
     long host_ms = 0;
     const CURLMcode res = ::curl_multi_timeout(multi_handle, milliseconds ? &host_ms : nullptr);
     if (res == CURLM_OK) {
@@ -1159,7 +1170,7 @@ CURLMcode APS5_VABI curl_multi_timeout_nid_postfix(CURLM* multi_handle, int64_t*
     return res;
 }
 
-CURLMcode APS5_VABI curl_multi_add_handle_nid_postfix(CURLM* multi_handle, CURL* easy_handle) {
+std::int32_t APS5_VABI curl_multi_add_handle_nid_postfix(CURLM* multi_handle, CURL* easy_handle) {
     return ::curl_multi_add_handle(multi_handle, easy_handle);
 }
 
@@ -1167,16 +1178,18 @@ curl_mime* APS5_VABI curl_mime_init_nid_postfix(CURL* easy) {
     return ::curl_mime_init(easy);
 }
 
-const struct guest_curl_easyoption* APS5_VABI curl_easy_option_by_id_nid_postfix(CURLoption id) {
+const struct guest_curl_easyoption* APS5_VABI curl_easy_option_by_id_nid_postfix(std::int32_t guestId) {
+    const auto id = static_cast<CURLoption>(guestId);
     const auto* opt = ::curl_easy_option_by_id(id);
     return reinterpret_cast<const guest_curl_easyoption*>(opt);
 }
 
-CURLcode APS5_VABI curl_mime_subparts_nid_postfix(curl_mimepart* part, curl_mime* subparts) {
+std::int32_t APS5_VABI curl_mime_subparts_nid_postfix(curl_mimepart* part, curl_mime* subparts) {
     return ::curl_mime_subparts(part, subparts);
 }
 
-struct guest_curl_version_info_data* APS5_VABI curl_version_info_nid_postfix(CURLversion age) {
+struct guest_curl_version_info_data* APS5_VABI curl_version_info_nid_postfix(std::int32_t guestAge) {
+    const auto age = static_cast<CURLversion>(guestAge);
     static guest_curl_version_info_data guest_info{};
     const auto* info = ::curl_version_info(age);
     if (!info) return nullptr;
@@ -1208,15 +1221,15 @@ struct guest_curl_version_info_data* APS5_VABI curl_version_info_nid_postfix(CUR
     return &guest_info;
 }
 
-CURLcode APS5_VABI curl_mime_encoder_nid_postfix(curl_mimepart* part, const char* encoding) {
+std::int32_t APS5_VABI curl_mime_encoder_nid_postfix(curl_mimepart* part, const char* encoding) {
     return ::curl_mime_encoder(part, encoding);
 }
 
-CURLcode APS5_VABI curl_global_init_mem_nid_postfix(long long flags, guest_curl_malloc_callback m, guest_curl_free_callback f, guest_curl_realloc_callback r, guest_curl_strdup_callback s, guest_curl_calloc_callback c) {
+std::int32_t APS5_VABI curl_global_init_mem_nid_postfix(long long flags, guest_curl_malloc_callback m, guest_curl_free_callback f, guest_curl_realloc_callback r, guest_curl_strdup_callback s, guest_curl_calloc_callback c) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-CURLcode APS5_VABI curl_mime_headers_nid_postfix(curl_mimepart* part, struct guest_curl_slist* headers, int take_ownership) {
+std::int32_t APS5_VABI curl_mime_headers_nid_postfix(curl_mimepart* part, struct guest_curl_slist* headers, int take_ownership) {
     return ::curl_mime_headers(part, reinterpret_cast<curl_slist*>(headers), take_ownership);
 }
 
@@ -1234,7 +1247,7 @@ CURLM* APS5_VABI curl_multi_init_nid_postfix() {
     return multi;
 }
 
-CURLMcode APS5_VABI curl_multi_cleanup_nid_postfix(CURLM* multi_handle) {
+std::int32_t APS5_VABI curl_multi_cleanup_nid_postfix(CURLM* multi_handle) {
     auto result = ::curl_multi_cleanup(multi_handle);
     if (result == CURLM_OK) {
         std::lock_guard lock(contextMutex);
@@ -1243,11 +1256,11 @@ CURLMcode APS5_VABI curl_multi_cleanup_nid_postfix(CURLM* multi_handle) {
     return result;
 }
 
-CURLcode APS5_VABI curl_easy_pause_nid_postfix(CURL* handle, int bitmask) {
+std::int32_t APS5_VABI curl_easy_pause_nid_postfix(CURL* handle, int bitmask) {
     return ::curl_easy_pause(handle, bitmask);
 }
 
-CURLcode APS5_VABI curl_mime_filename_nid_postfix(curl_mimepart* part, const char* filename) {
+std::int32_t APS5_VABI curl_mime_filename_nid_postfix(curl_mimepart* part, const char* filename) {
     return ::curl_mime_filename(part, filename);
 }
 

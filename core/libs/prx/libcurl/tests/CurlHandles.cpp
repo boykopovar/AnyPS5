@@ -1,4 +1,6 @@
+#include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstdlib>
 
 static void Require(bool condition) {
@@ -20,6 +22,7 @@ static void APS5_VABI Unlock(CURL* easy, curl_lock_data data, void* argument) {
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     Require(curl_global_init_nid_postfix(CURL_GLOBAL_DEFAULT) == CURLE_OK);
     const guest_curl_ssl_backend** backends = nullptr;
     Require(curl_global_sslset_nid_postfix(CURLSSLBACKEND_MBEDTLS, nullptr, &backends) == CURLSSLSET_OK);

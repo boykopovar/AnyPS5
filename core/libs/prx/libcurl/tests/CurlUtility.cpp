@@ -1,4 +1,6 @@
+#include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +13,7 @@ static void Require(bool condition) {
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     const char* ver = curl_version_nid_postfix();
     Require(ver != nullptr);
     Require(std::strncmp(ver, "libcurl/", 8) == 0);

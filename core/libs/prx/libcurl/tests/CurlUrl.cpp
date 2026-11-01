@@ -1,4 +1,6 @@
+#include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <cstdlib>
 #include <cstring>
@@ -10,6 +12,7 @@ static void Require(bool condition) {
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     struct UrlCase {
         const char* input;
         const char* expected;
@@ -41,7 +44,7 @@ int main() {
     CURLU* u = curl_url_nid_postfix();
     Require(u != nullptr);
 
-    const CURLUcode set_rc = curl_url_set_nid_postfix(u, CURLUPART_URL, "https://example.com:8443/test/path?foo=bar#section", 0);
+    const auto set_rc = curl_url_set_nid_postfix(u, CURLUPART_URL, "https://example.com:8443/test/path?foo=bar#section", 0);
     Require(set_rc == CURLUE_OK);
 
     char* scheme = nullptr;

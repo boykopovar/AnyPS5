@@ -1,4 +1,6 @@
+#include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <cstdlib>
 #include <cstring>
 
@@ -9,6 +11,7 @@ static void Require(bool condition) {
 }
 
 int main() {
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
     const auto* opt_url = curl_easy_option_by_name_nid_postfix("URL");
     Require(opt_url != nullptr);
     Require(std::strcmp(opt_url->name, "URL") == 0);
