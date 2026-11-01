@@ -56,6 +56,21 @@ if(BUILD_TESTING)
     endif()
 endif()
 configure_windows_unwind(libSceFreeType)
+target_sources(libSceFreeType PRIVATE src/Arithmetic.cpp)
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test_executable(guest_freetype_arithmetic_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeArithmetic.cpp)
+    target_include_directories(guest_freetype_arithmetic_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_arithmetic_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_arithmetic_tests)
+    add_test(NAME guest_freetype_arithmetic COMMAND ${Python3_EXECUTABLE}
+        ${LIBS_INCLUDE_DIR}/tests/test_guest_freetype_arithmetic.py $<TARGET_FILE:guest_freetype_arithmetic_tests>)
+    set_tests_properties(guest_freetype_arithmetic PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_freetype_arithmetic PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()
 
 target_sources(libSceFreeType PRIVATE src/Sfnt.cpp)
 if(BUILD_TESTING)

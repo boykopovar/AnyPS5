@@ -7,6 +7,13 @@
 
 extern "C" {
 
+std::int64_t APS5_VABI FT_MulDiv_nid_postfix(std::int64_t a, std::int64_t b, std::int64_t c);
+std::int64_t APS5_VABI FT_MulFix_nid_postfix(std::int64_t a, std::int64_t b);
+std::int64_t APS5_VABI FT_DivFix_nid_postfix(std::int64_t a, std::int64_t b);
+std::int64_t APS5_VABI FT_RoundFix_nid_postfix(std::int64_t a);
+std::int64_t APS5_VABI FT_CeilFix_nid_postfix(std::int64_t a);
+std::int64_t APS5_VABI FT_FloorFix_nid_postfix(std::int64_t a);
+
 std::int32_t APS5_VABI FT_Outline_GetInsideBorder_nid_postfix(const FreeType::GuestOutline* outline);
 std::int32_t APS5_VABI FT_Outline_GetOutsideBorder_nid_postfix(const FreeType::GuestOutline* outline);
 
