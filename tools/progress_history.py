@@ -141,7 +141,10 @@ def labelled(day, span):
 
 
 def scale(peak):
-    step = next(s for s in (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000) if peak <= s * 4)
+    magnitude = 1
+    while peak > 20 * magnitude:
+        magnitude *= 10
+    step = next(s * magnitude for s in (1, 2, 5) if peak <= s * magnitude * 4) if magnitude > 1 else 5
     return step, max(step, -(-peak // step) * step)
 
 

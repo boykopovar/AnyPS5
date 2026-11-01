@@ -539,7 +539,9 @@ private:
 
     std::uint64_t clockMillis() const {
         if (!started) return 0;
-        const auto milliseconds = static_cast<std::uint64_t>(presentationClock.Now());
+        const auto now = presentationClock.Now();
+        constexpr auto latest = std::numeric_limits<std::uint64_t>::max();
+        const auto milliseconds = now < static_cast<double>(latest) ? static_cast<std::uint64_t>(now) : latest;
         return duration != 0 ? std::min(milliseconds, duration) : milliseconds;
     }
 

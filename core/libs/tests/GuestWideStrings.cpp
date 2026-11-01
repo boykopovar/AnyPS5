@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <string>
 
 namespace {
@@ -245,28 +246,32 @@ int main() {
     require(token == tokens + 7 && same(token, u"two", 4) && last == tokens + 11);
     token = wcstok_nid_postfix(nullptr, u",", &last);
     require(token == tokens + 11 && same(token, u"three", 6) && last == tokens + 17);
-    require(wcstok_nid_postfix(nullptr, u",", &last) == nullptr && last == nullptr);
-    require(wcstok_nid_postfix(nullptr, u",", &last) == nullptr && last == nullptr);
+    require(wcstok_nid_postfix(nullptr, u",", &last) == nullptr && last != nullptr && *last == 0 && (std::less<>()(last, tokens) || !std::less<>()(last, tokens + 18)));
+    char16_t* const exhausted = last;
+    require(wcstok_nid_postfix(nullptr, u",", &last) == nullptr && last == exhausted);
 
-    char16_t tail[] = u"a b";
+    char16_t tail[8] = u"a b";
     require(wcstok_nid_postfix(tail, u" ", &last) == tail && last == tail + 2);
-    require(wcstok_nid_postfix(nullptr, u" ", &last) == tail + 2 && same(tail, u"a\0b", 4) && last == nullptr);
+    require(wcstok_nid_postfix(nullptr, u" ", &last) == tail + 2 && same(tail, u"a\0b", 4) && last == tail + 3);
+    tail[3] = u'x';
+    tail[4] = 0;
+    require(wcstok_nid_postfix(nullptr, u" ", &last) == tail + 3 && tail[3] == u'x' && last == tail + 4);
 
     char16_t onlyDelimiters[] = u";;";
     last = onlyDelimiters;
-    require(wcstok_nid_postfix(onlyDelimiters, u";", &last) == nullptr && last == nullptr && same(onlyDelimiters, u";;", 3));
+    require(wcstok_nid_postfix(onlyDelimiters, u";", &last) == nullptr && last == exhausted && same(onlyDelimiters, u";;", 3));
 
     char16_t empty[] = u"";
     last = empty;
-    require(wcstok_nid_postfix(empty, u";", &last) == nullptr && last == nullptr);
+    require(wcstok_nid_postfix(empty, u";", &last) == nullptr && last == exhausted);
 
     char16_t whole[] = u"word";
-    require(wcstok_nid_postfix(whole, u"", &last) == whole && last == nullptr && same(whole, u"word", 5));
+    require(wcstok_nid_postfix(whole, u"", &last) == whole && last == whole + 4 && same(whole, u"word", 5));
 
     char16_t wide[] = u"\u4e00\u3001\xd83d\xde00\u3001";
     require(wcstok_nid_postfix(wide, u"\u3001", &last) == wide && same(wide, u"\u4e00\0", 2) && last == wide + 2);
     require(wcstok_nid_postfix(nullptr, u"\u3001", &last) == wide + 2 && wide[2] == 0xd83d && wide[3] == 0xde00 && wide[4] == 0 && last == wide + 5);
-    require(wcstok_nid_postfix(nullptr, u"\u3001", &last) == nullptr && last == nullptr);
+    require(wcstok_nid_postfix(nullptr, u"\u3001", &last) == nullptr && last == exhausted);
 
     const char16_t units[] = {u'x', 0, u'￿', u'y'};
     require(wmemchr_nid_postfix(units, u'￿', 4) == units + 2);
