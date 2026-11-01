@@ -5,11 +5,9 @@
 #include <cstdint>
 #include <cstddef>
 #include <array>
-#include <cstring>
-#include <stdexcept>
+#include <algorithm>
 
 namespace {
-// Firmware command op-codes (libSceHidControl, PS5 3.20 export decompilation, Ghidra).
 constexpr std::uint32_t CMD_c0084888 = 0xc0084888u;
 constexpr std::uint32_t CMD_c010487d = 0xc010487du;
 constexpr std::uint32_t CMD_c0104882 = 0xc0104882u;
@@ -49,34 +47,14 @@ constexpr std::uint32_t CMD_8018487f = 0x8018487fu;
 constexpr std::uint32_t CMD_8020483f = 0x8020483fu;
 constexpr std::uint32_t CMD_8028487e = 0x8028487eu;
 
-// Status codes mirrored from the 3.20 decompilation.
-constexpr std::int32_t kOk = static_cast<std::int32_t>(0x803b3001u);
+constexpr std::int32_t kStatus3001 = static_cast<std::int32_t>(0x803b3001u);
 constexpr std::int32_t kNotReady = static_cast<std::int32_t>(0x803b3002u);
 
-// libSceHidControl internal state (modeled from the 3.20 binary):
-//   DAT_0000c018 == '\x01' -> initialized flag
-//   DAT_0000c014            -> device file descriptor
-//   state shadow (long)       -> re-checked after each command
-int g_deviceFd = -1;
 bool g_initialized = false;
-std::int64_t g_stateValue = 0;
 
-// Internal helpers (modeled from the 3.20 binary; not exported).
-[[noreturn]]
-void hidAbort()
+std::int32_t hidSendCommand(std::uint32_t, const void*, std::size_t)
 {
-    // Non-returning abort path from the decompilation (Ou3iL1abvng_C_D).
-    throw std::runtime_error("sceHidControl: device state changed during command");
-}
-
-std::int32_t hidSendCommand(std::uint32_t code, const void* payload, std::size_t payloadLen)
-{
-    (void)code;
-    (void)payloadLen;
-    if (g_deviceFd < 0 || payload == nullptr || payloadLen == 0) {
-        return kNotReady;
-    }
-    return kOk;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 inline void putU32(std::uint8_t* dst, std::uint32_t v)
@@ -94,118 +72,67 @@ inline void putU64(std::uint8_t* dst, std::int64_t v)
 template <std::size_t N>
 std::int32_t runCmd(std::uint32_t code, std::array<std::uint8_t, N>& cmd)
 {
-    const std::int64_t sBefore = g_stateValue;
-    const std::int32_t r = hidSendCommand(code, cmd.data(), N);
-    if (g_stateValue != sBefore) {
-        hidAbort();
-    }
-    return r;
+    return hidSendCommand(code, cmd.data(), N);
 }
 }
 
 extern "C" {
 
-// --- Unknown NID functions (14) ---
-
 int APS5_VABI libSceHidControlUnknown_00qes5NswlQ_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_c018488a, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_8fIm7UR4VDc_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8010484c, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_AjBZjowWaFI_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_c0184852, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_C05jP9w4PCc_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8010487e, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_DUGI7AXFtV0_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_c0084888, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_HZJRMD3BeKk_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8010483d, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_i5ALHbvjRi8_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_c0104886, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_iVF5VrBHJzk_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8018487f, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_OFyJjudLKlA_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_c018488a, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_tcDE01gUoN0_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8028487e, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_TKax3WNHtEg_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8010487a, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_w2MEBm2Tvm8_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8018487f, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_WikCB91EU0w_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8010487b, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI libSceHidControlUnknown_yJJq5Arw8EI_nid_no_patch() {
-    if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
-    putU32(cmd.data() + 0, 0);
-    return runCmd(CMD_8010487a, cmd);
+    NotImplemented_nid_no_patch(__func__);
 }
-
-// --- Named functions (68) ---
 
 int APS5_VABI sceHidControlConnectHandle(std::uint32_t param_1, std::uint32_t param_2, std::uint32_t param_3) {
     if (!g_initialized) return kNotReady;
@@ -282,7 +209,7 @@ int APS5_VABI sceHidControlGetBatteryState() {
 
 int APS5_VABI sceHidControlGetControllerSerialNumberInformation(std::uint32_t param_1, std::uint8_t* param_2) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == nullptr) return kOk;
+    if (param_2 == nullptr) NotImplemented_nid_no_patch(__func__);
     (void)param_1;
     std::array<std::uint8_t, 4> cmd{};
     putU32(cmd.data() + 0, param_1);
@@ -341,7 +268,7 @@ int APS5_VABI sceHidControlGetPswBatteryState() {
 
 int APS5_VABI sceHidControlGetPswCommand(std::uint32_t param_1, std::int64_t param_2) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == 0) return kOk;
+    if (param_2 == 0) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 12> cmd{};
     putU64(cmd.data() + 0, param_2);
     putU32(cmd.data() + 8, param_1);
@@ -378,7 +305,7 @@ int APS5_VABI sceHidControlGetPswDeviceNameForNearby() {
 }
 
 int APS5_VABI sceHidControlGetPswEqBandValues(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3) {
-    if (!g_initialized) return kOk;
+    if (!g_initialized) return kStatus3001;
     std::array<std::uint8_t, 12> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
@@ -387,7 +314,7 @@ int APS5_VABI sceHidControlGetPswEqBandValues(std::uint32_t param_1, std::int32_
 }
 
 int APS5_VABI sceHidControlGetPswEqPresetName(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3) {
-    if (!g_initialized) return kOk;
+    if (!g_initialized) return kStatus3001;
     std::array<std::uint8_t, 12> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
@@ -397,7 +324,7 @@ int APS5_VABI sceHidControlGetPswEqPresetName(std::uint32_t param_1, std::int32_
 
 int APS5_VABI sceHidControlGetPswEqPresetSelection(std::uint32_t param_1, std::int64_t param_2) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == 0) return kOk;
+    if (param_2 == 0) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 12> cmd{};
     putU64(cmd.data() + 0, param_2);
     putU32(cmd.data() + 8, param_1);
@@ -415,7 +342,7 @@ int APS5_VABI sceHidControlGetPswNearbyDeviceInfo(std::uint32_t param_1, std::in
 
 int APS5_VABI sceHidControlGetPswNetworkLocale(std::uint32_t param_1, std::int64_t param_2) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == 0) return kOk;
+    if (param_2 == 0) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 12> cmd{};
     putU64(cmd.data() + 0, param_2);
     putU32(cmd.data() + 8, param_1);
@@ -425,7 +352,7 @@ int APS5_VABI sceHidControlGetPswNetworkLocale(std::uint32_t param_1, std::int64
 
 int APS5_VABI sceHidControlGetPswSidetoneLevel(std::uint32_t param_1, std::int64_t param_2) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == 0) return kOk;
+    if (param_2 == 0) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 12> cmd{};
     putU64(cmd.data() + 0, param_2);
     putU32(cmd.data() + 8, param_1);
@@ -456,9 +383,7 @@ int APS5_VABI sceHidControlGetVersionInfo(std::uint32_t param_1, std::int64_t pa
 }
 
 int APS5_VABI sceHidControlInit() {
-    g_deviceFd = 0;
-    g_initialized = true;
-    return kOk;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceHidControlIsForceUpdateNeeded(std::uint32_t param_1, std::uint32_t param_2, std::uint8_t* param_3) {
@@ -472,7 +397,7 @@ int APS5_VABI sceHidControlIsForceUpdateNeeded(std::uint32_t param_1, std::uint3
 
 int APS5_VABI sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData(std::uint32_t param_1, std::uint32_t* param_2) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == nullptr) return kOk;
+    if (param_2 == nullptr) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 4> cmd{};
     putU32(cmd.data() + 0, param_1);
     return runCmd(CMD_8028487e, cmd);
@@ -502,7 +427,7 @@ int APS5_VABI sceHidControlPswUpdateInit() {
 
 int APS5_VABI sceHidControlPswUpdateIsReady(std::uint32_t param_1, std::uint32_t* param_2) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == nullptr) return kOk;
+    if (param_2 == nullptr) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 4> cmd{};
     putU32(cmd.data() + 0, param_1);
     return runCmd(CMD_8020483f, cmd);
@@ -510,8 +435,8 @@ int APS5_VABI sceHidControlPswUpdateIsReady(std::uint32_t param_1, std::uint32_t
 
 int APS5_VABI sceHidControlPswUpdateIsUpdateNeeded(std::uint32_t param_1, std::int64_t param_2, std::uint16_t* param_3) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == 0) return kOk;
-    if (param_3 == nullptr) return kOk;
+    if (param_2 == 0) NotImplemented_nid_no_patch(__func__);
+    if (param_3 == nullptr) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 4> cmd{};
     putU32(cmd.data() + 0, param_1);
     return runCmd(CMD_8018486d, cmd);
@@ -623,7 +548,7 @@ int APS5_VABI sceHidControlSetProcessFocus(std::uint32_t param_1, std::int64_t p
 
 int APS5_VABI sceHidControlSetPswCommand(std::uint32_t param_1, std::int64_t param_2) {
     if (!g_initialized) return kNotReady;
-    if (param_2 == 0) return kOk;
+    if (param_2 == 0) NotImplemented_nid_no_patch(__func__);
     std::array<std::uint8_t, 12> cmd{};
     putU64(cmd.data() + 0, param_2);
     putU32(cmd.data() + 8, param_1);
@@ -656,7 +581,7 @@ int APS5_VABI sceHidControlSetPswDeviceName(std::uint32_t param_1, std::int64_t 
 }
 
 int APS5_VABI sceHidControlSetPswEqBandValues(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3) {
-    if (!g_initialized) return kOk;
+    if (!g_initialized) return kStatus3001;
     std::array<std::uint8_t, 12> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
@@ -665,7 +590,7 @@ int APS5_VABI sceHidControlSetPswEqBandValues(std::uint32_t param_1, std::int32_
 }
 
 int APS5_VABI sceHidControlSetPswEqPresetName(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3) {
-    if (!g_initialized) return kOk;
+    if (!g_initialized) return kStatus3001;
     std::array<std::uint8_t, 12> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
