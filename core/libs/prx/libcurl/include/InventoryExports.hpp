@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstddef>
 
 extern "C" {
 
@@ -22,7 +23,7 @@ int APS5_VABI curl_version();
 int APS5_VABI curl_free();
 int APS5_VABI curl_mvsnprintf();
 int APS5_VABI curl_multi_socket_all();
-int APS5_VABI curl_strequal();
+int APS5_VABI curl_strequal(const char* first, const char* second);
 int APS5_VABI curl_url_get();
 int APS5_VABI curl_multi_strerror();
 int APS5_VABI curl_easy_setopt();
@@ -43,7 +44,7 @@ int APS5_VABI curl_easy_send();
 int APS5_VABI curl_easy_reset();
 int APS5_VABI curl_easy_strerror();
 int APS5_VABI curl_easy_init();
-int APS5_VABI curl_strnequal();
+int APS5_VABI curl_strnequal(const char* first, const char* second, size_t max);
 int APS5_VABI curl_mime_data_cb();
 int APS5_VABI curl_mvaprintf();
 int APS5_VABI curl_url();

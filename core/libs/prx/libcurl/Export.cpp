@@ -1,6 +1,11 @@
 #include "prx/libcurl/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include <cstddef>
+
+static char RawUpper(char value) {
+    return value >= 'a' && value <= 'z' ? static_cast<char>('A' + value - 'a') : value;
+}
 
 extern "C" {
 
@@ -76,8 +81,13 @@ int APS5_VABI curl_multi_socket_all() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI curl_strequal() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI curl_strequal(const char* first, const char* second) {
+    if (!first || !second) NotImplemented_nid_no_patch(__func__);
+    while (*first && *second && RawUpper(*first) == RawUpper(*second)) {
+        ++first;
+        ++second;
+    }
+    return RawUpper(*first) == RawUpper(*second);
 }
 
 int APS5_VABI curl_url_get() {
@@ -160,8 +170,15 @@ int APS5_VABI curl_easy_init() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI curl_strnequal() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI curl_strnequal(const char* first, const char* second, size_t max) {
+    if (!first || !second) NotImplemented_nid_no_patch(__func__);
+    while (*first && *second && max && RawUpper(*first) == RawUpper(*second)) {
+        --max;
+        ++first;
+        ++second;
+    }
+    if (max == 0) return 1;
+    return RawUpper(*first) == RawUpper(*second);
 }
 
 int APS5_VABI curl_mime_data_cb() {
