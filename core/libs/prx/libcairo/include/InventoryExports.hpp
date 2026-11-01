@@ -2,6 +2,15 @@
 
 #include "SceTypes.hpp"
 
+struct CairoRegion;
+
+struct CairoRectangleInt {
+    int x;
+    int y;
+    int width;
+    int height;
+};
+
 extern "C" {
 
 int APS5_VABI cairo_scaled_font_get_font_face();
@@ -59,7 +68,7 @@ int APS5_VABI cairo_mesh_pattern_curve_to();
 int APS5_VABI cairo_scaled_font_get_font_matrix();
 int APS5_VABI cairo_mesh_pattern_line_to();
 int APS5_VABI cairo_get_line_cap();
-int APS5_VABI cairo_region_get_rectangle();
+void APS5_VABI cairo_region_get_rectangle(const CairoRegion* region, int nth, CairoRectangleInt* rectangle);
 int APS5_VABI cairo_font_options_set_hint_style();
 int APS5_VABI cairo_set_miter_limit();
 int APS5_VABI cairo_translate();
@@ -74,7 +83,7 @@ int APS5_VABI cairo_clip_extents();
 int APS5_VABI cairo_set_scaled_font();
 int APS5_VABI cairo_matrix_transform_point();
 int APS5_VABI cairo_image_surface_get_format();
-int APS5_VABI cairo_region_create();
+CairoRegion* APS5_VABI cairo_region_create();
 int APS5_VABI cairo_fill();
 int APS5_VABI cairo_matrix_transform_distance();
 int APS5_VABI cairo_transform();
@@ -103,8 +112,8 @@ int APS5_VABI cairo_mesh_pattern_end_patch();
 int APS5_VABI cairo_get_target();
 int APS5_VABI cairo_surface_mark_dirty_rectangle();
 int APS5_VABI cairo_append_path();
-int APS5_VABI cairo_region_union_rectangle();
-int APS5_VABI cairo_region_reference();
+int APS5_VABI cairo_region_union_rectangle(CairoRegion* region, const CairoRectangleInt* rectangle);
+CairoRegion* APS5_VABI cairo_region_reference(CairoRegion* region);
 int APS5_VABI cairo_matrix_init_identity();
 int APS5_VABI cairo_scaled_font_status();
 int APS5_VABI cairo_in_fill();
@@ -157,13 +166,13 @@ int APS5_VABI cairo_scaled_font_create();
 int APS5_VABI cairo_pattern_create_radial();
 int APS5_VABI cairo_surface_get_content();
 int APS5_VABI cairo_set_source_surface();
-int APS5_VABI cairo_region_destroy();
+void APS5_VABI cairo_region_destroy(CairoRegion* region);
 int APS5_VABI cairo_image_surface_get_data();
 int APS5_VABI cairo_surface_create_for_rectangle();
 int APS5_VABI cairo_device_destroy();
 int APS5_VABI cairo_image_surface_create_for_data();
 int APS5_VABI cairo_pattern_add_color_stop_rgba();
-int APS5_VABI cairo_region_num_rectangles();
+int APS5_VABI cairo_region_num_rectangles(const CairoRegion* region);
 int APS5_VABI cairo_set_line_width();
 
 }

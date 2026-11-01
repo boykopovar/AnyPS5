@@ -1,0 +1,15 @@
+add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Region.cpp)
+target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
+
+if(BUILD_TESTING)
+    add_test_executable(guest_cairo_regions_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoRegions.cpp)
+    target_include_directories(guest_cairo_regions_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_regions_tests PRIVATE libcairo libc)
+    configure_windows_unwind(guest_cairo_regions_tests)
+    add_test(NAME guest_cairo_regions COMMAND guest_cairo_regions_tests)
+    set_tests_properties(guest_cairo_regions PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_regions PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
+    endif()
+endif()
