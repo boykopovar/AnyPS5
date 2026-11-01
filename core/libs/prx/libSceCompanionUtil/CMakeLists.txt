@@ -1,0 +1,16 @@
+add_library(libSceCompanionUtil SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceCompanionUtil PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceCompanionUtil)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_companion_util_tests tests/GetEventAnswer.cpp)
+    target_include_directories(guest_companion_util_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_companion_util_tests PRIVATE libSceCompanionUtil libc)
+    configure_windows_unwind(guest_companion_util_tests)
+    add_test(NAME guest_companion_util COMMAND guest_companion_util_tests)
+    set_tests_properties(guest_companion_util PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_companion_util PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCompanionUtil>")
+    endif()
+endif()
