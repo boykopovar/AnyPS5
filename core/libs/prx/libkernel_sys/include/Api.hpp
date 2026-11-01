@@ -227,7 +227,7 @@ int APS5_VABI sceKernelEventLogPread(void);
 int APS5_VABI sceKernelEventLogRead(void);
 int APS5_VABI sceKernelEventLogWrite(void);
 int APS5_VABI sceKernelExpectedHddFormat(void);
-int APS5_VABI sceKernelFlock(void);
+int APS5_VABI sceKernelFlock(int d, int operation);
 int APS5_VABI sceKernelGetACInfoAllForCoredump(void);
 int APS5_VABI sceKernelGetAppCategoryType(void);
 int APS5_VABI sceKernelGetAppInfoByAppId(void);
