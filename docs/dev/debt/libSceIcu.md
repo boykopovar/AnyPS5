@@ -1,5 +1,86 @@
 # libSceIcu technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
+
+- [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `u_tolower` | `I7A4lT+s9h8` |
+| `u_totitle` | `f4x1+G7t6eY` |
+| `u_toupper` | `rpv+luk5Ye0` |
+| `ublock_getCode` | `Oi8niAD8r1M` |
+| `ubrk_close` | `-Hc6XkAq-eU` |
+| `ubrk_countAvailable` | `bZT8JIrrg3I` |
+| `ubrk_current` | `fsgqunLD2b8` |
+| `ubrk_first` | `cL3dlqTcRqk` |
+| `ubrk_following` | `dC+0Pz5afr0` |
+| `ubrk_getAvailable` | `+Nd4bYkEgRc` |
+| `ubrk_getRuleStatus` | `av8J5NBkbRE` |
+| `ubrk_isBoundary` | `ypOz3lP3VhE` |
+| `ubrk_last` | `n6SEUE4Txvg` |
+| `ubrk_next` | `4Uj1DZGlHTw` |
+| `ubrk_open` | `NfGO57hqUEw` |
+| `ubrk_preceding` | `9hkT1aMC0Rs` |
+| `ubrk_previous` | `tGeOQLpMGgA` |
+| `ubrk_setText` | `NtjY-lZG4ss` |
+| `ubrk_setUText` | `qQMUbG5L6oE` |
+| `ucnv_cbFromUWriteBytes` | `qjWeIkH81-Y` |
+| `ucnv_close` | `JTIHqYZFMQE` |
+| `ucnv_convertEx` | `lPKKDtEmEgM` |
+| `ucnv_fromUnicode` | `6ZIjQAWKeRs` |
+| `ucnv_getCanonicalName` | `0GnpUt-BVlE` |
+| `ucnv_getName` | `7pCOClUrUmM` |
+| `ucnv_open` | `AKenFQbXGE0` |
+| `ucnv_reset` | `5O8bmW45o0U` |
+| `ucnv_setFallback` | `iEe61PaW1pg` |
+| `ucnv_setFromUCallBack` | `E0yB1UHl4VI` |
+| `ucnv_setSubstChars` | `Ku0Rs703XaI` |
+| `ucnv_setToUCallBack` | `UIU5m-5O68c` |
+| `ucnv_toUChars` | `LvSzmTZ0Mss` |
+| `ucnv_toUnicode` | `O1eMKYxVlTs` |
+| `ucurr_getName` | `T7jc4xaLMKo` |
+| `ucurr_openISOCurrencies` | `BFt6nFM3lbc` |
+| `udata_setCommonData` | `wHZwCpZVcGI` |
+| `udata_setFileAccess` | `mCyTdtewGpk` |
+| `uloc_addLikelySubtags` | `HQ6DCQrAXD4` |
+| `uloc_canonicalize` | `G-Jl6md9fz4` |
+| `uloc_countAvailable` | `J5lZTL2H6Aw` |
+| `uloc_forLanguageTag` | `a+8yAm1ZfCE` |
+| `uloc_getAvailable` | `JnzWSfYU-xg` |
+| `uloc_getBaseName` | `CZ0z95gBgXg` |
+| `uloc_getCharacterOrientation` | `pMLs993oHk0` |
+| `uloc_getCountry` | `SIZrguvplN4` |
+| `uloc_getDefault` | `m1nD9D9LmP0` |
+| `uloc_getKeywordValue` | `QYSES3tXUHM` |
+| `uloc_getLanguage` | `dxyWDe5AwgY` |
+| `uloc_getScript` | `9lLmMrDj590` |
+| `uloc_minimizeSubtags` | `yb9tILRzD1k` |
+| `uloc_setKeywordValue` | `sw98L1MbqpM` |
+| `uloc_toLanguageTag` | `zmMWRKwedmw` |
+| `uloc_toUnicodeLocaleType` | `tRTGVdmiGzQ` |
+| `unorm2_composePair` | `e+Udsq-3S+I` |
+| `unorm2_getNFCInstance` | `ikNH4c6kdMw` |
+| `unorm2_getNFDInstance` | `Drupl3SzOhM` |
+| `unorm2_getNFKCInstance` | `u7NoGsVfzcU` |
+| `unorm2_getNFKDInstance` | `nyO3x1IgiSI` |
+| `unorm2_getRawDecomposition` | `B8jGs8D+GHY` |
+| `unorm2_isNormalized` | `7ETpt3V2fEU` |
+| `unorm2_normalize` | `eMM8e4yA3AU` |
+| `ures_close` | `--GQ9Ov+0mM` |
+| `ures_getByKey` | `8WDJjbxNvCg` |
+| `ures_getStringByKey` | `apt8-c9wFxQ` |
+| `ures_open` | `bpD6xUk4QVI` |
+| `uscript_getScript` | `fiX2RRLQhak` |
+| `uscript_getShortName` | `4cTIrOZw1-0` |
+| `uscript_hasScript` | `PWK6yVIGNuY` |
+| `utext_close` | `2NaZ-stsAv0` |
+| `utext_openConstUnicodeString` | `yc1XEzBopCw` |
+| `utext_openUChars` | `o9+yMOok2Zs` |
+| `utext_setup` | `sEKpfqARKPI` |
+
 ### Unknown function info
 
 - [ICU export availability](../../../core/libs/prx/libSceIcu/Unescape.cpp) across firmware versions remains unproven. The [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIcu.c) includes the implemented escape, invariant-character and version helpers. [BunnyFl’s firmware 13.42 report](https://github.com/boykopovar/AnyPS5/pull/10961#issuecomment-6400071863) records `u_getVersion` returning `78.1.0.0` under an emulator, but neither escape function is in the checked native `system_ex/common_ex/lib/libSceIcu.sprx` export table. Only 104 of the 661 inventory NIDs appear among that module’s 299 exports. The exports for compatibility with older firmware are retained; availability and routing across firmware versions remain unproven.
