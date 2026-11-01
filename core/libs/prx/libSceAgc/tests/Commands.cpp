@@ -322,7 +322,10 @@ void testWorkloads() {
     const auto* complete = sceAgcDcbSetWorkloadComplete(&dcb.buffer, 1, 33);
     check(complete == dcb.words.data() + 18 && complete[0] == Agc::Command::Header(0x10, 12, 0) && complete[1] == 1 && complete[2] == 33 && complete[3] == 0xffffffffu && complete[4] == 0xfffffffdu, "workload complete packet");
     for (std::uint32_t word = 5; word < 12; ++word) check(complete[word] == 0, "workload complete packet tail is not zero");
-    check(dcb.buffer.cursor_up == dcb.words.data() + 30, "incorrect workload cursor advance");
+    const auto* inactive = sceAgcDcbSetWorkloadStreamInactive(&dcb.buffer, 1);
+    check(inactive == dcb.words.data() + 30 && inactive[0] == Agc::Command::Header(0x10, 9, 0) && inactive[1] == 1, "workload stream inactive packet");
+    for (std::uint32_t word = 2; word < 9; ++word) check(inactive[word] == 0, "workload stream inactive packet tail is not zero");
+    check(dcb.buffer.cursor_up == dcb.words.data() + 39, "incorrect workload cursor advance");
     const std::uint32_t duplicate[2] = {5, 5};
     const std::uint32_t outOfRange[1] = {64};
     const std::uint32_t top[1] = {63};
