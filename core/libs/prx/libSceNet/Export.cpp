@@ -149,7 +149,18 @@ constexpr int NET_SOL_SOCKET = 0xFFFF;
 constexpr int NET_IPPROTO_TCP = 6;
 constexpr int NET_IPPROTO_IPV6 = 41;
 constexpr int NET_TCP_NODELAY = 1;
+constexpr int NET_TCP_MAXSEG = 2;
+constexpr int NET_TCP_KEEPIDLE = 0x100;
+constexpr int NET_TCP_KEEPINTVL = 0x200;
+constexpr int NET_TCP_KEEPCNT = 0x400;
 constexpr int NET_TF_NODELAY = 4;
+constexpr int NET_TCP_MINIMUM_SEGMENT = 216;
+constexpr int NET_TCP_DEFAULT_MAXSEG = 536;
+constexpr int NET_TCP_DEFAULT_MAXSEG6 = 1220;
+constexpr std::uint32_t NET_TCP_TICKS_PER_SECOND = 1000;
+constexpr std::uint32_t NET_TCP_DEFAULT_KEEPIDLE = 7200;
+constexpr std::uint32_t NET_TCP_DEFAULT_KEEPINTVL = 75;
+constexpr std::uint32_t NET_TCP_DEFAULT_KEEPCNT = 8;
 constexpr int NET_SO_SNDTIMEO = 0x1005;
 constexpr int NET_SO_RCVTIMEO = 0x1006;
 constexpr int NET_SO_ERROR = 0x1007;
@@ -290,6 +301,10 @@ struct Sock {
     int rcv_buffer = 0;
     int onesbcast = 0;
     int keepalive = 0;
+    int tcpMaximumSegment = NET_TCP_DEFAULT_MAXSEG;
+    std::uint32_t tcpKeepIdle = 0;
+    std::uint32_t tcpKeepInterval = 0;
+    std::uint32_t tcpKeepCount = 0;
     std::string name;
 };
 
@@ -976,6 +991,7 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
     s.protocol = protocol;
     if (protocol == 0 && type == NET_SOCK_STREAM) s.protocol = IPPROTO_TCP;
     if (protocol == 0 && type == NET_SOCK_DGRAM) s.protocol = IPPROTO_UDP;
+    s.tcpMaximumSegment = family == NET_AF_INET6 ? NET_TCP_DEFAULT_MAXSEG6 : NET_TCP_DEFAULT_MAXSEG;
     s.native = std::move(handle);
     if (name != nullptr) s.name = std::string(name).substr(0, 31);
     g_socks[fd] = s;
@@ -1101,6 +1117,10 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     connection.type = NET_SOCK_STREAM;
     connection.protocol = listener.protocol;
     connection.connectAttempted = true;
+    connection.tcpMaximumSegment = listener.family == NET_AF_INET6 ? NET_TCP_DEFAULT_MAXSEG6 : NET_TCP_DEFAULT_MAXSEG;
+    connection.tcpKeepIdle = listener.tcpKeepIdle;
+    connection.tcpKeepInterval = listener.tcpKeepInterval;
+    connection.tcpKeepCount = listener.tcpKeepCount;
     connection.native = std::move(handle);
 #ifdef _WIN32
     connection.native->receiveTimeout = listener.native->receiveTimeout.load();
@@ -1110,6 +1130,12 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     if (descriptor < 0) return fail(-descriptor);
     {
         std::lock_guard lk(g_mutex);
+        const auto current = g_socks.find(s);
+        if (current != g_socks.end() && current->second.native == listener.native) {
+            connection.tcpKeepIdle = current->second.tcpKeepIdle;
+            connection.tcpKeepInterval = current->second.tcpKeepInterval;
+            connection.tcpKeepCount = current->second.tcpKeepCount;
+        }
         g_socks.emplace(descriptor, connection);
     }
     if (listener.native->nonblock) {
@@ -1509,6 +1535,35 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
             return fail(native_error());
         return 0;
     }
+    if (level == NET_IPPROTO_TCP &&
+        (optname == NET_TCP_MAXSEG || optname == NET_TCP_KEEPIDLE || optname == NET_TCP_KEEPINTVL || optname == NET_TCP_KEEPCNT)) {
+        if (!optval || optlen < sizeof(std::int32_t)) return fail(NET_EINVAL);
+        std::int32_t value = 0;
+        std::memcpy(&value, optval, sizeof(value));
+        const auto unsignedValue = static_cast<std::uint32_t>(value);
+        bool connected = false;
+        if (optname == NET_TCP_MAXSEG && !socket.listening) {
+            sockaddr_storage peer{};
+            NativeLength length = sizeof(peer);
+            connected = ::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &length) == 0;
+        }
+        std::lock_guard lk(g_mutex);
+        const auto it = g_socks.find(s);
+        if (it == g_socks.end() || it->second.native != socket.native) return fail(NET_EBADF);
+        if (optname == NET_TCP_MAXSEG) {
+            if (!connected || it->second.listening || value <= 0 || value > it->second.tcpMaximumSegment || value + 40 < NET_TCP_MINIMUM_SEGMENT)
+                return fail(NET_EINVAL);
+            it->second.tcpMaximumSegment = std::max(value, NET_TCP_MINIMUM_SEGMENT);
+            return 0;
+        }
+        if (optname == NET_TCP_KEEPCNT) {
+            it->second.tcpKeepCount = unsignedValue;
+            return 0;
+        }
+        if (unsignedValue > UINT32_MAX / NET_TCP_TICKS_PER_SECOND) return fail(NET_EINVAL);
+        (optname == NET_TCP_KEEPIDLE ? it->second.tcpKeepIdle : it->second.tcpKeepInterval) = unsignedValue;
+        return 0;
+    }
     if (level == NET_IPPROTO_TCP) return fail(NET_ENOPROTOOPT);
     if (level != NET_SOL_SOCKET) return fail(NET_EOPNOTSUPP);
     if (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO) {
@@ -1647,8 +1702,19 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         std::memcpy(optval, &value, *optlen);
         return 0;
     }
+    if (level == NET_IPPROTO_TCP &&
+        (optname == NET_TCP_MAXSEG || optname == NET_TCP_KEEPIDLE || optname == NET_TCP_KEEPINTVL || optname == NET_TCP_KEEPCNT)) {
+        const std::uint32_t value = optname == NET_TCP_MAXSEG ? static_cast<std::uint32_t>(socket.tcpMaximumSegment)
+            : optname == NET_TCP_KEEPIDLE ? (socket.tcpKeepIdle != 0 ? socket.tcpKeepIdle : NET_TCP_DEFAULT_KEEPIDLE)
+            : optname == NET_TCP_KEEPINTVL ? (socket.tcpKeepInterval != 0 ? socket.tcpKeepInterval : NET_TCP_DEFAULT_KEEPINTVL)
+            : (socket.tcpKeepCount != 0 ? socket.tcpKeepCount : NET_TCP_DEFAULT_KEEPCNT);
+        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
+        std::memcpy(optval, &value, *optlen);
+        return 0;
+    }
     if (*optlen < sizeof(int) &&
         !(level == NET_SOL_SOCKET && (optname == NET_SO_REUSEADDR || optname == NET_SO_BROADCAST))) return fail(NET_EINVAL);
+
     if (level == NET_IPPROTO_TCP) return fail(NET_ENOPROTOOPT);
     if (level != NET_SOL_SOCKET) return fail(NET_EOPNOTSUPP);
     int value = 0;
