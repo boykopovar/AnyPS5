@@ -712,6 +712,50 @@ void testMemory() {
     const auto beforeMask = storage.words;
     expectFailure([&] { sceAgcWaitRegMemPatchMask(packet + 4, 1); });
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
+
+    Storage acquireStorage;
+    auto* acquire = sceAgcDcbAcquireMem(&acquireStorage.buffer, 0, 0x1234u, 0x567u, nullptr, 0x1000, 0);
+    check(acquire[0] == Agc::Command::Header(0x58u, 8), "acquire mem header mismatch");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was set");
+    check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(sceAgcAcquireMemSetEngine(acquire, 1) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x80001234u, "acquire mem engine bit was not set to 1");
+    check(sceAgcAcquireMemSetEngine(acquire, 2) == 0, "sceAgcAcquireMemSetEngine failed with engine 2");
+    check(acquire[1] == 0x1234u, "engine 2 did not clear the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 3) == 0, "sceAgcAcquireMemSetEngine failed with engine 3");
+    check(acquire[1] == 0x80001234u, "engine 3 did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 4) == 0, "sceAgcAcquireMemSetEngine failed with engine 4");
+    check(acquire[1] == 0x1234u, "engine 4 did not clear the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, static_cast<std::uint8_t>(0xffffffffu)) == 0, "sceAgcAcquireMemSetEngine failed with 0xffffffff");
+    check(acquire[1] == 0x80001234u, "0xffffffff did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    check(sceAgcAcquireMemSetEngine(acquire, 0xffu) == 0, "sceAgcAcquireMemSetEngine failed with 0xff");
+    check(acquire[1] == 0x80001234u, "0xff did not set the engine bit");
+    check(sceAgcAcquireMemSetEngine(acquire, 0) == 0, "sceAgcAcquireMemSetEngine failed");
+    check(acquire[1] == 0x1234u, "acquire mem engine bit was not cleared to 0");
+    const auto beforeAcquire = acquireStorage.words;
+    expectFailure([&] { sceAgcAcquireMemSetEngine(nullptr, 0); });
+    auto* misalignedAcquire = reinterpret_cast<std::uint32_t*>(reinterpret_cast<unsigned char*>(acquire) + 1);
+    expectFailure([&] { sceAgcAcquireMemSetEngine(misalignedAcquire, 0); });
+    check(acquireStorage.words == beforeAcquire, "invalid acquire engine patch modified packet memory");
+    std::uint32_t wrongAcquire[8] = {0xc0065000u, 0x12345678u};
+    check(sceAgcAcquireMemSetEngine(wrongAcquire, 0) == static_cast<int>(0x8a6c000c), "non-ACQUIRE_MEM packet did not return 0x8a6c000c");
+    check(wrongAcquire[0] == 0xc0065000u && wrongAcquire[1] == 0x12345678u, "non-ACQUIRE_MEM packet was modified");
+    check(sceAgcAcquireMemSetEngine(wrongAcquire, 1) == static_cast<int>(0x8a6c000c), "non-ACQUIRE_MEM packet did not return 0x8a6c000c with engine 1");
+    check(wrongAcquire[0] == 0xc0065000u && wrongAcquire[1] == 0x12345678u, "non-ACQUIRE_MEM packet was modified with engine 1");
+
+    std::uint32_t customLengthAcquire[4] = {Agc::Command::Header(0x58u, 4), 0x4321u, 0, 0};
+    check(sceAgcAcquireMemSetEngine(customLengthAcquire, 1) == 0, "custom length acquire mem failed");
+    check(customLengthAcquire[1] == 0x80004321u, "custom length acquire mem engine bit was not set");
+
+    auto* acbAcquire = sceAgcAcbAcquireMem(&acquireStorage.buffer, 0x567u, nullptr, 0x1000, 0);
+    check(acbAcquire[1] == 0x80000000u, "ACB acquire mem engine bit was not default 1");
+    check(sceAgcAcquireMemSetEngine(acbAcquire, 0) == 0, "sceAgcAcquireMemSetEngine failed on ACB acquire");
+    check(acbAcquire[1] == 0u, "ACB acquire mem engine bit was not cleared to 0");
 }
 
 void testEndOfPipePatches() {
