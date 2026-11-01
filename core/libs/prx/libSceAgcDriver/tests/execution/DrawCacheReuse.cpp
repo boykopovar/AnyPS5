@@ -28,6 +28,10 @@ alignas(256) constexpr std::array<std::uint32_t, 16> TriangleVertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
     0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 16> OffsetTriangleVertexCode{
+    0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
+    0x7e0c0c08u, 0x06020306u, 0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u,
+};
 alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{0x7e000200u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> ConstantPixelCode{0xf4000080u, 0xfa000000u, 0xbf8cc07fu, 0x7e000202u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
@@ -42,6 +46,9 @@ alignas(8) Header VertexHeader{};
 alignas(8) Header PixelHeader{};
 alignas(8) Header TriangleVertexHeader{};
 alignas(8) Header ConstantPixelHeader{};
+alignas(8) Header OffsetTriangleVertexHeader{};
+alignas(256) std::array<std::uint32_t, 4> IndirectRecord{3, 1, 0, 0};
+alignas(256) std::array<std::uint32_t, 8> OffsetRecords{3, 1, 4, 0, 3, 1, 0, 0};
 
 const Shader* Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
@@ -231,6 +238,72 @@ void RetainedPixelCacheTransitions() {
     Require(after.verifyDecodeMismatches == before.verifyDecodeMismatches && after.facadeMismatches == before.facadeMismatches, "cached pixel transitions disagreed with fresh decoding");
 }
 
+void CpuPathIndirectDrawsAreCachedWhenAsked(bool libraries) {
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    const bool cached = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
+    auto commands = Draws(8.0f, VertexCode.data(), 1, PixelCode.data(), 1, {});
+    Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+    Append(commands, 0x79, {0x24a, 0});
+    const auto records = reinterpret_cast<std::uintptr_t>(IndirectRecord.data());
+    Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+    for (unsigned i = 0; i < 3; ++i) Append(commands, 0x24, {0, 0x8c, 0, 2});
+    const auto notFolded = static_cast<std::size_t>(AgcDriver::Graphics::IndirectDrawPath::NotFolded);
+    const auto pathsBefore = AgcDriver::Graphics::IndirectDrawCounts();
+    const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    const auto after = Submit(commands);
+    const auto pathsAfter = AgcDriver::Graphics::IndirectDrawCounts();
+    if (std::getenv("APS5_PROFILE_DRAW") != nullptr) Require(pathsAfter[notFolded] - pathsBefore[notFolded] == 3, mode + ": " + std::to_string(pathsAfter[notFolded] - pathsBefore[notFolded]) + " of three indirect draws whose packet patches a user word the vertex program reads as a value took the CPU path for an unfolded SGPR, expected 3");
+    Require(after.lookups - before.lookups == 3, mode + ": three CPU-path indirect draws made " + std::to_string(after.lookups - before.lookups) + " draw-cache lookups, expected 3");
+    if (cached) {
+        Require(after.inserts - before.inserts == 1 && after.absent - before.absent == 2, mode + ": with APS5_DRAW_CACHE_INDIRECT, three CPU-path indirect draws inserted " + std::to_string(after.inserts - before.inserts) + " draw entries with " + std::to_string(after.absent - before.absent) + " lookups absent, expected 1 and 2");
+        Require(after.hits - before.hits == 1, mode + ": with APS5_DRAW_CACHE_INDIRECT, the third CPU-path indirect draw did not reuse the cached draw (" + std::to_string(after.hits - before.hits) + " hits)");
+    } else {
+        Require(after.inserts == before.inserts && after.hits == before.hits && after.absent - before.absent == 3, mode + ": without APS5_DRAW_CACHE_INDIRECT, CPU-path indirect draws inserted " + std::to_string(after.inserts - before.inserts) + " draw entries and hit " + std::to_string(after.hits - before.hits) + " times, expected none");
+    }
+}
+
+void RecordsKeepThePacketsFragmentWord(bool libraries) {
+    const auto mode = std::string(libraries ? "with" : "without") + " graphics pipeline libraries";
+    const bool cached = std::getenv("APS5_DRAW_CACHE_INDIRECT") != nullptr;
+    Registered(OffsetTriangleVertexHeader, OffsetTriangleVertexCode.data(), sizeof(OffsetTriangleVertexCode), 2);
+    const auto submitRecords = [&](float fragmentWord) {
+        ColorMemory.fill(std::byte{0});
+        auto commands = Draws(32.0f, OffsetTriangleVertexCode.data(), 1, PixelCode.data(), 1, {});
+        Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(fragmentWord)});
+        Append(commands, 0x79, {0x24a, 0});
+        const auto records = reinterpret_cast<std::uintptr_t>(OffsetRecords.data());
+        Append(commands, 0x11, {1, static_cast<std::uint32_t>(records), static_cast<std::uint32_t>(records >> 32u)});
+        Append(commands, 0x2c, {0, 0x8c, 0, 0, 2, 0, 0, 16, 2});
+        return Submit(commands);
+    };
+    const auto wrote = [&](unsigned expected, const std::string& what) {
+        const auto brightest = BrightestColorByte();
+        Require(brightest == expected, mode + ": " + what + " wrote " + std::to_string(brightest) + ", expected " + std::to_string(expected));
+    };
+    const auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    submitRecords(0.75f);
+    wrote(191, "two records of a CPU-path indirect draw, the first moving the triangle off screen through the vertex word the packet names, with the fragment stage reading its own word 0 of 0.75 as its color,");
+    submitRecords(0.75f);
+    const auto seen = submitRecords(0.75f);
+    wrote(191, "the same two records on a cached draw");
+    const auto changed = submitRecords(0.25f);
+    wrote(64, "the same two records with the fragment stage's word changed to 0.25");
+    submitRecords(0.25f);
+    const auto second = submitRecords(0.25f);
+    wrote(64, "the same two records on the cached draw with the fragment word 0.25");
+    const auto after = submitRecords(0.75f);
+    wrote(191, "the same two records back on the cached draw with the fragment word 0.75");
+    Require(after.lookups - before.lookups == 7, mode + ": seven CPU-path indirect draws made " + std::to_string(after.lookups - before.lookups) + " draw-cache lookups, expected 7");
+    if (cached) {
+        Require(seen.inserts - before.inserts == 1 && seen.hits - before.hits == 1, mode + ": with APS5_DRAW_CACHE_INDIRECT, three CPU-path indirect draws inserted " + std::to_string(seen.inserts - before.inserts) + " entries and hit " + std::to_string(seen.hits - before.hits) + " times, expected 1 and 1");
+        Require(changed.hits == seen.hits, mode + ": a CPU-path indirect draw whose fragment word changed reused the cached draw (" + std::to_string(changed.hits - seen.hits) + " hits)");
+        Require(second.inserts - seen.inserts == 1 && second.hits - changed.hits == 1, mode + ": with APS5_DRAW_CACHE_INDIRECT, the draws with the fragment word 0.25 inserted " + std::to_string(second.inserts - seen.inserts) + " entries and hit " + std::to_string(second.hits - changed.hits) + " times, expected 1 and 1");
+        Require(after.hits - second.hits == 1 && after.inserts == second.inserts, mode + ": with APS5_DRAW_CACHE_INDIRECT, the draw back with the fragment word 0.75 hit " + std::to_string(after.hits - second.hits) + " times and inserted " + std::to_string(after.inserts - second.inserts) + " entries, expected 1 and 0");
+    } else {
+        Require(after.inserts == before.inserts && after.hits == before.hits, mode + ": without APS5_DRAW_CACHE_INDIRECT, CPU-path indirect draws inserted " + std::to_string(after.inserts - before.inserts) + " draw entries and hit " + std::to_string(after.hits - before.hits) + " times, expected none");
+    }
+}
+
 void SightingsKeepCollidingKeys() {
     DrawKeySightings sightings(DrawKeySightings::Ways);
     Require(!sightings.SeenBefore(0) && sightings.SeenBefore(0), "draw key 0 was not admitted at its second sight");
@@ -260,6 +333,8 @@ int main() {
             UserDataDrawsReuseTheirShape(libraries);
             StageDataHitsRefreshTheirWords(libraries);
             RetainedPixelCacheTransitions();
+            CpuPathIndirectDrawsAreCachedWhenAsked(libraries);
+            RecordsKeepThePacketsFragmentWord(libraries);
         }
         AgcDriverShutdown_nid_postfix();
         Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 0, "the driver's shutdown left the pipeline library worker running");

@@ -13,6 +13,7 @@
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <cerrno>
 #include <climits>
 #include <cstdint>
@@ -46,6 +47,8 @@ constexpr int GUEST_EMFILE = 24;
 constexpr int GUEST_EPIPE = 32;
 
 constexpr int KQ_NEVENTS = 8;
+constexpr int KQ_STACK_EVENTS = 64;
+constexpr int KQ_MAX_SCAN = 1024;
 constexpr std::int16_t EVFILT_AIO = -3;
 constexpr std::int16_t EVFILT_PROCDESC = -8;
 constexpr std::int16_t EVFILT_LIO = -10;
@@ -621,9 +624,19 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
     if (nchanges > 0 && changelist == nullptr) {
         return PosixFailure(GUEST_EFAULT);
     }
+    KernelTimespec limit{};
+    if (timeout != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&limit, timeout, sizeof(limit))) {
+            return PosixFailure(GUEST_EFAULT);
+        }
+        timeout = &limit;
+    }
     int errors = 0;
     for (int i = 0; i < nchanges; ++i) {
-        KernelEvent change = changelist[i];
+        KernelEvent change{};
+        if (!GuestCopyIn_nid_no_patch(&change, changelist + i, sizeof(change))) {
+            return PosixFailure(GUEST_EFAULT);
+        }
         if (change.filter == 0) {
             continue;
         }
@@ -638,7 +651,10 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
         change.flags = EV_ERROR;
         change.data = error;
         if (eventlist != nullptr) {
-            *eventlist++ = change;
+            if (!GuestCopyOut_nid_no_patch(eventlist, &change, sizeof(change))) {
+                return PosixFailure(GUEST_EFAULT);
+            }
+            ++eventlist;
         }
         --nevents;
         ++errors;
@@ -660,14 +676,19 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
             deadline = ScanDeadline(*timeout);
         }
     }
-    KernelEvent scratch[KQ_NEVENTS];
-    KernelEvent* target = eventlist != nullptr ? eventlist : scratch;
-    const int capacity = eventlist != nullptr ? nevents : std::min(nevents, KQ_NEVENTS);
+    KernelEvent scratch[KQ_STACK_EVENTS];
+    std::unique_ptr<KernelEvent[]> heap;
+    const int capacity = std::min(nevents, eventlist != nullptr ? KQ_MAX_SCAN : KQ_NEVENTS);
+    KernelEvent* target = scratch;
+    if (capacity > KQ_STACK_EVENTS) {
+        heap.reset(new KernelEvent[static_cast<std::size_t>(capacity)]);
+        target = heap.get();
+    }
     const int count = poll ? queue->GetTriggeredEvents(target, capacity) : queue->WaitForEventsUntil(target, capacity, deadline.value_or(0));
     if (count < 0) {
         return PosixFailure(GuestErrno(count));
     }
-    if (count > 0 && eventlist == nullptr) {
+    if (count > 0 && (eventlist == nullptr || !GuestCopyOut_nid_no_patch(eventlist, target, static_cast<std::size_t>(count) * sizeof(KernelEvent)))) {
         return PosixFailure(GUEST_EFAULT);
     }
     return count;

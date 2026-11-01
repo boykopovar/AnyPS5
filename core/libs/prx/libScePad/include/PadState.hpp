@@ -80,6 +80,7 @@ bool IsConnected(int port);
 
 extern "C" void PadPublishInput_nid_postfix(const PadInputState& input);
 extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState& input);
+extern "C" void PadApplyInjectedInput_nid_postfix(PadInputState* state);
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error);
 extern "C" bool PadFetchOutput_nid_postfix(std::uint32_t* seenSequence, PadOutputState* out);
 extern "C" bool PadFetchOutputForPort_nid_postfix(int port, std::uint32_t* seenSequence, PadOutputState* out);

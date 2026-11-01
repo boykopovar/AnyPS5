@@ -38,7 +38,7 @@ def main():
         assert "shared" in list(slots.values())[0], slots
         exports, thread_local = imported.exports()
         assert len(exports) == 1 and not thread_local, (exports, thread_local)
-        assert "shared" in list(exports.values())[0], exports
+        assert list(exports.values())[0] == ["shared#guest"], exports
         assert imported.code_segments(), "no code segments"
 
         plain = parsed(convert(root / "plain", [], []))

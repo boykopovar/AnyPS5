@@ -1,5 +1,6 @@
 import contextlib
 import http.server
+import importlib.util
 import io
 import json
 import os
@@ -397,6 +398,42 @@ class NidArgumentTests(unittest.TestCase):
 
 
 
+PUBLIC_HEADER_SPEC = importlib.util.spec_from_file_location(
+    "public_headers_audit", Path(__file__).resolve().parents[2] / "core/libs/tests/test_public_headers.py"
+)
+public_headers = importlib.util.module_from_spec(PUBLIC_HEADER_SPEC)
+PUBLIC_HEADER_SPEC.loader.exec_module(public_headers)
+
+
+class PublicHeaderDataAliases(unittest.TestCase):
+    def run_audit(self, header, source):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            libs = root / "core/libs"
+            lib = libs / "prx/libExample"
+            lib.mkdir(parents=True)
+            (lib / "libExample.hpp").write_text(header, encoding="utf-8")
+            (lib / "Export.cpp").write_text(source, encoding="utf-8")
+            public_headers.source_text.cache_clear()
+            public_headers.included_headers.cache_clear()
+            with patch.object(public_headers, "ROOT", root), patch.object(public_headers, "LIBS", libs):
+                return public_headers.audit()
+
+    def test_data_alias_requires_one_reachable_data_declaration(self):
+        source = 'APS5_EXPORT("AAAAAAAAAAA", ExampleData);\n'
+        self.run_audit('extern const char ExampleData[];\n', source)
+        with self.assertRaisesRegex(RuntimeError, "ExampleData: expected exactly one header declaration"):
+            self.run_audit('', source)
+        with self.assertRaisesRegex(RuntimeError, "ExampleData: expected exactly one header declaration"):
+            self.run_audit('extern const char ExampleData[];\nextern const char ExampleData[];\n', source)
+
+    def test_function_definition_cannot_be_declared_as_data(self):
+        source = 'int APS5_VABI ExampleFunction() { return 1; }\n'
+        self.run_audit('int APS5_VABI ExampleFunction();\n', source)
+        with self.assertRaisesRegex(RuntimeError, "ExampleFunction: function definition requires a function declaration"):
+            self.run_audit('extern const char ExampleFunction[];\n', source)
+
+
 class SourceCollectionTests(unittest.TestCase):
     def test_trailing_return_definitions_are_collected_without_declarations_or_literals(self):
         text = ('auto APS5_VABI sceTrailing() -> int { return 0; }\n'
@@ -645,6 +682,42 @@ int APS5_VABI sceReal() { return 0; }
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
 
+
+
+class SourceLocationTests(unittest.TestCase):
+    def test_lookup_finds_named_and_explicit_aliases_without_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prx = root / "core/libs/prx"
+            file = prx / "libExample/Export.cpp"
+            file.parent.mkdir(parents=True)
+            nid = nid_names.compute_nid("sceNamed")
+            file.write_text('int APS5_VABI sceNamed_nid_postfix() { return 1; }\n'
+                            'APS5_EXPORT("3gQncidodmw", CameraImage);\n'
+                            'int APS5_VABI CameraImage() { return 1; }\n'
+                            'int APS5_VABI Helper_nid_no_patch() { return 1; }\n', encoding="utf-8")
+            output = io.StringIO()
+            with patch.object(nid_names, "ROOT", root), patch.object(nid_names, "PRX", prx), \
+                 patch.object(nid_names, "load_db", side_effect=AssertionError("unexpected database")), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(nid_names.main(["--where", "--nid", nid, "3gQncidodmw", "--json"]), 0)
+            locations = json.loads(output.getvalue())["locations"]
+            self.assertEqual({row["name"] for row in locations}, {"sceNamed_nid_postfix", "CameraImage"})
+            self.assertTrue(all(row["path"] == "core/libs/prx/libExample/Export.cpp" for row in locations))
+
+    def test_where_requires_input_and_checks_nids(self):
+        for arguments in (["--where"], ["--where", "--nid"], ["--where", "--nid", "invalid"]):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    nid_names.main(arguments)
+
+
+class NidEncodingTests(unittest.TestCase):
+    def test_fixed_nid_vectors(self):
+        for name, expected in (("ACProcessMain", "mFq1M6vw-JM"), ("sceAmprUnknown00", "6OkOa1SOKuY"),
+                               ("", "B4c6vzgC+Xc"), ("東京", "2GKwIE7lnRc")):
+            with self.subTest(name=name):
+                self.assertEqual(nid_names.compute_nid(name), expected)
 
 
 if __name__ == "__main__":

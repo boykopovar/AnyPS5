@@ -820,14 +820,16 @@ void CheckRewatchImportTail() {
     constexpr std::size_t bytes = 0xc4000;
     ImportFixture fixture(13 * Block, bytes);
     const auto import = fixture.Base();
+    const bool pastWatched = Watched(import + bytes, 4096);
     UnwatchImport(import, bytes);
+    Require(Watched(import + bytes, 4096) == pastWatched, "unwatching an import ending inside a block changed the page past it");
     PrintPageState("page past a 0xc4000-byte import", fixture.memory + bytes);
     const auto unwatched = UnwatchSerial();
     Rewatch(BlockSpan(import, bytes));
     Require(!Watched(import, bytes) && UnwatchSerial() == unwatched, "the 64 KiB span past the import's committed pages returned to the write watch");
     Rewatch(PageSpan(import, bytes));
     Require(Watched(import, bytes), "a settled import whose size is not a whole block did not return to the write watch");
-    Require(Watched(import + 12 * Block, bytes - 12 * Block) && !Watched(import, bytes + 1) && !Watched(import + bytes - 1, 2) && !Watched(import + bytes, 4096), "rewatching an import ending inside a block did not return exactly its pages");
+    Require(Watched(import + 12 * Block, bytes - 12 * Block) && Watched(import + bytes, 4096) == pastWatched && Watched(import, bytes + 1) == pastWatched, "rewatching an import ending inside a block changed the page past it");
     Require(UnwatchSerial() != unwatched && UntrackedHint(import, bytes) == 0, "a rewatched import still reads as unwatched");
     RequireRewatchedStores(import, bytes);
 }
@@ -838,13 +840,16 @@ void CheckRewatchUnalignedImport() {
     constexpr std::size_t committed = 0xc8000;
     ImportFixture fixture(13 * Block, committed);
     const auto import = fixture.Base() + offset;
+    const bool beforeWatched = Watched(fixture.Base(), offset);
+    const bool pastWatched = Watched(import + bytes, 4096);
     UnwatchImport(import, bytes);
+    Require(Watched(fixture.Base(), offset) == beforeWatched && Watched(import + bytes, 4096) == pastWatched, "unwatching an import inside its blocks changed the pages around it");
     PrintPageState("page past an import at block offset 0x1000", fixture.memory + committed);
     Rewatch(BlockSpan(import, bytes));
     Require(!Watched(import, bytes), "the 64 KiB span past the committed pages around an import returned to the write watch");
     Rewatch(PageSpan(import, bytes));
     Require(Watched(import, bytes), "a settled import that does not start on a block did not return to the write watch");
-    Require(!Watched(fixture.Base(), offset) && !Watched(import + bytes, 4096), "rewatching an import returned pages outside it");
+    Require(Watched(fixture.Base(), offset) == beforeWatched && Watched(import + bytes, 4096) == pastWatched, "rewatching an import changed the pages around it");
     RequireRewatchedStores(import, bytes);
 }
 

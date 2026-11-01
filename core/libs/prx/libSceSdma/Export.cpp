@@ -7,6 +7,12 @@
 extern "C" {
 
 APS5_DUMMY_FUN
+
+int APS5_VABI sceSdmaPending_001_nid_no_patch(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+APS5_EXPORT("vPP6vKHY8Tg", sceSdmaPending_001_nid_no_patch);
 int APS5_VABI sceSdmaBeginQueueMode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

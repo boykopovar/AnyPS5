@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- [SceAvPlayerVideoEx](../../../core/libs/SceTypes.hpp) (libSceAvPlayer) - frame rate field and encoding unknown; it is left zero in frame and stream info
+- [SceAvPlayerVideoEx](../../../core/libs/SceTypes.hpp) (libSceAvPlayer) - the `framerate` field (offset 16) and its encoding are unknown and it is left zero in frame and stream info; `frame_rate` (offset 48) is set from FFmpeg's guessed frame rate in both, and the console's values are unmeasured
 
 ### Functional
 

@@ -4,6 +4,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 using GetU32 = int(APS5_VABI*)(std::int32_t, std::uint32_t, std::uint32_t*, void*);
 using SetU32 = int(APS5_VABI*)(std::int32_t, std::uint32_t, std::uint32_t, const void*);
@@ -19,11 +24,39 @@ constexpr std::uint32_t Channel0 = 1;
 constexpr std::uint32_t Channel1 = 2;
 constexpr std::uint32_t ChannelBoth = 3;
 
+using AudioGetData = int (APS5_VABI*)(void*);
+
+AudioGetData ResolveAudio(const char* name) {
+#ifdef _WIN32
+    void* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceCamera.prx"), name));
+#else
+    void* symbol = dlsym(RTLD_DEFAULT, name);
+#endif
+    if (!symbol) {
+        std::fprintf(stderr, "%s is not exported by libSceCamera\n", name);
+        std::abort();
+    }
+    return reinterpret_cast<AudioGetData>(symbol);
+}
+
 void Require(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "Camera settings: %s\n", message);
         std::abort();
     }
+}
+
+void CheckAudioAfterOpen() {
+    std::array<std::uint8_t, 64> data{};
+    data.fill(0xA5);
+    for (const char* name : {"sceCameraAudioGetData", "sceCameraAudioGetData2"}) {
+        const AudioGetData getData = ResolveAudio(name);
+        Require(getData(nullptr) == ErrorParam, "camera audio data must reject a null buffer");
+        Require(getData(data.data()) == 0, "camera audio data must answer 0 after the failed open");
+    }
+    for (const std::uint8_t byte : data) Require(byte == 0xA5, "camera audio data must not be written");
+    Require(sceCameraAudioReset() == 0, "camera audio reset must answer 0");
+    Require(sceCameraAudioClose() == 0, "camera audio close must answer 0");
 }
 
 CameraConfig SizedConfig() {
@@ -198,6 +231,7 @@ void CheckDevice() {
         Require(sceCameraGetCalibrationData(&refused, out.data()) == ErrorParam, "a bad calibration request must be rejected");
     }
     Require(sceCameraAudioOpen() == ErrorFatal, "camera audio must fail with FATAL");
+    CheckAudioAfterOpen();
 }
 
 }

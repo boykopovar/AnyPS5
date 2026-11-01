@@ -205,6 +205,8 @@ int main(int argc, char** argv) {
         if (AgcDriver::Graphics::UnitShadowEnabled()) {
             using namespace AgcDriver::Graphics;
             constexpr std::uint64_t Unit = 65536;
+            const auto probe = ProbeImportWriteProtection(AgcDriver::VulkanDeviceTestAccess::ContextOf(*device));
+            const std::string importReadsWritten = probe.failure != nullptr ? "the host import probe failed at " + std::string(probe.failure) : probe.writtenAfterSubmit != 0 ? "the device reports " + std::to_string(probe.writtenAfterSubmit) + " of " + std::to_string(probe.pages) + " host-imported pages written after a GPU read" : "";
             GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapping, static_cast<std::size_t>(mappingBytes));
             for (const bool onCpu : {false, true}) {
                 const std::string how = onCpu ? "published on the CPU" : "published by the GPU";
@@ -221,6 +223,11 @@ int main(int argc, char** argv) {
                     if (!import->dmaBuf) std::printf("note: the device imported the unaligned range through a host pointer, which has no lead\n");
                     dmaBufImport = import->dmaBuf;
                     Require(import->lead == (import->dmaBuf ? Lead : 0), "sparse import: the unaligned import does not start its buffer at the block below it");
+                    if (onCpu && !import->dmaBuf && !importReadsWritten.empty()) {
+                        std::printf("note: %s, so the watch this test puts on the host-pointer import reads its submissions as CPU stores; the unit shadow %s was not checked\n", importReadsWritten.c_str(), how.c_str());
+                        cpuLeadSkip = "the device imported the unaligned range through a host pointer, which has no lead";
+                        continue;
+                    }
                     auto* recorder = Recorder::Active();
                     if (recorder != nullptr && AgcDriver::GuestMemory::Watched(unitBegin, Unit)) {
                         AgcDriver::GuestMemory::CollectWritesUncached(unitBegin, Unit);

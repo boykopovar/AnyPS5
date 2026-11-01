@@ -242,6 +242,23 @@ class CompareResultsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
 
+    def test_diagnostic_limit_retains_only_visible_differences_while_counting_all(self):
+        before = copy.deepcopy(self.report)
+        before["rows"] = [
+            {"input": [index, 0, 0, 0], "output": [0, 0]}
+            for index in range(1000)
+        ]
+        after = copy.deepcopy(before)
+        for row in after["rows"]:
+            row["output"] = [1, 2]
+        count, differences = compare_results.compare_limited(before, after, 3)
+        self.assertEqual(count, 2000)
+        self.assertEqual(differences, [
+            (1, "v10", 0, 1),
+            (1, "v11", 0, 2),
+            (2, "v10", 0, 1),
+        ])
+
 
 
 if __name__ == "__main__":
