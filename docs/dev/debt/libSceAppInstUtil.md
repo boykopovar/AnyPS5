@@ -1,5 +1,38 @@
 # libSceAppInstUtil technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) - 26 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `2WQuFX8yYXg` |
+| `Unknown` | `4vqRxwpIE1M` |
+| `Unknown` | `9QIC1kZpSG4` |
+| `Unknown` | `K73u2VX0JFo` |
+| `Unknown` | `LsUZe38RhCs` |
+| `Unknown` | `N6H7LMfZD5Q` |
+| `Unknown` | `NXqdUFpinmo` |
+| `Unknown` | `QMjuGVPtjUY` |
+| `Unknown` | `R-OUApMZ1d8` |
+| `Unknown` | `T9h6l8bFKGE` |
+| `Unknown` | `X5Q7QxodFcg` |
+| `Unknown` | `XWjOLtdgxa4` |
+| `Unknown` | `Y+ln-TkY+hA` |
+| `Unknown` | `Zv+26GDSKcQ` |
+| `Unknown` | `ecad2GAw55Y` |
+| `Unknown` | `gFlBHjtrMDI` |
+| `Unknown` | `gP27iU+aZFw` |
+| `Unknown` | `grC16befiso` |
+| `Unknown` | `j80u95nZ+3A` |
+| `Unknown` | `j9qjbjMifhQ` |
+| `Unknown` | `pbYNtR2enrY` |
+| `Unknown` | `qn0aziKw-kE` |
+| `Unknown` | `qxjCWxg8ki4` |
+| `Unknown` | `vZ1SWJ0y4mo` |
+| `Unknown` | `xV7MhF+9AQk` |
+| `Unknown` | `yYVV-f0zoWY` |
+
 ### Unknown function info
 
 - [sceAppInstUtilAppInstallPkg](../../../core/libs/prx/libSceAppInstUtil/Export.cpp) - the package path is followed by an opaque 64-bit value sent to the install service; its meaning and pointer-versus-integer type remain unresolved.
