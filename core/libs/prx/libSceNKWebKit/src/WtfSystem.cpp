@@ -2,6 +2,10 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
+#include <array>
+#include <string>
 #include <stdexcept>
 #ifndef _WIN32
 #include <unistd.h>
@@ -105,6 +109,72 @@ int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOp
 
 void APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi(int handle) {
     _ZN3WTF14FileSystemImpl9closeFileERi(handle);
+}
+
+}
+
+namespace {
+constexpr unsigned GuestFileTypeMask = 0170000;
+constexpr unsigned GuestDirectoryType = 0040000;
+constexpr int GuestNoEntry = 2;
+constexpr int GuestAlreadyExists = 17;
+
+std::string FileSystemPath(const NKWebKit::WtfAbi::String& path) {
+    const auto representation = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&path, 0);
+    return representation.buffer ? reinterpret_cast<const char*>(representation.buffer + 1) : "";
+}
+
+bool MakeDirectories(const std::string& path) {
+    FileStat status{};
+    if (stat_nid_postfix(path.c_str(), &status) == 0) return (status.st_mode & GuestFileTypeMask) == GuestDirectoryType;
+    if (*__error_nid_postfix() != GuestNoEntry) return false;
+    const auto last = path.find_last_not_of('/');
+    if (last == std::string::npos) return false;
+    const auto separator = path.rfind('/', last);
+    if (separator != std::string::npos && !MakeDirectories(path.substr(0, separator ? separator : 1))) return false;
+    if (mkdir_nid_postfix(path.c_str(), 0777) == 0) return true;
+    return *__error_nid_postfix() == GuestAlreadyExists && stat_nid_postfix(path.c_str(), &status) == 0 &&
+        (status.st_mode & GuestFileTypeMask) == GuestDirectoryType;
+}
+}  // namespace
+
+extern "C" {
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE(const NKWebKit::WtfAbi::String& path) {
+    const auto name = FileSystemPath(path);
+    FileStat status{};
+    return stat_nid_postfix(name.c_str(), &status) == 0;
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE(const NKWebKit::WtfAbi::String& path) {
+    const auto name = FileSystemPath(path);
+    FileStat status{};
+    return lstat_nid_postfix(name.c_str(), &status) == 0 && (status.st_mode & GuestFileTypeMask) != GuestDirectoryType &&
+        unlink_nid_postfix(name.c_str()) == 0;
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_(const NKWebKit::WtfAbi::String& from, const NKWebKit::WtfAbi::String& to) {
+    const auto source = FileSystemPath(from);
+    const auto destination = FileSystemPath(to);
+    return RenameGuestPath_nid_no_patch(source.c_str(), destination.c_str()) != -1;
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE(const NKWebKit::WtfAbi::String& path) {
+    return MakeDirectories(FileSystemPath(path));
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE(const NKWebKit::WtfAbi::String& path) {
+    const auto name = FileSystemPath(path);
+    FileStat status{};
+    return lstat_nid_postfix(name.c_str(), &status) == 0 && (status.st_mode & GuestFileTypeMask) == GuestDirectoryType &&
+        rmdir_nid_postfix(name.c_str()) == 0;
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl8realPathERKNS_6StringE(const NKWebKit::WtfAbi::String& path) {
+    const auto name = FileSystemPath(path);
+    std::array<char, 1024> resolved{};
+    const auto* result = realpath_nid_postfix(name.c_str(), resolved.data());
+    return result ? _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(result)) : path;
 }
 
 }

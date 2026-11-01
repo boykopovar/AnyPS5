@@ -1654,8 +1654,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj` | `Rt3lL1byIzc` |
 | `_ZN3WTF14AtomStringImpl6lookUpEPKDsj` | `F8WuSFdu4is` |
 | `_ZN3WTF14AtomStringImpl6lookUpEPKhj` | `BuAIhZn+1Rs` |
-| `_ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE` | `wfDoJ0yldXQ` |
-| `_ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE` | `nsUltDlbQsU` |
 | `_ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE` | `DhTjWwepv6I` |
 | `_ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb` | `7S1e4l2WT+4` |
 | `_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb` | `ACazp+XQF6E` |
@@ -1668,9 +1666,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_` | `dbycEreQEcg` |
 | `_ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE` | `dlR6Z857IFs` |
 | `_ZN3WTF14FileSystemImpl18hardLinkOrCopyFileERKNS_6StringES3_` | `8R3APcMguxY` |
-| `_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE` | `yUU8KDyU5Xw` |
 | `_ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_` | `1tXDV45yh2Y` |
-| `_ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE` | `bmn8kprCF+U` |
 | `_ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE` | `sxavOcVMOFA` |
 | `_ZN3WTF14FileSystemImpl25createTemporaryZipArchiveERKNS_6StringE` | `9FdGIgYrVF4` |
 | `_ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE` | `k73D+1jaJZ0` |
@@ -1679,8 +1675,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc` | `Q5IWykchiD8` |
 | `_ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE` | `3TsXk8jA39E` |
 | `_ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_` | `PduV0fym+xE` |
-| `_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_` | `Pr98fHFIZlQ` |
-| `_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE` | `5DmxNjwctv4` |
 | `_ZN3WTF14SymbolRegistry12symbolForKeyERKNS_6StringE` | `4eO+y6WtOIw` |
 | `_ZN3WTF14SymbolRegistryD1Ev` | `4wHuG6WpyF0` |
 | `_ZN3WTF14SymbolRegistryD2Ev` | `l8UKHjO29+w` |

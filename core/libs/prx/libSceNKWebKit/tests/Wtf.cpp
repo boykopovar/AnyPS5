@@ -477,6 +477,89 @@ static void TestFileHandles() {
     std::filesystem::remove_all(root);
 }
 
+static void TestFilePaths() {
+    const auto exists = &_ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE;
+    const auto removeFile = &_ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE;
+    const auto move = &_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_;
+    const auto makeDirectories = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
+    const auto removeDirectory = &_ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE;
+    const auto realPath = &_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE;
+    const auto string = [](const char* value) { return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(value)); };
+    const auto bytes = [](const NKWebKit::WtfAbi::String& value) {
+        const auto utf8 = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&value, 0);
+        return std::string(reinterpret_cast<const char*>(utf8.buffer + 1), utf8.buffer->length);
+    };
+    const auto root = std::filesystem::current_path() / ("nkwebkit-paths-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+#ifndef _WIN32
+    std::filesystem::permissions(root, std::filesystem::perms::set_gid, std::filesystem::perm_options::add);
+#endif
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-paths", reinterpret_cast<const char*>(hostPath.c_str()));
+    auto parent = string("/nkwebkit-paths/a");
+    auto directory = string("/nkwebkit-paths/a/b");
+    auto missing = string("/nkwebkit-paths/missing");
+    Require(!exists(missing) && !removeFile(missing) && !removeDirectory(missing));
+    Require(bytes(realPath(missing)) == "/nkwebkit-paths/missing");
+    Require(!makeDirectories(string("")));
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    Require(makeDirectories(directory));
+#ifndef _WIN32
+    ::umask(oldMask);
+    Require((std::filesystem::status(root / "a" / "b").permissions() & std::filesystem::perms::all) == static_cast<std::filesystem::perms>(0777));
+#endif
+    Require(makeDirectories(directory) && makeDirectories(string("/nkwebkit-paths/a/b/")));
+    Require(exists(directory) && exists(parent));
+    Require(!removeFile(directory) && !removeDirectory(parent));
+    Require(removeDirectory(directory) && !exists(directory));
+    Require(makeDirectories(directory));
+    Require(makeDirectories(string("/nkwebkit-paths/fresh/../sibling")));
+    Require(std::filesystem::is_directory(root / "fresh") && std::filesystem::is_directory(root / "sibling"));
+    const auto write = [](const char* path, const char* data) {
+        const int handle = sceKernelOpen(path, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC, 0600);
+        Require(handle >= 0);
+        const auto length = std::strlen(data);
+        Require(sceKernelWrite(handle, data, length) == static_cast<std::int64_t>(length));
+        Require(sceKernelClose(handle) == 0);
+    };
+    write("/nkwebkit-paths/a/b/source", "source");
+    write("/nkwebkit-paths/a/b/destination", "old");
+    auto source = string("/nkwebkit-paths/a/b/source");
+    auto destination = string("/nkwebkit-paths/a/b/destination");
+    Require(exists(source) && !removeDirectory(source) && !removeDirectory(directory));
+    Require(!makeDirectories(source) && !makeDirectories(string("/nkwebkit-paths/a/b/source/child")));
+    Require(!move(source, string("/nkwebkit-paths/missing/target")) && exists(source));
+    Require(!move(source, directory) && exists(source));
+    Require(move(source, destination) && !exists(source) && exists(destination));
+    Require(!move(source, destination));
+    const int handle = sceKernelOpen("/nkwebkit-paths/a/b/destination", SCE_KERNEL_O_RDONLY, 0);
+    Require(handle >= 0);
+    char content[7]{};
+    Require(sceKernelRead(handle, content, sizeof(content)) == 6 && std::memcmp(content, "source", 6) == 0);
+    Require(sceKernelClose(handle) == 0);
+    Require(bytes(realPath(string("/nkwebkit-paths/a/./b/../b/destination"))) == "/nkwebkit-paths/a/b/destination");
+#ifndef _WIN32
+    std::filesystem::create_directory_symlink("a", root / "directory-link");
+    auto directoryLink = string("/nkwebkit-paths/directory-link");
+    Require(exists(directoryLink) && makeDirectories(directoryLink) && !removeDirectory(directoryLink));
+    Require(removeFile(directoryLink) && exists(parent));
+    std::filesystem::create_symlink("a/b/destination", root / "file-link");
+    auto fileLink = string("/nkwebkit-paths/file-link");
+    Require(exists(fileLink) && bytes(realPath(fileLink)) == "/nkwebkit-paths/a/b/destination");
+    Require(removeFile(fileLink) && exists(destination));
+    std::filesystem::create_symlink("missing", root / "dangling-link");
+    auto dangling = string("/nkwebkit-paths/dangling-link");
+    Require(!exists(dangling) && !removeDirectory(dangling));
+    Require(removeFile(dangling));
+#endif
+    Require(removeFile(destination) && !exists(destination) && !removeFile(destination));
+    Require(removeDirectory(directory) && removeDirectory(parent));
+    RemovePathAlias_nid_no_patch("/nkwebkit-paths");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     TestAdditionalWtf();
     TestMemoryAllocations();
@@ -486,6 +569,7 @@ int main() {
     TestString();
     TestWebCorePure();
     TestJscAndPal();
+    TestFilePaths();
     TestFileHandles();
     return 0;
 }
