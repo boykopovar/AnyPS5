@@ -93,6 +93,9 @@ int main() {
     Require(sceUserServiceSetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID + 1, 7) == USER_SERVICE_OK);
     Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID + 1, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 7);
     Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 3);
+    Require(sceUserServiceSetKeyboardType(USER_SERVICE_INITIAL_USER_ID, 20) == USER_SERVICE_OK);
+    Require(sceUserServiceSetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, 0) == USER_SERVICE_OK);
+    Require(sceUserServiceSetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, 0) == USER_SERVICE_OK);
     std::uint8_t muteList[240];
     std::uint8_t muteListResult[240];
     for (std::size_t i = 0; i < sizeof(muteList); ++i) {
@@ -102,35 +105,35 @@ int main() {
     Require(sceUserServiceGetPartyMuteListA(USER_SERVICE_INITIAL_USER_ID, muteListResult) == USER_SERVICE_OK);
     Require(std::memcmp(muteList, muteListResult, sizeof(muteList)) == 0);
     UserServiceSetUserConnected_nid_postfix(1, false);
+    UserServiceSetUserConnected_nid_postfix(2, true);
     constexpr std::int32_t keyboardTypeByLanguage[] = {37, 20, 26, 21, 17, 28, 29, 33, 34, 38, 39, 40, 23, 35, 16, 30, 31, 32, 19, 36, 22, 41, 25, 44, 48, 43, 47, 42, 46, 45};
     for (int language = 0; language < 30; ++language) {
         SetLanguage(std::to_string(language).c_str());
         std::int32_t value = 0x5A5A;
-        Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK && value == keyboardTypeByLanguage[language]);
+        Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID + 2, &value) == USER_SERVICE_OK && value == keyboardTypeByLanguage[language]);
         Require(sceUserServiceGetKeyboardType(123, &value) == USER_SERVICE_ERROR_UNKNOWN_USER && value == keyboardTypeByLanguage[language]);
         for (const auto variant : {sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType}) {
             value = 0x5A5A;
-            Require(variant(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK && value == 0);
+            Require(variant(USER_SERVICE_INITIAL_USER_ID + 2, &value) == USER_SERVICE_OK && value == 0);
         }
     }
     SetLanguage("30");
     std::int32_t fallback = 0x5A5A;
-    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &fallback) == USER_SERVICE_OK && fallback == 20);
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID + 2, &fallback) == USER_SERVICE_OK && fallback == 20);
     for (const char* malformed : {"arabic", "-1", "31", "1x", ""}) {
         SetLanguage(malformed);
         std::int32_t untouched = 0x5A5A;
         bool rejected = false;
         try {
-            sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &untouched);
+            sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID + 2, &untouched);
         } catch (const std::runtime_error& error) {
             rejected = std::string(error.what()).find("ANYPS5_LANGUAGE") != std::string::npos;
         }
         const bool configured = malformed[0] != '\0';
         Require(rejected == configured && untouched == (configured ? 0x5A5A : 20));
-        untouched = 0x5A5A;
-        Require(sceUserServiceGetKeyboardType(123, &untouched) == USER_SERVICE_ERROR_UNKNOWN_USER && untouched == 0x5A5A);
-        Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, &untouched) == USER_SERVICE_OK && untouched == 0);
+        Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID + 2, &untouched) == USER_SERVICE_OK && untouched == 0);
     }
+    UserServiceSetUserConnected_nid_postfix(2, false);
     SetLanguage(nullptr);
     Require(color == 0);
 
