@@ -2,7 +2,6 @@
 #include "prx/libSceNKWebKitRequirements/include/Identified.hpp"
 
 #include <stdexcept>
-#include <csetjmp>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -22,23 +21,36 @@ namespace {
 
 struct JpegBinding;
 
-struct JpegException {
-    j_common_ptr cinfo;
-};
-
 struct JpegBinding {
     NKWebKit::GuestJpegDecompress* guest_cinfo = nullptr;
     jpeg_decompress_struct host_cinfo{};
     jpeg_error_mgr host_err{};
     jpeg_source_mgr host_src{};
     std::vector<std::unique_ptr<NKWebKit::GuestJpegMarker>> guest_markers;
+    void** jump = nullptr;
 };
 
 static std::mutex g_jpegMutex;
 static std::unordered_map<NKWebKit::GuestJpegDecompress*, std::unique_ptr<JpegBinding>> g_jpegBindings;
 
-static void HostErrorExit(j_common_ptr cinfo) {
-    throw JpegException{cinfo};
+[[noreturn]] static void HostErrorExit(j_common_ptr cinfo) {
+    auto* b = static_cast<JpegBinding*>(cinfo->client_data);
+    if (!b || !b->jump) std::abort();
+    __builtin_longjmp(b->jump, 1);
+}
+
+template <typename Call>
+static bool RunGuarded(JpegBinding* b, Call call) {
+    void* buffer[5]{};
+    void** const previous = b->jump;
+    if (__builtin_setjmp(buffer) != 0) {
+        b->jump = previous;
+        return false;
+    }
+    b->jump = buffer;
+    call();
+    b->jump = previous;
+    return true;
 }
 
 static void HostEmitMessage(j_common_ptr cinfo, int msg_level) {
@@ -315,10 +327,8 @@ static void SyncHostToGuest(JpegBinding* b) {
     }
 }
 
-static void HandleException(JpegBinding* b) {
-    if (!b || !b->guest_cinfo) return;
+static void ForwardError(JpegBinding* b) {
     auto* g = b->guest_cinfo;
-    SyncHostToGuest(b);
     if (g->err) {
         g->err->msg_code = b->host_err.msg_code;
         for (int i = 0; i < 8; ++i) {
@@ -330,6 +340,12 @@ static void HandleException(JpegBinding* b) {
             g->err->error_exit(reinterpret_cast<NKWebKit::GuestCommonPtr>(g));
         }
     }
+}
+
+static void HandleException(JpegBinding* b) {
+    if (!b || !b->guest_cinfo) return;
+    SyncHostToGuest(b);
+    ForwardError(b);
 }
 
 } // namespace
@@ -374,12 +390,8 @@ void APS5_VABI jpeg_CreateDecompress_nid_postfix(NKWebKit::GuestJpegDecompress* 
     b->host_err.reset_error_mgr = HostResetErrorMgr;
     b->host_cinfo.client_data = b.get();
 
-    try {
-        jpeg_CreateDecompress(&b->host_cinfo, version, sizeof(jpeg_decompress_struct));
-    } catch (const JpegException&) {
-        if (cinfo->err && cinfo->err->error_exit) {
-            cinfo->err->error_exit(reinterpret_cast<NKWebKit::GuestCommonPtr>(cinfo));
-        }
+    if (!RunGuarded(b.get(), [&] { jpeg_CreateDecompress(&b->host_cinfo, version, sizeof(jpeg_decompress_struct)); })) {
+        ForwardError(b.get());
         return;
     }
 
@@ -408,157 +420,151 @@ void APS5_VABI jpeg_destroy_decompress_nid_postfix(NKWebKit::GuestJpegDecompress
         }
     }
     if (b) {
-        try {
-            jpeg_destroy_decompress(&b->host_cinfo);
-        } catch (...) {
-        }
+        RunGuarded(b.get(), [&] { jpeg_destroy_decompress(&b->host_cinfo); });
     }
 }
 
 int APS5_VABI jpeg_read_header_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo, int require_image) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        int ret = jpeg_read_header(&b->host_cinfo, require_image ? TRUE : FALSE);
-        SyncHostToGuest(b);
-        return ret;
-    } catch (const JpegException&) {
+    int ret = 0;
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { ret = jpeg_read_header(&b->host_cinfo, require_image ? TRUE : FALSE); })) {
         HandleException(b);
         return 0;
     }
+    SyncHostToGuest(b);
+    return ret;
 }
 
 int APS5_VABI jpeg_start_decompress_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        int ret = jpeg_start_decompress(&b->host_cinfo);
-        SyncHostToGuest(b);
-        return ret ? 1 : 0;
-    } catch (const JpegException&) {
+    int ret = 0;
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { ret = jpeg_start_decompress(&b->host_cinfo); })) {
         HandleException(b);
         return 0;
     }
+    SyncHostToGuest(b);
+    return ret ? 1 : 0;
 }
 
 uint32_t APS5_VABI jpeg_read_scanlines_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo, uint8_t** scanlines, uint32_t max_lines) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        JDIMENSION ret = jpeg_read_scanlines(&b->host_cinfo, reinterpret_cast<JSAMPARRAY>(scanlines), max_lines);
-        SyncHostToGuest(b);
-        return static_cast<uint32_t>(ret);
-    } catch (const JpegException&) {
+    JDIMENSION ret = 0;
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { ret = jpeg_read_scanlines(&b->host_cinfo, reinterpret_cast<JSAMPARRAY>(scanlines), max_lines); })) {
         HandleException(b);
         return 0;
     }
+    SyncHostToGuest(b);
+    return static_cast<uint32_t>(ret);
 }
 
 int APS5_VABI jpeg_finish_decompress_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        int ret = jpeg_finish_decompress(&b->host_cinfo);
-        SyncHostToGuest(b);
-        return ret ? 1 : 0;
-    } catch (const JpegException&) {
+    int ret = 0;
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { ret = jpeg_finish_decompress(&b->host_cinfo); })) {
         HandleException(b);
         return 0;
     }
+    SyncHostToGuest(b);
+    return ret ? 1 : 0;
 }
 
 void APS5_VABI jpeg_calc_output_dimensions_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        jpeg_calc_output_dimensions(&b->host_cinfo);
-        SyncHostToGuest(b);
-    } catch (const JpegException&) {
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { jpeg_calc_output_dimensions(&b->host_cinfo); })) {
         HandleException(b);
+        return;
     }
+    SyncHostToGuest(b);
 }
 
 int APS5_VABI jpeg_consume_input_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        int ret = jpeg_consume_input(&b->host_cinfo);
-        SyncHostToGuest(b);
-        return ret;
-    } catch (const JpegException&) {
+    int ret = 0;
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { ret = jpeg_consume_input(&b->host_cinfo); })) {
         HandleException(b);
         return 0;
     }
+    SyncHostToGuest(b);
+    return ret;
 }
 
 int APS5_VABI jpeg_has_multiple_scans_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    return jpeg_has_multiple_scans(&b->host_cinfo) ? 1 : 0;
+    boolean ret = FALSE;
+    if (!RunGuarded(b, [&] { ret = jpeg_has_multiple_scans(&b->host_cinfo); })) {
+        HandleException(b);
+        return 0;
+    }
+    return ret ? 1 : 0;
 }
 
 int APS5_VABI jpeg_input_complete_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    return jpeg_input_complete(&b->host_cinfo) ? 1 : 0;
+    boolean ret = FALSE;
+    if (!RunGuarded(b, [&] { ret = jpeg_input_complete(&b->host_cinfo); })) {
+        HandleException(b);
+        return 0;
+    }
+    return ret ? 1 : 0;
 }
 
 int APS5_VABI jpeg_start_output_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo, int scan_number) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        int ret = jpeg_start_output(&b->host_cinfo, scan_number);
-        SyncHostToGuest(b);
-        return ret ? 1 : 0;
-    } catch (const JpegException&) {
+    int ret = 0;
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { ret = jpeg_start_output(&b->host_cinfo, scan_number); })) {
         HandleException(b);
         return 0;
     }
+    SyncHostToGuest(b);
+    return ret ? 1 : 0;
 }
 
 int APS5_VABI jpeg_finish_output_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        int ret = jpeg_finish_output(&b->host_cinfo);
-        SyncHostToGuest(b);
-        return ret ? 1 : 0;
-    } catch (const JpegException&) {
+    int ret = 0;
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { ret = jpeg_finish_output(&b->host_cinfo); })) {
         HandleException(b);
         return 0;
     }
+    SyncHostToGuest(b);
+    return ret ? 1 : 0;
 }
 
 int APS5_VABI jpeg_resync_to_restart_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo, int desired) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        SyncGuestToHost(b);
-        int ret = jpeg_resync_to_restart(&b->host_cinfo, desired);
-        SyncHostToGuest(b);
-        return ret ? 1 : 0;
-    } catch (const JpegException&) {
+    int ret = 0;
+    SyncGuestToHost(b);
+    if (!RunGuarded(b, [&] { ret = jpeg_resync_to_restart(&b->host_cinfo, desired); })) {
         HandleException(b);
         return 0;
     }
+    SyncHostToGuest(b);
+    return ret ? 1 : 0;
 }
 
 void APS5_VABI jpeg_save_markers_nid_postfix(NKWebKit::GuestJpegDecompress* cinfo, int marker_code, unsigned int length_limit) {
     auto* b = FindBinding(cinfo);
     if (!b) throw std::invalid_argument("libjpeg: the decompression object was not created by jpeg_CreateDecompress");
-    try {
-        jpeg_save_markers(&b->host_cinfo, marker_code, length_limit);
-    } catch (const JpegException&) {
-        HandleException(b);
-    }
+    if (!RunGuarded(b, [&] { jpeg_save_markers(&b->host_cinfo, marker_code, length_limit); })) HandleException(b);
 }
 
 }
