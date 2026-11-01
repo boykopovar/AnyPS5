@@ -354,6 +354,7 @@ CompiledVariant sampleVariant() {
     image.sampledOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
+    image.gathered = true;
     image.optionalDescriptor = true;
     image.byElements = 4;
     image.byComponents = 1;
