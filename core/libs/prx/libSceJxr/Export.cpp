@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include "Stream.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
@@ -10,6 +12,33 @@
 
 namespace {
 constexpr std::int64_t WmpErrSuccess = 0;
+constexpr std::uint32_t ShortBits = 16;
+constexpr std::uint32_t LongBits = 32;
+
+std::uint32_t LoadBigEndian(const std::uint8_t* bytes) {
+    return (static_cast<std::uint32_t>(bytes[0]) << 24) | (static_cast<std::uint32_t>(bytes[1]) << 16) |
+           (static_cast<std::uint32_t>(bytes[2]) << 8) | static_cast<std::uint32_t>(bytes[3]);
+}
+
+std::uint32_t PeekBits(const Jxr::BitIo* io, std::uint32_t bits) {
+    return io->accumulator >> (LongBits - bits);
+}
+
+void AdvanceBits(Jxr::BitIo* io, std::uint32_t bits, const char* name) {
+    const std::uint32_t used = io->bitsUsed + bits;
+    const auto mask = static_cast<std::uintptr_t>(static_cast<std::intptr_t>(io->mask));
+    auto* current = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(io->current) + (used >> 3)) & mask);
+    if (!current) throw std::invalid_argument(std::string(name) + ": invalid argument");
+    io->bitsUsed = used & (ShortBits - 1);
+    io->current = current;
+    io->accumulator = LoadBigEndian(current) << io->bitsUsed;
+}
+
+std::uint32_t TakeBits(Jxr::BitIo* io, std::uint32_t bits, const char* name) {
+    const std::uint32_t value = PeekBits(io, bits);
+    AdvanceBits(io, bits, name);
+    return value;
+}
 }
 
 extern "C" {
@@ -58,6 +87,50 @@ std::int64_t APS5_VABI writeIS_nid_postfix(void*, Jxr::BitIo* io) {
     const auto mask = static_cast<std::uintptr_t>(static_cast<std::intptr_t>(io->mask));
     io->start = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(io->start) + packetSize) & mask);
     return result;
+}
+
+std::uint32_t APS5_VABI peekBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
+    if (!io || bits == 0 || bits > ShortBits) APS5_INVALID_ARG_EX;
+    return PeekBits(io, bits);
+}
+
+std::uint32_t APS5_VABI flushBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
+    if (!io || bits > ShortBits) APS5_INVALID_ARG_EX;
+    AdvanceBits(io, bits, __func__);
+    return 0;
+}
+
+std::uint32_t APS5_VABI getBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
+    if (!io || bits == 0 || bits > ShortBits) APS5_INVALID_ARG_EX;
+    return TakeBits(io, bits, __func__);
+}
+
+std::uint32_t APS5_VABI getBool16_nid_postfix(Jxr::BitIo* io) {
+    if (!io) APS5_INVALID_ARG_EX;
+    return TakeBits(io, 1, __func__);
+}
+
+std::int32_t APS5_VABI getBit16s_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
+    if (!io || bits >= ShortBits) APS5_INVALID_ARG_EX;
+    const std::uint32_t value = PeekBits(io, bits + 1);
+    if (value < 2) {
+        AdvanceBits(io, bits, __func__);
+        return 0;
+    }
+    AdvanceBits(io, bits + 1, __func__);
+    const auto magnitude = static_cast<std::int32_t>(value >> 1);
+    return (value & 1) ? -magnitude : magnitude;
+}
+
+std::uint32_t APS5_VABI getBit32_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
+    if (!io || bits == 0 || bits > LongBits) APS5_INVALID_ARG_EX;
+    std::uint32_t value = 0;
+    if (bits > ShortBits) {
+        value = TakeBits(io, ShortBits, __func__);
+        bits -= ShortBits;
+        value <<= bits;
+    }
+    return value | TakeBits(io, bits, __func__);
 }
 
 int APS5_VABI AllocateCodingContextDec_nid_postfix() {
@@ -436,10 +509,6 @@ int APS5_VABI fillToByte_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI flushBit16_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI flushToByte_SB_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -472,23 +541,7 @@ int APS5_VABI getBit16_S_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI getBit16_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI getBit16s_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI getBit32_SB_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI getBit32_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI getBool16_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -521,10 +574,6 @@ int APS5_VABI initMRPtr_nid_postfix() {
 }
 
 int APS5_VABI initPostProc_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI peekBit16_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
