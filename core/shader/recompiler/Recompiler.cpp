@@ -679,6 +679,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         if (budget.bytes > limits.maxOutputMemoryBytes) throw std::runtime_error("barycentric emulation on the mesh path needs " + std::to_string(budget.bytes) + " bytes of mesh output memory, the device allows " + std::to_string(limits.maxOutputMemoryBytes));
     }
     targetOptions.waveLdsMemoryBarriers = request.target.waveLdsMemoryBarriers;
+    targetOptions.imageAtomicStoreBarriers = request.target.imageAtomicStoreBarriers;
     targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
     targetOptions.ldsLockFences = request.target.ldsLockFences;
     targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;

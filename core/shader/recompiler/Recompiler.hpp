@@ -345,6 +345,7 @@ struct SpirvTarget {
     bool depthRangeRemap = false;
     bool float32FlushToZero = false;
     bool waveLdsMemoryBarriers = false;
+    bool imageAtomicStoreBarriers = false;
     bool float32DenormPreserve = false;
     bool fusedExactArithmetic = false;
     bool largePixelFunctionLdsBuffer = false;
