@@ -73,3 +73,6 @@
 [submodule "3rdparty/quickjs"]
 	path = 3rdparty/quickjs
 	url = https://github.com/quickjs-ng/quickjs.git
+[submodule "3rdparty/fontconfig"]
+	path = 3rdparty/fontconfig
+	url = https://github.com/fontconfig/fontconfig.git
