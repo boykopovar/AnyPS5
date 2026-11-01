@@ -420,6 +420,13 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(binary == 0 && binaryEnd == 1 && std::strcmp(binaryRest, "b101") == 0);
     Require(ScanList(" -0B11", "%i", &binary) == 1 && binary == 0);
     Require(ScanListS("0b1", "%i", &binary) == 1 && binary == 0);
+    unsigned int hexWrap = 0;
+    unsigned short shortWrap = 0;
+    unsigned char byteWrap = 0;
+    *__error_nid_postfix() = 7;
+    Require(ScanListS("61439ebdf", "%x", &hexWrap) == 1 && hexWrap == 0x1439ebdfu && *__error_nid_postfix() == 7);
+    Require(ScanListS("-eb371ade9", "%hx", &shortWrap) == 1 && shortWrap == 0x5217 && *__error_nid_postfix() == 7);
+    Require(ScanListS("867259ccd", "%hhX", &byteWrap) == 1 && byteWrap == 0xcd && *__error_nid_postfix() == 7);
     Require(sscanf_nid_postfix("0x1f", "%i", &binary) == 1 && binary == 31);
 #ifdef _WIN32
     int scanned = -1;
