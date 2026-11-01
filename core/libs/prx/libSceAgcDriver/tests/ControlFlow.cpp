@@ -539,6 +539,27 @@ void verifyScheduledJumpTable() {
     verifyJumpTable("scheduled two-dword table through vcc", vcc, 0x20u, {0xcu, 0x14u, 0x1cu}, {0x3cu, 0x44u, 0x4cu});
     static_cast<void>(recompile("scheduled two-dword table through vcc", vcc, 32u));
     static_cast<void>(recompile("scheduled two-dword table through vcc", vcc, 64u));
+    auto interpolated = code;
+    interpolated.insert(interpolated.begin() + 8u, 0xc8100800u);
+    interpolated.insert(interpolated.begin() + 12u, 0xc8110801u);
+    interpolated[6] += 8u;
+    verifyJumpTable("interpolated two-dword table", interpolated, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x44u, 0x4cu, 0x54u});
+    auto vectorScheduled = patched(interpolated, 8u, {0x7e020280u});
+    vectorScheduled = patched(std::move(vectorScheduled), 12u, {0x7e040280u});
+    verifyJumpTable("vector-scheduled two-dword table", vectorScheduled, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x44u, 0x4cu, 0x54u});
+    static_cast<void>(recompile("vector-scheduled two-dword table", vectorScheduled, 32u));
+    static_cast<void>(recompile("vector-scheduled two-dword table", vectorScheduled, 64u));
+    auto interpolatedVcc = patched(interpolated, 0u, {0x83ea826au});
+    interpolatedVcc = patched(std::move(interpolatedVcc), 2u, {0x8f6a836au});
+    interpolatedVcc = patched(std::move(interpolatedVcc), 10u, {0xd4000000u});
+    verifyJumpTable("interpolated two-dword table through vcc", interpolatedVcc, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x44u, 0x4cu, 0x54u});
+    require(refusal(patched(interpolatedVcc, 8u, {0xbeea0380u})).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted an overwritten VCC index");
+    for (const auto index : {8u, 12u}) {
+        for (const auto word : {0xbe880380u, 0xbe8c0380u, 0xbe8d0380u}) {
+            const auto clobbered = patched(interpolated, index, {word});
+            require(refusal(clobbered).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a clobbered index or base");
+        }
+    }
     const std::vector<std::vector<std::uint32_t>> refused{
         patched(code, 1, {0xbe880380u}),
         patched(code, 3, {0xbe880380u}),
