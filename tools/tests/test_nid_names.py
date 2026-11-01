@@ -588,6 +588,17 @@ namespace Private { int internal_nid_postfix = 0; }
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         self.assertEqual(json.loads(result.stdout)["rows"][0]["status"], "name-in-use")
 
+    def test_helper_function_bodies_do_not_consume_following_data(self):
+        self.write_source('''void helper(int value = 0) {}
+auto trailing() -> int { return 0; }
+extern "C" {
+void inner(int value = 0) {}
+auto inner_trailing() -> int { return 0; }
+int actual_nid_postfix = 1;
+}
+''')
+        self.assertEqual(nid_names.collect_real_names(), {"actual", "actual_nid_postfix"})
+
     def test_data_initializers_preserve_following_declarators(self):
         self.write_source('''extern "C" {
 int first_nid_postfix = 1 < 2, second_nid_postfix = 0;

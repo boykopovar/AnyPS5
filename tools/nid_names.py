@@ -177,6 +177,7 @@ def data_declarations(tokens, c_linkage):
 def source_data_definitions(text):
     text = text.replace("\\\n", "").replace("\\\r\n", "")
     scopes, groups, statement = [False], [], []
+    initializer = False
     pairs = {"(": ")", "[": "]", "{": "}"}
     directive_end = 0
     for match in CPP_TOKEN.finditer(text):
@@ -198,7 +199,7 @@ def source_data_definitions(text):
                 scopes.append(statement[1] == '"C"')
             elif statement[:1] == ["namespace"] or statement[:2] == ["inline", "namespace"]:
                 scopes.append(scopes[-1] if statement[-1] != "namespace" else None)
-            elif "=" in statement or (statement and (re.fullmatch(r"[A-Za-z_]\w*", statement[-1]) or statement[-1] == "]") and
+            elif initializer or (statement and ((re.fullmatch(r"[A-Za-z_]\w*", statement[-1]) and ")" not in statement) or statement[-1] == "]") and
                     statement[-1] not in {"noexcept", "override", "final"} and
                     statement[0] not in {"struct", "class", "union", "enum"}) or \
                     data_declarations(statement + ["{", "}"], scopes[-1]):
@@ -208,15 +209,20 @@ def source_data_definitions(text):
             else:
                 scopes.append(None)
             statement = []
+            initializer = False
         elif token == "}" and not groups:
             if len(scopes) > 1:
                 scopes.pop()
             statement = []
+            initializer = False
         elif token == ";" and not groups:
             yield from data_declarations(statement, scopes[-1])
             statement = []
+            initializer = False
         else:
             statement.append(token)
+            if token == "=" and not groups:
+                initializer = True
             if token in pairs:
                 groups.append(pairs[token])
             elif groups and token == groups[-1]:
