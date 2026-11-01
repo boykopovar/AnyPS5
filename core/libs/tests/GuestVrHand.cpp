@@ -1,5 +1,6 @@
 #include "prx/libSceVrHand/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -36,6 +37,11 @@ int main() {
     out.fill(kFill);
     Require(sceVrHandQueryMemory(nullptr, out.data()) == kErrInvalidArg && Untouched(out));
     Require(sceVrHandQueryMemory(param.data(), nullptr) == kErrInvalidArg);
+    errno = 71;
+    Require(sceVrHandQueryMemory(reinterpret_cast<const void*>(0x10), out.data()) == kErrInvalidArg && Untouched(out));
+    Require(errno == 71);
+    Require(sceVrHandQueryMemory(param.data(), reinterpret_cast<void*>(0x10)) == kErrInvalidArg);
+    Require(errno == 71);
 
     for (const std::uint32_t size : {0u, 0x1fu, 0x21u, 0x40u, 0x120u, 0x10020u, 0x1000020u}) {
         param = ValidParam();
