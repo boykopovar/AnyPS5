@@ -61,6 +61,16 @@ bool IsTemporaryMountPoint(const AppContentMountPoint* mountPoint) {
     return std::strncmp(mountPoint->data, TEMPORARY_MOUNT_POINT, sizeof(mountPoint->data)) == 0;
 }
 
+bool IsDownloadMountPoint(const AppContentMountPoint* mountPoint) {
+    if (!mountPoint) return false;
+    for (const char* prefix : {"/download0", "/download1", "/download2"}) {
+        if (std::strncmp(mountPoint->data, prefix, sizeof(mountPoint->data)) == 0) return true;
+    }
+    return false;
+}
+
+std::atomic<std::uint64_t> download2QuotaBytes{0};
+
 }
 
 static void ClearDirectory(const std::filesystem::path& directory) {
@@ -146,8 +156,8 @@ int APS5_VABI sceAppContentAppParamGetInt(uint32_t param_id, int32_t* value) {
 int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint* mount_point) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (std::strncmp(mount_point->data, DOWNLOAD_MOUNT_POINT, sizeof(mount_point->data)) != 0) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const auto directory = ResolvePath_nid_no_patch(DOWNLOAD_MOUNT_POINT);
+    if (!IsDownloadMountPoint(mount_point)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    const auto directory = ResolvePath_nid_no_patch(mount_point->data);
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
     ClearDirectory(directory);
     return 0;
@@ -156,13 +166,20 @@ int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint* mount_
 int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMountPoint* mountPoint, size_t* availableSpaceKb) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!mountPoint || !availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (std::strncmp(mountPoint->data, DOWNLOAD_MOUNT_POINT, sizeof(mountPoint->data)) != 0) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const std::uint64_t quotaKb = GetAppDownloadDataSizeMiB_nid_postfix() * 1024u;
+    if (!IsDownloadMountPoint(mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    std::uint64_t quotaKb = 0;
+    if (std::strncmp(mountPoint->data, DOWNLOAD_MOUNT_POINT, sizeof(mountPoint->data)) == 0) {
+        quotaKb = GetAppDownloadDataSizeMiB_nid_postfix() * 1024u;
+    } else if (std::strncmp(mountPoint->data, "/download2", sizeof(mountPoint->data)) == 0) {
+        quotaKb = download2QuotaBytes.load() / 1024u;
+    } else {
+        NotImplemented_nid_no_patch(__func__);
+    }
     if (quotaKb == 0) {
         *availableSpaceKb = 0;
         return 0;
     }
-    const auto directory = ResolvePath_nid_no_patch(DOWNLOAD_MOUNT_POINT);
+    const auto directory = ResolvePath_nid_no_patch(mountPoint->data);
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
     std::uint64_t usedKb = 0;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(directory)) {
@@ -308,6 +325,28 @@ int APS5_VABI sceAppContentDownload1Expand(void) {
 }
 
 int APS5_VABI sceAppContentDownload1Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Expand(size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (size == 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto directory = ResolvePath_nid_no_patch("/download2");
+    if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
+    download2QuotaBytes.store(size);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(const void* mdid, bool* matches) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!mdid || !matches) return SCE_APP_CONTENT_ERROR_PARAMETER;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
