@@ -20040,10 +20040,6 @@ int APS5_VABI _ZN3WTF31NonSharedCharacterBreakIteratorD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb() {
     NotImplemented_nid_no_patch(__func__);
 }

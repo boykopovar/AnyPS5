@@ -1978,7 +1978,8 @@ VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, s
     Require(mip < descriptor.mipCount, "attachment mip exceeds the storage image");
     const bool volume = descriptor.dimension == TextureDimension::k3D;
     const bool array = !volume && descriptor.dimension == TextureDimension::k2DArray;
-    Require((depthSlice == 0 && layers == 1) || (volume && mip == 0 && layers != 0 && depthSlice + layers - 1u <= descriptor.depthOrLastArray) || (array && depthSlice == 0 && layers != 0), "attachment slice is outside the storage image");
+    const auto depth = volume ? std::max((descriptor.depthOrLastArray + 1u) >> mip, 1u) : 1u;
+    Require((depthSlice == 0 && layers == 1) || (volume && layers != 0 && depthSlice < depth && layers <= depth - depthSlice) || (array && depthSlice == 0 && layers != 0), "attachment slice is outside the storage image");
     Require((layer == 0 && layers == 1) || (volume && layer == 0) || (array && descriptor.baseArray + layer + layers - 1u <= descriptor.depthOrLastArray), "attachment layer is outside the storage image");
     const auto found = attachmentViews.find({format, mip, depthSlice, layers, layer});
     if (found != attachmentViews.end()) return found->second;
@@ -3868,7 +3869,7 @@ void StorageTexture::MarkSliceDirty(std::uint32_t slice, std::uint32_t count) {
 }
 
 bool StorageTexture::anyLayerPending() const {
-    return std::any_of(layerPending.begin(), layerPending.end(), [](bool pending) { return pending; });
+    return layerPending.Any();
 }
 
 void StorageTexture::refreshGeneration() {
@@ -3924,37 +3925,40 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
-    std::vector<bool> unsaved;
-    bool anyUnsaved = false;
-    const bool trims = CommitTrims();
-    if (trims) {
-        for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || keptForCpu(layer));
-    }
-    if (!trims || anyUnsaved) {
-        unsaved.assign(trackedLayers, false);
-        anyUnsaved = false;
-        for (std::uint32_t layer = first; layer < first + count; ++layer) {
-            unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || keptForCpu(layer));
-            anyUnsaved = anyUnsaved || unsaved[layer];
+    if (!layerPending.AllIn(first, count)) {
+        std::vector<bool> unsaved;
+        bool anyUnsaved = false;
+        const bool trims = CommitTrims();
+        if (trims) {
+            for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || keptForCpu(layer));
         }
+        if (!trims || anyUnsaved) {
+            unsaved.assign(trackedLayers, false);
+            anyUnsaved = false;
+            for (std::uint32_t layer = first; layer < first + count; ++layer) {
+                unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || keptForCpu(layer));
+                anyUnsaved = anyUnsaved || unsaved[layer];
+            }
+        }
+        if (anyUnsaved && !GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) captureGuestBytes(&unsaved);
+        GuestMemory::CollectWritesUncached(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
+        if (!completionKept.empty()) {
+            for (std::uint32_t layer = first; layer < first + count; ++layer) {
+                if (layerPending[layer]) continue;
+                const auto end = layerBegin(layer) + layerBytes(layer);
+                for (auto at = layerBegin(layer) & ~std::uint64_t{65535}; at < end; at += 65536) completionKept[static_cast<std::size_t>(at / 65536 - descriptor.baseAddress / 65536)] = 0;
+            }
+        }
+        layerPending.SetRange(first, count, true);
     }
-    if (anyUnsaved && !GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) captureGuestBytes(&unsaved);
-    bool newlyPending = false;
-    for (std::uint32_t layer = first; layer < first + count; ++layer) newlyPending = newlyPending || !layerPending[layer];
-    if (newlyPending) GuestMemory::CollectWritesUncached(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
     const auto pendingSince = GuestMemory::TrackerGeneration();
     for (std::uint32_t layer = first; layer < first + count; ++layer) {
         if (!keptForCpu(layer)) layerPendingSince[layer] = pendingSince;
-        if (!layerPending[layer] && !completionKept.empty()) {
-            const auto end = layerBegin(layer) + layerBytes(layer);
-            for (auto at = layerBegin(layer) & ~std::uint64_t{65535}; at < end; at += 65536) completionKept[static_cast<std::size_t>(at / 65536 - descriptor.baseAddress / 65536)] = 0;
-        }
-        layerPending[layer] = true;
     }
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
     // this image's content). An alias written since keeps its own newer results pending.
-    if (auto source = borrowedFrom.lock(); source != nullptr && borrowedUnits.size() == trackedLayers) {
+    if (auto source = borrowedUnits.size() == trackedLayers && borrowedUnits.AnyIn(first, count) ? borrowedFrom.lock() : nullptr; source != nullptr) {
         bool superseded = false;
         for (std::uint32_t unit = first; unit < first + count; ++unit) {
             if (!borrowedUnits[unit]) continue;
@@ -5373,7 +5377,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
-        droppedUnits = static_cast<std::size_t>(std::count(layerPending.begin(), layerPending.end(), true));
+        droppedUnits = layerPending.Count();
         layerPending.assign(trackedLayers, false);
         if (dirty) {
             dirty = false;
@@ -5938,8 +5942,8 @@ std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
 
 void StorageTexture::forgetBorrowed(std::uint32_t first, std::uint32_t count) {
     if (borrowedUnits.empty()) return;
-    for (auto unit = first; unit < first + count && unit < borrowedUnits.size(); ++unit) borrowedUnits[unit] = false;
-    if (std::none_of(borrowedUnits.begin(), borrowedUnits.end(), [](bool held) { return held; })) {
+    if (first < borrowedUnits.size()) borrowedUnits.SetRange(first, std::min<std::size_t>(count, borrowedUnits.size() - first), false);
+    if (!borrowedUnits.Any()) {
         borrowedUnits.clear();
         borrowedFrom.reset();
     }
@@ -6045,7 +6049,7 @@ void StorageTexture::writeBack(std::uint64_t address, std::size_t bytes) {
         }
         if (present < storeWholeUntil || ++partialStores > pieces) {
             storeWholeUntil = present + window;
-            layers = layerPending;
+            layers = layerPending.Bools();
             coalescedWriteBacks.fetch_add(1, std::memory_order_relaxed);
         }
     }
