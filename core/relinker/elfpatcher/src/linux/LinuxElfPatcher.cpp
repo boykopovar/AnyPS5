@@ -293,7 +293,7 @@ Domain::SysVDynamicSection ImportsByNid(Domain::SysVDynamicSection dynSection) {
     return dynSection;
 }
 
-std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::uint64_t table, const std::uint64_t tableEnd, const std::uint64_t function) {
+std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::uint64_t pages, const std::uint64_t table, const std::uint64_t tableEnd, const std::uint64_t function) {
     std::vector<std::uint8_t> code = {0x52, 0x53, 0x41, 0x54, 0x48, 0x83, 0xec, 0x08};
     const auto rip = [&](std::initializer_list<std::uint8_t> opcode, const std::uint64_t target) {
         code.insert(code.end(), opcode);
@@ -302,14 +302,20 @@ std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::ui
             throw Domain::RelinkerException("Import trace table exceeds rel32 range");
         Io::AppendU32(code, static_cast<std::uint32_t>(displacement));
     };
-    rip({0x48, 0x8d, 0x1d}, table);
+    rip({0x48, 0x8d, 0x1d}, pages);
+    rip({0x4c, 0x8d, 0x25}, table);
+    const auto pageLoop = code.size();
+    code.insert(code.end(), {0x4c, 0x39, 0xe3, 0x73, 0x00});
+    const auto pageExit = code.size();
+    code.insert(code.end(), {0x48, 0x8b, 0x3b, 0x48, 0x01, 0xdf, 0xbe, 0x00, 0x10, 0x00, 0x00, 0x8b, 0x53, 0x08, 0xb8, 0x0a, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x48, 0x83, 0xc3, 0x10, 0xeb});
+    code.push_back(static_cast<std::uint8_t>(static_cast<std::int8_t>(static_cast<std::int64_t>(pageLoop) - static_cast<std::int64_t>(code.size() + 1))));
+    code[pageExit - 1] = static_cast<std::uint8_t>(code.size() - pageExit);
     rip({0x4c, 0x8d, 0x25}, tableEnd);
     const auto loop = code.size();
     code.insert(code.end(), {0x4c, 0x39, 0xe3, 0x73, 0x00});
     const auto exit = code.size();
     code.insert(code.end(), {0x48, 0x8b, 0x03, 0x48, 0x8b, 0x3c, 0x03, 0x48, 0x8b, 0x73, 0x08, 0x48, 0x01, 0xde, 0x48, 0x8b, 0x53, 0x10, 0x48, 0x01, 0xda});
     rip({0xff, 0x15}, function);
-    code.insert(code.end(), {0x48, 0x8b, 0x3b, 0x48, 0x01, 0xdf, 0x48, 0x81, 0xe7, 0x00, 0xf0, 0xff, 0xff, 0xbe, 0x00, 0x10, 0x00, 0x00, 0xba, 0x07, 0x00, 0x00, 0x00, 0x50, 0xb8, 0x0a, 0x00, 0x00, 0x00, 0x0f, 0x05, 0x58});
     code.insert(code.end(), {0x48, 0x8b, 0x0b, 0x48, 0x89, 0x04, 0x0b, 0x48, 0x83, 0xc3, 0x18, 0xeb});
     code.push_back(static_cast<std::uint8_t>(static_cast<std::int8_t>(static_cast<std::int64_t>(loop) - static_cast<std::int64_t>(code.size() + 1))));
     code[exit - 1] = static_cast<std::uint8_t>(code.size() - exit);
@@ -553,8 +559,10 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         buf.push_back(b);
 
     std::uint64_t traceFunctionVaddr = 0;
+    std::uint64_t tracePagesVaddr = 0;
     std::uint64_t traceTableVaddr = 0;
     std::uint64_t traceTableEndVaddr = 0;
+    std::map<std::uint64_t, std::size_t> tracePages;
     std::vector<std::size_t> traceEntries;
     if (_traceImports) {
         alignBuf(buf, 8);
@@ -562,6 +570,16 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         traceFunctionVaddr = vaddrOfExtraBlockOffset(functionOff);
         Io::AppendU64(buf, 0);
         Io::WriteU64(buf, static_cast<std::size_t>(relaOff + traceRelocation), address(traceFunctionVaddr));
+        tracePagesVaddr = vaddrOfExtraBlockOffset(buf.size());
+        for (const auto& import : traced) {
+            tracePages.emplace(import.Slot & ~(kDefaultLoadAlignment - 1), 0);
+            tracePages.emplace((import.Slot + kPltGotEntryBytes - 1) & ~(kDefaultLoadAlignment - 1), 0);
+        }
+        for (auto& [page, offset] : tracePages) {
+            offset = buf.size();
+            buf.resize(buf.size() + 16);
+            Io::WriteU64(buf, offset, page - vaddrOfExtraBlockOffset(offset));
+        }
         traceTableVaddr = vaddrOfExtraBlockOffset(buf.size());
         for (std::size_t index = 0; index < traced.size(); ++index) {
             traceEntries.push_back(buf.size());
@@ -591,7 +609,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const auto stubOff = static_cast<std::uint64_t>(buf.size());
     const auto stubVaddr = vaddrOfExtraBlockOffset(stubOff);
     if (_traceImports) {
-        for (std::uint8_t b : TracePrologue(stubVaddr, traceTableVaddr, traceTableEndVaddr, traceFunctionVaddr))
+        for (std::uint8_t b : TracePrologue(stubVaddr, tracePagesVaddr, traceTableVaddr, traceTableEndVaddr, traceFunctionVaddr))
             buf.push_back(b);
     }
     const auto entryStubVaddr = vaddrOfExtraBlockOffset(buf.size());
@@ -641,6 +659,20 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     _byteWriter->WriteU16(buf, kEhdrPhNumOffset, writtenPh);
     if (_fixedBase)
         RebaseProgramHeaders(buf, tableOff, phEntSize, writtenPh, base);
+
+    for (const auto& [page, offset] : tracePages) {
+        std::uint32_t flags = 0;
+        for (std::uint16_t index = 0; index < writtenPh; ++index) {
+            const auto header = static_cast<std::size_t>(tableOff + static_cast<std::uint64_t>(index) * phEntSize);
+            if (Io::ReadU32(buf, header + kPhdrTypeOffset) != PT_LOAD)
+                continue;
+            const auto start = Io::ReadU64(buf, header + kPhdrVaddrOffset);
+            const auto size = Io::ReadU64(buf, header + kPhdrMemSizeOffset);
+            if (size != 0 && address(page) >= (start & ~(kDefaultLoadAlignment - 1)) && address(page) < start + size)
+                flags = Io::ReadU32(buf, header + kPhdrFlagsOffset);
+        }
+        Io::WriteU32(buf, offset + 8, 3 | ((flags & PF_X) != 0 ? 4 : 0));
+    }
 
     SectionHeaderTableRequest sectionRequest{};
     sectionRequest.DynStrOffset = dynStrOff;
