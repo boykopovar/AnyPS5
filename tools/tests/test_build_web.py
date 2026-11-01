@@ -28,6 +28,28 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_browser_unsafe_paths_do_not_publish_library_archives(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for name in ("libs/NUL.prx", "libs/file:stream.prx", "libs/trailing./libc.prx",
+                     "libs/COM\u00b9.prx", "libs/control\x1f.prx", "libs/question?.prx", "libs/double//"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "archive layout"):
+                self.publish(library_zip([("libs/libc.prx", b"valid"), (name, b"runtime")]), valid)
+            self.assertEqual(self.manifest.read_bytes(), self.previous)
+            self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+    def test_missing_or_empty_runtimes_preserve_the_release_manifest(self):
+        valid = library_zip([("libs/", b""), ("libs/libc.prx", b"valid"), ("libs/licenses/note.txt", b"license")])
+        for entries in ((('libs/', b''),), (('libs/licenses/note.txt', b'license'),), (('libs/libc.prx', b''),)):
+            invalid = library_zip(entries)
+            for platform in ("windows", "linux"):
+                with self.subTest(entries=entries, platform=platform), self.assertRaisesRegex(ValueError, "runtime"):
+                    self.publish(invalid if platform == "windows" else valid, invalid if platform == "linux" else valid)
+                self.assertEqual(self.manifest.read_bytes(), self.previous)
+                self.assertEqual(self.existing.read_bytes(), b"previous archive")
+                self.assertFalse(any(path.suffix == ".download" for path in self.libraries.iterdir()))
+        self.publish(valid, valid)
+        self.assertEqual(json.loads(self.manifest.read_text(encoding="utf-8"))["tag"], "v1")
+
     def test_unicode_path_rewrite_is_rejected_before_decompression(self):
         original = "libs/../libc.prx"
         rewritten = "libs/libc.prx"
