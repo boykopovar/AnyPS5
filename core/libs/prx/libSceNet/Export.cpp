@@ -855,6 +855,63 @@ bool GetSocketOptionForKernel(int descriptor, int level, int option, void* value
 
 const bool g_socketOptionGetterRegistered = (KernelSetSocketOptionGetter_nid_no_patch(&GetSocketOptionForKernel), true);
 
+int FamilyOfSocket(int descriptor) {
+    std::lock_guard lk(g_mutex);
+    const auto it = g_socks.find(descriptor);
+    return it == g_socks.end() ? 0 : it->second.family;
+}
+
+bool IsStreamSocket(int descriptor) {
+    std::lock_guard lk(g_mutex);
+    const auto it = g_socks.find(descriptor);
+    return it != g_socks.end() && it->second.type == NET_SOCK_STREAM;
+}
+
+int ErrorOf(std::int64_t result) {
+    return result < 0 ? *errno_slot() : 0;
+}
+
+constexpr int KernelWaitAll = 0x40;
+
+std::int64_t ReceiveForKernel(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength) {
+    const int netFlags = flags & ~KernelWaitAll;
+    const auto size = static_cast<size_t>(length);
+    if (length == 0 && !IsStreamSocket(descriptor)) {
+        KernelSocketPoll::Entry entry{descriptor, KernelSocketPoll::Readable, 0};
+        if (PollSockets(&entry, 1, 0) == 0) return 0;
+    }
+    if (netFlags == flags || (flags & NET_MSG_PEEK) != 0 || !IsStreamSocket(descriptor)) return sceNetRecvfrom(descriptor, buffer, size, netFlags, address, addressLength);
+    size_t received = 0;
+    for (;;) {
+        const auto result = sceNetRecvfrom(descriptor, buffer == nullptr ? nullptr : static_cast<char*>(buffer) + received, size - received, netFlags, address, addressLength);
+        if (result < 0) return received > 0 ? static_cast<std::int64_t>(received) : result;
+        received += static_cast<size_t>(result);
+        if (result == 0 || received == size) return static_cast<std::int64_t>(received);
+    }
+}
+
+const KernelSocketPoll::Forwards g_socketForwards{
+    FamilyOfSocket,
+    [](int descriptor, const void* address, std::uint32_t length) {
+        return ErrorOf(sceNetBind_nid_postfix(descriptor, address, length));
+    },
+    [](int descriptor, void* address, std::uint32_t* length) {
+        return ErrorOf(sceNetGetsockname(descriptor, address, length));
+    },
+    [](int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error) {
+        const std::int64_t result = sceNetSendto(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength);
+        *error = ErrorOf(result);
+        return result;
+    },
+    [](int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, int* error) {
+        const std::int64_t result = ReceiveForKernel(descriptor, buffer, length, flags, address, addressLength);
+        *error = ErrorOf(result);
+        return result;
+    },
+};
+
+const bool g_socketForwardsRegistered = (KernelSetSocketForwards_nid_no_patch(&g_socketForwards), true);
+
 constexpr int GuestFcntlGetStatus = 3;
 constexpr int GuestFcntlSetStatus = 4;
 constexpr int GuestReadWrite = 2;
