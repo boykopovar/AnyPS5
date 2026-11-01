@@ -327,7 +327,7 @@ public:
         return userData;
     }
 
-    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) const {
+    ShaderRecompiler::RecompileResult Vertex(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, bool folded = true, bool verifyPlan = true) const {
         ShaderRecompiler::ShaderVertexStageInfo info{};
         info.resourcesNum = 2;
         info.resources[0].fields = {BufferTable[0], BufferTable[1], BufferTable[2], BufferTable[3]};
@@ -349,7 +349,11 @@ public:
         };
         request.useCache = false;
         auto result = ShaderRecompiler::Recompile(request);
-        Require(result.vertexOffsetSgpr == static_cast<std::int32_t>(BaseVertexSgpr) && result.instanceOffsetSgpr == static_cast<std::int32_t>(StartInstanceSgpr), "the fetch adds of s16 and s17 were not folded into the draw (vertex " + std::to_string(result.vertexOffsetSgpr) + ", instance " + std::to_string(result.instanceOffsetSgpr) + ")");
+        if (verifyPlan && folded) {
+            Require(result.vertexOffsetSgpr == static_cast<std::int32_t>(BaseVertexSgpr) && result.instanceOffsetSgpr == static_cast<std::int32_t>(StartInstanceSgpr), "the fetch adds of s16 and s17 were not folded into the draw (vertex " + std::to_string(result.vertexOffsetSgpr) + ", instance " + std::to_string(result.instanceOffsetSgpr) + ")");
+        } else if (verifyPlan) {
+            Require(result.vertexOffsetSgpr == -1 && result.instanceOffsetSgpr == -1 && result.vertexInputs.empty() && result.vertexAttributes.empty(), "the unsupported fetch pattern did not retain runtime fetching");
+        }
         return result;
     }
 
@@ -447,22 +451,69 @@ std::string Classified(Fixture& fixture, const std::string& what, const ShaderRe
     return what + ": classified to " + PathName(path) + ", expected " + PathName(expectedPath) + (expectedPath ? "" : expectedRule == Rule::InPlace ? " with both dimensions in place" : " with both dimensions constant") + "\n";
 }
 
+std::vector<std::uint32_t> FetchOriginCode(char test) {
+    std::vector<std::uint32_t> code(NoCarryCode.begin(), NoCarryCode.begin() + 2);
+    if (test == 'A') code.push_back(0xbe900382u);
+    const auto snapshot = [&] {
+        code.push_back(0xbeea03c1u);
+        code.push_back(0x02060b08u);
+    };
+    if (test == 'B') snapshot();
+    code.insert(code.end(), NoCarryCode.begin() + 2, NoCarryCode.begin() + 10);
+    if (test != 'B') snapshot();
+    code.insert(code.end(), NoCarryCode.begin() + 11, NoCarryCode.end());
+    return code;
+}
+
+std::string RunFetchOrigin(Fixture& fixture, char test, bool verifyPlan = true) {
+    constexpr std::uint32_t entryOffset = 16;
+    const auto arithmeticOffset = test == 'A' ? 2u : entryOffset;
+    const auto fetchOffset = test == 'B' ? 0u : arithmeticOffset;
+    const auto poisonOffset = fetchOffset == entryOffset ? 0u : entryOffset;
+    const std::array<std::uint32_t, Vertices> raw{Indices[0], Indices[1], Indices[2]};
+    VertexSlots.fill(3u);
+    InstanceSlots.fill(0u);
+    for (std::uint32_t ordinal = 0; ordinal < Vertices; ++ordinal) {
+        VertexSlots[fetchOffset + raw[ordinal]] = ordinal;
+        VertexSlots[poisonOffset + raw[ordinal]] = Vertices + ordinal;
+    }
+    const auto code = FetchOriginCode(test);
+    const auto userData = fixture.UserData(entryOffset, 0u);
+    const auto vertex = fixture.Vertex(code, userData, test == 'C', verifyPlan);
+    const auto draw = FoldedDraw(vertex, userData, {reinterpret_cast<std::uintptr_t>(Indices.data()), Vertices, 2u, 1u, 0u, true, 0u, 0u});
+    std::cout << "fetch-origin case=" << test << " entry_s16=" << entryOffset << " arithmetic_offset=" << arithmeticOffset << " expected_fetch_offset=" << fetchOffset << " poison_fetch_offset=" << poisonOffset << " vertex_fold=" << vertex.vertexOffsetSgpr << " instance_fold=" << vertex.instanceOffsetSgpr << " attributes=" << vertex.vertexAttributes.size() << " draw_first_vertex=" << draw.firstVertex << '\n';
+    fixture.Draw(vertex, draw);
+    std::string failures;
+    for (std::uint32_t slot = 0; slot < Slots; ++slot) {
+        const std::array<std::uint32_t, 4> expected = slot < Vertices ? std::array<std::uint32_t, 4>{0u, 0u, raw[slot] + arithmeticOffset, 0u} : std::array<std::uint32_t, 4>{Unwritten, Unwritten, Unwritten, Unwritten};
+        const auto* actual = Output.data() + slot * 4u;
+        const bool same = std::equal(expected.begin(), expected.end(), actual);
+        char line[384];
+        std::snprintf(line, sizeof(line), "fetch-origin case=%c slot=%u actual=%08x,%08x,%08x,%08x expected=%08x,%08x,%08x,%08x match=%u\n", test, slot, actual[0], actual[1], actual[2], actual[3], expected[0], expected[1], expected[2], expected[3], same ? 1u : 0u);
+        std::cout << line;
+        if (!same) failures += line;
+    }
+    if (test == 'C' && (vertex.vertexOffsetSgpr != static_cast<std::int32_t>(BaseVertexSgpr) || vertex.vertexAttributes.empty())) failures += "the valid post-add snapshot lost its vertex lift\n";
+    return failures;
+}
+
 std::string Analysis(Fixture& fixture) {
     struct Case {
         const char* what;
         std::span<const std::uint32_t> code;
         bool vertex;
         bool instance;
+        bool folded = true;
     };
     const std::array<Case, 12> cases{{
         {"a program that copies v5 and v8 before its fetch adds", VertexCode, true, true},
         {"a program whose fetch adds are the only readers of v5, v8, s16 and s17", PostAddCode, false, false},
         {"a program that reads the instance add's carry", CarryCode, false, true},
-        {"a program whose vertex add is a clamped v_sad_u32", ClampCode, true, false},
-        {"a program that adds s16 twice", TwiceCode, true, false},
-        {"a program that writes EXEC before its fetch adds", ExecCode, true, true},
-        {"a program that writes another add's carry to s17 before its fetch adds", CarryWriteCode, false, true},
-        {"a program whose s16 add writes v0, not v5", OtherVgprCode, true, false},
+        {"a program whose vertex add is a clamped v_sad_u32", ClampCode, false, false, false},
+        {"a program that adds s16 twice", TwiceCode, false, false, false},
+        {"a program that writes EXEC before its fetch adds", ExecCode, false, false, false},
+        {"a program that writes another add's carry to s17 before its fetch adds", CarryWriteCode, false, false, false},
+        {"a program whose s16 add writes v0, not v5", OtherVgprCode, false, false, false},
         {"a program whose vertex add is an unclamped v_sad_u32", SadCode, false, false},
         {"a program that sets every EXEC bit with s_mov_b64 before its fetch adds", ExecAllCode, false, false},
         {"a program that reloads s16 and s17 with s_load_dwordx2 from s[14:15] after its fetch adds and reads them", ReloadCode, false, false},
@@ -471,7 +522,7 @@ std::string Analysis(Fixture& fixture) {
     const auto userData = fixture.UserData(0x51u, 0x62u);
     std::string failures;
     for (const auto& entry : cases) {
-        const auto result = fixture.Vertex(entry.code, userData);
+        const auto result = fixture.Vertex(entry.code, userData, entry.folded);
         char line[256];
         std::snprintf(line, sizeof(line), "%s: folded value observable outside the fetch add: vertex %d instance %d; expected %d %d\n", entry.what, result.vertexOffsetShared ? 1 : 0, result.instanceOffsetShared ? 1 : 0, entry.vertex ? 1 : 0, entry.instance ? 1 : 0);
         std::cout << line;
@@ -582,22 +633,26 @@ std::string Run(Fixture& fixture) {
             failures += Classified(fixture, what, vertex, staleUserData, draw, std::nullopt, Rule::Constant, true);
         }
     }
+    for (const auto test : {'A', 'B', 'C'}) failures += RunFetchOrigin(fixture, test);
     return failures;
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        Require(argc == 1 || (argc == 2 && (argv[1][0] == 'A' || argv[1][0] == 'B' || argv[1][0] == 'C') && argv[1][1] == '\0'), "expected no arguments or one fetch-origin case: A, B or C");
+        const bool probe = argc == 2;
         std::shared_ptr<AgcDriver::VulkanDevice> device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Fixture fixture(device);
-        const auto failures = Run(fixture);
+        const auto failures = probe ? RunFetchOrigin(fixture, argv[1][0], false) : Run(fixture);
         if (!failures.empty()) {
             std::cerr << "vertex and instance indices differ from the guest's:\n" << failures;
             return 1;
         }
-        std::cout << "draw offset index tests passed\n";
+        if (probe) std::cout << "fetch-origin case " << argv[1][0] << " GPU readback passed\n";
+        else std::cout << "draw offset index tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -423,6 +423,81 @@ bool carryObserved(const RdnaProgram& program, std::size_t addIndex, std::uint32
     return false;
 }
 
+struct EmbeddedIndexOrigin {
+    bool vertex = false;
+    bool instance = false;
+    std::int32_t vertexOffset = -1;
+    std::int32_t instanceOffset = -1;
+};
+
+bool hasInitialEmbeddedIndices(const RdnaProgram& program, const EmbeddedFetchPlan& plan, std::uint32_t userDataBaseRegister, std::uint32_t userDataCount, std::uint32_t waveSize, const std::vector<std::uint32_t>& vertexAddPcs, const std::vector<std::uint32_t>& instanceAddPcs) {
+    if (plan.loads.empty()) return true;
+    if (plan.vertexOffsetConflict || plan.instanceOffsetConflict) return false;
+    const auto lastLoad = std::max_element(plan.loads.begin(), plan.loads.end(), [](const auto& a, const auto& b) { return a.programCounter < b.programCounter; })->programCounter;
+    for (const auto& inst : program.instructions) {
+        if ((IsDirectBranchOpcode(inst.op) && inst.branchTarget <= lastLoad) || inst.op == RdnaOpcode::SSetpcB64 || inst.op == RdnaOpcode::SSwappcB64 || inst.op == RdnaOpcode::SCallB64 || inst.op == RdnaOpcode::SRfeB64 || inst.op == RdnaOpcode::Unknown || inst.op == RdnaOpcode::Invalid) return false;
+    }
+    std::array<bool, kScalarSlotCount> initialUserData{};
+    for (std::uint32_t reg = userDataBaseRegister; reg < initialUserData.size() && reg - userDataBaseRegister < userDataCount; reg++) initialUserData[reg] = true;
+    std::array<EmbeddedIndexOrigin, kVectorSlotCount> origins{};
+    origins[kVertexIndexVgpr].vertex = true;
+    origins[kInstanceIndexVgpr].instance = true;
+    std::size_t provenLoads = 0u;
+    const auto unmodified = [](const RdnaOperand& operand) {
+        return !operand.clamp && !operand.negate && !operand.negateHi && !operand.absolute && !operand.opSel && !operand.opSelHi && !operand.dpp && !operand.dpp8 && !operand.explicitSdwaDst && !operand.sdwaSext && operand.sdwaSel == 6u && operand.omod == 0u;
+    };
+    for (const auto& inst : program.instructions) {
+        if (inst.programCounter > lastLoad) break;
+        if (leavesStraightLine(inst)) return false;
+        if (writesExec(inst) && !setsExecAllOnes(inst)) return false;
+        if (inst.family == RdnaInstructionFamily::MIMG && (inst.rawWords[0] & 0x00030000u) != 0u) return false;
+        if ((inst.family == RdnaInstructionFamily::MUBUF || inst.family == RdnaInstructionFamily::MTBUF) && (inst.rawWords[1] & 0x00800000u) != 0u) return false;
+        const auto load = std::find_if(plan.loads.begin(), plan.loads.end(), [&](const auto& item) { return item.programCounter == inst.programCounter; });
+        if (load != plan.loads.end()) {
+            if (!isVectorOperand(inst.source0) || inst.source0.reg >= origins.size()) return false;
+            const auto& origin = origins[inst.source0.reg];
+            if (!origin.vertex || !origin.instance || origin.vertexOffset != plan.vertexOffsetSgpr || origin.instanceOffset != plan.instanceOffsetSgpr) return false;
+            provenLoads++;
+        }
+        EmbeddedIndexOrigin next;
+        const bool vertexAdd = std::find(vertexAddPcs.begin(), vertexAddPcs.end(), inst.programCounter) != vertexAddPcs.end();
+        const bool instanceAdd = std::find(instanceAddPcs.begin(), instanceAddPcs.end(), inst.programCounter) != instanceAddPcs.end();
+        if ((vertexAdd || instanceAdd) && isVectorOperand(inst.destination) && inst.destination.reg < origins.size() && isScalarOperand(inst.source0) && scalarSlot(inst.source0) < initialUserData.size() && initialUserData[scalarSlot(inst.source0)] && !inst.clampResult && unmodified(inst.destination) && unmodified(inst.source0) && unmodified(inst.source1) && unmodified(inst.source2)) {
+            const auto& previous = origins[inst.destination.reg];
+            if (vertexAdd && inst.destination.reg == kVertexIndexVgpr && previous.vertex && !previous.instance && previous.vertexOffset == -1) {
+                next = previous;
+                next.vertexOffset = static_cast<std::int32_t>(scalarSlot(inst.source0));
+            }
+            if (instanceAdd && inst.destination.reg == kInstanceIndexVgpr && previous.instance && !previous.vertex && previous.instanceOffset == -1) {
+                next = previous;
+                next.instanceOffset = static_cast<std::int32_t>(scalarSlot(inst.source0));
+            }
+        } else if (inst.op == RdnaOpcode::VCndmaskB32 && isVectorOperand(inst.source0) && inst.source0.reg == kInstanceIndexVgpr && isVectorOperand(inst.source1) && inst.source1.reg == kVertexIndexVgpr && !inst.clampResult && unmodified(inst.destination) && unmodified(inst.source0) && unmodified(inst.source1)) {
+            const auto& vertex = origins[kVertexIndexVgpr];
+            const auto& instance = origins[kInstanceIndexVgpr];
+            if (vertex.vertex && !vertex.instance && instance.instance && !instance.vertex) next = EmbeddedIndexOrigin{true, true, vertex.vertexOffset, instance.instanceOffset};
+        }
+        if (inst.op == RdnaOpcode::SMovreldB32 || inst.op == RdnaOpcode::SMovreldB64 || inst.op == RdnaOpcode::SMovrelsd2B32) initialUserData.fill(false);
+        const auto invalidateScalar = [&](const RdnaOperand& destination, std::uint32_t width) {
+            if (!isScalarOperand(destination)) return;
+            const auto first = scalarSlot(destination);
+            for (std::uint32_t i = 0u; i < width && first + i < initialUserData.size(); i++) initialUserData[first + i] = false;
+        };
+        invalidateScalar(inst.destination, std::max(decodedDstSize(inst), inst.is64Bit || (isVectorAlu(inst) && waveSize == 64u) ? 2u : 1u));
+        invalidateScalar(inst.destination2, 2u);
+        const auto invalidateVector = [&](const RdnaOperand& destination, std::uint32_t width) {
+            if (!isVectorOperand(destination)) return;
+            for (std::uint32_t i = 0u; i < width && destination.reg + i < origins.size(); i++) origins[destination.reg + i] = EmbeddedIndexOrigin{};
+        };
+        if (inst.op == RdnaOpcode::VMovreldB32 || inst.op == RdnaOpcode::VMovrelsdB32 || inst.op == RdnaOpcode::VMovrelsd2B32 || inst.op == RdnaOpcode::VSwaprelB32) origins.fill(EmbeddedIndexOrigin{});
+        invalidateVector(inst.destination, std::max(embeddedFetchDstSize(inst), inst.is64Bit || isVectorAlu(inst) ? 2u : 1u));
+        invalidateVector(inst.destination2, 2u);
+        if (inst.op == RdnaOpcode::VSwapB32) invalidateVector(inst.source0, 1u);
+        if (isVectorOperand(inst.destination) && inst.destination.reg < origins.size()) origins[inst.destination.reg] = next;
+    }
+    return provenLoads == plan.loads.size();
+}
+
 }
 
 EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& program, std::uint32_t attributeTableRegister, std::uint32_t bufferTableRegister, std::uint32_t userDataBaseRegister, std::uint32_t userDataCount, std::uint32_t waveSize) const {
@@ -712,6 +787,7 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
     plan.vertexIndexObserved = observed(plan.vertexOffsetSgpr, vertexAddPcs, kVertexIndexVgpr);
     plan.instanceIndexObserved = observed(plan.instanceOffsetSgpr, instanceAddPcs, kInstanceIndexVgpr);
 
+    if (!hasInitialEmbeddedIndices(program, plan, userDataBaseRegister, userDataCount, waveSize, vertexAddPcs, instanceAddPcs)) return {};
     return plan;
 }
 
