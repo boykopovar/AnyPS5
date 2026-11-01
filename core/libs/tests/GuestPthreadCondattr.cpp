@@ -71,6 +71,9 @@ int main() {
     CheckClock(&attr, Monotonic);
     Require(pthread_condattr_destroy_nid_postfix(&other) == 0 && other == nullptr);
     Require(pthread_condattr_getclock_nid_postfix(&other, &clockId) == GuestEinval && clockId == -1);
+    Require(pthread_condattr_getclock_nid_postfix(&other, nullptr) == GuestEinval);
+    Require(pthread_condattr_getclock_nid_postfix(nullptr, &clockId) == GuestEinval && clockId == -1);
+    Require(pthread_condattr_getclock_nid_postfix(nullptr, nullptr) == GuestEinval);
     Require(scePthreadCondattrSetpshared(&attr, 1) == SceEinval);
     Require(scePthreadCondattrSetpshared(&attr, 0) == SCE_OK);
     Require(scePthreadCondattrGetpshared(&attr, &sharing) == SCE_OK && sharing == 0);
@@ -99,6 +102,9 @@ int main() {
     Require(threw);
     Require(scePthreadCondattrDestroy(&attr) == SCE_OK && attr == nullptr);
     Require(pthread_condattr_getclock_nid_postfix(&attr, &clockId) == GuestEinval && clockId == -1);
+    Require(pthread_condattr_getclock_nid_postfix(&attr, nullptr) == GuestEinval);
+    Require(pthread_condattr_getclock_nid_postfix(nullptr, &clockId) == GuestEinval && clockId == -1);
+    Require(pthread_condattr_getclock_nid_postfix(nullptr, nullptr) == GuestEinval);
     Require(scePthreadCondattrDestroy(&attr) == SceEinval);
     sharing = -1;
     Require(pthread_condattr_getpshared_nid_postfix(&attr, &sharing) == GuestEinval && sharing == -1);
