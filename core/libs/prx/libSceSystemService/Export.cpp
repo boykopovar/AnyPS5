@@ -315,8 +315,9 @@ int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAre
  if (info == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *info = SystemServiceDisplaySafeAreaInfo{};
- info->ratio = 1.0f;
+ SystemServiceDisplaySafeAreaInfo safeArea{};
+ safeArea.ratio = 1.0f;
+ if (!GuestCopyOut_nid_no_patch(info, &safeArea, sizeof(safeArea))) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -329,10 +330,12 @@ int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLumi
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  const auto hdr = AgcDriver::CurrentHostHdr();
- luminance->max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
- luminance->max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
- luminance->min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
- AgcDriverNoteReportedToneMapPeak_nid_postfix(luminance->max_tone_map_luminance);
+ SystemServiceHdrToneMapLuminance result{};
+ result.max_tone_map_luminance = AgcDriver::ToneMapPeakNits(hdr);
+ result.max_full_frame_tone_map_luminance = hdr.available ? hdr.display.maxFullFrameLuminance : AgcDriver::SdrToneMapLuminanceNits;
+ result.min_tone_map_luminance = hdr.available ? hdr.display.minLuminance : 0.0f;
+ if (!GuestCopyOut_nid_no_patch(luminance, &result, sizeof(result))) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ AgcDriverNoteReportedToneMapPeak_nid_postfix(result.max_tone_map_luminance);
  return SYSTEM_SERVICE_OK;
 }
 
@@ -340,7 +343,8 @@ int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value) {
  if (value == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *value = false;
+ constexpr bool skip = false;
+ if (!GuestCopyOut_nid_no_patch(value, &skip, sizeof(skip))) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -348,7 +352,8 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  if (status == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *status = SystemServiceStatus{};
+ const SystemServiceStatus current{};
+ if (!GuestCopyOut_nid_no_patch(status, &current, sizeof(current))) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -356,10 +361,12 @@ int APS5_VABI sceSystemServiceHideSplashScreen(void) {
  return SYSTEM_SERVICE_OK;
 }
 
-int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
- if (value == nullptr) {
+int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* output) {
+ if (output == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
+ int result = 0;
+ int* const value = &result;
  switch (paramId) {
   case SYSTEM_SERVICE_PARAM_ID_LANG:
   case SYSTEM_SERVICE_PARAM_ID_400: *value = SystemServiceConsoleLanguage("sceSystemServiceParamGetInt"); break;
@@ -373,6 +380,7 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
    *value = measured->value;
   }
  }
+ if (!GuestCopyOut_nid_no_patch(output, &result, sizeof(result))) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -381,9 +389,11 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  constexpr char SystemName[] = "PS5";
- std::memset(buf, 0, bufSize);
- std::memcpy(buf, SystemName, sizeof(SystemName));
- buf[SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH - 1] = '\0';
+ static constexpr char Zeros[256] = {};
+ for (std::size_t offset = 0; offset < bufSize; offset += sizeof(Zeros)) {
+  if (!GuestCopyOut_nid_no_patch(buf + offset, Zeros, std::min(sizeof(Zeros), bufSize - offset))) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
+ if (!GuestCopyOut_nid_no_patch(buf, SystemName, sizeof(SystemName))) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
 }
 
