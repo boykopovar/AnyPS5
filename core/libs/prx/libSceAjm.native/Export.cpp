@@ -68,9 +68,37 @@ int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const 
 }
 
 const char* APS5_VABI sceAjmStrError(int error) {
- (void)error;
- AjmStub(__func__);
- return nullptr;
+    // Texts read from the console's own export (PS5 firmware 13.40, PPSA01317), reported on #3205.
+    static const char* const messages[] = {
+        "context does not exist",                      // 0x80930002
+        "instance does not exist",                     // 0x80930003
+        "batch does not exist",                        // 0x80930004
+        "invalid parameter",                           // 0x80930005
+        "not enough memory",                           // 0x80930006
+        "not enough resources",                        // 0x80930007
+        "codec is not supported",                      // 0x80930008
+        "codec is already registered in the context",  // 0x80930009
+        "codec is not registered in the context",      // 0x8093000a
+        "wrong revision in the flags",                 // 0x8093000b
+        "flag is not supported",                       // 0x8093000c
+        "busy",                                        // 0x8093000d
+        "priority is invalid",                         // 0x8093000e
+        "in progress",                                 // 0x8093000f
+        "operation cannot be performed at the moment", // 0x80930010
+        "malformed batch",                             // 0x80930011
+        "error at job creation",                       // 0x80930012
+        "invalid opcode",                              // 0x80930013
+        "priority violation",                          // 0x80930014
+        "buffer is too big",                           // 0x80930015
+        "invalid address",                             // 0x80930016
+        "batch was cancelled",                         // 0x80930017
+        "specified memory area is already registered", // 0x80930018
+        "specified memory area is not registered",     // 0x80930019
+    };
+    if (error == 0) return "ok";
+    const std::uint32_t index = static_cast<std::uint32_t>(error) - 0x80930002u;
+    if (index < sizeof(messages) / sizeof(messages[0])) return messages[index];
+    return "(unknown)";
 }
 
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* param) {
