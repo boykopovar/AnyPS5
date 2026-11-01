@@ -359,13 +359,11 @@ int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter
 }
 
 int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsDrawupFillTextureImageObject(graphicsObject, fillObject, mode, output, x, y, width, height);
 }
 
 int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, std::uint32_t format, std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1, std::uint32_t option2, std::uint32_t dimension2, void** output) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsDrawupFillTexturePatternObject(graphicsObject, fillObject, mode, format, select, dimension1, option1, option2, dimension2, output);
 }
 
 int APS5_VABI sceFontGraphicsCanvasStartDrawing() {
