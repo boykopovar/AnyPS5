@@ -9,6 +9,10 @@ permissions:
   actions: read
   pull-requests: write
 
+concurrency:
+  group: progress-comment-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
 jobs:
   comment:
     if: github.event.workflow_run.conclusion == 'success'
