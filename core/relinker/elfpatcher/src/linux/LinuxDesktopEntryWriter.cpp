@@ -62,9 +62,12 @@ std::string title(const std::filesystem::path& paramJsonPath, const std::filesys
 
 std::string escapeValue(const std::string& value) {
     std::string result;
+    bool leading = true;
     for (const char c : value) {
         if (c == '\\') result += "\\\\";
+        else if (c == ' ' && leading) result += "\\s";
         else result += c;
+        leading = leading && c == ' ';
     }
     return result;
 }
