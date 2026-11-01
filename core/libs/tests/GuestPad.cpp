@@ -655,6 +655,11 @@ static bool TriggerIs(int trigger, bool valid, std::uint32_t mode, const std::ar
 }
 
 static void CheckTriggerEffect(int user, int handle) {
+    PadTriggerEffectStateInformation info{};
+    Require(scePadGetTriggerEffectState(0, &info) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetTriggerEffectState(0, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetTriggerEffectState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetTriggerEffectState(handle, &info) == PAD_OK);
     std::array<std::uint8_t, 120> param{};
     const auto command = [&](int trigger, std::uint32_t mode, const std::array<std::uint8_t, 3>& data) {
         std::memcpy(param.data() + 8 + 56 * trigger, &mode, sizeof(mode));
@@ -678,6 +683,7 @@ static void CheckTriggerEffect(int user, int handle) {
     command(0, 2, {2, 5, 8});
     Require(scePadSetTriggerEffect(special, param.data()) == PAD_OK && TriggerIs(0, false, 0, off, 0));
     Require(scePadClose_nid_postfix(special) == PAD_OK);
+    Require(scePadGetTriggerEffectState(special, &info) == PAD_ERROR_INVALID_HANDLE);
 }
 
 static void CheckAccessibilityControllerState(int handle) {
