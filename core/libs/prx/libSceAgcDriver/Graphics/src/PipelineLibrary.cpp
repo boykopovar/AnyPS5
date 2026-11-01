@@ -11,6 +11,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string_view>
 
 namespace AgcDriver::Graphics {
@@ -44,6 +45,7 @@ struct DeviceLibraries {
     std::vector<VkShaderModule> modules;
     std::map<Key, VkPipelineLayout> layouts;
     std::array<std::map<Key, VkPipeline>, 4> parts;
+    std::array<std::set<Key>, 4> building;
     PipelineLibraryCounters counters;
 };
 
@@ -188,10 +190,24 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         auto key = Combined(*partKeys[part], *contextKeys[part]);
         key.push_back(static_cast<std::byte>(optimize));
         auto& cache = device.parts[part];
+        auto& building = device.building[part];
+        store.idle.wait(lock, [&] { return !building.contains(key); });
         if (const auto found = cache.find(key); found != cache.end()) {
             libraries.push_back(found->second);
             continue;
         }
+        building.insert(key);
+        struct PartBuild {
+            std::set<Key>& building;
+            const Key& key;
+            std::unique_lock<std::mutex>& lock;
+            std::condition_variable& idle;
+            ~PartBuild() {
+                if (!lock.owns_lock()) lock.lock();
+                building.erase(key);
+                idle.notify_all();
+            }
+        } partBuild{building, key, lock, store.idle};
         PerformanceTimer timing("Vulkan.GraphicsPipelineLibrary");
         VkGraphicsPipelineLibraryCreateInfoEXT library{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, flags[part] == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT ? &rendering : &shaderRendering};
         library.flags = flags[part];
@@ -225,9 +241,6 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             break;
         }
         VkPipeline handle = VK_NULL_HANDLE;
-        // Built without the store's mutex: a draw whose parts are resident is not held behind
-        // another thread's build, and builds from several threads (the registration prebuild, the
-        // journal replay) run at once; a part another thread built meanwhile is kept, this one dropped.
         lock.unlock();
         VkResult created;
         {
@@ -236,11 +249,6 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         }
         lock.lock();
         Check(created, "vkCreateGraphicsPipelines library");
-        if (const auto raced = cache.find(key); raced != cache.end()) {
-            device.destroyPipeline(context.device, handle, nullptr);
-            libraries.push_back(raced->second);
-            continue;
-        }
         cache.emplace(key, handle);
         if (optimize) {
             for (std::uint32_t stage = 0; stage < create.stageCount; ++stage) {

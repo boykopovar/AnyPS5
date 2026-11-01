@@ -1124,6 +1124,9 @@ std::uint64_t hashKey(const std::vector<std::byte>& key) {
 }
 
 struct PipelineStore {
+    struct KeyHash {
+        std::size_t operator()(const std::vector<std::byte>& key) const { return hashKey(key); }
+    };
     struct Entry {
         VkDevice device;
         // The device's buffer pool at insertion: it is made and reset with the device, so it tells
@@ -1138,6 +1141,7 @@ struct PipelineStore {
     // Least recently used first.
     std::list<Entry> entries;
     std::unordered_map<std::uint64_t, std::list<Entry>::iterator> index;
+    std::unordered_map<std::vector<std::byte>, std::weak_ptr<std::mutex>, KeyHash> builds;
     std::uint64_t hits = 0;
     std::uint64_t misses = 0;
     std::uint64_t uncached = 0;
@@ -1270,6 +1274,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         abandon(store, it);
         return nullptr;
     };
+    std::shared_ptr<std::mutex> buildMutex;
     {
         std::lock_guard lock(store.mutex);
         reportPipelines(store);
@@ -1285,6 +1290,31 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             ++store.uncached;
             ++store.totals.uncached;
             return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
+        }
+        if (const auto found = store.builds.find(key); found != store.builds.end()) buildMutex = found->second.lock();
+        if (!buildMutex) {
+            buildMutex = std::make_shared<std::mutex>();
+            store.builds.insert_or_assign(key, buildMutex);
+        }
+    }
+    struct PipelineBuild {
+        PipelineStore& store;
+        const std::vector<std::byte>& key;
+        std::shared_ptr<std::mutex> mutex;
+        std::unique_lock<std::mutex> lock;
+        ~PipelineBuild() {
+            std::lock_guard guard(store.mutex);
+            if (mutex.use_count() == 1) store.builds.erase(key);
+        }
+    } build{store, key, std::move(buildMutex), {}};
+    build.lock = std::unique_lock(*build.mutex);
+    {
+        std::lock_guard lock(store.mutex);
+        bool collision = false;
+        if (auto pipeline = lookup(collision)) {
+            ++store.hits;
+            ++store.totals.hits;
+            return pipeline;
         }
         ++store.misses;
         ++store.totals.misses;
