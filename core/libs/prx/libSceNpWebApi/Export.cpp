@@ -179,8 +179,6 @@ int APS5_VABI sceNpWebApiCreateContextA(int libCtxId, int userId) {
     return createUserContext(libCtxId, context->second, userId);
 }
 
-int APS5_VABI sceNpWebApiCreateServicePushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum);
-
 int APS5_VABI sceNpWebApiCreateExtdPushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum) {
     return sceNpWebApiCreateServicePushEventFilter(libCtxId, handleId, npServiceName, npServiceLabel, filterParam, filterParamNum);
 }
