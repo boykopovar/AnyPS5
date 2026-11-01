@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <bit>
 #include <iomanip>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <memory>
@@ -87,11 +88,47 @@ constexpr std::uint8_t EntryStub[] = {
     0x4c, 0xc4, 0x08, 0x49, 0xff, 0xc0, 0xeb, 0xed, 0x48, 0xc7, 0x44, 0xfc, 0x08, 0x00, 0x00, 0x00,
     0x00, 0x4c, 0x8d, 0x54, 0xfc, 0x10, 0x45, 0x31, 0xc0, 0x49, 0x39, 0xc8, 0x74, 0x0d, 0x4e, 0x8b,
     0x0c, 0xc2, 0x4f, 0x89, 0x0c, 0xc2, 0x49, 0xff, 0xc0, 0xeb, 0xee, 0x49, 0xc7, 0x04, 0xca, 0x00,
-    0x00, 0x00, 0x00, 0x48, 0x89, 0xe6, 0x48, 0x8d, 0x3d, 0x00, 0x00, 0x00, 0x00, 0xff, 0x15, 0x00,
-    0x00, 0x00, 0x00, 0x0f, 0x0b,
+    0x00, 0x00, 0x00, 0x48, 0x89, 0xe6, 0x48, 0x8d, 0x3d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x83, 0xec,
+    0x10, 0x0f, 0xae, 0x1c, 0x24, 0xc7, 0x44, 0x24, 0x04, 0xc0, 0x9f, 0x00, 0x00, 0x0f, 0xae, 0x54,
+    0x24, 0x04, 0xff, 0x15, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xae, 0x14, 0x24, 0x48, 0x83, 0xc4, 0x10,
+    0x0f, 0x0b,
 };
 constexpr std::size_t EntryStubEntryDisplacement = 0x69;
-constexpr std::size_t EntryStubStartDisplacement = 0x6f;
+constexpr std::size_t EntryStubStartDisplacement = 0x84;
+
+struct MacOsTracePrologue {
+    std::vector<std::uint8_t> Bytes;
+    std::size_t EntryDisplacement;
+};
+
+MacOsTracePrologue BuildTracePrologue(const std::uint32_t prologueRva, const std::uint32_t tableRva, const std::uint32_t tableEndRva, const std::uint32_t functionSlotRva) {
+    std::vector<std::uint8_t> code = {0x57, 0x56, 0x52, 0x51, 0x53, 0x41, 0x54, 0x48, 0x83, 0xec, 0x08};
+    const auto rip = [&](const std::initializer_list<std::uint8_t> opcode, const std::uint32_t target) {
+        code.insert(code.end(), opcode);
+        const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(prologueRva + code.size() + 4);
+        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+            throw Domain::RelinkerException("Import trace stub exceeds rel32 range");
+        Io::AppendU32(code, static_cast<std::uint32_t>(displacement));
+    };
+    rip({0x48, 0x8d, 0x1d}, tableRva);
+    rip({0x4c, 0x8d, 0x25}, tableEndRva);
+    const auto loop = code.size();
+    code.insert(code.end(), {0x4c, 0x39, 0xe3, 0x73, 0x00});
+    const auto exit = code.size();
+    code.insert(code.end(), {0x48, 0x8b, 0x03, 0x48, 0x8b, 0x3c, 0x03, 0x48, 0x8b, 0x73, 0x08, 0x48, 0x01, 0xde, 0x48, 0x8b, 0x53, 0x10, 0x48, 0x01, 0xda});
+    rip({0xff, 0x15}, functionSlotRva);
+    code.insert(code.end(), {0x48, 0x8b, 0x0b, 0x48, 0x89, 0x04, 0x0b, 0x48, 0x83, 0xc3, 0x18, 0xeb});
+    const auto back = static_cast<std::int64_t>(loop) - static_cast<std::int64_t>(code.size() + 1);
+    if (back < -128 || back > 127)
+        throw Domain::RelinkerException("Import trace loop exceeds rel8 range");
+    code.push_back(static_cast<std::uint8_t>(static_cast<std::int8_t>(back)));
+    if (code.size() - exit > 127)
+        throw Domain::RelinkerException("Import trace loop exceeds rel8 range");
+    code[exit - 1] = static_cast<std::uint8_t>(code.size() - exit);
+    code.insert(code.end(), {0x48, 0x83, 0xc4, 0x08, 0x41, 0x5c, 0x5b, 0x59, 0x5a, 0x5e, 0x5f, 0xe9, 0x00, 0x00, 0x00, 0x00});
+    const auto entry = code.size() - 4;
+    return {std::move(code), entry};
+}
 
 struct Section {
     std::string Name;
@@ -187,6 +224,7 @@ std::pair<std::uint8_t, std::uint64_t> Locate(const std::vector<Segment>& segmen
         const auto& segment = segments[index];
         if (segment.MemorySize == 0 || rva < segment.Rva || rva - segment.Rva >= segment.MemorySize || size > segment.MemorySize - (rva - segment.Rva)) continue;
         if (index > 15) throw Domain::RelinkerException("Too many Mach-O segments for dyld opcodes", rva);
+        if ((segment.Protection & VmProtWrite) == 0) throw Domain::RelinkerException("Mach-O fixup target is not in a writable segment", rva);
         return {static_cast<std::uint8_t>(index), rva - segment.Rva};
     }
     throw Domain::RelinkerException("Mach-O fixup target is outside the image", rva);
@@ -423,6 +461,9 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto guestSegments = segments.size();
     auto sections = image.BuildSections();
     for (const auto& trap : tls.GsTraps) {
+        const auto target = tls.BranchTargets.upper_bound(trap.Rva);
+        if (target != tls.BranchTargets.end() && *target < trap.Rva + trap.Length)
+            throw Domain::RelinkerException("Branch enters a guest GS instruction", *target);
         if (input.Trampolines != nullptr) {
             for (const auto& site : *input.Trampolines) {
                 const auto siteRva = image.GetRva(site.Address, site.Length);
@@ -486,7 +527,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto descriptor = metaRva + static_cast<std::uint32_t>(MetaTlsDescriptor);
     const auto initPointer = AlignUp(metaSize, 8);
     const auto startSlot = initPointer + 8;
-    const auto tlsExports = startSlot + 8;
+    const auto traceFunctionSlot = input.TraceImports ? startSlot + 8 : startSlot;
+    const auto tlsExports = traceFunctionSlot + 8;
     std::map<std::string, std::uint64_t> tlsImportSlots;
     for (const auto& import : input.TlsImports) tlsImportSlots.emplace(import.Symbol, 0);
     auto metaEnd = tlsExports + input.TlsExports.size() * 16;
@@ -508,7 +550,6 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     for (std::size_t index = 0; index < input.TlsExports.size(); ++index) {
         const auto& variable = input.TlsExports[index];
         if (!hasTls) throw Domain::RelinkerException("Guest TLS export has no TLS block: " + variable.Symbol);
-        if (variable.Offset >= tls.Tls->MemorySize) throw Domain::RelinkerException("Guest TLS export is outside the TLS block: " + variable.Symbol);
         const auto at = tlsExports + index * 16;
         Io::WriteU64(meta, at, imageBase + descriptor);
         Io::WriteU64(meta, at + 8, variable.Offset);
@@ -661,6 +702,44 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     }
     if (input.Executable) {
         input.Binds.push_back({"_Aps5StartGuest_nid_no_patch", metaRva + static_cast<std::uint32_t>(startSlot)});
+        if (input.TraceImports)
+            input.Binds.push_back({"_TraceImport_nid_no_patch", metaRva + static_cast<std::uint32_t>(traceFunctionSlot)});
+    }
+    std::size_t traceEntryPatch = 0;
+    std::uint32_t tracePrologueRva = 0;
+    if (input.Executable && input.TraceImports) {
+        const auto tableRva = code.GetRva();
+        const auto tableEnd = tableRva + static_cast<std::uint32_t>(input.Traced.size() * 24);
+        std::map<std::string, std::uint32_t> stringRva;
+        std::vector<std::string> stringOrder;
+        auto cursor = tableEnd;
+        const auto intern = [&](const std::string& text) {
+            const auto existing = stringRva.find(text);
+            if (existing != stringRva.end()) return existing->second;
+            stringRva.emplace(text, cursor);
+            stringOrder.push_back(text);
+            cursor += static_cast<std::uint32_t>(text.size() + 1);
+            return stringRva.at(text);
+        };
+        std::vector<std::uint8_t> table;
+        for (std::size_t index = 0; index < input.Traced.size(); ++index) {
+            const auto entry = tableRva + static_cast<std::uint32_t>(index * 24);
+            const auto relative = [entry](const std::uint32_t target) { return static_cast<std::uint64_t>(static_cast<std::int64_t>(target) - static_cast<std::int64_t>(entry)); };
+            Io::AppendU64(table, relative(input.Traced[index].Rva));
+            Io::AppendU64(table, relative(intern(input.Traced[index].Name)));
+            Io::AppendU64(table, relative(intern(input.Traced[index].Library)));
+        }
+        for (const auto byte : table) code.Emit({byte});
+        for (const auto& text : stringOrder) {
+            if (code.GetRva() != stringRva.at(text)) throw Domain::RelinkerException("Import trace string was placed at the wrong address");
+            for (const auto character : text) code.Emit({static_cast<std::uint8_t>(character)});
+            code.Emit({0});
+        }
+        if (code.GetRva() != cursor) throw Domain::RelinkerException("Import trace table size changed while it was written");
+        tracePrologueRva = cursor;
+        const auto prologue = BuildTracePrologue(cursor, tableRva, tableEnd, metaRva + static_cast<std::uint32_t>(traceFunctionSlot));
+        traceEntryPatch = static_cast<std::size_t>(code.GetRva() - codeRva) + prologue.EntryDisplacement;
+        for (const auto byte : prologue.Bytes) code.Emit({byte});
     }
     const auto metaBytes = meta.size();
     segments.push_back({"__APS5DATA", metaRva, metaBytes, VmProtRead | VmProtWrite, std::move(meta), std::move(dataSections)});
@@ -675,6 +754,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             while (used != 0 && data[used - 1] == 0) --used;
             data.resize(used);
         }
+        if (segments[index].Name == "__APS5TEXT" && traceEntryPatch != 0 && data.size() < traceEntryPatch + 4)
+            data.resize(traceEntryPatch + 4, 0);
         data.resize(AlignUp(data.size(), PageSize), 0);
     }
 
@@ -811,17 +892,34 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
 
     std::vector<std::uint8_t> file;
     constexpr std::size_t HeaderSize = 32;
-    const auto stubOffset = AlignUp(HeaderSize + commands.size(), 16);
-    if (stubOffset + (input.Executable ? sizeof(EntryStub) : 0) > LoadRva)
+    constexpr std::size_t LoadCommandReserve = 0x400;
+    const auto stubOffset = AlignUp(HeaderSize + commands.size() + LoadCommandReserve, 16);
+    const auto traceJump = input.Executable && input.TraceImports;
+    const auto entryOffset = stubOffset + (traceJump ? 5 : 0);
+    if (entryOffset + (input.Executable ? sizeof(EntryStub) : 0) > LoadRva)
         throw Domain::RelinkerException("Mach-O load commands do not fit before the guest image");
     file.resize(LoadRva, 0);
     if (input.Executable) {
-        std::copy(std::begin(EntryStub), std::end(EntryStub), file.begin() + static_cast<std::ptrdiff_t>(stubOffset));
-        const auto writeDisplacement = [&](const std::size_t field, const std::uint64_t targetRva) {
-            const auto displacement = static_cast<std::int64_t>(targetRva) - static_cast<std::int64_t>(stubOffset + field + 4);
+        if (traceJump) {
+            const auto text = std::find_if(segments.begin(), segments.end(), [](const Segment& segment) { return segment.Name == "__APS5TEXT"; });
+            if (text == segments.end() || traceEntryPatch + 4 > text->Data.size())
+                throw Domain::RelinkerException("Import trace prologue is missing from the Mach-O image");
+            const auto displacement = static_cast<std::int64_t>(entryOffset) - static_cast<std::int64_t>(codeRva + traceEntryPatch + 4);
             if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
                 throw Domain::RelinkerException("macOS entry stub target is out of rel32 range");
-            Io::WriteU32(file, stubOffset + field, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
+            Io::WriteU32(text->Data, traceEntryPatch, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
+            const auto jump = static_cast<std::int64_t>(tracePrologueRva) - static_cast<std::int64_t>(stubOffset + 5);
+            if (jump < std::numeric_limits<std::int32_t>::min() || jump > std::numeric_limits<std::int32_t>::max())
+                throw Domain::RelinkerException("Import trace prologue is out of rel32 range");
+            file[stubOffset] = 0xe9;
+            Io::WriteU32(file, stubOffset + 1, static_cast<std::uint32_t>(static_cast<std::int32_t>(jump)));
+        }
+        std::copy(std::begin(EntryStub), std::end(EntryStub), file.begin() + static_cast<std::ptrdiff_t>(entryOffset));
+        const auto writeDisplacement = [&](const std::size_t field, const std::uint64_t targetRva) {
+            const auto displacement = static_cast<std::int64_t>(targetRva) - static_cast<std::int64_t>(entryOffset + field + 4);
+            if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                throw Domain::RelinkerException("macOS entry stub target is out of rel32 range");
+            Io::WriteU32(file, entryOffset + field, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
         };
         writeDisplacement(EntryStubEntryDisplacement, input.EntryRva);
         writeDisplacement(EntryStubStartDisplacement, metaRva + startSlot);

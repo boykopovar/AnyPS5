@@ -18,14 +18,14 @@ bool Driver::matchesCopyKernel(std::span<const std::uint32_t> code, const std::v
     static const bool enabled = std::getenv("APS5_NO_COPY_HLE") == nullptr;
     if (!enabled || userData.size() != 12 || compute.numThreads[0] != 64 || compute.numThreads[1] != 1 || compute.numThreads[2] != 1 || !compute.groupIdEnable[0]) return false;
     static constexpr std::size_t copyKernelWords = 38;
-    static constexpr std::uint64_t copyKernelHash = 0x6ec00fe8aa95f99aull;
+    static constexpr std::array<std::uint64_t, 2> copyKernelHashes{0x6ec00fe8aa95f99aull, 0xc771c42e4d069d62ull};
     if (code.size() < copyKernelWords || code[0] != 0xbfa00002u || code[copyKernelWords - 1] != 0xbf810000u) return false;
     std::uint64_t hash = 0xcbf29ce484222325ull;
     for (const auto word : code.first(copyKernelWords)) {
         hash ^= word;
         hash *= 0x100000001b3ull;
     }
-    if (hash != copyKernelHash) return false;
+    if (std::find(copyKernelHashes.begin(), copyKernelHashes.end(), hash) == copyKernelHashes.end()) return false;
     const auto stride = [&](std::size_t word) { return (userData[word] >> 16u) & 0x3fffu; };
     const auto swizzled = [&](std::size_t word) { return ((userData[word] >> 31u) & 1u) != 0; };
     return userData[3] == 0x00014004u && userData[7] == 0x00014004u && userData[11] == 0x0004dfacu && stride(1) == 4 && stride(5) == 4 && stride(9) == 16 && !swizzled(1) && !swizzled(5) && !swizzled(9) && userData[10] >= 1;
@@ -128,8 +128,7 @@ void Driver::noteCopyWriter(std::uint64_t program, std::uint64_t begin, std::uin
         knownValueEntries.fetch_add(1, std::memory_order_relaxed);
     }
     std::lock_guard lock(writtenBuffersMutex);
-    writtenBuffers.push_back({program, begin, end, ++writtenBufferSerial, queue, false, std::move(known), generation});
-    while (writtenBuffers.size() > WrittenBufferRing) writtenBuffers.pop_front();
+    writtenBuffers.Push({program, begin, end, ++writtenBufferSerial, queue, false, std::move(known), generation});
 }
 
 bool Driver::copyKnownValues() {
@@ -165,7 +164,7 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
     if ((packet[4] & 0x20u) != 0) {
         for (std::uint32_t axis = 0; axis < 3; ++axis) {
             const auto threads = std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u);
-            groups[axis] = (groups[axis] + threads - 1) / threads;
+            groups[axis] = ThreadDimensionGroups(groups[axis], threads);
         }
     }
     if (groups[1] != 1 || groups[2] != 1) {

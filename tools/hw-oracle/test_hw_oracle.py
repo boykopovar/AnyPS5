@@ -108,6 +108,20 @@ class InputRowsTests(unittest.TestCase):
                     assemble.assert_not_called()
                     oracle.assert_not_called()
 
+    def test_cli_accepts_utf8_bom_in_body_and_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body, rows = (Path(directory) / name for name in ("body.s", "rows.txt"))
+            argv = ["hw_oracle.py", str(body), str(rows)]
+            argv += [item for name, value in MODES.items()
+                     for item in ["--" + name.replace("_", "-"), str(value)]]
+            for bom in ("body", "rows"):
+                with self.subTest(bom=bom):
+                    body.write_text("s_nop 0", encoding="utf-8-sig" if bom == "body" else "utf-8")
+                    rows.write_text("1 2 3 4\n", encoding="utf-8-sig" if bom == "rows" else "utf-8")
+                    with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[]) as run:
+                        hw_oracle.main()
+                    run.assert_called_once_with("s_nop 0", [(1, 2, 3, 4)], b"", False, False, **MODES, lds=4096)
+
     def test_successful_dispatch_without_output_cannot_reuse_previous_results(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = Path(directory) / "runner.py"
@@ -626,6 +640,17 @@ class GroupSegmentTests(unittest.TestCase):
         self.assertNotIn("@LDS@", text)
 
 
+class SourceEncodingTests(unittest.TestCase):
+    def test_assembly_source_is_utf8(self):
+        body = "  s_nop 0  ; v0 \u2192 v10, caf\u00e9"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(hw_oracle, "target", return_value="gfx1036"), \
+                patch.object(hw_oracle, "runtime", return_value="hsa"), patch.object(hw_oracle.subprocess, "run"), \
+                patch.object(hw_oracle, "tool", return_value="clang"):
+            hw_oracle.assemble(body, Path(tmp), False, **MODES)
+            text = (Path(tmp) / "k.s").read_bytes().decode("utf-8")
+        self.assertIn(body, text)
+
+
 class AssemblyTests(unittest.TestCase):
     def test_condition_operands_match_wave_size(self):
         for name in ("clang", "ld.lld"):
@@ -717,6 +742,103 @@ class HipOracleTests(unittest.TestCase):
             with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exit:
                 self.oracle_hip.main(argv)
             self.assertEqual(exit.exception.code, 2)
+
+    def test_cli_rejects_noninteger_dispatch_sizes_before_oracle_work(self):
+        for index, name in ((1, "THREADS"), (4, "OUT_DWORDS")):
+            argv = ["code", "1", "in", "out", "1"]
+            argv[index] = "not-an-int"
+            with self.subTest(argument=name), patch.object(Path, "read_bytes", side_effect=AssertionError("input read")) as read, \
+                    patch.object(self.oracle_hip, "dispatch", side_effect=AssertionError("dispatch called")) as dispatch, \
+                    contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as exited:
+                self.oracle_hip.main(argv)
+            self.assertEqual(exited.exception.code, 2)
+            self.assertIn(f"{name} must be an integer", errors.getvalue())
+            self.assertNotIn("Traceback", errors.getvalue())
+            read.assert_not_called()
+            dispatch.assert_not_called()
+
+    def test_cli_rejects_short_dispatch_input_before_oracle_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            code, inputs, output = (root / name for name in ("code.co", "input.bin", "output.bin"))
+            code.write_bytes(b"code")
+            for threads, size in ((1, 0), (1, 15), (2, 31)):
+                with self.subTest(threads=threads, size=size):
+                    inputs.write_bytes(bytes(size))
+                    output.unlink(missing_ok=True)
+                    with patch.object(self.oracle_hip, "dispatch", side_effect=AssertionError("dispatch called")) as dispatch, \
+                            contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as exited:
+                        self.oracle_hip.main([str(code), str(threads), str(inputs), str(output), "1"])
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn(f"input file must contain at least {threads * 16} bytes", errors.getvalue())
+                    self.assertFalse(output.exists())
+                    dispatch.assert_not_called()
+
+            for size in (32, 35):
+                with self.subTest(threads=2, accepted_size=size):
+                    payload = bytes(range(size))
+                    inputs.write_bytes(payload)
+                    output.unlink(missing_ok=True)
+                    with patch.object(self.oracle_hip, "dispatch", return_value=bytes(8)) as dispatch:
+                        self.assertEqual(self.oracle_hip.main([str(code), "2", str(inputs), str(output), "1"]), 0)
+                    dispatch.assert_called_once_with(b"code", 2, payload, 1, False)
+                    self.assertEqual(output.read_bytes(), bytes(8))
+
+    def test_cli_rejects_output_aliases_before_oracle_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for alias in ("same", "hardlink"):
+                with self.subTest(mode="assemble", alias=alias):
+                    source = root / f"source-{alias}.s"
+                    source.write_bytes(b"assembly source")
+                    output = source
+                    if alias == "hardlink":
+                        output = root / "assembled-output"
+                        os.link(source, output)
+                    before = source.read_bytes()
+                    with patch.object(self.oracle_hip, "assemble", side_effect=AssertionError("assemble called")), \
+                            contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit) as exited:
+                        self.oracle_hip.main(["--assemble", str(source), str(output), "gfx1010"])
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn("--assemble output must not overwrite the source", error.getvalue())
+                    self.assertEqual(source.read_bytes(), before)
+                    if alias == "hardlink":
+                        output.unlink()
+
+            for input_name in ("code", "input"):
+                for alias in ("same", "hardlink"):
+                    with self.subTest(mode="dispatch", input=input_name, alias=alias):
+                        code = root / f"code-{input_name}-{alias}.co"
+                        inputs = root / f"input-{input_name}-{alias}.bin"
+                        code.write_bytes(b"code")
+                        inputs.write_bytes(b"input evidence")
+                        target = code if input_name == "code" else inputs
+                        output = target
+                        if alias == "hardlink":
+                            output = root / "dispatch-output"
+                            os.link(target, output)
+                        before = (code.read_bytes(), inputs.read_bytes())
+                        with patch.object(self.oracle_hip, "dispatch", side_effect=AssertionError("dispatch called")), \
+                                contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit) as exited:
+                            self.oracle_hip.main([str(code), "1", str(inputs), str(output), "1"])
+                        self.assertEqual(exited.exception.code, 2)
+                        self.assertIn("dispatch output must not overwrite an input file", error.getvalue())
+                        self.assertEqual((code.read_bytes(), inputs.read_bytes()), before)
+                        if alias == "hardlink":
+                            output.unlink()
+
+    def test_case_distinct_existing_paths_use_filesystem_identity(self):
+        source = Path("kernel.s")
+        output = Path("KERNEL.S")
+        self.assertEqual(source, output) if os.name == "nt" else self.assertNotEqual(source, output)
+        with patch.object(Path, "read_bytes", return_value=b"source"), \
+                patch.object(Path, "exists", return_value=True), \
+                patch.object(Path, "samefile", return_value=False) as samefile, \
+                patch.object(Path, "write_bytes") as write, \
+                patch.object(self.oracle_hip, "assemble", return_value=b"assembled"):
+            self.assertEqual(self.oracle_hip.main(["--assemble", str(source), str(output), "gfx1010"]), 0)
+        samefile.assert_called_once_with(output)
+        write.assert_called_once_with(b"assembled")
 
     def test_comgr_step_tries_each_action_until_one_produces_output(self):
         library = unittest.mock.MagicMock()

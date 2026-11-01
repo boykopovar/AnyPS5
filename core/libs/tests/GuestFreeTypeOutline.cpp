@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -12,11 +13,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Outline_Check_nid_postfix(GuestOutline*);
-void APS5_VABI FT_Outline_Get_CBox_nid_postfix(const GuestOutline*, GuestBBox*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -62,9 +58,11 @@ static void CompareBounds(std::vector<GuestVector> points) {
     FT_BBox expected{91, 92, 93, 94};
     FT_Outline_Get_CBox(&native, &expected);
     FT_Outline_Get_CBox_nid_postfix(&guest, &actual.value);
+
     Require(Equal(actual.value, {expected.xMin, expected.yMin, expected.xMax, expected.yMax}));
     Require(actual.before == 0x1122334455667788 && actual.after == 0x8877665544332211);
     FT_Outline_Get_CBox_nid_postfix(&guest, nullptr);
+
     Require(guest.n_contours == 65535 && guest.flags == 0x71 && guest.tags == nullptr && guest.contours == nullptr);
 }
 
@@ -96,10 +94,13 @@ int main() {
     GuestOutline outline{0, static_cast<std::uint16_t>(wide.size()), wide.data(), nullptr, nullptr, 0};
     GuestBBox box{1, 2, 3, 4};
     FT_Outline_Get_CBox_nid_postfix(&outline, &box);
+
     Require(Equal(box, {std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::min(),
                         std::numeric_limits<std::int64_t>::max(), std::numeric_limits<std::int64_t>::max()}));
     const GuestBBox retained = box;
     FT_Outline_Get_CBox_nid_postfix(nullptr, &box);
+
     Require(Equal(box, retained));
     FT_Outline_Get_CBox_nid_postfix(nullptr, nullptr);
+
 }

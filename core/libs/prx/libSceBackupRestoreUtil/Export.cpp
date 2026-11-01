@@ -1,3 +1,4 @@
+#include "prx/libSceBackupRestoreUtil/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -83,6 +84,26 @@ int APS5_VABI sceBackupRestoreUtilRestoreData() {
 int APS5_VABI sceBackupRestoreUtilTerminate() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceBackupRestoreUtilCalcRequiredSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBackupRestoreUtilCancelCalcRequiredSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBackupRestoreUtilGetBackupTelemetryInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBackupRestoreUtilGetRestoreFailedTitles() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBackupRestoreUtilGetRestoreTelemetryInfo() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

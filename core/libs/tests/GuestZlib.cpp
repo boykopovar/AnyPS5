@@ -1,20 +1,15 @@
+#include "prx/libSceZlib/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 #include <source_location>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-std::int32_t APS5_VABI sceZlibInitialize(const void*, std::uint64_t);
-std::int32_t APS5_VABI sceZlibFinalize();
-std::int32_t APS5_VABI sceZlibInflate(const void*, std::uint32_t, void*, std::uint32_t, std::uint64_t*);
-std::int32_t APS5_VABI sceZlibWaitForDone(std::uint64_t*, std::uint32_t*);
-std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t, std::uint32_t*, std::int32_t*);
-}
+#include <thread>
 
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (value) return;
@@ -39,6 +34,9 @@ int main() {
     std::int32_t status = 0;
     Require(sceZlibFinalize() == static_cast<std::int32_t>(0x81120032));
     Require(sceZlibInflate(nullptr, 0, nullptr, 0, nullptr) == static_cast<std::int32_t>(0x81120032));
+    Require(sceZlibWaitForDone(nullptr, nullptr) == static_cast<std::int32_t>(0x81120032));
+    std::uint64_t earlyId = 0;
+    Require(sceZlibWaitForDone(&earlyId, nullptr) == static_cast<std::int32_t>(0x81120032));
     Require(sceZlibInitialize(nullptr, 1) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInitialize(output, 0) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInitialize(nullptr, 0) == 0);
@@ -59,17 +57,20 @@ int main() {
         Require(sceZlibInflate(input, inputLength, output, capacity, &id) == 0);
         Require(id > previous);
         previous = id;
-        RequireThrows([&] { sceZlibInflate(input, inputLength, output, capacity, &id); });
-        std::uint32_t timeout = 0;
-        RequireThrows([&] { sceZlibWaitForDone(&id, &timeout); });
         std::uint64_t completed;
         Require(sceZlibWaitForDone(&completed, nullptr) == 0);
         Require(completed == id);
+        std::uint32_t timeout = 0;
+        Require(sceZlibWaitForDone(&completed, &timeout) == static_cast<std::int32_t>(0x81120027));
         Require(sceZlibGetResult(id + 1, &produced, &status) == static_cast<std::int32_t>(0x81120002));
+        Require(sceZlibGetResult(id, nullptr, &status) == static_cast<std::int32_t>(0x81120016));
         Require(sceZlibGetResult(id, &produced, &status) == 0);
         if (status != expectedStatus) std::fprintf(stderr, "input=%u capacity=%u status=%x expected=%x produced=%u\n", inputLength, capacity, static_cast<unsigned>(status), static_cast<unsigned>(expectedStatus), produced);
         Require(status == expectedStatus && produced <= capacity);
-        RequireThrows([&] { sceZlibGetResult(id, &produced, &status); });
+        std::uint32_t producedAgain = 0;
+        std::int32_t statusAgain = 0;
+        Require(sceZlibGetResult(id, &producedAgain, &statusAgain) == 0);
+        Require(producedAgain == produced && statusAgain == status);
         Require(std::all_of(storage.begin(), storage.begin() + 2048, [](auto byte) { return byte == 0xA5; }));
         Require(std::all_of(storage.begin() + 2048 + capacity, storage.end(), [](auto byte) { return byte == 0xA5; }));
     };
@@ -84,7 +85,60 @@ int main() {
     decode(compressed.data(), compressed.size() - 1, 65536, static_cast<std::int32_t>(0x811200FF));
     decode(compressed.data(), compressed.size() - 4, 8192, static_cast<std::int32_t>(0x811200FF));
     decode(compressed.data(), compressed.size() - 1, 8192, static_cast<std::int32_t>(0x811200FF));
+    alignas(2048) std::array<std::uint8_t, 3 * 8192> batch{};
+    std::array<std::uint64_t, 3> ids{};
+    for (std::size_t index = 0; index < ids.size(); ++index)
+        Require(sceZlibInflate(compressed.data(), compressed.size(), batch.data() + index * 8192, 8192, &ids[index]) == 0);
+    Require(ids[0] < ids[1] && ids[1] < ids[2]);
+    for (std::uint64_t expected : ids) {
+        std::uint64_t completed = 0;
+        Require(sceZlibWaitForDone(&completed, nullptr) == 0);
+        Require(completed == expected);
+    }
+    for (std::size_t index = 0; index < ids.size(); ++index) {
+        Require(sceZlibGetResult(ids[index], &produced, &status) == 0);
+        Require(status == 0 && produced == expectedLength);
+        Require(std::memcmp(batch.data() + index * 8192, text, sizeof(text) - 1) == 0);
+    }
+    std::uint64_t completed = 0;
+    std::uint32_t timeout = 0;
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
+    Require(sceZlibWaitForDone(&completed, &timeout) == 0);
+    Require(completed == id);
+    timeout = 20000;
+    const auto start = std::chrono::steady_clock::now();
+    Require(sceZlibWaitForDone(&completed, &timeout) == static_cast<std::int32_t>(0x81120027));
+    const auto waited = std::chrono::steady_clock::now() - start;
+    Require(waited >= std::chrono::microseconds(20000) && waited < std::chrono::seconds(1));
+    timeout = 1000;
+    const auto shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) Require(sceZlibWaitForDone(&completed, &timeout) == static_cast<std::int32_t>(0x81120027));
+    const auto shortWaits = std::chrono::steady_clock::now() - shortStart;
+    Require(shortWaits >= std::chrono::milliseconds(20) && shortWaits < std::chrono::milliseconds(200));
+    std::thread waiter([&] { Require(sceZlibWaitForDone(&completed, nullptr) == 0); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
+    waiter.join();
+    Require(completed == id);
+    Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
     Require(sceZlibFinalize() == 0);
+    Require(sceZlibInitialize(nullptr, 0) == 0);
+    Require(sceZlibGetResult(id, &produced, &status) == static_cast<std::int32_t>(0x81120002));
+    bool interrupted = false;
+    std::thread interruptedWaiter([&] {
+        std::uint32_t longTimeout = 5000000;
+        const auto waitStart = std::chrono::steady_clock::now();
+        try {
+            interrupted = sceZlibWaitForDone(&completed, &longTimeout) == static_cast<std::int32_t>(0x81120032);
+        } catch (const std::runtime_error&) {
+            interrupted = true;
+        }
+        Require(std::chrono::steady_clock::now() - waitStart < std::chrono::seconds(1));
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(sceZlibFinalize() == 0);
+    interruptedWaiter.join();
+    Require(interrupted);
     Require(sceZlibGetResult(id, &produced, &status) == static_cast<std::int32_t>(0x81120032));
     std::array<std::uint8_t, 65536> scratch{};
     RequireThrows([&] { sceZlibInitialize(scratch.data(), scratch.size()); });
@@ -94,4 +148,7 @@ int main() {
     Require(sceZlibInitialize(nullptr, 0) == 0);
     Require(sceZlibGetResult(id, &produced, &status) == static_cast<std::int32_t>(0x81120002));
     Require(sceZlibFinalize() == 0);
+    Require(sceZlibFinalize() == static_cast<std::int32_t>(0x81120032));
+    Require(sceZlibInflate(nullptr, 0, nullptr, 0, nullptr) == static_cast<std::int32_t>(0x81120032));
+    Require(sceZlibWaitForDone(nullptr, nullptr) == static_cast<std::int32_t>(0x81120032));
 }

@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -7,12 +9,6 @@
 #include <string>
 #include <string_view>
 
-struct GuestOption {
-    const char* name;
-    int hasArgument;
-    int* flag;
-    int value;
-};
 static_assert(sizeof(GuestOption) == 32);
 static_assert(offsetof(GuestOption, hasArgument) == 8);
 static_assert(offsetof(GuestOption, flag) == 16);
@@ -21,7 +17,6 @@ static_assert(offsetof(GuestOption, value) == 24);
 extern "C" {
 extern const char* __progname_nid_postfix;
 extern FileStream* __stderrp_nid_postfix;
-char* APS5_VABI getenv_nid_postfix(const char* name);
 
 int opterr_nid_postfix = 1;
 int optind_nid_postfix = 1;

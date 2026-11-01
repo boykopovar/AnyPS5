@@ -1,3 +1,6 @@
+#include "prx/libSceNpProfileDialog/include/Api.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -5,17 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceNpProfileDialogInitialize(void);
-int APS5_VABI sceNpProfileDialogTerminate(void);
-int APS5_VABI sceNpProfileDialogUpdateStatus(void);
-int APS5_VABI sceNpProfileDialogGetStatus(void);
-int APS5_VABI sceNpProfileDialogOpen(const void* param);
-int APS5_VABI sceNpProfileDialogOpenA(const void* param);
-int APS5_VABI sceNpProfileDialogClose(void);
-int APS5_VABI sceNpProfileDialogGetResult(void* result);
-}
 
 namespace {
 
@@ -77,6 +69,56 @@ void RequireCanceled(const std::uint8_t* result, void* userData) {
     for (std::size_t i = kResultSize; i < kResultSize + 16; ++i) Require(result[i] == kSentinel);
 }
 
+bool PsnNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::PsnFeature).message;
+}
+
+void RequireNotices(std::uint8_t* param, std::uint8_t* paramA) {
+    ModalDialogSetPresenter_nid_postfix(true);
+    Require(sceNpProfileDialogInitialize() == 0);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(param)) == 0);
+    Require(!PsnNoticeShown() && !ModalDialogCapturesInput_nid_postfix());
+    Require(sceNpProfileDialogGetStatus() == kStatusFinished);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(param)) == 0);
+    Require(PsnNoticeShown());
+    Require(sceNpProfileDialogGetStatus() == kStatusFinished);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(paramA)) == 0);
+    Require(PsnNoticeShown());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpProfileDialogOpen(nullptr) == kErrArgNull);
+    Require(!PsnNoticeShown());
+
+    Store<std::uint32_t>(param, 56, 9);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(param)); });
+    Require(!PsnNoticeShown());
+    Store<std::uint32_t>(param, 56, 1);
+
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(param)) == 0);
+    Require(!PsnNoticeShown() && !ModalDialogCapturesInput_nid_postfix());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpProfileDialogTerminate() == 0);
+}
+
 }
 
 int main() {
@@ -91,12 +133,12 @@ int main() {
 
     Require(sceNpProfileDialogTerminate() == kErrNotInitialized);
     Require(sceNpProfileDialogClose() == kErrNotInitialized);
-    Require(sceNpProfileDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotInitialized);
     Require(sceNpProfileDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceNpProfileDialogGetStatus() == kStatusNone);
     Require(sceNpProfileDialogUpdateStatus() == kStatusNone);
-    RequireThrows([&] { sceNpProfileDialogOpen(param); });
-    RequireThrows([&] { sceNpProfileDialogOpenA(paramA); });
+    RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(param)); });
+    RequireThrows([&] { sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(paramA)); });
     Require(sceNpProfileDialogGetStatus() == kStatusNone);
     Require(result[0] == kSentinel);
 
@@ -105,7 +147,7 @@ int main() {
     Require(sceNpProfileDialogGetStatus() == kStatusInitialized);
     Require(sceNpProfileDialogUpdateStatus() == kStatusInitialized);
 
-    Require(sceNpProfileDialogGetResult(result) == kErrNotFinished);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotFinished);
     Require(result[0] == kSentinel);
     RequireThrows([] { sceNpProfileDialogGetResult(nullptr); });
     RequireThrows([] { sceNpProfileDialogClose(); });
@@ -117,24 +159,24 @@ int main() {
 
     alignas(8) std::uint8_t wrong[kParamSize + 16];
     MakeParam(wrong, sizeof(wrong), kParamASize, 1, kParamUserData, &first);
-    RequireThrows([&] { sceNpProfileDialogOpen(wrong); });
+    RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(wrong)); });
     MakeParam(wrong, sizeof(wrong), kParamSize, 1, kParamAUserData, &second);
-    RequireThrows([&] { sceNpProfileDialogOpenA(wrong); });
+    RequireThrows([&] { sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(wrong)); });
     MakeParam(wrong, sizeof(wrong), kParamSize, 0, kParamUserData, &first);
-    RequireThrows([&] { sceNpProfileDialogOpen(wrong); });
+    RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(wrong)); });
     MakeParam(wrong, sizeof(wrong), kParamASize, 5, kParamAUserData, &second);
-    RequireThrows([&] { sceNpProfileDialogOpenA(wrong); });
+    RequireThrows([&] { sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(wrong)); });
     Require(sceNpProfileDialogGetStatus() == kStatusInitialized);
-    Require(sceNpProfileDialogGetResult(result) == kErrNotFinished);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotFinished);
 
     std::uint8_t paramCopy[sizeof(param)];
     std::memcpy(paramCopy, param, sizeof(param));
-    Require(sceNpProfileDialogOpen(param) == 0);
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(param)) == 0);
     Require(std::memcmp(param, paramCopy, sizeof(param)) == 0);
     Require(sceNpProfileDialogGetStatus() == kStatusFinished);
     Require(sceNpProfileDialogUpdateStatus() == kStatusFinished);
     Require(sceNpProfileDialogGetResult(nullptr) == kErrArgNull);
-    Require(sceNpProfileDialogGetResult(result) == 0);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == 0);
     RequireCanceled(result, &first);
     RequireThrows([] { sceNpProfileDialogClose(); });
     Require(sceNpProfileDialogGetStatus() == kStatusFinished);
@@ -144,26 +186,36 @@ int main() {
         std::uint8_t paramACopy[sizeof(paramA)];
         std::memcpy(paramACopy, paramA, sizeof(paramA));
         std::memset(result, kSentinel, sizeof(result));
-        Require(sceNpProfileDialogOpenA(paramA) == 0);
+        Require(sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(paramA)) == 0);
         Require(std::memcmp(paramA, paramACopy, sizeof(paramA)) == 0);
         Require(sceNpProfileDialogUpdateStatus() == kStatusFinished);
-        Require(sceNpProfileDialogGetResult(result) == 0);
+        Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == 0);
         RequireCanceled(result, &second);
     }
 
     Require(sceNpProfileDialogTerminate() == 0);
     Require(sceNpProfileDialogTerminate() == kErrNotInitialized);
+    Require(sceNpProfileDialogClose() == kErrNotInitialized);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotInitialized);
+    Require(sceNpProfileDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceNpProfileDialogGetStatus() == kStatusNone);
-    Require(sceNpProfileDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNpProfileDialogUpdateStatus() == kStatusNone);
 
     Require(sceNpProfileDialogInitialize() == 0);
     std::memset(result, kSentinel, sizeof(result));
-    Require(sceNpProfileDialogGetResult(result) == kErrNotFinished);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotFinished);
     Require(result[0] == kSentinel);
     Store<std::uint32_t>(param, 56, 4);
-    Require(sceNpProfileDialogOpen(param) == 0);
-    Require(sceNpProfileDialogGetResult(result) == 0);
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(param)) == 0);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == 0);
     RequireCanceled(result, &first);
     Require(sceNpProfileDialogTerminate() == 0);
+    Require(sceNpProfileDialogTerminate() == kErrNotInitialized);
+    Require(sceNpProfileDialogClose() == kErrNotInitialized);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotInitialized);
+    Require(sceNpProfileDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpProfileDialogGetStatus() == kStatusNone);
+    Require(sceNpProfileDialogUpdateStatus() == kStatusNone);
+    RequireNotices(param, paramA);
     return 0;
 }

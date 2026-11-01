@@ -8,9 +8,16 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <new>
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace AgcDriver::Graphics {
 
@@ -72,7 +79,12 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
         result = create(context.device, &info, nullptr, &cache);
     }
     Check(result, "vkCreatePipelineCache");
-    if (!path.empty()) saver = std::thread([this] { run(); });
+    try {
+        if (!path.empty()) saver = std::thread([this] { run(); });
+    } catch (...) {
+        context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
+        throw;
+    }
 }
 
 PipelineCache::~PipelineCache() {
@@ -94,6 +106,10 @@ std::span<const std::byte> PipelineCache::File::Payload() const {
 
 PipelineCache::File PipelineCache::readFile() const {
     File file;
+    if (path.empty()) {
+        file.state = FileState::Missing;
+        return file;
+    }
     if (!ShaderRecompiler::ReadWholeFile(path, file.contents)) {
         std::error_code error;
 #ifdef _WIN32
@@ -146,16 +162,24 @@ PipelineCache::File PipelineCache::readFile() const {
 }
 
 std::optional<PipelineCache::FileHeader> PipelineCache::readHeader() const {
+    if (path.empty()) return std::nullopt;
 #ifdef _WIN32
     std::error_code error;
     const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
     if (error) return std::nullopt;
-    std::ifstream file(native, std::ios::binary);
+    const auto file = CreateFileW(native.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return std::nullopt;
+    struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{file};
+    FileHeader header{};
+    DWORD readBytes = 0;
+    if (!ReadFile(file, &header, sizeof(header), &readBytes, nullptr) || readBytes != sizeof(header)) return std::nullopt;
 #else
     std::ifstream file(path, std::ios::binary);
-#endif
     FileHeader header{};
     if (!file.read(reinterpret_cast<char*>(&header), sizeof(header))) return std::nullopt;
+#endif
+    if (header.magic != FileMagic || header.format != FileFormat) return std::nullopt;
     return header;
 }
 
@@ -179,7 +203,8 @@ void PipelineCache::load(std::vector<std::byte>& initialData) {
     std::fprintf(stderr, "[pipeline-cache] loaded %.1f KiB from %s\n", static_cast<double>(initialData.size()) / 1024.0, path.string().c_str());
 }
 
-void PipelineCache::save(bool final, bool waitForPipelines) {
+void PipelineCache::save(bool final, bool waitForPipelines) try {
+    if (path.empty()) return;
     std::lock_guard pathLock(pathMutex(path));
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     const auto snapshot = [&] { return waitForPipelines ? synchronization.LockForSnapshot() : synchronization.TryLockForSnapshot(); };
@@ -197,21 +222,24 @@ void PipelineCache::save(bool final, bool waitForPipelines) {
         settledBytes = liveBytes;
         settledFile = file;
     };
-    const auto disk = fileUnchanged ? File{} : readFile();
+    auto disk = fileUnchanged ? File{} : readFile();
     if (disk.state == FileState::Unreadable) {
         std::fprintf(stderr, "[pipeline-cache] cannot read %s; not saving over it\n", path.string().c_str());
-        settle(readHeader());
         return;
     }
     if (disk.state == FileState::Invalid) std::fprintf(stderr, "[pipeline-cache] replacing %s: %s\n", path.string().c_str(), disk.invalidReason);
     std::size_t floor = fileUnchanged ? std::max<std::size_t>(loadedBytes, settledFile->dataBytes) : 0;
     VkPipelineCache merged = VK_NULL_HANDLE;
+    bool mergedWithFile = false;
     struct DestroyMerged {
         const Context& context;
-        const VkPipelineCache& cache;
-        ~DestroyMerged() {
-            if (cache != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
+        VkPipelineCache& cache;
+        void Reset() {
+            if (cache == VK_NULL_HANDLE) return;
+            context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
+            cache = VK_NULL_HANDLE;
         }
+        ~DestroyMerged() { Reset(); }
     } destroyMerged{context, merged};
     if (disk.state == FileState::Valid) {
         const auto data = disk.Payload();
@@ -221,11 +249,13 @@ void PipelineCache::save(bool final, bool waitForPipelines) {
         const auto result = context.Function<PFN_vkCreatePipelineCache>("vkCreatePipelineCache")(context.device, &info, nullptr, &merged);
         if (result == VK_SUCCESS) {
             floor = std::max(loadedBytes, data.size());
+            mergedWithFile = true;
         } else {
             merged = VK_NULL_HANDLE;
             std::fprintf(stderr, "[pipeline-cache] replacing %s: the driver refused it (Vulkan result %d)\n", path.string().c_str(), static_cast<int>(result));
         }
     }
+    std::vector<std::byte>().swap(disk.contents);
     if (merged != VK_NULL_HANDLE) {
         auto synchronizationLock = snapshot();
         if (!synchronizationLock.owns_lock()) return;
@@ -251,6 +281,7 @@ void PipelineCache::save(bool final, bool waitForPipelines) {
         if (result != VK_SUCCESS && result != VK_INCOMPLETE) return;
         file.resize(sizeof(FileHeader) + size);
     }
+    destroyMerged.Reset();
     if (size < floor) {
         std::fprintf(stderr, "[pipeline-cache] keeping %s: the merged cache has %.1f KiB, less than the %.1f KiB on disk or loaded at start\n", path.string().c_str(), static_cast<double>(size) / 1024.0, static_cast<double>(floor) / 1024.0);
         settle(fileUnchanged ? *settledFile : disk.header);
@@ -263,7 +294,9 @@ void PipelineCache::save(bool final, bool waitForPipelines) {
         return;
     }
     settle(header);
-    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), merged != VK_NULL_HANDLE ? " (merged with the file)" : "", final ? " (teardown)" : "");
+    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), mergedWithFile ? " (merged with the file)" : "", final ? " (teardown)" : "");
+} catch (const std::bad_alloc&) {
+    std::fputs("[pipeline-cache] save skipped: host memory exhausted\n", stderr);
 }
 
 void PipelineCache::SaveNow() {

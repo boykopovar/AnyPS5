@@ -1,5 +1,7 @@
+#include "prx/libSceSulphaDrv/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -16,8 +18,10 @@ int APS5_VABI sceSulphaGetConnectedClientCount(void) {
     return 0;
 }
 
-int APS5_VABI sceSulphaGetDefaultConfig(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSulphaGetDefaultConfig(void* config) {
+    if (config == nullptr) return static_cast<int>(0x804D0003u);
+    static constexpr std::uint64_t defaults[]{24, 0x400000, 0xFA100000003};
+    std::memcpy(config, defaults, sizeof(defaults));
     return 0;
 }
 
