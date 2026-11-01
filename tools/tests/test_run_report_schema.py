@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from importlib import metadata
 from pathlib import Path
 import unittest
@@ -176,6 +177,8 @@ class FixtureTests(ReportTests):
         for file in FIXTURES:
             with self.subTest(fixture=file.name):
                 data = file.read_bytes()
+                if os.name == "nt":
+                    data = data.replace(b"\r\n", b"\n")
                 self.assertLess(len(data), MAX_BYTES)
                 self.assertEqual(self.errors(json.loads(data.decode("utf-8"))), [])
                 self.assertEqual(data.decode("utf-8"), json.dumps(json.loads(data), indent=2, ensure_ascii=False) + "\n")
