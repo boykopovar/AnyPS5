@@ -27,7 +27,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7439 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7437 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -1760,7 +1760,6 @@
 | `_ZN3WTF19ParallelEnvironmentC1EPFvPvEmi` | `Efn-a1tGPqw` |
 | `_ZN3WTF19ParallelEnvironmentC2EPFvPvEmi` | `ciXM3j2URKk` |
 | `_ZN3WTF19isCompilationThreadEv` | `qoO6VaMuvG0` |
-| `_ZN3WTF19mimeTypeFromDataURLENS_10StringViewE` | `kie+nv-1HCM` |
 | `_ZN3WTF19numGraphemeClustersENS_10StringViewE` | `K7qAbz7P3rs` |
 | `_ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv` | `K59xDVxbCyM` |
 | `_ZN3WTF20ConcurrentPtrHashSet5clearEv` | `sDuWnr1d9ko` |
@@ -6054,7 +6053,6 @@
 | `_ZNK3WTF3URL19protocolHostAndPortEv` | `q8fEMeIqd5w` |
 | `_ZNK3WTF3URL21truncatedForUseAsBaseEv` | `uekVJTVqBGc` |
 | `_ZNK3WTF3URL24strippedForUseAsReferrerEv` | `CyN41AniueA` |
-| `_ZNK3WTF3URL30stringCenterEllipsizedToLengthEj` | `JRPrmfTHt08` |
 | `_ZNK3WTF3URL4dumpERNS_11PrintStreamE` | `ITwB6pPwmRc` |
 | `_ZNK3WTF3URL4userEv` | `ETN4mn+-5l0` |
 | `_ZNK3WTF3URL8passwordEv` | `aCtpeXWclTE` |
