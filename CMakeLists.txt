@@ -596,7 +596,7 @@ set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 include(cmake/ZArchive.cmake)
 include(cmake/Opus.cmake)
-if(WIN32 OR APPLE)
+if(WIN32 OR APPLE OR (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANYPS5_ENABLE_ASAN AND NOT ANYPS5_ENABLE_TSAN))
     set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
     set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
@@ -610,6 +610,8 @@ if(WIN32 OR APPLE)
         target_link_options(mimalloc PRIVATE -static
                 LINKER:--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free,--wrap=strdup,--wrap=_strdup)
         target_sources(mimalloc PRIVATE ${CMAKE_SOURCE_DIR}/core/libs/allocator/RuntimeHeap.c)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(mimalloc PRIVATE LINKER:--as-needed)
     endif()
 endif()
 
