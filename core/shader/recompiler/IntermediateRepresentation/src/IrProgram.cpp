@@ -224,7 +224,7 @@ std::string valueToString(const std::map<const IrValue*, std::size_t>& ids, cons
 
 std::size_t IrProgram::ReclaimUnusedValues() {
     std::vector<IrValue*> owned(nextValueId, nullptr);
-    for (const auto& value : values) owned[value->Id()] = value.get();
+    for (IrValue* value : values) owned[value->Id()] = value;
     std::vector<bool> live(nextValueId, false);
     std::unordered_set<IrValue*> liveElsewhere;
     std::vector<IrValue*> pending;
@@ -262,16 +262,14 @@ std::size_t IrProgram::ReclaimUnusedValues() {
         pending.pop_back();
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) keep(value->Argument(index));
     }
-    for (const auto& value : values) {
+    for (IrValue* value : values) {
         if (isLive(*value)) continue;
         for (std::size_t index = 0; index < value->ArgumentCount(); ++index) value->ReplaceArgument(index, nullptr);
     }
-    for (const auto& value : values) {
+    for (const IrValue* value : values) {
         if (!isLive(*value) && value->HasUses()) throw std::runtime_error("an unused IR value has an external user");
     }
-    const auto removed = std::erase_if(values, [&](const auto& value) { return !isLive(*value); });
-    values.shrink_to_fit();
-    return removed;
+    return values.EraseIf([&](const IrValue& value) { return !isLive(value); });
 }
 
 void IrProgram::ReleaseUseArena() {
@@ -320,10 +318,8 @@ IrBlock& IrProgram::CreateBlock() {
 }
 
 IrValue& IrProgram::CreateValue(IrOpcode opcode, IrType type) {
-    auto value = std::make_unique<IrValue>(opcode, type, nextValueId, useArena.Resource());
+    IrValue& created = values.Create(opcode, type, nextValueId, useArena.Resource());
     nextValueId++;
-    IrValue& created = *value;
-    values.push_back(std::move(value));
     return created;
 }
 
