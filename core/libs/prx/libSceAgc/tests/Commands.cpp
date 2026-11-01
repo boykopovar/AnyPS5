@@ -410,6 +410,45 @@ void testWorkloadStreams() {
     check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 3) == nullptr, "ACB workload complete packet after unregistration");
 }
 
+void testDrawPackets() {
+    Storage indirect;
+    const auto* draw = sceAgcDcbDrawIndirect(&indirect.buffer, 0x40, 0);
+    const std::array<std::uint32_t, 5> indirectExpected{0xc0032400u, 0x40, 0x280, 0x280, 2};
+    check(draw == indirect.words.data() && std::equal(indirectExpected.begin(), indirectExpected.end(), indirect.words.begin()), "DRAW_INDIRECT packet mismatch");
+    Storage flagged;
+    sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100);
+    sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100000100ull);
+    check(flagged.words[4] == 0x22u && flagged.words[9] == 2, "DRAW_INDIRECT initiator flags mismatch");
+    Storage offset;
+    sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 0, 0);
+    sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 9, 0);
+    const std::array<std::uint32_t, 10> offsetExpected{0xc0033500u, 1, 16, 0, 0, 0xc0033500u, 9, 16, 9, 0};
+    check(std::equal(offsetExpected.begin(), offsetExpected.end(), offset.words.begin()), "DRAW_INDEX_OFFSET_2 packet mismatch");
+    Storage instances;
+    sceAgcDcbSetNumInstances(&instances.buffer, 3);
+    check(instances.words[0] == 0xc0002f00u && instances.words[1] == 3, "NUM_INSTANCES packet mismatch");
+    Storage size;
+    sceAgcDcbSetIndexSize(&size.buffer, 1, 2);
+    sceAgcDcbSetIndexSize_0600(&size.buffer, 2, 3, 1);
+    const std::array<std::uint32_t, 6> sizeExpected{0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x44c2u};
+    check(std::equal(sizeExpected.begin(), sizeExpected.end(), size.words.begin()), "index size packet mismatch");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 2, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 0, 0x200000000ull); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 3, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0, 4); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize_0600(&rejected.buffer, 0, 0, 2); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbDrawIndirectGetSize() == 20 && sceAgcDcbDrawIndexOffsetGetSize() == 20 && sceAgcDcbSetNumInstancesGetSize() == 8 && sceAgcDcbSetIndexSizeGetSize() == 12, "draw packet sizes");
+}
+
 void testIndexBuffer() {
     Storage storage;
     alignas(4) std::uint16_t indices[2]{};
@@ -1067,6 +1106,7 @@ int main(int argc, char** argv) {
         testEndOfPipeAddressPatch();
         testWorkloadStreams();
         testIndexBuffer();
+        testDrawPackets();
         testIndexIndirectArgs();
         testIndirectBase();
         testContextState();
