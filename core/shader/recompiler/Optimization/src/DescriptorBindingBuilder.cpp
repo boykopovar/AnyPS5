@@ -224,7 +224,7 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             if (pair.sampler != r) continue;
             const auto& image = info.images.at(pair.image);
             if (!image.singleMipPlaneBiasCompatible || image.dimension != RdnaImageDimension::Dim2D) continue;
-            const auto mode = ResourceMaterializer::RuntimeImageMode(image, snapshot.images.at(pair.image), info.runtimeImageModes.at(pair.image));
+            const auto mode = ResourceMaterializer::RuntimeImageMode(image, snapshot.images.at(pair.image), info.runtimeImageModes.at(pair.image), info.maxImageArrayLayers);
             if (info.runtimeImageModes.at(pair.image).at(mode).dimension != RdnaImageDimension::Dim3D) continue;
             const auto& words = snapshot.samplers.at(r).dwords;
             if ((words[0] & ForceUnnormalizedBit) != 0u || ((words[0] >> 29u) & 3u) > 2u || ((words[2] >> 20u) & 0xfu) != 0u || ((words[2] >> 26u) & 3u) > 1u) fail("2D biased sampling of a one-slice volume requires a normalized point sampler");
@@ -252,7 +252,7 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             if (base.table != NoTable) {
                 failUnnormalized("samples an image selected at run time");
             }
-            const auto& image = info.runtimeImageModes.at(pair.image).at(ResourceMaterializer::RuntimeImageMode(base, snapshot.images.at(pair.image), info.runtimeImageModes.at(pair.image)));
+            const auto& image = info.runtimeImageModes.at(pair.image).at(ResourceMaterializer::RuntimeImageMode(base, snapshot.images.at(pair.image), info.runtimeImageModes.at(pair.image), info.maxImageArrayLayers));
             const auto* reason = ResourceMaterializer::UnnormalizedSampleMismatch(image);
             if (reason != nullptr && ResourceMaterializer::NullImageDescriptor(base, snapshot.images.at(pair.image))) {
                 if (nullMismatch == nullptr) nullMismatch = reason;
@@ -365,7 +365,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::size_t index = 0; index < info.images.size(); ++index) {
         if (info.images[index].table != NoTable) continue;
         const auto& modes = info.runtimeImageModes.at(index);
-        imageModes[index] = ResourceMaterializer::RuntimeImageMode(info.images[index], snapshot.images.at(index), modes);
+        imageModes[index] = ResourceMaterializer::RuntimeImageMode(info.images[index], snapshot.images.at(index), modes, info.maxImageArrayLayers);
         if (registrationModules && modes.size() > 1u) plan.specialization.push_back({PipelineSpecialization::ImageBase + static_cast<std::uint32_t>(index) * PipelineSpecialization::ImageWords, imageModes[index]});
     }
     for (std::uint32_t index = 0; index < info.buffers.size(); ++index) {
@@ -522,6 +522,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
                 physical.imageSamplers.push_back(0u);
                 physical.imageAtomic64.push_back(image.atomic64);
+                physical.imageFlattened1DArray.push_back(mode.flattened1DArray);
             }
         } else if (physical.role == DescriptorRole::GuestSamplers) {
             for (std::uint32_t element = 0; element < compact.resources.size(); ++element) {

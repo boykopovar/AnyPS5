@@ -353,6 +353,7 @@ struct SpirvTarget {
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
+    std::uint32_t maxImageArrayLayers = 0;
 };
 
 struct BindingLayout {
@@ -537,6 +538,7 @@ struct DescriptorBinding {
     std::vector<bool> imageAtomic;
     std::vector<bool> imageAtomic64;
     std::vector<DescriptorImageShape> imageShapes;
+    std::vector<bool> imageFlattened1DArray;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
     // (~0.4-0.5 us each on NVIDIA), so a driver may keep these elements in device-local memory.

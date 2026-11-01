@@ -51,6 +51,7 @@ struct DecodedImage {
     IrTextureNumericClass numericClass = IrTextureNumericClass::Unsupported;
     RdnaImageDimension dimension = RdnaImageDimension::Unknown;
     std::uint32_t mipCount = 1;
+    std::uint32_t arrayLayers = 1;
     IrBufferFormat conversionFormat = IrBufferFormat::Invalid;
     std::uint32_t shaderSwizzle = ShaderImageIdentitySwizzle;
     bool cube = false;
@@ -227,6 +228,9 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
             decoded.dimension = RdnaImageDimension::Dim2DArray;
         }
     }
+    const auto lastArray = descriptor.dwords[4] & 0x1fffu;
+    const auto firstArray = (descriptor.dwords[4] >> 16u) & 0x1fffu;
+    decoded.arrayLayers = lastArray >= firstArray ? lastArray - firstArray + 1u : 0u;
     if (GcnGuestShaders() && imageCoordinates(decoded.dimension) != imageCoordinates(base.dimension)) {
         throw std::runtime_error("GCN image instruction on a descriptor of type " + std::to_string(static_cast<std::uint32_t>(rawImageType(descriptor))) + " needs a different address count than its inferred dimension; not implemented");
     }
@@ -1664,7 +1668,7 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
         if (!image.convertedSamples && !image.srgbDecodeCompatible && convertedSampleCompatible(image) && descriptor.dwordCount == 8u && !nullImageDescriptor(image, descriptor)) {
             if (rawImageFormat(descriptor) == IrBufferFormat::Format11_11_10UNorm) throw ConvertedSampleRequired("samples a converted image through a shader prepared without converted-sample modes");
         }
-        static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, plan.info.runtimeImageModes.at(i)));
+        static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, plan.info.runtimeImageModes.at(i), plan.info.maxImageArrayLayers));
     }
 }
 
@@ -1716,14 +1720,14 @@ DecodeMemo& decodeMemo() {
 constexpr std::uint32_t DecodeMemoEntries = 1u << 20u;
 constexpr std::uint32_t DecodeFailed = 0x80000000u;
 
-std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const ImageResource> modes, const DescriptorValue& words, std::uint64_t memoKey, std::uint32_t resource) {
+std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const ImageResource> modes, const DescriptorValue& words, std::uint64_t memoKey, std::uint32_t resource, std::uint32_t maxImageArrayLayers) {
     DecodeMemoKey key{memoKey, resource, words.dwords};
     if (memoKey != 0u) {
         auto& memo = decodeMemo();
         std::lock_guard lock(memo.mutex);
         if (const auto found = memo.entries.find(key); found != memo.entries.end()) return found->second;
     }
-    const auto match = ResourceMaterializer::TryRuntimeImageMode(image, words, modes);
+    const auto match = ResourceMaterializer::TryRuntimeImageMode(image, words, modes, maxImageArrayLayers);
     const auto value = match.mode.has_value() ? *match.mode : DecodeFailed | static_cast<std::uint32_t>(match.reason);
     if (memoKey != 0u) {
         auto& memo = decodeMemo();
@@ -1846,7 +1850,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             out.map.insert(out.map.end(), record.begin(), record.end());
             return offset;
         }
-        const auto decoded = decodeTableEntry(image, modes, words, memoKey, resource);
+        const auto decoded = decodeTableEntry(image, modes, words, memoKey, resource, info.maxImageArrayLayers);
         if ((decoded & DecodeFailed) != 0u) {
             record[Abi::ImageRecordFlags] = poison(resource, static_cast<PoisonReason>(decoded & ~DecodeFailed), &words);
         } else {
@@ -2022,7 +2026,7 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
     return resolved;
 }
 
-std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
+std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image, std::uint32_t maxImageArrayLayers) {
     if (image.targetMerge) return {image};
     const bool table = image.table != NoTable;
     if (table && image.tableOperation == TableOperation::Unsupported) return {};
@@ -2234,7 +2238,7 @@ const char* ResourceMaterializer::UnnormalizedSampleMismatch(const ImageResource
     return nullptr;
 }
 
-RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes) {
+RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes, std::uint32_t maxImageArrayLayers) {
     RuntimeImageModeMatch result;
     const auto reject = [&](PoisonReason reason, std::string detail) {
         result.reason = reason;
@@ -2250,6 +2254,8 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
     const auto inspected = inspectImageDescriptor(descriptor, image, image.srgbDecodeFormats);
     if (inspected.reason.has_value()) return reject(*inspected.reason, inspected.detail);
     const auto& decoded = inspected.decoded;
+    static_cast<void>(maxImageArrayLayers);
+    const auto dimensionMatches = [&](const ImageResource& mode) { return mode.dimension == decoded.dimension || (mode.flattened1DArray && mode.dimension == RdnaImageDimension::Dim2D && decoded.dimension == RdnaImageDimension::Dim1DArray); };
     const auto format = rawImageFormat(descriptor);
     const bool emulated = image.depthCompare && format != IrBufferFormat::Format32Float && format != IrBufferFormat::Format16UNorm && !IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3]);
     if (!emulated && (image.emulatedCompare & EmulatedCompare::NativeOffsetUnsupported) != 0u) return reject(PoisonReason::UnsupportedOperation, "native comparison with a nonconstant texel offset requires VK_KHR_maintenance8 and shaderImageGatherExtended");
@@ -2280,7 +2286,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         const auto& mode = modes[index];
         if (mode.constantSwizzle) continue;
         if (((mode.emulatedCompare & EmulatedCompare::Enabled) != 0u) != emulated) continue;
-        if (mode.numericClass == decoded.numericClass && mode.dimension == decoded.dimension && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode) {
+        if (mode.numericClass == decoded.numericClass && dimensionMatches(mode) && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode) {
             result.mode = index;
             return result;
         }
@@ -2300,13 +2306,13 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         : decoded.srgbDecode ? PoisonReason::SrgbUnsupported
         : decoded.conversionFormat != IrBufferFormat::Invalid ? PoisonReason::Conversion
         : decoded.dimension == RdnaImageDimension::Dim2DMsaa || decoded.dimension == RdnaImageDimension::Dim2DMsaaArray ? PoisonReason::Multisampled
-        : std::none_of(modes.begin(), modes.end(), [&](const ImageResource& mode) { return mode.dimension == decoded.dimension && mode.cube == decoded.cube; }) ? PoisonReason::Dimension
+        : std::none_of(modes.begin(), modes.end(), [&](const ImageResource& mode) { return dimensionMatches(mode) && mode.cube == decoded.cube; }) ? PoisonReason::Dimension
         : PoisonReason::NumericClass;
     return reject(reason, message + words);
 }
 
-std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes) {
-    const auto match = TryRuntimeImageMode(image, descriptor, modes);
+std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes, std::uint32_t maxImageArrayLayers) {
+    const auto match = TryRuntimeImageMode(image, descriptor, modes, maxImageArrayLayers);
     if (!match.mode.has_value()) throw std::runtime_error(match.detail);
     return *match.mode;
 }
@@ -2345,7 +2351,7 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
         image.mipCount = image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
         if (image.table == NoTable) continue;
         tables = true;
-        const auto modes = RuntimeImageModes(image);
+        const auto modes = RuntimeImageModes(image, resources.info.maxImageArrayLayers);
         const bool storage = image.resourceClass == ImageResourceClass::Storage;
         if (modes.empty() || modes.size() > ImageTableAbi::MaxModes || (storage && image.mipMode == ImageMipMode::DynamicStorage)) image.tableOperation = TableOperation::Unsupported;
     }
@@ -2363,9 +2369,19 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
 }
 
 void ResourceMaterializer::PrepareImageModes(ShaderInfo& info) {
+    std::vector<bool> sampled(info.images.size(), false);
+    for (const auto& pair : info.sampledPairs) if (pair.image < sampled.size()) sampled[pair.image] = true;
+    for (std::size_t index = 0; index < info.images.size(); ++index) {
+        auto& image = info.images[index];
+        image.flattenAllowed = !sampled[index];
+        if (image.flattenAllowed && image.dimension == RdnaImageDimension::Dim1DArray) {
+            image.dimension = RdnaImageDimension::Dim2D;
+            image.flattened1DArray = true;
+        }
+    }
     info.runtimeImageModes.clear();
     info.runtimeImageModes.reserve(info.images.size());
-    for (const auto& image : info.images) info.runtimeImageModes.push_back(RuntimeImageModes(image));
+    for (const auto& image : info.images) info.runtimeImageModes.push_back(RuntimeImageModes(image, info.maxImageArrayLayers));
 }
 
 namespace {

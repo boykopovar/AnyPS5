@@ -380,6 +380,20 @@ bool FirstLayerDescriptor(std::span<const std::uint32_t> words, std::array<std::
     return true;
 }
 
+void FlattenLargeOneDimensionalArray(GuestTextureResource& resource) {
+    if (resource.dimension != TextureDimension::k1DArray) return;
+    Require(resource.mipCount == 1u, "a 1D array load past maxImageArrayLayers with mip levels is not implemented");
+    Require(resource.tileMode == TextureTileMode::kLinear, "a 1D array load past maxImageArrayLayers with tiled storage is not implemented");
+    Require(resource.dccAddress == 0, "a 1D array load past maxImageArrayLayers with DCC metadata is not implemented");
+    const auto layerBytes = DescribeSurface(resource).layerBytes;
+    const auto base = resource.baseArray;
+    resource.baseAddress += layerBytes * base;
+    resource.height = resource.depthOrLastArray - base + 1u;
+    resource.depthOrLastArray = 0;
+    resource.baseArray = 0;
+    resource.dimension = TextureDimension::k2D;
+}
+
 bool MatchesGuestDimension(ShaderRecompiler::DescriptorImageShape shape, TextureDimension dimension) {
     switch (shape) {
         case ShaderRecompiler::DescriptorImageShape::Image1D: return dimension == TextureDimension::k1D;
