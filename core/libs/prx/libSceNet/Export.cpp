@@ -133,6 +133,7 @@ constexpr int NET_ENOTINIT = 200;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
 constexpr int NET_CONFIG_ERROR_NULL_FLAGS = static_cast<int>(0x8041130Eu);
+constexpr int NET_CONFIG_ERROR_NO_ROUTE = static_cast<int>(0x8041130Cu);
 constexpr int NET_RESOLVER_ABORT_FLAG_NTOA_PRESERVATION = 0x1;
 constexpr int NET_RESOLVER_ABORT_FLAG_ATON_PRESERVATION = 0x2;
 constexpr std::uint32_t NET_IFF_UP = 0x1;
@@ -3237,11 +3238,12 @@ int APS5_VABI sceNetConfigDelRoute(const std::uint32_t* destination, const std::
 }
 
 int APS5_VABI sceNetConfigGetDefaultRoute(std::uint32_t* gateway) {
-    if (!gateway) throw std::runtime_error("sceNetConfigGetDefaultRoute: a null gateway is not supported");
+    if (!g_net_inited) return fail(NET_ENOTINIT);
     std::uint32_t found = 0;
-    if (!NetCtlHostIpv4Gateway_nid_no_patch(&found)) throw std::runtime_error("sceNetConfigGetDefaultRoute: the answer without an IPv4 default route is not implemented");
+    if (!NetCtlHostIpv4Gateway_nid_no_patch(&found)) return NET_CONFIG_ERROR_NO_ROUTE;
+    if (gateway == nullptr) throw std::invalid_argument("sceNetConfigGetDefaultRoute: null gateway");
     *gateway = found;
-    return 0;
+    return 1;
 }
 
 int APS5_VABI sceNetDhcpGetAutoipInfo(std::int32_t interfaceId, NetAutoIpInfo* parameter) {

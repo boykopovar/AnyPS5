@@ -427,27 +427,31 @@ static void CheckScopeIdText() {
 }
 
 static void CheckDefaultRoute() {
+    std::uint32_t gateway = 0xa5a5a5a5u;
+    Require(sceNetTerm() == 0);
+    Require(Failed(sceNetConfigGetDefaultRoute(&gateway), 200) && gateway == 0xa5a5a5a5u);
+    Require(Failed(sceNetConfigGetDefaultRoute(nullptr), 200));
+    Require(sceNetInit_nid_postfix() == 0);
     NetCtlInfo info{};
     const int result = sceNetCtlGetInfo(16, &info);
     const char* route = reinterpret_cast<const char*>(info.opaque);
-    std::uint32_t gateway = 0xa5a5a5a5u;
-    const auto throws = [](auto&& call) {
-        try {
-            call();
-        } catch (const std::runtime_error&) {
-            return true;
-        }
-        return false;
-    };
-    Require(throws([] { sceNetConfigGetDefaultRoute(nullptr); }));
     if (result != 0 || std::strcmp(route, "0.0.0.0") == 0) {
         Require(result == 0 || result == static_cast<int>(0x80412108));
+        Require(sceNetConfigGetDefaultRoute(&gateway) == static_cast<int>(0x8041130Cu) && gateway == 0xa5a5a5a5u);
+        Require(sceNetConfigGetDefaultRoute(nullptr) == static_cast<int>(0x8041130Cu));
         return;
     }
-    Require(sceNetConfigGetDefaultRoute(&gateway) == 0);
+    Require(sceNetConfigGetDefaultRoute(&gateway) == 1);
     std::array<char, 16> text{};
     Require(sceNetInetNtop(2, &gateway, text.data(), text.size()) == text.data());
     Require(std::strcmp(text.data(), route) == 0);
+    bool threw = false;
+    try {
+        sceNetConfigGetDefaultRoute(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 static void CheckRandom() {
