@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 import tomllib
 from pathlib import Path
@@ -14,6 +15,21 @@ def unique_json_keys(pairs):
             raise ValueError(f"duplicate JSON key {key!r}")
         result[key] = value
     return result
+
+
+def resolve_catalog(path):
+    path = Path(path)
+    try:
+        resolved = Path(os.path.realpath(path))
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise ValueError(f"Symlink loop from {path!r}: {error}") from error
+        raise ValueError(f"Symlink loop from {path!r}")
+    return resolved
 
 
 def validate(directory):
@@ -65,10 +81,7 @@ def main(argv=None):
     parser.add_argument("--catalog", required=True, type=Path, help="directory containing index.json and patch files")
     args = parser.parse_args(argv)
     try:
-        try:
-            catalog = args.catalog.resolve()
-        except RuntimeError as error:
-            raise ValueError(f"catalog path cannot be resolved: {error}") from error
+        catalog = resolve_catalog(args.catalog)
         return validate(catalog)
     except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as error:
         print(f"Catalog validation: {error}", file=sys.stderr)
