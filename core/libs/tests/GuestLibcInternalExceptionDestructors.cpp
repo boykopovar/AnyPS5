@@ -7,11 +7,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 namespace {
 
 unsigned releases = 0;
 void* lastReleased = nullptr;
+std::array<void*, 4> released{};
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -21,6 +23,7 @@ void Require(bool condition, const char* message) {
 
 void* APS5_VABI TestAllocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI TestFree(void* pointer) {
+    if (releases < released.size()) released[releases] = pointer;
     ++releases;
     lastReleased = pointer;
     std::free(pointer);
@@ -75,6 +78,26 @@ void CheckFutureError() {
     Require(std::memcmp(&expected, &actual, sizeof(expected)) == 0, "D2 leaves the object as D1 does");
 }
 
+void CheckMessageDeletingDestructor(Destructor destructor, const char* text) {
+    auto* object = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(LibcException::ExceptionObject)));
+    _ZNSt13runtime_errorC1EPKc_nid_postfix(object, text);
+    releases = 0;
+    destructor(object);
+    Require(releases == 1 && released[0] == object, "the deleting destructor frees the object through operator delete");
+}
+
+void CheckFutureErrorDeletingDestructor() {
+    auto* object = new (_Znwm_nid_postfix(sizeof(LibcException::FutureErrorObject))) LibcException::FutureErrorObject{};
+    object->message.capacity = 24;
+    object->message.size = 24;
+    object->message.pointer = static_cast<char*>(_Znwm_nid_postfix(25));
+    std::memcpy(object->message.pointer, "future already retrieved", 25);
+    char* storage = object->message.pointer;
+    releases = 0;
+    sceLibcInternalFutureErrorDeletingDestructor_nid_no_patch(object);
+    Require(releases == 2 && released[0] == storage && released[1] == object, "the message and then the object are freed");
+}
+
 }
 
 int main() {
@@ -88,7 +111,10 @@ int main() {
     CheckMessageDestructor(&sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch, "value too large");
     CheckMessageDestructor(&sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch, "value too small");
     CheckFutureError();
+    CheckMessageDeletingDestructor(&sceLibcInternalOverflowErrorDeletingDestructor_nid_no_patch, "value too large");
+    CheckMessageDeletingDestructor(&sceLibcInternalUnderflowErrorDeletingDestructor_nid_no_patch, "value too small");
+    CheckFutureErrorDeletingDestructor();
 
-    std::puts("libc internal exception base-object destructor checks passed");
+    std::puts("libc internal exception destructor checks passed");
     return 0;
 }
