@@ -24,7 +24,7 @@ RELATIVE_DEFINED = (TARGET, (1 << 32) | 8, FUNCTION)
 JUMP_SLOT = (TARGET, (1 << 32) | 7, 0)
 
 
-def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12):
+def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12, preinit=False):
     image = module_with_symbol(exported)
     image[0x89c] = symbol_info
     image.extend(bytes(0xE00 - len(image)))
@@ -37,6 +37,8 @@ def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, expor
         tags += [(23, 0x2400), (2, len(plt) * 24), (20, 7), (3, TARGET)]
     if lifecycle:
         tags += [(25, TARGET), (27, 8), (26, TARGET), (28, 8)]
+    if preinit:
+        tags += [(32, TARGET), (33, 8)]
     if sce:
         struct.pack_into("<H", image, 56, 4)
         struct.pack_into("<IIQQQQQQ", image, 232, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
@@ -76,6 +78,133 @@ def change_tag(image, tag, value=None, replacement=None):
                 struct.pack_into("<q", image, position, replacement)
             return image
     raise AssertionError(f"Missing dynamic tag {tag:#x}")
+
+def duplicate_dynamic_segment(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    image[insert_at:insert_at + 56] = image[176:176 + 56]
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def insert_dynamic_tag(image, tag, value):
+    for position in range(0x2000, 0x2200, 16):
+        current, _ = struct.unpack_from("<qQ", image, position)
+        if current == 0:
+            struct.pack_into("<qQ", image, position, tag, value)
+            struct.pack_into("<qQ", image, position + 16, 0, 0)
+            size, = struct.unpack_from("<Q", image, 176 + 32)
+            struct.pack_into("<QQ", image, 176 + 32, size + 16, size + 16)
+            return image
+    raise AssertionError("Missing dynamic terminator")
+def truncate_dynamic_terminator(image):
+    size, = struct.unpack_from("<Q", image, 176 + 32)
+    struct.pack_into("<QQ", image, 176 + 32, size - 8, size - 8)
+    return image
+
+
+def duplicate_sce_dynamic_data(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    sce_offset = None
+    for index in range(phnum):
+        offset = 64 + index * 56
+        if struct.unpack_from("<I", image, offset)[0] == 0x61000000:
+            sce_offset = offset
+            break
+    if sce_offset is None:
+        insert_at = 64 + phnum * 56
+        if insert_at + 112 > len(image):
+            image.extend(bytes(insert_at + 112 - len(image)))
+        struct.pack_into("<IIQQQQQQ", image, insert_at, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
+        struct.pack_into("<IIQQQQQQ", image, insert_at + 56, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
+        struct.pack_into("<H", image, 56, phnum + 2)
+        return image
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    image[insert_at:insert_at + 56] = image[sce_offset:sce_offset + 56]
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def invalid_tls_segment_size(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x2700, 0x2700, 0x2700, 16, 8, 8)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def duplicate_tls_segment(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 112 > len(image):
+        image.extend(bytes(insert_at + 112 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0, 0, 0, 0, 8, 8)
+    image[insert_at + 56:insert_at + 112] = image[insert_at:insert_at + 56]
+    struct.pack_into("<H", image, 56, phnum + 2)
+    return image
+
+
+def invalid_tls_segment_align(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x2700, 0x2700, 0x2700, 0, 8, 6)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def invalid_tls_segment_large_align(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x2700, 0x2700, 0x2700, 0, 8, 0x4000)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+def invalid_tls_segment_large_memsz(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x2700, 0x2700, 0x2700, 0, 0x80000000, 8)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+def invalid_tls_outside_load(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x1200, 0x1500, 0x1500, 8, 8, 8)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
+def invalid_tls_outside_file(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0x27f9, 0x1100, 0, 8, 8, 8)
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
 
 
 def unsized_lifecycle(rela, sce, initial):
@@ -122,6 +251,7 @@ def invalid_cases(sce):
     yield "relative-symbol-mismatched-value", module([(TARGET, (1 << 32) | 8, FUNCTION + 8)], sce=sce), "RELATIVE relocation has a symbol"
     yield "relative-symbol-undefined", module([(TARGET, (1 << 32) | 8, 0)], sce=sce, exported=False), "RELATIVE relocation has a symbol"
     yield "invalid-symbol", module([NOOP, (TARGET, (99 << 32) | 6, 0)], sce=sce), "Unsupported relocation or symbol index"
+    yield "invalid-guest-symbol-addend", module([(TARGET, (1 << 32) | 6, 1)], sce=sce), "Invalid guest symbol relocation"
     yield "invalid-target", module([NOOP, (0xffffffffffffffff, 8, FUNCTION)], sce=sce), "Unmapped or inaccessible guest address"
     yield "overlapping-partial", module([NOOP, RELATIVE, (TARGET + 4, 8, FUNCTION)], sce=sce), "Overlapping guest relocations"
     yield "relative-over-symbol", module([SYMBOL_POINTER, RELATIVE], sce=sce), "Overlapping guest relocations"
@@ -129,7 +259,9 @@ def invalid_cases(sce):
     yield "relative-over-defined-relative", module([RELATIVE_DEFINED, RELATIVE], sce=sce), "Overlapping guest relocations"
     yield "invalid-plt-kind", module(plt=[NOOP, RELATIVE], sce=sce), "Unsupported relocation or symbol index"
     yield "unrelocated-lifecycle", module([(TARGET, 0, FUNCTION)], sce=sce, lifecycle=True, initial=FUNCTION), "Unrelocated guest lifecycle pointer"
+    yield "unaligned-lifecycle-size", change_tag(module([RELATIVE], sce=sce, lifecycle=True, initial=0), 27, 4), "Unaligned guest lifecycle array size"
     yield "plt-lifecycle", module(plt=[JUMP_SLOT], sce=sce, lifecycle=True, initial=0), "Unsupported guest lifecycle relocation"
+    yield "invalid-lifecycle-function-addend", module([(TARGET, (1 << 32) | 1, 1)], sce=sce, lifecycle=True, initial=0), "Invalid guest lifecycle function relocation"
     size = 0x61000031 if sce else 8
     entry = 0x61000033 if sce else 9
     address = 0x6100002f if sce else 7
@@ -143,7 +275,33 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "preinit-without-init", module([NOOP], sce=sce, preinit=True), "Guest PREINIT_ARRAY has no module initializer"
+    yield "unsupported-dynamic-flags", insert_dynamic_tag(module([NOOP], sce=sce), 30, 1), "Unsupported guest dynamic flags"
+    yield "unsupported-dynamic-tag-rpath", insert_dynamic_tag(module([NOOP], sce=sce), 15, 0), "Unsupported dynamic tag 15"
+    yield "unsupported-dynamic-tag-symbolic", insert_dynamic_tag(module([NOOP], sce=sce), 16, 0), "Unsupported dynamic tag 16"
+    yield "unsupported-dynamic-tag-rel", insert_dynamic_tag(module([NOOP], sce=sce), 17, 0), "Unsupported dynamic tag 17"
+    yield "unsupported-dynamic-tag-rela", insert_dynamic_tag(module([NOOP], sce=sce), 18, 0), "Unsupported dynamic tag 18"
+    yield "unsupported-dynamic-tag-unused", insert_dynamic_tag(module([NOOP], sce=sce), 19, 0), "Unsupported dynamic tag 19"
+    yield "unsupported-dynamic-tag-textrel", insert_dynamic_tag(module([NOOP], sce=sce), 22, 0), "Unsupported dynamic tag 22"
+    strtab = 0x61000035 if sce else 5
+    yield "duplicate-dynamic-tag-strtab", insert_dynamic_tag(module([NOOP], sce=sce), strtab, 0), f"Duplicate dynamic tag {strtab}"
+    yield "unterminated-dynamic-segment", truncate_dynamic_terminator(module([NOOP], sce=sce)), "Unterminated dynamic segment"
+    yield "duplicate-dynamic-segment", duplicate_dynamic_segment(module([NOOP], sce=sce)), "Duplicate dynamic segment"
+    yield "duplicate-sce-dynamic-data", duplicate_sce_dynamic_data(module([NOOP], sce=sce)), "Duplicate SCE dynamic data"
+    yield "invalid-tls-segment-size", invalid_tls_segment_size(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+    yield "duplicate-tls-segment", duplicate_tls_segment(module([NOOP], sce=sce)), "Multiple ELF TLS segments"
+    yield "invalid-tls-segment-align", invalid_tls_segment_align(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
 
+
+def invalid_cases_macos(sce):
+    yield "invalid-tls-segment-large-align", invalid_tls_segment_large_align(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+    yield "invalid-tls-segment-large-memsz", invalid_tls_segment_large_memsz(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+
+def invalid_cases_windows(sce):
+    yield "invalid-tls-segment-large-memsz", invalid_tls_segment_large_memsz(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+    yield "invalid-tls-segment-large-align", invalid_tls_segment_large_align(module([NOOP], sce=sce)), "Invalid or unsupported ELF TLS layout"
+    yield "invalid-tls-segment-outside-load", invalid_tls_outside_load(module([NOOP], sce=sce)), "PT_TLS initialization image is outside PT_LOAD memory"
+    yield "invalid-tls-segment-outside-file", invalid_tls_outside_file(module([NOOP], sce=sce)), "PT_TLS initialization image is outside the file"
 
 def main():
     if sys.argv[1] == "--load":
@@ -215,6 +373,14 @@ def main():
                         assert not {25, 26, 27, 28} & set(dynamic_tags(artifact.read_bytes())), name
             for name, image, error in invalid_cases(sce):
                 result, artifact, output = convert(f"{sce}-{name}", "linux", image)
+                assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
+                assert not artifact.exists() and not output.exists(), name
+            for name, image, error in invalid_cases_macos(sce):
+                result, artifact, output = convert(f"{sce}-{name}", "macos", image)
+                assert result.returncode == 2 and error in result.stderr, ("macos", sce, name, result.stderr)
+                assert not artifact.exists() and not output.exists(), ("macos", sce, name)
+            for name, image, error in invalid_cases_windows(sce):
+                result, artifact, output = convert(f"{sce}-{name}", "windows", image)
                 assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
                 assert not artifact.exists() and not output.exists(), name
     print("Guest no-op relocation tests passed")
