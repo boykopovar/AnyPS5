@@ -71,6 +71,8 @@ int APS5_VABI sceDataTransferAbortLaunchPS5();
 int APS5_VABI sceDataTransferAbortPS5Request();
 int APS5_VABI sceDataTransferAbortRequestBeforeFgTransferPS5();
 int APS5_VABI sceDataTransferAbortSearchPS5();
+int APS5_VABI sceDataTransferEventIsAuthReady();
+int APS5_VABI sceDataTransferEventIsPwrReqReady();
 int APS5_VABI sceDataTransferEventIsAuthReadyPS4();
 int APS5_VABI sceDataTransferEventIsPwrReqReadyPS4();
 int APS5_VABI sceDataTransferEventIsPwrReqReadyPS5();

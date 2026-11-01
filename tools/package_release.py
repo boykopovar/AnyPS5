@@ -17,6 +17,21 @@ WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "fa
              "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 
 
+def resolve_release_path(path):
+    path = Path(path)
+    try:
+        resolved = Path(os.path.realpath(path))
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise ValueError(f"{path}: release path is a symbolic link loop: {error}") from error
+        raise ValueError(f"{path}: release path is a symbolic link loop")
+    return resolved
+
+
 def windows_runtime(build):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
@@ -178,25 +193,27 @@ def main(argv=None):
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
+        output = resolve_release_path(args.output)
         if args.docs is not None:
             if args.platform is not None or args.build is not None or args.version is not None or args.revision is not None:
                 parser.error("--docs cannot be combined with --platform, --build, --version or --revision")
-            collect_docs(args.docs, args.output)
+            collect_docs(resolve_release_path(args.docs), output)
         elif args.platform == "headers":
             if args.version is None or args.build is not None or args.revision is not None:
                 parser.error("--platform headers requires --version and does not accept --build or --revision")
-            package_headers.package(ROOT, args.output, args.version)
+            package_headers.package(ROOT, output, args.version)
         else:
             if args.platform is None or args.build is None or args.version is None:
                 parser.error("--platform, --build and --version are required when --docs is not specified")
+            build = resolve_release_path(args.build)
             if args.platform == "web":
                 if args.revision is None:
                     parser.error("--revision is required for --platform web")
-                package_web(args.build, args.output, args.version, args.revision)
+                package_web(build, output, args.version, args.revision)
             else:
                 if args.revision is not None:
                     parser.error("--revision requires --platform web")
-                package(args.platform, args.build, args.output, args.version)
+                package(args.platform, build, output, args.version)
     except (RuntimeError, ValueError, OSError) as error:
         parser.error(str(error))
     return 0

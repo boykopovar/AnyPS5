@@ -31,6 +31,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include "ResidentPresent.hpp"
 #include "ImageTableAbi.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
@@ -1420,7 +1421,7 @@ class StderrCapture {
 public:
     StderrCapture() {
         std::fflush(stderr);
-        file = std::tmpfile();
+        file = TemporaryFile::Open();
         Require(file != nullptr, "cannot open a temporary file for stderr");
 #ifdef _WIN32
         saved = _dup(_fileno(stderr));
@@ -9390,6 +9391,7 @@ void dataRefreshTests(const Device& device, Recorder& recorder) {
     Require(!resources.DataWordsDiffer(original) && resources.DataWordsDiffer(live), "the per-word compare disagrees with the words");
     Require(resources.RefreshData(recorder.Commands(), live, &recorder), "a refresh with different words recorded nothing");
     Require(resources.DataWordsHash() == ShaderResources::DataWordsHash(live) && !resources.DataWordsDiffer(live), "the refreshed template's hash is not the patched words'");
+    RecordMemoryBarrier(context, recorder.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
     Require(resources.RefreshData(recorder.Commands(), original, &recorder), "the refresh back recorded nothing");
     Require(resources.DataWordsHash() == ShaderResources::DataWordsHash(original), "the refreshed template's hash is not the original words'");
     Require(!resources.RefreshData(recorder.Commands(), original, &recorder), "a refresh with equal words recorded");
@@ -11130,7 +11132,7 @@ void pipelineCacheHeaderTests(const Device& device) {
     Require(versionDirectory.native().size() >= 220 && versionDirectory.native().size() <= 249, "the pipeline cache directory is not between 220 and 249 characters");
 #ifdef _WIN32
     _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
-    _putenv_s("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str());
+    _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", directory.c_str());
 #else
     setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
     setenv("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str(), 1);
