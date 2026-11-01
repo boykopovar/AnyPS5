@@ -1,6 +1,9 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +37,10 @@ const char* SslAlertDescStringLong(int value);
 const char* OcspCertStatusString(long status);
 const char* OcspCrlReasonString(long reason);
 const char* OcspResponseStatusString(long status);
+void* D2iX509(void** certificate, const unsigned char** in, long length);
+void X509Free(void* certificate);
+int I2dX509Pubkey(void* key, unsigned char** out);
+void Free(void* pointer);
 int ObjCreate(const char* oid, const char* shortName, const char* longName);
 void ObjCleanup();
 int I2tAsn1Object(char* buffer, int length, const void* object);
@@ -307,11 +314,456 @@ void CompareStrings() {
     CompareStrings("OCSP_response_status_str", Range(-2, 10), [](long v) { return OCSP_response_status_str_nid_postfix(v); }, LibreSslReference::OcspResponseStatusString);
 }
 
+using Der = std::vector<unsigned char>;
+
+unsigned Pick(unsigned count) { return static_cast<unsigned>(generator() % count); }
+bool Chance(unsigned percent) { return Pick(100) < percent; }
+
+bool faulty = false;
+
+bool Fault(unsigned percent) { return faulty && Chance(percent); }
+
+Der Join(std::initializer_list<Der> parts) {
+    Der joined;
+    for (const auto& part : parts) joined.insert(joined.end(), part.begin(), part.end());
+    return joined;
+}
+
+Der Wrap(Der tag, const Der& content) {
+    Der out = std::move(tag);
+    if ((out[0] & 0x20) && Chance(8)) {
+        out.push_back(0x80);
+        out.insert(out.end(), content.begin(), content.end());
+        out.push_back(0);
+        out.push_back(0);
+        return out;
+    }
+    const std::size_t size = content.size();
+    if (size < 128 && !Chance(4)) {
+        out.push_back(static_cast<unsigned char>(size));
+    } else {
+        Der length;
+        for (std::size_t rest = size; rest; rest >>= 8) length.insert(length.begin(), static_cast<unsigned char>(rest));
+        if (length.empty() || Chance(20)) length.insert(length.begin(), 0);
+        out.push_back(static_cast<unsigned char>(0x80 | length.size()));
+        out.insert(out.end(), length.begin(), length.end());
+    }
+    out.insert(out.end(), content.begin(), content.end());
+    return out;
+}
+
+Der Wrap(unsigned char tag, const Der& content) { return Wrap(Der{tag}, content); }
+
+Der Characters(std::size_t count) {
+    static constexpr unsigned char pool[] = {' ', ' ', 'A', 'b', 'Z', 'q', '\t', '\n', '\r', '0', '~', 'M', 0x80, 0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xff, 0x00, 0xd8, 0xdc, 0x10, 0x7f};
+    Der out;
+    for (std::size_t index = 0; index < count; ++index) out.push_back(!faulty ? pool[Pick(12)] : Chance(80) ? pool[Pick(sizeof pool)] : static_cast<unsigned char>(generator()));
+    return out;
+}
+
+Der Integer() {
+    static const Der patterns[] = {{}, {0x00}, {0x00, 0x80}, {0x00, 0x00, 0x01}, {0xff}, {0xff, 0x00}, {0xff, 0x00, 0x00}, {0x80}, {0x80, 0x00}, {0xff, 0x7f}, {0x01, 0x00}};
+    if (Chance(60)) return patterns[Pick(std::size(patterns))];
+    return Characters(Pick(10));
+}
+
+Der ObjectContent() {
+    static const Der valid[] = {{0x55, 0x04, 0x03}, {0x55, 0x04, 0x0a}, {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b}, {0x55, 0x1d, 0x13}, {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x01}};
+    static const Der invalid[] = {{}, {0x80, 0x01}, {0x55, 0x84}, {0x2a, 0x80, 0x80, 0x01}, {0x81, 0x80, 0x01}};
+    if (!Fault(20)) return valid[Pick(std::size(valid))];
+    if (Chance(50)) return invalid[Pick(std::size(invalid))];
+    Der out = Characters(1 + Pick(6));
+    out.back() &= 0x7f;
+    return out;
+}
+
+Der BitContent() {
+    if (Fault(5)) return {};
+    Der out{static_cast<unsigned char>(Fault(20) ? Pick(64) : Pick(8))};
+    const Der data = Characters(Pick(6));
+    out.insert(out.end(), data.begin(), data.end());
+    return out;
+}
+
+Der Split(unsigned char tag, const Der& content) {
+    if (!Chance(12)) return Wrap(tag, content);
+    Der chunks;
+    for (std::size_t at = 0; at < content.size();) {
+        const std::size_t size = std::min<std::size_t>(content.size() - at, 1 + Pick(4));
+        const Der part(content.begin() + static_cast<std::ptrdiff_t>(at), content.begin() + static_cast<std::ptrdiff_t>(at + size));
+        const unsigned char inner = !Fault(30) ? 0x04 : static_cast<unsigned char>(Chance(50) ? tag : Pick(31));
+        chunks = Join({chunks, Chance(10) ? Split(static_cast<unsigned char>(inner | 0x20), part) : Wrap(inner, part)});
+        at += size;
+    }
+    return Wrap(static_cast<unsigned char>(tag | 0x20), chunks);
+}
+
+Der Value(unsigned char tag) {
+    switch (tag) {
+    case 0x01: return Wrap(tag, !Fault(15) ? Der{static_cast<unsigned char>(Chance(50) ? 0xff : Pick(3))} : Characters(Pick(3)));
+    case 0x02:
+    case 0x0a: return Split(tag, Integer());
+    case 0x03: return Split(tag, BitContent());
+    case 0x05: return Wrap(tag, !Fault(10) ? Der{} : Der{0x00});
+    case 0x06: return Wrap(tag, ObjectContent());
+    case 0x1e: return Split(tag, Characters(!Fault(15) ? 2 * Pick(6) : Pick(9)));
+    case 0x1c: return Split(tag, Characters(!Fault(15) ? 4 * Pick(4) : Pick(9)));
+    case 0x30:
+    case 0x31: return Wrap(tag, Chance(50) ? Join({Wrap(0x02, {0x01}), Wrap(0x0c, Characters(Pick(4)))}) : Der{});
+    case 0x1f: return Wrap(Der{0x1f, static_cast<unsigned char>(31 + Pick(60))}, Characters(Pick(4)));
+    default: return Split(tag, Characters(Pick(14)));
+    }
+}
+
+Der NameValue() {
+    static constexpr unsigned char common[] = {0x0c, 0x0c, 0x13, 0x13, 0x14, 0x16, 0x12, 0x1e, 0x1c, 0x03, 0x30};
+    static constexpr unsigned char rare[] = {0x0a, 0x07, 0x08, 0x09, 0x0b, 0x0d, 0x0e, 0x0f, 0x1d, 0x1a, 0x02, 0x04, 0x31, 0x05, 0x01, 0x06, 0x17, 0x18, 0x15, 0x19, 0x1b, 0x80, 0x1f};
+    return Value(!Fault(15) ? common[Pick(sizeof common)] : rare[Pick(sizeof rare)]);
+}
+
+Der Name() {
+    Der sets;
+    const unsigned count = Chance(10) ? 0 : 1 + Pick(3);
+    for (unsigned set = 0; set < count; ++set) {
+        Der entries;
+        const unsigned size = Chance(75) ? 1 : 2 + Pick(2);
+        for (unsigned entry = 0; entry < size; ++entry) entries = Join({entries, Wrap(0x30, Join({Wrap(0x06, ObjectContent()), NameValue()}))});
+        sets = Join({sets, Wrap(0x31, entries)});
+    }
+    return Wrap(0x30, sets);
+}
+
+Der Parameter() {
+    static constexpr unsigned char tags[] = {0x05, 0x05, 0x05, 0x01, 0x02, 0x03, 0x04, 0x06, 0x0a, 0x0c, 0x13, 0x1e, 0x1c, 0x30, 0x31, 0x17, 0x1f, 0x80, 0xa0, 0x40, 0x09};
+    const unsigned char tag = tags[Pick(sizeof tags)];
+    if (tag == 0x80 || tag == 0x40) return Wrap(tag, Characters(Pick(4)));
+    if (tag == 0xa0) return Wrap(tag, Wrap(0x05, {}));
+    return Value(tag);
+}
+
+Der Algorithm() {
+    Der fields = Wrap(0x06, ObjectContent());
+    if (Chance(85)) fields = Join({fields, Parameter()});
+    return Wrap(0x30, fields);
+}
+
+Der Time() {
+    static constexpr unsigned char tags[] = {0x17, 0x18, 0x13, 0x0c, 0x1a};
+    return Split(tags[Fault(30) ? Pick(sizeof tags) : Pick(2)], !Fault(20) ? Der{'2', '0', '0', '1', '0', '1', '0', '0', '0', '0', '0', '0', 'Z'} : Characters(Pick(16)));
+}
+
+Der Extensions() {
+    Der list;
+    const unsigned count = Pick(4);
+    for (unsigned index = 0; index < count; ++index) {
+        Der fields = Wrap(0x06, ObjectContent());
+        if (Chance(40)) fields = Join({fields, Value(0x01)});
+        fields = Join({fields, !Fault(5) ? Split(0x04, Characters(Pick(10))) : NameValue()});
+        list = Join({list, Wrap(0x30, fields)});
+    }
+    return Wrap(0xa3, Wrap(0x30, list));
+}
+
+Der Certificate() {
+    Der tbs;
+    if (Chance(70)) tbs = Wrap(0xa0, Wrap(0x02, Integer()));
+    tbs = Join({tbs, Wrap(0x02, Integer()), Algorithm(), Name(), Wrap(0x30, Join({Time(), Time()})), Name(),
+        Wrap(0x30, Join({Algorithm(), Split(0x03, BitContent())}))});
+    if (Chance(15)) tbs = Join({tbs, !Fault(20) ? Wrap(0x81, BitContent()) : Wrap(0xa1, Wrap(0x04, BitContent()))});
+    if (Chance(15)) tbs = Join({tbs, Wrap(0x82, BitContent())});
+    if (Chance(60)) tbs = Join({tbs, Extensions()});
+    return Wrap(0x30, Join({Wrap(0x30, tbs), Algorithm(), Split(0x03, BitContent())}));
+}
+
+Der Mutate(Der der) {
+    const unsigned count = 1 + Pick(3);
+    for (unsigned round = 0; round < count && !der.empty(); ++round) {
+        const std::size_t at = Pick(static_cast<unsigned>(der.size()));
+        switch (Pick(7)) {
+        case 0: der[at] ^= static_cast<unsigned char>(1u << Pick(8)); break;
+        case 1: der[at] = static_cast<unsigned char>(generator()); break;
+        case 2: der.resize(at); break;
+        case 3: der.insert(der.begin() + static_cast<std::ptrdiff_t>(at), static_cast<unsigned char>(generator())); break;
+        case 4: der.erase(der.begin() + static_cast<std::ptrdiff_t>(at)); break;
+        case 5: der[at] = 0x80; break;
+        default: der[at] = static_cast<unsigned char>(Chance(50) ? 0x00 : 0xff); break;
+        }
+    }
+    return der;
+}
+
+std::string Describe(const Asn1String* string) {
+    if (!string) return "null";
+    return "S(" + std::to_string(string->type) + "," + std::to_string(string->length) + "," + std::to_string(string->flags) + "," +
+        (string->data ? Hex(string->data, static_cast<std::size_t>(std::max(string->length, 0))) : std::string("null")) + ")";
+}
+
+std::string Describe(const LibreSslAsn1Object* object) {
+    if (!object) return "null";
+    return "O(" + std::to_string(object->nid) + "," + std::to_string(object->flags) + "," + std::to_string(object->length) + "," + Quoted(object->shortName) + "," +
+        Quoted(object->longName) + "," + (object->data ? Hex(object->data, static_cast<std::size_t>(std::max(object->length, 0))) : std::string("null")) + ")";
+}
+
+std::string Describe(const LibreSslAsn1Type* any) {
+    if (!any) return "null";
+    std::string text = "T(" + std::to_string(any->type) + ",";
+    if (any->type == 1) return text + std::to_string(*reinterpret_cast<const std::int64_t*>(&any->value)) + ")";
+    if (any->type == 5) return text + (any->value ? "set" : "null") + ")";
+    if (any->type == 6) return text + Describe(static_cast<const LibreSslAsn1Object*>(any->value)) + ")";
+    return text + Describe(static_cast<const Asn1String*>(any->value)) + ")";
+}
+
+std::string Describe(const LibreSslX509Algorithm* algorithm) {
+    if (!algorithm) return "null";
+    return "A(" + Describe(algorithm->algorithm) + "," + Describe(algorithm->parameter) + ")";
+}
+
+std::string DescribeStack(const LibreSslStack* stack) {
+    if (!stack) return "null";
+    return "K(" + std::to_string(stack->num) + "," + std::to_string(stack->numAlloc) + "," + std::to_string(stack->sorted) + "," + (stack->comp ? "comp" : "nocomp") + ")";
+}
+
+std::string Describe(const LibreSslX509Name* name) {
+    if (!name) return "null";
+    const auto* bytes = static_cast<const std::uint64_t*>(name->bytes);
+    const auto* data = *reinterpret_cast<const unsigned char* const*>(bytes + 1);
+    std::string text = "N(" + std::to_string(name->modified) + "," + std::to_string(bytes[0]) + "," + std::to_string(bytes[2]) + "," + Hex(data, bytes[0]) + "," + DescribeStack(name->entries);
+    for (int index = 0; index < name->entries->num; ++index) {
+        const auto* entry = reinterpret_cast<const LibreSslX509NameEntry*>(name->entries->data[index]);
+        text += ",E(" + std::to_string(entry->set) + "," + std::to_string(entry->size) + "," + Describe(static_cast<const LibreSslAsn1Object*>(entry->object)) + "," +
+            Describe(static_cast<const Asn1String*>(entry->value)) + ")";
+    }
+    return text + "," + std::to_string(name->canonEnclen) + "," + (name->canonEnc ? Hex(name->canonEnc, static_cast<std::size_t>(name->canonEnclen)) : std::string("null")) + ")";
+}
+
+std::string Describe(const LibreSslX509* certificate) {
+    if (!certificate) return "null";
+    const auto* info = certificate->certificateInfo;
+    std::string text = "X(" + Describe(info->version) + "," + Describe(info->serialNumber) + "," + Describe(info->signature) + "," + Describe(info->issuer) + "," +
+        Describe(info->validity->notBefore) + "," + Describe(info->validity->notAfter) + "," + Describe(info->subject) + "," + Describe(info->key->algorithm) + "," +
+        Describe(info->key->publicKey) + "," + (info->key->key ? "key" : "nokey") + "," + Describe(info->issuerUid) + "," + Describe(info->subjectUid) + "," + DescribeStack(info->extensions);
+    for (int index = 0; info->extensions && index < info->extensions->num; ++index) {
+        const auto* extension = reinterpret_cast<const LibreSslX509Extension*>(info->extensions->data[index]);
+        text += ",E(" + Describe(extension->object) + "," + std::to_string(extension->critical) + "," + Describe(extension->value) + ")";
+    }
+    text += "," + std::to_string(info->encoding.length) + "," + std::to_string(info->encoding.modified) + "," + Hex(info->encoding.data, static_cast<std::size_t>(info->encoding.length));
+    text += "," + Describe(certificate->signatureAlgorithm) + "," + Describe(certificate->signature) + "," + std::to_string(certificate->valid) + "," + std::to_string(certificate->references) +
+        "," + Quoted(certificate->name) + "," + (certificate->exData.stack ? "exdata" : "noexdata") + "," + std::to_string(certificate->pathLength) + "," + std::to_string(certificate->proxyPathLength) +
+        "," + std::to_string(certificate->extensionFlags) + "," + std::to_string(certificate->keyUsage) + "," + std::to_string(certificate->extendedKeyUsage) + "," +
+        std::to_string(certificate->netscapeCertType) + "," + Hex(certificate->sha1Hash, sizeof certificate->sha1Hash);
+    const void* const pointers[] = {certificate->subjectKeyId, certificate->authorityKeyId, certificate->policyCache, certificate->crlDistributionPoints, certificate->alternativeNames,
+        certificate->nameConstraints, certificate->auxiliary};
+    for (const void* pointer : pointers) text += pointer ? ",set" : ",null";
+    return text + ")";
+}
 
 std::string Errors(const std::function<unsigned long()>& next) {
     std::string text;
     while (const unsigned long code = next()) text += " " + std::to_string(code);
     return text;
+}
+
+void CompareCertificates() {
+    for (int round = 0; round < 60000; ++round) {
+        faulty = Chance(60);
+        Der der = Certificate();
+        if (faulty && Chance(70)) der = Mutate(der);
+        std::size_t length = der.size();
+        if (Fault(6)) length = Pick(static_cast<unsigned>(der.size() + 1));
+        if (Chance(3)) der.push_back(static_cast<unsigned char>(generator()));
+        der.resize(der.size() + 32);
+        const bool reuse = Chance(10);
+        LibreSslX509* mine = nullptr;
+        void* theirs = nullptr;
+        if (reuse) {
+            const bool keep = faulty;
+            faulty = false;
+            Der base;
+            for (int attempt = 0; attempt < 20 && (!mine || !theirs); ++attempt) {
+                if (mine) X509_free_nid_postfix(mine);
+                if (theirs) LibreSslReference::X509Free(theirs);
+                mine = nullptr;
+                theirs = nullptr;
+                base = Certificate();
+                const unsigned char* in = base.data();
+                d2i_X509_nid_postfix(&mine, &in, static_cast<std::int64_t>(base.size()));
+                in = base.data();
+                LibreSslReference::D2iX509(&theirs, &in, static_cast<long>(base.size()));
+            }
+            faulty = keep;
+            ERR_clear_error_nid_postfix();
+        }
+        LibreSslReference::ErrClearError();
+        LibreSslX509* const mineBefore = mine;
+        void* const theirsBefore = theirs;
+        const unsigned char* mineIn = der.data();
+        const unsigned char* theirIn = der.data();
+        LibreSslX509* mineResult = nullptr;
+        const auto error = Attempt([&] { mineResult = d2i_X509_nid_postfix(reuse ? &mine : nullptr, &mineIn, static_cast<std::int64_t>(length)); });
+        void* theirResult = LibreSslReference::D2iX509(reuse ? &theirs : nullptr, &theirIn, static_cast<long>(length));
+        const std::string mineText = error.empty() ? Describe(mineResult) + " consumed " + std::to_string(mineIn - der.data()) + Errors(ERR_get_error_nid_postfix) +
+            (reuse ? std::string(mine == mineBefore ? " same" : mine ? " other" : " cleared") : std::string()) : error;
+        const std::string theirText = Describe(static_cast<const LibreSslX509*>(theirResult)) + " consumed " + std::to_string(theirIn - der.data()) + Errors(LibreSslReference::ErrGetError) +
+            (reuse ? std::string(theirs == theirsBefore ? " same" : theirs ? " other" : " cleared") : std::string());
+        const char* function = reuse ? "d2i_X509 (reused)" : mineResult ? "d2i_X509 (decoded)" : "d2i_X509 (rejected)";
+        Record(function, mineText == theirText, [&] { return Hex(der.data(), length) + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+        if (error.empty() && mineResult) X509_free_nid_postfix(mineResult);
+        if (theirResult) LibreSslReference::X509Free(theirResult);
+        ERR_clear_error_nid_postfix();
+        LibreSslReference::ErrClearError();
+    }
+}
+
+struct Saved {
+    LibreSslX509Algorithm* algorithm;
+    LibreSslAsn1Object* object;
+    LibreSslAsn1Type* parameter;
+    std::int32_t type;
+    void* value;
+    Asn1String* bits;
+    std::int64_t flags;
+    std::int32_t stringType;
+};
+
+bool StringParameter(const LibreSslAsn1Type* parameter) {
+    return parameter && parameter->type != 1 && parameter->type != 5 && parameter->type != 6 && parameter->value;
+}
+
+Saved Save(LibreSslX509PublicKey* key) {
+    Saved saved{key->algorithm, key->algorithm->algorithm, key->algorithm->parameter, 0, nullptr, key->publicKey, key->publicKey->flags, 0};
+    if (saved.parameter) {
+        saved.type = saved.parameter->type;
+        saved.value = saved.parameter->value;
+        if (StringParameter(saved.parameter)) saved.stringType = static_cast<Asn1String*>(saved.value)->type;
+    }
+    return saved;
+}
+
+void Restore(LibreSslX509PublicKey* key, const Saved& saved) {
+    key->algorithm = saved.algorithm;
+    key->algorithm->algorithm = saved.object;
+    key->algorithm->parameter = saved.parameter;
+    key->publicKey = saved.bits;
+    key->publicKey->flags = saved.flags;
+    if (!saved.parameter) return;
+    saved.parameter->type = saved.type;
+    saved.parameter->value = saved.value;
+    if (saved.stringType) static_cast<Asn1String*>(saved.value)->type = saved.stringType;
+}
+
+bool Zero(const Asn1String* string) {
+    return std::all_of(string->data, string->data + string->length, [](unsigned char byte) { return byte == 0; });
+}
+
+bool Unencodable(const LibreSslAsn1Type* parameter) {
+    if (!StringParameter(parameter)) return false;
+    const auto* string = static_cast<const Asn1String*>(parameter->value);
+    if (!Zero(string)) return false;
+    if (parameter->type == 2 || parameter->type == 10) return string->type & 0x100;
+    return parameter->type == 3 && string->length && !(string->flags & 0x08);
+}
+
+std::string MutateKey(LibreSslX509PublicKey* key, unsigned kind, unsigned choice, std::int64_t number) {
+    static constexpr std::int32_t stringTypes[] = {2, 10, 3, 4, 16, 17, -3, 12, 19, 30, 31, 40, 200, 0x1f};
+    auto* parameter = key->algorithm->parameter;
+    switch (kind) {
+    case 1:
+        if (!StringParameter(parameter)) return "unchanged";
+        parameter->type = stringTypes[choice % std::size(stringTypes)];
+        return "type " + std::to_string(parameter->type);
+    case 2:
+        if (!parameter) return "unchanged";
+        parameter->type = choice % 3 == 0 ? 5 : 1;
+        parameter->value = reinterpret_cast<void*>(choice % 3 == 2 ? static_cast<std::int64_t>(0xffffffff) : number);
+        return "type " + std::to_string(parameter->type) + " value " + std::to_string(reinterpret_cast<std::int64_t>(parameter->value));
+    case 3:
+        if (!StringParameter(parameter)) return "unchanged";
+        static_cast<Asn1String*>(parameter->value)->type ^= 0x100;
+        parameter->type = choice % 2 ? 2 : 10;
+        return "negated as " + std::to_string(parameter->type);
+    case 4:
+        key->algorithm->parameter = nullptr;
+        return "no parameter";
+    case 5:
+        key->algorithm->algorithm = nullptr;
+        return "no object";
+    case 6:
+        key->algorithm = nullptr;
+        return "no algorithm";
+    case 7:
+        key->publicKey = nullptr;
+        return "no bits";
+    case 8:
+        key->publicKey->flags = choice % 3 ? 0x08 | (number & 7) : 0;
+        return "flags " + std::to_string(key->publicKey->flags);
+    default:
+        return "unchanged";
+    }
+}
+
+bool Encodable(const LibreSslX509PublicKey* key) {
+    if (key->algorithm && Unencodable(key->algorithm->parameter)) return false;
+    return !key->publicKey || key->publicKey->flags & 0x08 || !key->publicKey->length || !Zero(key->publicKey);
+}
+
+std::string EncodeKey(void* key, unsigned mode, const std::function<int(void*, unsigned char**)>& encode, const std::function<void(void*)>& release) {
+    if (mode == 0) return std::to_string(encode(key, nullptr));
+    if (mode == 1) {
+        unsigned char* out = nullptr;
+        const int length = encode(key, &out);
+        std::string text = std::to_string(length) + (out ? " " + Hex(out, static_cast<std::size_t>(std::max(length, 0))) : std::string(" null"));
+        if (out) release(out);
+        return text;
+    }
+    Der buffer(4096, 0xcc);
+    unsigned char* out = buffer.data() + 3;
+    const int length = encode(key, &out);
+    return std::to_string(length) + " advanced " + std::to_string(out - buffer.data() - 3) + " " + Hex(buffer.data(), 1096);
+}
+
+void CompareKeyEncodings() {
+    for (int round = 0; round < 40000; ++round) {
+        faulty = Chance(50);
+        const Der der = Certificate();
+        const unsigned char* in = der.data();
+        LibreSslX509* mine = d2i_X509_nid_postfix(nullptr, &in, static_cast<std::int64_t>(der.size()));
+        in = der.data();
+        auto* theirs = static_cast<LibreSslX509*>(LibreSslReference::D2iX509(nullptr, &in, static_cast<long>(der.size())));
+        ERR_clear_error_nid_postfix();
+        LibreSslReference::ErrClearError();
+        if (!mine || !theirs) {
+            if (mine) X509_free_nid_postfix(mine);
+            if (theirs) LibreSslReference::X509Free(theirs);
+            continue;
+        }
+        auto* mineKey = mine->certificateInfo->key;
+        auto* theirKey = theirs->certificateInfo->key;
+        const Saved mineSaved = Save(mineKey);
+        const Saved theirSaved = Save(theirKey);
+        const unsigned kind = Chance(40) ? 0 : 1 + Pick(8);
+        const unsigned choice = Pick(1000);
+        const std::int64_t number = Chance(50) ? Pick(0x300) : static_cast<std::int64_t>(generator() & 0xffffffff);
+        const std::string mutation = MutateKey(mineKey, kind, choice, number);
+        MutateKey(theirKey, kind, choice, number);
+        const unsigned mode = Pick(3);
+        const bool none = Chance(3);
+        if (Encodable(mineKey)) {
+            std::string mineText;
+            const auto error = Attempt([&] {
+                mineText = EncodeKey(none ? nullptr : mineKey, mode, [](void* key, unsigned char** out) { return i2d_X509_PUBKEY_nid_postfix(static_cast<LibreSslX509PublicKey*>(key), out); },
+                    [](void* pointer) { free_nid_postfix(pointer); });
+            });
+            if (!error.empty()) mineText = error;
+            mineText += Errors(ERR_get_error_nid_postfix);
+            const std::string theirText = EncodeKey(none ? nullptr : theirKey, mode, LibreSslReference::I2dX509Pubkey, LibreSslReference::Free) + Errors(LibreSslReference::ErrGetError);
+            Record("i2d_X509_PUBKEY", mineText == theirText,
+                [&] { return Hex(der.data(), der.size()) + " " + mutation + " mode " + std::to_string(mode) + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+        }
+        Restore(mineKey, mineSaved);
+        Restore(theirKey, theirSaved);
+        X509_free_nid_postfix(mine);
+        LibreSslReference::X509Free(theirs);
+    }
 }
 
 struct Oid {
@@ -402,11 +854,15 @@ void CompareCreatedObjects() {
 }
 
 int main() {
+    std::array<void*, 10> api{};
+    ApplicationHeapRegister_nid_no_patch(api.data());
     CompareAesKeys();
     CompareAesModes();
     CompareDigests();
     CompareDesParity();
     CompareStrings();
+    CompareCertificates();
+    CompareKeyEncodings();
     CompareCreatedObjects();
     long cases = 0;
     long differing = 0;
