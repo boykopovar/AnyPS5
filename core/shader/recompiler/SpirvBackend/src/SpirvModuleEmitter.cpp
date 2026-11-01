@@ -2169,7 +2169,7 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
     if (exp.kind == ExportTargetKind::Null || exp.en == 0u) {
         return;
     }
-    EmitIfCondition(state, exec, [&]() {
+    const auto store = [&]() {
         const auto data = ctx.Arg(inst, 0);
         if (exp.kind == ExportTargetKind::Primitive) {
             if (state.program.Resources().stage == IrShaderStage::Mesh) {
@@ -2267,7 +2267,14 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
         } else {
             state.module.AddFunction(spv::OpStore, variable, value);
         }
-    });
+    };
+    const bool killedWhenInactive = state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt && exp.vm &&
+        state.pixelValidMaskVariable != 0u && std::ranges::none_of(PixelInfo(state).merges, [&](const auto& merge) { return merge.target == exp.index; });
+    if (killedWhenInactive) {
+        store();
+    } else {
+        EmitIfCondition(state, exec, store);
+    }
 }
 
 std::uint32_t EmitGetShaderBase(SpirvValueEmitContext& ctx) {
