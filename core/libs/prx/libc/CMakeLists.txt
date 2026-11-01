@@ -154,7 +154,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(BUILD_TESTING)
-    add_test_executable(guest_update_env_tests ${LIBS_INCLUDE_DIR}/tests/GuestUpdateEnv.cpp)
+    add_test_executable(guest_update_env_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestUpdateEnv.cpp)
     target_include_directories(guest_update_env_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_update_env_tests PRIVATE libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_update_env_tests)
@@ -178,7 +179,8 @@ endif()
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPoint.cpp)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_raise_except_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseExcept.cpp)
+    add_test_executable(guest_raise_except_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestRaiseExcept.cpp)
     target_include_directories(guest_raise_except_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_raise_except_tests PRIVATE libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_raise_except_tests)
@@ -193,7 +195,8 @@ if(BUILD_TESTING)
         set_tests_properties(${raiseExceptTests} PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    add_test_executable(guest_floating_point_tests ${LIBS_INCLUDE_DIR}/tests/GuestFloatingPoint.cpp)
+    add_test_executable(guest_floating_point_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestFloatingPoint.cpp)
     target_include_directories(guest_floating_point_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_floating_point_tests PRIVATE libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_floating_point_tests)
@@ -263,7 +266,8 @@ if(BUILD_TESTING)
         endif()
     endif()
 
-    add_test_executable(guest_index_tests ${LIBS_INCLUDE_DIR}/tests/GuestIndex.cpp)
+    add_test_executable(guest_index_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestIndex.cpp)
     target_include_directories(guest_index_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_index_tests PRIVATE libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_index_tests)
@@ -514,7 +518,8 @@ if(BUILD_TESTING)
         set_tests_properties(guest_character PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    add_test_executable(guest_set_env_tests ${LIBS_INCLUDE_DIR}/tests/GuestSetEnv.cpp)
+    add_test_executable(guest_set_env_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestSetEnv.cpp)
     target_include_directories(guest_set_env_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_set_env_tests PRIVATE libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_set_env_tests)
@@ -932,7 +937,8 @@ if(BUILD_TESTING)
         set_tests_properties(guest_standard_streams_update_stdout PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    add_test_executable(guest_gets_tests ${LIBS_INCLUDE_DIR}/tests/GuestGets.cpp)
+    add_test_executable(guest_gets_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestGets.cpp)
     target_include_directories(guest_gets_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_gets_tests PRIVATE libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_gets_tests)

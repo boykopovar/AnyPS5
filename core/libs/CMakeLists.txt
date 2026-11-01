@@ -364,7 +364,8 @@ if(BUILD_TESTING)
     add_test(NAME nid_buffer_validation COMMAND nid_buffer_validation_tests)
     set_tests_properties(nid_buffer_validation PROPERTIES TIMEOUT 10)
 
-    add_test_executable(guest_dinkumware_fetch_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestDinkumwareFetch.cpp
+    add_test_executable(guest_dinkumware_fetch_tests NO_RUNTIME_DLL_STAGING
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestDinkumwareFetch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/NidCompute.cpp ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/Sha1.cpp)
     target_include_directories(guest_dinkumware_fetch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
     target_link_libraries(guest_dinkumware_fetch_tests PRIVATE ${CMAKE_DL_LIBS})
