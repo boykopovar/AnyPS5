@@ -2,7 +2,7 @@
 
 A static recompiler for PS5 executables. `ps5lift` lifts guest x86-64 code to LLVM IR and compiles it to native code for the host, so a title can run on aarch64 Linux machines such as the NVIDIA DGX Spark (GB10) without an x86 emulator. The system libraries are AnyPS5's own, and AnyPS5's ELF reader and `.eh_frame` scanner are the lifter's frontend.
 
-Status: guest code built for Zen 2, including SSE, AVX2, FMA, F16C and x87 code, lifts and runs on aarch64 with the same output as on x86-64. AnyPS5's PS5-style test executables (NID imports, static TLS) relink, lift and run. Commercial titles do not run yet; see [the design](PS5LIFT_DESIGN.md) and [known gaps](TechnicalDebt.md#ps5lift).
+Status: **milestone 2 in progress**. Guest code built for Zen 2, including SSE, AVX2, FMA, F16C and x87 code, lifts and runs on aarch64 with the same output as on x86-64. AnyPS5's PS5-style test executables (NID imports, static TLS) relink, lift and run, and so does [EVO Player](https://github.com/sainsaji/EVO-PLAYER-PS5), a homebrew media player, as far as its home screen. Commercial titles do not run yet; see [the design](PS5LIFT_DESIGN.md) and [known gaps](TechnicalDebt.md#ps5lift).
 
 ## Build
 
@@ -52,6 +52,24 @@ The runtime is a shared library, which AnyPS5's libraries link too, so they reac
 `ps5lift` also lifts the modules the executable names in `DT_NEEDED` as `$ORIGIN/<path>`, such as the `app0/sce_module/*.guest.prx` files the relinker writes beside `app.elf`, and the runtime initializes them before the executable starts; see [the design](PS5LIFT_DESIGN.md#images). The output is a static archive with one object per part of the program: the functions in address order, about 50000 instructions to a part, and a last part with the image's segments and tables. Each part is lifted, optimized and compiled on a thread of its own, and calls between parts are relocations the linker resolves, with range-extension thunks where a call is too far for a direct branch. The parts depend only on the program, so the output does not depend on `--jobs`.
 
 The lifter prints how many functions and instructions it lifted, how many jump tables it recovered and how many of them it sized by the data around them, and lists every unsupported instruction it found. Reaching one at run time stops the program with its address.
+
+## Use
+
+`tools/ps5lift.py` takes a title from its extracted files to a running game. `game` builds it from the title's `app0` directory, the one holding `eboot.bin`, into a directory of its own, and `run` starts it:
+
+```sh
+python3 tools/ps5lift.py game path/to/app0 out
+python3 tools/ps5lift.py run out
+```
+
+`game` uses the build in `build` (`--build` names another) and takes these steps:
+
+1. It prepares the title. The `eboot.bin` and the modules it ships, in `sce_module`, `prx` and the other directories AnyPS5's `audit_dump.py` knows, are SELF containers: it turns each decrypted one into a plain ELF with AnyPS5's `unwrap_self.py` and converts them with the AnyPS5 relinker. PS5 executables are position-independent, and the relinker places this one at 1008 GiB, where every guest image goes ([the design](PS5LIFT_DESIGN.md#machine-model)); the modules it loads go beside it under `app0`. The imports AnyPS5's libraries do not export are listed in `out/audit.json`; the game stops if it reaches one.
+2. It generates the import bridges for the libraries the title links.
+3. It lifts the title into `out/app.a`, and lifts again only when the lifter or the title is newer, or with `--relift`.
+4. It builds the runtime and links `out/game`.
+
+`run` starts the game in `out/run`, where `app0` is the title's directory, with `APS5_PLAYGO_UNLISTED_CHUNKS=installed` since every chunk of an extracted title is there. Settings such as AnyPS5's `APS5_` options follow as `NAME=VALUE`, and `game --run` builds and starts in one go. The steps are commands of their own too (`prepare`, `bridges` and `runtime`); `python3 tools/ps5lift.py --help` lists every command.
 
 ## Import bridges
 

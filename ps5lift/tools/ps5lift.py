@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Generate ps5lift's import bridges for AnyPS5's libraries, build its runtime and run its tests.
+"""Lift a PS5 title with ps5lift and run it on AnyPS5's libraries, and run ps5lift's tests.
 
-`ps5lift.py bridges` generates the bridges a lifted program calls AnyPS5's libraries through and `runtime` builds the
-runtime for a target. The other commands are the test drivers ctest runs and the bridge survey."""
+`ps5lift.py game DUMP OUT` does every step for a title: it prepares the extracted title, generates the import bridges,
+lifts the program, builds the runtime and links the game; `ps5lift.py run OUT` starts it. The other commands are those
+steps one at a time and the test drivers ctest runs."""
 import argparse
 import base64
 import collections
@@ -105,6 +106,14 @@ def compare(expected, actual, label):
     return False
 
 
+def configured_compilers(build):
+    cache = Path(build) / "CMakeCache.txt"
+    if not cache.exists():
+        raise SystemExit(f"{cache} does not exist: configure ps5lift there first (see docs/dev/PS5LIFT.md)")
+    values = dict(re.findall(r"^(CMAKE_C_COMPILER|CMAKE_CXX_COMPILER):\w+=(.*)$", cache.read_text(), re.MULTILINE))
+    return values["CMAKE_C_COMPILER"], values["CMAKE_CXX_COMPILER"]
+
+
 DEPENDENCY_OPTIONS = {"-o", "-MF", "-MT", "-MQ"}
 
 
@@ -174,6 +183,28 @@ def compiler_arguments(entry):
         elif word not in ("-c", "-MD", "-MMD", entry["file"]):
             arguments.append(word)
     return arguments
+
+
+def needed_libraries(elf):
+    data = Path(elf).read_bytes()
+    offset, = struct.unpack_from("<Q", data, 0x28)
+    size, count = struct.unpack_from("<HH", data, 0x3a)
+    sections = [struct.unpack_from("<IIQQQQIIQQ", data, offset + index * size) for index in range(count)]
+    for _, kind, _, _, start, length, link, _, _, entry_size in sections:
+        if kind != 6:
+            continue
+        strings = sections[link][4]
+        names = []
+        for entry in range(start, start + length, entry_size):
+            tag, value = struct.unpack_from("<qQ", data, entry)
+            if tag == 0:
+                break
+            if tag == 1:
+                name = data[strings + value:data.index(b"\0", strings + value)].decode()
+                if name.endswith(".prx") and "$" not in name:
+                    names.append(name[:-len(".prx")])
+        return names
+    raise SystemExit(f"{elf} has no dynamic section")
 
 
 RUNTIME_SOURCES = ["runtime/src/Runtime.cpp", "runtime/src/GuestCpu.cpp", "runtime/src/X87.cpp", "runtime/src/Jump.cpp", "runtime/src/Cpuid.cpp", "runtime/src/StringCompare.cpp", "runtime/src/NativeCall.cpp"]
@@ -834,6 +865,101 @@ def bridges_command(args):
     return 0
 
 
+def prepare_title(dump, work, relinker, libs=None, report=None):
+    sys.path.insert(0, str(ANYPS5 / "tools"))
+    import audit_dump
+    import import_audit
+    source = Path(work) / "source"
+    output = Path(work) / "output"
+    for directory in (source, output):
+        if directory.exists():
+            raise SystemExit(f"{directory} already exists")
+    output.mkdir(parents=True)
+    module_directories, extra = audit_dump.prepare(Path(dump), source)
+    command = [str(relinker), "--registry", "--linux-fixed-base", f"{GUEST_BASE:#x}"]
+    for relative in extra:
+        command += ["--module-dir", relative]
+    subprocess.run(command + [str(source / "eboot.elf"), str(output / "app.elf")], check=True)
+    if libs is None:
+        return 0
+    audit = sorted(str(path) for path in output.rglob("*.registry.json")) + ["--libs", str(libs)]
+    audit += [option for directory in module_directories for option in ("--modules", str(directory))]
+    if report:
+        audit += ["--json", str(report)]
+    return import_audit.main(audit)
+
+
+def prepare_command(args):
+    if args.json and not args.libs:
+        raise SystemExit("--json needs --libs")
+    return prepare_title(args.dump, args.work, args.relinker, args.libs, args.json)
+
+
+def game_command(args):
+    build = Path(args.build).resolve()
+    out = Path(args.out).resolve()
+    dump = Path(args.dump).resolve()
+    if not (dump / "eboot.bin").is_file():
+        raise SystemExit(f"{dump} holds no eboot.bin: pass the title's extracted app0 directory")
+    clang, clangxx = configured_compilers(build)
+    lifter = build / "lifter" / "ps5lift"
+    anyps5 = build / "anyps5"
+    if not lifter.is_file() or not (anyps5 / "compile_commands.json").is_file():
+        raise SystemExit(f"{build} holds no built ps5lift and AnyPS5: build it first (cmake --build {build})")
+    out.mkdir(parents=True, exist_ok=True)
+    elf = out / "work" / "output" / "app.elf"
+    if elf.exists():
+        print(f"prepared: {elf}")
+    else:
+        print(f"preparing {dump}")
+        status = prepare_title(dump, out / "work", anyps5 / "core" / "relinker" / "relinker", anyps5 / "core" / "libs" / "libs", out / "audit.json")
+        if status != 0:
+            print("the audit lists imports AnyPS5 does not implement yet; the title stops if it reaches one")
+    libraries = needed_libraries(elf)
+    bridges = out / "bridges.cpp"
+    print(f"generating bridges for {len(libraries)} libraries")
+    generate_bridges(libraries, anyps5, bridges, jobs=args.jobs)
+    archive = out / "app.a"
+    if not args.relift and archive.exists() and archive.stat().st_mtime > max(lifter.stat().st_mtime, elf.stat().st_mtime):
+        print(f"lifted: {archive}")
+    else:
+        print(f"lifting {elf}")
+        archive.unlink(missing_ok=True)
+        result = subprocess.run([str(lifter), str(elf), "-o", str(archive), *(["--jobs", str(args.jobs)] if args.jobs else [])], stderr=subprocess.PIPE, text=True)
+        (out / "lift.log").write_text(result.stderr)
+        if result.returncode != 0:
+            raise SystemExit(f"lifting failed with exit code {result.returncode}; see {out / 'lift.log'}")
+        print(result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "lifted")
+    triple = host_triple()
+    runtime, main_library = build_runtime(triple, None, runtime_directory(build, triple, None), clang, clangxx, args.jobs or os.cpu_count())
+    anyps5_build = AnyPS5Build(anyps5)
+    game = out / "game"
+    print(f"linking {game}")
+    link_lifted(clangxx, triple, game, [archive, bridges, *anyps5_build.linked_libraries(libraries)], link_arguments(runtime, main_library))
+    directory = out / "run"
+    directory.mkdir(exist_ok=True)
+    for name, target in (("app0", dump), ("game", game)):
+        link = directory / name
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(target)
+    print(f"ready: {sys.argv[0]} run {out}")
+    return run_game(out, args.env) if args.run else 0
+
+
+def run_game(out, settings):
+    directory = Path(out).resolve() / "run"
+    if not (directory / "game").exists():
+        raise SystemExit(f"{directory / 'game'} does not exist: build the title with the game command first")
+    environment = {**os.environ, "APS5_PLAYGO_UNLISTED_CHUNKS": "installed"}
+    for setting in settings:
+        name, separator, value = setting.partition("=")
+        if not separator:
+            raise SystemExit(f"{setting}: settings take the form NAME=VALUE")
+        environment[name] = value
+    return subprocess.run([str(directory / "game")], cwd=directory, env=environment).returncode
+
+
 def lift(ps5lift, guest, lifted, triple, flags):
     return run([ps5lift, guest, "-o", lifted, "--triple", triple, *flags]).stderr.strip()
 
@@ -1327,6 +1453,29 @@ def survey_command(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
+
+    game = commands.add_parser("game", help="prepare, lift and link a title in one go", description="Prepare an extracted title, generate its import bridges, lift it, build the runtime and link the game into OUT")
+    game.add_argument("dump", type=Path, help="the title's extracted app0 directory, holding eboot.bin")
+    game.add_argument("out", type=Path, help="the directory for everything built from the title; the game ends up in OUT/run")
+    game.add_argument("--build", type=Path, default=BUILD, help="ps5lift's CMake build directory, with the lifter and AnyPS5's libraries built")
+    game.add_argument("--jobs", type=int, help="threads for the bridges, the lift and the runtime; all of the host's by default")
+    game.add_argument("--relift", action="store_true", help="lift again even when the lifted program is newer than the lifter and the title")
+    game.add_argument("--run", action="store_true", help="start the game once it is linked")
+    game.add_argument("env", nargs="*", metavar="NAME=VALUE", help="environment settings for --run, such as APS5 options")
+    game.set_defaults(handler=game_command)
+
+    start = commands.add_parser("run", help="start a game built with the game command", description="Start the game in OUT/run with the title's files as app0")
+    start.add_argument("out", type=Path)
+    start.add_argument("env", nargs="*", metavar="NAME=VALUE", help="environment settings, such as APS5 options")
+    start.set_defaults(handler=lambda args: run_game(args.out, args.env))
+
+    prepare = commands.add_parser("prepare", help="unwrap and relink a title for ps5lift", description="Unwrap an extracted title's eboot.bin and the modules it ships into WORK/source, as AnyPS5's audit_dump.py finds them, and relink them at the guest base into WORK/output/app.elf. With --libs, also audit the imports against AnyPS5's libraries and exit with the audit's status.")
+    prepare.add_argument("dump", type=Path, help="the title's extracted app0 directory, holding eboot.bin")
+    prepare.add_argument("work", type=Path, help="a directory for the unwrapped and relinked files; its source and output must not exist yet")
+    prepare.add_argument("--relinker", type=Path, default=BUILD / "anyps5" / "core" / "relinker" / "relinker")
+    prepare.add_argument("--libs", type=Path, help="AnyPS5's built .prx directory, to audit the imports against")
+    prepare.add_argument("--json", type=Path, help="also write the audit's JSON report here; needs --libs")
+    prepare.set_defaults(handler=prepare_command)
 
     bridges = commands.add_parser("bridges", help="generate import bridges for AnyPS5 libraries", description="Generate SysV-to-native import bridges for AnyPS5 libraries")
     bridges.add_argument("library", nargs="+", help="AnyPS5 library targets, such as libc; for a NID that several export, the first one's export gets the bridge")
