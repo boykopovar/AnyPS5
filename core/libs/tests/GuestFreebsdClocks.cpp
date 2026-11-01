@@ -351,6 +351,7 @@ int main() {
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     Require(sceKernelGettimeofday(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelGettimeofday(reinterpret_cast<KernelTimeval*>(static_cast<std::uintptr_t>(0x10))) == static_cast<int>(0x8002000eu));
     const std::int64_t beforeSce = Microseconds();
     KernelTimeval sceTime{-1, -1};
     Require(sceKernelGettimeofday(&sceTime) == SCE_OK);
