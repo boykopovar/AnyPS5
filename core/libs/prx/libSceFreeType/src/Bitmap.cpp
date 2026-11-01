@@ -38,13 +38,13 @@ void SyncBitmap(GuestBitmap& guest, const FT_Bitmap& bitmap) {
 
 namespace FreeType {
 
-void RegisterBitmap_nid_no_patch(GuestFace& face) {
+extern "C" void RegisterBitmap_nid_no_patch(GuestFace& face) {
     auto& owners = Owners();
     std::lock_guard lock(owners.mutex);
     owners.bitmaps.insert_or_assign(&face.slot.bitmap, face.host->glyph ? &face.host->glyph->bitmap : nullptr);
 }
 
-void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap) {
+extern "C" void UnregisterBitmap_nid_no_patch(const GuestBitmap* bitmap) {
     auto& owners = Owners();
     std::lock_guard lock(owners.mutex);
     owners.bitmaps.erase(bitmap);

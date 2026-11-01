@@ -1747,12 +1747,16 @@ int main() {
     {
         FT_Face nativeFile = nullptr;
         Require(FT_New_Face(hostLibrary, "app0/font.ttf", 0, &nativeFile) == 0);
-        const auto* bytes = FaceOf(face)->bytes.data();
-        Require(FaceOf(face)->bytes.size() == font.size() && std::memcmp(bytes, font.data(), font.size()) == 0);
+        const auto& faces = static_cast<GuestLibrary*>(library)->faces;
+        const auto ownedFace = std::find_if(faces.begin(), faces.end(), [face](const auto& candidate) { return &candidate->rec == face; });
+        Require(ownedFace != faces.end());
+        const auto& ownedBytes = (*ownedFace)->bytes;
+        const auto* bytes = ownedBytes.data();
+        Require(ownedBytes.size() == font.size() && std::memcmp(bytes, font.data(), font.size()) == 0);
         Require(FT_Reference_Face_nid_postfix(face) == FT_Reference_Face(nativeFile));
         Require(FT_Done_Face(nativeFile) == 0 && FT_Done_Face_nid_postfix(face) == 0);
         Require(static_cast<GuestLibrary*>(library)->faces.size() == 2);
-        Require(FaceOf(face)->bytes.data() == bytes && std::memcmp(bytes, font.data(), font.size()) == 0);
+        Require(ownedBytes.data() == bytes && std::memcmp(bytes, font.data(), font.size()) == 0);
         Require(FT_Get_Char_Index_nid_postfix(face, 'A') == FT_Get_Char_Index(nativeFile, 'A'));
         Require(FT_Done_Face(nativeFile) == 0);
         std::puts("File-backed face reference: owned font bytes survive a non-final release");
