@@ -21,6 +21,7 @@ static constexpr int SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER = static_cast<int
 static constexpr int SCE_NP_ENTITLEMENT_ACCESS_ERROR_NOT_FOUND = static_cast<int>(0x80558007);
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr uint32_t SKU_FLAG_FULL = 3;
+static constexpr std::int32_t USER_ID_INVALID = -1;
 
 namespace {
 
@@ -198,9 +199,9 @@ int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfoList(std::int32
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
-int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(std::int32_t user_id, uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, NpEntitlementAccessAddcontEntitlementInfo* info) {
+    if (user_id == USER_ID_INVALID) return SCE_NP_ENTITLEMENT_ACCESS_ERROR_PARAMETER;
+    return sceNpEntitlementAccessGetAddcontEntitlementInfo(service_label, entitlement_label, info);
 }
 
 int APS5_VABI sceNpEntitlementAccessPollConsumableEntitlementInfo() {

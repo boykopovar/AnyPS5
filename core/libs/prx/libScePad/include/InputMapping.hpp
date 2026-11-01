@@ -29,6 +29,7 @@ struct InputSettings {
     double stickModifierScale = 0.5;
     double keyboardRampMs = 0.0;
     double triggerRampMs = 0.0;
+    bool mouseControlsRightStick = true;
 };
 
 struct InputConfiguration {
@@ -41,6 +42,9 @@ inline constexpr std::array InputMapping{
     InputBinding{SDL_SCANCODE_F10, MouseButton::None, InputControl::TogglePerformanceOverlay},
     InputBinding{SDL_SCANCODE_F12, MouseButton::None, InputControl::Screenshot},
     InputBinding{SDL_SCANCODE_F9, MouseButton::None, InputControl::ShowPadStatus},
+    InputBinding{SDL_SCANCODE_F5, MouseButton::None, InputControl::VolumeDown},
+    InputBinding{SDL_SCANCODE_F6, MouseButton::None, InputControl::VolumeUp},
+    InputBinding{SDL_SCANCODE_F8, MouseButton::None, InputControl::ToggleMute},
     InputBinding{SDL_SCANCODE_RETURN, MouseButton::None, InputControl::Button, PadButton::Cross},
     InputBinding{SDL_SCANCODE_SPACE, MouseButton::None, InputControl::Button, PadButton::Cross},
     InputBinding{SDL_SCANCODE_ESCAPE, MouseButton::None, InputControl::Button, PadButton::Options},
