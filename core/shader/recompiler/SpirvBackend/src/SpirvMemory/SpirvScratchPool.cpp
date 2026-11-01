@@ -93,16 +93,19 @@ void EmitScratchPoolAcquire(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpBranchConditional, pending, body, merge);
         EmitLabel(state, body);
         const auto candidate = LoadU32(state, state.scratchPoolCandidateVariable);
-        const auto previous = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, PoolWord(state, candidate), device, acquire, acquire, ConstantU32(state, 1u), ConstantU32(state, 0u));
-        const auto acquired = state.module.AllocateId();
-        state.module.AddFunction(spv::OpIEqual, TypeBool(state), acquired, previous, ConstantU32(state, 0u));
+        const auto observed = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), observed, PoolWord(state, candidate), device, ConstantU32(state, spv::MemorySemanticsMaskNone));
+        EmitIfCondition(state, EmitCompareU32Constant(state, spv::OpIEqual, observed, 0u), [&] {
+            const auto previous = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, PoolWord(state, candidate), device, acquire, acquire, ConstantU32(state, 1u), ConstantU32(state, 0u));
+            state.module.AddFunction(spv::OpStore, state.scratchPoolWonVariable, Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, previous, 0u), ConstantU32(state, 1u), ConstantU32(state, 0u)));
+        });
+        const auto acquired = EmitCompareU32Constant(state, spv::OpIEqual, LoadU32(state, state.scratchPoolWonVariable), 1u);
         const auto next = EmitAddU32(state, candidate, ConstantU32(state, 1u));
         const auto atEnd = state.module.AllocateId();
         state.module.AddFunction(spv::OpIEqual, TypeBool(state), atEnd, next, slots);
         const auto wrapped = Select(state, TypeU32(state), atEnd, ConstantU32(state, 0u), next);
         state.module.AddFunction(spv::OpStore, state.scratchPoolCandidateVariable, Select(state, TypeU32(state), acquired, candidate, wrapped));
-        state.module.AddFunction(spv::OpStore, state.scratchPoolWonVariable, Select(state, TypeU32(state), acquired, ConstantU32(state, 1u), ConstantU32(state, 0u)));
         state.module.AddFunction(spv::OpBranch, continuation);
         EmitLabel(state, continuation);
         state.module.AddFunction(spv::OpBranch, header);
