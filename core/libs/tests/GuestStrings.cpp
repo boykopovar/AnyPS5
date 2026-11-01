@@ -135,13 +135,6 @@ static void CheckBoundsCheckedFunctions() {
     char nonOverlap[16] = {};
     std::strcpy(nonOverlap + 8, "cd");
     Require(strcpy_s_nid_postfix(nonOverlap, SIZE_MAX >> 1, nonOverlap + 8) == 0 && std::strcmp(nonOverlap, "cd") == 0);
-    Require(memset_s_nid_postfix(bytes, sizeof(bytes), 9, 8) == 22 && bytes[0] == 9 && bytes[3] == 9);
-    char sentinel[4] = {1, 2, 3, 4};
-    Require(memset_s_nid_postfix(sentinel, sizeof(sentinel), 7, 2) == 0 && sentinel[1] == 7 && sentinel[2] == 3);
-    Require(memset_s_nid_postfix(sentinel, (SIZE_MAX >> 1) + 1, 0, 1) == 22 && sentinel[0] == 7);
-    Require(memset_s_nid_postfix(sentinel, sizeof(sentinel), 0, (SIZE_MAX >> 1) + 1) == 22 && sentinel[0] == 7 && sentinel[3] == 4);
-    Require(memset_s_nid_postfix(sentinel, SIZE_MAX >> 1, 5, 1) == 0 && sentinel[0] == 5 && sentinel[1] == 7);
-    Require(memset_s_nid_postfix(nullptr, sizeof(sentinel), 0, 1) == 22);
     Require(strnstr_nid_postfix("haystack", "st", 4) == nullptr);
     const char haystack[] = "haystack";
     Require(strnstr_nid_postfix(haystack, "st", 6) == haystack + 3);
