@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -23,6 +24,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -72,6 +74,7 @@ constexpr std::size_t SmallCubeOffset = 0x180000;
 constexpr std::size_t LargeCubeOffset = 0x200000;
 constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr std::size_t FrameCopiesOffset = 0x520000;
+constexpr std::size_t ReusedArrayOffset = 0x680000;
 constexpr std::size_t ReloadOffset = 0x700000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
@@ -239,7 +242,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     device.WaitIdle();
 }
 
-void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+ShaderRecompiler::RecompileResult CompileLoad(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
     const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
     std::vector<std::uint32_t> userData(16, 0u);
     const auto out = std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(output.data())), static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(output.data()) >> 32u) & 0xffffu), static_cast<std::uint32_t>(output.size_bytes()), 0x31016facu};
@@ -257,10 +260,19 @@ void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& sh
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+void DispatchLoad(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& result, const Shape& shape, std::span<std::uint32_t> output, bool shaderImage2D = false) {
+    const auto& code = shaderImage2D ? Load2D : shape.type == TypeCube ? LoadCube : shape.type == Type2DArray ? LoadArray : Load2D;
     std::fill(output.begin(), output.end(), 0xdeadbeefu);
-    const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+}
+
+void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
+    const auto result = CompileLoad(device, texels, shape, slice, output, shaderImage2D, row);
+    DispatchLoad(device, result, shape, output, shaderImage2D);
 }
 
 void Expect(std::span<const std::uint32_t> output, std::uint32_t expected, const std::string& what) {
@@ -287,6 +299,30 @@ void ArrayCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std
         Load(device, base, shape, slice, output);
         Expect(output, Bits(expected[slice]), "D32 2D array slice " + std::to_string(slice));
     }
+}
+
+void ReusedArrayCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    auto* base = block.At(ReusedArrayOffset);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.5f), 4u);
+    FillSlice(base + 2u * SliceBytes, SliceBytes, Bits(0.75f), 4u);
+    const Shape shape{Format32Float, 128, 128, Type2DArray, 2, Swizzle64KbZX};
+    const auto first = CompileLoad(device, base, shape, 0, output);
+    const auto second = CompileLoad(device, base, shape, 1, output);
+    const auto before = AgcDriver::Graphics::SharedResourceCache().Size();
+    DispatchLoad(device, first, shape, output);
+    Expect(output, Bits(DrawnDepth), "reused D32 array slice 0");
+    if (std::getenv("APS5_NO_PER_USE_TEXTURE_TEMPLATES") == nullptr) Require(AgcDriver::Graphics::SharedResourceCache().Size() > before, "a dispatch over a depth plane copy did not enter the resource cache");
+    DispatchLoad(device, second, shape, output);
+    Expect(output, Bits(0.5f), "reused D32 array slice 1");
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, 0.625f);
+    DispatchLoad(device, first, shape, output);
+    Expect(output, Bits(0.625f), "reused D32 array slice 0 after the surface was drawn again");
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.875f), 4u);
+    DispatchLoad(device, second, shape, output);
+    Expect(output, Bits(0.875f), "reused D32 array slice 1 after its guest memory changed");
+    DispatchLoad(device, first, shape, output);
+    Expect(output, Bits(0.625f), "reused D32 array slice 0 dispatched again unchanged");
 }
 
 // A cube over six square D32 slices: face 0 from the live surface, faces 1-5 from guest memory.
@@ -505,6 +541,8 @@ int main(int argc, char** argv) {
         ArrayCase(*device, block, output);
         present();
         CubeCase(*device, block, output);
+        present();
+        ReusedArrayCase(*device, block, output);
         present();
         IntegerCase(*device, block, output);
         present();

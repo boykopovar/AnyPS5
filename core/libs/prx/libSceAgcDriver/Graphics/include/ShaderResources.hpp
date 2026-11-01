@@ -322,7 +322,7 @@ public:
     std::size_t BindingCount() const { return bindings.size(); }
     // Why the fast proof of a Revalidate left the object to the full walk (the [rescache]
     // revalidate line's reasons); Count: it did not.
-    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, Depth, Replaced, Audit, Count };
+    enum class FastFail : std::size_t { NoRecord, Collect, Pending, Evicted, Changed, Keys, ClearedView, StorageKeys, Depth, Replaced, Audit, PerUse, Count };
     struct CollectRefusals {
         std::uint64_t sampled = 0;
         std::uint64_t storage = 0;
@@ -648,6 +648,7 @@ private:
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
+    bool perUseTextures = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
     // The pending registry's serial at the last Revalidate that proved this object, taken before
