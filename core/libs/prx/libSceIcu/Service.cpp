@@ -7,6 +7,7 @@
 #include <bit>
 #include <mutex>
 #include <string_view>
+#include <unordered_set>
 
 namespace {
 using namespace Icu::Abi;
@@ -15,6 +16,7 @@ template<typename TValue> TValue& Require(TValue* value) {
     return *value;
 }
 std::recursive_mutex ServiceLock;
+std::unordered_set<const void*> DeletedFactories;
 const TypeInfo* NotifierType() {
     ICUNotifier object{};
     _ZN6icu_6811ICUNotifierC2Ev_nid_postfix(&object);
@@ -62,6 +64,11 @@ void DeleteObject(Object* object) {
     if (object) Virtual_nid_no_patch<Delete>(object, 1)(object);
 }
 void APS5_VABI DeleteFactory_nid_no_patch(void* object) {
+    if (!object) return;
+    {
+        std::lock_guard lock(ServiceLock);
+        DeletedFactories.insert(object);
+    }
     DeleteObject(static_cast<Object*>(object));
 }
 void APS5_VABI DeleteUnicodeStringObj_nid_no_patch(void* obj) {
@@ -311,6 +318,7 @@ const void* APS5_VABI _ZN6icu_6810ICUService15registerFactoryEPNS_17ICUServiceFa
     if (Require(status) <= 0 && factory) {
         Require(self);
         std::lock_guard lock(ServiceLock);
+        DeletedFactories.erase(factory);
         if (!self->factories) {
             self->factories = CreateFactoryVector(status);
             if (*status > 0) return nullptr;
@@ -320,8 +328,7 @@ const void* APS5_VABI _ZN6icu_6810ICUService15registerFactoryEPNS_17ICUServiceFa
             using Clear = void (APS5_VABI *)(ICUService*);
             Virtual_nid_no_patch<Clear>(self, 18)(self);
         } else {
-            using DeleteFactory = void (APS5_VABI *)(ICUServiceFactory*);
-            Virtual_nid_no_patch<DeleteFactory>(factory, 1)(factory);
+            DeleteFactory_nid_no_patch(factory);
             factory = nullptr;
         }
     }
@@ -340,9 +347,9 @@ std::int8_t APS5_VABI _ZN6icu_6810ICUService10unregisterEPKvR10UErrorCode_nid_po
             Virtual_nid_no_patch<Clear>(self, 18)(self);
             result = 1;
         } else {
+            if (DeletedFactories.contains(factory)) throw std::invalid_argument("ICU service: unregister of a deleted factory");
             Require(status) = 1;
-            using DeleteFactory = void (APS5_VABI *)(ICUServiceFactory*);
-            Virtual_nid_no_patch<DeleteFactory>(factory, 1)(factory);
+            DeleteFactory_nid_no_patch(factory);
         }
     }
     if (result) {

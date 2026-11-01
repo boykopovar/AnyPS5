@@ -44,6 +44,15 @@ int main() {
     Check(builder.status == 0 && builder.extensions && !builder.variant);
     Check(std::strcmp(builder.language, "en") == 0 && std::strcmp(builder.region, "US") == 0);
     Check(std::strcmp(builder.extensions->fullName, "en_US") == 0);
+    Icu::Abi::Locale shifted{};
+    _ZN6icu_686LocaleC1ERKS0__nid_postfix(&shifted, _ZN6icu_686Locale5getUSEv_nid_postfix());
+    shifted.variantBegin = static_cast<std::int32_t>(std::strlen(shifted.baseName)) + 1;
+    auto* adopted = builder.extensions;
+    invalid = false;
+    try { _ZN6icu_6813LocaleBuilder9setLocaleERKNS_6LocaleE_nid_postfix(&builder, &shifted); } catch (const std::invalid_argument&) { invalid = true; }
+    Check(invalid && builder.extensions == adopted && std::strcmp(builder.language, "en") == 0 && std::strcmp(builder.region, "US") == 0);
+    shifted.variantBegin = 0;
+    _ZN6icu_686LocaleD1Ev_nid_postfix(&shifted);
     _ZN6icu_6813LocaleBuilderD1Ev_nid_postfix(&builder);
     Check(builder.vtable == Icu::Abi::Vtable_nid_no_patch(Icu::Abi::Class::Object));
     std::puts("ICU locale builder tests passed");

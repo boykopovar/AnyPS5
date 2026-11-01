@@ -2,6 +2,7 @@
 // License & terms of use: http://www.unicode.org/copyright.html
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <cstdlib>
+#include <stdexcept>
 
 namespace {
 void Check(bool condition) { if (!condition) std::abort(); }
@@ -33,8 +34,16 @@ int main() {
     Check(_ZNK6icu_6813UnicodeStringeqERKS0__nid_postfix(copy, &id));
     _ZN6icu_6813UnicodeStringD0Ev_nid_postfix(copy);
     _ZN6icu_687UVectorD1Ev_nid_postfix(&visible);
+    auto* stray = static_cast<SimpleFactory*>(Allocate_nid_no_patch(sizeof(SimpleFactory)));
+    _ZN6icu_6813SimpleFactoryC1EPNS_7UObjectERKNS_13UnicodeStringEa_nid_postfix(stray, nullptr, &id, 1);
     Check(_ZN6icu_6810ICUService10unregisterEPKvR10UErrorCode_nid_postfix(&service, registration, &status));
     Check(_ZNK6icu_6810ICUService9isDefaultEv_nid_postfix(&service));
+    bool deleted = false;
+    try { _ZN6icu_6810ICUService10unregisterEPKvR10UErrorCode_nid_postfix(&service, registration, &status); } catch (const std::invalid_argument&) { deleted = true; }
+    Check(deleted && status == -1);
+    Check(!_ZN6icu_6810ICUService10unregisterEPKvR10UErrorCode_nid_postfix(&service, stray, &status) && status == 1);
+    status = -1;
+    Check(_ZNK6icu_6810ICUService12getTimestampEv_nid_postfix(&service) == 2);
     _ZN6icu_6810ICUService5resetEv_nid_postfix(&service);
     Check(_ZNK6icu_6810ICUService12getTimestampEv_nid_postfix(&service) == 3);
     _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&id);
