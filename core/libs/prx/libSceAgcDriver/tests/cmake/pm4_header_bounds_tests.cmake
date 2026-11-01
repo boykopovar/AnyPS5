@@ -1,0 +1,13 @@
+if(BUILD_TESTING)
+    add_test_executable(pm4_header_bounds_tests tests/Pm4HeaderBounds.cpp)
+    target_include_directories(pm4_header_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(pm4_header_bounds_tests PRIVATE libSceAgcDriver libc)
+    set_target_properties(pm4_header_bounds_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(pm4_header_bounds_tests)
+    add_test(NAME pm4_header_bounds COMMAND pm4_header_bounds_tests)
+    set_tests_properties(pm4_header_bounds PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(pm4_header_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
