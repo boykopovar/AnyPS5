@@ -278,7 +278,11 @@ A Windows executable started without a standard output or error handle, such as 
 
 ### Display resolution and window size
 
-The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen; set `ANYPS5_FULLSCREEN` to a non-empty value other than `0` to open the window fullscreen from the start. Changing the window size does not change the game's render resolution. AnyPS5 does not currently provide a global render-resolution override; use a game's own display setting when it offers one.
+The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen; set `ANYPS5_FULLSCREEN` to a non-empty value other than `0` to open the window fullscreen from the start. Changing the window size does not change the game's render resolution. The only host setting that changes the resolution a game reads is `APS5_OUTPUT_RESOLUTION`, described below; otherwise AnyPS5 provides no render-resolution override, so use a game's own display setting when it offers one.
+
+`APS5_OUTPUT_RESOLUTION=<width>x<height>`, for example `APS5_OUTPUT_RESOLUTION=1920x1080`, makes the game's video output status report the 1080p class when the width is below 3840 and the height below 2160, and the 2160p class otherwise, instead of the class of the display's current mode. The two numbers must be positive integers separated by `x` or `X`. An empty value is the same as an unset one; any other value stops the game with an error that names the variable.
+
+`ANYPS5_DISPLAY_INDEX=<n>` opens the window centred on display `n`, counted from 0 in the order SDL lists the displays. Unset, the first display is used. A value that is not the index of a connected display, including an empty value, stops the game at start with an error that names the variable.
 
 ### VR compatibility
 
@@ -303,6 +307,10 @@ For timed button sequences, see [Controller timelines](INPUT_MAPPING.md#controll
 
 Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. `touch-left` and `touch-right` press the touchpad with a finger on its left or right half, as the `TouchLeft` and `TouchRight` keys do; in the command file they are bits `0x200000` and `0x400000` of the button field. Button names joined by `+`, such as `l1+r1`, are pressed together in one command; `release` cannot be joined. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
 
+Set `APS5_NO_PAD_INPUT` to any value, an empty one included, to make the window ignore its keyboard and mouse events. The keyboard and mouse bindings, the mouse stick and the window keys (F10, F11 and F12 among them) then do nothing. Controllers and the `APS5_PAD_INPUT_FILE` commands are not affected.
+
+On Windows, set `APS5_NO_WGI` to any value to turn off SDL's Windows Gaming Input controller backend. AnyPS5 turns off DirectInput there in every case, and this variable is read once when the video output driver is created.
+
 ### Controller vibration strength
 
 Set `ANYPS5_RUMBLE` to a whole number from `0` to `100` to scale how strongly the game's vibration reaches your controller. `100`, which is also the value when the variable is unset, passes the vibration exactly as the game asks. `0` turns vibration off: the motors never receive a nonzero request, and a rumble that was running is stopped. Values in between scale the motor strength by that percentage and apply to every connected controller.
@@ -315,6 +323,18 @@ ANYPS5_RUMBLE=0 ./app.elf
 The setting covers the rumble motors, the impulse-trigger rumble of controllers that have it, and the vibration a game plays as audio, both when it is played on a DualSense's own sound card and when it is turned into motor rumble. It does not change DualSense adaptive trigger effects (resistance and trigger vibration profiles), which still reach the controller as the game sends them. A value that is empty, signed, fractional or above 100 stops the game at start with an error naming `ANYPS5_RUMBLE`.
 
 This is a host-side comfort setting, not console behaviour: it is applied by AnyPS5 between the game and your controller, it is read once at start, and there is no hotkey or overlay entry for it. It is not a model of any console setting.
+
+### Controller connection and user 0
+
+By default port 0 stays connected and the first user stays logged in even when the only controller is removed, so the game keeps reading the last state and never learns the pad is gone. Set `ANYPS5_PAD_PORT0_STATE=controller` to make the game see the controller instead:
+
+```sh
+ANYPS5_PAD_PORT0_STATE=controller ./app.elf
+```
+
+With `controller`, removing the controller bound to Player 1 makes the game see a disconnected pad with zeroed input, and user 0 logs out; plugging it back in connects the pad and logs the user in again. A change is applied only after the controller has stayed away or present for 500 ms, so a cable that drops and returns does not make the game flap. Keyboard and mouse do not count as a controller in this mode: while no controller is bound to Player 1, their input is not given to the game. The value `default`, or leaving the variable unset, keeps the behaviour above. Any other value, including an empty one, stops the game when video output starts, with an error that names `ANYPS5_PAD_PORT0_STATE`.
+
+Only port 0 and user 0 follow the controller. Players 2 to 4 keep reporting the state they had before.
 
 ### Video-out and pad telemetry
 
@@ -333,6 +353,10 @@ Games that open the console's system font sets (`sceFontOpenFontSet`) need font 
 ### Console language
 
 Games ask for the console's language with `sceSystemServiceParamGetInt` and show their text in it when they have it. It is English (United States) unless `ANYPS5_LANGUAGE` is set to another console language number: 0 Japanese, 1 English (United States), 2 French, 3 Spanish, 4 German, 5 Italian, 6 Dutch, 7 Portuguese (Portugal), 8 Russian, 9 Korean, 10 Chinese (Traditional), 11 Chinese (Simplified), 12 Finnish, 13 Swedish, 14 Danish, 15 Norwegian, 16 Polish, 17 Portuguese (Brazil), 18 English (United Kingdom), 19 Turkish, 20 Spanish (Latin America), 21 Arabic, 22 French (Canada), 23 Czech, 24 Hungarian, 25 Greek, 26 Romanian, 27 Thai, 28 Vietnamese, 29 Indonesian, 30 Ukrainian. For example, `ANYPS5_LANGUAGE=21` selects Arabic. An empty value is the same as an unset one; any other value stops the game at its first language query with an error that names the variable.
+
+### Save data free space
+
+By default a game's save data is never refused for lack of disk space, and the free blocks it sees are those of its own save. Set `ANYPS5_FREE_SPACE=host` to make a new save refuse to be created when the volume that holds the save data has less room than the save's size, so the game can report that the disk is full. A save of 16384 blocks, the size used when the game asks for none, needs 1 GiB. The free blocks a game reads for a save are then limited to the room its volume still has. `fixed`, the value used when the variable is unset, keeps today's behaviour, and any other value, including an empty one, stops the game at its next save mount or save search that finds a save, with an error naming `ANYPS5_FREE_SPACE`. On Windows an empty value counts as unset, because `set ANYPS5_FREE_SPACE=` in `cmd` and `$env:ANYPS5_FREE_SPACE = ""` in PowerShell remove the variable. Existing saves are opened as before in both modes. Whether a console refuses a save the same way is not measured; see the [technical debt](../dev/debt/libSceSaveData.native.md) of `libSceSaveData.native`.
 
 ### Host game mode
 
@@ -535,6 +559,12 @@ F9 shows it, in the game window; pressing F9 while it is shown starts the 4 seco
 A line is the player number (the controller's slot: a controller that reconnects takes the lowest free slot, which can be another player), the controller type and its power. The type is `DUALSENSE`, `DUALSHOCK 4`, `DUALSHOCK 3`, `XBOX` or `SWITCH`; for any other controller it is the name SDL reports, reduced to the characters of the overlay font and cut to 12 characters with a final dot, or `PAD` when SDL gives no name. The power is `WIRED` or one of SDL's battery classes, `BATTERY EMPTY` (up to 5%), `BATTERY LOW` (up to 20%), `BATTERY MEDIUM` (up to 70%) and `BATTERY FULL`; a controller whose driver or connection reports no level reads `BATTERY UNKNOWN`. What is reported depends on SDL, the operating system and the controller.
 
 The panel uses the font and scale of the [performance overlay](#performance-overlay) and sits in the corner mirrored horizontally from `ANYPS5_OVERLAY_POS`, the top right by default, so it never covers that overlay. While the system on-screen keyboard is shown the panel is not drawn, and its 4 seconds keep running. Screenshots do not include it. While it is hidden, which is always so unless F9 or `ANYPS5_PAD_STATUS=1` shows it, nothing is drawn, no render pass or memory is allocated for it and the presented image is unchanged. What still runs is a lock and a clock read in each present and in each video-out loop pass, to see whether the panel is wanted. With `ANYPS5_PAD_STATUS` unset or 0 and no F9 press, no controller name is copied and no battery level is read for it; they are read on every loop pass with `ANYPS5_PAD_STATUS=1`, and while the panel is shown after F9.
+
+### PSN-only dialogs
+
+Some system dialogs need PlayStation Network: the profile, the friend list, the store, the invitation dialog, the Facebook link and the authorized-apps dialog. AnyPS5 does not provide PlayStation Network, so these dialogs finish at once with the same answer as a cancel, and nothing is shown. The web browser dialog is not known to need PlayStation Network, so its notice only says that the system feature is not available.
+
+Set `ANYPS5_PSN_DIALOGS=show` to show a notice on the game's screen when one of these dialogs opens. The notice has one OK button and takes the controller until it is answered. It is not shown again within two seconds of the previous one, and it is not shown while another dialog or notice is showing. The game's result is the same either way. `silent`, an unset variable and an empty one show nothing. Any other value stops the game at its first such dialog with an error that names `ANYPS5_PSN_DIALOGS`.
 
 ### Windows crash diagnostics
 

@@ -1,3 +1,5 @@
+#include "prx/libSceNpManager/include/LegacyExports.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpManager/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -1103,5 +1105,44 @@ int APS5_VABI sceNpSnsFacebookGetAccessToken() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI npManagerLegacyUnknown_70N4VzVCpQg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("70N4VzVCpQg", npManagerLegacyUnknown_70N4VzVCpQg_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_SSuF3qPYjgA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SSuF3qPYjgA", npManagerLegacyUnknown_SSuF3qPYjgA_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_ZKqJVpTOtW0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZKqJVpTOtW0", npManagerLegacyUnknown_ZKqJVpTOtW0_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_jBLJpaqaV1A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jBLJpaqaV1A", npManagerLegacyUnknown_jBLJpaqaV1A_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_mtowPSR0JN8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mtowPSR0JN8", npManagerLegacyUnknown_mtowPSR0JN8_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_qp_minus_DvqvPOYM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qp-DvqvPOYM", npManagerLegacyUnknown_qp_minus_DvqvPOYM_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_tmnDjDmI3AI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tmnDjDmI3AI", npManagerLegacyUnknown_tmnDjDmI3AI_nid_no_patch);
 
 }

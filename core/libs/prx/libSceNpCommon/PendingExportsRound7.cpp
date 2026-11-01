@@ -316,11 +316,6 @@ int APS5_VABI _ZNK3sce2np10JsonString6GetStrEPcm(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np10Cancelable10LockCancelEPKciS3_(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

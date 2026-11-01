@@ -13,7 +13,9 @@ public:
     static constexpr std::uint32_t Unity = 65536;
     static constexpr std::uint32_t DefaultRampFrames = 480;
 
-    explicit HostGainRamp(std::uint32_t rampFrames = DefaultRampFrames) {
+    HostGainRamp() : HostGainRamp(DefaultRampFrames) {}
+
+    explicit HostGainRamp(std::uint32_t rampFrames) {
         Configure(rampFrames);
     }
 
