@@ -45,6 +45,7 @@
 
 ### Unknown function info
 
+- [sceUserServiceInitializeForShellCore and sceUserServiceTerminateForShellCore](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware 13.60 initializes with priority 700, a callback table, an IPMI client, and an event worker, then tears those down on termination. AnyPS5 has no IPMI client or service worker, so these exports use the same state transitions as `sceUserServiceInitialize` and `sceUserServiceTerminate`; the shell callback table and worker behavior are not modeled.
 - [sceUserServiceRegisterEventCallback and sceUserServiceUnregisterEventCallback](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware 13.60 stores unique callback and user-data pairs and sends 8-byte login/logout events to callbacks. AnyPS5 models these callbacks for login/logout transitions supplied through `UserServiceSetUserConnected_nid_postfix`; other firmware event types have no host event source. Unregister removes the pair before returning and waits for other-thread invocations to finish. When called from that callback, it prevents later invocations and waits for concurrent invocations on other threads, while the current invocation continues until it returns. Termination uses the same drain behavior.
 
 - [sceUserServiceGetLoginUserIdList and sceUserServiceGetEvent for user 0](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - under ANYPS5_PAD_PORT0_STATE=controller user 0 logs out when its controller is removed and logs in when it returns, after a hold of 500 ms that AnyPS5 chooses. Whether the console logs the initial user out on controller removal, how long it takes and which event it sends are not measured. The default mode keeps user 0 logged in as before.
@@ -408,7 +409,7 @@
 - [sceUserServiceSetControlCenterStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetMicLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetTeamShowAboutTeam](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetEventVsh](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetEventVsh](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware 13.60 filters queued events to its supported event-type set. AnyPS5 currently generates only login/logout events, so the export forwards to the local event queue implementation.
 - [sceUserServiceGetA11yControllerBName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetNpAge](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetPlayingBigAppTitleId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature

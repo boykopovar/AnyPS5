@@ -1244,8 +1244,7 @@ int APS5_VABI sceUserServiceGetSystemLoggerHashedAccountIdClockType(void) {
 }
 
 int APS5_VABI sceUserServiceTerminateForShellCore(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+ return sceUserServiceTerminate();
 }
 
 int APS5_VABI sceUserServiceSetParentalMorpheus(void) {
@@ -2263,9 +2262,8 @@ int APS5_VABI sceUserServiceGetTeamShowAboutTeam(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetEventVsh(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetEventVsh(SceUserServiceEvent* event) {
+ return sceUserServiceGetEvent(event);
 }
 
 int APS5_VABI sceUserServiceGetA11yControllerBName(void) {
@@ -2740,9 +2738,8 @@ int APS5_VABI sceUserServiceGetGlsFloatingMessage(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceInitializeForShellCore(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceInitializeForShellCore(void*) {
+ return MarkInitialized();
 }
 
 int APS5_VABI sceUserServiceGetGlsBcTags(void) {
