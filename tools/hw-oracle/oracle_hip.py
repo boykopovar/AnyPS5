@@ -224,13 +224,22 @@ def main(argv=None):
         if len(args.dispatch) != 5 or args.target or args.assemble or args.wave64:
             parser.error("give --target, --assemble SOURCE OUTPUT TARGET, or CODE THREADS IN OUT OUT_DWORDS")
         code, threads, inputs, output, out_dwords = args.dispatch
-        threads, out_dwords = int(threads), int(out_dwords)
+        try:
+            threads = int(threads)
+        except ValueError:
+            parser.error("THREADS must be an integer")
+        try:
+            out_dwords = int(out_dwords)
+        except ValueError:
+            parser.error("OUT_DWORDS must be an integer")
         if threads not in range(1, 1025) or out_dwords not in range(1, 17):
             parser.error("THREADS must be 1 to 1024 and OUT_DWORDS 1 to 16")
         code, inputs, output = Path(code), Path(inputs), Path(output)
         code_bytes, input_bytes = code.read_bytes(), inputs.read_bytes()
         if output.exists() and any(source.samefile(output) for source in (code, inputs)):
             parser.error("dispatch output must not overwrite an input file")
+        if len(input_bytes) < threads * 16:
+            parser.error(f"input file must contain at least {threads * 16} bytes")
         result = dispatch(code_bytes, threads, input_bytes, out_dwords, os.environ.get("COARSE") is not None)
         output.write_bytes(result)
         return 0

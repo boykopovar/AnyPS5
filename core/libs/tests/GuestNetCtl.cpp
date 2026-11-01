@@ -106,10 +106,15 @@ void CheckCallbacks() {
     int v6 = -1;
     Require(sceNetCtlRegisterCallbackV6(RecordV6, &v6Probe, &v6) == 0 && v6 == 0);
 
+    int stateV6 = -1;
+    Require(sceNetCtlGetStateV6(&stateV6) == 0);
+    const int eventV6 = stateV6 == kStateIpObtained ? kEventIpObtained : kEventDisconnected;
+
     int first = -1;
     Require(sceNetCtlRegisterCallback(RecordFirst, &firstProbe, &first) == 0 && first == 0);
     Require(sceNetCtlCheckCallback() == 0);
     Require(g_first.calls == 1 && g_first.event == event && g_first.arg == &firstProbe);
+    Require(g_v6.calls == 1 && g_v6.event == eventV6 && g_v6.arg == &v6Probe);
     Require(sceNetCtlCheckCallback() == 0);
     Require(g_first.calls == 1);
 
@@ -148,7 +153,8 @@ void CheckCallbacks() {
     Require(sceNetCtlRegisterCallback(RecordFirst, &secondProbe, &first) == 0 && first == 0);
     Require(sceNetCtlCheckCallback() == 0);
     Require(g_first.calls == 2 && g_first.event == event && g_first.arg == &secondProbe);
-    Require(g_second.calls == 2 && g_self.calls == 1 && g_v6.calls == 0);
+    Require(g_second.calls == 2 && g_self.calls == 1 && g_v6.calls == 2);
+    Require(g_v6.event == eventV6 && g_v6.arg == &v6Probe);
     Require(sceNetCtlUnregisterCallback(first) == 0);
     Require(sceNetCtlUnregisterCallbackV6(v6) == 0);
 }
@@ -230,15 +236,59 @@ void CheckIpcIntCallbacks() {
     Require(sceNetCtlUnregisterCallback(internal) == 0);
     Require(sceNetCtlUnregisterCallbackIpcInt(internal) == idNotFound);
 
+    int stateV6 = -1;
+    Require(sceNetCtlGetStateV6(&stateV6) == 0);
+    const int eventV6 = stateV6 == kStateIpObtained ? kEventIpObtained : kEventDisconnected;
     int internalV6 = -1;
     Require(sceNetCtlRegisterCallbackV6IpcInt(RecordIpcInt, &probe, &internalV6) == 0 && internalV6 == 0);
     int sharedV6 = -1;
     Require(sceNetCtlRegisterCallbackV6(RecordIpcInt, &probe, &sharedV6) == 0 && sharedV6 == 1);
     Require(sceNetCtlCheckCallback() == 0);
-    Require(g_ipcInt.calls == 2);
+    Require(g_ipcInt.calls == 4 && g_ipcInt.event == eventV6 && g_ipcInt.arg == &probe);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_ipcInt.calls == 4 && g_ipcInt.event == eventV6 && g_ipcInt.arg == &probe);
     Require(sceNetCtlUnregisterCallbackV6IpcInt(sharedV6) == 0);
     Require(sceNetCtlUnregisterCallbackV6(internalV6) == 0);
     Require(sceNetCtlUnregisterCallbackV6IpcInt(internalV6) == idNotFound);
+
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpcInt, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(nullptr, &probe, &internal) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(-1) == invalidId);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(8) == invalidId);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(0) == idNotFound);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+
+    int forLibId = -1;
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpcInt, &probe, &forLibId) == 0 && forLibId == 0);
+    const int callsBefore = g_ipcInt.calls;
+    int publicId = -1;
+    Require(sceNetCtlRegisterCallback(RecordIpcInt, &probe, &publicId) == 0);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_ipcInt.calls == callsBefore + 1);
+    int publicV6Id = -1;
+    Require(sceNetCtlRegisterCallbackV6(RecordIpcInt, &probe, &publicV6Id) == 0);
+    Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
+    Require(g_ipcInt.calls == callsBefore + 1);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+    Require(g_ipcInt.calls == callsBefore + 2 && g_ipcInt.event == event && g_ipcInt.arg == &probe);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
+    Require(g_ipcInt.calls == callsBefore + 2);
+    Require(sceNetCtlUnregisterCallbackV6(publicV6Id) == 0);
+    Require(sceNetCtlUnregisterCallback(publicId) == 0);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(forLibId) == 0);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(forLibId) == idNotFound);
+
+    int cids[8] = {};
+    for (int i = 0; i < 8; ++i) {
+        Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpcInt, &probe, &cids[i]) == 0);
+        Require(cids[i] == i);
+    }
+    int extra = -1;
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(RecordIpcInt, &probe, &extra) == static_cast<int>(0x80412103));
+    for (int i = 0; i < 8; ++i) {
+        Require(sceNetCtlUnregisterCallbackForLibIpcInt(cids[i]) == 0);
+    }
 }
 
 NetCtlInfo Query(int code) {
@@ -610,6 +660,9 @@ int main() {
     Require(sceNetCtlRegisterCallbackForNpToolkit(nullptr, nullptr, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlUnregisterCallbackForNpToolkit(-1) == invalidId);
     Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
+    Require(sceNetCtlRegisterCallbackForLibIpcInt(nullptr, nullptr, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlUnregisterCallbackForLibIpcInt(-1) == invalidId);
+    Require(sceNetCtlCheckCallbackForLibIpcInt() == 0);
     CheckCallbacks();
     CheckIpcIntGetters();
     CheckIpcIntCallbacks();

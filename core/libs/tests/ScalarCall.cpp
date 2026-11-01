@@ -141,6 +141,18 @@ static void CheckUserDataCalls() {
     Require(UserDataCalls({0xbe842104u, 0xbf810000u}, 6u).empty());
     const auto direct = UserDataCalls({0xbe8e2104u, 0xbf810000u}, 6u);
     Require(direct.size() == 1u && direct[0].linkRegister == 14u && direct[0].userDataRegister == 4u);
+    const std::vector<std::uint32_t> branchedCopy{0xbe8e0300u, 0xbe8f0301u, 0xbf880001u, 0x7e020280u, 0xbe8e210eu, 0xbf810000u};
+    const auto acrossBranch = UserDataCalls(branchedCopy);
+    Require(acrossBranch.size() == 1u && acrossBranch[0].programCounter == 0x10u && acrossBranch[0].linkRegister == 14u && acrossBranch[0].userDataRegister == 0u);
+    auto skippedWrite = branchedCopy;
+    skippedWrite[3] = 0xbe8e0380u;
+    Require(UserDataCalls(skippedWrite).empty());
+    const std::vector<std::uint32_t> loopedCall{0xbe8e0300u, 0xbe8f0301u, 0xbe8e210eu, 0xbf85fffeu, 0xbf810000u};
+    Require(UserDataCalls(loopedCall).empty());
+    auto separateLink = loopedCall;
+    separateLink[2] = 0xbe90210eu;
+    const auto keptPointer = UserDataCalls(separateLink);
+    Require(keptPointer.size() == 1u && keptPointer[0].programCounter == 0x8u && keptPointer[0].linkRegister == 16u && keptPointer[0].userDataRegister == 0u);
 
     const std::vector<std::uint32_t> addFive{0x4a020285u, 0xbe80200eu};
     const std::vector<std::uint32_t> addSixtyFour{0x4a0202c0u, 0xbe80200eu};
