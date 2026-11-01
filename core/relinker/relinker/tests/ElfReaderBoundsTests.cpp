@@ -308,6 +308,11 @@ int main() {
             Write<std::uint32_t>(bytes, 192, 17);
             RejectSections(std::move(bytes));
         }},
+        {"symbol st_name offset exceeding string table bounds", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 192, 18);
+            RejectSections(std::move(bytes));
+        }},
         {"section name table offset overflow", [] {
             auto bytes = Fixture();
             Write<std::uint64_t>(bytes, 280, std::numeric_limits<std::uint64_t>::max() - 3);
