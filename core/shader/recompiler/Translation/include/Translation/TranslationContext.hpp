@@ -87,7 +87,7 @@ private:
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
-    IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr);
+    IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr, bool multiplication = false);
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
     IrValue& invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct);
     std::array<IrU32, 2> quietNan64(const std::array<IrU32, 2>& bits);
