@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceBemp2sys/include/InventoryExports.hpp"
 #include "prx/libSceBemp2sys/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -161,5 +163,19 @@ int APS5_VABI bemp2sys_tsfilter_sendmessage_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceBemp2sysUnknown_1L1WwRMiys8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1L1WwRMiys8", libSceBemp2sysUnknown_1L1WwRMiys8_nid_no_patch);
+
+int APS5_VABI libSceBemp2sysUnknown_B1nK_plus_wb5rME_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("B1nK+wb5rME", libSceBemp2sysUnknown_B1nK_plus_wb5rME_nid_no_patch);
 
 }

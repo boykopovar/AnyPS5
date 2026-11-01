@@ -137,9 +137,42 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
         return headers[left].MappedAddress < headers[right].MappedAddress;
     });
     for (std::size_t position = 1; position < loads.size(); ++position) {
-        const auto& previous = headers[loads[position - 1]];
-        if (headers[loads[position]].MappedAddress - previous.MappedAddress < previous.MemorySize)
-            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", headers[loads[position]].MappedAddress);
+        auto& previous = headers[loads[position - 1]];
+        const auto& current = headers[loads[position]];
+        if (current.MappedAddress - previous.MappedAddress >= previous.MemorySize)
+            continue;
+        const auto previousEnd = previous.MappedAddress + previous.MemorySize;
+        if (current.MappedAddress == previous.MappedAddress || previousEnd > current.MappedAddress + current.MemorySize)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+        if (((previous.Flags | current.Flags) & (PF_W | PF_X)) == (PF_W | PF_X)
+            && current.MappedAddress % kDefaultLoadAlignment != 0)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+        const auto previousFileEnd = previous.MappedAddress + previous.FileSize;
+        const auto currentFileEnd = current.MappedAddress + current.FileSize;
+        const auto compareEnd = std::min(previousEnd, std::max(previousFileEnd, currentFileEnd));
+        for (auto address = current.MappedAddress; address < compareEnd;) {
+            const bool previousBacked = address < previousFileEnd;
+            const bool currentBacked = address < currentFileEnd;
+            auto runEnd = compareEnd;
+            if (previousBacked)
+                runEnd = std::min(runEnd, previousFileEnd);
+            if (currentBacked)
+                runEnd = std::min(runEnd, currentFileEnd);
+            const auto length = static_cast<std::size_t>(runEnd - address);
+            const auto previousAt = static_cast<std::size_t>(previous.Offset + (address - previous.MappedAddress));
+            const auto currentAt = static_cast<std::size_t>(current.Offset + (address - current.MappedAddress));
+            const bool congruent = previousBacked && currentBacked
+                ? std::equal(buf.begin() + previousAt, buf.begin() + previousAt + length, buf.begin() + currentAt)
+                : previousBacked
+                    ? std::all_of(buf.begin() + previousAt, buf.begin() + previousAt + length, [](const std::uint8_t byte) { return byte == 0; })
+                    : std::all_of(buf.begin() + currentAt, buf.begin() + currentAt + length, [](const std::uint8_t byte) { return byte == 0; });
+            if (!congruent)
+                throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+            address = runEnd;
+        }
+        previous.MemorySize = current.MappedAddress - previous.MappedAddress;
+        if (previous.FileSize > previous.MemorySize)
+            previous.FileSize = previous.MemorySize;
     }
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
