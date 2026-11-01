@@ -206,6 +206,50 @@ def chart(points):
     return "\n".join(out)
 
 
+def gained(points, days):
+    last = date.fromisoformat(points[-1]["date"])
+    before = [p for p in points if (last - date.fromisoformat(p["date"])).days >= days]
+    start = before[-1] if before else points[0]
+    return points[-1]["libraries"]["done"] - start["libraries"]["done"]
+
+
+def weekly_badge(points):
+    value = f"{gained(points, 7):+,} functions"
+    return progress.badge("implemented in 7 days", points[-1]["libraries"], value, "#2f81f7")
+
+
+def daily(points):
+    bars = [(p["date"], p["libraries"]["done"] - q["libraries"]["done"]) for q, p in zip(points, points[1:])]
+    if not bars:
+        return ""
+    step, peak = scale(max(max(change for _, change in bars), 1))
+    lowest = min(min(change for _, change in bars), 0)
+    height, top = 214, 34
+    base = top + 150 * peak / (peak - lowest)
+    py = lambda v: base - v / (peak - lowest) * 150
+    slot = (WIDTH - LEFT - RIGHT) / len(bars)
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {height}" role="img" '
+           'aria-label="System library functions implemented per day" '
+           f'font-family="sans-serif" font-size="12" fill="{TEXT}">',
+           f'<rect width="{WIDTH}" height="{height}" rx="6" fill="{BACKGROUND}"/>',
+           f'<text x="{LEFT}" y="{top - 12}" font-size="13" font-weight="bold">System library functions implemented per day</text>']
+    for tick in range(0, peak + 1, step):
+        out.append(f'<line x1="{LEFT}" x2="{WIDTH - RIGHT}" y1="{py(tick):.1f}" y2="{py(tick):.1f}" stroke="{GRID}"/>'
+                   f'<text x="{LEFT - 6}" y="{py(tick) + 4:.1f}" text-anchor="end" fill="{MUTED}">{tick:,}</text>')
+    for index, (day, change) in enumerate(bars):
+        x, y = LEFT + index * slot, py(max(change, 0))
+        out.append(f'<rect x="{x + slot * 0.15:.1f}" y="{y:.1f}" width="{slot * 0.7:.1f}" height="{abs(py(change) - base):.1f}" '
+                   f'fill="{SERIES[0][2]}"><title>{day}: {change:+,} implemented</title></rect>')
+        label = labelled(date.fromisoformat(day), len(bars))
+        if label:
+            out.append(f'<text x="{x + slot / 2:.1f}" y="{top + 168}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>')
+    week = gained(points, 7)
+    out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{top + 16}" fill="{TEXT}" font-weight="bold">Last 7 days {week:+,}</text>'
+               f'<text x="{WIDTH - RIGHT + 8}" y="{top + 34}" fill="{MUTED}">Last day {bars[-1][1]:+,}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def page(points):
     rows = "\n".join(f'<tr><td>{p["date"]}</td>' + "".join(
         f'<td>{p[name]["done"]}/{p[name]["total"]}</td><td>{p[name]["percent"]}%</td>' for name, _, _ in SERIES) + "</tr>"
@@ -219,12 +263,13 @@ def page(points):
         '</head><body>',
         '<h1>Progress history</h1>',
         chart(points),
+        daily(points),
         f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is declared. Library '
         'functions are declared in the <code>prx</code> sources; the shader total is the AMD RDNA 1 + RDNA 2 instruction list '
         f'(<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
         'One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point is measured '
         f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> rules and instruction list, '
-        'so the series is comparable across days. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
+        'so the series is comparable across days. The bars are the change in implemented library functions from one point to the next. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
         '<table><tr><th>Date</th>' + "".join(f'<th>{escape(label)}</th><th>%</th>' for _, label, _ in SERIES) + '</tr>',
         rows,
@@ -244,7 +289,7 @@ def main(argv=None):
     parser.add_argument("--cache", type=Path, help="reuse per-commit counts while the scanner, ISA list and Python version match")
     parser.add_argument("--csv", action="store_true", help="also write history.csv with the measured JSON points")
     args = parser.parse_args(argv)
-    outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
+    outputs = [args.output / name for name in ("history.json", "history.svg", "history.html", "badge-week.svg")]
     if args.csv:
         outputs.append(args.output / "history.csv")
     try:
@@ -268,6 +313,7 @@ def main(argv=None):
         (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
         (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
         (args.output / "history.html").write_text(page(points), encoding="utf-8")
+        (args.output / "badge-week.svg").write_text(weekly_badge(points), encoding="utf-8")
         if args.csv:
             with (args.output / "history.csv").open("w", encoding="utf-8", newline="") as output:
                 writer = csv.writer(output)
