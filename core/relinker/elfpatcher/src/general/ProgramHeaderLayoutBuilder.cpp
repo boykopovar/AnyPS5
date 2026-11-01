@@ -229,6 +229,8 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     if (request.ExtraBlockOffset > buf.size() || request.ExtraBlockSize > buf.size() - request.ExtraBlockOffset)
         throw Domain::RelinkerException("Extra block exceeds the output file");
     std::uint64_t headerBlockAlign = kDefaultLoadAlignment;
+    if (request.MovedLoadAlignment > headerBlockAlign && (request.MovedLoadAlignment & (request.MovedLoadAlignment - 1)) == 0)
+        headerBlockAlign = request.MovedLoadAlignment;
     for (const auto& ph : request.OriginalHeaders) {
         if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign && (ph.Alignment & (ph.Alignment - 1)) == 0)
             headerBlockAlign = ph.Alignment;

@@ -125,7 +125,7 @@ std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, cons
     return type == R_X86_64_PC32 || type == R_X86_64_32 ? 4 : 8;
 }
 
-void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
+std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
     std::vector<std::size_t> loads;
     for (std::size_t index = 0; index < headers.size(); ++index) {
         if (headers[index].Type == PT_LOAD && headers[index].MemorySize != 0) {
@@ -174,6 +174,7 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
         if (previous.FileSize > previous.MemorySize)
             previous.FileSize = previous.MemorySize;
     }
+    std::uint64_t lowered = 0;
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
@@ -204,8 +205,11 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
         buf.resize(static_cast<std::size_t>(offset + load.FileSize));
         std::copy_n(buf.begin() + static_cast<std::ptrdiff_t>(load.Offset), static_cast<std::size_t>(load.FileSize), buf.begin() + static_cast<std::ptrdiff_t>(offset));
         load.Offset = offset;
+        if (load.Alignment > kDefaultLoadAlignment && (load.Alignment & (load.Alignment - 1)) == 0)
+            lowered = std::max(lowered, load.Alignment);
         load.Alignment = std::min(load.Alignment, kDefaultLoadAlignment);
     }
+    return lowered;
 }
 
 struct TracedImport {
@@ -629,7 +633,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         for (const auto& header : headers)
             if (header.Type == PT_LOAD)
                 RequireBaseAlignment(*_fixedBase, header.Alignment);
-    SeparateSharedLoadPages(buf, headers);
+    const auto movedLoadAlignment = SeparateSharedLoadPages(buf, headers);
 
     ProgramHeaderLayoutRequest layoutRequest{};
     layoutRequest.PhOff = tableOff;
@@ -643,6 +647,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     layoutRequest.DynamicSegmentSize = dynSegBuf.size();
     layoutRequest.InterpOffset = interpOff;
     layoutRequest.InterpSize = interpSize;
+    layoutRequest.MovedLoadAlignment = movedLoadAlignment;
 
     const std::uint16_t writtenPh = _programHeaderLayoutBuilder->WriteLayout(buf, layoutRequest);
     _byteWriter->WriteU16(buf, kEhdrPhNumOffset, writtenPh);

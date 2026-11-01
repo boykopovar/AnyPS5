@@ -129,6 +129,16 @@ std::uint64_t OutputAlignment(const Bytes& output, const std::uint64_t vaddr) {
     throw std::runtime_error("linux load pages: no output PT_LOAD at the segment's address");
 }
 
+std::uint64_t MaximumAlignment(const Bytes& output) {
+    std::uint64_t largest = kPage;
+    for (const auto& load : OutputLoads(output)) {
+        Require(load.Alignment <= 1 || load.Offset % load.Alignment == load.MappedAddress % load.Alignment, "PT_LOAD offset and address differ modulo its alignment");
+        if (load.Alignment != 0 && (load.Alignment & (load.Alignment - 1)) == 0)
+            largest = std::max(largest, load.Alignment);
+    }
+    return largest;
+}
+
 void ZeroFillBelowTheNextSegment() {
     auto source = Fixture(0x3000);
     std::fill(source.begin() + 0x1000, source.begin() + 0x1100, std::uint8_t{0xAA});
@@ -284,6 +294,7 @@ void LargeAlignmentMovesToThePage() {
         Require(output.size() <= source.size() + 3 * kPage, "output grew to " + std::to_string(output.size()) + " bytes for alignment " + std::to_string(alignment));
         RequireImage(output, source, headers, "incongruent segment with a large alignment");
         Require(OutputAlignment(output, 0x1000) == kPage, "moved segment declares an alignment its offset does not honour");
+        Require(MaximumAlignment(output) == alignment, "the largest PT_LOAD alignment is " + std::to_string(MaximumAlignment(output)) + ", not " + std::to_string(alignment));
     }
 }
 
@@ -301,6 +312,30 @@ void LargeAlignmentOnASharedPage() {
     Require(output.size() <= source.size() + 3 * kPage, "output grew to " + std::to_string(output.size()) + " bytes on the shared page path");
     RequireImage(output, source, headers, "shared page with a large alignment");
     Require(OutputAlignment(output, 0x2c20) == kPage, "moved segment declares an alignment its offset does not honour");
+    Require(MaximumAlignment(output) == 0x80000000, "the largest PT_LOAD alignment is " + std::to_string(MaximumAlignment(output)));
+}
+
+void CongruentLargeAlignmentOnASharedPage() {
+    auto source = Fixture(0x3000);
+    std::fill(source.begin() + 0x1000, source.begin() + 0x1100, std::uint8_t{0xAA});
+    std::fill(source.begin() + 0x1100, source.begin() + 0x1c20, std::uint8_t{0x55});
+    std::fill(source.begin() + 0x1c20, source.begin() + 0x2000, std::uint8_t{0x77});
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x10, 0x10, 5),
+        Load(0x1000, 0x1000, 0x100, 0x4c20, 6),
+        Load(0x1c20, 0x5c20, 0x3e0, 0x3e0, 4, 0x4000),
+    };
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {});
+    Require(output.size() <= source.size() + 3 * kPage, "output grew to " + std::to_string(output.size()) + " bytes for a congruent alignment");
+    RequireImage(output, source, headers, "congruent segment with a large alignment on a shared page");
+    Require(OutputOffset(output, 0x5c20) != 0x1c20 && OutputOffset(output, 0x5c20) % kPage == 0xc20, "a segment whose page reads other bytes was not moved to a page-congruent offset");
+    Require(OutputAlignment(output, 0x5c20) == kPage, "moved segment declares an alignment its offset does not honour");
+    Require(MaximumAlignment(output) == 0x4000, "the largest PT_LOAD alignment fell to " + std::to_string(MaximumAlignment(output)));
+    const auto loads = OutputLoads(output);
+    const auto headerBlock = std::find_if(loads.begin(), loads.end(), [](const Domain::ProgramHeader& load) { return load.Offset == 0; });
+    Require(headerBlock != loads.end() && headerBlock->Alignment == 0x4000 && headerBlock->MappedAddress % 0x4000 == 0, "the header block does not carry the moved segment's alignment");
+    const auto fixed = Patcher(0x400000).Patch(source, headers, {}, 0, "$ORIGIN/libs", false, false, {});
+    Require(MaximumAlignment(fixed) == 0x4000, "the largest PT_LOAD alignment at a fixed base fell to " + std::to_string(MaximumAlignment(fixed)));
 }
 
 void LargeAlignmentAtAFixedBaseIsRefused() {
@@ -335,6 +370,7 @@ int main() {
         IncongruentOffsetBelowThePagePrefix();
         LargeAlignmentMovesToThePage();
         LargeAlignmentOnASharedPage();
+        CongruentLargeAlignmentOnASharedPage();
         LargeAlignmentAtAFixedBaseIsRefused();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
