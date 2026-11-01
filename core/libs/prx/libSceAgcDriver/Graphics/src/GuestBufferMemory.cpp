@@ -6184,6 +6184,14 @@ VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std:
     return {handle, offset - adjustment, range};
 }
 
+std::optional<VkDescriptorBufferInfo> GuestBufferMemory::FillTarget(std::uint64_t address, std::size_t bytes) const {
+    const auto* found = owner(address, address + bytes);
+    if (found == nullptr || found->mirror != nullptr || (found->direct == nullptr && !found->gpuCopy)) return std::nullopt;
+    std::uint32_t adjustment = 0;
+    const auto info = Descriptor(address, bytes, adjustment);
+    return VkDescriptorBufferInfo{info.buffer, info.offset + adjustment, bytes};
+}
+
 std::uint64_t GuestBufferMemory::ViewBytes(std::uint64_t bytes, std::uint32_t adjustment) {
     if (adjustment % 4 == 0) return bytes + adjustment;
     const auto dwords = adjustment / 4 + bytes / 4 + (adjustment % 4 + bytes % 4 + 3) / 4;

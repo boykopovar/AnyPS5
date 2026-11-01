@@ -20,7 +20,7 @@ std::uint64_t GdsAddress() {
     static const std::uint64_t address = [] {
         constexpr int ReadWrite = 0x3;
         constexpr int PrivateAnonymous = 0x1002;
-        void* mapped = mmap_nid_postfix(nullptr, GdsBytes, ReadWrite, PrivateAnonymous, -1, 0);
+        void* mapped = mmap_nid_postfix(nullptr, GdsBindingBytes, ReadWrite, PrivateAnonymous, -1, 0);
         if (mapped == nullptr || mapped == reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1))) throw std::runtime_error("cannot allocate the global data share");
         return reinterpret_cast<std::uint64_t>(mapped);
     }();

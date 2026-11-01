@@ -51,6 +51,7 @@ struct SpirvEmitInfo {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
+    bool orderedAppend = false;
 };
 
 struct SpannedWaveUnsupported : std::runtime_error {

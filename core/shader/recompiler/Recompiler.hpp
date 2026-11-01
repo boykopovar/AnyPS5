@@ -760,6 +760,7 @@ struct CompiledShaderArtifact {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
+    bool orderedAppend = false;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;

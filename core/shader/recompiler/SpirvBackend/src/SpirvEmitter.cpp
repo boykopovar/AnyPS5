@@ -332,6 +332,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         info->fullSubgroups = state.spannedWave;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->meshWindowBuffer = state.meshWindowBuffer;
+        info->orderedAppend = state.requirements.orderedAppend;
     }
     return state.module.Finalize();
 }

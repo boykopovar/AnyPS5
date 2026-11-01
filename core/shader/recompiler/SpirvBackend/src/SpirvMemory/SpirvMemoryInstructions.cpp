@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 #include <unordered_set>
 #include <vector>
@@ -1303,6 +1304,67 @@ std::uint32_t AddressAtomic(SpirvValueEmitContext& ctx, const IrValue& inst) {
     });
 }
 
+std::uint32_t OrderedFlags(const IrValue& inst) {
+    const auto* flags = inst.Arguments().size() > 5u ? inst.Argument(5) : nullptr;
+    return flags != nullptr && flags->HasImmediate() ? flags->ImmediateU32() : 0u;
+}
+
+constexpr std::uint32_t OrderedTurnWaitLimit = 1u << 20u;
+constexpr std::uint32_t OrderedTurnAbandoned = 0xffffffffu;
+
+struct OrderedTurn {
+    std::uint32_t pointer;
+    std::uint32_t timeouts;
+    std::uint32_t launch;
+    std::uint32_t wrapped;
+    bool release;
+};
+
+template<typename TAtomic>
+std::uint32_t EmitOrderedTurn(SpirvEmitterState& state, const OrderedTurn& turn, std::uint32_t actor, std::uint32_t condition, TAtomic&& atomic) {
+    const auto entry = state.currentLabel;
+    const auto header = state.module.AllocateId();
+    const auto body = state.module.AllocateId();
+    const auto cont = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    const auto tries = state.module.AllocateId();
+    const auto triesNext = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, header);
+    state.module.AddFunction(spv::OpPhi, TypeU32(state), tries, ConstantU32(state, 0u), entry, triesNext, cont);
+    state.module.AddFunction(spv::OpLoopMerge, merge, cont, spv::LoopControlMaskNone);
+    state.module.AddFunction(spv::OpBranch, body);
+    EmitLabel(state, body);
+    const auto loaded = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicLoad, TypeU32(state), loaded, turn.pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireMask | spv::MemorySemanticsUniformMemoryMask));
+    state.module.AddFunction(spv::OpIAdd, TypeU32(state), triesNext, tries, ConstantU32(state, 1u));
+    const auto ready = AndCondition(state, actor, Binary(state, spv::OpIEqual, TypeBool(state), loaded, turn.launch));
+    const auto abandoned = Binary(state, spv::OpIEqual, TypeBool(state), loaded, ConstantU32(state, OrderedTurnAbandoned));
+    const auto exhausted = AndCondition(state, actor, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), triesNext, ConstantU32(state, OrderedTurnWaitLimit)));
+    const auto unordered = AndCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), ready), Binary(state, spv::OpLogicalOr, TypeBool(state), exhausted, AndCondition(state, actor, abandoned)));
+    const auto finish = Binary(state, spv::OpLogicalOr, TypeBool(state), ready, unordered);
+    const auto value = EmitValueOrZeroIfCondition(state, AndCondition(state, finish, condition), atomic);
+    EmitIfCondition(state, unordered, [&] {
+        const auto counted = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), counted, turn.timeouts, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 1u));
+        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), abandoned), [&] {
+            state.module.AddFunction(spv::OpAtomicStore, turn.pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, OrderedTurnAbandoned));
+        });
+    });
+    if (turn.release) {
+        EmitIfCondition(state, ready, [&] {
+            const auto previous = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, turn.pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask), ConstantU32(state, spv::MemorySemanticsMaskNone), turn.wrapped, turn.launch);
+        });
+    }
+    const auto done = Binary(state, spv::OpLogicalOr, TypeBool(state), finish, Unary(state, spv::OpLogicalNot, TypeBool(state), actor));
+    state.module.AddFunction(spv::OpBranchConditional, done, merge, cont);
+    EmitLabel(state, cont);
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, merge);
+    return value;
+}
+
 std::uint32_t AppendConsume(SpirvValueEmitContext& ctx, const IrValue& inst, bool append, bool ordered = false, bool swap = false) {
     auto& state = ctx.state;
     if (ctx.half == 1u) {
@@ -1342,14 +1404,50 @@ std::uint32_t AppendConsume(SpirvValueEmitContext& ctx, const IrValue& inst, boo
     const auto bounds = m0Address ? AndCondition(state, storageBounds, m0Bounds) : storageBounds;
     const auto lanesActive = wave64 ? Binary(state, spv::OpINotEqual, TypeBool(state), count, ConstantU32(state, 0u)) : exec;
     const auto condition = AndCondition(state, isFirst, AndCondition(state, lanesActive, bounds));
-    const auto atomic = EmitValueOrZeroIfCondition(state, condition, [&]() {
+    const bool turn = ordered && gds && state.requirements.orderedAppend && !InFunctionStorage(state, mem.kind);
+    std::optional<OrderedTurn> orderedTurn;
+    if (turn) {
+        const auto* workgroup = ShaderWorkgroupInput(state);
+        if (workgroup == nullptr) {
+            ctx.Fail(inst, "orders its waves without the compute workgroup size");
+        }
+        std::uint32_t threads = 1u;
+        for (const auto count : workgroup->threadsNum) threads *= std::max(count, 1u);
+        const std::uint32_t guestWave = state.program.WaveSize();
+        const std::uint32_t wavesPerGroup = (threads + guestWave - 1u) / guestWave;
+        const auto groups = [&](std::uint32_t component) {
+            const auto pointer = state.module.AllocateId();
+            const auto value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeU32(state)), pointer, state.numWorkgroupsVariable, ConstantU32(state, component));
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+            return value;
+        };
+        const auto group = [&](std::uint32_t component) { return EmitInputComponentU32(state, StageInputKind::WorkgroupId, component); };
+        const auto plane = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, group(2u), groups(1u)), group(1u));
+        const auto linear = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, plane, groups(0u)), group(0u));
+        const auto waveInGroup = EmitBinaryU32(state, spv::OpUDiv, EmitLocalInvocationIndex(state), ConstantU32(state, guestWave));
+        const auto launch = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, linear, ConstantU32(state, wavesPerGroup)), waveInGroup);
+        const auto waves = EmitBinaryU32(state, spv::OpIMul, EmitBinaryU32(state, spv::OpIMul, EmitBinaryU32(state, spv::OpIMul, groups(0u), groups(1u)), groups(2u)), ConstantU32(state, wavesPerGroup));
+        const auto element = [&](std::uint32_t fromEnd) { return EmitMemoryElementPointer(state, access, EmitMemoryElementIndex(state, access, Binary(state, spv::OpISub, TypeU32(state), access.length, ConstantU32(state, fromEnd)))); };
+        const auto next = EmitAddU32(state, launch, ConstantU32(state, 1u));
+        orderedTurn = OrderedTurn{element(2u), element(1u), launch, Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), next, waves), ConstantU32(state, 0u), next), (OrderedFlags(inst) & 2u) != 0u};
+    }
+    const auto update = [&]() {
         if (InFunctionStorage(state, mem.kind)) {
             return UpdateFunctionElement(state, EmitMemoryElementPointer(state, access, index), [&](std::uint32_t old) { return swap ? amount : Binary(state, append ? spv::OpIAdd : spv::OpISub, TypeU32(state), old, count); });
         }
         const auto value = state.module.AllocateId();
         state.module.AddFunction(swap ? spv::OpAtomicExchange : append ? spv::OpAtomicIAdd : spv::OpAtomicISub, TypeU32(state), value, EmitMemoryElementPointer(state, access, index), ConstantU32(state, gds ? spv::ScopeDevice : spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), amount);
         return value;
-    });
+    };
+    std::uint32_t atomic = 0;
+    if (orderedTurn.has_value()) {
+        const auto anyActive = Binary(state, spv::OpINotEqual, TypeBool(state), count, ConstantU32(state, 0u));
+        const auto waveLeader = Binary(state, spv::OpIEqual, TypeBool(state), EmitSubgroupLocalInvocationId(state), ConstantU32(state, 0u));
+        atomic = EmitOrderedTurn(state, *orderedTurn, Select(state, TypeBool(state), anyActive, isFirst, waveLeader), condition, update);
+    } else {
+        atomic = EmitValueOrZeroIfCondition(state, condition, update);
+    }
     const auto result = state.module.AllocateId();
     EmitSubgroupShuffle(state, TypeU32(state), result, atomic, EmitHostSubgroupLane(state, sourceLane));
     return result;

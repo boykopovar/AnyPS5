@@ -237,6 +237,7 @@ public:
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    std::optional<VkDescriptorBufferInfo> guestFillTarget(std::uint64_t address, std::size_t bytes) const { return guestMemory.FillTarget(address, bytes); }
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
     bool UsesAddressTable() const { return usesBda; }
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
