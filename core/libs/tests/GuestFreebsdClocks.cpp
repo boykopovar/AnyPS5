@@ -67,6 +67,10 @@ static void UnsupportedResolutionStillThrows() {
     constexpr int fault = static_cast<int>(0x8002000eu);
     Require(sceKernelClockGetres(GUEST_CLOCK_REALTIME, nullptr) == fault);
     Require(sceKernelClockGetres(3, nullptr) == fault);
+    for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_MONOTONIC}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_getres_nid_postfix(clockId, reinterpret_cast<KernelTimespec*>(1)) == -1 && *__error_nid_postfix() == 14);
+    }
 }
 
 static void OmittedTimeIsFaultAfterClockValidation() {
