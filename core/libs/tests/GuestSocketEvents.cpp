@@ -356,7 +356,13 @@ int main() {
     }
     racingSender.join();
     racingReader.join();
-    Require(sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    char late[8];
+    int drained = SCE_OK;
+    while ((drained = sceKernelWaitEqueue(blocking, events.data(), events.size(), &count, &shortTimeout)) == SCE_OK) {
+        Require(count == 1 && (events[0].data == 0 || events[0].data == 3));
+        Require(recv_nid_postfix(datagram, late, sizeof(late), 0x80) == events[0].data);
+    }
+    Require(drained == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelDeleteReadEvent(blocking, datagram) == SCE_OK);
     Require(close_nid_postfix(datagram) == 0);
     Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);
