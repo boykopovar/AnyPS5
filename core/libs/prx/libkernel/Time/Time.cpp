@@ -584,11 +584,10 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     KernelTimespec value{};
     if (ReadClock(clockId, &value) != 0) return -1;
-    if (tp == nullptr) {
+    if (tp == nullptr || !GuestCopyOut_nid_no_patch(tp, &value, sizeof(value))) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    *tp = value;
     return 0;
 }
 
@@ -630,10 +629,9 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zo
     return 0;
 }
 
-int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
-    if (res == nullptr) return 0;
+static int ReadClockResolution(int clockId, KernelTimespec* res) {
     if (IsCpuClock(clockId))
-        return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
+        return ReadClockResolution(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
     if (clockId == 1 || clockId == 2) {
         std::uint64_t nanos = 0;
         if (!ProcessCpuResolutionNanos(&nanos)) return -1;
@@ -712,6 +710,17 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     res->tv_nsec = static_cast<std::int64_t>(ts.tv_nsec);
     return 0;
 #endif
+}
+
+int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
+    if (res == nullptr) return 0;
+    KernelTimespec value{};
+    if (ReadClockResolution(clockId, &value) != 0) return -1;
+    if (!GuestCopyOut_nid_no_patch(res, &value, sizeof(value))) {
+        *__error_nid_postfix() = GUEST_EFAULT;
+        return -1;
+    }
+    return 0;
 }
 
 int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
