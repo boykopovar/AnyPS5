@@ -42,6 +42,7 @@ std::uint32_t TypeStorageBufferU8Pointer(SpirvEmitterState& state);
 std::uint32_t TypeStorageBufferU8ElementPointer(SpirvEmitterState& state);
 std::uint32_t TypePhysicalU32Pointer(SpirvEmitterState& state);
 std::uint32_t TypePhysicalBufferPointer(SpirvEmitterState& state, bool wide);
+std::uint32_t ReadOnlyStorageBufferType(SpirvEmitterState& state, std::uint32_t element, std::uint32_t stride);
 std::uint32_t TypePhysicalReadOnlyBufferPointer(SpirvEmitterState& state, bool wide);
 std::uint32_t TypePushConstantElementPointer(SpirvEmitterState& state);
 std::uint32_t TypeU32ArrayPointer(SpirvEmitterState& state, std::uint32_t storageClass, std::uint32_t dwords);

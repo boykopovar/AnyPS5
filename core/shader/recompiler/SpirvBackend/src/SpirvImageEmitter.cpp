@@ -1753,8 +1753,10 @@ ScalarBufferDword EmitScalarBufferDword(SpirvEmitterState& state, std::uint32_t 
     return dword;
 }
 
+}
+
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
-    if (state.tableMapAddressed) {
+    if (state.TableMapAddressed()) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), value, EmitStageRingWordPointer(state, RuntimeAbi::RootStageField::TableMap, index), spv::MemoryAccessAlignedMask, 4u);
         return value;
@@ -1765,6 +1767,8 @@ std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
     state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
     return value;
 }
+
+namespace {
 
 std::uint32_t TableMapAt(SpirvEmitterState& state, std::uint32_t base, std::uint32_t offset) {
     return LoadTableMap(state, offset == 0u ? base : Binary(state, spv::OpIAdd, TypeU32(state), base, ConstantU32(state, offset)));
@@ -1901,8 +1905,8 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         result.valid = both(checked, negate(driverRejected));
         result.flags = flags;
         live = selected;
-        state.tableAccess.element = state.tableHeap ? Select(state, u32, checked, element, ConstantU32(state, 0u)) : Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
-        state.tableAccess.heap = state.tableHeap;
+        state.tableAccess.element = state.TableHeap() ? Select(state, u32, checked, element, ConstantU32(state, 0u)) : Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
+        state.tableAccess.heap = state.TableHeap();
         const auto& sources = state.program.Resources().descriptorSources;
         state.tableAccess.uniform = base.source < sources.size() && sources[base.source].tableColumn.has_value() && sources[base.source].tableColumn->selected;
         if (!state.tableAccess.uniform) DecorateTableNonUniform(state, state.tableAccess.element);
@@ -2326,8 +2330,7 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
                     for (std::uint32_t i = 0; i < 4u; ++i) {
                         const auto pointer = state.module.AllocateId();
                         state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, op(spv::OpIAdd, u64, physical, BdaConstant(state, (first + i) * 4u)));
-                        values[i] = state.module.AllocateId();
-                        state.module.AddFunction(spv::OpLoad, u32, values[i], pointer, spv::MemoryAccessAlignedMask, 4u);
+                        values[i] = EmitAlignedLoadU32(state, pointer);
                     }
                     return compose(values);
                 });

@@ -60,6 +60,9 @@ struct IrBindingLayout {
     [[nodiscard]] std::uint32_t ImageMetadataDword() const {
         return DispatchThreadLimitDword() + (dispatchThreadLimit ? 3u : 0u);
     }
+    [[nodiscard]] std::uint32_t ImageFirstElementDword(std::uint32_t image) const {
+        return ImageMetadataDword() + image * (sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t)) + offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t);
+    }
     [[nodiscard]] std::uint32_t RuntimeStateDword() const {
         return ImageMetadataDword() + runtimeImageCount * (sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t));
     }

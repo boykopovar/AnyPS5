@@ -425,14 +425,6 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     plan.bindings.reserve(layout.descriptors.size());
     const bool slotWords = layout.gpuResolvedImages && !registrationModules;
     std::uint32_t imageSlotBase = layout.ImageSlotDword();
-    const auto descriptorSetFor = [&](DescriptorBindingKind kind) {
-        if (kind == DescriptorBindingKind::Gds && layout.UsesDataAddress()) return RuntimeAbi::GpuGdsSet;
-        if (layout.gpuResolvedImages) {
-            const bool heapSetBinding = layout.HeapImageKind(kind) || kind == DescriptorBindingKind::Samplers || kind == DescriptorBindingKind::ShaderData || kind == DescriptorBindingKind::FlattenedSrt;
-            return heapSetBinding ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
-        }
-        return fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
-    };
     for (const auto& logical : layout.descriptors) {
         const bool imageHeap = ImageBindingResourceClass(logical.kind) != ImageResourceClass::None;
         const bool samplerHeap = logical.kind == DescriptorBindingKind::Samplers;
@@ -472,10 +464,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if ((imageHeap || samplerHeap) && compact.resources.empty()) continue;
         PreparedDescriptorBinding entry{};
         auto& physical = entry.descriptor;
-        const bool heapImage = layout.HeapImageKind(compact.kind);
-        const bool sharedHeapArray = layout.gpuResolvedImages && (heapImage || samplerHeap);
-        physical.descriptorSet = descriptorSetFor(compact.kind);
-        physical.binding = NativeBinding(sharedHeapArray ? IrShaderStage::Pixel : stage, compact.kind);
+        physical.descriptorSet = DescriptorSetNumber(layout, compact.kind, stage, layout.gpuResolvedImages, fragmentDescriptorSet, true);
+        physical.binding = DescriptorBindingNumber(layout, compact.kind, stage, layout.gpuResolvedImages);
         physical.count = compact.resources.empty() ? 1u : static_cast<std::uint32_t>(compact.resources.size());
         physical.kind = PhysicalKindFor(compact.kind);
         physical.role = RoleFor(compact.kind);
