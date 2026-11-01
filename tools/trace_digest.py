@@ -62,7 +62,7 @@ class Trace:
         self.threads = {}
         self.slices = collections.defaultdict(list)
         self.presents = []
-        self.folded = collections.defaultdict(float)
+        self.folded = collections.defaultdict(list)
         self.batched = []
         if not isinstance(document, (list, dict)):
             raise ValueError("trace must be an event array or object")
@@ -99,7 +99,8 @@ class Trace:
                 self.presents.append((_event_number(event, "ts", index), _event_args(event, index).get("present")))
             elif phase == "C":
                 tid = _event_tid(event, index)
-                self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
+                self.folded[tid].append((_event_number(event, "ts", index),
+                    sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())))
         self.presents.sort()
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))
@@ -233,7 +234,8 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
         threads.append({"thread": trace.name(tid), "busy_ms_per_frame": (traced - waited) / 1000.0 / count,
                         "wait_ms_per_frame": waited / 1000.0 / count,
                         "untraced_ms_per_frame": max(span_us - traced, 0.0) / 1000.0 / count,
-                        "folded_ms_per_frame": trace.folded.get(tid, 0.0) / count,
+                        "folded_ms_per_frame": sum(value for ts, value in trace.folded.get(tid, [])
+                                                   if not frames or frames[0][1] <= ts < frames[-1][2]) / count,
                         "busy_pct": 100.0 * (traced - waited) / span_us if span_us else 0.0,
                         "wait_pct": 100.0 * waited / span_us if span_us else 0.0,
                         "top": [{"name": name, "ms_per_frame": us / 1000.0 / count} for name, us in leaders.most_common(2)]})
