@@ -1003,6 +1003,7 @@ def main(argv=None):
     parser.add_argument("--strict-stubs", action="store_true",
                         help="also fail when a referenced import resolves to a throwing stub")
     parser.add_argument("--strict-providers", action="store_true", help="fail when a named import is provided only by another library; retains the existing libc and title-module rules")
+    parser.add_argument("--strict-partial", action="store_true", help="also fail when an import has known unsupported input paths")
     args = parser.parse_args(argv)
     try:
         dependency_registries = [needed_registry_path(path) for path in args.registries if path.name.endswith(".registry.json")]
@@ -1048,7 +1049,7 @@ def main(argv=None):
         return 2
     located = locate_missing(missing, {path.resolve().parent for path in args.registries}) if missing else None
     print(render(summary, records, missing, stops, missing_hosts, located))
-    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
+    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) or (args.strict_partial and summary["unique_by_class"]["partial"]) else 0
 
 
 if __name__ == "__main__":
