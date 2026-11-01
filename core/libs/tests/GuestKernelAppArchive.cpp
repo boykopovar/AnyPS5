@@ -384,6 +384,8 @@ void Reads() {
 }
 
 void Status() {
+    auto* const badStatus = reinterpret_cast<FileStat*>(static_cast<std::uintptr_t>(0x10));
+    Check(sceKernelStat("/app0/Data/Small.txt", badStatus) == SCE_KERNEL_ERROR_EFAULT);
     FileStat status{};
     Check(sceKernelStat("/app0/Data/Small.txt", &status) == 0);
     Check((status.st_mode & TypeMask) == RegularType && (status.st_mode & 0222) == 0 && status.st_size == 3 && status.st_blocks == 1);
