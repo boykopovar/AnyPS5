@@ -141,5 +141,6 @@ int main() {
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
     CheckLoops(&attr);
     CheckOwnershipAndRelativeLock();
+    CheckTimedlockNegativeTime();
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
 }
