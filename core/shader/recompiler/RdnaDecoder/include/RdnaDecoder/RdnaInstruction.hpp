@@ -1,7 +1,6 @@
 #ifndef CORE_SHADER_RECOMPILIER_RDNADECODER_INCLUDE_RDNADECODER_RDNAINSTRUCTION_HPP
 #define CORE_SHADER_RECOMPILIER_RDNADECODER_INCLUDE_RDNADECODER_RDNAINSTRUCTION_HPP
 
-#include "RdnaDecoder/DiagnosticSink.hpp"
 #include "RdnaDecoder/RdnaOpcode.hpp"
 #include <array>
 #include <cstdint>
@@ -14,9 +13,7 @@ class UnsupportedInstructionError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
     UnsupportedInstructionError(const std::string& message, const char* encodingName, long long opcode, const char* sourceFile, int sourceLine)
-        : std::runtime_error(message), encoding(encodingName), opcodeValue(opcode), file(sourceFile), line(sourceLine) {
-        if (const auto* sink = Diagnostics(); sink != nullptr && sink->unsupportedInstruction != nullptr) sink->unsupportedInstruction(encodingName, nullptr, opcode, sourceFile, sourceLine);
-    }
+        : std::runtime_error(message), encoding(encodingName), opcodeValue(opcode), file(sourceFile), line(sourceLine) {}
     const char* encoding = nullptr;
     long long opcodeValue = -1;
     const char* file = nullptr;

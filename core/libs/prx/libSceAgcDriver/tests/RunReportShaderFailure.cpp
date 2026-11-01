@@ -1,6 +1,8 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "RdnaDecoder/RdnaProgram.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestWorkMark.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
@@ -13,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -78,19 +81,51 @@ void verifyGuestWorkMarks() {
     require(taken <= 8, "more marks are kept than the table holds");
 }
 
-void verifySinkReceivesUnsupportedInstruction() {
+void verifyConstructingTheErrorReportsNothing() {
     static const DiagnosticSink sink{.unsupportedInstruction = Unsupported};
     SetDiagnosticSink(&sink);
     unsupported = 0;
-    lastEncodingIsSop1 = 0;
     static_cast<void>(UnsupportedInstructionError("unsupported SOP1 opcode 5", "SOP1", 5, __FILE__, __LINE__));
-    require(unsupported == 1 && lastEncodingIsSop1 == 1, "the unsupported instruction was not reported with its encoding");
+    require(unsupported == 0, "building the error already reported an instruction that nothing ended on");
+    SetDiagnosticSink(nullptr);
+}
+
+std::uint32_t findUndecodableWord() {
+    SetDiagnosticSink(nullptr);
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 5> classes{{{0xbe800000u, 8u}, {0x80000000u, 23u}, {0xb0000000u, 23u}, {0xbf800000u, 16u}, {0xbf000000u, 16u}}};
+    for (const auto& [base, shift] : classes) {
+        for (std::uint32_t opcode = 0; opcode < 128u; ++opcode) {
+            const std::uint32_t word = base | (opcode << shift);
+            const std::array<std::uint32_t, 2> code{word, 0xbf810000u};
+            try {
+                static_cast<void>(DecodeRdnaInstruction(0, code, 0));
+            } catch (const UnsupportedInstructionError&) {
+                return word;
+            } catch (const std::exception&) {
+            }
+        }
+    }
+    return 0;
+}
+
+void verifyUndecodableTrailingWordIsNotReported() {
+    const auto word = findUndecodableWord();
+    require(word != 0, "no word that the decoder rejects was found to place after a program");
+    const std::array<std::uint32_t, 6> code{0x7e020300u, 0xe0700000u, 0x80000100u, 0xbf810000u, word, 0xbf810000u};
+    static const DiagnosticSink sink{.shader = Shader, .unsupportedInstruction = Unsupported};
+    SetDiagnosticSink(&sink);
+    unsupported = 0;
+    RdnaProgram program;
+    DecodeRdnaProgram(code, program);
+    require(!program.instructions.empty(), "the program before the undecodable word was not decoded");
+    require(unsupported == 0, "the decoder reported a word after the end of the program that it skipped");
     SetDiagnosticSink(nullptr);
 }
 
 void verify() {
     verifyGuestWorkMarks();
-    verifySinkReceivesUnsupportedInstruction();
+    verifyUndecodableTrailingWordIsNotReported();
+    verifyConstructingTheErrorReportsNothing();
 #ifdef _WIN32
     _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
 #else
@@ -100,6 +135,7 @@ void verify() {
     SetDiagnosticSink(&sink);
     for (const bool cache : {false, true}) {
         compiled = failed = reused = unsupported = 0;
+        lastEncodingIsSop1 = 0;
         const auto before = std::string(cache ? "cached" : "uncached");
         recompile(MovStore, cache);
         require(compiled == 1 && failed == 0, before + ": a good compile was not counted as one compile (compiled " + std::to_string(compiled) + ", failed " + std::to_string(failed) + ")");
@@ -111,6 +147,7 @@ void verify() {
         }
         require(compiled + failed == 2, before + ": each attempt is counted once, as a compile or as a failure (compiled " + std::to_string(compiled) + ", failed " + std::to_string(failed) + ")");
         require(threw ? failed == 1 && compiled == 1 : failed == 0 && compiled == 2, before + ": the outcome and the counts disagree");
+        require(threw ? unsupported >= 1 && lastEncodingIsSop1 == 1 : unsupported == 0, before + ": the instruction that ended a shader was not reported with its encoding, or one was reported for a shader that compiled");
     }
 }
 

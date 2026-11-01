@@ -1398,6 +1398,12 @@ void NoteFailureOnce() {
     if (current == nullptr || current == counted) return;
     counted = current;
     NoteShader(1);
+    try {
+        std::rethrow_exception(current);
+    } catch (const UnsupportedInstructionError& error) {
+        if (const auto* sink = Diagnostics(); sink != nullptr && sink->unsupportedInstruction != nullptr) sink->unsupportedInstruction(error.encoding, nullptr, error.opcodeValue, error.file, error.line);
+    } catch (...) {
+    }
 }
 
 template <typename Compile>
