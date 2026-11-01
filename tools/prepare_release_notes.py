@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import stat
 import sys
 from pathlib import Path
@@ -25,7 +26,7 @@ def prepare_notes(source, body, full):
     paths = (source, body, full)
     for index, first in enumerate(paths):
         for second in paths[index + 1:]:
-            if first.resolve() == second.resolve() or (first.exists() and second.exists() and first.samefile(second)):
+            if os.path.realpath(first) == os.path.realpath(second) or (first.exists() and second.exists() and first.samefile(second)):
                 raise ValueError("Release note input and outputs must be distinct files")
     try:
         payload = json.loads(source.read_text(encoding="utf-8-sig"))
@@ -40,14 +41,30 @@ def prepare_notes(source, body, full):
     if len(body_text) > BODY_LIMIT:
         raise ValueError(f"Release notes body exceeds {BODY_LIMIT} characters after removing What's Changed")
     for destination in (body, full):
+        try:
+            destination.stat()
+        except FileNotFoundError:
+            pass
         if destination.is_dir():
             raise IsADirectoryError(str(destination))
         if os.name == "nt" and destination.exists() and destination.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
             raise PermissionError(f"Release note destination is read-only: {destination}")
-    body.parent.mkdir(parents=True, exist_ok=True)
-    full.parent.mkdir(parents=True, exist_ok=True)
-    full.write_bytes(notes.encode("utf-8"))
-    body.write_bytes(body_text.encode("utf-8"))
+    staged = []
+    try:
+        for destination, text in ((full, notes), (body, body_text)):
+            target = destination.resolve()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.parent / (".release-notes-" + secrets.token_hex(16))
+            with temporary.open("xb") as output:
+                staged.append((temporary, target))
+                if target.exists():
+                    temporary.chmod(stat.S_IMODE(target.stat().st_mode))
+                output.write(text.encode("utf-8"))
+        for temporary, target in staged:
+            os.replace(temporary, target)
+    finally:
+        for temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
 
 
 def main(argv=None):

@@ -15,6 +15,7 @@
 #include <netinet/tcp.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <poll.h>
 #include <unistd.h>
 #endif
@@ -742,6 +743,12 @@ void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup look
 extern "C" {
 
 extern const std::uint32_t sce_net_in6addr_any[4] = {};
+
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_loopback_nid_postfix[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_nodelocal_allnodes_nid_postfix[16] = {0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_linklocal_allrouters_nid_postfix[16] = {0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2};
+extern const std::uint32_t sce_net_dummy_nid_postfix = 0;
+
 alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_linklocal_allnodes[16] = {0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
 
 int* APS5_VABI sceNetErrnoLoc(void) {
@@ -836,6 +843,17 @@ bool SetSocketOptionForKernel(int descriptor, int level, int option, const void*
 }
 
 const bool g_socketOptionSetterRegistered = (KernelSetSocketOptionSetter_nid_no_patch(&SetSocketOptionForKernel), true);
+
+bool GetSocketOptionForKernel(int descriptor, int level, int option, void* value, std::uint32_t* length, int* error) {
+    {
+        std::lock_guard lk(g_mutex);
+        if (g_socks.count(descriptor) == 0) return false;
+    }
+    *error = sceNetGetsockopt(descriptor, level, option, value, length) == 0 ? 0 : *errno_slot();
+    return true;
+}
+
+const bool g_socketOptionGetterRegistered = (KernelSetSocketOptionGetter_nid_no_patch(&GetSocketOptionForKernel), true);
 
 constexpr int GuestFcntlGetStatus = 3;
 constexpr int GuestFcntlSetStatus = 4;
@@ -2378,7 +2396,9 @@ int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std
 }
 
 int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
-    if (timeout < 0 || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0) return fail(NET_EINVAL);
+    constexpr int minimumTimeout = 1000000;
+    if (timeout < 0 || (timeout != 0 && timeout < minimumTimeout) || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0)
+        return fail(NET_EINVAL);
     if (!hostname || !addr) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
     if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;
@@ -2538,7 +2558,9 @@ int APS5_VABI sceNetClearDnsCache(int flags) {
 }
 
 int APS5_VABI sceNetGetStatisticsInfo(NetStatisticsInfo* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    if (info == nullptr) return fail(NET_EFAULT);
+    constexpr std::int32_t FREE_BYTES = 16 * 1024 * 1024;
+    *info = {FREE_BYTES, FREE_BYTES, 0, 0, FREE_BYTES, FREE_BYTES};
     return 0;
 }
 
@@ -2560,7 +2582,8 @@ int APS5_VABI sceNetSetDnsInfo(const NetDnsInfo* info, std::uint32_t flags) {
 }
 
 int APS5_VABI sceNetShowIfconfigWithMemory(std::int32_t poolId) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lk(g_mutex);
+    if (g_pools.find(poolId) == g_pools.end()) return fail(NET_EBADF);
     return 0;
 }
 
@@ -2569,7 +2592,8 @@ int APS5_VABI sceNetShowPolicy(void) {
 }
 
 int APS5_VABI sceNetShowPolicyWithMemory(std::int32_t poolId) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lk(g_mutex);
+    if (g_pools.find(poolId) == g_pools.end()) return fail(NET_EBADF);
     return 0;
 }
 
@@ -2619,7 +2643,8 @@ int APS5_VABI sceNetShowRoute6(void) {
 }
 
 int APS5_VABI sceNetShowRoute6WithMemory(std::int32_t poolId) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lk(g_mutex);
+    if (g_pools.find(poolId) == g_pools.end()) return fail(NET_EBADF);
     return 0;
 }
 

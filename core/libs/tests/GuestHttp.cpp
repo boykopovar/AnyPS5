@@ -5,9 +5,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <clocale>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -425,7 +427,36 @@ static void CheckCaList() {
     Require(sceHttpsFreeCaList(1, &list) == 0 && list.certs == nullptr && list.certsNum == 0);
 }
 
-int main() {
+static int CheckUriLocales() {
+    const std::string previousCtype = std::setlocale(LC_CTYPE, nullptr);
+    bool exercised = false;
+#ifdef _WIN32
+    const char* locales[] = {".1252"};
+#else
+    const char* locales[] = {"en_US.ISO8859-1", "en_US.iso88591", "en_US.UTF-8"};
+#endif
+    for (const char* locale : locales) {
+        if (!std::setlocale(LC_CTYPE, locale)) continue;
+        CheckUriEscapeBytes();
+        CheckUriParseCharacters();
+        const bool classifiesHighByte = std::isalpha(static_cast<unsigned char>(0xE9)) != 0;
+        exercised |= classifiesHighByte;
+        std::printf("URI locale checks: %s; classifies 0xE9 as alphabetic: %s\n", locale, classifiesHighByte ? "yes" : "no");
+    }
+    Require(std::setlocale(LC_CTYPE, previousCtype.c_str()) != nullptr);
+#ifdef _WIN32
+    Require(exercised);
+#endif
+    if (!exercised) {
+        std::fputs("SKIP: URI locale regression requires a Latin-1 locale that classifies 0xE9 as alphabetic.\n", stderr);
+        return 77;
+    }
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--uri-locale") == 0) return CheckUriLocales();
+    Require(argc == 1);
     const std::uint64_t processSize = processParameters.size();
     const std::uint32_t processMagic = 0x4942524f;
     std::uint32_t sdkVersion = 0x1000000;
@@ -565,17 +596,6 @@ int main() {
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);
     CheckUriEscapeBytes();
     CheckUriParseCharacters();
-#ifdef _WIN32
-    Require(std::setlocale(LC_CTYPE, ".1252") != nullptr);
-    CheckUriEscapeBytes();
-    CheckUriParseCharacters();
-#else
-    for (const char* locale : {"en_US.ISO8859-1", "en_US.iso88591", "en_US.UTF-8"}) {
-        if (!std::setlocale(LC_CTYPE, locale)) continue;
-        CheckUriEscapeBytes();
-        CheckUriParseCharacters();
-    }
-#endif
     Require(std::setlocale(LC_CTYPE, previousCtype.c_str()) != nullptr);
 
     constexpr const char* unescapeCases[][2] = {
