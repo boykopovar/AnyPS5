@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
+#include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -41,6 +42,36 @@ void Run(AgcDriver::VulkanDevice& device) {
         const auto pixel = clamped ? 31u : 8u;
         const auto expected = iteration == 16u ? 0u : swizzled ? (format == 34u ? pixel + 200u : format == 22u ? 0x3f800000u : 1u) : format == 34u ? pixel + 100u : texels[pixel];
         for (std::uint32_t lane = 0u; lane < 32u; ++lane) Require(output[lane] == expected, "runtime image/sampler selection failed: iteration=" + std::to_string(iteration) + " value=" + std::to_string(output[lane]) + " expected=" + std::to_string(expected));
+    }
+    auto alphaCode = code;
+    alphaCode[4] = 0xf0800808u;
+    struct Case {
+        std::uint32_t format;
+        std::uint32_t swizzle;
+        std::uint32_t expected;
+    };
+    const std::array cases{Case{22u, 0x3acu, 0x3f800000u}, Case{20u, 0x3acu, 1u}, Case{56u, 0xfacu, 0u}, Case{22u, 0x1acu, 0u}, Case{22u, 0x3acu, 0x3f800000u}};
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> prepared;
+    for (const auto& test : cases) {
+        auto& texels = textures.front();
+        texels.fill(0x00102030u);
+        output.fill(0xdeadbeefu);
+        const auto bufferAddress = reinterpret_cast<std::uintptr_t>(output.data());
+        const auto imageAddress = reinterpret_cast<std::uintptr_t>(texels.data());
+        std::array<std::uint32_t, 16> userData{static_cast<std::uint32_t>(bufferAddress), static_cast<std::uint32_t>(bufferAddress >> 32u), 256u, 0x31016facu, static_cast<std::uint32_t>(imageAddress >> 8u), static_cast<std::uint32_t>(imageAddress >> 40u) | (test.format << 20u) | (3u << 30u), 7u, 0x90000000u | test.swizzle, 0u, 0u, 0u, 0u, 0x92u, 0u, 0u, 0u};
+        const ShaderRecompiler::ShaderComputeStageInfo compute{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(alphaCode.data()), alphaCode, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.Target(), {0u, 0u, 0u, 128u}};
+        if (!prepared) prepared = ShaderRecompiler::PrepareShader(request);
+        const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, prepared);
+        Require(invocation.has_value(), "constant alpha view stopped matching its prepared artifact");
+        ShaderRecompiler::SrtRuntime runtime;
+        runtime.userData = userData;
+        runtime.shaderBase = request.shader.codeAddress;
+        const auto captured = invocation->Capture(runtime);
+        const auto shader = invocation->Materialize(*captured);
+        device.Dispatch(*shader, 1u, 1u, 1u);
+        device.WaitIdle();
+        for (std::uint32_t lane = 0u; lane < 32u; ++lane) Require(output[lane] == test.expected, "prepared constant alpha result is stale or has the wrong numeric type");
     }
 }
 

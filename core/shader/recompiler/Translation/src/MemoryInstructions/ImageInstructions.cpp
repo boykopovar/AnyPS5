@@ -92,7 +92,8 @@ bool TranslationContext::imageAtomic(const RdnaInstruction& inst, IrOpcode opcod
     if (inst.dataBits == 64u) {
         opcode = imageAtomic64Opcode(opcode);
     }
-    const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
+    MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     IrValue* resource = getImageResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
     const MemoryFlags flags = addMemoryInfo(memory, inst.programCounter);

@@ -1,18 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetstack(const PthreadAttr* attr, void** stackAddress, std::size_t* stackSize);
-int APS5_VABI scePthreadAttrGetstackaddr(const PthreadAttr* attr, void** stackAddress);
-int APS5_VABI scePthreadAttrGetguardsize(const PthreadAttr* attr, std::size_t* guardSize);
-int APS5_VABI scePthreadAttrSetguardsize(PthreadAttr* attr, std::size_t guardSize);
-int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* stackAddress, std::size_t stackSize);
-int APS5_VABI scePthreadAttrSetstackaddr(PthreadAttr* attr, void* stackAddress);
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr int SceEinval = static_cast<int>(0x80020016u);

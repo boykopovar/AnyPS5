@@ -1,3 +1,5 @@
+#include "prx/libSceAudioIn/include/AudioIn.hpp"
+#include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -104,10 +106,9 @@ std::size_t capture(SDL_AudioDeviceID device, std::uint8_t* dest, std::size_t by
     while (SDL_GetQueuedAudioSize(device) < bytes && Clock::now() < deadline) PreciseSleepUs(1000);
     const std::size_t queued = SDL_GetQueuedAudioSize(device);
     std::array<std::uint8_t, 4096> discard;
-    for (std::size_t excess = queued > bytes * MAX_QUEUED_BLOCKS ? queued - bytes * MAX_QUEUED_BLOCKS : 0; excess > 0;) {
-        const auto chunk = static_cast<Uint32>(std::min(excess, discard.size()));
-        excess -= SDL_DequeueAudio(device, discard.data(), chunk);
-    }
+    const std::size_t excess = queued > bytes * MAX_QUEUED_BLOCKS ? queued - bytes * MAX_QUEUED_BLOCKS : 0;
+    audioin::detail::discardQueuedAudio(excess, discard.data(), discard.size(),
+        [device](std::uint8_t* dest, std::uint32_t chunk) { return SDL_DequeueAudio(device, dest, chunk); });
     return SDL_DequeueAudio(device, dest, static_cast<Uint32>(bytes));
 }
 
@@ -191,9 +192,9 @@ int32_t APS5_VABI sceAudioInAsyncOpen(int32_t userId, uint32_t type, uint32_t in
 }
 
 int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::lock_guard lock(g_mutex);
+    if (!find(handle)) return AUDIO_IN_ERROR_INVALID_HANDLE;
+    return 0;
 }
 
 int32_t APS5_VABI sceAudioInGetGain(int32_t handle, float* gain) {
@@ -258,14 +259,14 @@ int APS5_VABI sceAudioInGetHandleStatusInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioInOpenEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAudioInOpenEx(int user_id, uint32_t type, uint32_t index, uint32_t extra, uint32_t len, uint32_t freq, uint32_t param) {
+    (void)extra;
+    return sceAudioInOpen(user_id, type, index, len, freq, param);
 }
 
-int APS5_VABI sceAudioInHqOpenEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAudioInHqOpenEx(int user_id, uint32_t type, uint32_t index, uint32_t extra, uint32_t len, uint32_t freq, uint32_t param) {
+    (void)extra;
+    return sceAudioInOpen(user_id, type, index, len, freq, param);
 }
 
 int APS5_VABI sceAudioInDeviceOpenEx(void) {
@@ -289,12 +290,10 @@ int APS5_VABI sceAudioInSetSparkSideTone(void) {
 }
 
 int APS5_VABI sceAudioInSetCompressorPreGain(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAudioInSetNoiseGateThreshold(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

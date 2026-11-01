@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -19,28 +22,6 @@
 #include <unistd.h>
 #endif
 
-struct GuestIovec {
-    void* base;
-    std::size_t length;
-};
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelLseek(int, std::int64_t, int);
-std::int64_t APS5_VABI sceKernelReadv(int, const GuestIovec*, int);
-std::int64_t APS5_VABI sceKernelWritev(int, const GuestIovec*, int);
-std::int64_t APS5_VABI sceKernelPreadv(int, const GuestIovec*, int, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwritev(int, const GuestIovec*, int, std::int64_t);
-std::int64_t APS5_VABI readv_nid_postfix(int, const GuestIovec*, int);
-std::int64_t APS5_VABI writev_nid_postfix(int, const GuestIovec*, int);
-std::int64_t APS5_VABI _readv_nid_postfix(int, const GuestIovec*, int);
-std::int64_t APS5_VABI _writev_nid_postfix(int, const GuestIovec*, int);
-std::int64_t APS5_VABI preadv_nid_postfix(int, const GuestIovec*, int, std::int64_t);
-std::int64_t APS5_VABI pwritev_nid_postfix(int, const GuestIovec*, int, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-}
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "File vector memory check failed at line %d\n", line);
@@ -54,7 +35,7 @@ struct Transfer {
     bool posix;
     bool positioned;
     bool write;
-    std::function<std::int64_t(int, const GuestIovec*, int)> call;
+    std::function<std::int64_t(int, const KernelIovec*, int)> call;
 };
 
 static std::uintptr_t observedTable = 0;
@@ -77,14 +58,14 @@ int main(int argc, char** argv) {
     const std::array<Transfer, 10> transfers{{
         {"readv", true, false, false, readv_nid_postfix},
         {"writev", true, false, true, writev_nid_postfix},
-        {"preadv", true, true, false, [](int fd, const GuestIovec* iov, int count) { return preadv_nid_postfix(fd, iov, count, 1); }},
-        {"pwritev", true, true, true, [](int fd, const GuestIovec* iov, int count) { return pwritev_nid_postfix(fd, iov, count, 1); }},
+        {"preadv", true, true, false, [](int fd, const KernelIovec* iov, int count) { return preadv_nid_postfix(fd, iov, count, 1); }},
+        {"pwritev", true, true, true, [](int fd, const KernelIovec* iov, int count) { return pwritev_nid_postfix(fd, iov, count, 1); }},
         {"_readv", true, false, false, _readv_nid_postfix},
         {"_writev", true, false, true, _writev_nid_postfix},
         {"sceKernelReadv", false, false, false, sceKernelReadv},
         {"sceKernelWritev", false, false, true, sceKernelWritev},
-        {"sceKernelPreadv", false, true, false, [](int fd, const GuestIovec* iov, int count) { return sceKernelPreadv(fd, iov, count, 1); }},
-        {"sceKernelPwritev", false, true, true, [](int fd, const GuestIovec* iov, int count) { return sceKernelPwritev(fd, iov, count, 1); }},
+        {"sceKernelPreadv", false, true, false, [](int fd, const KernelIovec* iov, int count) { return sceKernelPreadv(fd, iov, count, 1); }},
+        {"sceKernelPwritev", false, true, true, [](int fd, const KernelIovec* iov, int count) { return sceKernelPwritev(fd, iov, count, 1); }},
     }};
 #ifdef _WIN32
     SYSTEM_INFO system{};
@@ -98,9 +79,9 @@ int main(int argc, char** argv) {
     Require(memory != MAP_FAILED);
 #endif
     std::array<char, 2> bytes{'A', 'B'};
-    const std::array<GuestIovec, 2> vectors{{{bytes.data(), 1}, {bytes.data() + 1, 1}}};
+    const std::array<KernelIovec, 2> vectors{{{bytes.data(), 1}, {bytes.data() + 1, 1}}};
     std::memcpy(memory, vectors.data(), sizeof(vectors));
-    std::memcpy(memory + page - sizeof(GuestIovec), vectors.data(), sizeof(GuestIovec));
+    std::memcpy(memory + page - sizeof(KernelIovec), vectors.data(), sizeof(KernelIovec));
     Protect(memory, page, true);
     Protect(memory + page, page, false);
     const auto path = std::filesystem::temp_directory_path() /
@@ -113,13 +94,13 @@ int main(int argc, char** argv) {
         { std::ofstream file(path, std::ios::binary); file << "ABCD"; Require(static_cast<bool>(file)); }
         const int fd = sceKernelOpen(guestPath.c_str(), SCE_KERNEL_O_RDWR, 0);
         Require(fd >= 0);
-        const std::array<const GuestIovec*, 6> invalid{{
+        const std::array<const KernelIovec*, 6> invalid{{
             nullptr,
-            reinterpret_cast<const GuestIovec*>(std::uintptr_t{1}),
-            reinterpret_cast<const GuestIovec*>(memory + page),
-            reinterpret_cast<const GuestIovec*>(memory + page - sizeof(GuestIovec)),
-            reinterpret_cast<const GuestIovec*>(memory + page - sizeof(GuestIovec) / 2),
-            reinterpret_cast<const GuestIovec*>(UINTPTR_MAX - sizeof(GuestIovec) + 1),
+            reinterpret_cast<const KernelIovec*>(std::uintptr_t{1}),
+            reinterpret_cast<const KernelIovec*>(memory + page),
+            reinterpret_cast<const KernelIovec*>(memory + page - sizeof(KernelIovec)),
+            reinterpret_cast<const KernelIovec*>(memory + page - sizeof(KernelIovec) / 2),
+            reinterpret_cast<const KernelIovec*>(UINTPTR_MAX - sizeof(KernelIovec) + 1),
         }};
         for (const auto* table : invalid) {
             *__error_nid_postfix() = 0;
@@ -142,7 +123,7 @@ int main(int argc, char** argv) {
         observedTable = reinterpret_cast<std::uintptr_t>(memory);
         observedBytes = 0;
         GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ObserveRead);
-        Require(transfer.call(fd, reinterpret_cast<const GuestIovec*>(memory), 2) == 2);
+        Require(transfer.call(fd, reinterpret_cast<const KernelIovec*>(memory), 2) == 2);
         GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
         Require(observedBytes == sizeof(vectors));
         Require(sceKernelLseek(fd, 0, SEEK_CUR) == (transfer.positioned ? 0 : 2));
@@ -156,10 +137,10 @@ int main(int argc, char** argv) {
             Require((bytes == (transfer.positioned ? std::array<char, 2>{'B', 'C'} : std::array<char, 2>{'A', 'B'})));
         }
         Require(sceKernelLseek(fd, 0, SEEK_SET) == 0);
-        Require(transfer.call(fd, reinterpret_cast<const GuestIovec*>(memory + page - sizeof(GuestIovec)), 1) == 1);
+        Require(transfer.call(fd, reinterpret_cast<const KernelIovec*>(memory + page - sizeof(KernelIovec)), 1) == 1);
         Require(sceKernelLseek(fd, 0, SEEK_CUR) == (transfer.positioned ? 0 : 1));
         Require(sceKernelLseek(fd, 0, SEEK_SET) == 0);
-        std::array<GuestIovec, 1024> maximum{};
+        std::array<KernelIovec, 1024> maximum{};
         maximum.back() = {bytes.data(), 1};
         Require(transfer.call(fd, maximum.data(), static_cast<int>(maximum.size())) == 1);
         Require(sceKernelLseek(fd, 0, SEEK_CUR) == (transfer.positioned ? 0 : 1));

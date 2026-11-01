@@ -186,7 +186,7 @@ def main():
         for name, image, base, error in (
             ("unaligned", fixture(alignment=0x20000), 0x410000, "is not a multiple of the PT_LOAD alignment 0x20000"),
             ("beyond-user-space", fixture(memory_size=0x100000), 0x7FFFFFFF0000, "outside the Linux user address space"),
-            ("unsupported-type", fixture(relocation_type=9), BASE, "Relocation type 9 cannot be placed at a fixed Linux base"),
+            ("unsupported-type", fixture(relocation_type=11), BASE, "Unsupported relocation type 0xb"),
             ("negative-target", fixture(addend=-16), BASE, "Relocation target -16 lies below the image at a fixed Linux base"),
         ):
             result, output = relink(relinker, work, name, image, "--linux-fixed-base", hex(base))

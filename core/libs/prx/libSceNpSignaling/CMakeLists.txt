@@ -1,0 +1,16 @@
+add_library(libSceNpSignaling SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpSignaling PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpSignaling)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_signaling_offline_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpSignalingOffline.cpp)
+    target_include_directories(guest_np_signaling_offline_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_signaling_offline_tests PRIVATE libSceNpSignaling)
+    configure_windows_unwind(guest_np_signaling_offline_tests)
+    add_test(NAME guest_np_signaling_offline COMMAND guest_np_signaling_offline_tests)
+    set_tests_properties(guest_np_signaling_offline PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_signaling_offline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpSignaling>")
+    endif()
+endif()

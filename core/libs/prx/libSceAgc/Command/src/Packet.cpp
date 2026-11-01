@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
@@ -67,6 +68,7 @@ void Reserve(CommandBuffer* buffer, std::uint32_t count, const char* function) {
 std::uint32_t* Allocate(CommandBuffer* buffer, std::uint32_t count, const char* function) {
     Reserve(buffer, count, function);
     auto* result = buffer->cursor_up;
+    AgcDriverPrepareCommandWrite_nid_no_patch(reinterpret_cast<std::uint64_t>(result), static_cast<std::size_t>(count) * sizeof(std::uint32_t));
     buffer->cursor_up += count;
     return result;
 }
@@ -113,17 +115,23 @@ std::uint32_t* WriteRegisters(CommandBuffer* buffer, std::uint32_t opcode, const
         Require(buffer != nullptr, function, "null command buffer");
         return buffer->cursor_up;
     }
-    CheckAddress(reinterpret_cast<std::uintptr_t>(registers), 4, function);
+    CheckAddress(reinterpret_cast<std::uintptr_t>(registers), 1, function);
+    const auto* bytes = reinterpret_cast<const std::byte*>(const_cast<const ShaderRegister*>(registers));
+    const auto entryAt = [&](std::uint32_t index) {
+        ShaderRegister entry;
+        std::memcpy(&entry, bytes + static_cast<std::size_t>(index) * sizeof(ShaderRegister), sizeof(entry));
+        return entry;
+    };
     std::vector<ShaderRegister> snapshot;
     if (snapshotAll) {
         snapshot.reserve(count);
         for (std::uint32_t i = 0; i < count; ++i) {
-            snapshot.push_back({registers[i].offset, registers[i].value});
+            snapshot.push_back(entryAt(i));
             CheckBits(snapshot.back().offset, 0xffffu, function);
         }
     }
-    const auto offsetAt = [&](std::uint32_t index) { return snapshotAll ? snapshot[index].offset : registers[index].offset; };
-    const auto valueAt = [&](std::uint32_t index) { return snapshotAll ? snapshot[index].value : registers[index].value; };
+    const auto offsetAt = [&](std::uint32_t index) { return snapshotAll ? snapshot[index].offset : entryAt(index).offset; };
+    const auto valueAt = [&](std::uint32_t index) { return snapshotAll ? snapshot[index].value : entryAt(index).value; };
     std::uint32_t* first = nullptr;
     std::uint32_t index = 0;
     while (index < count) {

@@ -1,6 +1,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
+#include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
@@ -25,6 +26,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -95,6 +97,12 @@ bool descriptorIsCube(const DescriptorValue& descriptor) {
     return rawImageType(descriptor) == ImageType::Cube;
 }
 
+bool descriptorIsShortCube(const DescriptorValue& descriptor) {
+    const auto depth = descriptor.dwords[4] & 0x1fffu;
+    const auto baseArray = (descriptor.dwords[4] >> 16u) & 0x1fffu;
+    return descriptorIsCube(descriptor) && descriptor.dwordCount == 8u && baseArray < depth && depth - baseArray < 5u;
+}
+
 RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaImageDimension requested) {
     const bool wantArray = requested == RdnaImageDimension::Dim1DArray || requested == RdnaImageDimension::Dim2DArray || requested == RdnaImageDimension::Dim2DMsaaArray;
     switch (rawImageType(descriptor)) {
@@ -128,10 +136,19 @@ std::uint32_t imageCoordinates(RdnaImageDimension dimension) {
     }
 }
 
+bool multisamplePlaneRead(const ImageResource& image) {
+    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
+}
+
+bool undefinedImageWords(const DescriptorValue& descriptor) {
+    const auto type = static_cast<std::uint32_t>(rawImageType(descriptor));
+    return !nullImageDescriptor(descriptor) && type >= 2u && (type < static_cast<std::uint32_t>(ImageType::Color1D) || !IsDefinedImageFormat(rawImageFormat(descriptor)));
+}
+
 bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
     const auto type = rawImageType(descriptor);
     const auto format = rawImageFormat(descriptor);
-    if (type < ImageType::Color1D || format == IrBufferFormat::Invalid) {
+    if (type < ImageType::Color1D || !IsDefinedImageFormat(format)) {
         return false;
     }
     if (r128 && type != ImageType::Color1D && type != ImageType::Color2D && type != ImageType::Color2DMsaa) {
@@ -173,7 +190,7 @@ PoisonReason invalidImageReason(const DescriptorValue& descriptor) {
     if (type < ImageType::Color1D) {
         return PoisonReason::NotImage;
     }
-    if (rawImageFormat(descriptor) == IrBufferFormat::Invalid) {
+    if (!IsDefinedImageFormat(rawImageFormat(descriptor))) {
         return PoisonReason::InvalidFormat;
     }
     if (type == ImageType::Color2DMsaa || type == ImageType::Color2DMsaaArray) {
@@ -201,7 +218,8 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (!validImageDescriptor(descriptor, base.r128)) {
         return rejectImage(invalidImageReason(descriptor), "image descriptor is invalid");
     }
-    decoded.dimension = descriptorDimension(descriptor, base.dimension);
+    const bool queryLayers = base.dimension == RdnaImageDimension::Dim1D && base.dimensionQueryOnly && rawImageType(descriptor) == ImageType::Color2DArray;
+    decoded.dimension = descriptorDimension(descriptor, queryLayers ? RdnaImageDimension::Dim2DArray : base.dimension);
     if (base.depthCompare) {
         if (decoded.dimension == RdnaImageDimension::Dim1D) {
             decoded.dimension = RdnaImageDimension::Dim2D;
@@ -214,6 +232,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     decoded.cube = descriptorIsCube(descriptor);
     const auto format = rawImageFormat(descriptor);
+    if (decoded.dimension == RdnaImageDimension::Dim2DMsaa && rawImageType(descriptor) == ImageType::Color2DMsaa && multisamplePlaneRead(base) && !IsFmaskTextureFormat(format) && !IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) decoded.dimension = RdnaImageDimension::Dim2D;
     if (base.atomic64 && format != IrBufferFormat::Format32_32UInt && format != IrBufferFormat::Format32_32SInt && format != IrBufferFormat::Format32_32Float) {
         return rejectImage(PoisonReason::InvalidFormat, "64-bit atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
@@ -222,14 +241,22 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool storage = base.resourceClass == ImageResourceClass::Storage;
     const bool table = base.table != NoTable;
+    if (decoded.cube && (storage || !base.sampledOnly) && descriptorIsShortCube(descriptor)) {
+        return rejectImage(PoisonReason::Dimension, "a cube descriptor with fewer than six slices is implemented only for sampling; loads, stores and dimension queries through it stop at its last slice");
+    }
     decoded.fmask = IsFmaskTextureFormat(format);
     if (decoded.fmask && !base.fmaskCompatible) return rejectImage(PoisonReason::Fmask, "FMASK requires a direct 32-bit image load");
     if (decoded.fmask && (storage || base.depthCompare || table)) {
         return rejectImage(PoisonReason::Fmask, "FMASK requires a direct sampled image load");
     }
-    if (decoded.fmask && format != IrBufferFormat::Fmask32_S8_F8) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
-    if (decoded.fmask && (descriptor.dwords[6] & (3u << 20u)) != 0u) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is not implemented");
+    if (decoded.fmask && !FmaskLayoutOf(format).has_value()) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
+    if (decoded.fmask && ((descriptor.dwords[6] & (1u << 20u)) != 0u || ((descriptor.dwords[6] & (1u << 21u)) != 0u && (descriptor.dwords[6] >> 24u) == 0u && descriptor.dwords[7] == 0u))) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is not implemented without readable metadata");
+    if (decoded.fmask && (descriptor.dwords[6] & (1u << 21u)) != 0u && format != IrBufferFormat::Fmask32_S8_F8) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
     if (decoded.fmask && (base.packed || base.byElements != 0u)) return rejectImage(PoisonReason::Fmask, "packed FMASK image reads are not implemented");
+    for (std::uint32_t component = 0; decoded.fmask && component < 4u; ++component) {
+        const auto selector = (descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u;
+        if (selector != 0u && selector != 1u && selector != 4u) return rejectImage(PoisonReason::Fmask, "FMASK destination channel selector is not implemented");
+    }
     if (base.packed) {
         if (table || (!storage && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle)) {
             return rejectImage(PoisonReason::InvalidFormat, "packed image access requires a direct image, with identity swizzle when sampled");
@@ -249,10 +276,11 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
                                                                      : "MIMG BY2/BY4 requires a direct, identity-swizzled 2D image whose elements fill one dword: R8, R16 or RG8 for BY2, R8 for BY4");
         }
     }
-    const bool nativeRepacked = format == IrBufferFormat::Format10_11_11Float && !storage && !base.packed;
-    decoded.conversionFormat = RemapTextureFormat(format) != format && !nativeRepacked ? format : IrBufferFormat::Invalid;
-    if (format == IrBufferFormat::Format11_11_10UNorm || (format == IrBufferFormat::Format10_11_11Float && !nativeRepacked)) {
-        const bool floating = format == IrBufferFormat::Format10_11_11Float;
+    const bool nativeRepacked = (format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !storage && !base.packed;
+    const auto remappedFormat = storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
+    decoded.conversionFormat = remappedFormat != format && !nativeRepacked ? format : IrBufferFormat::Invalid;
+    if (format == IrBufferFormat::Format11_11_10UNorm || ((format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !nativeRepacked)) {
+        const bool floating = format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float;
         if (!base.srgbDecodeCompatible) {
             if (floating) return rejectImage(PoisonReason::Conversion, "samples or gathers a converted float image, or queries its LOD, which is not implemented");
             if (storage || base.depthCompare || (base.emulatedCompare & EmulatedCompare::ConvertedSampleUnsupported) != 0u) return rejectImage(PoisonReason::Conversion, "sampling, gathering or querying LOD of a converted unorm image is not implemented");
@@ -265,6 +293,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
             if (((descriptorImageSwizzle(descriptor) >> (component * 3u)) & 7u) == 7u) return rejectImage(PoisonReason::Conversion, "selects a channel the converted image format does not have");
         }
     }
+    if (decoded.fmask && format != IrBufferFormat::Fmask32_S8_F8) decoded.conversionFormat = FmaskExpansion;
     decoded.srgbDecode = !storage && !base.depthCompare && (srgbDecodeFormats & SrgbDecodeBit(format)) != 0u;
     if (decoded.srgbDecode && !base.srgbDecodeCompatible) {
         return rejectImage(PoisonReason::SrgbUnsupported, "samples or gathers an sRGB image the device cannot sample, which is not implemented");
@@ -275,7 +304,9 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const bool wideSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt;
     const bool narrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt || format == IrBufferFormat::Format8_8_8_8SInt || format == IrBufferFormat::Format16_16_16_16SInt;
     const bool rawSintStorage = storage && (wideSint || (narrowSint && !base.packed)) && base.written && !base.read && !base.atomic;
-    decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : nativeRepacked ? IrTextureNumericClass::Float : SampledTextureNumericClass(format);
+    const bool rawFloat16Storage = storage && base.written && !base.read && !base.atomic &&
+        (remappedFormat == IrBufferFormat::Format16Float || remappedFormat == IrBufferFormat::Format16_16Float || remappedFormat == IrBufferFormat::Format16_16_16_16Float);
+    decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : nativeRepacked ? IrTextureNumericClass::Float : SampledTextureNumericClass(remappedFormat);
     if (!storage && !base.depthCompare && IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) {
         decoded.depthBits = true;
         if (!base.depthBitsCompatible) return rejectImage(PoisonReason::DepthBits16, "runtime image reads depth bits as unsupported 16-bit results");
@@ -290,7 +321,10 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
         if (rawSintStorage) {
             decoded.numericClass = IrTextureNumericClass::Uint;
         }
-        if ((rawSintStorage || (base.atomic && format == IrBufferFormat::Format32SInt)) && !base.packed) {
+        if (rawFloat16Storage) {
+            decoded.numericClass = IrTextureNumericClass::Uint;
+        }
+        if ((rawSintStorage || rawFloat16Storage || (base.atomic && format == IrBufferFormat::Format32SInt)) && !base.packed) {
             decoded.conversionFormat = format;
         }
     } else if (decoded.numericClass == IrTextureNumericClass::Unsupported || (base.depthCompare && decoded.numericClass != IrTextureNumericClass::Float)) {
@@ -655,6 +689,7 @@ private:
 
 struct WordsIndexTag {};
 struct ElementIndexTag {};
+struct SamplerIndexTag {};
 struct PoisonIndexTag {};
 struct TableRecordsTag {};
 
@@ -665,11 +700,18 @@ public:
     void Run() {
         tables = ImageTableSnapshot{};
         std::uint32_t count = 0;
+        bool hasIndirect = false;
         for (const auto& image : plan.info.images) {
-            if (image.table != NoTable) count = std::max(count, image.table + 1u);
+            if (image.table != NoTable) {
+                count = std::max(count, image.table + 1u);
+                if (image.source < plan.descriptorSources.size() && plan.descriptorSources[image.source].tableColumn.has_value() && plan.descriptorSources[image.source].tableColumn->indirect) hasIndirect = true;
+            }
         }
         for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) count = std::max(count, sampler.table + 1u);
+            if (sampler.table != NoTable) {
+                count = std::max(count, sampler.table + 1u);
+                if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value() && plan.descriptorSources[sampler.source].tableColumn->indirect) hasIndirect = true;
+            }
         }
         if (count == 0u) {
             return;
@@ -678,14 +720,31 @@ public:
             throw std::runtime_error("image table snapshot requires runtime memory access");
         }
         const auto started = std::chrono::steady_clock::now();
-        tables.shader = plan.shaderHash;
-        tables.tables.resize(count);
-        for (const auto& image : plan.info.images) {
-            if (image.table != NoTable) Snapshot(image.source, image.table);
+        const bool checkEpoch = (count > 1u || hasIndirect) && runtime.descriptorScope != nullptr;
+        bool completed = false;
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            if (attempt != 0u) {
+                columns.clear();
+                pages.clear();
+                wholePages.clear();
+                tables = {};
+            }
+            tables.shader = plan.shaderHash;
+            tables.tables.resize(count);
+            const SrtForceSyncScope forceSync(runtime, checkEpoch && attempt == 2u);
+            const auto invalidationsBefore = checkEpoch ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            for (const auto& image : plan.info.images) {
+                if (image.table != NoTable) Snapshot(image.source, image.table);
+            }
+            for (const auto& sampler : plan.info.samplers) {
+                if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
+            }
+            if (!checkEpoch || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) {
+                completed = true;
+                break;
+            }
         }
-        for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
-        }
+        if (!completed) throw std::runtime_error("image table: multi-table snapshot did not stabilize");
         auto& counters = tableCounters();
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
         counters.tables.fetch_add(count, std::memory_order_relaxed);
@@ -704,12 +763,17 @@ public:
 
 private:
     static constexpr std::uint64_t PageBytes = 4096u;
+    mutable std::uint32_t indirectDwords = 0;
+    mutable std::uint32_t indirectDword = 0;
+    mutable std::uint32_t accessibleChecks = 0;
 
     bool Accessible(std::uint64_t address, std::uint64_t bytes) const {
         return runtime.accessible == nullptr || runtime.accessible(runtime.userContext, address, bytes);
     }
 
     bool PageAccessible(std::uint64_t address, std::uint64_t begin, std::uint64_t end) {
+        indirectDword = 0u;
+        accessibleChecks = 0u;
         const auto page = address & ~(PageBytes - 1u);
         if (const auto found = pages.find(page); found != pages.end()) return found->second;
         const auto first = std::max(page, begin);
@@ -723,12 +787,29 @@ private:
         const auto page = address & ~(PageBytes - 1u);
         const auto [found, inserted] = wholePages.try_emplace(page, false);
         if (inserted) found->second = Accessible(page, PageBytes);
-        return found->second || Accessible(address, sizeof(std::uint32_t));
+        const bool accessible = found->second || Accessible(address, sizeof(std::uint32_t));
+        if (accessible) {
+            ++accessibleChecks;
+        } else {
+            indirectDword = 0u;
+            accessibleChecks = 0u;
+        }
+        return accessible;
     }
 
     std::uint32_t Read(std::uint64_t address) const {
+        const bool scoped = runtime.descriptorScope != nullptr && indirectDwords > 1u && accessibleChecks == 1u;
+        if (scoped) {
+            static_cast<void>(runtime.descriptorScope(runtime.userContext, static_cast<std::size_t>(indirectDwords - indirectDword) * sizeof(std::uint32_t)));
+            indirectDword = (indirectDword + 1u) % indirectDwords;
+        } else {
+            indirectDword = 0u;
+        }
+        accessibleChecks = 0u;
         std::uint32_t word = 0;
-        if (!runtime.readMemory(runtime.userContext, address, &word)) {
+        const bool ok = runtime.readMemory(runtime.userContext, address, &word);
+        if (scoped) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
+        if (!ok) {
             throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
         }
         return word;
@@ -846,25 +927,41 @@ private:
             return;
         }
         DescriptorValue value;
-        value.dwordCount = 8u;
         std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
         std::uint64_t high = 0;
-        for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
-            const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, size);
-            if (!position.has_value()) {
+        bool completed = false;
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            value = {};
+            value.dwordCount = 8u;
+            low = std::numeric_limits<std::uint64_t>::max();
+            high = 0;
+            const SrtForceSyncScope forceSync(runtime, attempt == 2u);
+            const auto invalidationsBefore = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+                const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, size);
+                if (!position.has_value()) {
+                    value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
+                    continue;
+                }
+                const auto address = base + *position;
+                if (!PageAccessible(address, base, base + size)) {
+                    records.states.front() = RecordState::Unmapped;
+                    return;
+                }
+                if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, static_cast<std::size_t>(column.dwordCount - dword) * sizeof(std::uint32_t)));
+                value.dwords[dword] = Read(address);
+                if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
                 value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
-                continue;
+                low = std::min(low, address);
+                high = std::max(high, address + sizeof(std::uint32_t));
+                if (runtime.descriptorScope != nullptr && runtime.descriptorScope(runtime.userContext, 0u) != invalidationsBefore) break;
             }
-            const auto address = base + *position;
-            if (!PageAccessible(address, base, base + size)) {
-                records.states.front() = RecordState::Unmapped;
-                return;
+            if (runtime.descriptorScope == nullptr || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) {
+                completed = true;
+                break;
             }
-            value.dwords[dword] = Read(address);
-            value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
-            low = std::min(low, address);
-            high = std::max(high, address + sizeof(std::uint32_t));
         }
+        if (!completed) throw std::runtime_error("image table: selected descriptor snapshot did not stabilize");
         records.words.front() = WordsIndex(records, value);
         if (low < high) tables.ranges.emplace_back(low, high - low);
     }
@@ -912,7 +1009,15 @@ private:
             return found->second;
         }
         auto& records = columns[source];
-        ReadColumn(*plan.descriptorSources.at(source).tableColumn, source, records);
+        const auto& column = *plan.descriptorSources.at(source).tableColumn;
+        const auto previousIndirectDwords = indirectDwords;
+        indirectDwords = column.indirect ? column.dwordCount : 0u;
+        indirectDword = 0u;
+        accessibleChecks = 0u;
+        ReadColumn(column, source, records);
+        indirectDwords = previousIndirectDwords;
+        indirectDword = 0u;
+        accessibleChecks = 0u;
         if (!records.sealed) Seal(records);
         return records;
     }
@@ -1085,7 +1190,7 @@ private:
             read = std::move(comparedWords);
         } else {
             read.resize(total);
-            ReadRuns(runs, read);
+            ReadRuns(runs, read, column.dwordCount);
         }
         auto next = split.begin();
         for (std::uint32_t record = 0; record < records.keys; record++) {
@@ -1122,16 +1227,39 @@ private:
         if (memoized) Remember(key, records, std::move(runs), std::move(read), column.address && low < high ? low : 0u, column.address && low < high ? high : 0u);
     }
 
-    void ReadRuns(const std::vector<std::pair<std::uint64_t, std::uint32_t>>& runs, std::vector<std::uint32_t>& read) const {
-        std::size_t at = 0;
-        for (const auto& [address, count] : runs) {
-            if (runtime.readWords != nullptr) {
-                if (!runtime.readWords(runtime.userContext, address, read.data() + at, count)) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
-            } else {
-                for (std::uint32_t word = 0; word < count; word++) read[at + word] = Read(address + word * 4u);
+    void ReadRuns(const std::vector<std::pair<std::uint64_t, std::uint32_t>>& runs, std::vector<std::uint32_t>& read, std::uint32_t descriptorDwords) const {
+        const auto scopeBytes = descriptorDwords > 1u ? static_cast<std::size_t>(descriptorDwords) * sizeof(std::uint32_t) : 0u;
+        bool completed = false;
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            const SrtForceSyncScope forceSync(runtime, attempt == 2u);
+            const auto invalidationsBefore = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            std::size_t at = 0;
+            for (const auto& [address, count] : runs) {
+                if (runtime.readWords != nullptr) {
+                    if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, scopeBytes));
+                    const bool ok = runtime.readWords(runtime.userContext, address, read.data() + at, count);
+                    if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
+                    if (!ok) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
+                } else {
+                    for (std::uint32_t word = 0; word < count; word++) {
+                        if (runtime.descriptorScope != nullptr && descriptorDwords > 1u) {
+                            const auto remaining = std::min<std::uint32_t>(descriptorDwords - (word % descriptorDwords), count - word);
+                            static_cast<void>(runtime.descriptorScope(runtime.userContext, static_cast<std::size_t>(remaining) * sizeof(std::uint32_t)));
+                        }
+                        read[at + word] = Read(address + word * 4u);
+                        if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
+                        if (runtime.descriptorScope != nullptr && runtime.descriptorScope(runtime.userContext, 0u) != invalidationsBefore) break;
+                    }
+                }
+                if (runtime.descriptorScope != nullptr && runtime.descriptorScope(runtime.userContext, 0u) != invalidationsBefore) break;
+                at += count;
             }
-            at += count;
+            if (runtime.descriptorScope == nullptr || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) {
+                completed = true;
+                break;
+            }
         }
+        if (!completed) throw std::runtime_error("image table: descriptor snapshot did not stabilize");
         tableReuseTotals().wordsRead.fetch_add(read.size(), std::memory_order_relaxed);
     }
 
@@ -1158,7 +1286,7 @@ private:
             }
         }
         std::vector<std::uint32_t> read(memo.read->words.size());
-        ReadRuns(memo.read->runs, read);
+        ReadRuns(memo.read->runs, read, column.dwordCount);
         if (read != memo.read->words) {
             comparedRuns = memo.read->runs;
             comparedWords = std::move(read);
@@ -1336,7 +1464,13 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
             descriptor.dwordCount = 8u;
         }
         if (!validImageDescriptor(descriptor, image.r128) && !nullImageDescriptor(image, descriptor)) {
-            throw std::runtime_error("runtime image descriptor is invalid");
+            if (!image.optionalDescriptor || !undefinedImageWords(descriptor)) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), ": image %u first used at pc 0x%x (%s, read %d, written %d, r128 %d), T# %08x %08x %08x %08x %08x %08x %08x %08x", i, image.firstUsePc, image.optionalDescriptor ? "optional" : "required", image.read ? 1 : 0, image.written ? 1 : 0, image.r128 ? 1 : 0, descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3], descriptor.dwords[4], descriptor.dwords[5], descriptor.dwords[6], descriptor.dwords[7]);
+                throw std::runtime_error(std::string("runtime image descriptor is invalid") + detail);
+            }
+            descriptor = DescriptorValue{};
+            descriptor.dwordCount = 8u;
         }
         snapshot.images[i] = descriptor;
     }
@@ -1380,7 +1514,7 @@ void materializeForcedDegamma(const IrResourcePlan& plan, ResourceSnapshot& snap
 
 std::uint32_t colorCompareReference(IrBufferFormat format) {
     const auto value = static_cast<std::uint32_t>(format);
-    if (((value >= 1u && value <= 77u) || (value >= 128u && value <= 130u)) && SampledTextureNumericClass(format) == IrTextureNumericClass::Float && format != IrBufferFormat::Format11_11_10UNorm && format != IrBufferFormat::Format10_11_11Float) return EmulatedCompare::ReferenceZero;
+    if (((value >= 1u && value <= 77u) || (value >= 128u && value <= 130u)) && (SampledTextureNumericClass(format) == IrTextureNumericClass::Float || format == IrBufferFormat::Format11_11_10Float) && format != IrBufferFormat::Format11_11_10UNorm && format != IrBufferFormat::Format10_11_11Float) return EmulatedCompare::ReferenceZero;
     throw std::runtime_error("comparison sampling of a color texture is implemented only for floating-point, UNORM and SNORM formats (format " + std::to_string(value) + ")");
 }
 
@@ -1479,9 +1613,34 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
     return *samplerState | (reference << EmulatedCompare::ReferenceShift) | (singleLevel ? EmulatedCompare::SingleLevel : 0u);
 }
 
+bool disabledBufferDescriptor(const BufferResource& buffer, const DescriptorValue& descriptor) {
+    const auto decoded = decodeBufferDescriptor(descriptor);
+    const auto format = decoded.RawFormat();
+    if (decoded.Type() == 0u) return format == 0u;
+    return (decoded.Type() == 2u || decoded.Type() == 3u) && format <= static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) && !buffer.read;
+}
+
+bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, const DescriptorValue& descriptor) {
+    const auto& buffer = plan.info.buffers[index];
+    if (GcnGuestShaders() || buffer.atomic || buffer.scalar || buffer.imageAlias != BufferResource::NoImageAlias || !disabledBufferDescriptor(buffer, descriptor)) return false;
+    const bool measuredOnly = decodeBufferDescriptor(descriptor).Type() != 0u;
+    bool accessed = false;
+    for (const auto& memory : plan.memoryInfo) {
+        if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
+        if (memory.typed || memory.gpuDescriptor) return false;
+        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) return false;
+        accessed = true;
+    }
+    return accessed;
+}
+
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
         const auto& buffer = plan.info.buffers[i];
+        if (disabledBufferAccesses(plan, i, snapshot.buffers.at(i))) {
+            auto& words = snapshot.buffers.at(i).dwords;
+            std::fill(words.begin(), words.begin() + 4, 0u);
+        }
         const bool scalarOnly = buffer.scalar && !buffer.written && !buffer.atomic && !buffer.formatted && buffer.imageAlias == BufferResource::NoImageAlias
             && std::none_of(plan.memoryInfo.begin(), plan.memoryInfo.end(), [i](const MemoryInfo& memory) { return memory.kind == ResourceKind::Buffer && memory.resource == i; });
         if (scalarOnly) {
@@ -1491,8 +1650,8 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
         const auto decoded = decodeBufferDescriptor(snapshot.buffers.at(i));
         if (decoded.Type() != 0u) {
             const auto& words = snapshot.buffers.at(i).dwords;
-            char detail[64];
-            std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x)", i, words[0], words[1], words[2], words[3]);
+            char detail[96];
+            std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x) first used at pc 0x%x", i, words[0], words[1], words[2], words[3], buffer.firstUsePc);
             throw std::runtime_error(std::string("buffer descriptor uses an unsupported type") + detail);
         }
         if (plan.stage != IrShaderStage::Compute && decoded.AddTid()) throw std::runtime_error("buffer ADD_TID is only valid for compute shaders");
@@ -1671,6 +1830,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         return Abi::PoisonCode(*index);
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
+    HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
     std::vector<std::uint32_t> directSamplers(info.images.size(), 0u);
     for (const auto& pair : info.sampledPairs) {
         if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= 1u << pair.sampler;
@@ -1699,17 +1859,17 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 auto element = words.dwords;
                 if (mode.conversionFormat != IrBufferFormat::Invalid || mode.depthBits) element[3] = (element[3] & ~0xfffu) | ShaderImageIdentitySwizzle;
                 const auto kind = DescriptorBindingForImage(mode);
-                const auto hash = hashWords(element, (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
+                const auto hash = hashWords(element, (static_cast<std::uint64_t>(image.atomic64) << 25u) ^ (static_cast<std::uint64_t>(image.atomic) << 24u) ^ (static_cast<std::uint64_t>(mode.dimension) << 16u) ^ (static_cast<std::uint64_t>(mode.depthCompare) << 8u) ^ static_cast<std::uint64_t>(kind));
                 auto index = elementIndex.Find(hash, [&](std::uint32_t known) {
                     const auto& entry = out.elements[known];
-                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind;
+                    return entry.words == element && entry.dimension == mode.dimension && entry.depthCompare == mode.depthCompare && entry.kind == kind && entry.atomic == image.atomic && entry.atomic64 == image.atomic64;
                 });
                 if (!index.has_value() && out.elements.size() >= Abi::ImageElementBudget) {
                     record[Abi::ImageRecordFlags] = poison(resource, PoisonReason::Budget, &words);
                 } else {
                     if (!index.has_value()) {
                         index = static_cast<std::uint32_t>(out.elements.size());
-                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u});
+                        out.elements.push_back({element, mode.dimension, mode.depthCompare, kind, 0u, image.atomic, image.atomic64});
                         elementIndex.Insert(hash, *index);
                     }
                     out.elements[*index].samplers |= directSamplers[resource];
@@ -1728,19 +1888,29 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Unnormalized, &words);
         } else if (((words.dwords[0] >> 29u) & 3u) != 0u) {
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
-        } else if (out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
-            record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
         } else {
-            record[Abi::SamplerRecordElement] = static_cast<std::uint32_t>(out.samplers.size());
-            for (std::uint32_t variant = 0; variant < 2u; variant++) {
-                const bool compare = variant == 1u;
-                for (std::uint32_t point = 0; point < 2u; point++) {
-                    ImageTableSamplerElement element;
-                    std::copy_n(words.dwords.begin(), 4u, element.words.begin());
-                    element.compare = compare;
-                    element.point = point != 0u;
-                    out.samplers.push_back(element);
+            const auto hash = hashWords(std::span(words.dwords.data(), 4u), 0);
+            auto index = samplerIndex.Find(hash, [&](std::uint32_t known) {
+                return std::equal(words.dwords.begin(), words.dwords.begin() + 4u, out.samplers[known].words.begin());
+            });
+            if (!index.has_value() && out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
+                record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
+            } else {
+                if (!index.has_value()) {
+                    index = static_cast<std::uint32_t>(out.samplers.size());
+                    for (std::uint32_t variant = 0; variant < 2u; variant++) {
+                        const bool compare = variant == 1u;
+                        for (std::uint32_t point = 0; point < 2u; point++) {
+                            ImageTableSamplerElement element;
+                            std::copy_n(words.dwords.begin(), 4u, element.words.begin());
+                            element.compare = compare;
+                            element.point = point != 0u;
+                            out.samplers.push_back(element);
+                        }
+                    }
+                    samplerIndex.Insert(hash, *index);
                 }
+                record[Abi::SamplerRecordElement] = *index;
             }
         }
         const auto offset = static_cast<std::uint32_t>(out.map.size());
@@ -1812,7 +1982,12 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
 }
 
 std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
-    if (memoKey == 0u || snapshot.tables.tables.empty() || !TableResolutionReuse()) return std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
+    if (snapshot.tables.tables.empty()) {
+        static const auto none = std::make_shared<const ResolvedImageTables>();
+        static_cast<void>(ResolveImageTables(info, snapshot, memoKey));
+        return none;
+    }
+    if (memoKey == 0u || !TableResolutionReuse()) return std::make_shared<const ResolvedImageTables>(ResolveImageTables(info, snapshot, memoKey));
     auto reducing = reducingSamplers(info, snapshot);
     auto& memo = resolutionMemo();
     auto& totals = tableReuseTotals();
@@ -1848,6 +2023,7 @@ std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTab
 }
 
 std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageResource& image) {
+    if (image.targetMerge) return {image};
     const bool table = image.table != NoTable;
     if (table && image.tableOperation == TableOperation::Unsupported) return {};
     std::vector<ImageResource> modes;
@@ -1862,16 +2038,22 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.cube = false;
         mode.mipCount = mode.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
-        if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
+        if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format11_11_10Float || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
-        const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible;
+        const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
         const bool volumePlaneBias = image.dimension == RdnaImageDimension::Dim2D && image.singleMipPlaneBiasCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
-        const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
+        const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !image.adjustedSample && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
         if ((volumeLoad || volumeStore || volumePlaneBias || volumeArraySample) && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
             auto volume = mode;
             volume.dimension = RdnaImageDimension::Dim3D;
             modes.push_back(volume);
+        }
+        const bool arrayStore = image.dimension == RdnaImageDimension::Dim3D && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
+        if (arrayStore && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
+            auto array = mode;
+            array.dimension = RdnaImageDimension::Dim2DArray;
+            modes.push_back(array);
         }
         if (image.dimension == RdnaImageDimension::Dim2DMsaa && image.fmaskCompatible && image.cubeFaceCompatible && !table && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
             auto plane = mode;
@@ -1890,13 +2072,13 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             line.dimension = RdnaImageDimension::Dim1D;
             modes.push_back(line);
         }
-        if (image.dimension == RdnaImageDimension::Dim2D && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
+        if ((image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
             auto line = mode;
             line.dimension = RdnaImageDimension::Dim1D;
             modes.push_back(line);
         }
         const bool cubeFaceStorage = image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
-        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && !image.adjustedSample && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
             auto face = mode;
             face.dimension = RdnaImageDimension::Dim2DArray;
             face.cube = true;
@@ -1907,10 +2089,23 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             line.dimension = RdnaImageDimension::Dim1D;
             modes.push_back(line);
         }
-        if (image.dimension == RdnaImageDimension::Dim1D && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        const bool planeAdded = image.dimension == RdnaImageDimension::Dim1D && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid;
+        if (planeAdded) {
             auto plane = mode;
             plane.dimension = RdnaImageDimension::Dim2D;
             modes.push_back(plane);
+        }
+        if (image.dimension == RdnaImageDimension::Dim1D && image.dimensionQueryOnly && !storage) {
+            for (const auto dimension : {RdnaImageDimension::Dim2D, RdnaImageDimension::Dim2DArray, RdnaImageDimension::Dim3D}) {
+                if (dimension == RdnaImageDimension::Dim2D && planeAdded) continue;
+                auto view = mode;
+                view.dimension = dimension;
+                modes.push_back(view);
+            }
+            auto cube = mode;
+            cube.dimension = RdnaImageDimension::Dim2DArray;
+            cube.cube = true;
+            modes.push_back(cube);
         }
         if (image.dimension == RdnaImageDimension::Dim1DArray || image.dimension == RdnaImageDimension::Dim2DArray || image.dimension == RdnaImageDimension::Dim2DMsaaArray) {
             auto plain = mode;
@@ -1947,12 +2142,21 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             if (!storage) append(IrTextureNumericClass::Sint, IrBufferFormat::Invalid, IrBufferFormat::Invalid, false, false);
             append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UInt, IrBufferFormat::Invalid, false, false);
             if ((image.srgbDecodeCompatible || (image.convertedSamples && convertedSampleCompatible(image))) && image.depthBitsCompatible) append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UNorm, IrBufferFormat::Invalid, false, false);
-            if (image.srgbDecodeCompatible && image.depthBitsCompatible) append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
+            if (image.srgbDecodeCompatible && image.depthBitsCompatible) {
+                append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10Float, IrBufferFormat::Invalid, false, false);
+                append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
+            }
+            if (storage) {
+                for (const auto format : {IrBufferFormat::Format5_6_5UNorm, IrBufferFormat::Format5_5_5_1UNorm, IrBufferFormat::Format4_4_4_4UNorm}) {
+                    append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
+                }
+            }
             if (!storage) {
                 if (image.depthBitsCompatible) {
                     append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Invalid, true, false);
                     append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Invalid, true, true);
                 }
+                if (image.fmaskCompatible && !table) append(IrTextureNumericClass::Uint, FmaskExpansion, IrBufferFormat::Invalid, false, false);
             }
         }
     }
@@ -1962,6 +2166,10 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             if (image.atomic && format != IrBufferFormat::Format32SInt) continue;
             append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
         }
+    }
+    if (storage && !image.packed && image.written && !image.read && !image.atomic) {
+        constexpr std::array formats{IrBufferFormat::Format16Float, IrBufferFormat::Format16_16Float, IrBufferFormat::Format16_16_16_16Float};
+        for (const auto format : formats) append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
     }
     if (image.depthCompare && !table && (image.emulatedCompare & EmulatedCompare::Unsupported) == 0u && (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray)) {
         auto mode = image;
@@ -2162,63 +2370,141 @@ void ResourceMaterializer::PrepareImageModes(ShaderInfo& info) {
 
 namespace {
 
+std::vector<const IrValue*> pathToMemoryRead(const IrValue& handle) {
+    std::unordered_map<const IrValue*, const IrValue*> parents;
+    std::vector<const IrValue*> queue;
+    const auto visit = [&](const IrValue* argument, const IrValue* parent) {
+        if (argument == nullptr) return;
+        argument = argument->Resolve();
+        if (!argument->HasImmediate() && parents.emplace(argument, parent).second) queue.push_back(argument);
+    };
+    for (const auto* argument : handle.Arguments()) visit(argument, nullptr);
+    for (std::size_t index = 0; index < queue.size(); ++index) {
+        const auto* value = queue[index];
+        if (Detail::IsMemoryRead(value->Opcode())) {
+            std::vector<const IrValue*> path;
+            for (const auto* step = parents.at(value); step != nullptr; step = parents.at(step)) path.push_back(step);
+            return path;
+        }
+        for (const auto* argument : value->Arguments()) visit(argument, value);
+    }
+    return {};
+}
+
 void ownPlanValues(IrResourcePlan& plan) {
     std::vector<IrValue**> roots;
     for (auto& source : plan.descriptorSources) {
         for (auto& dword : source.dwords) roots.push_back(&dword);
     }
     for (auto& read : plan.srtReads) roots.push_back(&read.value);
-    for (auto& block : plan.controlFlow) roots.push_back(&block.condition);
     for (auto& value : plan.uniformFill.values) roots.push_back(&value);
+    const auto closures = roots.size();
+    for (auto& block : plan.controlFlow) roots.push_back(&block.condition);
 
-    std::unordered_map<const IrValue*, IrValue*> clones;
-    std::vector<const IrValue*> order;
-    std::vector<const IrValue*> pending;
-    for (const auto* root : roots) {
-        if (*root != nullptr) pending.push_back(*root);
-    }
-    while (!pending.empty()) {
-        const auto* value = pending.back();
-        pending.pop_back();
-        if (!clones.emplace(value, nullptr).second) continue;
-        order.push_back(value);
-        for (const auto* argument : value->Arguments()) {
-            if (argument != nullptr) pending.push_back(argument);
+    std::unordered_set<const IrValue*> whole;
+    std::unordered_set<const IrValue*> linked;
+    for (;;) {
+        std::unordered_map<const IrValue*, IrValue*> clones;
+        std::unordered_set<const IrValue*> closed;
+        std::unordered_set<const IrValue*> opened;
+        std::unordered_set<const IrValue*> handles;
+        std::vector<const IrValue*> phis;
+        std::vector<const IrValue*> order;
+        std::vector<std::pair<const IrValue*, bool>> pending;
+        for (std::size_t index = 0; index < roots.size(); ++index) {
+            if (*roots[index] != nullptr) pending.emplace_back(*roots[index], index < closures);
         }
-    }
-    plan.valueStorage.Reserve(order.size());
-    for (const auto* value : order) {
-        auto* clone = plan.valueStorage.Create(value->Opcode(), value->Type(), static_cast<std::uint32_t>(plan.valueStorage.Size()));
-        clone->SetFlags(value->Flags<std::uint64_t>());
-        if (value->HasImmediate()) clone->SetImmediateU64(value->ImmediateU64());
-        clone->SetRegister(value->Register());
-        clones[value] = clone;
-    }
-    std::unordered_map<const IrBlock*, IrBlock*> blocks;
-    const auto blockFor = [&](const IrBlock* block) {
-        auto& clone = blocks[block];
-        if (clone == nullptr) {
-            plan.blockStorage.push_back(std::make_unique<IrBlock>(block->Id()));
-            clone = plan.blockStorage.back().get();
+        while (!pending.empty()) {
+            const auto value = pending.back().first;
+            const auto closure = pending.back().second || whole.contains(value);
+            pending.pop_back();
+            if (clones.emplace(value, nullptr).second) order.push_back(value);
+            auto reads = closure ? Detail::EvaluatorReads::Closure : Detail::Evaluator::Reads(plan, *value);
+            if (reads == Detail::EvaluatorReads::Nothing && linked.contains(value)) reads = Detail::EvaluatorReads::Arguments;
+            if (reads == Detail::EvaluatorReads::Nothing || closed.contains(value)) continue;
+            if (closure) {
+                closed.insert(value);
+            } else if (!opened.insert(value).second) {
+                continue;
+            } else if (value->IsPhi()) {
+                phis.push_back(value);
+            }
+            for (const auto* argument : value->Arguments()) {
+                if (argument != nullptr) pending.emplace_back(argument, closure);
+            }
+            if (!closure && reads == Detail::EvaluatorReads::Closure && value->ArgumentCount() != 0u && value->Argument(0) != nullptr) {
+                const auto* handle = value->Argument(0)->Resolve();
+                handles.insert(handle);
+                if (opened.insert(handle).second) {
+                    for (const auto* argument : handle->Arguments()) {
+                        if (argument != nullptr) pending.emplace_back(argument, false);
+                    }
+                }
+            }
         }
-        return clone;
-    };
-    for (const auto* value : order) {
-        std::vector<IrValue*> arguments;
-        std::vector<IrBlock*> phiBlocks;
-        arguments.reserve(value->ArgumentCount());
-        if (value->IsPhi()) phiBlocks.reserve(value->ArgumentCount());
-        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
-            const auto* argument = value->Argument(index);
-            arguments.push_back(argument == nullptr ? nullptr : clones.at(argument));
-            if (value->IsPhi()) phiBlocks.push_back(blockFor(value->PhiBlock(index)));
+        IrValueArena storage;
+        storage.Reserve(order.size());
+        for (const auto* value : order) {
+            auto* clone = storage.Create(value->Opcode(), value->Type(), static_cast<std::uint32_t>(storage.Size()));
+            clone->SetFlags(value->Flags<std::uint64_t>());
+            if (value->HasImmediate()) clone->SetImmediateU64(value->ImmediateU64());
+            clone->SetRegister(value->Register());
+            clones[value] = clone;
         }
-        clones.at(value)->SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
+        std::vector<std::unique_ptr<IrBlock>> blockStorage;
+        std::unordered_map<const IrBlock*, IrBlock*> blocks;
+        const auto blockFor = [&](const IrBlock* block) {
+            auto& clone = blocks[block];
+            if (clone == nullptr) {
+                blockStorage.push_back(std::make_unique<IrBlock>(block->Id()));
+                clone = blockStorage.back().get();
+            }
+            return clone;
+        };
+        for (const auto* value : order) {
+            const auto count = closed.contains(value) || opened.contains(value) ? value->ArgumentCount() : 0u;
+            std::vector<IrValue*> arguments;
+            std::vector<IrBlock*> phiBlocks;
+            arguments.reserve(count);
+            if (value->IsPhi()) phiBlocks.reserve(count);
+            for (std::size_t index = 0; index < count; index++) {
+                const auto* argument = value->Argument(index);
+                arguments.push_back(argument == nullptr ? nullptr : clones.at(argument));
+                if (value->IsPhi()) phiBlocks.push_back(blockFor(value->PhiBlock(index)));
+            }
+            clones.at(value)->SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
+        }
+        const auto resolvesAlike = [&](const IrValue* phi) {
+            try {
+                const auto* expected = ResolveInvariantPhi(plan, const_cast<IrValue*>(phi));
+                const auto* copied = ResolveInvariantPhi(plan, clones.at(phi));
+                if (expected == nullptr) return copied == nullptr;
+                const auto found = clones.find(expected);
+                return found != clones.end() && found->second == copied;
+            } catch (const std::exception&) {
+                return false;
+            }
+        };
+        bool grown = false;
+        for (const auto* phi : phis) {
+            if (!closed.contains(phi) && !resolvesAlike(phi)) grown = whole.insert(phi).second || grown;
+        }
+        for (const auto* handle : handles) {
+            if (closed.contains(handle) || Detail::LoadedFromMemory(*clones.at(handle))) continue;
+            const auto path = pathToMemoryRead(*handle);
+            bool linkedStep = false;
+            for (const auto* step : path) linkedStep = linked.insert(step).second || linkedStep;
+            if (!path.empty()) grown = (linkedStep || whole.insert(handle).second) || grown;
+        }
+        if (grown) continue;
+        plan.valueStorage = std::move(storage);
+        plan.blockStorage = std::move(blockStorage);
+        for (auto* root : roots) {
+            if (*root != nullptr) *root = clones.at(*root);
+        }
+        plan.denseValueIds = true;
+        return;
     }
-    for (auto* root : roots) {
-        if (*root != nullptr) *root = clones.at(*root);
-    }
-    plan.denseValueIds = true;
 }
 
 void buildCompactPlan(IrResourcePlan& plan) {
@@ -2298,9 +2584,8 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     PrepareImageModes(plan.info);
     plan.uniformFill = source.uniformFill;
     for (auto& block : plan.controlFlow) {
-        if (block.condition != nullptr && !Detail::Evaluator::MayEvaluate(source, block.condition)) block.condition = nullptr;
+        if (block.condition != nullptr && !Detail::Evaluator::MayDecide(source, block.condition)) block.condition = nullptr;
     }
-    ownPlanValues(plan);
     const auto addSource = [&plan](std::uint32_t index) {
         if (index >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan resource references an unknown descriptor source");
@@ -2327,6 +2612,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     }
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);
+    ownPlanValues(plan);
     buildCompactPlan(plan);
     return plan;
 }
@@ -2351,17 +2637,38 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
     auto& activeSources = HostThreadLocal<std::vector<std::uint8_t>, ActiveSourcesStorage>();
     activeSources.clear();
     try {
-        materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
-        TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
+        bool completed = false;
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            const SrtForceSyncScope forceSync(runtime, attempt == 2u);
+            const auto beforeSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            activeSources.clear();
+            try {
+                materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
+                const auto afterSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+                TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
+                const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+                if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
+                    continue;
+                }
+                const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                materializeForcedDegamma(plan, nextSnapshot);
+                materializeTables(plan, nextSnapshot);
+                materializeSrtGuards(plan, nextSnapshot);
+                if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
+                completed = true;
+                break;
+            } catch (const ConvertedSampleRequired&) {
+                throw;
+            } catch (const std::runtime_error&) {
+                if (runtime.descriptorScope == nullptr || attempt == 2u) throw;
+                if (runtime.descriptorScope(runtime.userContext, 0u) == beforeSnapshot) attempt = 1u;
+            }
+        }
+        if (!completed) throw std::runtime_error("runtime resource snapshot did not stabilize");
     } catch (...) {
         reportTables();
         throw;
     }
-    const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    materializeForcedDegamma(plan, nextSnapshot);
-    materializeTables(plan, nextSnapshot);
-    materializeSrtGuards(plan, nextSnapshot);
-    if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     snapshot = std::move(nextSnapshot);
     reportTables();
     if (MaterializeProfiled()) materializeNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - materializeStarted).count()), std::memory_order_relaxed);

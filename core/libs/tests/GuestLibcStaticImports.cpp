@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <cmath>
@@ -7,21 +8,6 @@
 #include <stdexcept>
 #include <thread>
 #include <time.h>
-
-struct Xtime {
-    std::int64_t sec;
-    std::int64_t nsec;
-};
-
-extern "C" {
-float APS5_VABI nearbyintf_nid_postfix(float x);
-int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type);
-void APS5_VABI _Mtx_destroy_nid_postfix(void** handle);
-int APS5_VABI _Mtx_lock_nid_postfix(void** handle);
-int APS5_VABI _Mtx_unlock_nid_postfix(void** handle);
-int APS5_VABI _Mtx_trylock_nid_postfix(void** handle);
-int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime* remaining);
-}
 
 namespace {
 
@@ -156,6 +142,7 @@ void TestThrdSleep() {
 
     RequireThrows<std::invalid_argument>([] {
         _Thrd_sleep_nid_postfix(nullptr, nullptr);
+
     });
 }
 

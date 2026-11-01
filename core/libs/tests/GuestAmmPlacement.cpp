@@ -1,13 +1,10 @@
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceAmprAmmGetVirtualAddressRanges(std::uint64_t*, std::uint64_t*, std::uint64_t*, std::uint64_t*);
-}
 
 static void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);

@@ -1,5 +1,8 @@
+#include "prx/libSceNpCommerce/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include <array>
 #include <stdexcept>
 #include "SceTypes.hpp"
@@ -8,19 +11,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* param);
-int APS5_VABI sceUserServiceTerminate();
-int APS5_VABI sceNpCommerceDialogInitialize();
-int APS5_VABI sceNpCommerceDialogOpen(const NpCommerceDialogParam* param);
-int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param);
-int APS5_VABI sceNpCommerceDialogUpdateStatus(void);
-int APS5_VABI sceNpCommerceDialogGetStatus(void);
-int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result);
-int APS5_VABI sceNpCommerceDialogClose(void);
-int APS5_VABI sceNpCommerceDialogTerminate();
-}
 
 namespace {
 
@@ -31,6 +21,7 @@ alignas(16) std::array<std::byte, 64> process{};
 constexpr int statusNone = 0;
 constexpr int statusInitialized = 1;
 constexpr int statusFinished = 3;
+constexpr int errorAlreadyInitialized = static_cast<int>(0x80B80004u);
 constexpr std::int32_t resultUserCanceled = 1;
 
 void RequireCanceledResult(std::uint64_t userData, bool clearsReserved) {
@@ -42,6 +33,58 @@ void RequireCanceledResult(std::uint64_t userData, bool clearsReserved) {
     Require(result.userData == userData);
     for (const auto value : result.padding) Require(value == 0x33);
     for (const auto value : result.reserved) Require(value == (clearsReserved ? 0 : 0x33));
+}
+
+
+bool PsnNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::PsnFeature).message;
+}
+
+void RequireNotices() {
+    std::uint32_t sdkVersion = 0x03500000;
+    std::memcpy(process.data() + 16, &sdkVersion, sizeof(sdkVersion));
+    NpCommerceDialogParam param{};
+    param.base.size = sizeof(param.base);
+    param.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u;
+    param.size = sizeof(param);
+    param.userId = USER_SERVICE_INITIAL_USER_ID;
+    param.mode = 5;
+    param.argument = 1;
+    NpCommerceDialogParam2 param2{};
+    param2.base.size = sizeof(param2.base);
+    param2.base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param2)) - 1060003575u;
+    param2.size = sizeof(param2);
+    param2.userId = USER_SERVICE_INITIAL_USER_ID;
+    param2.mode = 5;
+    param2.argument = 1;
+
+    ModalDialogSetPresenter_nid_postfix(true);
+    sceNpCommerceDialogTerminate();
+    Require(sceNpCommerceDialogInitialize() == 0);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpCommerceDialogOpen(&param) == 0);
+    Require(!PsnNoticeShown() && !ModalDialogCapturesInput_nid_postfix());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpCommerceDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(!PsnNoticeShown());
+    Require(sceNpCommerceDialogOpen(&param) == 0);
+    Require(PsnNoticeShown());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpCommerceDialogOpen2(&param2) == 0);
+    Require(PsnNoticeShown());
+
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceNpCommerceDialogTerminate() == 0);
 }
 
 }
@@ -72,6 +115,19 @@ int main() {
     Require(sceNpCommerceDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
     NpCommerceDialogResult result{};
     Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80003u));
+
+    Require(sceNpCommerceDialogInitializeInternal() == 0);
+    Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    Require(sceNpCommerceDialogInitializeInternal() == errorAlreadyInitialized);
+    Require(sceNpCommerceDialogInitialize() == errorAlreadyInitialized);
+    Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    Require(sceNpCommerceDialogTerminate() == 0);
+    Require(sceNpCommerceDialogGetStatus() == statusNone);
+    Require(sceNpCommerceDialogInitialize() == 0);
+    Require(sceNpCommerceDialogInitializeInternal() == errorAlreadyInitialized);
+    Require(sceNpCommerceDialogGetStatus() == statusInitialized);
+    Require(sceNpCommerceDialogTerminate() == 0);
+    Require(sceNpCommerceDialogGetStatus() == statusNone);
     Require(sceNpCommerceDialogInitialize() == 0);
     Require(sceNpCommerceDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80005u));
@@ -142,6 +198,7 @@ int main() {
     bool threw = false;
     try {
         sceNpCommerceDialogOpen2(&param2);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -192,7 +249,16 @@ int main() {
     Require(sceNpCommerceDialogUpdateStatus() == statusFinished);
     RequireCanceledResult(param2.userData, false);
     Require(sceNpCommerceDialogTerminate() == 0);
+    Require(sceNpCommerceDialogTerminate() == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogClose() == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogOpen2(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogOpen2(&param2) == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80003u));
     Require(sceNpCommerceDialogGetStatus() == statusNone);
+    Require(sceNpCommerceDialogUpdateStatus() == statusNone);
+    RequireNotices();
     Require(sceUserServiceTerminate() == 0);
     return 0;
 }

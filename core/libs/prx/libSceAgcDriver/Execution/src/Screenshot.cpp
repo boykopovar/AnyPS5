@@ -16,8 +16,12 @@ namespace {
 std::atomic<bool> requested{false};
 
 std::filesystem::path directory() {
+#ifdef _WIN32
+    const wchar_t* configured = _wgetenv(L"ANYPS5_SCREENSHOTS");
+#else
     const char* configured = std::getenv("ANYPS5_SCREENSHOTS");
-    if (configured != nullptr && configured[0] != '\0') return configured;
+#endif
+    if (configured != nullptr && configured[0] != 0) return configured;
     const std::unique_ptr<char, decltype(&SDL_free)> basePath(SDL_GetBasePath(), SDL_free);
     if (!basePath) throw std::runtime_error(std::string("Screenshot: cannot locate the executable: ") + SDL_GetError());
     return std::filesystem::path(reinterpret_cast<const char8_t*>(basePath.get())) / "anyps5-screenshots";

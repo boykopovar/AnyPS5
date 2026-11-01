@@ -1,10 +1,13 @@
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -12,30 +15,12 @@
 #include <string>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond*, SaveDataDirNameSearchResult*);
-int APS5_VABI sceSaveDataDirNameSearch2(const SaveDataDirNameSearchCond*, SaveDataDirNameSearchResult*);
-int APS5_VABI sceSaveDataMount3(const SaveDataMount3*, SaveDataMountResult*);
-int APS5_VABI sceSaveDataUmount2(std::uint32_t, const SaveDataMountPoint*);
-int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint*, std::uint32_t, const void*, std::size_t);
-int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint*, SaveDataMountInfo*);
-}
-
 static constexpr int SaveDataErrorParameter = -2137063424;
 
 static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
 
-template <typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
 
 static std::vector<std::string> Search(std::uint32_t key, std::uint32_t order, std::uint32_t capacity, std::uint32_t* hits) {
     SceSaveDataDirName pattern{};
@@ -291,12 +276,24 @@ static void CheckNullArguments() {
     SaveDataDirNameSearchCond cond{};
     cond.user_id = 1;
     SaveDataDirNameSearchResult result{};
-    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch(nullptr, &result); }), "null cond throws in sceSaveDataDirNameSearch");
-    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch(&cond, nullptr); }), "null result throws in sceSaveDataDirNameSearch");
-    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch2(nullptr, &result); }), "null cond throws in sceSaveDataDirNameSearch2");
-    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch2(&cond, nullptr); }), "null result throws in sceSaveDataDirNameSearch2");
+    Require(sceSaveDataDirNameSearch(nullptr, &result) == SaveDataErrorParameter, "null cond returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(nullptr, &result) == SaveDataErrorParameter, "null cond returns PARAMETER in sceSaveDataDirNameSearch2");
+    Require(sceSaveDataDirNameSearch2(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearch2");
     cond.order = 2;
     Require(sceSaveDataDirNameSearch2(&cond, &result) == SaveDataErrorParameter, "invalid order must be rejected in sceSaveDataDirNameSearch2");
+    Require(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress returns PARAMETER in sceSaveDataGetConvertProgress");
+    float progress = 0.0f;
+    Require(sceSaveDataGetConvertProgress(&progress) == -2137063423, "uninitialized convert progress returns NOT_INITIALIZED");
+    Require(sceSaveDataCheckIpmiIfSize() == 0, "sceSaveDataCheckIpmiIfSize succeeds");
+    Require(sceSaveDataDebug() == 0, "sceSaveDataDebug succeeds");
+    Require(sceSaveDataDebugCheckBackupData() == 0, "sceSaveDataDebugCheckBackupData succeeds");
+    Require(sceSaveDataDebugCleanMount() == 0, "sceSaveDataDebugCleanMount succeeds");
+    Require(sceSaveDataDebugCompiledSdkVersion() == 0, "sceSaveDataDebugCompiledSdkVersion succeeds");
+    Require(sceSaveDataDebugCreateSaveDataRoot() == 0, "sceSaveDataDebugCreateSaveDataRoot succeeds");
+    Require(sceSaveDataDebugProspero() == 0, "sceSaveDataDebugProspero succeeds");
+    Require(sceSaveDataDebugRemoveSaveDataRoot() == 0, "sceSaveDataDebugRemoveSaveDataRoot succeeds");
+    Require(sceSaveDataDebugTarget() == 0, "sceSaveDataDebugTarget succeeds");
 }
 
 static void BlockSize() {
@@ -306,6 +303,40 @@ static void BlockSize() {
     CreateSized("BLOCK_B", 32768, 0);
     info = MountInfo("BLOCK_B");
     Require(info.blocks == 16384 && info.free_blocks == 16384, "a save must hold at most 16384 blocks");
+}
+
+static void SetHostZone(const char* zone) {
+#ifdef _WIN32
+    Require(_putenv_s("TZ", zone == nullptr ? "" : zone) == 0, "TZ could not be set");
+    _tzset();
+#else
+    Require((zone == nullptr ? unsetenv("TZ") : setenv("TZ", zone, 1)) == 0, "TZ could not be set");
+    tzset();
+#endif
+}
+
+static void UnsetParamsReportDirectoryTime() {
+    std::filesystem::create_directories(std::filesystem::path("_sd") / "STAMP_A");
+    const auto created = static_cast<std::int64_t>(std::time(nullptr));
+    const char* inherited = std::getenv("TZ");
+    const std::string previous = inherited == nullptr ? "" : inherited;
+    for (const char* zone : {"AAA-12", "AAA+12"}) {
+        SetHostZone(zone);
+        SceSaveDataDirName pattern{};
+        std::snprintf(pattern.data, sizeof(pattern.data), "STAMP_A");
+        SaveDataDirNameSearchCond cond{};
+        cond.user_id = 1;
+        cond.dir_name = &pattern;
+        SceSaveDataDirName name{};
+        SaveDataParam param{};
+        SaveDataDirNameSearchResult result{};
+        result.dir_names = &name;
+        result.dir_names_num = 1;
+        result.params = &param;
+        Require(sceSaveDataDirNameSearch(&cond, &result) == 0 && result.set_num == 1, "the unmounted save was not found");
+        Require(param.mtime >= created - 60 && param.mtime <= created + 60, "a save without a stored mtime must report its directory's modification time under any TZ");
+    }
+    SetHostZone(inherited == nullptr ? nullptr : previous.c_str());
 }
 
 int main() {
@@ -322,6 +353,7 @@ int main() {
         TrailingWildcards();
         SaveSize();
         BlockSize();
+        UnsetParamsReportDirectoryTime();
         CheckNullArguments();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
