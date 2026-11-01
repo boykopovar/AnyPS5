@@ -113,6 +113,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
         }
         cleanEvaluator.ReportInaccessibleReads(nullptr);
         cleanEvaluator.ReportNullRootReads(nullptr);
+        if (!ApplySourceBlockGuards(program, visited, active)) return Fail("invalid copied descriptor read guard");
     }
     InaccessibleRead inaccessible;
     std::uint32_t nullRoots = 0;
@@ -360,6 +361,29 @@ void verifyTape(const IrResourcePlan& program, const SrtRuntime& runtime, std::v
     if (nullRootReads != nullptr) *nullRootReads = expectedNullRoots;
 }
 
+}
+
+bool ApplySourceBlockGuards(const IrResourcePlan& program, std::span<const std::uint8_t> visited, std::span<std::uint8_t> active) {
+    const auto imageBase = program.descriptorSources.size();
+    if (active.size() < imageBase + program.info.images.size()) return false;
+    bool guarded = false;
+    for (std::size_t source = 0; source < imageBase; ++source) {
+        const auto& blocks = program.descriptorSources[source].requiredBlocks;
+        if (blocks.empty()) continue;
+        guarded = true;
+        for (const auto block : blocks) {
+            if (block >= visited.size()) return false;
+            if (visited[block] == 0u) active[source] = 0u;
+        }
+    }
+    if (guarded) {
+        for (std::size_t image = 0; image < program.info.images.size(); ++image) {
+            const auto source = program.info.images[image].source;
+            if (source >= imageBase) return false;
+            if (!program.descriptorSources[source].requiredBlocks.empty() && active[source] == 0u) active[imageBase + image] = 0u;
+        }
+    }
+    return true;
 }
 
 bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources, std::vector<SrtReadPoison>* poison, std::uint32_t* nullRootReads) {
