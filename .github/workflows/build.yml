@@ -146,11 +146,11 @@ jobs:
                 ),
               };
             };
-            const relinkerHosts = (full, linux) => JSON.stringify([
+            const relinkerHosts = (full, linux, intelMac = true) => JSON.stringify([
               ...(full && linux ? [] : [{ os: 'ubuntu-latest', compiler: 'g++' }]),
               ...(full ? [] : [{ os: 'windows-latest', compiler: 'g++' }]),
               { os: 'macos-latest', compiler: 'clang++' },
-              { os: 'macos-latest', compiler: 'clang++', architectures: 'x86_64' },
+              ...(intelMac ? [{ os: 'macos-latest', compiler: 'clang++', architectures: 'x86_64' }] : []),
             ]);
             if (context.eventName === 'push') {
               if (context.ref !== 'refs/heads/main') {
@@ -270,7 +270,7 @@ jobs:
             core.setOutput('write-watch', writeWatch);
             core.setOutput('mingw-host-tests', !manual && run.mingwHostTests);
             core.setOutput('full', full);
-            core.setOutput('relinker-hosts', relinkerHosts(full, linux));
+            core.setOutput('relinker-hosts', relinkerHosts(full, linux, manual));
             const merged = pulls.map((pull) => `PR #${pull.number} at ${pull.head} merged into main at ${main.commit.sha}`);
             merged.forEach((line) => core.info(line));
             await core.summary.addRaw(
