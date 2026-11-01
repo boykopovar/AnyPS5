@@ -925,7 +925,7 @@ std::optional<std::uint16_t> URLPort(const URL& url) {
     unsigned portLength = (url.bits >> 3) & 7;
     if (portLength <= 1) return std::nullopt;
     auto view = View(url.impl);
-    if (url.hostEnd + portLength > view.length) return std::nullopt;
+    if (url.hostEnd > view.length || portLength > view.length - url.hostEnd) return std::nullopt;
     auto portView = Slice(view, url.hostEnd + 1, portLength - 1);
     if (!portView.length) return std::nullopt;
     unsigned i = 0;

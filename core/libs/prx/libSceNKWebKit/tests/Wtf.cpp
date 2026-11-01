@@ -1066,6 +1066,10 @@ void TestURLsAndReallocation() {
     URL urlBarePlusPort{urlBarePlusPortStr.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
     Check(!URLProtocolHostAndPortAreEqual(&urlBarePlusPort, &urlPort80));
     Check(URLProtocolHostAndPortAreEqual(&urlBarePlusPort, &urlNoPort));
+    auto urlPortOutOfBoundsStr = FromUTF8Z(U8("http://example.test:80"));
+    URL urlPortOutOfBounds{urlPortOutOfBoundsStr.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 24, 22, 22};
+    Check(URLProtocolHostAndPortAreEqual(&urlPortOutOfBounds, &urlNoPort));
+    Check(!URLProtocolHostAndPortAreEqual(&urlPortOutOfBounds, &urlPort80));
     Check(URLProtocolHostAndPortAreEqual(&absent, &absent));
     Check(!URLProtocolHostAndPortAreEqual(&url, &absent));
     Check(!URLProtocolHostAndPortAreEqual(&absent, &url));
