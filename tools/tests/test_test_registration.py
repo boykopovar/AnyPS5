@@ -569,6 +569,124 @@ class ScriptRegistrationTests(unittest.TestCase):
                          ["tools/tests/test_env.py", "tools/tests/test_later.py", "tools/tests/test_name.py"])
 
 
+@unittest.skipUnless(shutil.which("cmake") and shutil.which("ctest") and shutil.which("ninja"),
+                     "CMake, CTest and Ninja are required")
+class DisabledScriptRegistrationTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.source = self.root / "source"
+        self.script = "tools/tests/test_probe.py"
+        self.registration = ('add_test(NAME probe COMMAND "${Python3_EXECUTABLE}" '
+                             '"${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_probe.py")\n')
+        (self.source / "tools/tests").mkdir(parents=True)
+        (self.source / self.script).write_text('print("registration-probe-ran")\n', encoding="utf-8")
+        self.tool = self.source / "tools/check_test_registration.py"
+        self.tool.write_bytes(Path(check_test_registration.__file__).read_bytes())
+        subprocess.run(["git", "init", "-q", str(self.source)], check=True, capture_output=True)
+
+    def run_project(self, registrations, workflow=None):
+        prefix = ('cmake_minimum_required(VERSION 3.20)\nproject(registration NONE)\nenable_testing()\n'
+                  f'set(Python3_EXECUTABLE [=[{sys.executable}]=])\n')
+        (self.source / "CMakeLists.txt").write_text(prefix + registrations, encoding="utf-8")
+        if workflow is not None:
+            path = self.source / ".github/workflows/check.yml"
+            path.parent.mkdir(parents=True)
+            path.write_text(workflow, encoding="utf-8")
+        build = self.root / "build"
+        subprocess.run(["cmake", "-S", str(self.source), "-B", str(build), "-G", "Ninja"],
+                       check=True, capture_output=True, text=True)
+        ctest = subprocess.run(["ctest", "--test-dir", str(build), "-V"],
+                               check=True, capture_output=True, text=True)
+        audit = subprocess.run([sys.executable, "-B", str(self.tool), "--scripts"],
+                               capture_output=True, text=True)
+        return ctest.stdout, audit
+
+    def test_cli_rejects_a_script_only_registered_as_disabled(self):
+        output, audit = self.run_project(
+            self.registration +
+            'set_tests_properties(probe PROPERTIES DISABLED TRUE)\n')
+        self.assertIn("Disabled", output)
+        self.assertNotIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+        self.assertIn(f"error: {self.script} is a test script that no add_test or workflow runs", audit.stdout)
+
+    def test_conditional_disable_does_not_hide_an_enabled_registration(self):
+        output, audit = self.run_project(
+            self.registration +
+            'if(NOT (TRUE))\nset_tests_properties(probe PROPERTIES DISABLED TRUE)\nendif()\n')
+        self.assertIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_disabled_registration_inside_a_shared_condition_is_rejected(self):
+        output, audit = self.run_project(
+            'if(TRUE)\n' + self.registration +
+            'set_tests_properties(probe PROPERTIES DISABLED ON)\nendif()\n')
+        self.assertIn("Disabled", output)
+        self.assertNotIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+
+    def test_disabled_alternative_registrations_do_not_reenable_each_other(self):
+        disabled = self.registration + 'set_tests_properties(probe PROPERTIES DISABLED TRUE)\n'
+        output, audit = self.run_project('if(TRUE)\n' + disabled + 'else()\n' + disabled + 'endif()\n')
+        self.assertIn("Disabled", output)
+        self.assertNotIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+
+    def test_reenabled_registration_counts_as_run(self):
+        output, audit = self.run_project(
+            self.registration +
+            'set_tests_properties(probe PROPERTIES TIMEOUT 10 DISABLED TRUE)\n'
+            'set_tests_properties(probe PROPERTIES DISABLED OFF)\n')
+        self.assertIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_conditional_enable_preserves_possible_coverage(self):
+        output, audit = self.run_project(
+            self.registration +
+            'set_tests_properties(probe PROPERTIES DISABLED TRUE)\n'
+            'if(TRUE)\nset_tests_properties(probe PROPERTIES DISABLED OFF)\nendif()\n')
+        self.assertIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_conditional_disable_preserves_a_previously_disabled_test(self):
+        for condition in ("TRUE", "FALSE"):
+            with self.subTest(condition=condition):
+                output, audit = self.run_project(
+                    self.registration + 'set_tests_properties(probe PROPERTIES DISABLED TRUE)\n' +
+                    f'if({condition})\nset_tests_properties(probe PROPERTIES DISABLED TRUE)\nendif()\n')
+                self.assertIn("Disabled", output)
+                self.assertNotIn("registration-probe-ran", output)
+                self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+
+    def test_another_enabled_registration_of_the_same_script_counts(self):
+        output, audit = self.run_project(
+            self.registration +
+            'set_tests_properties(probe PROPERTIES DISABLED TRUE)\n' +
+            self.registration.replace("NAME probe", "NAME enabled"))
+        self.assertIn("Disabled", output)
+        self.assertIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_disabling_multiple_modern_and_legacy_registrations_is_reported(self):
+        output, audit = self.run_project(
+            self.registration +
+            'add_test(legacy "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_probe.py")\n'
+            'set_tests_properties(probe legacy PROPERTIES DISABLED "YES")\n')
+        self.assertNotIn("registration-probe-ran", output)
+        self.assertEqual(output.count("Not Run (Disabled)"), 2)
+        self.assertEqual(audit.returncode, 1, audit.stdout + audit.stderr)
+
+    def test_workflow_coverage_counts_when_ctest_registration_is_disabled(self):
+        output, audit = self.run_project(
+            self.registration + 'set_tests_properties(probe PROPERTIES DISABLED TRUE)\n',
+            'jobs:\n  check:\n    steps:\n      - run: python tools/tests/test_probe.py\n')
+        self.assertIn("Disabled", output)
+        self.assertNotIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+
 class CheckRegistrationCliTests(unittest.TestCase):
     def test_cache_with_utf8_bom_is_read(self):
         with tempfile.TemporaryDirectory() as directory:

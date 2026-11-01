@@ -6,6 +6,8 @@ from pathlib import Path
 
 TEST_OUTPUT = r"tests[\\/]"
 COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|subdirs)\s*\(", re.M | re.I)
+SCOPE_START = {"if", "foreach", "while", "function", "macro", "block"}
+SOURCE_COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
 ARGUMENT = re.compile(r'"(?:\\.|[^"\\])*"|\[(?P<equals>=*)\[.*?\](?P=equals)\]|[^\s()]+', re.S)
 LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=literal_equals)\]'
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
@@ -51,14 +53,25 @@ def built(build):
     return names
 
 
-def commands(content):
+def commands(content, pattern=COMMAND):
     content = content.removeprefix("\ufeff")
     content = LEXICAL.sub(lambda match: re.sub(r"[^\n]", " ", match.group())
                           if match.group("comment") is not None else match.group(), content)
     code = LEXICAL.sub(lambda match: re.sub(r"[^\n]", "_", match.group()), content)
     parsed_until = 0
-    for command in COMMAND.finditer(code):
+    for command in pattern.finditer(code):
         if command.start() < parsed_until:
+            continue
+        name = command.group(1).lower()
+        if name in SCOPE_START or name.removeprefix("end") in SCOPE_START or name in {"else", "elseif"}:
+            depth, position = 1, command.end()
+            while position < len(code) and depth:
+                depth += (code[position] == "(") - (code[position] == ")")
+                position += 1
+            if depth:
+                raise ValueError(f"unterminated {name} command at position {command.start()}")
+            parsed_until = position
+            yield name, []
             continue
         position, arguments = command.end(), []
         while position < len(content):
@@ -182,17 +195,47 @@ def run_scripts(root, files):
     for name in files:
         if name.endswith("CMakeLists.txt") or name.endswith(".cmake"):
             content = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
-            for command, arguments in commands(content):
-                if command == "add_test":
+            tests = []
+            scopes = []
+            for index, (command, arguments) in enumerate(commands(content, SOURCE_COMMAND)):
+                if command in SCOPE_START:
+                    scopes.append((index, index))
+                elif command.removeprefix("end") in SCOPE_START:
+                    if scopes:
+                        scopes.pop()
+                elif command in {"else", "elseif"}:
+                    if scopes:
+                        scopes[-1] = (scopes[-1][0], index)
+                elif command == "add_test" and arguments:
                     if arguments and arguments[0] == "NAME":
                         if "COMMAND" not in arguments[2:]:
                             continue
+                        test_name = arguments[1]
                         start = arguments.index("COMMAND", 2) + 1
                         end = next((index for index in range(start, len(arguments))
                                     if arguments[index] in ("CONFIGURATIONS", "WORKING_DIRECTORY", "COMMAND_EXPAND_LISTS", "BUILD_DEPENDS")), len(arguments))
                         arguments = arguments[start:end]
                     else:
+                        test_name = arguments[0]
                         arguments = arguments[1:]
+                    tests.append([test_name, arguments, False, scopes[:]])
+                elif command == "set_tests_properties" and "PROPERTIES" in arguments:
+                    properties = arguments.index("PROPERTIES")
+                    values = arguments[properties + 1:]
+                    for key, value in zip(values[::2], values[1::2]):
+                        if key == "DISABLED":
+                            for test in tests:
+                                if test[0] in arguments[:properties]:
+                                    if any(left[0] == right[0] and left[1] != right[1]
+                                           for left, right in zip(test[3], scopes)):
+                                        continue
+                                    disabled = value.upper() in ("1", "ON", "YES", "TRUE", "Y")
+                                    if test[3][:len(scopes)] == scopes:
+                                        test[2] = disabled
+                                    elif not disabled:
+                                        test[2] = False
+            for _, arguments, disabled, _ in tests:
+                if not disabled:
                     run.update(argument.rpartition("}")[2].lstrip("/") for argument in arguments)
         elif name.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
             for line in workflow_run_lines((Path(root) / name).read_text(encoding="utf-8", errors="replace")):
