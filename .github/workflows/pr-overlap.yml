@@ -39,6 +39,7 @@ jobs:
           shopt -s nullglob
           marker='<!-- pr-overlap -->'
           unpinned() { sed -E 's#/blob/[0-9a-f]{40}/#/blob/main/#g'; }
+          created=0 updated=0 deleted=0 unchanged=0 clean=0
           prev=
           for file in "$out"/*.md; do
             [ -z "$prev" ] || record "$prev" "$hash"
@@ -51,19 +52,47 @@ jobs:
               --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | head -n1)
             id=$(jq -r '.[0] // empty' <<< "${comment:-null}")
             if [ -s "$file" ]; then
-              [ "$(jq -r '.[1]' <<< "${comment:-null}" | unpinned)" = "$(unpinned < "$file")" ] && continue
+              if [ "$(jq -r '.[1]' <<< "${comment:-null}" | unpinned)" = "$(unpinned < "$file")" ]; then
+                unchanged=$((unchanged + 1))
+                continue
+              fi
               if [ -n "$id" ]; then
                 gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@"$file" > /dev/null
+                updated=$((updated + 1))
+                echo "pr_overlap sync: updated comment on PR #$pr"
               else
                 gh pr comment "$pr" --body-file "$file"
+                created=$((created + 1))
+                echo "pr_overlap sync: created comment on PR #$pr"
               fi
             elif [ -n "$id" ]; then
-              gh api -X DELETE "repos/$GH_REPO/issues/comments/$id"
+              gh api -X DELETE "repos/$GH_REPO/issues/comments/$id" > /dev/null
+              deleted=$((deleted + 1))
+              echo "pr_overlap sync: deleted stale comment on PR #$pr"
+            else
+              clean=$((clean + 1))
             fi
           done
           [ -z "$prev" ] || record "$prev" "$hash"
           reports=$(for file in "$out"/*.md; do basename "$file" .md; done | jq -R . | jq -sc .)
           jq -c --argjson keep "$reports" 'with_entries(select(.key | IN($keep[])))' "$state" > "$state.new" && mv "$state.new" "$state"
+          echo "pr_overlap sync: created=$created updated=$updated deleted=$deleted unchanged=$unchanged clean=$clean"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## PR overlap"
+              echo ""
+              echo "- **Repo:** \`$GH_REPO\`"
+              echo "- **Base:** \`${{ github.event.repository.default_branch }}\`"
+              echo ""
+              echo "| Sync | Count |"
+              echo "|---|---:|"
+              echo "| Created | $created |"
+              echo "| Updated | $updated |"
+              echo "| Deleted | $deleted |"
+              echo "| Unchanged | $unchanged |"
+              echo "| Clean (no comment) | $clean |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - if: always()
         uses: actions/cache/save@v6
         with:
