@@ -3,6 +3,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/parsing/RelrRelocations.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
@@ -54,7 +55,10 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     const auto fileOffset = [&](std::uint64_t address, std::uint64_t size) {
         for (const auto& header : headers) {
             if (header.Type != 1 || address < header.MappedAddress || address - header.MappedAddress > header.FileSize || size > header.FileSize - (address - header.MappedAddress)) continue;
-            const auto offset = header.Offset + address - header.MappedAddress;
+            const auto relative = address - header.MappedAddress;
+            if (relative > std::numeric_limits<std::uint64_t>::max() - header.Offset)
+                throw Domain::RelinkerException("Code analysis: file range exceeds image", header.Offset);
+            const auto offset = header.Offset + relative;
             range(offset, size);
             return offset;
         }
@@ -229,14 +233,28 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     range(0, 64);
     if (const auto entry = Io::ReadU64(bytes, 24); entry != 0) addRoot(entry);
     if (const auto init = value(12, 0x6000000c)) addRoot(*init);
-    if (const auto fini = value(13, 0x6000000d); fini && *fini != 0) addRoot(*fini);
+    if (const auto fini = value(13, 0x6000000d)) addRoot(*fini);
     const auto symbolBytes = value(0x6100003f, 0xffffffffffffffffull);
     std::uint64_t symbolCount = 0;
     if (symbolBytes) {
         if (*symbolBytes % 24 != 0) throw Domain::RelinkerException("Code analysis: invalid symbol table size");
         symbolCount = *symbolBytes / 24;
-    } else if (tags.contains(4)) symbolCount = Io::ReadU32(bytes, fileOffset(tags.at(4), 8) + 4);
-    else if (tags.contains(0x6ffffef5)) {
+    } else if (tags.contains(4)) {
+        const auto address = tags.at(4);
+        const auto header = fileOffset(address, 8);
+        const auto nbucket = Io::ReadU32(bytes, header);
+        const auto nchain = Io::ReadU32(bytes, header + 4);
+        if (nbucket == 0 || nchain == 0)
+            throw Domain::RelinkerException("Code analysis: invalid SysV hash header", address);
+        const std::uint64_t hashSize = 8 + static_cast<std::uint64_t>(nbucket) * 4 + static_cast<std::uint64_t>(nchain) * 4;
+        const auto start = fileOffset(address, hashSize);
+        for (std::uint64_t index = 0; index < nbucket; ++index) {
+            const auto bucket = Io::ReadU32(bytes, start + 8 + index * 4);
+            if (bucket >= nchain)
+                throw Domain::RelinkerException("Code analysis: invalid SysV hash bucket index", address);
+        }
+        symbolCount = nchain;
+    } else if (tags.contains(0x6ffffef5)) {
         const auto address = tags.at(0x6ffffef5);
         const auto header = fileOffset(address, 16);
         const auto bucketCount = Io::ReadU32(bytes, header);
@@ -246,6 +264,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             throw Domain::RelinkerException("Code analysis: invalid GNU hash header", address);
         const std::uint64_t bucketOffset = 16 + static_cast<std::uint64_t>(bloomCount) * 8;
         const auto chainOffset = bucketOffset + static_cast<std::uint64_t>(bucketCount) * 4;
+        if (chainOffset > std::numeric_limits<std::uint64_t>::max() - address)
+            throw Domain::RelinkerException("Code analysis: invalid GNU hash header", address);
         const auto start = fileOffset(address, chainOffset);
         std::uint64_t lastBucket = 0;
         for (std::uint64_t index = 0; index < bucketCount; ++index) {
@@ -258,11 +278,15 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         if (lastBucket != 0) {
             symbolCount = lastBucket;
             for (;;) {
+                if (symbolCount - firstSymbol > (std::numeric_limits<std::uint64_t>::max() - chainOffset) / 4)
+                    throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 const auto offset = chainOffset + (symbolCount - firstSymbol) * 4;
                 if (offset > std::numeric_limits<std::uint64_t>::max() - address)
                     throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 const auto chain = Io::ReadU32(bytes, fileOffset(address + offset, 4));
                 ++symbolCount;
+                if (symbolCount > std::numeric_limits<std::uint32_t>::max())
+                    throw Domain::RelinkerException("Code analysis: invalid GNU hash chain", address);
                 if (chain & 1) break;
             }
         }
@@ -283,6 +307,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     CodePointers pointers;
     std::set<std::uint64_t> importSlots;
+    std::set<std::uint64_t> relativeSlots;
     const auto relocationRange = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag) -> std::pair<std::uint64_t, std::uint64_t> {
         const auto size = value(sizeTag, sceSizeTag);
         if (!size) return {0, 0};
@@ -311,7 +336,10 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                     && addend <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
                     && Io::ReadU64(bytes, symbol + 8) == addend;
                 const auto [recorded, inserted] = pointers.Values.emplace(slot, addend);
-                if ((index != 0 && !zeroSectionSymbol && !matchingDefinedSymbol) || (!inserted && recorded->second != addend)) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
+                const auto replaces = !plt && index == 0 && !inserted && relativeSlots.contains(slot);
+                if ((index != 0 && !zeroSectionSymbol && !matchingDefinedSymbol) || (!inserted && recorded->second != addend && !replaces)) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
+                if (replaces) recorded->second = addend;
+                if (!plt && index == 0) relativeSlots.insert(slot);
                 addPointerRoot(addend);
             } else if (type == 1 || type == 6 || type == 7) {
                 if (index != 0 && index >= symbolCount) throw Domain::RelinkerException("Code analysis: invalid relocation symbol", slot);
@@ -326,6 +354,13 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             }
         }
     };
+    std::vector<Domain::DynamicTag> relrTags;
+    for (const auto tag : {35, 36, 37})
+        if (tags.contains(tag)) relrTags.push_back({tag, tags.at(tag)});
+    for (const auto& [slot, target] : ReadRelrRelocations(bytes, headers, relrTags)) {
+        pointers.Values.emplace(slot, target);
+        addPointerRoot(target);
+    }
     readRelocations(relaOffset, relaSize, false);
     readRelocations(pltOffset, pltSize, true);
     for (const auto& [addressTag, sizeTag] : {std::pair{25u, 27u}, std::pair{26u, 28u}, std::pair{32u, 33u}}) {
@@ -480,7 +515,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     std::size_t previousRoots = 0;
     std::unordered_set<Domain::VirtualAddress> decodedInstructions;
-    std::vector<std::unordered_set<Domain::VirtualAddress>> sectionReachable(codeHeaders.size());
+    std::vector<std::vector<std::uint8_t>> sectionReachable(codeHeaders.size());
     do {
         previousRoots = roots.size();
         for (std::size_t i = 0; i < codeHeaders.size(); ++i) {
@@ -491,8 +526,9 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             for (const auto root : roots) if (root >= header.MappedAddress && root - header.MappedAddress < header.FileSize) entries.push_back(root);
             if (entries.empty()) continue;
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
-            const auto graph = UnusedNidFilter::BuildControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), sectionReachable[i], [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable);
-            for (const auto address : graph->ReachableVaddrs()) {
+            auto& reached = sectionReachable[i];
+            if (reached.empty()) reached.resize(header.FileSize);
+            for (const auto address : UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable)) {
                 if (!decodedInstructions.insert(address).second) continue;
                 instructions.insert(address);
                 const auto offset = address - header.MappedAddress;

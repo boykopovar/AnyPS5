@@ -20,6 +20,7 @@ CLASSES = ("implemented", "partial", "stub", "absent", "module")
 CONDITIONAL = re.compile(r"(?:if|else|for|while|do|switch|case|default|try|catch|co_await|co_yield)\b")
 BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
 EXIT = re.compile(r"\b(?:return|co_return|goto)\b")
+FLOW_TOKEN = re.compile(r"\w+|[()[\]{}]")
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
@@ -503,6 +504,39 @@ def top_level_statements(body):
     return parts
 
 
+def function_exit(body):
+    for _, statement in top_level_statements(body):
+        depth, end, capture_depth, callable_scope = 0, 0, 0, False
+        for match in FLOW_TOKEN.finditer(statement):
+            if match.start() < end:
+                continue
+            token = match.group()
+            if token == "[":
+                before = statement[:match.start()].rstrip()
+                if not depth and not statement.startswith("[[", match.start()) and (
+                        not before or before[-1] in "=({,:;?!~&|+-*/%^<>" or before.endswith("]]")
+                        or re.search(r"\b(?:co_await|co_yield|throw)$", before)):
+                    capture_depth = depth + 1
+                depth += 1
+            elif token == "(":
+                depth += 1
+            elif token in (")", "]"):
+                if token == "]" and depth == capture_depth:
+                    callable_scope = True
+                    capture_depth = 0
+                depth -= 1
+            elif token == "{":
+                end = progress.body_end(statement, match.start()) + 1
+                statement_expression = depth and statement[:match.start()].rstrip().endswith("(")
+                if not callable_scope and (not depth or statement_expression) and function_exit(statement[match.start():end]):
+                    return True
+            elif not depth:
+                if EXIT.fullmatch(token):
+                    return True
+                callable_scope = callable_scope or token in ("class", "struct", "union")
+    return False
+
+
 def branch_variants(body):
     root = []
     lists, groups = [root], []
@@ -579,14 +613,17 @@ def unconditional_calls(body):
                 before = statement[:call.start()]
                 if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
                     names.add(call.group(1))
-        if EXIT.search(statement):
+        if function_exit("{" + statement + "}"):
             break
     return names
 
 
 def always_stub_calls(text):
     helpers = {}
+    possible = progress.stub_calls(text)
     for match in progress.STUB_WRAPPER.finditer(text):
+        if match.group(1) not in possible:
+            continue
         body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
         helpers.setdefault(match.group(1), []).extend(variant_calls(body))
     calls = {progress.STUB}
@@ -602,7 +639,7 @@ def conditional_stubs(library):
     for source in library.rglob("*.cpp"):
         if "tests" in source.relative_to(library).parts:
             continue
-        text = progress.code(source.read_text(errors="ignore"))
+        text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = always_stub_calls(text)
         for match in progress.DEFINITION.finditer(text):
             body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
@@ -797,8 +834,10 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         library = record["library"]
         if library and not available(library):
             missing[library] += 1
-    for _, needed in (module_imports or {}).values():
+    for module, (_, needed) in (module_imports or {}).items():
         for library in needed:
+            if module.endswith(".guest.prx") and library == "ld-linux-x86-64.so.2":
+                continue
             if not available(library):
                 missing[library] += 1
     return ordered, dict(sorted(missing.items()))
