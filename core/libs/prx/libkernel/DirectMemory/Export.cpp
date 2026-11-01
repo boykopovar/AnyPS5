@@ -481,9 +481,11 @@ int APS5_VABI sceKernelQueryMemoryProtection(void* addr, void** start, void** en
  VirtualQueryInfo info{};
  const int result = sceKernelVirtualQuery(addr, 0, &info, sizeof(info));
  if (result != 0) return result;
- if (start) *start = reinterpret_cast<void*>(info.start);
- if (end) *end = reinterpret_cast<void*>(info.end);
- if (prot) *prot = info.protection;
+ const auto startAddress = reinterpret_cast<void*>(info.start);
+ const auto endAddress = reinterpret_cast<void*>(info.end);
+ if (start != nullptr && !GuestCopyOut_nid_no_patch(start, &startAddress, sizeof(startAddress))) return SCE_KERNEL_ERROR_EFAULT;
+ if (end != nullptr && !GuestCopyOut_nid_no_patch(end, &endAddress, sizeof(endAddress))) return SCE_KERNEL_ERROR_EFAULT;
+ if (prot != nullptr && !GuestCopyOut_nid_no_patch(prot, &info.protection, sizeof(info.protection))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
@@ -494,8 +496,10 @@ int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end) {
   VirtualQueryInfo info{};
   if (sceKernelVirtualQuery(addr, 0, &info, sizeof(info)) != 0) return SCE_KERNEL_ERROR_EACCES;
  }
- if (start) *start = reinterpret_cast<void*>(stackStart);
- if (end) *end = reinterpret_cast<void*>(stackEnd);
+ const auto startAddress = reinterpret_cast<void*>(stackStart);
+ const auto endAddress = reinterpret_cast<void*>(stackEnd);
+ if (start != nullptr && !GuestCopyOut_nid_no_patch(start, &startAddress, sizeof(startAddress))) return SCE_KERNEL_ERROR_EFAULT;
+ if (end != nullptr && !GuestCopyOut_nid_no_patch(end, &endAddress, sizeof(endAddress))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
@@ -851,6 +855,10 @@ int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
 }
 
 extern "C" {
+
+bool APS5_VABI DirectMemoryAliased_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    return DirectMemoryAliased(address, bytes);
+}
 
 int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length) {
     std::uintptr_t start = 0;

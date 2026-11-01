@@ -132,7 +132,6 @@ Project switches accept `ON` or `OFF`:
 | `-DANYPS5_USE_SYSTEM_DEPS=ON`    | `OFF`   | Resolve SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools from the system instead of the submodules. |
 | `-DAPS5_ENABLE_TIMING_LOG=ON`    | `OFF`   | Compile frame timing logging.                    |
 | `-DAPS5_ENABLE_TRACY=ON`         | `OFF`   | Build the [Tracy](#tracy) profiler client into the agc driver. |
-| `-DAPS5_AGC_CREATE_LOG=OFF`      | `ON`    | No effect: `sceAgcCreateShader` logs nothing on success. |
 | `-DAGC_BUILD_VISUAL_TEST=ON`     | `OFF`   | Build the standalone AGC SPIR-V visual test.     |
 | `-DANYPS5_REQUIRE_CPU_LEAD_TEST=ON` | `OFF` | With `BUILD_TESTING=ON`, also register `agc_driver_sparse_dma_buf_cpu_lead`, which runs `agc_driver_sparse_dma_buf_import_tests --require-cpu-lead` and fails instead of skipping when the nonzero-lead dma-buf CPU publish is not exercised, such as on Windows or without an accessible `/dev/udmabuf`. |
 | `-DANYPS5_LIBRESSL_ORACLE=ON`    | `OFF`   | With `BUILD_TESTING=ON`, download LibreSSL 2.5.4 from ftp.openbsd.org at build time, check its SHA-256 and register `guest_libressl_oracle`, which compares `libSceLibreSsl` and `libSceLibreSsl3` exports with it and prints the cases and differences per function. Without the flag nothing is downloaded. |
@@ -264,6 +263,12 @@ On Windows use `agc_frame_replay.exe` and prepend `build/core/libs/libs/unpatche
 ## Pipeline statistics
 
 Set `APS5_PIPELINE_STATS=1` to capture and print driver statistics for each newly created graphics or compute pipeline. This requires `VK_KHR_pipeline_executable_properties` and `pipelineExecutableInfo`; an unsupported device fails with an error. Statistic names and units are driver-specific. Capturing statistics can increase pipeline compilation cost. The setting is disabled by default.
+
+## GPU memory accounting
+
+Set `APS5_TRACE_MEMORY_BUDGET=1` to track Vulkan allocations by device, heap and allocation category. Dynamic storage-cache budget queries print `[gpu-memory]` reports at most once every 10 seconds. Reports contain byte counts for active and retained memory, the driver's heap budget and usage, and the storage budget's sampled, cached, reserved, available and cap terms. Image reuse changes the category without counting another allocation; slab free slots and pooled buffers count as retained memory. Host fallback allocations count against the heap actually used.
+
+`unattributed_usage` is reported heap usage above tracked allocations; `tracked_above_usage` is the reverse difference. Vulkan heap usage is an estimate and includes driver allocations, so neither difference identifies a specific allocation class. `complete=0` means accounting metadata could not be recorded consistently. The switch records allocation lifetimes and leaves cache limits and eviction unchanged. A forced `APS5_TEXTURE_CACHE_MIB` bypasses dynamic budget queries and their reports.
 
 ## Device loss reports
 

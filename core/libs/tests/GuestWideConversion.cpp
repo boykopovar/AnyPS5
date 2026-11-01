@@ -60,6 +60,43 @@ static void CheckStoul() {
     Require(Throws([] { _WStoul_nid_postfix(u"1", nullptr, 37); }), "_WStoul throws for base 37");
 }
 
+template<typename TValue, typename TConvert>
+static void CheckConversion(TConvert convert, const char16_t* text, long argument, TValue value, std::size_t consumed, int error, const char* message) {
+    char16_t* end = nullptr;
+    errno = 0;
+    const TValue result = convert(text, &end, argument);
+    if (result != value || end != text + consumed || errno != error) {
+        std::fprintf(stderr, "%s: consumed %lld, errno %d\n", message, static_cast<long long>(end - text), errno);
+        ++failures;
+    }
+}
+
+static void CheckDinkumwareConversions() {
+    constexpr std::uint64_t unsignedMax = std::numeric_limits<std::uint64_t>::max();
+    constexpr long long signedMax = std::numeric_limits<long long>::max();
+    constexpr long long signedMin = std::numeric_limits<long long>::min();
+    const auto stoull = [](const char16_t* text, char16_t** end, long base) { return _WStoull_nid_postfix(text, end, static_cast<int>(base)); };
+    const auto stoll = [](const char16_t* text, char16_t** end, long base) { return _WStoll_nid_postfix(text, end, static_cast<int>(base)); };
+    CheckConversion<unsigned long long>(stoull, u" -0x10", 16, 18446744073709551600ULL, 6, 0, "_WStoull negates after the prefix");
+    CheckConversion<unsigned long long>(stoull, u"0x", 0, 0, 0, 0, "_WStoull prefix without digits converts nothing");
+    CheckConversion<unsigned long long>(stoull, u"-18446744073709551616", 10, unsignedMax, 21, ERANGE, "_WStoull overflow ignores the sign");
+    CheckConversion<unsigned long long>(stoull, u"0000000000000000000000001", 10, 1, 25, 0, "_WStoull does not count leading zeros");
+    CheckConversion<long long>(stoll, u"9223372036854775807", 10, signedMax, 19, 0, "_WStoll maximum");
+    CheckConversion<long long>(stoll, u"9223372036854775808", 10, signedMax, 19, ERANGE, "_WStoll positive overflow");
+    CheckConversion<long long>(stoll, u"-9223372036854775808", 10, signedMin, 20, 0, "_WStoll minimum");
+    CheckConversion<long long>(stoll, u"-9223372036854775809", 10, signedMin, 20, ERANGE, "_WStoll negative overflow");
+    CheckConversion<long long>(stoll, u"- 5", 10, -5, 3, 0, "_WStoll skips white space after the sign");
+    CheckConversion<long long>(stoll, u"--1", 10, signedMin, 3, ERANGE, "_WStoll second sign overflows");
+    CheckConversion<long long>(stoll, u"  +0x7f", 0, 127, 7, 0, "_WStoll base detection");
+    CheckConversion<long long>(stoll, u"", 2, 0, 0, 0, "_WStoll empty string");
+    CheckConversion<double>(_WStod_nid_postfix, u" 1.5", 2, 150.0, 4, 0, "_WStod scales by a power of ten");
+    CheckConversion<double>(_WStod_nid_postfix, u"25x", -1, 2.5, 2, 0, "_WStod stops at a non-digit");
+    CheckConversion<double>(_WStod_nid_postfix, u"1e400", 0, std::numeric_limits<double>::infinity(), 5, ERANGE, "_WStod overflow");
+    CheckConversion<double>(_WStod_nid_postfix, u"\u30001", 0, 0.0, 0, 0, "_WStod does not skip a non-ASCII space");
+    CheckConversion<float>(_WStof_nid_postfix, u" 1.5", 2, 150.0f, 4, 0, "_WStof scales by a power of ten");
+    CheckConversion<long double>(_WStold_nid_postfix, u"-2.5e1", 3, -25000.0L, 6, 0, "_WStold scales by a power of ten");
+}
+
 static void CheckClassification() {
     int (APS5_VABI* const classes[])(std::uint32_t) = {
         iswalnum_nid_postfix, iswalpha_nid_postfix, iswcntrl_nid_postfix, iswdigit_nid_postfix,
@@ -260,6 +297,7 @@ static void CheckUnsizedScan() {
 
 int main() {
     CheckStoul();
+    CheckDinkumwareConversions();
     CheckClassification();
     CheckScan();
     CheckUnsizedScan();
