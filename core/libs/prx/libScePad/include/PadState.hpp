@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEPAD_PADSTATE_HPP
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include "SceTypes.hpp"
@@ -89,5 +90,9 @@ extern "C" void PadQueueLegacyAudioHaptics_nid_postfix(int source, std::uint64_t
 extern "C" void PadClearLegacyAudioHaptics_nid_postfix(int source);
 extern "C" void PadSubmitAudioHapticsForPort_nid_postfix(int port, std::uint8_t large, std::uint8_t small);
 extern "C" void PadSetPortConnected_nid_postfix(int port, bool connected);
+extern "C" void PadSetHapticStreamOpen_nid_postfix(bool open);
+extern "C" bool PadHapticStreamOpen_nid_postfix();
+extern "C" void PadSubmitHapticFrames_nid_postfix(const float* left, const float* right, std::size_t stride, std::uint32_t frames, std::uint32_t rate);
+extern "C" bool PadWaitTakeHapticBlock_nid_postfix(std::int8_t* block, std::uint32_t timeoutMs);
 
 #endif
