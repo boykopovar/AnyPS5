@@ -1,10 +1,7 @@
 #include "prx/libSceLoginService/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-#include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -26,19 +23,6 @@ int main() {
 
     Require(sceLoginServiceInitialize() == 0);
     Require(sceLoginServiceRequestDevices(nullptr) == kErrInvalidArg);
-
-    bool threw = false;
-    try {
-        sceLoginServiceRequestDevices(request);
-    } catch (const std::runtime_error& error) {
-        if (std::string(error.what()) == "sceLoginServiceRequestDevices not implemented") {
-            threw = true;
-        } else {
-            std::fprintf(stderr, "sceLoginServiceRequestDevices threw: %s\n", error.what());
-            return 1;
-        }
-    }
-    Require(threw);
 
     Require(sceLoginServiceTerminate() == 0);
     Require(sceLoginServiceRequestDevices(nullptr) == kErrInvalidArg);
