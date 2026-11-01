@@ -106,7 +106,7 @@ static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult c
 static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
 static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
-static_assert(sizeof(IrValue) == 136, "IrValue changed: update the plan value encoder");
+static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
 static_assert(sizeof(DescriptorSource) == 192, "DescriptorSource changed: update the plan encoder");
@@ -141,7 +141,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 45, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 46, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -801,6 +801,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.flatVolumeCompatible);
         out.Value(image.singleMipPlaneBiasCompatible);
         out.Value(image.volumeArraySampleCompatible);
+        out.Value(image.adjustedSample);
         out.Value(image.flatLineCompatible);
         out.Value(image.flatVolumeLineCompatible);
         out.Value(image.dimensionQueryOnly);
@@ -911,6 +912,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.flatVolumeCompatible);
         in.Value(image.singleMipPlaneBiasCompatible);
         in.Value(image.volumeArraySampleCompatible);
+        in.Value(image.adjustedSample);
         in.Value(image.flatLineCompatible);
         in.Value(image.flatVolumeLineCompatible);
         in.Value(image.dimensionQueryOnly);
@@ -1387,6 +1389,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_PERF_DOM_INTERSECTION",
     "APS5_NO_PERF_ITERATION_SELECTION",
     "APS5_NO_PERF_LAYOUT_PAIR",
+    "APS5_NO_BUFFER_SUBSTITUTES",
     "APS5_NO_RESULT_MEMO",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
@@ -1505,6 +1508,7 @@ public:
         if (DecodeEntry(bytes, key, *persisted, std::move(mapped)) != LoadStatus::Loaded) return nullptr;
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
+        persisted->substitutes = variant.substitutes;
         return persisted;
     }
 
@@ -1881,7 +1885,7 @@ DiskStore& store() {
 }
 
 std::uint64_t SourceVersion() {
-    return Generated::SourceVersion;
+    return ExactF32Arithmetic() ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
 }
 
 void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key) {

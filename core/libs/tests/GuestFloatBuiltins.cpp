@@ -65,6 +65,18 @@ static void CheckComparisons() {
     Require(__ledf2_nid_postfix(Double(0x0000000000000001ull), 0.) == 1);
 }
 
+static void CheckSingleComparisonsAndAddition() {
+    Require(__lesf2_nid_postfix(1.f, 2.f) <= 0 && __lesf2_nid_postfix(2.f, 2.f) <= 0 && __lesf2_nid_postfix(2.f, 1.f) > 0);
+    Require(__lesf2_nid_postfix(NAN, 1.f) > 0 && __lesf2_nid_postfix(1.f, NAN) > 0);
+    Require(__gtsf2_nid_postfix(-1.f, -2.f) > 0 && __gtsf2_nid_postfix(-2.f, -1.f) <= 0 && __gtsf2_nid_postfix(2.f, 2.f) <= 0);
+    Require(__gtsf2_nid_postfix(1.f, NAN) <= 0 && __gtsf2_nid_postfix(NAN, NAN) <= 0);
+    Require(__nesf2_nid_postfix(1.f, -1.f) != 0 && __nesf2_nid_postfix(NAN, 0.f) != 0 && __nesf2_nid_postfix(0.f, -0.f) == 0);
+    Require(__addsf3_nid_postfix(1.f, 2.f) == 3.f && __addsf3_nid_postfix(-1.5f, .25f) == -1.25f);
+    Require(__addsf3_nid_postfix(0x1p-149f, 0x1p-149f) == 0x1p-148f);
+    Require(__addsf3_nid_postfix(0x1.fffffep127f, 0x1.fffffep127f) == INFINITY);
+    Require(Bits(__addsf3_nid_postfix(1.f, -1.f)) == 0u);
+}
+
 static void CheckFloatConversions() {
     Require(Bits(__extendsfdf2_nid_postfix(Float(0x7f800001u))) == 0x7ff0000000000001ull);
     Require(Bits(__extendsfdf2_nid_postfix(Float(0xffc00001u))) == 0xfff8000000000001ull);
@@ -150,6 +162,7 @@ static void CheckComplex() {
 int main() {
     CheckArithmetic();
     CheckComparisons();
+    CheckSingleComparisonsAndAddition();
     CheckFloatConversions();
     CheckFloatToInteger();
     CheckIntegerToFloat();

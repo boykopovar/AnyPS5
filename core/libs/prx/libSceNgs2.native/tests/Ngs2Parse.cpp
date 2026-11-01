@@ -241,8 +241,36 @@ static void TestFrameInfoErrors() {
     }
 }
 
+static std::int32_t APS5_VABI ReadUserWaveform(std::uintptr_t user_data, std::uint32_t offset, void* data, std::size_t size) {
+    const auto& file = *reinterpret_cast<const std::vector<std::uint8_t>*>(user_data);
+    if (offset > file.size() || size > file.size() - offset) return -1;
+    std::memcpy(data, file.data() + offset, size);
+    return static_cast<std::int32_t>(size);
+}
+
+static void TestParseUser() {
+    const auto file = PcmFile(2, 44100, 16, 100);
+    Ngs2WaveformInfo expected{};
+    Ngs2WaveformInfo actual{};
+    Require(sceNgs2ParseWaveformData(file.data(), file.size(), &expected) == SCE_NGS2_OK);
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&file), &actual) == SCE_NGS2_OK);
+    Require(std::memcmp(&expected, &actual, sizeof(expected)) == 0);
+    Require(sceNgs2ParseWaveformUser(0, 0, &actual) == static_cast<int>(0x804A0408u));
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&file), nullptr) ==
+        static_cast<int>(0x804A0053u));
+    auto bad = file;
+    bad[0] = 'X';
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&bad), &actual) ==
+        SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    auto truncated = file;
+    truncated.resize(16);
+    Require(sceNgs2ParseWaveformUser(reinterpret_cast<std::uintptr_t>(&ReadUserWaveform), reinterpret_cast<std::uintptr_t>(&truncated), &actual) ==
+        static_cast<int>(0x804A0408u));
+}
+
 int main() {
     TestParsePcm();
+    TestParseUser();
     TestParseUnknownFormats();
     TestParseFile();
     TestParseFileBank();

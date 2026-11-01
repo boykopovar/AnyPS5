@@ -2,6 +2,8 @@
 
 ### Unknown function info
 
+- [sceOpusCeltEncGetAjmContext, sceOpusCeltMultistreamEncCreate, sceOpusCeltMultistreamEncCtl and sceOpusCeltMultistreamEncCreateEx](../../../core/libs/prx/libSceOpusCeltEnc/Export.cpp) have unknown signatures and behaviour. Only names and NIDs are established by the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceopusceltenc-b31be2adfa.jsonl). The parameterless `int` declarations are import-resolution placeholders, not confirmed ABI signatures, and every call throws through `NotImplemented_nid_no_patch`.
+
 - [sceOpusCeltEncCtl, sceOpusCeltEncEncodeFloatWithPriority and sceOpusCeltEncEncodeWithPriority](../../../core/libs/prx/libSceOpusCeltEnc/Export.cpp) (libSceOpusCeltEnc) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusCeltEnc.c). The prototypes mirror the sibling encoder declarations and libopus's own ctl and priority entry points, but the console's request codes, priority and batch semantics were not recovered. They throw through `NotImplemented_nid_no_patch`; this is not an ABI claim.
 
 ### Functional

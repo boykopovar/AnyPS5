@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpTrophy/include/InventoryExports.hpp"
 #include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
@@ -781,5 +783,67 @@ int APS5_VABI sceNpTrophySystemWrapRemoveUserData(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetailsArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTitleData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetails() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+O9vU1CpGZA", libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+not13BEdVI", libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FJZW2oHUHFk", libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_bGnKq23jqek_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("bGnKq23jqek", libSceNpTrophyUnknown_bGnKq23jqek_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lX611WLCvX0", libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("n4AHGHb-pfY", libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch);
 
 }

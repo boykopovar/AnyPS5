@@ -180,6 +180,11 @@ void ForgetJitSharedMemory(int descriptor) {
     g_jitDescriptors.erase(descriptor);
 }
 
+bool IsJitSharedMemory(int descriptor) {
+    std::lock_guard lock(g_jitLock);
+    return g_jitDescriptors.contains(descriptor);
+}
+
 void DuplicateJitSharedMemory(int from, int to) {
     std::lock_guard lock(g_jitLock);
     g_jitDescriptors.erase(to);

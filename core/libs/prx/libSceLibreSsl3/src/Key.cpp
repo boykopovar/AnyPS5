@@ -35,4 +35,10 @@ int APS5_VABI EC_KEY_up_ref_nid_postfix(LibreSsl3EcKey* key) {
     return Retain_nid_no_patch(key->references);
 }
 
+int APS5_VABI RSA_up_ref_nid_postfix(LibreSsl3Rsa* rsa) {
+    if (!rsa)
+        throw std::invalid_argument("RSA_up_ref requires a key");
+    return Retain_nid_no_patch(rsa->references);
+}
+
 }

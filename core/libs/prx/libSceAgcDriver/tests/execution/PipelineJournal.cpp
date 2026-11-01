@@ -14,6 +14,7 @@
 #include "ShaderCacheDirectory.hpp"
 #include "../NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
+#include "ShaderDiskCache.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -383,6 +384,14 @@ void HeldModuleTests() {
         for (std::size_t index = 0; index < results.size(); ++index) device->Dispatch(results[index], 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codes[index].data()));
         device->WaitIdle();
         AgcDriver::Graphics::FlushPipelineJournal();
+        std::uint64_t encoded = 0;
+        for (const auto& result : results) {
+            std::vector<std::byte> bytes;
+            ShaderRecompiler::ShaderDiskCache::EncodeResult(result, bytes);
+            encoded += bytes.size();
+        }
+        const auto journalBytes = std::filesystem::file_size(AgcDriver::Graphics::PipelineJournalPath());
+        Require(journalBytes < encoded, "the journal is " + std::to_string(journalBytes) + " bytes with 16 of its modules alone encoding to " + std::to_string(encoded) + " bytes, so it does not store them compressed");
     }
     SetEnvironment("APS5_PIPELINE_JOURNAL_THREADS", "1");
     const auto before = Snapshot();
@@ -492,6 +501,37 @@ std::vector<ShaderRecompiler::PipelineIdentity> ReadJournalComputeIdentities(con
         while (cursor % 8u != 0) ++cursor;
     }
     return identities;
+}
+
+void ReplayRacesDispatchTests() {
+    using namespace NarrowConstantStoreFixture;
+    constexpr std::uint32_t Pipelines = 32;
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    std::vector<std::vector<std::uint32_t>> codes;
+    for (std::uint32_t salt = 16; salt < 16 + Pipelines; ++salt) codes.push_back(ComputeCode(salt));
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device recording the raced pipelines could not be opened");
+        device->WaitForPipelineJournalReplay();
+        for (const auto& code : codes) device->Dispatch(CompileCompute(*device, code, words, 32), 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto before = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device racing the replay could not be opened");
+        std::vector<ShaderRecompiler::RecompileResult> shaders;
+        for (const auto& code : codes) shaders.push_back(CompileCompute(*device, code, words, 32));
+        for (std::size_t index = 0; index < shaders.size(); ++index) device->Dispatch(shaders[index], 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codes[index].data()));
+        device->WaitIdle();
+        device->WaitForPipelineJournalReplay();
+        const auto after = Snapshot();
+        Require(after.journal.replayRejected == before.journal.replayRejected && after.journal.replayFailed == before.journal.replayFailed, "the raced replay rejected or failed a compute pipeline");
+        const auto visited = (after.journal.replayedCompute - before.journal.replayedCompute) + (after.journal.replayPresent - before.journal.replayPresent);
+        Require(device->ComputePipelinesCreated() == visited, "a dispatch and the replay both built a compute pipeline: " + std::to_string(device->ComputePipelinesCreated()) + " built for " + std::to_string(visited) + " replayed");
+    }
 }
 
 void NewestEntriesTests() {
@@ -697,7 +737,9 @@ void OversizedRecordKeepsTheJournal() {
         device->WaitForPipelineJournalReplay();
         const auto code = ComputeCode(2);
         auto result = CompileCompute(*device, code, words, 32);
-        result.shaderDataUserWords.assign(400000u, 0u);
+        result.shaderDataUserWords.resize(400000u);
+        std::uint32_t noise = 0x9e3779b9u;
+        for (auto& word : result.shaderDataUserWords) word = noise = noise * 1664525u + 1013904223u;
         AgcDriver::Graphics::RecordComputePipeline(result, false);
         AgcDriver::Graphics::FlushPipelineJournal();
     }
@@ -743,6 +785,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         JournalTests();
+        ReplayRacesDispatchTests();
         NewestEntriesTests();
         EvictionTests();
         EvictionWatermarkTests();

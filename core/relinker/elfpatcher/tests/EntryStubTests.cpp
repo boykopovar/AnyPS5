@@ -161,11 +161,22 @@ void windowsKernelVariantDependenciesLoadCanonicalKernel() {
     }
 }
 
+void stubRejectsAnEntryBeyondTheWrapBoundary() {
+    bool threw = false;
+    try {
+        static_cast<void>(Elfpatcher::EntryStubBuilder().BuildEntryStub(0x1000, 0xFFFFFFFFFFFFF000));
+    } catch (const Domain::RelinkerException& error) {
+        threw = std::string(error.what()).find("rel32") != std::string::npos;
+    }
+    require(threw, "an entry point more than 2^63 from the stub was accepted with a wrapped displacement");
+}
+
 }
 
 int main() {
     try {
         stubTerminatesTheFrameChain();
+        stubRejectsAnEntryBeyondTheWrapBoundary();
         windowsStubLoadsTheAllocatorFirst("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
         windowsStubLoadsTheAllocatorFirst("$ORIGIN/libs", u"libs\\", {0x48, 0x8d, 0x35});
         windowsStubLoadsTheAllocatorOnRequest("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});

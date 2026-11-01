@@ -31,6 +31,10 @@ int APS5_VABI sceKernelIsDisableRazor() {
     return 0;
 }
 
+int APS5_VABI sceKernelGetDiableBinaryVersionCheckValue() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceKernelReadDipswData() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
