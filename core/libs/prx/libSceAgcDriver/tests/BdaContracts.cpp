@@ -177,6 +177,26 @@ void RunBdaContractTests() {
     program.BlockOrder().push_back(&block);
     ValidateBdaTarget(program, target);
     AgcDriver::Graphics::Require(!BdaInvocationsMayStop(program), "a BDA program with barriers must keep its invocations running");
+    for (const auto opcode : {IrOpcode::ReadLane, IrOpcode::WriteLane}) {
+        IrProgram lanes;
+        lanes.Resources().stage = IrShaderStage::Pixel;
+        auto& laneBlock = lanes.CreateBlock();
+        laneBlock.AppendInstruction(&lanes.CreateValue(opcode, IrType::U32));
+        lanes.BlockOrder().push_back(&laneBlock);
+        AgcDriver::Graphics::Require(!BdaInvocationsMayStop(lanes), std::string("a pixel program with ") + (opcode == IrOpcode::ReadLane ? "v_readlane" : "v_writelane") + " must keep its invocations running: a waterfall over a mask that holds a stopped lane never clears its bit");
+    }
+    IrProgram plain;
+    plain.Resources().stage = IrShaderStage::Pixel;
+    auto& plainBlock = plain.CreateBlock();
+    plainBlock.AppendInstruction(&plain.CreateValue(IrOpcode::ReadFirstLane, IrType::U32));
+    plain.BlockOrder().push_back(&plainBlock);
+    AgcDriver::Graphics::Require(BdaInvocationsMayStop(plain), "a BDA program with only v_readfirstlane must still stop a faulting invocation");
+    IrProgram computeLanes;
+    computeLanes.Resources().stage = IrShaderStage::Compute;
+    auto& computeBlock = computeLanes.CreateBlock();
+    computeBlock.AppendInstruction(&computeLanes.CreateValue(IrOpcode::ReadLane, IrType::U32));
+    computeLanes.BlockOrder().push_back(&computeBlock);
+    AgcDriver::Graphics::Require(BdaInvocationsMayStop(computeLanes), "a compute program with v_readlane and no barrier must still stop a faulting invocation");
     program.Resources().stage = IrShaderStage::TessellationControl;
     ValidateBdaTarget(program, target);
     program.Resources().stage = IrShaderStage::Compute;
