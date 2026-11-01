@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
@@ -188,9 +189,9 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         {0, 0, 0, threadGroup != std::array<std::uint32_t, 3>{} ? 0u : 128u}
     };
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    static double captureMs = 0, keyMs = 0, recompileMs = 0, deviceMs = 0;
-    static std::uint64_t cacheHits = 0;
-    static std::uint64_t dispatches = 0;
+    static std::atomic<double> captureMs{0}, keyMs{0}, recompileMs{0}, deviceMs{0};
+    static std::atomic<std::uint64_t> cacheHits{0};
+    static std::atomic<std::uint64_t> dispatches{0};
     auto lap = std::chrono::steady_clock::now();
 
     std::array<double, DriverPhaseCount> phaseMs{};
@@ -367,7 +368,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     if (cached) {
         require(keepVariant != nullptr && keepVariant->shader == registeredShader, "dispatch cache belongs to another registered shader");
-        captureMs += phaseTiming.Elapsed();
+        if (profile) captureMs.fetch_add(phaseTiming.Elapsed(), std::memory_order_relaxed);
     } else if (!fromAhead) {
         shaderMemory = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);
         std::uint64_t forgetAtCapture = 0;
@@ -386,7 +387,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             captured = shaderMemory->Regions();
             request.context.memory = captured;
             if (traceCapSync()) traceCapture("dispatch-capture", address, submission.queue, captured, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);
-            captureMs += phaseTiming.Elapsed();
+            if (profile) captureMs.fetch_add(phaseTiming.Elapsed(), std::memory_order_relaxed);
             phaseTiming.Phase(PhaseCapture);
             if (dumpShaders) static_cast<void>(dumpRequest(address, request));
             const auto started = std::chrono::steady_clock::now();
@@ -395,11 +396,13 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             timing.Mark("capture_resources");
             compiledResult = invocation.Materialize(*capture);
             timing.Mark("materialize");
-            if (compiledResult->cacheHit) ++cacheHits;
+            if (profile && compiledResult->cacheHit) cacheHits.fetch_add(1, std::memory_order_relaxed);
             const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-            static double totalMs = 0;
-            totalMs += elapsed;
-            if (profile && elapsed > 200) std::fprintf(stderr, "[gpu] compute shader 0x%llx recompile took %.0f ms (%zu SPIR-V words, %zu captured regions, total %.1f s)\n", static_cast<unsigned long long>(address), elapsed, compiledResult->spirv.size(), captured.size(), totalMs / 1000);
+            static std::atomic<double> totalMs{0};
+            if (profile) {
+                const auto total = totalMs.fetch_add(elapsed, std::memory_order_relaxed) + elapsed;
+                if (elapsed > 200) std::fprintf(stderr, "[gpu] compute shader 0x%llx recompile took %.0f ms (%zu SPIR-V words, %zu captured regions, total %.1f s)\n", static_cast<unsigned long long>(address), elapsed, compiledResult->spirv.size(), captured.size(), total / 1000);
+            }
         } catch (const std::exception& error) {
             std::string dump;
             if (dumpShaders) {
@@ -416,7 +419,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             else std::snprintf(where, sizeof(where), "compute shader 0x%llx (%s): ", static_cast<unsigned long long>(address), dump.c_str());
             throw std::runtime_error(where + reason);
         }
-        recompileMs += phaseTiming.Elapsed();
+        if (profile) recompileMs.fetch_add(phaseTiming.Elapsed(), std::memory_order_relaxed);
         phaseTiming.Phase(PhaseRecompile);
         insertDispatch(address, key, noDispatchCache || !CacheableResult(*compiledResult), profile, registeredShader, forgetAtCapture, memory, shaderMemory, captured, capture, compiledResult, missedEntry, missedDiffering, attachVariant, phaseTiming);
     }
@@ -656,7 +659,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     }
     phaseTiming.Phase(PhaseDevice);
     if (noteWrites && !writerKeyedEvidence()) noteWrittenBuffers(address, submission.queue, compiled);
-    deviceMs += phaseTiming.Elapsed();
+    if (profile) deviceMs.fetch_add(phaseTiming.Elapsed(), std::memory_order_relaxed);
     phaseTiming.Phase(PhaseTail);
     if (profile) {
         auto& pending = pendingDispatchPhases();
@@ -667,7 +670,16 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         pending.ms = phaseMs;
         pending.tailAt = phaseLap;
     }
-    if (profile && ++dispatches % 100 == 0) AgcDriver::ProfilePrint_nid_no_patch( "[gpu] %llu dispatches (%llu dispatch cache hits, %llu evictions, %llu recompile cache hits): capture %.1f s, cache key %.1f s, recompile %.1f s, device %.1f s\n", static_cast<unsigned long long>(dispatches), static_cast<unsigned long long>(dispatchCacheHits), static_cast<unsigned long long>(dispatchCacheEvictions), static_cast<unsigned long long>(cacheHits), captureMs / 1000, keyMs / 1000, recompileMs / 1000, deviceMs / 1000);
+    if (profile && dispatches.fetch_add(1, std::memory_order_relaxed) % 100 == 99) {
+        std::uint64_t hits = 0;
+        std::uint64_t evictions = 0;
+        {
+            std::lock_guard cacheLock(dispatchCacheMutex);
+            hits = dispatchCacheHits;
+            evictions = dispatchCacheEvictions;
+        }
+        AgcDriver::ProfilePrint_nid_no_patch( "[gpu] %llu dispatches (%llu dispatch cache hits, %llu evictions, %llu recompile cache hits): capture %.1f s, cache key %.1f s, recompile %.1f s, device %.1f s\n", static_cast<unsigned long long>(dispatches.load(std::memory_order_relaxed)), static_cast<unsigned long long>(hits), static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(cacheHits.load(std::memory_order_relaxed)), captureMs.load(std::memory_order_relaxed) / 1000, keyMs.load(std::memory_order_relaxed) / 1000, recompileMs.load(std::memory_order_relaxed) / 1000, deviceMs.load(std::memory_order_relaxed) / 1000);
+    }
 }
 
 }
