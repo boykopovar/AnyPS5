@@ -47,6 +47,17 @@ bool IsUserLoggedIn(int userId) {
  return userConnected[index];
 }
 
+int ReportBooleanSetting(int userId, bool* setting, bool value) {
+ if (!IsUserLoggedIn(userId)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+ }
+ if (setting == nullptr) {
+  return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ *setting = value;
+ return USER_SERVICE_OK;
+}
+
 int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
  if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
@@ -572,7 +583,7 @@ int APS5_VABI sceUserServiceSetPasscode(int userId, const char* value) {
     return WriteUserStringSetting(userId, value, 2, 16);
 }
 
-int APS5_VABI sceUserServiceGetAppearOfflineSetting(void) {
+int APS5_VABI sceUserServiceGetAppearOfflineSetting(int userId, std::int32_t* value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -627,7 +638,7 @@ int APS5_VABI sceUserServiceGetRegisteredHomeUserIdList(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceSetVolumeForGenericUSB(void) {
+int APS5_VABI sceUserServiceSetVolumeForGenericUSB(int userId, std::uint16_t deviceType, std::uint16_t deviceIndex, int value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -636,7 +647,7 @@ int APS5_VABI sceUserServiceSetControlCenterFunctionControlSettings(int userId, 
     return WriteUserDataSetting(userId, settings, 64, 0x08aeu, 64);
 }
 
-int APS5_VABI sceUserServiceGetAudioFocus(void) {
+int APS5_VABI sceUserServiceGetAudioFocus(int userId, void* audioFocus) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -661,9 +672,8 @@ int APS5_VABI sceUserServiceGetHmd2MuteAssign(int userId, std::int32_t* value) {
     return ReadUserIntegerSetting(userId, value, 0x0780a104u, 1);
 }
 
-int APS5_VABI sceUserServiceGetIsCronosEnabled(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetIsCronosEnabled(std::int32_t userId, bool* enabled) {
+ return ReportBooleanSetting(userId, enabled, false);
 }
 
 int APS5_VABI sceUserServiceSetHoldAudioOutDevice(int userId, std::int32_t value) {
@@ -743,7 +753,7 @@ int APS5_VABI sceUserServiceSetParentalBrowser(int userId, std::uint32_t value) 
     return WriteUserIntegerSetting(userId, value, 0x07805c05u);
 }
 
-int APS5_VABI sceUserServiceGetPadSpeakerVolume(void) {
+int APS5_VABI sceUserServiceGetPadSpeakerVolume(int userId, std::uint16_t deviceType, std::uint16_t deviceIndex, std::int32_t* value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -785,7 +795,7 @@ int APS5_VABI sceUserServiceGetVoiceAgentLanguage(int userId, std::int32_t* valu
     return ReadUserIntegerSetting(userId, value, 0x0780d202u, -1);
 }
 
-int APS5_VABI sceUserServiceSetVolumeForController(void) {
+int APS5_VABI sceUserServiceSetVolumeForController(int userId, std::uint16_t deviceType, std::uint16_t deviceIndex, int value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -873,7 +883,7 @@ int APS5_VABI sceUserServiceSetPbtcSaturdayHoursEnd(int userId, std::int32_t val
     return WriteUserIntegerSetting(userId, value, 0x0780b818u);
 }
 
-int APS5_VABI sceUserServiceSetSystemLoggerHashedAccountIdParam(void) {
+int APS5_VABI sceUserServiceSetSystemLoggerHashedAccountIdParam(int userId, std::uint8_t* value, int size, std::uint64_t flags) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1178,7 +1188,7 @@ int APS5_VABI sceUserServiceGetGlsCommunityId(int userId, char* value, std::size
     return ReadUserStringSetting(userId, value, size, 0x0848u, 37);
 }
 
-int APS5_VABI sceUserServiceUpdateCronosCountryList(void) {
+int APS5_VABI sceUserServiceUpdateCronosCountryList(const char* countryList) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1512,7 +1522,7 @@ int APS5_VABI sceUserServiceGetGlsTtsVolume(int userId, std::int32_t* value) {
     return ReadUserIntegerSetting(userId, value, 0x0780c02au, -1);
 }
 
-int APS5_VABI sceUserServiceGetMicLevel(void) {
+int APS5_VABI sceUserServiceGetMicLevel(void* level, void* settings) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1565,7 +1575,7 @@ int APS5_VABI sceUserServiceGetImePointerMode(int userId, std::int32_t* value) {
     return ReadUserIntegerSetting(userId, value, 0x07808083u, 0);
 }
 
-int APS5_VABI sceUserServiceGetVolumeForController(void) {
+int APS5_VABI sceUserServiceGetVolumeForController(int userId, std::uint16_t deviceType, std::uint16_t deviceIndex, std::int32_t* value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1679,7 +1689,7 @@ int APS5_VABI sceUserServiceGetNotificationBehavior(int userId, std::uint32_t* v
     return ReadUserIntegerSetting(userId, value, 0x83fu, 0);
 }
 
-int APS5_VABI sceUserServiceSetPadProfileDataHuntList(void) {
+int APS5_VABI sceUserServiceSetPadProfileDataHuntList(int userId, void* profiles, std::uint32_t count, std::uint32_t flags) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1712,7 +1722,7 @@ int APS5_VABI sceUserServiceGetHrtf(int userId, std::int32_t* value) {
     return ReadUserIntegerSetting(userId, value, 0x0780a010u, 3);
 }
 
-int APS5_VABI sceUserServiceSetAppearOfflineSetting(void) {
+int APS5_VABI sceUserServiceSetAppearOfflineSetting(int userId, std::int32_t value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1757,7 +1767,7 @@ int APS5_VABI sceUserServiceGetA11yControllerInitialSetupProgress(int userId, st
     return ReadUserIntegerSetting(userId, value, 0x0780aa07u, 0);
 }
 
-int APS5_VABI sceUserServiceGetVolumeForGenericUSB(void) {
+int APS5_VABI sceUserServiceGetVolumeForGenericUSB(int userId, std::uint16_t deviceType, std::uint16_t deviceIndex, std::int32_t* value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1951,7 +1961,7 @@ int APS5_VABI sceUserServiceGetNpOfflineAccountAdult(int userId, std::int32_t* v
     return ReadUserIntegerSetting(userId, value, 0x838u, 0);
 }
 
-int APS5_VABI sceUserServiceSetGamePresets(void) {
+int APS5_VABI sceUserServiceSetGamePresets(int userId, void* presets) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1993,7 +2003,7 @@ int APS5_VABI sceUserServiceIsGuestUser(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetPadProfileDataHuntList(void) {
+int APS5_VABI sceUserServiceGetPadProfileDataHuntList(int userId, void* profiles, std::uint32_t count, std::uint32_t flags) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2092,7 +2102,7 @@ int APS5_VABI sceUserServiceSetControlCenterStatus(int userId, std::uint32_t val
     return WriteUserIntegerSetting(userId, value, 0x8b8u);
 }
 
-int APS5_VABI sceUserServiceSetMicLevel(void) {
+int APS5_VABI sceUserServiceSetMicLevel(void* level, void* settings) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2567,7 +2577,7 @@ int APS5_VABI sceUserServiceGetIsPersonalizedHrtfEnabled(int userId, std::int32_
     return ReadUserIntegerSetting(userId, value, 0x0780a01cu, 0);
 }
 
-int APS5_VABI sceUserServiceSetPadSpeakerVolume(void) {
+int APS5_VABI sceUserServiceSetPadSpeakerVolume(int userId, std::uint16_t deviceType, std::uint16_t deviceIndex, int value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
