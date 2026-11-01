@@ -190,7 +190,11 @@ std::uint32_t GuestAddressBase(SpirvValueEmitContext& ctx, const IrValue& inst, 
     if (handle == nullptr || handle->Opcode() != IrOpcode::GetAddressResource || handle->ArgumentCount() != 2u) {
         ctx.Fail(inst, "has no address base pair");
     }
-    const auto base = DeviceAddressFromWords(state, ctx.Arg(*handle, 0), ctx.Arg(*handle, 1));
+    auto baseLow = ctx.Arg(*handle, 0);
+    if (mem.kind == ResourceKind::ScalarAddress) {
+        baseLow = Binary(state, spv::OpBitwiseAnd, TypeU32(state), baseLow, ConstantU32(state, ~3u));
+    }
+    const auto base = DeviceAddressFromWords(state, baseLow, ctx.Arg(*handle, 1));
     return AddBdaAddress(ctx, inst, base, Unary(state, spv::OpUConvert, TypeScalarU64(state), low), false);
 }
 

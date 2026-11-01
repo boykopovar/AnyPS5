@@ -4590,7 +4590,11 @@ bool TableTouched(const std::vector<ShaderRecompiler::MemoryRegion>& regions, co
 
 void verifyScalarAddressRule() {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
-    require(Abi::ScalarAddressDword(0x1000u, 0x23u, 0x41u) == 0x1060u && Abi::ScalarAddressDword(0x1001u, 0x20u, 0u) == 0x1021u, "scalar address rule: the offset and immediate are not dword-aligned on their own");
+    require(Abi::ScalarAddressDword(0x1000u, 0x23u, 0x41u) == 0x1060u, "scalar address rule: the offset and immediate are not dword-aligned on their own");
+    for (const std::uint64_t low : {1u, 2u, 3u}) {
+        require(Abi::ScalarAddressDword(0x1000u + low, 0x20u, 0u) == 0x1020u && Abi::ScalarAddressDword(0x1000u + low, 0x23u, 0x41u) == 0x1060u, ("scalar address rule: a base with low bits " + std::to_string(low) + " is not dword-aligned").c_str());
+        require(Abi::ScalarAddressDword(0xfffffffffffffff0ull + low, 0x8u, 0x4u) == 0xfffffffffffffffcull && !Abi::ScalarAddressDword(0xfffffffffffffff0ull + low, 0x8u, 0x8u).has_value(), ("scalar address rule: a carry past 2^64 from a base with low bits " + std::to_string(low) + " is wrong").c_str());
+    }
     require(Abi::ScalarAddressDword(0x1000u, 0x20u, 0xfffffff0u) == 0x1010u && !Abi::ScalarAddressDword(0x8u, 0x4u, 0xfffffff0u).has_value(), "scalar address rule: a negative immediate is wrong");
     require(!Abi::ScalarAddressDword(0xfffffffffffffff0ull, 0x10u, 0u).has_value() && !Abi::ScalarAddressDword(0xfffffffffffffff0ull, 0x8u, 0x8u).has_value() && Abi::ScalarAddressDword(0xfffffffffffffff0ull, 0x8u, 0x4u) == 0xfffffffffffffffcull, "scalar address rule: a carry past 2^64 is wrong");
     for (const std::uint32_t stride : {4u, 32u, 48u, 0x330u}) {
@@ -4688,11 +4692,12 @@ void verifyPointerImageTable() {
     require(loadedTable.capture->snapshot.tables.tables.at(0).codes == snapshot.codes && loadedTable.capture->snapshot.tables.ranges == tables.ranges, "pointer image table: a base loaded from the SRT with a negative immediate snapshots other records");
     require(loadedTable.result->imageTableReadRanges == compiled.result->imageTableReadRanges, "pointer image table: a negative immediate changed the consumed ranges");
     require(TableCodes(TableMap(*loadedTable.result), 0) == codes, "pointer image table: a loaded base maps other records");
-    root[12] = static_cast<std::uint32_t>(pointer) | 2u;
-    const auto unaligned = CompileTable(loaded);
-    const auto& unalignedCodes = unaligned.capture->snapshot.tables.tables.at(0).codes;
-    require(unalignedCodes.size() == Entries && std::all_of(unalignedCodes.begin(), unalignedCodes.end(), [](std::uint32_t code) { return code == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)); }), "pointer image table: a pointer that is not dword-aligned was read");
-    require(unaligned.result->imageTableReadRanges == std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>>{{}}, "pointer image table: an unaligned pointer recorded consumed ranges");
+    for (const std::uint32_t low : {1u, 2u, 3u}) {
+        root[12] = static_cast<std::uint32_t>(pointer) | low;
+        const auto unaligned = CompileTable(loaded);
+        require(unaligned.capture->snapshot.tables.tables.at(0).codes == snapshot.codes && unaligned.capture->snapshot.tables.ranges == tables.ranges, "pointer image table: a pointer off a dword boundary does not read the records at its dword");
+        require(unaligned.result->imageTableReadRanges == compiled.result->imageTableReadRanges, "pointer image table: a pointer off a dword boundary consumed other ranges");
+    }
     root[12] = static_cast<std::uint32_t>(pointer);
 
     const std::vector<std::uint32_t> directCode{0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0xf4000440u, 0xfa000038u, 0x8f128511u, 0xf40c0900u,
