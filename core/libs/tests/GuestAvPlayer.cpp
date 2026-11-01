@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <new>
@@ -757,7 +758,7 @@ void CheckStreamInfo(AvPlayerInternal* player) {
             Check(std::strcmp(info.details.video.language_code, "eng") == 0, "unexpected video language");
         } else {
             const bool english = index == EnglishAudioStream;
-            Check(info.type == 0, "audio stream type");
+            Check(info.type == 2, "audio stream type");
             Check(info.details.audio.channel_count == (english ? 2 : 1) && info.details.audio.sample_rate == SampleRate, "unexpected audio stream");
             Check(std::strcmp(info.details.audio.language_code, english ? "eng" : "fra") == 0, "unexpected audio language");
         }
@@ -785,7 +786,7 @@ void CheckStreamInfoEx(AvPlayerInternal* player) {
         } else {
             const bool english = index == EnglishAudioStream;
             const auto& audio = info.details.audio;
-            Check(info.type == 0, "extended audio stream type");
+            Check(info.type == 2, "extended audio stream type");
             Check(audio.channel_count == (english ? 2 : 1) && audio.sample_rate == SampleRate, "unexpected extended audio stream");
             Check(std::memcmp(audio.language_code, english ? "eng" : "fra", 4) == 0, "unexpected extended audio language");
         }
@@ -946,7 +947,7 @@ void TestVp9OpusPlayback() {
         AvPlayerStreamInfo video{};
         Check(sceAvPlayerGetStreamInfo(player, 0, &video) == 0 && video.type == 1 && video.details.video.width == 112 && video.details.video.height == 64, "unexpected VP9 stream");
         AvPlayerStreamInfo audio{};
-        Check(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 0 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
+        Check(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 2 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
         Check(sceAvPlayerEnableStream(player, 0) == 0 && (!withAudio || sceAvPlayerEnableStream(player, 1) == 0), "enable WebM streams failed");
         if (!withAudio) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "WebM no-sync mode rejected");
         Check(sceAvPlayerStart(player) == 0, "WebM start failed");
@@ -1260,6 +1261,27 @@ void TestRestartAfterPausedJumpKeepsClockRunning() {
         return last >= 200;
     }), "playback froze after a restart that followed a paused jump");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock stayed frozen after the restart");
+    Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
+void TestJumpPastTheLatestTimeReportsTheDuration() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    std::uint64_t duration = 0;
+    for (const auto stream : {VideoStream, EnglishAudioStream}) {
+        AvPlayerStreamInfo info{};
+        Check(sceAvPlayerGetStreamInfo(player, stream, &info) == 0, "stream info failed");
+        duration = std::max(duration, info.duration);
+    }
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Check(sceAvPlayerJumpToTime(player, std::numeric_limits<std::uint64_t>::max()) == 0, "jump to the latest time failed");
+    Check(sceAvPlayerStart(player) == 0, "start failed");
+    const auto current = sceAvPlayerCurrentTime(player);
+    Check(current == duration, "current time " + std::to_string(current) + " after a jump to the latest time, expected the duration " + std::to_string(duration));
     Check(sceAvPlayerClose(player) == 0, "close failed");
 }
 
@@ -2129,6 +2151,7 @@ int main(int argc, char** argv) {
         TestPs5ExtendedInitLayout();
         TestAutoStartKeepsStartedPlayback();
         TestRestartAfterPausedJumpKeepsClockRunning();
+        TestJumpPastTheLatestTimeReportsTheDuration();
         TestUnsyncedVideoKeepsUpWithAudio();
         TestNoSyncVideoCanLeadAudioClock();
         TestLoopWarningWaitsForPlayback();
