@@ -1874,6 +1874,10 @@ int main() {
     Require(fstatat_nid_postfix(base, "missing.bin", &stat, 0x0200) == -1 && Error() == 2);
     Require(fstatat_nid_postfix(base, nullptr, &stat, 0) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "", &stat, 0) == -1 && Error() == 2);
+    Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", nullptr, 0x0200) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0) == -1 && Error() == 14);
+    Require(fstatat_nid_postfix(base, "file.txt", reinterpret_cast<FileStat*>(0x800000000000), 0x0200) == -1 && Error() == 14);
     Require(fstatat_nid_postfix(base, "file.txt", &stat, 0x4000) == -1 && Error() == 22);
     Require(fstatat_nid_postfix(-1, "file.txt", &stat, 0) == -1 && Error() == 9);
     const int notDirectory = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
