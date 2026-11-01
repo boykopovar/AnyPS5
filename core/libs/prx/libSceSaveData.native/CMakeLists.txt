@@ -32,6 +32,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
 
+    add_test_executable(guest_savedata_constant_calls_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataConstantCalls.cpp)
+    target_include_directories(guest_savedata_constant_calls_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_savedata_constant_calls_tests PRIVATE libSceSaveData.native libc)
+    add_test(NAME guest_savedata_constant_calls COMMAND guest_savedata_constant_calls_tests)
+    set_tests_properties(guest_savedata_constant_calls PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_savedata_constant_calls PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+    endif()
+
     add_test_executable(guest_savedata_mount_status_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataMountStatus.cpp)
     target_include_directories(guest_savedata_mount_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_savedata_mount_status_tests PRIVATE libSceSaveData.native libc)
