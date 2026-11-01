@@ -372,6 +372,8 @@ struct ScratchPool {
     VkDescriptorSet set = VK_NULL_HANDLE;
     std::uint64_t slots = 0;
     std::uint64_t headerBytes = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t lastUse = 0;
     ~ScratchPool() {
         buffer.reset();
         if (pool != VK_NULL_HANDLE) destroyPool(device, pool, nullptr);
@@ -385,16 +387,23 @@ void ZeroScratchPoolHeader(const Graphics::Context& context, const ScratchPool& 
     batch.SubmitAndWait();
 }
 
+std::uint64_t MebibytesFromEnvironment(const char* name, std::uint64_t fallback) {
+    std::uint64_t mebibytes = fallback;
+    if (const char* text = std::getenv(name)) {
+        char* end = nullptr;
+        const auto parsed = std::strtoull(text, &end, 10);
+        if (end != text && *end == 0 && parsed != 0) mebibytes = parsed;
+    }
+    return mebibytes << 20u;
+}
+
 std::uint64_t ScratchPoolCapBytes() {
-    static const std::uint64_t bytes = [] {
-        std::uint64_t mebibytes = 64;
-        if (const char* text = std::getenv("APS5_SCRATCH_POOL_MIB")) {
-            char* end = nullptr;
-            const auto parsed = std::strtoull(text, &end, 10);
-            if (end != text && *end == 0 && parsed != 0) mebibytes = parsed;
-        }
-        return mebibytes << 20u;
-    }();
+    static const std::uint64_t bytes = MebibytesFromEnvironment("APS5_SCRATCH_POOL_MIB", 64);
+    return bytes;
+}
+
+std::uint64_t ScratchPoolTotalBytes() {
+    static const std::uint64_t bytes = MebibytesFromEnvironment("APS5_SCRATCH_POOL_TOTAL_MIB", 256);
     return bytes;
 }
 
@@ -568,6 +577,7 @@ struct VulkanDevice::State {
     std::shared_ptr<WorkgroupMemory> workgroupMemory;
     std::mutex scratchPoolsMutex;
     std::map<ShaderRecompiler::PipelineIdentity, std::shared_ptr<ScratchPool>> scratchPools;
+    std::uint64_t scratchPoolUses = 0;
     // Compute pipeline objects by variant (and push-constant use), under their own mutex: the
     // dispatch's find-or-insert and the verify switch's lookups touch the map, recipes hold weak
     // references to its objects.
@@ -740,14 +750,20 @@ struct VulkanDevice::State {
         const auto capSlots = std::max<std::uint64_t>(std::min(ScratchPoolCapBytes(), range) / slotBytes, 1u);
         const auto wanted = std::clamp<std::uint64_t>(groups, 1u, capSlots);
         std::lock_guard lock(scratchPoolsMutex);
-        auto& slot = scratchPools[identity];
-        if (slot != nullptr && slot->slots >= wanted) return slot;
+        const auto use = ++scratchPoolUses;
+        if (const auto found = scratchPools.find(identity); found != scratchPools.end() && found->second->slots >= wanted) {
+            found->second->lastUse = use;
+            return found->second;
+        }
+        const auto size = wanted * slotBytes;
+        EvictScratchPools(identity, size);
         auto created = std::make_shared<ScratchPool>();
         created->device = device;
         created->destroyPool = DeviceFunction<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool");
         created->slots = wanted;
         created->headerBytes = wanted * 2u * 4u;
-        const auto size = wanted * slotBytes;
+        created->bytes = size;
+        created->lastUse = use;
         created->buffer = std::make_unique<Graphics::DeviceBuffer>(context, static_cast<std::size_t>(size), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -769,8 +785,19 @@ struct VulkanDevice::State {
         write.pBufferInfo = &described;
         DeviceFunction<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(device, 1, &write, 0, nullptr);
         ZeroScratchPoolHeader(context, *created);
-        slot = created;
+        scratchPools[identity] = created;
         return created;
+    }
+
+    void EvictScratchPools(const ShaderRecompiler::PipelineIdentity& identity, std::uint64_t needed) {
+        scratchPools.erase(identity);
+        std::uint64_t held = 0;
+        for (const auto& [key, pool] : scratchPools) held += pool->bytes;
+        while (!scratchPools.empty() && held + needed > ScratchPoolTotalBytes()) {
+            const auto oldest = std::min_element(scratchPools.begin(), scratchPools.end(), [](const auto& left, const auto& right) { return left.second->lastUse < right.second->lastUse; });
+            held -= oldest->second->bytes;
+            scratchPools.erase(oldest);
+        }
     }
 
     void CreateMarkerBuffer() {

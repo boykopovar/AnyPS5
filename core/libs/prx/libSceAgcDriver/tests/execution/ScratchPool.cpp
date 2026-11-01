@@ -428,20 +428,58 @@ void RunDiscardedInitialization(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void RunEviction(AgcDriver::VulkanDevice& device) {
+    const std::string name = "scratch pool eviction over the total budget";
+    constexpr std::uint32_t waveSize = 32u;
+    constexpr std::uint32_t threads = waveSize * 2u;
+    const auto lanes = ContentionGroups * threads;
+    const auto first = ContentionKernel(waveSize);
+    const auto second = DivergentExitKernel(waveSize);
+    std::vector<std::uint32_t> output(static_cast<std::size_t>(lanes) * 4u, 0xdeadbeefu);
+    std::vector<std::uint32_t> userData(4, 0u);
+    const auto outputDescriptor = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size() * 4u));
+    std::copy(outputDescriptor.begin(), outputDescriptor.end(), userData.begin());
+    const auto firstResult = Compile(device, first, userData, waveSize, threads, true, ContentionScratchDwords);
+    const auto secondResult = Compile(device, second, userData, waveSize, threads, true, ContentionScratchDwords);
+    const auto run = [&](const ShaderRecompiler::RecompileResult& result, const Words& code, bool exitsEarly, const char* step) {
+        std::fill(output.begin(), output.end(), 0xdeadbeefu);
+        device.Dispatch(result, ContentionGroups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.WaitIdle();
+        for (std::uint32_t lane = 0; lane < lanes; ++lane) {
+            const bool exited = exitsEarly && (lane % threads) < waveSize;
+            for (std::uint32_t k = 0; k < 4u; ++k) {
+                const auto value = output[static_cast<std::size_t>(lane) * 4u + k];
+                const auto expected = exited ? 0xdeadbeefu : lane * 4u + k;
+                Require(value == expected, name + ": " + step + " lane " + std::to_string(lane) + " dword " + std::to_string(k) + " read " + Hex(value) + ", expected " + Hex(expected));
+            }
+        }
+    };
+    const auto held = [&](const ShaderRecompiler::RecompileResult& result) { return AgcDriver::VulkanDeviceTestAccess::HeaderOf(device, result).first != VK_NULL_HANDLE; };
+    run(firstResult, first, false, "first program");
+    Require(held(firstResult), name + ": the first program got no pool");
+    run(secondResult, second, true, "second program");
+    Require(held(secondResult) && !held(firstResult), name + ": the second pool did not evict the first");
+    run(firstResult, first, false, "first program again");
+    Require(held(firstResult) && !held(secondResult), name + ": the first program's pool was not recreated in place of the second");
+}
+
 }
 
 int main() {
     try {
 #ifdef _WIN32
         _putenv_s("APS5_SCRATCH_POOL_MIB", "1");
+        _putenv_s("APS5_SCRATCH_POOL_TOTAL_MIB", "1");
 #else
         setenv("APS5_SCRATCH_POOL_MIB", "1", 1);
+        setenv("APS5_SCRATCH_POOL_TOTAL_MIB", "1", 1);
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool wave64 = device->Target().subgroupSize >= 32u;
         RunPlain(*device);
         RunDiscardedInitialization(*device);
+        RunEviction(*device);
         for (const std::uint32_t waveSize : {32u, 64u}) {
             if (waveSize == 64u && !wave64) continue;
             for (const Form form : {Form::Table, Form::Literal, Form::Computed}) {
