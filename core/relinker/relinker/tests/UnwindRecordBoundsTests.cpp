@@ -352,6 +352,37 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        for (std::uint8_t badVersion : {std::uint8_t{0}, std::uint8_t{2}, std::uint8_t{5}, std::uint8_t{255}}) {
+            std::vector<std::uint8_t> badCieBytes(0x400, 0);
+            Io::WriteU32(badCieBytes, 0x200, 25);
+            badCieBytes[0x208] = badVersion;
+            const std::uint8_t badCiePrefix[] = {'z', 'P', 'L', 'R', 0, 1, 0, 0x78, 11, 0};
+            std::copy(std::begin(badCiePrefix), std::end(badCiePrefix), badCieBytes.begin() + 0x209);
+            badCieBytes[0x212] = 0;
+            Io::WriteU64(badCieBytes, 0x213, 0x1000);
+            badCieBytes[0x21B] = 0x4B;
+            badCieBytes[0x21C] = 0;
+            Io::WriteU32(badCieBytes, 0x220, 29);
+            Io::WriteU32(badCieBytes, 0x224, 0x24);
+            Io::WriteU64(badCieBytes, 0x228, 0x1000);
+            Io::WriteU64(badCieBytes, 0x230, 0x20);
+            badCieBytes[0x238] = 4;
+            Io::WriteU32(badCieBytes, 0x239, 0xFFFFEFFF);
+            badCieBytes[0x300] = 1;
+            badCieBytes[0x302] = 3;
+            Io::WriteU64(badCieBytes, 0x304, 0x200);
+            Io::WriteU32(badCieBytes, 0x30C, 1);
+            Io::WriteU64(badCieBytes, 0x310, 0x1000);
+            Io::WriteU64(badCieBytes, 0x318, 0x220);
+            Domain::ProgramHeader badLoad{}; badLoad.Type = 1; badLoad.Flags = 4; badLoad.FileSize = badCieBytes.size(); badLoad.MemorySize = badCieBytes.size(); badLoad.Alignment = 8;
+            Domain::ProgramHeader badEh = badLoad; badEh.Type = 0x6474E550; badEh.Offset = 0x300; badEh.MappedAddress = 0x300; badEh.FileSize = 32; badEh.MemorySize = 32; badEh.Alignment = 4;
+            bool badCieRejected = false;
+            try { Relinker::UnusedNidFilter::ReadExceptionFunctions(badCieBytes, {badLoad, badEh}, {}, {}); }
+            catch (const Domain::RelinkerException& error) {
+                badCieRejected = std::string(error.what()).find("unsupported CIE version") != std::string::npos;
+            }
+            Require(badCieRejected);
+        }
+        std::cout << "34 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
