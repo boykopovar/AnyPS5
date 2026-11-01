@@ -362,6 +362,22 @@ struct Context {
         return *host;
     }
 
+    bool DeviceLocalHeadroom(VkDeviceSize bytes) const {
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return true;
+        std::uint32_t type = 0;
+        while (type < memory.memoryTypeCount && (memory.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == 0) ++type;
+        if (type == memory.memoryTypeCount) return true;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
+        memoryProperties2(physical, &properties);
+        const auto heap = memory.memoryTypes[type].heapIndex;
+        const auto budget = reported.heapBudget[heap];
+        if (budget == 0) return true;
+        const auto limit = budget - budget / 8u;
+        const auto usage = reported.heapUsage[heap];
+        return usage < limit && bytes <= limit - usage;
+    }
+
     std::optional<std::uint32_t> HostMemoryType(std::uint32_t mask) const {
         for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
             if ((mask & (1u << i)) != 0 && (memory.memoryHeaps[memory.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return i;

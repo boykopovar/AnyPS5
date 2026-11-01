@@ -138,6 +138,25 @@ void BufferPlacementTests() {
     choose("no physical device retains cached preference", 15, coherent, 0);
 }
 
+void HeadroomTests() {
+    Context context = mockContext(true);
+    const auto check = [&](const char* what, std::uint64_t budget, std::uint64_t usage, std::uint64_t bytes, bool expected) {
+        reportedBudget = budget;
+        reportedUsage = usage;
+        Expect(context.DeviceLocalHeadroom(bytes) == expected, std::string(what) + ": expected " + (expected ? "room" : "no room"));
+    };
+    check("room below seven eighths of the budget", 4096 * MiB, 3000 * MiB, 64 * MiB, true);
+    check("allocation ends at seven eighths exactly", 4096 * MiB, 3520 * MiB, 64 * MiB, true);
+    check("allocation crosses seven eighths", 4096 * MiB, 3521 * MiB, 64 * MiB, false);
+    check("usage already past seven eighths", 4096 * MiB, 3700 * MiB, 1 * MiB, false);
+    check("budget not reported", 0, 4000 * MiB, 64 * MiB, true);
+    context.memoryProperties2 = nullptr;
+    check("no VK_EXT_memory_budget", 4096 * MiB, 4000 * MiB, 64 * MiB, true);
+    context.memoryProperties2 = mockMemoryProperties2;
+    context.memory.memoryTypes[DeviceType].propertyFlags = 0;
+    check("no device-local memory type", 4096 * MiB, 4000 * MiB, 64 * MiB, true);
+}
+
 }
 
 int main() {
@@ -153,6 +172,7 @@ int main() {
         BufferPlacementTests();
         RefusedFallbackTests();
         ReclaimTests();
+        HeadroomTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
