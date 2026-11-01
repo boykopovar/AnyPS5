@@ -18,6 +18,7 @@ int APS5_VABI sceAudioOutOpenEx(void) {
 }
 
 int APS5_VABI sceAudioOutSetSystemDebugState(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include <stdexcept>
+
 static void Require(bool value, const char* message) {
     if (value) return;
     std::fprintf(stderr, "%s\n", message);
@@ -12,7 +14,13 @@ static void Require(bool value, const char* message) {
 
 int main() {
     Require(sceAudioOutGetSimulatedHandleStatusInfo() == static_cast<int>(0x809B00FF), "simulated handle status info is not supported");
-    Require(sceAudioOutSetSystemDebugState() == 0, "set system debug state returns 0");
+    bool threw = false;
+    try {
+        sceAudioOutSetSystemDebugState();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "set system debug state throws");
     Require(sceAudioOutGetInfoOpenNum() == 0, "open port count info returns 0");
     Require(sceAudioOutGetInfo() == 0, "port info returns 0");
     std::puts("audio out info calls: PASS");
