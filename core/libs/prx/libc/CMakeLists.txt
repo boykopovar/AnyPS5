@@ -134,6 +134,20 @@ set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LegacySignals.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/SigvecExport.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_sigvec_tests ${LIBS_INCLUDE_DIR}/tests/GuestSigvec.cpp)
+    target_include_directories(guest_sigvec_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sigvec_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_sigvec_tests)
+    add_test(NAME guest_sigvec COMMAND guest_sigvec_tests)
+    set_tests_properties(guest_sigvec PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_sigvec PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 
 target_include_directories(libc PRIVATE
         ${LIBS_INCLUDE_DIR}
