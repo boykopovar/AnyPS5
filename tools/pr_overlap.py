@@ -444,7 +444,8 @@ def hunks(pr, path):
 
 
 def clashes(a, b, path):
-    ranges = sorted((min(s1, s2), max(e1, e2)) for s1, e1 in hunks(a, path) for s2, e2 in hunks(b, path)
+    left, right = hunks(a, path), hunks(b, path)
+    ranges = sorted((min(s1, s2), max(e1, e2)) for s1, e1 in left for s2, e2 in right
                     if s1 <= e2 + 1 and s2 <= e1 + 1)
     merged = []
     for start, end in ranges:
