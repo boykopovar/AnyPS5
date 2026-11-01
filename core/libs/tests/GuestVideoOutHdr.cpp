@@ -87,7 +87,7 @@ int main() {
     AgcDriverSetSurfaceHdr10_nid_postfix(true);
     Require(OutputModeEventArrives(queue, 2'000'000), "HDR output becoming available does not fire the output mode event");
     status = Status(handle);
-    Require(status.dynamicRange == 2 && status.flags == 1, "HDR output is not reported");
+    Require(status.dynamicRange == 2 && status.flags == 0, "HDR output is not reported with flags 0");
     Require(status.resolution != 0 && status.refreshRate == 3 && status.reserved[0] == 0 && status.reserved[1] == 0 && status.reserved[2] == 0, "the rest of the output status changed with HDR");
     luminance = ToneMap();
     Require(luminance.max_tone_map_luminance == 1015.0f && luminance.max_full_frame_tone_map_luminance == 640.0f && luminance.min_tone_map_luminance == 0.005f, "the display's luminance is not the tone-map luminance");

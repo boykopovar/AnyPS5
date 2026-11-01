@@ -232,10 +232,28 @@ static void ContextChurn() {
 }
 #endif
 
+#ifdef _WIN32
+static std::atomic<int> drainCallbacks{0};
+static void APS5_VABI DrainHandler(int, void*) { drainCallbacks.fetch_add(1); }
+static void DeferredDrain() {
+    scePthreadSelf();
+    ThreadCancel::IoRestart restart(false);
+    {
+        ThreadCancel::IoPoint point(restart);
+        GuestExceptionQueueIoForTest_nid_no_patch(DrainHandler);
+        Require(drainCallbacks.load() == 0, "delivery escaped active I/O ownership");
+    }
+    Require(drainCallbacks.load() == 1, "deferred delivery was lost or repeated");
+}
+#endif
+
 int main(int argc, char** argv) {
     Require(argc == 2, "expected adopted, adopted_exit, swap, jump or sigjump");
     State reading;
     state = &reading;
+#ifdef _WIN32
+    if (std::strcmp(argv[1], "deferred_drain") == 0) { DeferredDrain(); return 0; }
+#endif
 #ifdef __linux__
     if (std::strcmp(argv[1], "churn") == 0) { ContextChurn(); return 0; }
 #endif

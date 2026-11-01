@@ -12,6 +12,7 @@
 #include "prx/libkernel/File/include/WindowsFileTime.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 #include "prx/libc/include/WindowsDescriptor.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
 #include <io.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -23,6 +24,25 @@ struct NativeStat : __stat64 {
     bool hasIdentity = false;
     bool isSymbolicLink = false;
 };
+static bool NativeStatPath(const std::filesystem::path& path, std::filesystem::path& prepared) {
+    const auto& input = path.native();
+    if (input.starts_with(L"\\\\?\\") || input.starts_with(L"\\\\.\\")) {
+        prepared = path;
+        return true;
+    }
+    std::error_code error;
+    prepared = std::filesystem::absolute(path, error);
+    if (error) {
+        errno = FilesystemError(error);
+        return false;
+    }
+    prepared = prepared.lexically_normal().make_preferred();
+    const auto& native = prepared.native();
+    if (native.size() < MAX_PATH || native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return true;
+    prepared = native.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + native.substr(2))
+                                               : std::filesystem::path(L"\\\\?\\" + native);
+    return true;
+}
 static int ReadHandleInfo(HANDLE handle, NativeStat* st) {
     if (GetFileType(handle) != FILE_TYPE_DISK) return 0;
     if (!GetFileInformationByHandleEx(handle, FileBasicInfo, &st->times, sizeof(st->times)))
@@ -32,11 +52,13 @@ static int ReadHandleInfo(HANDLE handle, NativeStat* st) {
     return 0;
 }
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
-    if (_wstat64(p.c_str(), st) != 0) {
+    std::filesystem::path prepared;
+    if (!NativeStatPath(p, prepared)) return -1;
+    if (_wstat64(prepared.c_str(), st) != 0) {
         if (_doserrno == ERROR_CANT_RESOLVE_FILENAME) File::WindowsFileTime::Failure(_doserrno);
         return -1;
     }
-    const auto handle = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    const auto handle = CreateFileW(prepared.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
     const int result = ReadHandleInfo(handle, st);
@@ -52,12 +74,14 @@ static int DoFstat(int fd, NativeStat* st) {
     return ReadHandleInfo(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st);
 }
 static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
-    const auto attributes = GetFileAttributesW(p.c_str());
+    std::filesystem::path prepared;
+    if (!NativeStatPath(p, prepared)) return -1;
+    const auto attributes = GetFileAttributesW(prepared.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return DoStat(p, st);
-    if (!File::WindowsSymbolicLink::IsNameSurrogate(p, "lstat")) return DoStat(p, st);
+    if (!File::WindowsSymbolicLink::IsNameSurrogate(prepared, "lstat")) return DoStat(p, st);
     std::string target;
-    const bool link = File::WindowsSymbolicLink::Read(p, target, "lstat") || File::WindowsSymbolicLink::ReadJunction(p, target, "lstat");
-    const auto handle = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    const bool link = File::WindowsSymbolicLink::Read(prepared, target, "lstat") || File::WindowsSymbolicLink::ReadJunction(prepared, target, "lstat");
+    const auto handle = CreateFileW(prepared.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
     const int result = ReadHandleInfo(handle, st);
@@ -72,6 +96,49 @@ static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     st->st_size = static_cast<__int64>(target.size());
     st->isSymbolicLink = true;
     return 0;
+}
+#elif defined(__APPLE__)
+#include <fcntl.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <unistd.h>
+using NativeStat = struct stat;
+static int StatAt(const std::filesystem::path& p, NativeStat* st, int flags) {
+    std::string rest = p.native();
+    int directory = AT_FDCWD;
+    while (rest.size() >= PATH_MAX) {
+        const std::size_t split = rest.rfind('/', PATH_MAX - 1);
+        if (split == std::string::npos) {
+            if (directory != AT_FDCWD) ::close(directory);
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        const std::string prefix = split == 0 ? std::string("/") : rest.substr(0, split);
+        const int next = ::openat(directory, prefix.c_str(), O_SEARCH | O_CLOEXEC);
+        const int error = errno;
+        if (directory != AT_FDCWD) ::close(directory);
+        if (next < 0) {
+            errno = error;
+            return -1;
+        }
+        directory = next;
+        rest.erase(0, split + 1);
+        rest.erase(0, rest.find_first_not_of('/'));
+    }
+    const int result = ::fstatat(directory, rest.empty() ? "." : rest.c_str(), st, flags);
+    const int error = errno;
+    if (directory != AT_FDCWD) ::close(directory);
+    errno = error;
+    return result;
+}
+static int DoStat(const std::filesystem::path& p, NativeStat* st) {
+    return StatAt(p, st, 0);
+}
+static int DoFstat(int fd, NativeStat* st) {
+    return ::fstat(fd, st);
+}
+static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
+    return StatAt(p, st, AT_SYMLINK_NOFOLLOW);
 }
 #else
 #include <sys/stat.h>
@@ -129,12 +196,21 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_rdev = static_cast<std::uint32_t>(st.st_rdev);
     sb->st_blksize = static_cast<std::uint32_t>(st.st_blksize);
     sb->st_blocks = static_cast<std::int64_t>(st.st_blocks);
+#if defined(__APPLE__)
+    sb->st_atim.tv_sec = static_cast<std::int64_t>(st.st_atimespec.tv_sec);
+    sb->st_atim.tv_nsec = static_cast<std::int64_t>(st.st_atimespec.tv_nsec);
+    sb->st_mtim.tv_sec = static_cast<std::int64_t>(st.st_mtimespec.tv_sec);
+    sb->st_mtim.tv_nsec = static_cast<std::int64_t>(st.st_mtimespec.tv_nsec);
+    sb->st_ctim.tv_sec = static_cast<std::int64_t>(st.st_ctimespec.tv_sec);
+    sb->st_ctim.tv_nsec = static_cast<std::int64_t>(st.st_ctimespec.tv_nsec);
+#else
     sb->st_atim.tv_sec = static_cast<std::int64_t>(st.st_atim.tv_sec);
     sb->st_atim.tv_nsec = static_cast<std::int64_t>(st.st_atim.tv_nsec);
     sb->st_mtim.tv_sec = static_cast<std::int64_t>(st.st_mtim.tv_sec);
     sb->st_mtim.tv_nsec = static_cast<std::int64_t>(st.st_mtim.tv_nsec);
     sb->st_ctim.tv_sec = static_cast<std::int64_t>(st.st_ctim.tv_sec);
     sb->st_ctim.tv_nsec = static_cast<std::int64_t>(st.st_ctim.tv_nsec);
+#endif
 #if defined(__APPLE__)
     sb->st_birthtim.tv_sec = static_cast<std::int64_t>(st.st_birthtimespec.tv_sec);
     sb->st_birthtim.tv_nsec = static_cast<std::int64_t>(st.st_birthtimespec.tv_nsec);
@@ -145,6 +221,7 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_birthtim.tv_nsec = static_cast<std::int64_t>(st.st_birthtim.tv_nsec);
 #endif
 #endif
+    if ((sb->st_mode & 0170000) == 0040000) sb->st_blksize = 0x10000;
 }
 
 namespace File {
