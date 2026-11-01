@@ -3,13 +3,23 @@
 #include "SDL_filesystem.h"
 #include "SDL_error.h"
 #include <atomic>
+#include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <ctime>
-#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -40,10 +50,52 @@ std::string localTimestamp() {
     return text;
 }
 
-std::filesystem::path unusedPath(const std::filesystem::path& folder, const std::string& stem) {
+int createExclusive(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return ::_wopen(path.c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY | _O_NOINHERIT, _S_IREAD | _S_IWRITE);
+#else
+    return ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+#endif
+}
+
+bool writeAll(int descriptor, const std::uint8_t* data, std::size_t size) {
+    while (size != 0) {
+#ifdef _WIN32
+        const unsigned int chunk = size > INT_MAX ? INT_MAX : static_cast<unsigned int>(size);
+        const int written = ::_write(descriptor, data, chunk);
+#else
+        const auto written = ::write(descriptor, data, size);
+#endif
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) return false;
+        data += written;
+        size -= static_cast<std::size_t>(written);
+    }
+    return true;
+}
+
+bool closeFile(int descriptor) {
+#ifdef _WIN32
+    return ::_close(descriptor) == 0;
+#else
+    return ::close(descriptor) == 0;
+#endif
+}
+
+std::filesystem::path writeUnusedPng(const std::filesystem::path& folder, const std::string& stem, const std::vector<std::uint8_t>& png) {
     for (int index = 0; index < 1000; ++index) {
         const auto path = folder / (index == 0 ? stem + ".png" : stem + "-" + std::to_string(index) + ".png");
-        if (!std::filesystem::exists(path)) return path;
+        const int descriptor = createExclusive(path);
+        if (descriptor < 0) {
+            if (errno == EEXIST) continue;
+            throw std::runtime_error("Screenshot: cannot create output file");
+        }
+        const bool written = writeAll(descriptor, png.data(), png.size());
+        const bool closed = closeFile(descriptor);
+        if (written && closed) return path;
+        std::error_code error;
+        std::filesystem::remove(path, error);
+        throw std::runtime_error("Screenshot: cannot write output file");
     }
     throw std::runtime_error("Screenshot: no unused file name for " + stem + " in " + folder.string());
 }
@@ -71,11 +123,5 @@ std::filesystem::path AgcDriver::Screenshot::Write(std::string_view titleId, std
     const auto png = Decoder::Png::Encode(rgb, width, height, 3);
     const auto folder = directory();
     std::filesystem::create_directories(folder);
-    const auto path = unusedPath(folder, std::string(titleId) + "-" + localTimestamp());
-    std::ofstream file;
-    file.exceptions(std::ios::failbit | std::ios::badbit);
-    file.open(path, std::ios::binary);
-    file.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
-    file.close();
-    return path;
+    return writeUnusedPng(folder, std::string(titleId) + "-" + localTimestamp(), png);
 }
