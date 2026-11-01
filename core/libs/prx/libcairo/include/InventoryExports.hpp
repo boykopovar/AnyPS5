@@ -2,11 +2,45 @@
 
 #include "SceTypes.hpp"
 
+struct cairo_font_options_t;
+
+enum cairo_antialias_t : int {
+    CAIRO_ANTIALIAS_DEFAULT,
+    CAIRO_ANTIALIAS_NONE,
+    CAIRO_ANTIALIAS_GRAY,
+    CAIRO_ANTIALIAS_SUBPIXEL,
+    CAIRO_ANTIALIAS_FAST,
+    CAIRO_ANTIALIAS_GOOD,
+    CAIRO_ANTIALIAS_BEST,
+};
+
+enum cairo_subpixel_order_t : int {
+    CAIRO_SUBPIXEL_ORDER_DEFAULT,
+    CAIRO_SUBPIXEL_ORDER_RGB,
+    CAIRO_SUBPIXEL_ORDER_BGR,
+    CAIRO_SUBPIXEL_ORDER_VRGB,
+    CAIRO_SUBPIXEL_ORDER_VBGR,
+};
+
+enum cairo_hint_style_t : int {
+    CAIRO_HINT_STYLE_DEFAULT,
+    CAIRO_HINT_STYLE_NONE,
+    CAIRO_HINT_STYLE_SLIGHT,
+    CAIRO_HINT_STYLE_MEDIUM,
+    CAIRO_HINT_STYLE_FULL,
+};
+
+enum cairo_hint_metrics_t : int {
+    CAIRO_HINT_METRICS_DEFAULT,
+    CAIRO_HINT_METRICS_OFF,
+    CAIRO_HINT_METRICS_ON,
+};
+
 extern "C" {
 
 int APS5_VABI cairo_scaled_font_get_font_face();
 int APS5_VABI cairo_paint();
-int APS5_VABI cairo_font_options_set_hint_metrics();
+void APS5_VABI cairo_font_options_set_hint_metrics(cairo_font_options_t* options, cairo_hint_metrics_t hint_metrics);
 int APS5_VABI cairo_set_font_options();
 int APS5_VABI cairo_device_to_user_distance();
 int APS5_VABI cairo_font_face_set_user_data();
@@ -60,7 +94,7 @@ int APS5_VABI cairo_scaled_font_get_font_matrix();
 int APS5_VABI cairo_mesh_pattern_line_to();
 int APS5_VABI cairo_get_line_cap();
 int APS5_VABI cairo_region_get_rectangle();
-int APS5_VABI cairo_font_options_set_hint_style();
+void APS5_VABI cairo_font_options_set_hint_style(cairo_font_options_t* options, cairo_hint_style_t hint_style);
 int APS5_VABI cairo_set_miter_limit();
 int APS5_VABI cairo_translate();
 int APS5_VABI cairo_font_face_destroy();
@@ -81,7 +115,7 @@ int APS5_VABI cairo_transform();
 int APS5_VABI cairo_set_line_join();
 int APS5_VABI cairo_pop_group_to_source();
 int APS5_VABI cairo_mesh_pattern_set_corner_color_rgba();
-int APS5_VABI cairo_font_options_copy();
+cairo_font_options_t* APS5_VABI cairo_font_options_copy(const cairo_font_options_t* original);
 int APS5_VABI cairo_identity_matrix();
 int APS5_VABI cairo_save();
 int APS5_VABI cairo_clip();
@@ -91,7 +125,7 @@ int APS5_VABI cairo_arc();
 int APS5_VABI cairo_stroke_preserve();
 int APS5_VABI cairo_path_extents();
 int APS5_VABI cairo_ft_scaled_font_unlock_face();
-int APS5_VABI cairo_font_options_get_antialias();
+cairo_antialias_t APS5_VABI cairo_font_options_get_antialias(const cairo_font_options_t* options);
 int APS5_VABI cairo_mesh_pattern_move_to();
 int APS5_VABI cairo_paint_with_alpha();
 int APS5_VABI cairo_set_fill_rule();
@@ -126,12 +160,12 @@ int APS5_VABI cairo_set_dash();
 int APS5_VABI cairo_pattern_set_filter();
 int APS5_VABI cairo_new_path();
 int APS5_VABI cairo_push_group();
-int APS5_VABI cairo_font_options_destroy();
+void APS5_VABI cairo_font_options_destroy(cairo_font_options_t* options);
 int APS5_VABI cairo_ft_font_options_substitute();
 int APS5_VABI cairo_image_surface_get_width();
-int APS5_VABI cairo_font_options_create();
+cairo_font_options_t* APS5_VABI cairo_font_options_create();
 int APS5_VABI cairo_device_to_user();
-int APS5_VABI cairo_font_options_set_antialias();
+void APS5_VABI cairo_font_options_set_antialias(cairo_font_options_t* options, cairo_antialias_t antialias);
 int APS5_VABI cairo_glyph_free();
 int APS5_VABI cairo_select_font_face();
 int APS5_VABI cairo_line_to();
@@ -141,7 +175,7 @@ int APS5_VABI cairo_font_face_reference();
 int APS5_VABI cairo_set_line_cap();
 int APS5_VABI cairo_scaled_font_text_to_glyphs();
 int APS5_VABI cairo_scaled_font_glyph_extents();
-int APS5_VABI cairo_font_options_set_subpixel_order();
+void APS5_VABI cairo_font_options_set_subpixel_order(cairo_font_options_t* options, cairo_subpixel_order_t subpixel_order);
 int APS5_VABI cairo_show_text();
 int APS5_VABI cairo_set_font_face();
 int APS5_VABI cairo_close_path();
