@@ -271,7 +271,25 @@ static void VerifyReportedEventsMoveBehindWaitingOnes() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyInvalidQueueAttributes() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(nullptr, "invalid") == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(sceKernelCreateEqueue(&eq, "bounds") == SCE_OK);
+    KernelEvent event{};
+    int count = -1;
+    const KernelUseconds timeout = 0;
+    Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, -1, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, 1, nullptr, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
+    VerifyInvalidQueueAttributes();
     VerifyPeriodicTimer();
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
