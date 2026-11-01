@@ -474,18 +474,30 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
 
 int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode) {
     constexpr int GuestEinval = 22;
-    if (!result) return GuestEinval;
+    if (!result) {
+        SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
+        return GuestEinval;
+    }
     *result = nullptr;
-    if (!filename || !mode) return GuestEinval;
+    if (!filename || !mode) {
+        SonyInvokeConstraintHandler("fopen_s: bad argument", nullptr, GuestEinval);
+        return GuestEinval;
+    }
     *result = fopen_nid_postfix(filename, mode);
     return *result ? 0 : errno;
 }
 
 int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode, FileStream* stream) {
     constexpr int GuestEinval = 22;
-    if (!result) return GuestEinval;
+    if (!result) {
+        SonyInvokeConstraintHandler("fopen_s: bad FILE ** argument", nullptr, GuestEinval);
+        return GuestEinval;
+    }
     *result = nullptr;
-    if (!mode || !stream) return GuestEinval;
+    if (!mode || !stream) {
+        SonyInvokeConstraintHandler("fopen_s: bad argument", nullptr, GuestEinval);
+        return GuestEinval;
+    }
     *result = freopen_nid_postfix(filename, mode, stream);
     return *result ? 0 : errno;
 }
