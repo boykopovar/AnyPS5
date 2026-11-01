@@ -7,6 +7,7 @@
 #include <iterator>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 #include "SceTypes.hpp"
@@ -343,6 +344,28 @@ uint32_t sjisX0208Single(uint8_t byte) {
 
 constexpr uint8_t EUC_CN_TAG[8] = {'E', 'U', 'C', 'C', 'N', '9', '3', '6'};
 constexpr uint8_t GBK_TAG[8] = {'G', 'B', 'K', 'C', 'P', '9', '3', '6'};
+constexpr std::size_t GB_RANGE_BYTE = 8;
+constexpr std::size_t GB_UDA_BYTE = 9;
+constexpr uint32_t GB_UDA_FIRST = 0xE000;
+constexpr uint32_t GBK_UDA_DECODED_FIRST = 0xE234;
+constexpr uint32_t GB_UDA_LAST = 0xE765;
+
+bool gbUdaMapped(const void* profile) {
+    return static_cast<const uint8_t*>(profile)[GB_UDA_BYTE] != 0;
+}
+
+bool isGbUda(uint32_t code) {
+    return code >= GB_UDA_FIRST && code <= GB_UDA_LAST;
+}
+
+void initGbSheet(void* sheet, const uint8_t (&tag)[8], uint8_t range, uint8_t uda) {
+    auto* bytes = static_cast<uint8_t*>(sheet);
+    std::memcpy(bytes, tag, sizeof(tag));
+    bytes[GB_RANGE_BYTE] = range;
+    bytes[GB_UDA_BYTE] = uda;
+}
+
+uint32_t gbkUserDefined(uint32_t cell);
 
 bool isEucCn(const void* profile) {
     return profile != nullptr && std::memcmp(profile, EUC_CN_TAG, sizeof(EUC_CN_TAG)) == 0;
@@ -403,7 +426,9 @@ int decodeGb(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_
     if (mbcsMax < 2) return needBytes(2, length);
     const uint8_t trail = mbcs[1];
     if (trail == 0xFF || (gbk ? trail < 0x40 || trail == 0x7F : trail < 0xA1)) return rejectTrail(trail, 2, length);
-    code = Cp936::TO_UCS2[(lead - 0x81) * 190 + (trail < 0x7F ? trail - 0x40 : trail - 0x41)];
+    const uint32_t cell = (lead - 0x81) * 190 + (trail < 0x7F ? trail - 0x40 : trail - 0x41);
+    code = Cp936::TO_UCS2[cell];
+    if (code == 0 && gbk && gbUdaMapped(profile)) code = gbkUserDefined(cell);
     if (code == 0) return unassigned(2, length);
     length = 2;
     return 0;
@@ -457,10 +482,23 @@ struct Gb18030Tables {
     std::span<const uint32_t[3]> twoByte;
     std::span<const uint32_t[3]> fourByte;
     bool edition2005;
+    uint8_t defaultRange;
 };
 
-constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, false};
-constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true};
+struct Gb18030Range {
+    int value;
+    bool fourByteBmp;
+    bool firstSupplementary;
+    bool lastSupplementary;
+};
+
+constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, false, 1};
+constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true, 3};
+constexpr Gb18030Range GB18030_RANGES[6] = {
+    {0, false, false, false}, {1, true, false, false}, {2, false, false, false}, {3, true, false, false}, {5, true, true, false}, {7, true, true, true},
+};
+constexpr uint32_t GB18030_SUPPLEMENTARY_FIRST = 0x10000;
+constexpr uint32_t GB18030_SUPPLEMENTARY_LAST = 0x10FFFF;
 constexpr uint32_t GB18030_SWAPPED_CELL = (0xA8 - 0x81) * 190 + (0xBC - 0x41);
 constexpr uint32_t GB18030_SWAPPED_LINEAR = (5 * 126 + (0xF4 - 0x81)) * 10 + 7;
 
@@ -477,6 +515,22 @@ const Gb18030Tables* gb18030Tables(const void* profile) {
 
 bool isGb18030(const void* profile) {
     return gb18030Tables(profile) != nullptr;
+}
+
+const Gb18030Range* gb18030Range(int value) {
+    const auto found = std::find_if(std::begin(GB18030_RANGES), std::end(GB18030_RANGES), [value](const Gb18030Range& range) { return range.value == value; });
+    return found == std::end(GB18030_RANGES) ? nullptr : found;
+}
+
+bool gb18030FourByteMapped(const void* profile, const Gb18030Tables& tables, uint32_t code) {
+    const uint8_t stored = static_cast<const uint8_t*>(profile)[GB_RANGE_BYTE];
+    const Gb18030Range* range = gb18030Range(stored);
+    if (!range) throw std::runtime_error("GB 18030 profile: the sheet holds no valid four-byte range");
+    if (code <= 0xFFFF) return range->fourByteBmp;
+    if (stored == tables.defaultRange) return mapsGb18030Supplementary(tables, code);
+    if (code == GB18030_SUPPLEMENTARY_FIRST) return range->firstSupplementary;
+    if (code == GB18030_SUPPLEMENTARY_LAST) return range->lastSupplementary;
+    throw std::runtime_error("GB 18030 profile: four-byte range " + std::to_string(stored) + " of this edition is not implemented for supplementary characters other than U+10000 and U+10FFFF");
 }
 
 bool isGb(const void* profile) {
@@ -496,6 +550,11 @@ uint32_t gb18030Cell(const Gb18030Tables& tables, uint32_t cell) {
     return run ? run[1] + cell - run[0] : Cp936::TO_UCS2[cell];
 }
 
+uint32_t gbkUserDefined(uint32_t cell) {
+    const uint32_t code = gb18030Cell(GB18030_2000, cell);
+    return code >= GBK_UDA_DECODED_FIRST && code <= GB_UDA_LAST ? code : 0;
+}
+
 void putGbLinear(uint32_t linear, uint8_t* mbcs) {
     mbcs[3] = static_cast<uint8_t>(0x30 + linear % 10);
     linear /= 10;
@@ -511,7 +570,7 @@ void putGbCell(uint32_t cell, uint8_t* mbcs) {
     mbcs[1] = static_cast<uint8_t>(column < 0x3F ? 0x40 + column : 0x41 + column);
 }
 
-int decodeGb18030(const Gb18030Tables& tables, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
+int decodeGb18030(const void* profile, const Gb18030Tables& tables, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
     const uint8_t lead = mbcs[0];
     if (lead < 0x80) {
         length = 1;
@@ -529,13 +588,14 @@ int decodeGb18030(const Gb18030Tables& tables, const uint8_t* mbcs, uint32_t mbc
         const uint32_t* run = findRun(tables.fourByte, linear);
         if (!run) return unassigned(4, length);
         code = tables.edition2005 && linear == GB18030_SWAPPED_LINEAR ? 0xE7C7 : run[1] + linear - run[0];
-        if (code > 0xFFFF && !mapsGb18030Supplementary(tables, code)) return unassigned(4, length);
+        if (!gb18030FourByteMapped(profile, tables, code)) return unassigned(4, length);
         length = 4;
         return 0;
     }
     if (second < 0x40 || second == 0x7F || second == 0xFF) return rejectTrail(second, 2, length);
-    length = 2;
     code = gb18030Cell(tables, (lead - 0x81) * 190 + (second < 0x7F ? second - 0x40 : second - 0x41));
+    if (isGbUda(code) && !gbUdaMapped(profile)) return unassigned(2, length);
+    length = 2;
     return 0;
 }
 
@@ -552,12 +612,13 @@ const std::vector<std::pair<uint32_t, uint16_t>>& gb18030Reverse(const Gb18030Ta
     return &tables == &GB18030_2005 ? reverse2005 : reverse2000;
 }
 
-int encodeGb18030(const Gb18030Tables& tables, uint32_t code, uint8_t* mbcs, uint32_t& length) {
+int encodeGb18030(const void* profile, const Gb18030Tables& tables, uint32_t code, uint8_t* mbcs, uint32_t& length) {
     if (code < 0x80) {
         length = 1;
         mbcs[0] = static_cast<uint8_t>(code);
         return 0;
     }
+    if (isGbUda(code) && !gbUdaMapped(profile)) return CES_ERROR_UNASSIGNED_CODE;
     const auto& reverse = gb18030Reverse(tables);
     const auto found = std::lower_bound(reverse.begin(), reverse.end(), std::pair<uint32_t, uint16_t>(code, 0));
     if (found != reverse.end() && found->first == code) {
@@ -565,7 +626,7 @@ int encodeGb18030(const Gb18030Tables& tables, uint32_t code, uint8_t* mbcs, uin
         length = 2;
         return 0;
     }
-    if (code > 0xFFFF && !mapsGb18030Supplementary(tables, code)) return CES_ERROR_UNASSIGNED_CODE;
+    if (!gb18030FourByteMapped(profile, tables, code)) return CES_ERROR_UNASSIGNED_CODE;
     if (tables.edition2005 && code == 0xE7C7) {
         putGbLinear(GB18030_SWAPPED_LINEAR, mbcs);
         length = 4;
@@ -929,7 +990,7 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
     if (isJis2004(profile)) return decodeJis2004(isSjis2004(profile), mbcs, mbcsMax, length, code);
     if (isEucKr(profile) || isUhc(profile)) return decodeCp949(isUhc(profile), mbcs, mbcsMax, length, code);
     if (isBig5(profile)) return decodeCp950(mbcs, mbcsMax, length, code);
-    if (const Gb18030Tables* tables = gb18030Tables(profile)) return decodeGb18030(*tables, mbcs, mbcsMax, length, code);
+    if (const Gb18030Tables* tables = gb18030Tables(profile)) return decodeGb18030(profile, *tables, mbcs, mbcsMax, length, code);
     if (isEucCn(profile) || isGbk(profile)) return decodeGb(profile, mbcs, mbcsMax, length, code);
     const uint8_t lead = mbcs[0];
     if (isSbc(profile)) {
@@ -1035,7 +1096,7 @@ int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& leng
     if (isJis2004(profile)) return encodeJis2004(isSjis2004(profile), code, mbcs, length);
     if (isEucKr(profile) || isUhc(profile)) return encodeDbcs(cp949Reverse(), isEucKr(profile), code, mbcs, length);
     if (isBig5(profile)) return encodeDbcs(cp950Reverse(), false, code, mbcs, length);
-    if (const Gb18030Tables* tables = gb18030Tables(profile)) return encodeGb18030(*tables, code, mbcs, length);
+    if (const Gb18030Tables* tables = gb18030Tables(profile)) return encodeGb18030(profile, *tables, code, mbcs, length);
     if (isEucCn(profile) || isGbk(profile)) return encodeGb(profile, code, mbcs, length);
     if (isSbc(profile)) {
         length = 1;
@@ -2379,20 +2440,36 @@ void* APS5_VABI sceCesUcsProfileInitEucCnGb2312(void* sheet) {
 
 void* APS5_VABI sceCesUcsProfileInitGbkCp936(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, GBK_TAG, sizeof(GBK_TAG));
+    initGbSheet(sheet, GBK_TAG, 0, 0);
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitGb18030_2000(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, GB18030_2000_TAG, sizeof(GB18030_2000_TAG));
+    initGbSheet(sheet, GB18030_2000_TAG, GB18030_2000.defaultRange, 1);
     return sheet;
 }
 
 void* APS5_VABI sceCesUcsProfileInitGb18030_2005(void* sheet) {
     if (!sheet) return nullptr;
-    std::memcpy(sheet, GB18030_2005_TAG, sizeof(GB18030_2005_TAG));
+    initGbSheet(sheet, GB18030_2005_TAG, GB18030_2005.defaultRange, 1);
     return sheet;
+}
+
+int APS5_VABI sceCesGbUcsProfileSet4ByteCharRange(void* profile, int range) {
+    if (!profile || isEucCn(profile) || isGbk(profile)) return CES_ERROR_INVALID_PROFILE;
+    if (!isGb18030(profile)) throw std::runtime_error("sceCesGbUcsProfileSet4ByteCharRange: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
+    if (!gb18030Range(range)) return CES_ERROR_INVALID_PARAMETER;
+    static_cast<uint8_t*>(profile)[GB_RANGE_BYTE] = static_cast<uint8_t>(range);
+    return 0;
+}
+
+int APS5_VABI sceCesGbUcsProfileSetUdaMapping(void* profile, int udaMapping) {
+    if (!profile || isEucCn(profile)) return CES_ERROR_INVALID_PROFILE;
+    if (!isGb(profile)) throw std::runtime_error("sceCesGbUcsProfileSetUdaMapping: a profile other than the GB 18030, GBK and EUC-CN ones is not implemented");
+    if (udaMapping != 0 && udaMapping != 1) return CES_ERROR_INVALID_PARAMETER;
+    static_cast<uint8_t*>(profile)[GB_UDA_BYTE] = static_cast<uint8_t>(udaMapping);
+    return 0;
 }
 
 int APS5_VABI sceCesEucCnToUcs2(const void* profile, const uint8_t* eucBuffer, uint32_t eucMax, uint32_t* eucSize, uint16_t* ucs2) {
