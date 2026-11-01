@@ -551,8 +551,10 @@ int APS5_VABI scePadSetLightBarBaseBrightness(std::int32_t handle, std::uint32_t
 }
 
 int APS5_VABI scePadSetLightBarBlinking(std::int32_t handle, const PadLightBarBlinkingParameter* parameter) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (SpecialHandle(handle)) return PAD_OK;
+    return PAD_OK;
 }
 
 std::uint64_t APS5_VABI scePadGetIdleCount(std::int32_t userId) {
