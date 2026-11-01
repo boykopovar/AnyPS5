@@ -343,7 +343,7 @@ class ProgressHistoryTests(unittest.TestCase):
                 with patch.object(progress_history, "collect", return_value=[point]) as collect:
                     with contextlib.redirect_stdout(io.StringIO()):
                         progress_history.main([str(output), "--cache", str(loop)])
-                collect.assert_called_once_with("HEAD", loop)
+                collect.assert_called_once_with("HEAD", loop, None, None)
                 self.assertEqual(json.loads((output / "history.json").read_text(encoding="utf-8")), [point])
             with self.subTest("output"):
                 errors = io.StringIO()
