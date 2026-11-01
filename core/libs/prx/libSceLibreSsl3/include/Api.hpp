@@ -117,7 +117,7 @@ int APS5_VABI HMAC_CTX_free_nid_postfix();
 int APS5_VABI HMAC_CTX_new_nid_postfix();
 int APS5_VABI OPENSSL_init_ssl_nid_postfix();
 int APS5_VABI PEM_read_bio_PUBKEY_nid_postfix();
-int APS5_VABI SSL_CIPHER_get_id_nid_postfix();
+std::uint64_t APS5_VABI SSL_CIPHER_get_id_nid_postfix(const LibreSsl3Cipher* cipher);
 int APS5_VABI SSL_CTX_add1_chain_cert_nid_postfix();
 int APS5_VABI SSL_CTX_set0_chain_nid_postfix();
 int APS5_VABI SSL_CTX_set_timeout_nid_postfix();
