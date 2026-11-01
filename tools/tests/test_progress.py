@@ -22,6 +22,11 @@ def excessive_nesting():
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+SHADER_SOURCE = {"isa": "AMD RDNA 2", "instructions": {"total": 5, "decoded": 3, "translated": 1},
+                 "dpp": {"total": 2, "decoded": 1}, "unsupported_throws": 3, "forms": [], "untranslated": [],
+                 "throw_areas": [], "throw_sites": [], "formats": {"total": 0, "sampled": 0, "buffer": 0, "host": 0}}
+
+
 class ProgressSnapshotTests(unittest.TestCase):
     def test_library_counters_reject_invalid_types_and_negative_values(self):
         for field in ("done", "todo"):
@@ -352,6 +357,18 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(sum(line.startswith("| libSce") for line in table.splitlines()), progress.REPORT_ROWS)
         self.assertIn("3 more libraries", table)
 
+    def test_opcodes_counted_through_variants_are_not_listed_as_uncounted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            opcodes = Path(directory) / "RdnaOpcode.hpp"
+            opcodes.write_text("enum class RdnaOpcode : int {\n    VAddI32,\n    VMulLoI32,\n    Count,\n};\n",
+                               encoding="utf-8")
+            isa = Path(directory) / "rdna_isa.txt"
+            isa.write_text("V_ADD_CO_U32 VOP3\n", encoding="utf-8")
+            with patch.multiple(progress, OPCODES=opcodes, ISA=isa):
+                shaders = progress.collect_shaders()
+        self.assertEqual(shaders["done"], 1)
+        self.assertEqual(shaders["extra"], ["VMulLoI32"])
+
     def test_raw_string_example_does_not_declare_an_export(self):
         source = 'const char* example = R"help(\nint APS5_VABI Fake() { return 0; }\n)help";\n'
         source += 'int APS5_VABI Real() { return 7; }\n'
@@ -670,6 +687,7 @@ class ProgressTests(unittest.TestCase):
         stdout = io.StringIO()
         with patch.object(progress, "collect_libraries", return_value=libraries), \
              patch.object(progress, "collect_shaders", return_value=shaders), \
+             patch.object(progress, "collect_shader_source", return_value=SHADER_SOURCE), \
              patch("sys.stdout", stdout):
             code = progress.main(argv)
         return code, stdout.getvalue()
@@ -696,7 +714,8 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(payload["shaders"], shaders)
         self.assertNotIn("libraries 1/2", output)
         code, output = self.run_main(["--module", "libScePad"], libraries, shaders)
-        self.assertEqual(output, "libraries 1/2 (50.0%)\nshaders 2/4 (50.0%)\n")
+        self.assertEqual(output, "libraries 1/2 (50.0%)\nshader opcode names declared 2/4 (50.0%)\n"
+                                 "shader forms decoded 3/5 (60.0%), translated 1, unsupported throws 3\n")
         stderr = io.StringIO()
         with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
             progress.main([])
