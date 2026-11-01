@@ -2646,6 +2646,71 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
 }
 
+struct StencilAttachment {
+    ColorTarget color{};
+    RenderTarget target;
+    DeviceBuffer transfer;
+    DepthSampleLocations depth;
+
+    static ColorTarget Color(const State& state) {
+        ColorTarget result{};
+        result.extent = state.depth->extent;
+        result.format = VK_FORMAT_R8_UINT;
+        result.bytes = static_cast<std::size_t>(result.extent.width) * result.extent.height;
+        result.elementBytes = 1u;
+        result.exportIndex = 7u;
+        result.uintExport = true;
+        return result;
+    }
+
+    StencilAttachment(const Context& context, const State& state)
+        : color(Color(state)), target(context, color, false), transfer(context, color.bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT), depth(DepthSurfaceSampleLocations(context, *state.depth)) {}
+
+    void Load(const Context& context, VkCommandBuffer commands) {
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_STENCIL_BIT, 0, 0, 1};
+        copy.imageExtent = {color.extent.width, color.extent.height, 1};
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Resolved(&DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, depth.image, VK_IMAGE_LAYOUT_GENERAL, transfer.Handle(), 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        imageBarrier(context, commands, target.Image(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        context.Resolved(&DeviceFunctions::cmdCopyBufferToImage, "vkCmdCopyBufferToImage")(commands, transfer.Handle(), target.Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        imageBarrier(context, commands, target.Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    }
+
+    void Store(const Context& context, VkCommandBuffer commands) {
+        imageBarrier(context, commands, target.Image(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {color.extent.width, color.extent.height, 1};
+        context.Resolved(&DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, target.Image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, transfer.Handle(), 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+        context.Resolved(&DeviceFunctions::cmdCopyBufferToImage, "vkCmdCopyBufferToImage")(commands, transfer.Handle(), depth.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+    }
+};
+
+}
+
+void ValidateStencilAttachment(const Context& context, const State& state) {
+    Require(context.independentBlend, "stencil attachment export requires enabled independentBlend");
+    Require(state.samples == 1u && state.depth && state.depth->samples == 1u && state.depth->stencilAddress != 0 && HasStencil(state.depth->format), "stencil attachment export requires a single-sample depth/stencil target");
+    Require(state.stencilTest && !state.pixelEarlyZ, "stencil attachment export requires a late stencil test");
+    Require(state.renderLayers == 1u && state.layerExports == 0u && !state.rectList && !state.stages.mesh && !state.stages.tessellation, "stencil attachment export requires a single-layer vertex draw");
+    Require(!state.depthBiasPerFace && !state.dualSourceBlend && state.reversedBlend == 0u, "stencil attachment export refuses face or channel splits");
+    Require(context.limits.maxColorAttachments >= 8u && state.blends.size() <= 8u && std::ranges::none_of(state.colors, [](const ColorTarget& color) { return color.exportIndex == 7u; }), "stencil attachment export requires unused color location 7");
+    Require(state.blends.size() < 8u || state.blends[7].colorWriteMask == 0u, "stencil attachment export refuses a write mask at color location 7");
+    Require(state.renderExtent.width <= state.depth->extent.width && state.renderExtent.height <= state.depth->extent.height, "stencil attachment export render area exceeds the depth target");
+    const auto supportedFace = [](const VkStencilOpState& face) { return face.compareOp == VK_COMPARE_OP_ALWAYS && face.failOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_REPLACE && face.writeMask == 0xffu; };
+    Require(supportedFace(state.stencilFront) && supportedFace(state.stencilBack), "stencil attachment export requires ALWAYS, full-byte pass replacement and KEEP on failure on both faces");
+}
+
+namespace {
+
 // The state with the outputs the pixel shader lacks masked: Vulkan leaves attachments a pixel
 // shader has no output for undefined, so their writes are masked (shaders that only store to
 // images or buffers keep their targets as they were). Empty when no mask must change.
@@ -2721,6 +2786,7 @@ struct TargetBinding {
 
 struct PreparedDraw {
     explicit PreparedDraw(bool profile) : timer(profile) {}
+    std::unique_ptr<StencilAttachment> stencilTarget;
     PreparedDraw(const PreparedDraw&) = delete;
     PreparedDraw& operator=(const PreparedDraw&) = delete;
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
@@ -2891,6 +2957,12 @@ void rememberShape(const Context& context, std::uint64_t shape, std::span<const 
 
 bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, PreparedDraw& prepared) {
     auto*& recipeOut = prepared.recipeOut;
+    const bool stencilAttachment = std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilAttachmentExport; });
+    if (stencilAttachment) {
+        Require(std::ranges::count_if(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->stencilAttachmentExport; }) == 1 && shaders.back().stage == ShaderRecompiler::ShaderStage::Fragment && shaders.back().program->stencilAttachmentExport, "stencil attachment export requires exactly one fragment stage");
+        ValidateStencilAttachment(context, state);
+        recipeOut = nullptr;
+    }
     auto& stencilReferences = prepared.stencilReferences;
     for (const auto& shader : shaders) {
         if (shader.program != nullptr && !shader.program->stencilReferences.empty()) {
@@ -3068,10 +3140,15 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         targetViews.push_back(DepthSurfaceView(context, *state.depth, state.depthWrite));
         if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     }
+    auto& stencilTarget = prepared.stencilTarget;
+    if (stencilAttachment) {
+        stencilTarget = std::make_unique<StencilAttachment>(context, state);
+        targetViews.insert(std::prev(targetViews.end()), stencilTarget->target.View());
+    }
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
     auto* recorder = prepared.recorder = Recorder::Active();
-    bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
+    bool recordable = !stencilAttachment && recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
     auto& resolved = prepared.resolved;
     resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
     auto& resources = resolved.resources;
@@ -3243,6 +3320,16 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         masked->colors[index].format = AttachmentProxyFormat(context, state.colors[index].format);
         masked->blends.at(state.colors[index].exportIndex).colorWriteMask &= VK_COLOR_COMPONENT_R_BIT;
     }
+    if (stencilAttachment) {
+        if (!masked) masked = state;
+        masked->colors.push_back(stencilTarget->color);
+        masked->hasColorTarget = true;
+        masked->blends.resize(8u);
+        masked->blends[7] = {};
+        masked->blends[7].colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+        masked->stencilFront.passOp = masked->stencilBack.passOp = VK_STENCIL_OP_KEEP;
+        masked->stencilFront.writeMask = masked->stencilBack.writeMask = 0u;
+    }
     const State& pipelineState = masked.has_value() ? *masked : state;
     static const bool verifySetLayouts = std::getenv("APS5_VERIFY_SET_LAYOUTS") != nullptr;
     if (verifySetLayouts && context.descriptorCache != nullptr) {
@@ -3265,7 +3352,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     if (!stencilReplay.empty()) {
         pipeline = stencilReplay.front().second;
     } else {
-        const bool memoized = stencilReferences.empty() && std::none_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied || binding.multisampled; });
+        const bool memoized = !stencilAttachment && stencilReferences.empty() && std::none_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied || binding.multisampled; });
         const auto layouts = resources->SetLayouts();
         std::uint64_t storeHash = 0;
         if (memoized) pipeline = shapePipeline(context, prepared.shape, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
@@ -3277,6 +3364,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (!repeated) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
         if (memoized) rememberShape(context, prepared.shape, targets, repeated ? nullptr : &pipeline, storeHash, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
     }
+    if (stencilAttachment) Require(!pipeline->SplitsFaces() && !pipeline->SplitsSecondChannel(), "stencil attachment export refuses pipeline face or channel splits");
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
     // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
     auto& owners = prepared.owners;
@@ -3288,6 +3376,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         framebufferOwners.push_back(binding.multisampled ? binding.multisampleOwner : binding.resident);
     }
     auto& framebuffer = prepared.framebuffer;
+    if (stencilAttachment) framebufferOwners.push_back(nullptr);
     framebuffer = pipeline->AcquireFramebuffer(targetViews, framebufferOwners, state.renderExtent, state.renderLayers);
     auto& reordered = prepared.reordered;
     auto& reorderPass = prepared.reorderPass;
@@ -3319,6 +3408,9 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     const auto report = [&](const char* suffix) { reportDrawEnd(state, timer, built, outcome, waitedBefore, ownWaitedMs, suffix); };
     auto* recipeOut = prepared.recipeOut;
     const auto& stencilReferences = prepared.stencilReferences;
+    const auto& stencilTarget = prepared.stencilTarget;
+    const bool stencilAttachment = stencilTarget != nullptr;
+    const State& pipelineState = prepared.masked ? *prepared.masked : state;
     auto& inputs = prepared.inputs;
     const auto* args = prepared.args;
     const int dumpLimit = prepared.dumpLimit;
@@ -3508,8 +3600,9 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     }
     std::vector<std::shared_ptr<void>> reorderKept;
     RecordSampleOrder(context, commands, reorderPass, reordered, true, reorderKept);
+    if (stencilTarget) stencilTarget->Load(context, commands);
     APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
-    pipeline->Begin(commands, *framebuffer, state.renderExtent, state);
+    pipeline->Begin(commands, *framebuffer, state.renderExtent, stencilAttachment ? pipelineState : state);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Layout());
     if (pixelLdsSubgroup != 0u) BindPixelFunctionLds(context, commands, pipeline->Layout());
@@ -3551,6 +3644,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         for (auto& object : reorderKept) recorder->Keep(std::move(object));
     }
     APS5_LOG_CHARS_OUT_DEBUG("Render pass ended");
+    if (stencilTarget) stencilTarget->Store(context, commands);
     for (auto& binding : targets) {
         if (binding.proxied) {
             binding.resident->RecordAttachmentProxyStore(commands, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -3625,7 +3719,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         // The recorder sync SubmitAndWait makes is the draw's own wait, not a nested hook wait.
         const auto ownBefore = profile ? Recorder::ThreadWaitedMs() : 0.0;
         batch->SubmitAndWait();
-        if (!stencilReferences.empty()) resources->CheckFaults();
+        if (!stencilReferences.empty() || stencilAttachment) resources->CheckFaults();
         if (profile) ownWaitedMs += Recorder::ThreadWaitedMs() - ownBefore;
     }
     if (checkRecords) checkRecords();

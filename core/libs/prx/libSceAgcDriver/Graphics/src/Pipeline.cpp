@@ -766,7 +766,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
 }
 
 bool Pipeline::Prebuild(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
-    if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return !shader.program->stencilReferences.empty(); })) return false;
+    if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return !shader.program->stencilReferences.empty() || shader.program->stencilAttachmentExport; })) return false;
     struct Scope {
         Scope() { prebuilding = true; prebuilt = false; }
         ~Scope() { prebuilding = false; }

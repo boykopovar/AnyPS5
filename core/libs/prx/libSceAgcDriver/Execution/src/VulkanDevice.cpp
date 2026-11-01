@@ -483,6 +483,7 @@ struct VulkanDevice::State {
     bool depthBiasClamp = false;
     bool dualSrcBlend = false;
     bool logicOp = false;
+    bool independentBlend = false;
     bool occlusionQueryPrecise = false;
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
@@ -1884,6 +1885,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.logicOp = available.logicOp;
     state->logicOp = enabled.logicOp == VK_TRUE;
     state->dualSrcBlend = enabled.dualSrcBlend == VK_TRUE;
+    state->independentBlend = enabled.independentBlend == VK_TRUE;
     enabled.occlusionQueryPrecise = available.occlusionQueryPrecise;
     state->occlusionQueryPrecise = enabled.occlusionQueryPrecise == VK_TRUE;
     // Recompiled storage-image access declares no format (the guest descriptor decides it).
@@ -4282,6 +4284,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.multiDrawIndirect = state->multiDrawIndirect;
     context.dualSrcBlend = state->dualSrcBlend;
     context.logicOp = state->logicOp;
+    context.independentBlend = state->independentBlend;
     context.depthBounds = state->depthBounds;
     context.depthBiasClamp = state->depthBiasClamp;
     context.samplerFilterMinmax = state->samplerFilterMinmax;

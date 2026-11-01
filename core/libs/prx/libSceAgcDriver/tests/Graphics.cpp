@@ -9653,6 +9653,19 @@ std::string stencilRefShape(std::span<const std::uint32_t> words) {
 }
 
 void stencilRefExportTests() {
+    {
+        AgcDriver::Graphics::Context context{};
+        context.limits.maxColorAttachments = 8u;
+        AgcDriver::Graphics::State state{};
+        state.depth = AgcDriver::Graphics::DepthTarget{0u, 1u, {64u, 4u}, VK_FORMAT_D24_UNORM_S8_UINT, 1.0f, 0u};
+        state.stencilTest = true;
+        state.renderExtent = {64u, 4u};
+        state.stencilFront = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, 0u};
+        state.stencilBack = state.stencilFront;
+        expectFailure([&] { AgcDriver::Graphics::ValidateStencilAttachment(context, state); }, "requires enabled independentBlend");
+        context.independentBlend = true;
+        AgcDriver::Graphics::ValidateStencilAttachment(context, state);
+    }
     for (const auto shaderControl : {0x52u, 0x12u, 0x02u, 0x03u}) {
         for (const auto zFormat : {2u, 9u}) {
             const auto queue = stencilRefExportQueue(shaderControl, zFormat);
@@ -9768,6 +9781,57 @@ void stencilRefExportTests() {
         ShaderRecompiler::RecompileCacheKey::Build(exportedTest, testKey);
         ShaderRecompiler::RecompileCacheKey::Build(exportedOperation, operationKey);
         Require(testKey != operationKey, "the recompile cache key ignores the stencil operation value export");
+    }
+    {
+        const std::array<std::uint32_t, 10> dynamicStencil{0x7e0e0200u, 0xd7650001u, 0x000100c1u, 0x34020282u, 0xdacc0000u, 0x07000701u, 0xbf8cc07fu, 0xf8001882u, 0x700u, 0xbf810000u};
+        const std::array<std::uint32_t, 1> userData{0x00002a05u};
+        auto attachmentRequest = stencilRefExportRequest(0x52u, plain, dynamicStencil);
+        attachmentRequest.context.pixel->stencilOperationValueExport = true;
+        attachmentRequest.context.userData = userData;
+        const auto attachment = ShaderRecompiler::Recompile(attachmentRequest);
+        Require(attachment.stencilAttachmentExport && attachment.stencilReferences.empty() && !attachment.stencilReplaySafe && attachment.stencilReferenceDword == 0xffffffffu, "a dynamic stencil operation value did not select its single-draw attachment export");
+        Require(attachment.pushConstants.size() == sizeof(std::uint32_t) && stencilRefShape(attachment.spirv.Words()).empty(), "a stencil attachment export reserved replay data or a native stencil output");
+        const auto attachmentShape = [](std::span<const std::uint32_t> words) {
+            std::map<std::uint32_t, std::uint32_t> variables;
+            std::map<std::uint32_t, std::uint32_t> pointers;
+            std::set<std::uint32_t> unsignedTypes;
+            std::uint32_t output = 0u;
+            bool stored = false;
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+                const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+                if (op == spv::OpTypeInt && words[at + 2u] == 32u && words[at + 3u] == 0u) unsignedTypes.insert(words[at + 1u]);
+                if (op == spv::OpTypePointer && words[at + 2u] == spv::StorageClassOutput) pointers[words[at + 1u]] = words[at + 3u];
+                if (op == spv::OpVariable && words[at + 3u] == spv::StorageClassOutput) variables[words[at + 2u]] = words[at + 1u];
+                if (op == spv::OpDecorate && words[at + 2u] == spv::DecorationLocation && words[at + 3u] == 7u) output = words[at + 1u];
+                if (op == spv::OpStore && output != 0u && words[at + 1u] == output) stored = true;
+            }
+            return output != 0u && stored && variables.contains(output) && pointers.contains(variables.at(output)) && unsignedTypes.contains(pointers.at(variables.at(output)));
+        };
+        Require(attachmentShape(attachment.spirv.Words()), "the stencil operation attachment is not a stored unsigned scalar at color location 7");
+        attachmentRequest.target.registrationModules = true;
+        const auto prepared = ShaderRecompiler::PrepareShader(attachmentRequest);
+        Require(ShaderRecompiler::GetPreparedArtifact(*prepared).stencilAttachmentExport, "shader preparation lost the stencil attachment mode");
+        const auto captured = ShaderRecompiler::CaptureResources(attachmentRequest, ShaderRecompiler::SrtRuntime{.userData = userData}, *prepared);
+        Require(captured != nullptr, "the stencil attachment fixture could not capture its user data");
+        const auto materialized = ShaderRecompiler::MaterializeShader(attachmentRequest, *captured, *prepared);
+        Require(materialized->stencilAttachmentExport && materialized->stencilReferences.empty() && attachmentShape(materialized->spirv.Words()), "materialization lost the stencil attachment interface");
+        attachmentRequest.target.registrationModules = false;
+        attachmentRequest.context.pixel->earlyZ = true;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(attachmentRequest)); }, "late tests");
+        attachmentRequest.context.pixel->earlyZ = false;
+        attachmentRequest.context.pixel->orderedPixelShader = true;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(attachmentRequest)); }, "late tests");
+        attachmentRequest.context.pixel->orderedPixelShader = false;
+        attachmentRequest.context.pixel->stencilOperationValueExport = false;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(attachmentRequest)); }, "replay-safe");
+        attachmentRequest.context.pixel->stencilOperationValueExport = true;
+        attachmentRequest.target.supportedCapabilities = stencilExport;
+        const auto native = ShaderRecompiler::Recompile(attachmentRequest);
+        Require(!native.stencilAttachmentExport && native.stencilReferences.empty() && stencilRefShape(native.spirv.Words()) == "capability extension replacing builtin store ", "a native stencil operation export selected emulation");
+        const std::array<std::uint32_t, 12> collisionCode{0x7e0e0200u, 0xd7650001u, 0x000100c1u, 0x34020282u, 0xdacc0000u, 0x07000701u, 0xbf8cc07fu, 0xf8000071u, 0x7u, 0xf8001882u, 0x700u, 0xbf810000u};
+        attachmentRequest.shader.code = collisionCode;
+        attachmentRequest.target.supportedCapabilities = plain;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(attachmentRequest)); }, "unused color output location 7");
     }
     auto replayRequest = stencilRefExportRequest(0x52u, plain);
     const auto replayHandle = ShaderRecompiler::PrepareShader(replayRequest);

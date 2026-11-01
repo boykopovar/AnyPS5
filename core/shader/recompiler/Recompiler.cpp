@@ -620,7 +620,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     constexpr BindingAllocator bindingAllocator;
     bool registration = request.target.registrationModules && (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Fragment);
     program.Metadata().bindingLayoutComplete = false;
-    const bool stencilReplay = request.shader.stage == ShaderStage::Fragment && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; }) && std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == request.target.supportedCapabilities.end();
+    const auto stencilMode = SelectStencilExportMode(program, std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) != request.target.supportedCapabilities.end(), inputInfo.pixel != nullptr && inputInfo.pixel->psStencilOperationValueExport, inputInfo.pixel != nullptr && inputInfo.pixel->psEarlyZ, inputInfo.pixel != nullptr && inputInfo.pixel->psOrderedPixelShader);
+    const bool stencilReplay = stencilMode == StencilExportMode::Replay;
     auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay);
 
     SpirvTargetOptions targetOptions {};
@@ -703,6 +704,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
     result.registrationModule = registration;
     if (request.shader.stage == ShaderStage::Mesh && request.graphics) result.meshBarycentrics = request.graphics->meshBarycentrics;
+    result.stencilAttachmentExport = stencilMode == StencilExportMode::Attachment;
     result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program);
     result.bdaWrites = program.Info().bdaWrites;
     if (stencilReplay) {
@@ -1153,6 +1155,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .meshBarycentrics = artifact.meshBarycentrics,
         .stencilReferences = artifact.stencilReferences,
         .stencilReplaySafe = artifact.stencilReplaySafe,
+        .stencilAttachmentExport = artifact.stencilAttachmentExport,
         .bdaWrites = artifact.bdaWrites,
         .stencilReferenceDword = artifact.stencilReferenceDword,
         .variantId = artifact.variantId
