@@ -300,10 +300,21 @@ static int FailedCreateTest() {
     return 0;
 }
 
+static void SetFullscreenSetting(const char* value) {
+#ifdef _WIN32
+    // SDL_setenv on Windows only changes the process block, which std::getenv does not read.
+    _putenv_s("ANYPS5_FULLSCREEN", value);
+#else
+    SDL_setenv("ANYPS5_FULLSCREEN", value, 1);
+#endif
+    const char* seen = std::getenv("ANYPS5_FULLSCREEN");
+    Require(seen != nullptr && std::strcmp(seen, value) == 0, "the fullscreen setting did not reach the environment that production reads");
+}
+
 static int WindowTest() {
     OwnedDirectory owned;
     if (!VideoAvailable()) return 77;
-    SDL_setenv("ANYPS5_FULLSCREEN", "windowed", 1);
+    SetFullscreenSetting("windowed");
     HostWindowSize windowed;
     {
         DisplayWindow window;
@@ -324,7 +335,7 @@ static int WindowTest() {
         SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
         Require(back == windowed, "leaving fullscreen did not restore the windowed size");
     }
-    SDL_setenv("ANYPS5_FULLSCREEN", "borderless", 1);
+    SetFullscreenSetting("borderless");
     {
         DisplayWindow window;
         if (!Open(window)) {
@@ -337,7 +348,7 @@ static int WindowTest() {
         SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
         Require(!Fullscreen(window) && back == windowed, "leaving a fullscreen start did not give the creation size");
     }
-    SDL_setenv("ANYPS5_FULLSCREEN", "yes", 1);
+    SetFullscreenSetting("yes");
     {
         DisplayWindow window;
         if (!Open(window)) {
