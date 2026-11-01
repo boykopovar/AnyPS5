@@ -230,10 +230,12 @@ void FrameRecorder::ReserveEopFlip(const FlipInfo& info, std::uint32_t token) {
         return;
     }
     if (state != State::Recording) return;
+    const auto entry = DriverDetail::Driver::Get().StartedProgress();
     emitDelta();
     if (state != State::Recording) return;
     call.ordinal = ++ordinal;
-    std::tie(call.accepted, call.completed) = DriverDetail::Driver::Get().SerialProgress();
+    call.accepted = entry.accepted;
+    call.completed = entry.completed;
     writer->WriteCall(call);
     ++recordedCalls;
 }
@@ -292,11 +294,14 @@ void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<co
         return;
     }
     if (state != State::Recording) return;
+    const auto entry = DriverDetail::Driver::Get().StartedProgress();
     if (prologueCall) emitShaderDelta(shaders);
     else emitDelta();
     if (state != State::Recording) return;
     call.ordinal = ++ordinal;
-    std::tie(call.accepted, call.completed) = DriverDetail::Driver::Get().SerialProgress();
+    call.accepted = entry.accepted;
+    call.completed = entry.completed;
+    if (call.kind == FrameCallKind::Submit) ++submitDepths[static_cast<std::size_t>(std::min<std::uint64_t>(entry.accepted - entry.completed, submitDepths.size() - 1))];
     writer->WriteCall(call);
     ++recordedCalls;
 }
@@ -760,6 +765,9 @@ std::string FrameRecorder::header() const {
     text += ",\"ranges\":" + std::to_string(ranges.size()) + ",\"late_ranges\":" + std::to_string(lateRanges) + ",\"snapshot_bytes\":" + std::to_string(snapshotBytes) + ",\"unreadable_bytes\":" + std::to_string(unreadableBytes) + ",\"host_only_sample_bytes\":" + std::to_string(hostOnlySampleBytes);
     text += ",\"memory_groups\":" + std::to_string(deltaGroups) + ",\"delta_bytes\":" + std::to_string(deltaBytes) + ",\"gpu_store_bytes\":" + std::to_string(gpuStoreBytes);
     text += ",\"capture_seconds\":" + std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count());
+    text += ",\"submit_depths\":[";
+    for (std::size_t depth = 0; depth < submitDepths.size(); ++depth) text += (depth == 0 ? "" : ",") + std::to_string(submitDepths[depth]);
+    text += "]";
     text += ",\"env\":{";
     bool first = true;
     for (const auto& [name, value] : captureEnvironment()) {

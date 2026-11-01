@@ -347,6 +347,11 @@ std::pair<std::uint64_t, std::uint64_t> Driver::SerialProgress() {
     return {accepted, completed};
 }
 
+StartedProgressSnapshot Driver::StartedProgress() {
+    std::lock_guard lock(mutex);
+    return {accepted, completed, std::vector<std::uint64_t>(startedAhead.begin(), startedAhead.end())};
+}
+
 void Driver::CheckFailure() {
     if (failed.load(std::memory_order_acquire)) {
         std::lock_guard lock(mutex);
