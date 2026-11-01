@@ -319,9 +319,16 @@ static void CheckEndedThreads() {
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
 
     Pthread adopted = nullptr;
-    std::thread([&adopted] { adopted = scePthreadSelf(); }).join();
+    std::int64_t adoptedId = 0;
+    std::thread([&adopted, &adoptedId] {
+        adopted = scePthreadSelf();
+        adoptedId = pthread_getthreadid_np_nid_postfix();
+    }).join();
     Require(adopted != nullptr && ReportedEnded(adopted));
     CheckPosixQuery(adopted, GUEST_ESRCH);
+    KernelCpumask adoptedMask = 0;
+    *__error_nid_postfix() = 0;
+    Require(cpuset_getaffinity_nid_postfix(3, 1, adoptedId, sizeof(adoptedMask), &adoptedMask) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
 }
 
 static void CheckGetprioOfTheCallingThread() {

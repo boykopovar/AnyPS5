@@ -482,6 +482,15 @@ static CpuClockRegistry& CpuClocks() {
     return *registry;
 }
 
+static bool GuestThreadEnded(const PthreadPrivate* thread) {
+    if (thread->_finished.load(std::memory_order_acquire)) return true;
+#ifdef _WIN32
+    return thread->hostAdopted && WaitForSingleObject(static_cast<HANDLE>(thread->nativeHandle), 0) == WAIT_OBJECT_0;
+#else
+    return false;
+#endif
+}
+
 PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false), _retval(nullptr), _detached(false), _adopted(false), _handleStorage(nullptr), _joined(false) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
@@ -505,7 +514,7 @@ std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& t
     auto& registry = CpuClocks();
     std::unique_lock lock(registry.lock);
     for (const auto& [id, candidate] : registry.threads) {
-        if (!candidate->initialThread.load(std::memory_order_acquire) || candidate->_finished.load(std::memory_order_acquire)) continue;
+        if (!candidate->initialThread.load(std::memory_order_acquire) || GuestThreadEnded(candidate)) continue;
         thread = candidate;
         return lock;
     }
@@ -542,7 +551,7 @@ void SetLiveGuestThreadsAffinity(KernelCpumask mask) {
     std::lock_guard lock(registry.lock);
     registry.processAffinity = mask;
     for (const auto& [id, thread] : registry.threads) {
-        if (!thread->_finished.load(std::memory_order_acquire)) thread->affinity.store(mask, std::memory_order_relaxed);
+        if (!GuestThreadEnded(thread)) thread->affinity.store(mask, std::memory_order_relaxed);
     }
 }
 
@@ -551,7 +560,7 @@ KernelCpumask LiveGuestThreadsAffinity() {
     std::lock_guard lock(registry.lock);
     KernelCpumask mask = 0;
     for (const auto& [id, thread] : registry.threads) {
-        if (!thread->_finished.load(std::memory_order_acquire)) mask |= thread->affinity.load(std::memory_order_relaxed);
+        if (!GuestThreadEnded(thread)) mask |= thread->affinity.load(std::memory_order_relaxed);
     }
     return mask;
 }
@@ -560,10 +569,7 @@ std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
     auto& registry = CpuClocks();
     std::unique_lock lock(registry.lock);
     for (const auto& [id, live] : registry.threads) {
-        if (live != thread || live->_finished.load(std::memory_order_acquire)) continue;
-#ifdef _WIN32
-        if (live->hostAdopted && WaitForSingleObject(static_cast<HANDLE>(live->nativeHandle), 0) == WAIT_OBJECT_0) return {};
-#endif
+        if (live != thread || GuestThreadEnded(live)) continue;
         return lock;
     }
     return {};
@@ -597,7 +603,7 @@ bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& ma
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
-        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        if (thread->tid != tid || GuestThreadEnded(thread)) continue;
         mask = thread->affinity.load(std::memory_order_relaxed);
         return true;
     }
@@ -608,7 +614,7 @@ bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& pr
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
-        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        if (thread->tid != tid || GuestThreadEnded(thread)) continue;
         policy = thread->schedPolicy.load(std::memory_order_relaxed);
         priority = thread->priority.load(std::memory_order_relaxed);
         return true;
@@ -620,7 +626,7 @@ bool SetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask mas
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
-        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        if (thread->tid != tid || GuestThreadEnded(thread)) continue;
         thread->affinity.store(mask, std::memory_order_relaxed);
         return true;
     }
@@ -631,7 +637,7 @@ bool LiveGuestThreadExists(std::int64_t tid) {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
-        if (!thread->_finished.load(std::memory_order_acquire) && thread->tid == tid) return true;
+        if (!GuestThreadEnded(thread) && thread->tid == tid) return true;
     }
     return false;
 }
@@ -643,7 +649,7 @@ bool GuestThreadCpuNanos(int cpuClockThread, std::uint64_t* nanos) {
     if (found == registry.threads.end())
         return false;
     PthreadPrivate* thread = found->second;
-    if (thread->_finished.load(std::memory_order_acquire))
+    if (GuestThreadEnded(thread))
         return false;
 #ifdef _WIN32
     if (thread->nativeHandle == nullptr) {
