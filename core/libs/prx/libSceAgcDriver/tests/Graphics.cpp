@@ -13264,6 +13264,7 @@ int main(int argc, char** argv) {
         RunGuestAllocationTests();
         RunUnmappedGapTests();
         RunVanishedPageReadTests();
+        RunPageBlockTests();
         RunColorTargetLayoutTests();
         RunLiveStackAccessTests();
         RunTextureFormatTests();

@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -41,12 +42,12 @@ public:
         GuestArena::GuestArenaRelease_nid_postfix(data, bytes);
     }
 
-    std::byte* Commit(std::size_t offset) {
+    std::byte* Commit(std::size_t offset, std::size_t length = Unit) {
         auto* at = data + offset;
-        GuestArena::GuestArenaCommit_nid_postfix(at, Unit, PAGE_READWRITE, Unit);
-        std::memset(at, 0x5b, Unit);
+        GuestArena::GuestArenaCommit_nid_postfix(at, length, PAGE_READWRITE, Unit);
+        std::memset(at, 0x5b, length);
         GuestAllocations::Mutation mutation;
-        mutation.Add(at, Unit, true, true, true);
+        mutation.Add(at, length, true, true, true);
         committed.push_back(offset);
         return at;
     }
@@ -130,12 +131,115 @@ void CheckBoundaries() {
     Require(Accessible(block, Unit, true), "access observer did not invalidate inaccessible state after commit");
     std::puts("page-state boundaries, publication, holes and invalidation passed");
 }
+
+void CheckRuns() {
+    constexpr std::size_t page = 4096;
+    constexpr std::size_t count = 1536;
+    constexpr auto bytes = count * page;
+    using Ranges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
+    Range range(3 * ChunkGuestBytes);
+    auto* guest = range.Commit(ChunkGuestBytes - 512 * page, bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(guest);
+    const auto expected = [&](std::size_t index, std::size_t length = 1) {
+        Ranges result;
+        if (index != 0) result.emplace_back(base, base + index * page);
+        if (index + length < count) result.emplace_back(base + (index + length) * page, base + bytes);
+        return result;
+    };
+    const auto protect = [&](std::size_t index, bool writable) {
+        auto* at = guest + index * page;
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(at, page, true, writable, true, [&] {
+            const DWORD protection = writable ? PAGE_READWRITE : PAGE_READONLY;
+            DWORD previous = 0;
+            Require(VirtualProtect(at, page, protection, &previous) != 0, "cannot protect run fixture page");
+            GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(at), page, protection);
+        });
+    };
+    const Ranges whole{{base, base + bytes}};
+    Require(DescribeCommitted(base, bytes, true).whole, "run fixture was not fully writable");
+    for (const std::size_t index : {0, 63, 64, 511, 512, 513, 700, 1023, 1024, 1535}) {
+        protect(index, false);
+        Require(!Accessible(guest, bytes, true) && Accessible(guest, bytes), "a protected page retained writable access in a summarized run");
+        Require(CommittedRanges(base, bytes, true) == expected(index), "a block or chunk boundary retained a stale summary");
+        Require(CommittedRanges(base, bytes) == whole, "readable ranges changed around a read-only page");
+        Require(CommittedRanges(base + 1, bytes - 2, true) == [&] {
+            auto clipped = expected(index);
+            if (!clipped.empty() && clipped.front().first == base) ++clipped.front().first;
+            if (!clipped.empty() && clipped.back().second == base + bytes) --clipped.back().second;
+            return clipped;
+        }(), "an unaligned run crossed a protected page");
+        protect(index, true);
+        Require(DescribeCommitted(base, bytes, true).whole, "restored run was not writable");
+    }
+    auto* hole = guest + 512 * page;
+    GuestArena::GuestArenaReset_nid_postfix(hole, Unit);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(hole), Unit);
+    Require(!Accessible(hole, page), "a decommitted page retained cached access");
+    Require(CommittedRanges(base, bytes) == expected(512, Unit / page), "decommitted pages retained a block summary");
+    GuestArena::GuestArenaCommit_nid_postfix(hole, Unit, PAGE_READWRITE, Unit);
+    Require(DescribeCommitted(base, bytes, true).whole, "recommit did not clear inaccessible state and its summary");
+    std::atomic<bool> done{false};
+    std::atomic<std::size_t> epoch{0};
+    std::atomic<std::size_t> changed{0};
+    std::array<std::atomic<std::size_t>, 2> observed{};
+    std::atomic<unsigned> errors{0};
+    std::vector<std::thread> readers;
+    for (std::size_t reader = 0; reader < observed.size(); ++reader) {
+        readers.emplace_back([&, reader] {
+            while (!done.load(std::memory_order_acquire)) {
+                const auto phase = epoch.load(std::memory_order_acquire);
+                if (phase > observed[reader].load(std::memory_order_relaxed)) {
+                    const auto index = changed.load(std::memory_order_relaxed);
+                    if (CommittedRanges(base, bytes, true) != ((phase & 1) != 0 ? expected(index) : whole)) errors.fetch_add(1, std::memory_order_relaxed);
+                    observed[reader].store(phase, std::memory_order_release);
+                } else static_cast<void>(DescribeCommitted(base, bytes, true));
+            }
+        });
+    }
+    const auto publish = [&](std::size_t phase, std::size_t index) {
+        changed.store(index, std::memory_order_relaxed);
+        epoch.store(phase, std::memory_order_release);
+        for (auto& seen : observed) {
+            while (seen.load(std::memory_order_acquire) < phase) std::this_thread::yield();
+        }
+    };
+    for (std::size_t round = 0; round < 128; ++round) {
+        const auto index = (round * 37 + 511) % count;
+        protect(index, false);
+        publish(2 * round + 1, index);
+        protect(index, true);
+        publish(2 * round + 2, index);
+    }
+    for (std::size_t round = 0; round < 2000; ++round) {
+        const auto index = 448 + round % 128;
+        protect(index, false);
+        protect(index, true);
+    }
+    protect(512, false);
+    publish(257, 512);
+    done.store(true, std::memory_order_release);
+    for (auto& reader : readers) reader.join();
+    Require(errors.load() == 0 && CommittedRanges(base, bytes, true) == expected(512), "concurrent scans retained a stale block summary");
+    protect(512, true);
+    std::array<std::byte, 16> copy{};
+    Read(base, copy);
+    Require(std::all_of(copy.begin(), copy.end(), [](std::byte value) { return value == std::byte{0x5b}; }), "summary scans changed guest data");
+    Range edge(2 * ChunkGuestBytes);
+    constexpr std::size_t edgePages = 512;
+    const auto edgeFirst = reinterpret_cast<std::uint64_t>(edge.Commit(ChunkGuestBytes - edgePages * page, edgePages * page));
+    const Ranges edgeRun{{edgeFirst, edgeFirst + edgePages * page}};
+    Require(CommittedRanges(edgeFirst, edgePages * page, true) == edgeRun, "the run before an unallocated chunk was not writable");
+    Require(!DescribeCommitted(edgeFirst, edgePages * page + Unit, true).whole && CommittedRanges(edgeFirst, edgePages * page + Unit, true) == edgeRun, "a run into an unallocated chunk was reported past its committed pages");
+    std::puts("page-state block scans across 64-page, 512-page and sparse-chunk boundaries passed");
+}
 }
 
 int main(int argc, char** argv) {
     try {
         Require(GuestArena::GuestArenaAvailable_nid_postfix(), "page-state fixture needs the guest arena");
         if (argc == 2 && std::string_view(argv[1]) == "--metadata") CheckMetadata();
+        else if (argc == 2 && std::string_view(argv[1]) == "--runs") CheckRuns();
         else CheckBoundaries();
         return 0;
     } catch (const std::exception& error) {
