@@ -27,6 +27,7 @@ const char* Usage() {
            "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
            "  --registry                     Write <output-stem>.registry.json beside the output.\n"
            "  --autorun                      Run the output after conversion and print its exit code.\n"
+           "  --dry-run                      Convert in memory and list planned outputs without writing them.\n"
            "\n"
            "Layout:\n"
            "  --sce-module-path <path>       Parent of the module directories. Default: the input file's directory.\n"
@@ -65,6 +66,7 @@ const char* Usage() {
 namespace {
 
 constexpr std::string_view kVerifyRejectedOptions[] = {
+    "--dry-run",
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
     "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
     "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
@@ -110,14 +112,7 @@ Args ParseArgs(int argc, char* argv[]) {
             if (args.windowsFixedBase) throw std::runtime_error("--windows-fixed-base cannot be repeated");
             if (i + 1 >= argc || std::string(argv[i + 1]).empty() || std::string(argv[i + 1]).starts_with("--"))
                 throw std::runtime_error("--windows-fixed-base requires an address");
-            std::string_view value(argv[++i]);
-            const bool hexadecimal = value.starts_with("0x") || value.starts_with("0X");
-            if (hexadecimal) value.remove_prefix(2);
-            std::uint64_t address = 0;
-            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), address, hexadecimal ? 16 : 10);
-            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || address < 0x20000 || address > 0x7fffffff0000 || (address & 0xffff) != 0)
-                throw std::runtime_error("--windows-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");
-            args.windowsFixedBase = address;
+            args.windowsFixedBase = ParseFixedBase(argv[++i], 0x20000, "--windows-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");
         } else if (arg == "--linux-fixed-base") {
             if (args.linuxFixedBase) throw std::runtime_error("--linux-fixed-base cannot be repeated");
             if (i + 1 >= argc || std::string_view(argv[i + 1]).empty() || std::string_view(argv[i + 1]).starts_with("--"))
@@ -191,6 +186,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.lazyBinding = true;
         } else if (arg == "--autorun") {
             args.autorun = true;
+        } else if (arg == "--dry-run") {
+            args.dryRun = true;
         } else if (arg == "--windows-diagnostics") {
             args.windowsDiagnostics = true;
         } else if (arg == "--windows-gui") {
@@ -211,6 +208,7 @@ Args ParseArgs(int argc, char* argv[]) {
     }
 
     const bool verifying = !args.verifyPatchesPath.empty();
+    if (args.dryRun && args.autorun) throw std::runtime_error("--dry-run conflicts with --autorun");
     if (args.verifyOutput && !verifying) throw std::runtime_error("--verify-output requires --verify-patches");
     if (!args.patchesPath.empty() && args.noPatches) throw std::runtime_error("--patches conflicts with --no-patches");
     if (verifying) {

@@ -61,6 +61,16 @@ int main() {
     Require(AutoRedirect(request) == -1);
     Require(AuthEnabled(tmpl) == 0 && AutoRedirect(tmpl) == 0);
 
+    const std::uint32_t sslVersions[] = {2, 3, 4, 5};
+    for (const std::uint32_t version : sslVersions) {
+        Require(sceHttp2SetMinSslVersion(tmpl, version) == 0);
+        Require(sceHttp2SetMinSslVersion(request, version) == 0);
+    }
+    const int deleted = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://localhost/", 0);
+    Require(deleted > 0 && sceHttp2DeleteRequest(deleted) == 0);
+    const int unknownIds[] = {0, -1, 0x7fffffff, deleted};
+    for (const int unknown : unknownIds) Require(sceHttp2SetMinSslVersion(unknown, 5) == InvalidId);
+
     Require(sceHttp2SetAuthEnabled(tmpl, 1) == 0);
     Require(sceHttp2AddRequestHeader(tmpl, "X-Late", "1", 0) == 0);
     Require(AuthEnabled(request) == 1);
@@ -126,7 +136,14 @@ int main() {
     Require(Throws([&] { sceHttp2SetPreSendCallback(sent, nullptr, nullptr); }));
     Require(sceHttp2DeleteRequest(sent) == 0);
 
+    const int sized = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://localhost/", 0);
+    Require(sized > 0);
+    Require(sceHttp2SetRequestContentLength(sized, 42) == 0);
+    Require(sceHttp2DeleteRequest(sized) == 0);
+    Require(sceHttp2SetRequestContentLength(sized, 42) == InvalidId);
+
     Require(sceHttp2DeleteRequest(request) == 0);
+    Require(sceHttp2SetRequestContentLength(tmpl, 42) == 0);
     const int invalidIds[] = {0, -1, 0x7fffffff, request, context, box};
     for (const int invalid : invalidIds) {
         int value = -2;
@@ -139,6 +156,7 @@ int main() {
         Require(sceHttp2SetAuthInfoCallback(invalid, nullptr, nullptr) == InvalidId);
         Require(sceHttp2SetPreSendCallback(invalid, nullptr, nullptr) == InvalidId);
         if (invalid != context) Require(sceHttp2AuthCacheFlush(invalid) == InvalidId);
+        if (invalid != context && invalid != box) Require(sceHttp2SetRequestContentLength(invalid, 42) == InvalidId);
         Require(sceHttp2RedirectCacheFlush(invalid) == 0);
     }
 

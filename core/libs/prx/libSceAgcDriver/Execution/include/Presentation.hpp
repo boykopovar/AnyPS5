@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 
 struct ImeKeyboardView;
+struct ModalDialogView;
 
 namespace AgcDriver {
 
@@ -33,6 +34,7 @@ extern "C" void AgcDriverPresentBuffer_nid_postfix(const AgcDriver::Presentation
 extern "C" void AgcDriverReleaseWindow_nid_postfix(void* window);
 extern "C" void AgcDriverTogglePerformanceOverlay_nid_postfix();
 extern "C" void AgcDriverSetSystemOverlay_nid_postfix(const ImeKeyboardView* view);
+extern "C" void AgcDriverSetSystemDialog_nid_postfix(const ModalDialogView* view);
 extern "C" void AgcDriverReportFailure_nid_postfix(std::exception_ptr error);
 
 #endif

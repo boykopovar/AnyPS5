@@ -52,7 +52,7 @@ void defaults() {
     const auto args = parse({"input.elf", "output.elf"});
     require(args.inputPath == "input.elf", "input path was not captured");
     require(args.outputPath == "output.elf", "output path was not captured");
-    require(!args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
+    require(!args.dryRun && !args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
         !args.toWindows && !args.lazyBinding && !args.autorun && !args.windowsDiagnostics && !args.windowsGui,
         "a flag defaulted to true");
     require(args.unusedFilterLevel == 0u, "unused filter level did not default to 0");
@@ -223,6 +223,8 @@ void windowsFixedBase() {
         const auto args = parse({"--windows-fixed-base", value, "--windows", "input.elf", "output.exe"});
         require(args.windowsFixedBase == 0x400000, "fixed base was parsed incorrectly");
     }
+    require(parse({"--windows", "--windows-fixed-base", "0x20000", "input.elf", "output.exe"}).windowsFixedBase == 0x20000, "lowest fixed base was rejected");
+    require(parse({"--windows", "--windows-fixed-base", "0x7fffffff0000", "input.elf", "output.exe"}).windowsFixedBase == 0x7fffffff0000, "highest fixed base was rejected");
     require(parse({"--windows", "--windows-fixed-base", "0x400000000", "input.elf", "output.exe"}).windowsFixedBase == 0x400000000, "fixed base was truncated to 32 bits");
     for (const auto& value : {"0", "0x10000", "0x400001", "0x", "-4194304", "+4194304", " 4194304", "0x400000junk", "18446744073709551616", "0x800000000000"})
         expectThrows({"--windows", "--windows-fixed-base", value, "input.elf", "output.exe"}, "--windows-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");
@@ -351,9 +353,24 @@ void verifyMode() {
     expectUsage({"--verify-patches", "p.toml"});
 }
 
+void dryRun() {
+    for (const auto* target : {"--windows", "--macos"}) {
+        const auto args = parse({"input.elf", "--dry-run", target, "--registry", "output"});
+        require(args.dryRun && args.writeRegistry, "dry run must preserve conversion options");
+        require(args.inputPath == "input.elf" && args.outputPath == "output", "dry run consumed a positional path");
+    }
+    require(parse({"--dry-run", "input.elf", "output"}).dryRun, "Linux dry run was ignored");
+    require(parse({"--dry-run", "--dry-run", "input.elf", "output"}).dryRun, "repeated dry run was rejected");
+    expectThrows({"--dry-run", "--autorun", "input.elf", "output"}, "--dry-run conflicts with --autorun");
+    expectThrows({"--autorun", "--dry-run", "input.elf", "output"}, "--dry-run conflicts with --autorun");
+    expectThrows({"--verify-patches", "p.toml", "--dry-run", "input.elf"}, "--dry-run cannot be used with --verify-patches");
+    expectUsage({"--dry-run", "input.elf"});
+}
+
 int main() {
     try {
         defaults();
+        dryRun();
         booleanFlags();
         trapSdkSyscallStubs();
         positionalsInterleaveWithFlags();
