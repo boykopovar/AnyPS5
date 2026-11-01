@@ -54,6 +54,30 @@ class Tests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
 
+    def test_linked_header_directories_keep_the_package_manifest(self):
+        self.fixture()
+        expected = self.run_tool("--root", self.root)
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        for name in ("core/libs", "core"):
+            with self.subTest(directory=name):
+                link = self.root / name
+                target = self.root / ("physical-" + link.name)
+                link.rename(target)
+                try:
+                    link.symlink_to(target, target_is_directory=True)
+                except OSError as error:
+                    target.rename(link)
+                    if getattr(error, "winerror", None) == 1314:
+                        self.skipTest("needs symbolic-link creation privilege")
+                    raise
+                try:
+                    result = self.run_tool("--root", self.root)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout), json.loads(expected.stdout))
+                finally:
+                    link.unlink()
+                    target.rename(link)
+
 
 if __name__ == "__main__":
     unittest.main()
