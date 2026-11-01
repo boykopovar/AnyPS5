@@ -256,10 +256,10 @@ std::string RunningTitleId() {
 }
 
 void CopyRunningTitleId(const std::string& caller, bool running, char* destination) {
-    if (!running) NotImplemented_nid_no_patch((caller + ": application other than the running title").c_str());
-    if (destination == nullptr) NotImplemented_nid_no_patch((caller + ": null title ID buffer").c_str());
+    if (!running) throw std::runtime_error(caller + ": application other than the running title");
+    if (destination == nullptr) throw std::runtime_error(caller + ": null title ID buffer");
     const std::string titleId = RunningTitleId();
-    if (titleId.size() >= TitleIdBufferSize) NotImplemented_nid_no_patch((caller + ": title ID that does not fit 10 bytes").c_str());
+    if (titleId.size() >= TitleIdBufferSize) throw std::runtime_error(caller + ": title ID that does not fit 10 bytes");
     std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
 }
 
@@ -276,14 +276,14 @@ int RunningAppId(const std::string& caller, const char* titleId) {
 template<typename TValue>
 int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* destination, std::type_identity_t<TValue> value, int nullOutputResult) {
     if (destination == nullptr) return nullOutputResult;
-    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch((caller + ": application other than the running title").c_str());
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(caller + ": application other than the running title");
     *destination = value;
     return SYSTEM_SERVICE_OK;
 }
 
 int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
-    if (capacity == 0) NotImplemented_nid_no_patch((caller + ": a list with no room for the running title").c_str());
+    if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
     appIds[0] = SYSTEM_SERVICE_RUNNING_APP_ID;
     *count = 1;
     return SYSTEM_SERVICE_OK;
