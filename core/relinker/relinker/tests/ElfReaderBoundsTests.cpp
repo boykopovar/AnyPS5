@@ -359,6 +359,13 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
         }},
+        {"symbol with st_shndx == SHN_XINDEX when extended section table is absent or truncated", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 2);
+            Write<std::uint16_t>(bytes, 58, 64);
+            Write<std::uint16_t>(bytes, 60, 0);
+            RejectSections(std::move(bytes));
+        }},
     };
     std::size_t failures = 0;
     for (const auto& [name, test] : cases) {
