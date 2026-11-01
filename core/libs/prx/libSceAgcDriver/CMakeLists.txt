@@ -354,6 +354,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MemoryAccounting.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ParallelCompare.cpp
@@ -450,6 +451,9 @@ target_link_libraries(libSceAgcDriver PRIVATE
         libzstd_static
         ${CMAKE_DL_LIBS}
 )
+if(WIN32)
+    target_link_libraries(libSceAgcDriver PRIVATE pdh)
+endif()
 if(APS5_ENABLE_TRACY)
     target_link_libraries(libSceAgcDriver PUBLIC TracyClient)
 endif()

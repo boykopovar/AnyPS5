@@ -272,6 +272,8 @@ def load(path, thread=None):
         frames, _, count = line.rpartition(" ")
         if not frames or not count.isdigit():
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        if thread is not None:
+            raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")
         samples.stacks[frames] += int(count)
     return samples
 
@@ -346,6 +348,8 @@ def symbolize(parser, args):
                 if os.path.realpath(source) == os.path.realpath(output) or (source.exists() and output.exists() and source.samefile(output)):
                     parser.error("symbolized output must be separate from the sample captures")
     samples = load(args.samples, args.thread)
+    if args.out and not samples.stacks:
+        parser.error("--out needs a collapsed-stack file")
     if args.since:
         samples = window(samples, load(args.since, args.thread))
     if args.out and samples.stacks:
