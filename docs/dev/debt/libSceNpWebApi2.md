@@ -16,3 +16,14 @@
 - [Push handle lifecycle](../../../core/libs/prx/libSceNpWebApi2/Export.cpp): PS5 create/delete/abort signatures and invalid-context/invalid-handle errors are confirmed. Handles track ownership, timeout and abort state; deletion and context termination remove them. Network push operations and cancellation of active requests remain unimplemented.
 - [sceNpWebApi2GetMemoryPoolStats](../../../core/libs/prx/libSceNpWebApi2/Export.cpp): PS5 confirms the context/statistics arguments and 32-byte output. An invalid context returns `0x80553404` without changing output; a valid context with null output succeeds. Allocator accounting remains absent: peak and current usage still report zero instead of native pool allocations.
 - [sceNpWebApi2PushEventSetHandleTimeout](../../../core/libs/prx/libSceNpWebApi2/Export.cpp): PS5 confirms three 32-bit arguments, ownership validation and storing the entire timeout value without range checks. The stored timeout is not consumed because asynchronous push operations are unimplemented.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceNpWebApi2/Export.cpp) - 4 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `4N85o28Ifbk` |
+| `Unknown` | `A9IoYzANK3M` |
+| `Unknown` | `lylvdXiq1UE` |
+| `Unknown` | `qaMcX2+6ZiA` |

@@ -285,6 +285,11 @@ int main() {
     Require(pthread_getaffinity_np_nid_postfix(nullptr, GUEST_CPUSET_BYTES, rawSet) == GUEST_EINVAL);
     Require(pthread_getaffinity_np_nid_postfix(nullptr, 0, rawSet) == GUEST_EINVAL);
     Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, nullptr) == GUEST_EFAULT);
+    auto* const badSet = reinterpret_cast<void*>(0x10);
+    Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, badSet) == GUEST_EFAULT);
+    Require(pthread_setaffinity_np_nid_postfix(pthread_self_nid_postfix(), GUEST_CPUSET_BYTES, badSet) == GUEST_EFAULT);
+    Require(cpuset_getaffinity_nid_postfix(3, 1, -1, 8, badSet) == -1 && *__error_nid_postfix() == GUEST_EFAULT);
+    Require(cpuset_setaffinity_nid_postfix(3, 1, -1, 8, badSet) == -1 && *__error_nid_postfix() == GUEST_EFAULT);
     Require(cpuset_getaffinity_nid_postfix(3, 1, scePthreadGetthreadid(), 8, processSet) == 0 && processSet[0] == available);
     Require(cpuset_getaffinity_nid_postfix(3, 1, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
     Require(cpuset_getaffinity_nid_postfix(3, 2, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_ESRCH);

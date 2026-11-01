@@ -8,6 +8,10 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "tests/TemporaryFile.hpp"
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -78,7 +82,7 @@ static bool FchflagsThrows(int descriptor, std::uint64_t flags, const char* name
 }
 
 static std::string CaptureStderr(const std::function<void()>& action) {
-    std::FILE* capture = std::tmpfile();
+    std::FILE* capture = TemporaryFile::Open();
     Require(capture != nullptr);
     std::fflush(stderr);
 #ifdef _WIN32
@@ -349,11 +353,13 @@ static void TestLongHostPathStat() {
     root /= L"anyps5-stat-long-" + std::to_wstring(std::chrono::steady_clock::now().time_since_epoch().count());
     auto deep = root;
     while (deep.native().size() < MAX_PATH + 24) deep /= std::wstring(40, L'd');
+    std::vector<std::filesystem::path> directories{root};
     Require(::CreateDirectoryW(ExtendedPath(root).c_str(), nullptr) != 0);
     auto directory = root;
     for (const auto& component : std::filesystem::path(deep).lexically_relative(root)) {
         directory /= component;
         Require(::CreateDirectoryW(ExtendedPath(directory).c_str(), nullptr) != 0);
+        directories.push_back(directory);
     }
     const auto file = deep / L"payload.bin";
     const auto handle = ::CreateFileW(ExtendedPath(file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -367,20 +373,24 @@ static void TestLongHostPathStat() {
     FileStat status{};
     Require(ResolvePath_nid_no_patch("/long-stat-host/payload.bin").native().size() > MAX_PATH);
     Require(sceKernelStat("/long-stat-host/payload.bin", &status) == 0 && status.st_size == 8);
+    Require(lstat_nid_postfix("/long-stat-host/payload.bin", &status) == 0 && status.st_size == 8 &&
+        (status.st_mode & 0170000) == 0100000);
     Require(sceKernelStat("/long-stat-host/missing.bin", &status) == static_cast<int>(0x80020002u));
+    Require(lstat_nid_postfix("/long-stat-host/missing.bin", &status) == -1 && *__error_nid_postfix() == 2);
     Require(sceKernelStat("/long-stat-host/", &status) == 0 && (status.st_mode & 0170000) == 0040000);
     RemovePathAlias_nid_no_patch("/long-stat-host");
     const auto extendedHost = ExtendedPath(deep).string();
     AddPathAlias_nid_no_patch("/long-stat-extended", extendedHost.c_str());
     Require(ResolvePath_nid_no_patch("/long-stat-extended/payload.bin").native().starts_with(L"\\\\?\\"));
     Require(sceKernelStat("/long-stat-extended/payload.bin", &status) == 0 && status.st_size == 8);
+    Require(lstat_nid_postfix("/long-stat-extended/payload.bin", &status) == 0 && status.st_size == 8 &&
+        (status.st_mode & 0170000) == 0100000);
     Require(sceKernelStat("/long-stat-extended/missing.bin", &status) == static_cast<int>(0x80020002u));
+    Require(lstat_nid_postfix("/long-stat-extended/missing.bin", &status) == -1 && *__error_nid_postfix() == 2);
     RemovePathAlias_nid_no_patch("/long-stat-extended");
-    ::DeleteFileW(ExtendedPath(file).c_str());
-    for (auto path = deep; ; path = path.parent_path()) {
-        ::RemoveDirectoryW(ExtendedPath(path).c_str());
-        if (path == root) break;
-    }
+    Require(::DeleteFileW(ExtendedPath(file).c_str()) != 0);
+    for (auto path = directories.rbegin(); path != directories.rend(); ++path)
+        Require(::RemoveDirectoryW(ExtendedPath(*path).c_str()) != 0);
 }
 #endif
 
@@ -445,8 +455,9 @@ int main() {
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);
     Require(throttling[0] == 0xffffffffu && throttling[1] == 0 && throttling[2] == 0 && throttling[3] == 0);
     Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));
-    auto* captured = std::tmpfile();
+    auto* captured = TemporaryFile::Open();
     Require(captured != nullptr);
 #ifdef _WIN32
     const int saved = ::_dup(::_fileno(stderr));
@@ -517,7 +528,7 @@ int main() {
         }
     }
     Require(close_nid_postfix(descriptors[0]) == 0);
-    auto* hostCapture = std::tmpfile();
+    auto* hostCapture = TemporaryFile::Open();
     Require(hostCapture != nullptr && pipe_nid_postfix(descriptors) == 0);
 #ifdef _WIN32
     const int hostError = ::_dup(2);
@@ -542,7 +553,7 @@ int main() {
     Require(std::fclose(hostCapture) == 0);
 #ifdef _WIN32
     for (const bool reopen : {false, true}) {
-        auto* hostCapture = std::tmpfile();
+        auto* hostCapture = TemporaryFile::Open();
         const int hostError = ::_dup(2);
         Require(hostCapture != nullptr && hostError >= 0);
         int redirect[2] = {-1, -1};
@@ -667,7 +678,11 @@ int main() {
     Require(chflags_nid_postfix(file.string().c_str(), ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), 0x200000) == -1 && *__error_nid_postfix() == 1);
     Require(ChflagsThrows(file, 0x2, "UF_IMMUTABLE"));
-    Require(ChflagsThrows(file, 0x1000 | 0x40000, "UF_READONLY|SF_APPEND"));
+    for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x370000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
+        Require(chflags_nid_postfix(file.string().c_str(), system) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x40000 | 0x20) == -1 && *__error_nid_postfix() == 45);
+    Require(chflags_nid_postfix(root.string().c_str(), 0x20000) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix((root / "missing").string().c_str(), 0x20000) == -1 && *__error_nid_postfix() == 2);
     const auto chflagsDangling = root / "dangling.link";
     const auto chflagsPointing = root / "file.link";
 #ifdef _WIN32
@@ -696,7 +711,10 @@ int main() {
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, 0x200000) == -1 && *__error_nid_postfix() == 1);
     Require(FchflagsThrows(flagged, 0x2, "UF_IMMUTABLE"));
-    Require(FchflagsThrows(flagged, 0x1000 | 0x40000, "UF_READONLY|SF_APPEND"));
+    for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
+        Require(fchflags_nid_postfix(flagged, system) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x370000) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x40000 | 0x20) == -1 && *__error_nid_postfix() == 45);
     Require(close_nid_postfix(flagged) == 0);
     Require(fchflags_nid_postfix(flagged, 0) == -1 && *__error_nid_postfix() == 9);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 9);
@@ -1426,7 +1444,18 @@ int main() {
     Require(close_nid_postfix(plainFile) == 0);
     Require(close_nid_postfix(directoryDescriptor) == 0);
     const int flaggedDirectory = sceKernelOpen(rootName.c_str(), 0x20000, 0);
-    Require(flaggedDirectory >= 0 && sceKernelClose(flaggedDirectory) == 0);
+    FileStat directoryStatus{};
+    Require(flaggedDirectory >= 0 && sceKernelFstat(flaggedDirectory, &directoryStatus) == 0 && directoryStatus.st_blksize == 0x10000);
+    Require(sceKernelStat(rootName.c_str(), &directoryStatus) == 0 && directoryStatus.st_blksize == 0x10000);
+    FileStat fileStatus{};
+#ifdef _WIN32
+    Require(sceKernelStat(presentName.c_str(), &fileStatus) == 0 && fileStatus.st_blksize == 512);
+#else
+    struct stat presentHostStat {};
+    Require(::stat(presentName.c_str(), &presentHostStat) == 0);
+    Require(sceKernelStat(presentName.c_str(), &fileStatus) == 0 && fileStatus.st_blksize == static_cast<decltype(fileStatus.st_blksize)>(presentHostStat.st_blksize));
+#endif
+    Require(sceKernelClose(flaggedDirectory) == 0);
     std::vector<char> entries(4096);
     for (const auto& directoryName : {std::string("/"), std::string("."), rootName + "/", rootName + "/.."}) {
         const int listed = sceKernelOpen(directoryName.c_str(), 0x20000, 0);
