@@ -45,6 +45,295 @@ static void ExpectException(TAction action) {
     throw std::runtime_error("Expected a stream exception");
 }
 
+static void CheckReadErrnoAndStatus(const char* path) {
+    {
+        auto* stream = fopen_nid_postfix(path, "wb");
+        Require(stream != nullptr);
+        constexpr char payload[] = "hello world\n";
+        Require(fwrite_nid_postfix(payload, 1, sizeof(payload) - 1, stream) == sizeof(payload) - 1);
+        Require(fclose_nid_postfix(stream) == 0);
+    }
+    {
+        auto* stream = fopen_nid_postfix(path, "rb");
+        Require(stream != nullptr);
+        std::array<char, 32> buffer{};
+        errno = 35;
+        Require(fread_nid_postfix(buffer.data(), 0, 10, stream) == 0);
+        Require(errno == 35);
+        Require(fread_nid_postfix(buffer.data(), 10, 0, stream) == 0);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(stream) == 0);
+
+        Require(fread_nid_postfix(buffer.data(), 1, 5, stream) == 5);
+        Require(std::memcmp(buffer.data(), "hello", 5) == 0);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(stream) == 0);
+
+        Require(fgetc_nid_postfix(stream) == ' ');
+        Require(errno == 35);
+        Require(ferror_nid_postfix(stream) == 0);
+
+        Require(getc_unlocked_nid_postfix(stream) == 'w');
+        Require(errno == 35);
+        Require(ferror_unlocked_nid_postfix(stream) == 0);
+
+        std::array<char, 16> lineBuffer{};
+        Require(fgets_nid_postfix(lineBuffer.data(), static_cast<int>(lineBuffer.size()), stream) == lineBuffer.data());
+        Require(std::strcmp(lineBuffer.data(), "orld\n") == 0);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(stream) == 0);
+
+        Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == 0);
+        Require(feof_nid_postfix(stream) != 0);
+        Require(ferror_nid_postfix(stream) == 0);
+        Require(errno == 35);
+
+        Require(fgetc_nid_postfix(stream) == EOF);
+        Require(feof_nid_postfix(stream) != 0);
+        Require(ferror_nid_postfix(stream) == 0);
+        Require(errno == 35);
+
+        Require(getc_unlocked_nid_postfix(stream) == EOF);
+        Require(feof_unlocked_nid_postfix(stream) != 0);
+        Require(ferror_unlocked_nid_postfix(stream) == 0);
+        Require(errno == 35);
+
+        Require(fgets_nid_postfix(lineBuffer.data(), static_cast<int>(lineBuffer.size()), stream) == nullptr);
+        Require(feof_nid_postfix(stream) != 0);
+        Require(ferror_nid_postfix(stream) == 0);
+        Require(errno == 35);
+
+        Require(fclose_nid_postfix(stream) == 0);
+    }
+#ifndef _WIN32
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            std::array<char, 16> buffer{};
+            buffer.fill('Z');
+            errno = 0;
+            Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), &pipe) == 0);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) != 0);
+            Require(feof_nid_postfix(&pipe) == 0);
+            Require(buffer[0] == 'Z');
+            pipe.Close();
+        }
+        Require(::close(descriptors[1]) == 0);
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            errno = 0;
+            Require(fgetc_nid_postfix(&pipe) == EOF);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) != 0);
+            Require(feof_nid_postfix(&pipe) == 0);
+            pipe.Close();
+        }
+        Require(::close(descriptors[1]) == 0);
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            errno = 0;
+            Require(getc_unlocked_nid_postfix(&pipe) == EOF);
+            Require(errno == 35);
+            Require(ferror_unlocked_nid_postfix(&pipe) != 0);
+            Require(feof_unlocked_nid_postfix(&pipe) == 0);
+            pipe.Close();
+        }
+        Require(::close(descriptors[1]) == 0);
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            std::array<char, 16> buffer{};
+            buffer.fill('Z');
+            errno = 0;
+            Require(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), &pipe) == nullptr);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) != 0);
+            Require(feof_nid_postfix(&pipe) == 0);
+            pipe.Close();
+        }
+        Require(::close(descriptors[1]) == 0);
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            std::array<char, 8> buffer{};
+            buffer.fill('A');
+            errno = 35;
+            Require(fread_nid_postfix(buffer.data(), 0, 4, &pipe) == 0);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) == 0);
+            Require(fread_nid_postfix(buffer.data(), 4, 0, &pipe) == 0);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) == 0);
+            Require(buffer[0] == 'A');
+            pipe.Close();
+        }
+        Require(::close(descriptors[1]) == 0);
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        Require(::write(descriptors[1], "ab", 2) == 2);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            std::array<char, 8> buffer{};
+            buffer.fill('Z');
+            errno = 0;
+            Require(fread_nid_postfix(buffer.data(), 4, 1, &pipe) == 0);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) != 0);
+            Require(buffer[0] == 'a' && buffer[1] == 'b' && buffer[2] == 'Z' && buffer[3] == 'Z');
+            pipe.Close();
+        }
+        Require(::close(descriptors[1]) == 0);
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        Require(::write(descriptors[1], "abc", 3) == 3);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            std::array<char, 16> buffer{};
+            buffer.fill('?');
+            errno = 0;
+            char* const result = fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), &pipe);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) != 0);
+            if (result != nullptr) {
+                Require(result == buffer.data());
+                Require(buffer[0] == 'a' && buffer[1] == 'b' && buffer[2] == 'c');
+            }
+            pipe.Close();
+        }
+        Require(::close(descriptors[1]) == 0);
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        Require(::write(descriptors[1], "hello\n", 6) == 6);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            std::array<char, 16> buffer{};
+            errno = 35;
+            Require(fgetc_nid_postfix(&pipe) == 'h');
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) == 0);
+            Require(getc_unlocked_nid_postfix(&pipe) == 'e');
+            Require(errno == 35);
+            Require(ferror_unlocked_nid_postfix(&pipe) == 0);
+            Require(fread_nid_postfix(buffer.data(), 1, 2, &pipe) == 2);
+            Require(buffer[0] == 'l' && buffer[1] == 'l');
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) == 0);
+            char* const line = fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), &pipe);
+            Require(line == buffer.data());
+            Require(std::strcmp(buffer.data(), "o\n") == 0);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) == 0);
+            pipe.Close();
+        }
+        Require(::close(descriptors[1]) == 0);
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        Require(::close(descriptors[1]) == 0);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            std::array<char, 16> buffer{};
+            errno = 35;
+            Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), &pipe) == 0);
+            Require(feof_nid_postfix(&pipe) != 0);
+            Require(ferror_nid_postfix(&pipe) == 0);
+            Require(errno == 35);
+
+            Require(fgetc_nid_postfix(&pipe) == EOF);
+            Require(feof_nid_postfix(&pipe) != 0);
+            Require(ferror_nid_postfix(&pipe) == 0);
+            Require(errno == 35);
+
+            Require(getc_unlocked_nid_postfix(&pipe) == EOF);
+            Require(feof_unlocked_nid_postfix(&pipe) != 0);
+            Require(ferror_unlocked_nid_postfix(&pipe) == 0);
+            Require(errno == 35);
+
+            Require(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), &pipe) == nullptr);
+            Require(feof_nid_postfix(&pipe) != 0);
+            Require(ferror_nid_postfix(&pipe) == 0);
+            Require(errno == 35);
+
+            pipe.Close();
+        }
+    }
+    {
+        int descriptors[2];
+        Require(::pipe(descriptors) == 0);
+        Require(::fcntl(descriptors[0], F_SETFL, ::fcntl(descriptors[0], F_GETFL) | O_NONBLOCK) == 0);
+        {
+            FileStream pipe(::fdopen(descriptors[0], "rb"));
+            errno = 0;
+            Require(fgetc_nid_postfix(&pipe) == EOF);
+            Require(errno == 35);
+            Require(ferror_nid_postfix(&pipe) != 0);
+
+            Require(::write(descriptors[1], "xy", 2) == 2);
+            std::array<char, 4> buffer{};
+            errno = 35;
+            Require(fread_nid_postfix(buffer.data(), 1, 2, &pipe) == 2);
+            Require(buffer[0] == 'x' && buffer[1] == 'y');
+            Require(ferror_nid_postfix(&pipe) != 0);
+            Require(errno == 35);
+
+            Require(::close(descriptors[1]) == 0);
+            descriptors[1] = -1;
+
+            errno = 35;
+            Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), &pipe) == 0);
+            Require(feof_nid_postfix(&pipe) != 0);
+            Require(ferror_nid_postfix(&pipe) != 0);
+            Require(errno == 35);
+
+            Require(fgetc_nid_postfix(&pipe) == EOF);
+            Require(errno == 35);
+
+            Require(getc_unlocked_nid_postfix(&pipe) == EOF);
+            Require(errno == 35);
+
+            Require(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), &pipe) == nullptr);
+            Require(errno == 35);
+
+            pipe.Close();
+        }
+        if (descriptors[1] >= 0) ::close(descriptors[1]);
+    }
+#endif
+}
+
 static void ReplaceWithReadOnlyDescriptor(FileStream* stream, const char* path) {
 #ifdef _WIN32
     const int descriptor = _open(path, _O_RDONLY | _O_BINARY);
@@ -488,6 +777,7 @@ int main(int argc, char** argv) {
     CheckZeroSizedTransfers(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
+    CheckReadErrnoAndStatus(argv[1]);
     Require(_Stdout_nid_postfix.GetHandle() == stdout);
     Require(_Stderr_nid_postfix.GetHandle() == stderr);
     Require(fputs_nid_postfix("stdout object works\n", &_Stdout_nid_postfix) >= 0);

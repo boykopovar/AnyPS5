@@ -553,8 +553,13 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
         return count;
     }
     if (!stream->SwitchToReading()) return 0;
+    const int previousError = errno;
+    errno = 0;
     const auto result = std::fread(buffer, size, count, handle);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result < count);
     return result;
 }

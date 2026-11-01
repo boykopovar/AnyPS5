@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -91,8 +92,13 @@ int APS5_VABI fgetc_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReading()) return -1;
+    const int previousError = errno;
+    errno = 0;
     const int result = std::fgetc(native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
@@ -148,12 +154,17 @@ int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReadingUnlocked()) return -1;
+    const int previousError = errno;
+    errno = 0;
 #ifdef _WIN32
     const int result = _fgetc_nolock(native);
 #else
     const int result = getc_unlocked(native);
 #endif
+    const int nativeError = errno;
     stream->SyncUnlockedStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
@@ -228,8 +239,13 @@ char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReading()) return nullptr;
+    const int previousError = errno;
+    errno = 0;
     auto* result = std::fgets(buffer, size, native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (nativeError != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
+    else errno = previousError;
     stream->KeepDirectoryReadError(result == nullptr);
     return result;
 }
