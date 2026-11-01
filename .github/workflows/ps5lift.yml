@@ -70,7 +70,7 @@ jobs:
 
   lifter:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
+    timeout-minutes: 300
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 3G
@@ -78,12 +78,12 @@ jobs:
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v7
-      - name: Check out ps5lift's submodules
-        run: git submodule update --init --recursive --depth 1 3rdparty/zydis 3rdparty/softfloat
+        with:
+          submodules: recursive
       - name: Install the toolchain and libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build ccache python3 clang-18 lld-18 llvm-18-dev libzstd-dev zlib1g-dev g++-x86-64-linux-gnu
+          sudo apt-get install -y --no-install-recommends cmake ninja-build ccache python3 clang-18 lld-18 llvm-18-dev libzstd-dev zlib1g-dev python3-clang-18 g++-x86-64-linux-gnu libx11-dev libxext-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev libpipewire-0.3-dev libpulse-dev libasound2-dev
       - uses: actions/cache/restore@v6
         with:
           path: .ccache
@@ -91,7 +91,7 @@ jobs:
           restore-keys: ps5lift-ccache-
       - name: Configure
         run: cmake -S ps5lift -B ps5lift/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/usr/lib/llvm-18/bin/clang -DCMAKE_CXX_COMPILER=/usr/lib/llvm-18/bin/clang++ -DLLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm
-      - name: Build ps5lift
+      - name: Build ps5lift and AnyPS5's libraries for a lifted guest
         run: cmake --build ps5lift/build --parallel 4
       - name: Test
         run: ctest --test-dir ps5lift/build --output-on-failure --parallel 4

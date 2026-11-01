@@ -1,0 +1,18 @@
+mutex init 0
+counter 40000 results 30
+mutex destroy 0
+thread handles are guest addresses 1
+scePthreadExit join 0 result 77
+32 MiB stack join 0 levels 5000, reported stack holds it 1
+raised 0, frame intact 1, rip after the last call 1
+raised at a suspended thread 0, resumed 0, handled on it before its entry 1
+module loaded 1 started 0, dlsym 0 answer 42, absent symbol 1
+module found under another case 1, same answer 1
+module of the executable's code 0, holds it 1, unwind tables 0 1
+slept at least 20 ms
+tsc ordered, frequency plausible
+signal returns the guest's handler 1
+ignoring SIGPIPE replaces the default 1
+raising an ignored SIGPIPE returns 0
+signal reports SIG_IGN 1
+siglongjmp without a saved mask keeps the blocked set 1

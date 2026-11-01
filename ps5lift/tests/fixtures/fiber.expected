@@ -1,0 +1,20 @@
+init ping 0
+init pong 0
+ping round 0 self 1 value 1
+pong value 2 scale 2.0
+ping round 1 self 1 value 4
+pong value 5 scale 4.0
+ping round 2 self 1 value 10
+pong value 11 scale 8.0
+ping round 3 self 1 value 22
+pong value 23 scale 16.0
+ping round 4 self 1 value 46
+pong value 47 scale 32.0
+ping local 465055
+run 0 returned 940
+self outside 80590005
+finalize pong 0
+finalize ping 0
+init away 0
+run away 0 returned 7
+create 0
