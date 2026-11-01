@@ -1745,10 +1745,8 @@ namespace {
 
 wchar_t g_exitCheckpoint[1024];
 std::atomic<HANDLE> g_exitLock{INVALID_HANDLE_VALUE};
-std::atomic<bool> g_exitKeepCheckpoint{false};
 
 void RememberForExit(const fs::path& checkpoint, void* lock) {
-    g_exitKeepCheckpoint = false;
     const auto text = checkpoint.native();
     g_exitCheckpoint[0] = L'\0';
     if (text.size() < std::size(g_exitCheckpoint)) {
@@ -1756,10 +1754,6 @@ void RememberForExit(const fs::path& checkpoint, void* lock) {
         g_exitCheckpoint[text.size()] = L'\0';
     }
     g_exitLock = lock != nullptr ? static_cast<HANDLE>(lock) : INVALID_HANDLE_VALUE;
-}
-
-void KeepCheckpointAtExit() {
-    g_exitKeepCheckpoint = true;
 }
 
 void ForgetForExit() {
@@ -1776,7 +1770,6 @@ void ProcessDetachCleanup() {
         disposition.DeleteFile = TRUE;
         SetFileInformationByHandle(lock, FileDispositionInfo, &disposition, sizeof(disposition));
     }
-    if (g_exitCheckpoint[0] != L'\0' && !g_exitKeepCheckpoint) DeleteFileW(g_exitCheckpoint);
 }
 #endif
 
@@ -2168,9 +2161,6 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
         std::unique_lock files(writeMutex, std::defer_lock);
         if (!files.try_lock_for(settings.lockWait)) {
             std::fputs("[run-report] a checkpoint write did not finish; the report of this run is left to the next start\n", stderr);
-#ifdef _WIN32
-            KeepCheckpointAtExit();
-#endif
             std::lock_guard guard(mutex);
             finalized = false;
             state = 2;
@@ -2181,7 +2171,9 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
             const auto text = Serialize(Snapshot(exit, std::move(stop), exitCode, false), host);
             std::string error;
             auto publishLock = AcquirePublishLock(settings.lockWait);   // serializes publication with another instance's Resume retraction of the shared report name
-            if (WriteAtomically(reportPath, text, settings.runId.substr(0, 8), error)) {
+            if (!publishLock) {
+                std::fputs("[run-report] the report name is busy; the report of this run is left to the next start\n", stderr);
+            } else if (WriteAtomically(reportPath, text, settings.runId.substr(0, 8), error)) {
                 reportPublished = true;
                 publishedBytes = text;
                 if (settings.beforeCheckpointRemoval) settings.beforeCheckpointRemoval();
@@ -2195,20 +2187,11 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
                 std::fprintf(stderr, "[run-report] wrote %s\n", reportPath.filename().string().c_str());
             } else {
                 std::fprintf(stderr, "[run-report] could not write %s: %s\n", reportPath.filename().string().c_str(), error.c_str());
-#ifdef _WIN32
-                KeepCheckpointAtExit();
-#endif
             }
         } catch (const std::exception& failure) {
             std::fprintf(stderr, "[run-report] could not write the report: %s\n", failure.what());
-#ifdef _WIN32
-            KeepCheckpointAtExit();
-#endif
         } catch (...) {
             std::fputs("[run-report] could not write the report\n", stderr);
-#ifdef _WIN32
-            KeepCheckpointAtExit();
-#endif
         }
         files.unlock();
         std::lock_guard guard(mutex);

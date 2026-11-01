@@ -1493,6 +1493,37 @@ void ResumeDoesNotRaceAwayAnotherRunsReportTest() {
     Require(Contains(Read(first.ReportPath()), IdB), "Resume removed the report another run published between its read and its removal: " + Read(first.ReportPath()));
 }
 
+void FinishDoesNotPublishWithoutPublishLockTest() {
+    Directory executable, user;
+    auto otherSettings = SettingsFor(executable.path, user.path, IdB);
+    otherSettings.lockWait = std::chrono::milliseconds(150);
+    RunReport::Collector other(std::move(otherSettings));
+    Require(other.Start(), "the other run did not start");
+    auto settings = SettingsFor(executable.path, user.path, IdA);
+    settings.lockWait = std::chrono::milliseconds(3000);
+    settings.afterResumeRead = [&] {
+        std::thread publisher([&] { other.Finish(RunReport::Exit::Clean, {}, 0); });
+        publisher.join();
+    };
+    RunReport::Collector first(std::move(settings));
+    Require(first.Start(), "the first run did not start");
+    first.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(first.Resume(), "the run was not reopened");
+    Require(!other.Finalized(), "a run that never got the publish lock was reported as finalized");
+    Require(fs::exists(other.CheckpointPath()), "a run that never got the publish lock lost its checkpoint");
+    Require(!fs::exists(other.ReportPath()) || !Contains(Read(other.ReportPath()), IdB), "a run published its report without holding the publish lock");
+}
+
+void DetachWithoutFinishKeepsCheckpointTest() {
+#ifdef _WIN32
+    Directory executable, user;
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    RunReport::ProcessDetachCleanup();
+    Require(fs::exists(collector.CheckpointPath()), "process detach deleted the checkpoint of a run that never finished");
+#endif
+}
+
 void FailedFinalWriteKeepsCheckpointTest() {
     Directory executable, user;
     RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
@@ -1833,6 +1864,8 @@ int main(int argc, char** argv) {
         Run("resume-keeps-newer-report", ResumeKeepsNewerReportTest);
         Run("handoff-outcome", HandoffOutcomeTest);
         Run("resume-does-not-race-away-another-report", ResumeDoesNotRaceAwayAnotherRunsReportTest);
+        Run("finish-needs-publish-lock", FinishDoesNotPublishWithoutPublishLockTest);
+        Run("detach-without-finish-keeps-checkpoint", DetachWithoutFinishKeepsCheckpointTest);
         Run("failed-final-write-keeps-checkpoint", FailedFinalWriteKeepsCheckpointTest);
         Run("deferred-worker", DeferredWorkerTest);
         Run("checkpoint-does-not-block-hooks", CheckpointDoesNotBlockHooksTest);
