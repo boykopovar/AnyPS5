@@ -34,7 +34,7 @@ jobs:
         shell: bash
         run: |
           ANYPS5_TEST_NODE="$(command -v node)"
-          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          git clone --depth 1 --branch 6.0.12 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
           "$RUNNER_TEMP/emsdk/emsdk" install 6.0.12
           "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.12
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
