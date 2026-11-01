@@ -221,7 +221,7 @@ inline Registers BuildInitialContextRegisters() {
     Registers result{
         {0x200, 0}, {0x201, 0}, {0x202, 0xcc0010}, {0x203, 0},
         {0x204, 0}, {0x205, 0}, {0x206, 1087}, {0x207, 0},
-        {0x0, 0}, {0x2, 0}, {0x3, 0}, {0x4, 0}, {0x8, 0}, {0x9, 0x3f800000}, {0xa, 0}, {0xb, 0},
+        {0x0, 0}, {0x2, 0}, {0x3, 0}, {0x4, 0}, {0x8, 0}, {0x9, 0x3f800000}, {0xa, 0}, {0xb, 0}, {0x10, 0}, {0x11, 0},
         {0x80, 0}, {0x83, 0xffff}, {0x8c, 0xaa99aaaa}, {0x8d, 0}, {0x8e, 0}, {0x8f, 0},
         {0xc, 0}, {0xd, 0x40004000}, {0x81, 0x80000000}, {0x82, 0x40004000},
         {0x90, 0x80000000}, {0x91, 0x40004000},
@@ -251,9 +251,31 @@ inline Registers BuildInitialContextRegisters() {
     return result;
 }
 
-inline Registers InitialContextRegisters() {
+inline const Registers& InitialContextRegisterSet() {
     static const Registers& initial = *new Registers(BuildInitialContextRegisters());
     return initial;
+}
+
+inline Registers InitialContextRegisters() {
+    return InitialContextRegisterSet();
+}
+
+struct SpareRegisters {
+    Registers registers;
+    SpareRegisters() = default;
+    SpareRegisters(const SpareRegisters&) {}
+    SpareRegisters& operator=(const SpareRegisters&) { return *this; }
+    SpareRegisters(SpareRegisters&&) noexcept = default;
+    SpareRegisters& operator=(SpareRegisters&&) noexcept = default;
+};
+
+inline Registers ClearStateContextRegisters() {
+    static const Registers& cleared = *new Registers([] {
+        auto registers = BuildInitialContextRegisters();
+        registers[0x1b6] = 2;
+        return registers;
+    }());
+    return cleared;
 }
 
 struct Predication {
@@ -268,18 +290,30 @@ struct QueueState {
     Registers context = InitialContextRegisters();
     Registers userConfig{{0x24a, 0}, {0x24b, 0}};
     std::optional<Registers> savedContext;
+    SpareRegisters spareContext;
     std::vector<std::uint32_t> constantRam;
     std::uint64_t indexBase = 0;
     std::uint64_t drawIndirectBase = 0;
     std::uint64_t dispatchIndirectBase = 0;
-    std::uint32_t indexBufferSize = 0;
+    std::optional<std::uint32_t> indexBufferSize;
     std::uint32_t indexType = 0;
     std::uint32_t instanceCount = 1;
     std::vector<std::string> markers;
     Predication predication;
 
     void ClearContext() {
-        context = InitialContextRegisters();
+        context = ClearStateContextRegisters();
+    }
+
+    void PushContext() {
+        spareContext.registers = context;
+        savedContext.emplace(std::move(spareContext.registers));
+    }
+
+    void PopContext() {
+        std::swap(context, *savedContext);
+        spareContext.registers = std::move(*savedContext);
+        savedContext.reset();
     }
 
     std::span<const std::uint32_t> ConstantRam() const {

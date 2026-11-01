@@ -93,15 +93,12 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         Require(!isAnisoFilter(xyMagFilter) && !isAnisoFilter(xyMinFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
         Require(clampX == 0u || clampX == 2u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only clamp-to-last-texel and clamp-to-border are implemented");
         Require(clampY == 0u || clampY == 2u || clampY == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only clamp-to-last-texel and clamp-to-border are implemented");
-        Require(!truncCoord, "guest sampler descriptor uses unnormalized coordinates with TRUNC_COORD, which is not implemented");
         Require(!mcCoordTrunc, "guest sampler descriptor uses unnormalized coordinates with MC_COORD_TRUNC, which is not implemented");
     } else {
         Require(!unnormalizedProven, "guest sampler descriptor is bound as unnormalized without FORCE_UNNORMALIZED");
     }
     Require(!forceSrgb || forceDegammaPaired, "guest sampler descriptor forces sRGB decoding which is not implemented");
-    // TRUNC_COORD picks point-sampled texels by truncation instead of rounding, and the perf fields
-    // trade mip/depth precision for speed; Vulkan's nearest filtering already floors, so these only
-    // move texel selection by half a texel at most and are accepted as is. ANISO_THRESHOLD and
+    // The perf fields trade mip/depth precision for speed and are accepted as is. ANISO_THRESHOLD and
     // ANISO_BIAS only tune how many anisotropic taps the hardware takes; the host filter picks its own.
     static_cast<void>(truncCoord);
     static_cast<void>(anisoThreshold);

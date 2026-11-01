@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -14,8 +17,6 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -55,12 +56,23 @@ struct UserSemaphore {
 };
 
 struct AddressWaiter {
-    TimedWait::Condition condition;
+    TimedWait::SingleWaiterCondition condition;
     bool woken = false;
 };
 
-std::mutex g_waitersLock;
-std::unordered_map<std::uintptr_t, std::list<AddressWaiter*>> g_waiters;
+constexpr std::size_t kBucketCount = 64;
+
+struct alignas(64) WaiterBucket {
+    std::mutex mutex;
+    std::unordered_map<std::uintptr_t, std::list<AddressWaiter*>> waiters;
+};
+
+std::array<WaiterBucket, kBucketCount> g_buckets;
+
+WaiterBucket& BucketOf(std::uintptr_t address) {
+    const auto hashed = (address >> 2) * UINT64_C(0x9e3779b97f4a7c15);
+    return g_buckets[hashed >> 58];
+}
 
 template <class TValue>
 bool IsAlignedAddress(std::uintptr_t address) {
@@ -69,27 +81,24 @@ bool IsAlignedAddress(std::uintptr_t address) {
 
 template <class TFunction>
 void DeferringDelivery(TFunction function) {
-#ifdef _WIN32
     {
         TimedWait::DeliveryDeferral deferral;
         function();
     }
     TimedWait::DeliverDeferred();
-#else
-    function();
-#endif
 }
 
 template <class TReady>
 std::optional<std::chrono::nanoseconds> WaitOnKeyLocked(std::uintptr_t key, TReady ready, std::optional<std::uint64_t> deadlineNanos, bool& woken) {
-    std::unique_lock<std::mutex> lock(g_waitersLock);
+    auto& bucket = BucketOf(key);
+    std::unique_lock<std::mutex> lock(bucket.mutex);
     if (ready()) {
         woken = true;
         return std::nullopt;
     }
 
     AddressWaiter waiter;
-    auto& queue = g_waiters[key];
+    auto& queue = bucket.waiters[key];
     const auto position = queue.insert(queue.end(), &waiter);
     const auto isWoken = [&] { return waiter.woken; };
     const auto waitStart = std::chrono::steady_clock::now();
@@ -104,7 +113,7 @@ std::optional<std::chrono::nanoseconds> WaitOnKeyLocked(std::uintptr_t key, TRea
     if (!woken) {
         queue.erase(position);
         if (queue.empty()) {
-            g_waiters.erase(key);
+            bucket.waiters.erase(key);
         }
     }
     return waited;
@@ -122,36 +131,70 @@ bool WaitOnKeyUntil(std::uintptr_t key, TReady ready, std::optional<std::uint64_
 }
 
 template <class TValue>
-bool WaitOnAddressUntil(TValue* address, TValue expected, std::optional<std::uint64_t> deadlineNanos, const void* caller) {
-    return WaitOnKeyUntil(reinterpret_cast<std::uintptr_t>(address), [&] { return std::atomic_ref<TValue>(*address).load() != expected; }, deadlineNanos, caller);
+TValue LoadAddressValue(TValue* address) {
+    if (reinterpret_cast<std::uintptr_t>(address) % alignof(TValue) == 0) return std::atomic_ref<TValue>(*address).load();
+    TValue value;
+    asm volatile("mov %1, %0" : "=r"(value) : "m"(*reinterpret_cast<const unsigned char (*)[sizeof(TValue)]>(address)));
+    return value;
 }
 
 template <class TValue>
-int WaitOnAddress(TValue* address, TValue expected, const KernelUseconds* timeout, const void* caller) {
-    const auto deadline = timeout == nullptr ? std::nullopt : std::optional<std::uint64_t>(TimedWait::DeadlineNanos(*timeout));
-    return WaitOnAddressUntil(address, expected, deadline, caller) ? SYNC_ON_ADDRESS_OK : SCE_KERNEL_ERROR_ETIMEDOUT;
+bool WaitOnAddressUntil(TValue* address, TValue expected, std::optional<std::uint64_t> deadlineNanos, const void* caller, bool& differed) {
+    return WaitOnKeyUntil(reinterpret_cast<std::uintptr_t>(address), [&] { return differed = LoadAddressValue(address) != expected; }, deadlineNanos, caller);
 }
 
-void WakeAddressLocked(std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
-    std::lock_guard<std::mutex> lock(g_waitersLock);
-    const auto entry = g_waiters.find(key);
-    if (entry == g_waiters.end()) {
-        return;
+template <class TValue>
+bool WaitOnAddressUntil(TValue* address, TValue expected, std::optional<std::uint64_t> deadlineNanos, const void* caller) {
+    bool differed = false;
+    return WaitOnAddressUntil(address, expected, deadlineNanos, caller, differed);
+}
+
+template <class TValue>
+int WaitOnAddress(TValue* address, TValue expected, KernelUseconds* timeout, const void* caller) {
+    if (timeout != nullptr && *timeout == 0) {
+        return SCE_KERNEL_ERROR_ETIMEDOUT;
+    }
+    if (address == nullptr) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
+    const auto deadline = timeout == nullptr ? std::nullopt : std::optional<std::uint64_t>(TimedWait::DeadlineNanos(*timeout));
+    bool differed = false;
+    const bool woken = WaitOnAddressUntil(address, expected, deadline, caller, differed);
+    if (differed) {
+        return SCE_KERNEL_ERROR_EAGAIN;
+    }
+    if (timeout != nullptr) {
+        const std::uint64_t now = TimedWait::NowNanos();
+        *timeout = woken && *deadline > now ? static_cast<KernelUseconds>((*deadline - now) / 1000) : 0;
+    }
+    return woken ? SYNC_ON_ADDRESS_OK : SCE_KERNEL_ERROR_ETIMEDOUT;
+}
+
+std::int32_t WakeAddressLocked(std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
+    auto& bucket = BucketOf(key);
+    std::lock_guard<std::mutex> lock(bucket.mutex);
+    const auto entry = bucket.waiters.find(key);
+    if (entry == bucket.waiters.end()) {
+        return 0;
     }
     auto& queue = entry->second;
-    for (std::int32_t woken = 0; !queue.empty() && (woken < count || (wakesAtLeastOne && woken == 0)); ++woken) {
+    std::int32_t woken = 0;
+    for (; !queue.empty() && (woken < count || (wakesAtLeastOne && woken == 0)); ++woken) {
         AddressWaiter* waiter = queue.front();
         queue.pop_front();
         waiter->woken = true;
         waiter->condition.NotifyOne();
     }
     if (queue.empty()) {
-        g_waiters.erase(entry);
+        bucket.waiters.erase(entry);
     }
+    return woken;
 }
 
-void WakeAddress(std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
-    DeferringDelivery([&] { WakeAddressLocked(key, count, wakesAtLeastOne); });
+std::int32_t WakeAddress(std::uintptr_t key, std::int32_t count, bool wakesAtLeastOne) {
+    std::int32_t woken = 0;
+    DeferringDelivery([&] { woken = WakeAddressLocked(key, count, wakesAtLeastOne); });
+    return woken;
 }
 
 std::uint64_t SaturatingNanos(std::int64_t seconds, std::int64_t nanos) {
@@ -191,6 +234,7 @@ int UmtxDeadline(const void* sizeArgument, const void* timeArgument, std::option
     } else {
         KernelTimespec now{};
         clock_gettime_nid_postfix(static_cast<int>(time.clockId), &now);
+
         remaining = SaturatingNanos(time.timeout.tv_sec - now.tv_sec, time.timeout.tv_nsec - now.tv_nsec);
     }
     if (remaining < UNBOUNDED_WAIT_NANOS) {
@@ -241,9 +285,10 @@ int UmtxNwakePrivate(void* object, std::uint64_t value) {
 }
 
 void WakeSemaphoreLocked(std::uintptr_t key, UserSemaphore* semaphore) {
-    std::lock_guard<std::mutex> lock(g_waitersLock);
-    const auto entry = g_waiters.find(key);
-    if (entry == g_waiters.end()) {
+    auto& bucket = BucketOf(key);
+    std::lock_guard<std::mutex> lock(bucket.mutex);
+    const auto entry = bucket.waiters.find(key);
+    if (entry == bucket.waiters.end()) {
         return;
     }
     auto& queue = entry->second;
@@ -255,7 +300,7 @@ void WakeSemaphoreLocked(std::uintptr_t key, UserSemaphore* semaphore) {
     waiter->woken = true;
     waiter->condition.NotifyOne();
     if (queue.empty()) {
-        g_waiters.erase(entry);
+        bucket.waiters.erase(entry);
     }
 }
 
@@ -294,54 +339,33 @@ int SemWake(UserSemaphore* semaphore) {
 
 extern "C" {
 
-int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, KernelUseconds* timeout, const char* name) {
     (void)name;
-    if (!IsAlignedAddress<std::uint32_t>(reinterpret_cast<std::uintptr_t>(address))) {
-        APS5_INVALID_ARG_EX;
-    }
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
-int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, KernelUseconds* timeout, const char* name) {
     (void)name;
-    if (!IsAlignedAddress<std::uint8_t>(reinterpret_cast<std::uintptr_t>(address))) {
-        APS5_INVALID_ARG_EX;
-    }
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
-int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected, KernelUseconds* timeout, const char* name) {
     (void)name;
-    if (!IsAlignedAddress<std::uint16_t>(reinterpret_cast<std::uintptr_t>(address))) {
-        APS5_INVALID_ARG_EX;
-    }
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
-int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected, KernelUseconds* timeout, const char* name) {
     (void)name;
-    if (!IsAlignedAddress<std::uint32_t>(reinterpret_cast<std::uintptr_t>(address))) {
-        APS5_INVALID_ARG_EX;
-    }
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
-int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected, const KernelUseconds* timeout, const char* name) {
+int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected, KernelUseconds* timeout, const char* name) {
     (void)name;
-    if (!IsAlignedAddress<std::uint64_t>(reinterpret_cast<std::uintptr_t>(address))) {
-        APS5_INVALID_ARG_EX;
-    }
     return WaitOnAddress(address, expected, timeout, __builtin_return_address(0));
 }
 
 int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count) {
-    const auto key = reinterpret_cast<std::uintptr_t>(address);
-    if (!IsAlignedAddress<std::uint8_t>(key) || count < 0) {
-        APS5_INVALID_ARG_EX;
-    }
-
-    WakeAddress(key, count, false);
-    return SYNC_ON_ADDRESS_OK;
+    return WakeAddress(reinterpret_cast<std::uintptr_t>(address), count, true);
 }
 
 int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t value, void* sizeArgument, void* timeArgument) {

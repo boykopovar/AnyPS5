@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
 #include "SceShaders.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -10,10 +11,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <span>
-
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps);
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps);
-extern "C" int APS5_VABI sceAgcUpdateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 
 namespace {
 
@@ -158,13 +155,46 @@ void testUpdateMapping() {
     check(std::memcmp(create.data(), update.data(), written) == 0, "update differs from the split f16 mapping");
     checkIdentity(create, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 
-    for (const std::uint32_t index : {1u, 3u}) {
-        inputs[index].default_value = 0;
-        update = filled();
-        expectFailure([&] { sceAgcUpdateInterpolantMapping_10000(update.data(), &gs, &ps); });
-        check(std::memcmp(update.data(), untouched.data(), sizeof(update)) == 0, "rejected update wrote registers");
-        inputs[index].default_value = inputs[index].default_value_hi;
+    inputs[1].default_value = 0;
+    inputs[3].default_value = 0;
+    update = filled();
+    check(sceAgcUpdateInterpolantMapping_10000(update.data(), &gs, &ps) == 0, "update with split f16 defaults failed");
+    check(update[1].value == 0x01380007u && update[3].value == 0x03680409u, "f16 DEFAULT_VAL does not come from the low default");
+}
+
+void testUnversionedMapping() {
+    std::array<ShaderSemantic, 5> inputs{
+        semantic(1, 0, 2), semantic(2, 0, 2), semantic(5, 0, 2), semantic(3, 0, 0), semantic(4, 0, 3)};
+    inputs[0].is_flat_shaded = 1;
+    inputs[0].default_value = 1;
+    inputs[0].default_value_hi = 3;
+    inputs[1].default_value_hi = 1;
+    inputs[2].is_flat_shaded = 1;
+    inputs[2].default_value_hi = 2;
+    inputs[3].is_flat_shaded = 1;
+    inputs[3].default_value = 2;
+    std::array<ShaderSemantic, 4> outputs{semantic(1, 7, 3), semantic(2, 4, 1), semantic(3, 9, 0), semantic(4, 2, 1)};
+    Shader gs{};
+    gs.output_semantics = outputs.data();
+    gs.num_output_semantics = static_cast<std::uint16_t>(outputs.size());
+    Shader ps{};
+    ps.input_semantics = inputs.data();
+    ps.num_input_semantics = static_cast<std::uint32_t>(inputs.size());
+    const std::array<std::uint32_t, 5> flatDefault{0x02680527u, 0x02380024u, 0x02580020u, 0x00000629u, 0x03180002u};
+    const std::size_t written = inputs.size() * sizeof(ShaderRegister);
+    const auto untouched = filled();
+
+    auto create = filled();
+    check(sceAgcCreateInterpolantMapping_nid_postfix(create.data(), &gs, &ps) == 0, "unversioned mapping failed");
+    for (std::uint32_t i = 0; i < inputs.size(); ++i) {
+        check(create[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i && create[i].value == flatDefault[i], "unversioned mapping changed");
     }
+    checkIdentity(create, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
+
+    auto update = filled();
+    check(sceAgcUpdateInterpolantMapping_nid_postfix(update.data(), &gs, &ps) == 0, "unversioned update failed");
+    check(std::memcmp(update.data(), create.data(), written) == 0, "unversioned update differs from its mapping");
+    check(std::memcmp(update.data() + inputs.size(), untouched.data(), sizeof(update) - written) == 0, "unversioned update wrote past its inputs");
 }
 
 void testRejections() {
@@ -208,8 +238,9 @@ int main() {
         testIdentity();
         testMapping();
         testUpdateMapping();
+        testUnversionedMapping();
         testRejections();
-        check(mappings == 7u && links == 5u, "mapping preparation call count changed");
+        check(mappings == 10u && links == 8u, "mapping preparation call count changed");
         LibcRunShutdown_nid_postfix();
         std::puts("AGC interpolant mapping tests passed");
         return 0;

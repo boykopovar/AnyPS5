@@ -47,6 +47,20 @@ class WindowsSymbolicLink {
     }
 
 public:
+    static bool IsNameSurrogate(const std::filesystem::path& native, const char* operation) {
+        const HANDLE handle = CreateFileW(native.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), std::string(operation) + ": CreateFileW");
+        FILE_ATTRIBUTE_TAG_INFO information{};
+        const BOOL read = GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &information, sizeof(information));
+        const DWORD code = GetLastError();
+        CloseHandle(handle);
+        if (!read)
+            throw std::system_error(static_cast<int>(code), std::system_category(), std::string(operation) + ": GetFileInformationByHandleEx");
+        return (information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && IsReparseTagNameSurrogate(information.ReparseTag);
+    }
+
     static bool Read(const std::filesystem::path& native, std::string& target, const char* operation) {
         const HANDLE handle = CreateFileW(native.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
             OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
@@ -107,6 +121,14 @@ public:
         return true;
     }
 };
+
+inline bool WindowsSymbolicLinkLoop(const std::filesystem::path& path) {
+    const auto handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_CANT_RESOLVE_FILENAME;
+    CloseHandle(handle);
+    return false;
+}
 
 }
 

@@ -5,7 +5,7 @@
 
 namespace ShaderRecompiler {
 
-IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr) {
+IrValue::IrValue(IrOpcode opcode, IrType type, std::uint32_t id, std::pmr::memory_resource* useArena) : opcode(opcode), type(type), id(id), hasImmediate(false), parent(nullptr), operandUses(IrUseAllocator<IrUse>(useArena)) {
     arguments.reserve(IrOpcodeOperandCount(opcode));
 }
 
@@ -13,7 +13,7 @@ std::uint32_t IrValue::Id() const {
     return id;
 }
 
-const std::vector<IrValue*>& IrValue::Arguments() const {
+const IrOperands& IrValue::Arguments() const {
     return arguments;
 }
 
@@ -39,9 +39,11 @@ void IrValue::ReplaceArgument(std::size_t index, IrValue* argument) {
     }
     IrValue* previous = arguments[index];
     if (previous != nullptr) {
-        const auto operandIt = std::find_if(previous->operandUses.begin(), previous->operandUses.end(), [this, index](const IrUse& use) {
-            return use.user == this && use.operand == index;
-        });
+        const auto operandIt = !previous->operandUses.empty() && previous->operandUses.back() == IrUse{this, index}
+            ? previous->operandUses.end() - 1
+            : std::find_if(previous->operandUses.begin(), previous->operandUses.end(), [this, index](const IrUse& use) {
+                return use.user == this && use.operand == index;
+            });
         if (operandIt != previous->operandUses.end()) {
             previous->operandUses.erase(operandIt);
         }
@@ -119,8 +121,13 @@ IrBlock* IrValue::PhiBlock(std::size_t index) const {
     return phiBlocks[index];
 }
 
-const std::vector<IrUse>& IrValue::OperandUses() const {
+const IrUseList& IrValue::OperandUses() const {
     return operandUses;
+}
+
+void IrValue::MoveUsesToHeap() {
+    if (operandUses.get_allocator().Arena() == nullptr) return;
+    operandUses = IrUseList(operandUses.begin(), operandUses.end(), IrUseAllocator<IrUse>{});
 }
 
 std::uint64_t IrValue::ImmediateU64() const {

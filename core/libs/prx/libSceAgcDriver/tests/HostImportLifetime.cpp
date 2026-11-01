@@ -517,7 +517,7 @@ void partialUnmap(Fixture& fixture) {
     {
         GuestAllocations::Mutation mutation;
         mutation.Unmap(middle, part, [&](const void* piece, std::size_t bytes, const void* original, bool last) {
-            Require(!imported->freed.load(), "an unmap inside a host import freed the memory of the side it keeps");
+            requireFreed(imported);
             Require(!other->freed.load(), "partial unmap retired a disjoint host import");
             Require(piece == middle && bytes == part && original == allocation.data && !last, "partial unmap changed the wrong guest extent");
         });
@@ -525,9 +525,8 @@ void partialUnmap(Fixture& fixture) {
     Require(!RegisteredReadableCovers(reinterpret_cast<std::uint64_t>(middle), part), "the middle of a partial unmap remains registered");
     const auto low = fixture.Import(allocation.Address(), part);
     const auto high = fixture.Import(allocation.Address() + 2 * part, part);
-    Require(high->memory == imported->memory && !imported->freed.load(), "the side kept from an unmap inside the host import was imported again");
+    Require(imported->freed.load(), "the side kept from an unmap inside the host import reused memory imported across the unmapped range");
     Require(high->address == allocation.Address() + 2 * part && high->bytes == part, "the kept side of the host import does not cover its remaining range");
-    Require(low->memory != imported->memory, "the smaller side of an unmap inside the host import was not imported again");
     Require(!low->freed.load() && !high->freed.load() && !other->freed.load(), "remaining partial mappings could not be imported");
     {
         GuestAllocations::Mutation mutation;

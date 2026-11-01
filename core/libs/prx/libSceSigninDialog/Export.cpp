@@ -1,3 +1,4 @@
+#include "prx/libSceSigninDialog/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>

@@ -70,7 +70,7 @@ void _validateTessellation(const TessellationConfiguration* tessellation) {
 
 void _validateMesh(const MeshConfiguration* mesh) {
     if (mesh == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: a mesh-stage program has no mesh configuration");
-    if (mesh->threadsPerGroup == 0u || mesh->maxVertices == 0u || mesh->maxPrimitives == 0u || (mesh->outputPrimitiveSize != 2u && mesh->outputPrimitiveSize != 3u) || mesh->provokingVertex >= mesh->outputPrimitiveSize) throw std::runtime_error("ShaderInputInfoBuilder: invalid mesh configuration");
+    if (mesh->threadsPerGroup == 0u || mesh->maxVertices == 0u || mesh->maxPrimitives == 0u || (mesh->outputPrimitiveSize != 1u && mesh->outputPrimitiveSize != 2u && mesh->outputPrimitiveSize != 3u) || mesh->provokingVertex >= mesh->outputPrimitiveSize) throw std::runtime_error("ShaderInputInfoBuilder: invalid mesh configuration");
 }
 
 }
@@ -151,6 +151,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psNoPerspective = pixel.noPerspective;
         pixelStorage.psPixelKillEnable = pixel.pixelKillEnable;
         pixelStorage.psDepthExportEnable = pixel.depthExportEnable;
+        pixelStorage.psDepthExportMin = pixel.depthExportMin;
+        pixelStorage.psDepthExportMax = pixel.depthExportMax;
         pixelStorage.psSampleMaskExportEnable = pixel.sampleMaskExportEnable;
         pixelStorage.psStencilRefExportEnable = pixel.stencilRefExportEnable;
         pixelStorage.psStencilOperationValueExport = pixel.stencilOperationValueExport;
@@ -162,11 +164,23 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         if (pixel.ditheredAlphaToCoverage && !pixel.alphaToCoverage) throw std::runtime_error("dithered alpha-to-coverage requires enabled coverage");
         pixelStorage.psAlphaToCoverage = pixel.alphaToCoverage;
         pixelStorage.psDitheredAlphaToCoverage = pixel.ditheredAlphaToCoverage;
+        pixelStorage.psDitheredAlphaSamples = pixel.ditheredAlphaSamples;
         pixelStorage.quadPixelMask = pixel.quadPixelMask;
         pixelStorage.quadSampleMask = pixel.quadSampleMask;
         pixelStorage.psIteratesSamples = pixel.iteratesSamples;
         pixelStorage.psPositionLocation = pixel.positionLocation;
         pixelStorage.sampleLocations = pixel.sampleLocations;
+        for (const auto& merge : pixel.targetMerges) {
+            const auto& first = pixel.targetMerges.front();
+            if (merge.mask == 0u || merge.target >= 8u || std::ranges::count(pixel.targetMerges, merge.target, &TargetMerge::target) != 1 || (merge.samples != 1u && merge.samples != 2u && merge.samples != 4u && merge.samples != 8u) || merge.samples != first.samples || merge.depthStencilWrites != first.depthStencilWrites || merge.depthStencilTests != first.depthStencilTests) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target merge");
+            const auto& blend = merge.blend;
+            if (blend.enabled && (merge.samples != 1u || blend.colorSource > 14u || blend.colorDestination > 14u || blend.alphaSource > 14u || blend.alphaDestination > 14u || blend.colorOperation > 4u || blend.alphaOperation > 4u || blend.writeMask > 0xfu)) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target blend");
+            pixelStorage.merges.push_back(merge);
+            pixelStorage.mergeSamples = merge.samples;
+            pixelStorage.mergeDepthStencilWrites = merge.depthStencilWrites;
+            pixelStorage.mergeDepthStencilTests = merge.depthStencilTests;
+        }
+        pixelStorage.sampleOrder = pixel.sampleOrder;
         ShaderStageInputInfo result;
         result.pixel = &pixelStorage;
         return result;
@@ -189,6 +203,10 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         vertexStorage.fetchEmbedded = vertex.fetchEmbedded;
         vertexStorage.paClVsOutCntl = vertex.paClVsOutCntl;
         vertexStorage.depthRemap = {vertex.depthRemapMode};
+        vertexStorage.pointList = vertex.pointList;
+        vertexStorage.pointSize = vertex.pointSize;
+        vertexStorage.pointSizeMin = vertex.pointSizeMin;
+        vertexStorage.pointSizeMax = vertex.pointSizeMax;
         vertexStorage.fetchExternal = false;
         vertexStorage.fetchAttribReg = static_cast<int>(vertex.fetchAttribReg);
         vertexStorage.fetchBufferReg = static_cast<int>(vertex.fetchBufferReg);
@@ -216,6 +234,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.instancePatches = tessellation->instancePatches;
             target.drawParameters = tessellation->drawParameters;
             target.mergedHull = tessellation->mergedHull;
+            target.geometryItemDwords = stage == ShaderStageKind::TessellationEvaluation && mesh != nullptr ? mesh->esgsItemSize : 0u;
         }
         if (stage == ShaderStageKind::Mesh) {
             _validateMesh(mesh);
@@ -234,6 +253,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.provokingVertex = mesh->provokingVertex;
             target.esgsItemSize = mesh->esgsItemSize;
             target.outputPrimitiveSize = mesh->outputPrimitiveSize;
+            if (target.outputPrimitiveSize == 1u) vertexStorage.pointList = true;
+            target.capturedInput = tessellation != nullptr;
         }
         ShaderStageInputInfo result;
         result.vertex = &vertexStorage;

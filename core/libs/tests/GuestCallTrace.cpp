@@ -12,8 +12,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <source_location>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -106,8 +110,8 @@ int main(int argc, char** argv) {
         while (!locked.load()) std::this_thread::yield();
         if (std::strcmp(argv[1], "abort-race") == 0) {
             for (int call = 0; call < 100; ++call) Require(first(1, 2, 3, 4, 5, 6, 7, 8) == 204);
-            std::atomic<bool> go{false};
-            std::thread([&go] {
+            static std::atomic<bool> go{false};
+            std::thread([] {
                 while (!go.load()) {
                 }
                 std::abort();
@@ -161,12 +165,20 @@ int main(int argc, char** argv) {
     Require(CopyCallCounts_nid_no_patch(counts, 2, nullptr) == 2);
     Require(counts[0].calls == 3 && std::strcmp(counts[0].name, "Blocks") == 0 && counts[1].calls == 2 && std::strcmp(counts[1].name, "Doubles") == 0);
     Require(CopyCallCounts_nid_no_patch(nullptr, 8, &total) == 0 && total == 8);
+    Require(CopyThreadCallTrace_nid_no_patch(CurrentThread(), entries, 16) == 8);
+    for (std::uint64_t index = 0; index < 8; ++index) Require(entries[index].sequence == index + 1 && entries[index].thread == CurrentThread());
+    Require(CopyThreadCallTrace_nid_no_patch(CurrentThread(), entries, 2) == 2 && entries[0].sequence == 7 && entries[1].sequence == 8);
+    Require(std::strcmp(entries[1].name, "Blocks") == 0);
+    Require(CopyThreadCallTrace_nid_no_patch(CurrentThread() + 1, entries, 16) == 0);
+    Require(CopyThreadCallTrace_nid_no_patch(CurrentThread(), nullptr, 16) == 0 && CopyThreadCallTrace_nid_no_patch(CurrentThread(), entries, 0) == 0);
 
     constexpr std::uint64_t Workers = 4;
     constexpr std::uint64_t Calls = 20000;
     std::vector<std::thread> workers;
+    std::uint64_t workerThreads[Workers]{};
     for (std::uint64_t worker = 0; worker < Workers; ++worker) {
-        workers.emplace_back([integers, worker] {
+        workers.emplace_back([integers, worker, &workerThreads] {
+            workerThreads[worker] = CurrentThread();
             for (std::uint64_t call = 0; call < Calls; ++call) Require(integers(worker, call, 1, 2, 3, 4, 5, 6) == Integers(worker, call, 1, 2, 3, 4, 5, 6));
         });
     }
@@ -176,6 +188,31 @@ int main(int argc, char** argv) {
     Require(CopyCallTrace_nid_no_patch(recent.get(), Window) == Window);
     Require(recent[Window - 1].sequence == 8 + Workers * Calls && recent[0].sequence == 8 + Workers * Calls - Window + 1);
     for (std::size_t index = 0; index < Window; ++index) Require(std::strcmp(recent[index].name, "Integers") == 0);
+    Require(CopyThreadCallTrace_nid_no_patch(CurrentThread(), entries, 16) == 0);
+    const auto own = std::make_unique<CallTraceEntry[]>(Window);
+    std::size_t owned = 0;
+    for (const std::uint64_t thread : workerThreads) {
+        std::size_t expected = 0;
+        for (std::size_t index = 0; index < Window; ++index) expected += recent[index].thread == thread;
+        const std::size_t count = CopyThreadCallTrace_nid_no_patch(thread, own.get(), Window);
+        Require(count == expected);
+        for (std::size_t index = 0; index < count; ++index) Require(own[index].thread == thread && (index == 0 || own[index - 1].sequence < own[index].sequence));
+        if (count != 0) Require(CopyThreadCallTrace_nid_no_patch(thread, entries, 1) == 1 && entries[0].sequence == own[count - 1].sequence);
+        owned += count;
+    }
+    Require(owned == Window);
     Require(CopyCallCounts_nid_no_patch(counts, 1, &total) == 1 && total == 8 + Workers * Calls);
     Require(counts[0].calls == 1 + Workers * Calls && std::strcmp(counts[0].name, "Integers") == 0);
+
+    const auto path = std::filesystem::temp_directory_path() / ("guest_call_trace_counts_" + std::to_string(CurrentThread()) + ".txt");
+    const auto utf8 = path.u8string();
+    Require(WriteCallCounts_nid_no_patch(reinterpret_cast<const char*>(utf8.c_str())));
+    std::ifstream written(path, std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(written), std::istreambuf_iterator<char>()};
+    written.close();
+    Require(text == std::to_string(1 + Workers * Calls) + " libTraced.prx Integers\n3 libTraced.prx Blocks\n2 libTraced Doubles\n1 libOther.prx Mixed\n1 libOther Variadic\n");
+    const auto unwritable = (path / "file").u8string();
+    Require(!WriteCallCounts_nid_no_patch(reinterpret_cast<const char*>(unwritable.c_str())));
+    Require(!WriteCallCounts_nid_no_patch(nullptr) && !WriteCallCounts_nid_no_patch(""));
+    std::filesystem::remove(path);
 }

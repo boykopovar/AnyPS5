@@ -124,7 +124,7 @@ namespace AgcDriver::Graphics {
     }
 
     bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
-        if (IsSrgbTextureFormat(guestFormat)) return false;
+        if (IsSrgbTextureFormat(guestFormat) || IgnoresForcedDegamma(guestFormat)) return false;
         for (std::uint32_t element = 0; element < 32u && element < samplers.size(); ++element) {
             if (((samplerMask >> element) & 1u) != 0u && samplers[element]->ForcesDegamma()) return true;
         }

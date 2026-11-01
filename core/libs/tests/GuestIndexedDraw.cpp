@@ -1,15 +1,11 @@
+#include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
+#include "prx/libSceAgc/DcbDraw/include/DrawIndexed.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include <array>
 #include <cstdlib>
 #include <stdexcept>
 
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcDcbSetIndexCount(CommandBuffer*, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcDcbSetIndexCountGetSize();
-std::uint32_t* APS5_VABI sceAgcDcbDrawIndex(CommandBuffer*, std::uint32_t, const volatile void*, std::uint64_t);
-std::uint32_t APS5_VABI sceAgcDcbDrawIndexGetSize();
-}
 static void Require(bool condition) { if (!condition) std::abort(); }
 template<typename TAction> static void Reject(TAction action) {
     bool rejected = false;
