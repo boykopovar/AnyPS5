@@ -656,6 +656,14 @@ int main() {
     Require(sceFontCloseFont(fileHandle) == SCE_FONT_OK);
     RemovePathAlias_nid_no_patch("/font-test");
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK && font != nullptr);
+    Require(sceFontGetLibrary(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontLibrary fontLibrary = nullptr;
+    Require(sceFontGetLibrary(font, &fontLibrary) == SCE_FONT_OK && fontLibrary == library);
+    Font::FontLibNative invalidLibrary{};
+    Require(sceFontSetFontsOpenMode(nullptr, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontSetFontsOpenMode(&invalidLibrary, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontSetFontsOpenMode(library, 3) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    for (const auto mode : {0, 1, 2}) Require(sceFontSetFontsOpenMode(library, mode) == SCE_FONT_OK);
     int setting = -1;
     Require(sceFontGetScriptLanguage(font, 3, &setting) == SCE_FONT_ERROR_INVALID_PARAMETER && setting == 0);
     Require(sceFontSetScriptLanguage(font, 3, 7) == SCE_FONT_ERROR_INVALID_PARAMETER);
