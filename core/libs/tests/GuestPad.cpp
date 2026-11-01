@@ -547,6 +547,7 @@ static void CheckSystemRemote(int handle) {
     Require(remote > 0 && remote != handle);
     Require(scePadGetHandle(PAD_USER_ID_SYSTEM, PAD_PORT_TYPE_REMOTE, 0) == remote);
     Require(scePadGetHandle(PAD_USER_ID_SYSTEM, PAD_PORT_TYPE_REMOTE, 1) == noHandle);
+    for (const int type : {-1, -2, 1, 3, 4, 5, 17, 0xff}) Require(scePadGetHandle(PAD_USER_ID_SYSTEM, type, 0) == noHandle);
     PadData drained[64]{};
     scePadRead_nid_postfix(handle, drained, 64);
     PadInputState pressed;
@@ -942,6 +943,7 @@ int main() {
     Require(scePadOpen_nid_postfix(-1, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     for (const int type : {5, 6, 16, 0xff, -1}) Require(scePadOpen_nid_postfix(user, type, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetHandle(user, 0, 0) == noHandle);
+    for (const int type : {-1, -2, 1, 3, 4, 5, 6, 16, 17, 0xff}) Require(scePadGetHandle(user, type, 0) == noHandle);
     const unsigned char wheel[16]{0xb7, 0x0e, 0x04, 0x0e, 0x08, 0x6e, 0x01};
     Require(scePadOpenExt(user, PAD_PORT_TYPE_SPECIAL, 0, wheel) == static_cast<int>(0x80920007));
     Require(scePadOpenExt(user, PAD_PORT_TYPE_SPECIAL, 1, wheel) == PAD_ERROR_INVALID_ARG);
@@ -1011,10 +1013,11 @@ int main() {
     Require(scePadSetVibrationMode(handle, 6) == PAD_ERROR_INVALID_ARG);
     Require(scePadSetVibrationMode(handle, -1) == PAD_ERROR_INVALID_ARG);
     CheckSystemRemote(handle);
-    Require(scePadGetHandle(user, 16, 0) == noHandle);
+    for (const int type : {-1, -2, 1, 3, 4, 5, 6, 16, 17, 0xff}) Require(scePadGetHandle(user, type, 0) == noHandle);
     Require(scePadGetHandle(user, 0, 1) == noHandle);
     Require(scePadClose_nid_postfix(handle) == 0);
     Require(scePadGetHandle(user, 0, 0) == noHandle);
+    for (const int type : {-1, -2, 1, 3, 4, 5, 6, 16, 17, 0xff}) Require(scePadGetHandle(user, type, 0) == noHandle);
     Require(!scePadIsValidHandle(handle, PAD_PORT_TYPE_STANDARD));
     Require(scePadSetLightBar(handle, &lightBar) == PAD_OK && LightBarIs(0, true, 255, 128, 64));
     Require(scePadResetLightBarAll() == PAD_OK && LightBarIs(0, true, 255, 128, 64));
