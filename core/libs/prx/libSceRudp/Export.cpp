@@ -51,6 +51,8 @@ constexpr uint64_t RUDP_POLL_WAIT_MAX_USEC = static_cast<uint64_t>(std::numeric_
 constexpr int RUDP_POOL_MIN_SIZE = 0xC58;
 constexpr std::uintptr_t RUDP_POOL_ALIGNMENT = 8;
 constexpr std::size_t RUDP_STATUS_SIZE = 0xF8;
+constexpr std::size_t RUDP_CONTEXT_STATUS_SIZE = 0x30;
+constexpr std::size_t RUDP_CONTEXT_STATUS_PARENT = 4;
 constexpr std::size_t RUDP_STATUS_CURRENT_CONTEXTS = 0x64;
 constexpr std::size_t RUDP_CONTEXT_BUFFER_STATUS_SIZE = 16;
 constexpr uint16_t RUDP_MAX_SEGMENT_SIZE = 1410;
@@ -279,12 +281,12 @@ int APS5_VABI sceRudpSetEventHandler(GuestRudpEventHandler handler, void* arg) {
 int APS5_VABI sceRudpCreateContext(GuestRudpEventHandler handler, void* arg, int* ctxId) {
     (void)handler;
     (void)arg;
-    if (ctxId == nullptr) {
-        return RUDP_ERROR_INVALID_ARGUMENT;
-    }
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (ctxId == nullptr) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
     }
     const int id = g_next_ctx++;
     g_ctx.emplace(id, RudpContext{});
@@ -393,17 +395,20 @@ int APS5_VABI sceRudpInitiate(int ctx_id, const void* to, uint32_t tolen, uint16
     return RUDP_ERROR_CONN_REFUSED;
 }
 
-int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, uint32_t size) {
+int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, std::size_t size) {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
     }
+    if (ctx_id < 0 || status == nullptr || size == 0 || size > RUDP_CONTEXT_STATUS_SIZE) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
     if (!valid_ctx(ctx_id)) {
         return RUDP_ERROR_INVALID_CONTEXT_ID;
     }
-    if (status != nullptr && size != 0) {
-        std::memset(status, 0, size);  // state 0 = idle, nothing pending
-    }
+    unsigned char report[RUDP_CONTEXT_STATUS_SIZE] = {};
+    std::memset(report + RUDP_CONTEXT_STATUS_PARENT, 0xFF, sizeof(std::int32_t));
+    std::memcpy(status, report, size);
     return 0;
 }
 

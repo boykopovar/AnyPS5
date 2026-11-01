@@ -27,6 +27,7 @@ const char* Usage() {
            "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
            "  --registry                     Write <output-stem>.registry.json beside the output.\n"
            "  --autorun                      Run the output after conversion and print its exit code.\n"
+           "  --dry-run                      Convert in memory and list planned outputs without writing them.\n"
            "\n"
            "Layout:\n"
            "  --sce-module-path <path>       Parent of the module directories. Default: the input file's directory.\n"
@@ -65,6 +66,7 @@ const char* Usage() {
 namespace {
 
 constexpr std::string_view kVerifyRejectedOptions[] = {
+    "--dry-run",
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
     "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
     "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
@@ -184,6 +186,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.lazyBinding = true;
         } else if (arg == "--autorun") {
             args.autorun = true;
+        } else if (arg == "--dry-run") {
+            args.dryRun = true;
         } else if (arg == "--windows-diagnostics") {
             args.windowsDiagnostics = true;
         } else if (arg == "--windows-gui") {
@@ -204,6 +208,7 @@ Args ParseArgs(int argc, char* argv[]) {
     }
 
     const bool verifying = !args.verifyPatchesPath.empty();
+    if (args.dryRun && args.autorun) throw std::runtime_error("--dry-run conflicts with --autorun");
     if (args.verifyOutput && !verifying) throw std::runtime_error("--verify-output requires --verify-patches");
     if (!args.patchesPath.empty() && args.noPatches) throw std::runtime_error("--patches conflicts with --no-patches");
     if (verifying) {
