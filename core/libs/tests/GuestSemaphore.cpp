@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
@@ -56,6 +57,37 @@ static void RequireInvalidArguments() {
     Require(sceKernelSignalSema(sem, 3) == SCE_OK);
     Require(sceKernelPollSema(sem, 3) == SCE_OK);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
+
+    std::uintptr_t posixSem = 0x1234;
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(&posixSem, 0, 0x80000000u) == -1 && *__error_nid_postfix() == 22);
+    Require(posixSem == 0x1234);
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(&posixSem, 0, 0x80000001u) == -1 && *__error_nid_postfix() == 22);
+    Require(posixSem == 0x1234);
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(&posixSem, 0, 0xffffffffu) == -1 && *__error_nid_postfix() == 22);
+    Require(posixSem == 0x1234);
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(&posixSem, 0, static_cast<unsigned int>(-1)) == -1 && *__error_nid_postfix() == 22);
+    Require(posixSem == 0x1234);
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(&posixSem, 0, static_cast<unsigned int>(-2)) == -1 && *__error_nid_postfix() == 22);
+    Require(posixSem == 0x1234);
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(&posixSem, 0, static_cast<unsigned int>(-100)) == -1 && *__error_nid_postfix() == 22);
+    Require(posixSem == 0x1234);
+    std::uintptr_t validSem = 0;
+    Require(sem_init_nid_postfix(&validSem, 0, 0x7fffffffu) == 0);
+    Require(sem_destroy_nid_postfix(&validSem) == 0);
+
+    std::intptr_t ksemId = -1;
+    *__error_nid_postfix() = 0;
+    Require(ksem_init_nid_postfix(&ksemId, 0x80000000u) == -1 && *__error_nid_postfix() == 22);
+    Require(ksemId == -1);
+    *__error_nid_postfix() = 0;
+    Require(ksem_init_nid_postfix(&ksemId, static_cast<unsigned int>(-1)) == -1 && *__error_nid_postfix() == 22);
+    Require(ksemId == -1);
 }
 
 int main() {
