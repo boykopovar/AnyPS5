@@ -24,6 +24,7 @@
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
 - [scePadSetLightBarBaseBrightness, scePadDisableTriggerEffect](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return success for known handles without changing hardware states. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
+- [scePadSetProcessPrivilege, scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return success without reading or storing their `int` or `bool` argument and without changing pad state. The repository records no title or firmware evidence for their signatures or for the success result. Closes when: measured on a PS5 or read from a firmware module
 
 ### Unknown function info
 
