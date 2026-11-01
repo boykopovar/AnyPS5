@@ -9,6 +9,8 @@
 static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr int InvalidId = static_cast<int>(0x817B1100);
+static constexpr int NotFound = static_cast<int>(0x817B1025);
+static constexpr int NullPointer = static_cast<int>(0x817B1225);
 
 template <typename TCall>
 static bool Throws(TCall call) {
@@ -30,7 +32,35 @@ int main() {
     const int request = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://localhost/", 0);
     Require(box > 0 && context > 0 && tmpl > 0 && request > 0);
     Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
-    Require(Throws([&] { sceHttp2SetCookieBox(tmpl, box); }));
+    int bound = -7;
+    Require(sceHttp2GetCookieBox(tmpl, &bound) == NotFound && bound == 0);
+    Require(sceHttp2GetCookieBox(tmpl, nullptr) == NullPointer && sceHttp2GetCookieBox(context, nullptr) == NullPointer);
+    Require(sceHttp2SetCookieBox(tmpl, box) == 0);
+    bound = -7;
+    Require(sceHttp2GetCookieBox(tmpl, &bound) == 0 && bound == box);
+    bound = -7;
+    Require(sceHttp2GetCookieBox(request, &bound) == NotFound && bound == 0);
+    const int copied = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://localhost/", 0);
+    bound = -7;
+    Require(sceHttp2GetCookieBox(copied, &bound) == 0 && bound == box);
+    Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
+    bound = -7;
+    Require(sceHttp2GetCookieBox(tmpl, &bound) == NotFound && bound == 0);
+    bound = -7;
+    Require(sceHttp2GetCookieBox(copied, &bound) == 0 && bound == box);
+    for (const int id : {context, 0, -1, 0x7fffffff}) {
+        Require(sceHttp2SetCookieBox(id, box) == InvalidId && sceHttp2SetCookieBox(id, 0) == InvalidId);
+        bound = -7;
+        Require(sceHttp2GetCookieBox(id, &bound) == InvalidId && bound == 0);
+    }
+    const int deletedBox = sceHttp2CreateCookieBox(0x10000);
+    Require(deletedBox > 0 && sceHttp2DeleteCookieBox(deletedBox) == 0);
+    for (const int value : {-1, 0x7fffffff, context, tmpl, deletedBox}) Require(sceHttp2SetCookieBox(request, value) == InvalidId);
+    const int heldBox = sceHttp2CreateCookieBox(0x10000);
+    Require(heldBox > 0 && sceHttp2SetCookieBox(copied, heldBox) == 0 && sceHttp2DeleteCookieBox(heldBox) == 0);
+    bound = -7;
+    Require(sceHttp2GetCookieBox(copied, &bound) == 0 && bound == heldBox);
+    Require(sceHttp2SetCookieBox(copied, 0) == 0 && sceHttp2DeleteRequest(copied) == 0);
     Require(sceHttp2CookieFlush(box) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 0) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 3) == 0);

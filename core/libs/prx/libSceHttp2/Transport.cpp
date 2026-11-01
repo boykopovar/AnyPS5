@@ -8,6 +8,7 @@
 #endif
 
 #include "Transport.hpp"
+#include "Cookies.hpp"
 
 #include "zlib.h"
 #include "prx/libSceNet/include/Net.hpp"
@@ -290,6 +291,8 @@ struct Request::State {
 
     ~State() { Close(); }
 
+    std::string Address() const { return "https://" + url.authority + url.path; }
+
     void Close() {
         if (session) nghttp2_session_del(std::exchange(session, nullptr));
         if (ssl >= 0) sceSslDeleteConnection(std::exchange(ssl, -1));
@@ -471,6 +474,7 @@ struct Request::State {
                 state.contentLength = Number(text);
                 state.hasLength = true;
             }
+            if (key == "set-cookie" && state.settings.cookieBox != 0) Http2StoreResponseCookie(state.settings.cookieBox, state.Address(), text);
             if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
         });
     }
@@ -553,6 +557,9 @@ struct Request::State {
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& header) { return header.first == "user-agent"; }))
             fields.emplace_back("user-agent", settings.userAgent);
         fields.insert(fields.end(), settings.headers.begin(), settings.headers.end());
+        if (settings.cookieBox != 0) {
+            if (auto cookie = Http2CookieHeader(settings.cookieBox, Address())) fields.emplace_back("cookie", std::move(*cookie));
+        }
         if (!settings.noContentLength) fields.emplace_back("content-length", std::to_string(settings.contentLength));
         std::vector<nghttp2_nv> headers;
         for (auto& [name, value] : fields) headers.push_back({reinterpret_cast<std::uint8_t*>(name.data()),

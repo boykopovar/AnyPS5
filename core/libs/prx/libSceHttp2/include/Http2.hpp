@@ -80,7 +80,7 @@ int APS5_VABI sceHttp2CookieImport(void);
 int APS5_VABI sceHttp2GetAuthEnabled(int id, int* isEnable);
 int APS5_VABI sceHttp2GetAutoRedirect(int id, int* enable);
 int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, std::size_t* required, std::size_t prepared);
-int APS5_VABI sceHttp2GetCookieBox(void);
+int APS5_VABI sceHttp2GetCookieBox(int id, int* cookieBoxId);
 int APS5_VABI sceHttp2GetCookieStats(int cookieBoxId, Http2CookieStats* stats);
 int APS5_VABI sceHttp2RedirectCacheFlush(int libHttp2CtxId);
 int APS5_VABI sceHttp2RemoveRequestHeader(int id, const char* name);

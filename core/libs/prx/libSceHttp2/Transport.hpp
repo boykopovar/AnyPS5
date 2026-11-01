@@ -36,6 +36,7 @@ struct Settings {
     void* authInfoArgument = nullptr;
     void* preSendCallback = nullptr;
     void* preSendArgument = nullptr;
+    int cookieBox = 0;
 };
 
 struct Capacity {
