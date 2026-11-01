@@ -1,4 +1,4 @@
-add_library(libSceRegMgr SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceRegMgr SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
 target_include_directories(libSceRegMgr PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceRegMgr)
 

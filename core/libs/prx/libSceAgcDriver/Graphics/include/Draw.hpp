@@ -38,6 +38,7 @@ void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPi
 void CheckPixelFunctionLds(const Context& context);
 void ReleasePixelFunctionLds(VkDevice device);
 bool UsesMeshWindow(std::span<const CompiledShader> shaders);
+bool ValidationKey(const Context& context, std::span<const CompiledShader> shaders, const State& state, std::vector<std::uint64_t>& key);
 VkDescriptorSetLayout MeshWindowSetLayout(const Context& context);
 void PrepareMeshWindow(const Context& context);
 void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
