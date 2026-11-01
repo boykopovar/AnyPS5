@@ -1280,6 +1280,7 @@ VkFormat PackedStorageViewFormat(VkFormat format) {
     switch (format) {
         case VK_FORMAT_R5G6B5_UNORM_PACK16:
         case VK_FORMAT_A1R5G5B5_UNORM_PACK16:
+        case VK_FORMAT_R5G5B5A1_UNORM_PACK16:
         case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
             return VK_FORMAT_R16_UINT;
         default:
