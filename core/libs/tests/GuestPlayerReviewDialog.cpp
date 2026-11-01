@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include <cerrno>
 #include <cstdlib>
 
 namespace {
@@ -79,6 +80,9 @@ int main() {
     Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == COMMON_DIALOG_RESULT_USER_CANCELED);
     Require(result[0] == -1 && result[1] == -1 && result[3] == -1);
     Require(result[2] == COMMON_DIALOG_RESULT_USER_CANCELED);
+    errno = 71;
+    Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(0x10)) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(errno == 71);
     Require(scePlayerReviewDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(scePlayerReviewDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
     Require(scePlayerReviewDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
