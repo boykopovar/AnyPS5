@@ -14,6 +14,14 @@ import validate_patch_catalog
 
 
 class CatalogValidatorTests(unittest.TestCase):
+    def test_target_path_cannot_contain_nul(self):
+        self.patch.write_text('format = 1\n[[patch]]\ntarget = "mod\\u0000ule.prx"\nva = 0x1000\nexpected = "00"\nvalue = "01"\n')
+        self.entry["targets"] = {"mod\x00ule.prx": "0" * 64}
+        result, output, errors = self.run_validator()
+        self.assertEqual(result, 2)
+        self.assertEqual(output, "")
+        self.assertIn("invalid relative path", errors)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="patch catalog validation-")
         self.addCleanup(self.directory.cleanup)

@@ -24,7 +24,7 @@ TEST_RESULTS = {"passed", "failed", "partial"}
 
 
 def relative_path(name):
-    if not isinstance(name, str) or not name or "\\" in name:
+    if not isinstance(name, str) or not name or "\\" in name or "\x00" in name:
         raise ValueError(f"invalid relative path: {name!r}")
     path = PurePosixPath(name)
     if path.is_absolute() or PureWindowsPath(name).drive or any(part in (".", "..") for part in name.split("/")):
