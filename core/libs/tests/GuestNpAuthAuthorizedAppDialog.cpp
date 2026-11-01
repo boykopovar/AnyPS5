@@ -2,6 +2,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -157,6 +158,9 @@ int main() {
     Require(sceNpAuthAuthorizedAppDialogGetStatus() == kStatusFinished);
 
     Require(sceNpAuthAuthorizedAppDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpAuthAuthorizedAppDialogGetResult(reinterpret_cast<std::int32_t*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kResultUserCanceled);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
