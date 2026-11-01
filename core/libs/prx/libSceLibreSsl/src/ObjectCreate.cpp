@@ -217,6 +217,15 @@ const char* LibreSslAddedObjectName_nid_no_patch(int nid, bool longName) {
     return longName ? found->second->object.longName : found->second->object.shortName;
 }
 
+bool LibreSslHasAddedObjectName_nid_no_patch(const char* name, bool longName) {
+    std::lock_guard lock(mutex);
+    for (const auto& added : objects) {
+        const char* registered = longName ? added->object.longName : added->object.shortName;
+        if (registered && std::strcmp(registered, name) == 0) return true;
+    }
+    return false;
+}
+
 int APS5_VABI OBJ_create_nid_postfix(const char* oid, const char* shortName, const char* longName) {
     if (!oid) throw std::invalid_argument("OBJ_create: null OID text");
     std::vector<unsigned char> content = TextToContent(oid);
