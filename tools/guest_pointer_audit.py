@@ -10,25 +10,47 @@ ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
 SAFE = ("GuestCopyIn_nid_no_patch", "GuestCopyOut_nid_no_patch", "CopyGuestString_nid_no_patch",
         "CopyGuestPath_nid_no_patch", "CopyGuestEnvironment_nid_no_patch")
-RAW_CALLS = ("memcpy", "memmove", "memset", "memcmp", "strcpy", "strncpy", "strlen", "strnlen", "strcmp", "strncmp",
-             "snprintf", "sprintf", "copy", "copy_n", "fill", "fill_n")
+UNEVALUATED = ("sizeof", "alignof", "decltype", "noexcept")
+RAW_CALLS = {
+    "memcpy": (0, 1), "memmove": (0, 1), "memset": (0,), "memcmp": (0, 1),
+    "strcpy": (0, 1), "strncpy": (0, 1), "strlen": (0,), "strnlen": (0,), "strcmp": (0, 1), "strncmp": (0, 1),
+    "snprintf": (0,), "sprintf": (0,), "copy": (0, 1, 2), "copy_n": (0, 2), "fill": (0, 1), "fill_n": (0,),
+}
 PARAMETER = re.compile(r"([A-Za-z_][\w:<>,\s]*?(?:[*&]+\s*(?:const\b\s*)?)+)\s*(\w+)\s*$")
+RAW_CALL = re.compile(rf"\b(?:std::|::)?({'|'.join(RAW_CALLS)})\s*\(")
+QUIET_CALL = re.compile(rf"\b({'|'.join(SAFE + UNEVALUATED)})\s*\(")
+CAST = re.compile(r"^(?:\(\s*[\w\s:*<>]+\)(?=\s*\S)|(?:reinterpret|static|const)_cast\s*<[^>]*>|\()\s*")
+
+
+def split_top_level(text):
+    parts, depth, start = [], 0, 0
+    for index, character in enumerate(text):
+        if character in "(<[{":
+            depth += 1
+        elif character in ")>]}":
+            depth -= 1
+        elif character == "," and depth == 0:
+            parts.append((start, text[start:index]))
+            start = index + 1
+    parts.append((start, text[start:]))
+    return parts
+
+
+def closing(text, open_paren):
+    depth = 0
+    for index in range(open_paren, len(text)):
+        if text[index] == "(":
+            depth += 1
+        elif text[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return len(text) - 1
 
 
 def pointer_parameters(signature):
     names = []
-    depth, start = 0, 0
-    parts = []
-    for index, character in enumerate(signature):
-        if character in "(<[":
-            depth += 1
-        elif character in ")>]":
-            depth -= 1
-        elif character == "," and depth == 0:
-            parts.append(signature[start:index])
-            start = index + 1
-    parts.append(signature[start:])
-    for part in parts:
+    for _, part in split_top_level(signature):
         part = part.split("=")[0].strip()
         if "(" in part or "&" in part:
             continue
@@ -38,36 +60,53 @@ def pointer_parameters(signature):
     return names
 
 
+def quiet(body):
+    blanked = list(body)
+    for match in QUIET_CALL.finditer(body):
+        start, end = match.end() - 1, closing(body, match.end() - 1)
+        for index in range(start + 1, end):
+            if blanked[index] != "\n":
+                blanked[index] = " "
+    return "".join(blanked)
+
+
+def names_parameter(argument, name):
+    argument = argument.strip()
+    while True:
+        stripped = CAST.sub("", argument, count=1)
+        if stripped == argument:
+            break
+        argument = stripped
+    return re.match(rf"{re.escape(name)}\b", argument) is not None
+
+
 def accesses(body, name):
-    found = []
     word = re.escape(name)
-    patterns = (
-        ("member", rf"\b{word}\s*->"),
-        ("index", rf"\b{word}\s*\["),
-        ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{word}\b"),
-        ("library call", rf"\b(?:std::)?(?:{'|'.join(RAW_CALLS)})\s*\(\s*(?:[^,()]*,\s*)?(?:reinterpret_cast<[^>]*>\()?\s*{word}\b"),
-    )
-    for kind, pattern in patterns:
-        for match in re.finditer(pattern, body):
-            found.append((kind, match.end() - 1))
-    return found
+    found = []
+    for kind, pattern in (("member", rf"\b{word}\s*->"), ("index", rf"\b{word}\s*\["),
+                          ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{word}\b")):
+        found += [(match.end() - 1, kind) for match in re.finditer(pattern, body)]
+    for match in RAW_CALL.finditer(body):
+        open_paren = match.end() - 1
+        arguments = split_top_level(body[open_paren + 1:closing(body, open_paren)])
+        for position in RAW_CALLS[match.group(1)]:
+            if position < len(arguments) and names_parameter(arguments[position][1], name):
+                found.append((open_paren + 1 + arguments[position][0], "library call"))
+    return sorted(found)
 
 
 def audit_text(text):
     results = []
     for match in progress.DEFINITION.finditer(text):
-        name = match.group(1)
         open_paren = text.index("(", match.start(1))
         close_paren = text.rindex(")", 0, match.end())
         body_start = match.end() - 1
-        body = text[body_start:progress.body_end(text, body_start) + 1]
+        body = quiet(text[body_start:progress.body_end(text, body_start) + 1])
         for parameter in pointer_parameters(text[open_paren + 1:close_paren]):
-            if any(re.search(rf"\b{safe}\s*\([^;]*\b{re.escape(parameter)}\b", body) for safe in SAFE):
-                continue
             hits = accesses(body, parameter)
             if hits:
-                line = text.count("\n", 0, body_start + hits[0][1]) + 1
-                results.append({"function": name, "parameter": parameter, "line": line, "kinds": sorted({kind for kind, _ in hits})})
+                line = text.count("\n", 0, body_start + hits[0][0]) + 1
+                results.append({"function": match.group(1), "parameter": parameter, "line": line, "kinds": sorted({kind for _, kind in hits})})
     return results
 
 
