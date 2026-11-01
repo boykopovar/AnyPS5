@@ -7,6 +7,15 @@
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
 #include <mutex>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver {
@@ -107,6 +116,17 @@ static std::mutex& VulkanLoaderMutex() {
 }
 
 extern "C" void AgcDriverLockVulkanLoader_nid_postfix() {
+#ifdef _WIN32
+    static const auto hdesk = [] {
+        if (const auto hwinsta = OpenWindowStationA("WinSta0", FALSE, 0x037F)) {
+            SetProcessWindowStation(hwinsta);
+        }
+        return OpenDesktopA("Default", 0, FALSE, 0x01FF);
+    }();
+    if (hdesk != nullptr) {
+        SetThreadDesktop(hdesk);
+    }
+#endif
     VulkanLoaderMutex().lock();
 }
 
