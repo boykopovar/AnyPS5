@@ -1409,11 +1409,11 @@ std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const Sw
             pair = source;
         } else {
             std::uint32_t low = 0, high = 0;
-            if (!findLastWriter(program, index, {source}, low) || !findLastWriter(program, index, {source + 1u}, high)) continue;
-            const auto first = std::min(low, high);
-            const bool sameBlock = std::none_of(labels.begin(), labels.end(), [&](std::uint32_t label) {
-                return label > program.instructions[first].programCounter && label <= instruction.programCounter;
-            });
+            bool reaches = findLastWriter(program, index, {source}, low) && findLastWriter(program, index, {source + 1u}, high) &&
+                std::none_of(labels.begin(), labels.end(), [&](std::uint32_t label) {
+                    return label > program.instructions[std::min(low, high)].programCounter && label <= instruction.programCounter;
+                });
+            if (!reaches) reaches = reachingWriter(program, index, {source}, low, swappc.waveSize) && reachingWriter(program, index, {source + 1u}, high, swappc.waveSize);
             const auto& lowWriter = program.instructions[low];
             const auto& highWriter = program.instructions[high];
             std::uint32_t from = NoScalarRegister;
@@ -1423,7 +1423,7 @@ std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const Sw
                 from = scalarIndex(lowWriter.source0);
                 if (from != NoScalarRegister && !isScalar(highWriter.source0, from + 1u)) from = NoScalarRegister;
             }
-            if (!sameBlock || from == NoScalarRegister || from % 2u != 0u || !userData(from) || !userData(from + 1u) || !unchanged(from, low) || !unchanged(from + 1u, high)) continue;
+            if (!reaches || from == NoScalarRegister || from % 2u != 0u || !userData(from) || !userData(from + 1u) || !unchanged(from, low) || !unchanged(from + 1u, high)) continue;
             pair = from;
         }
         calls.push_back({instruction.programCounter, link, pair});

@@ -13,6 +13,7 @@ static constexpr int SCE_NP_MATCHING2_ERROR_CONTEXT_MAX = static_cast<int>(0x805
 static constexpr int SCE_NP_MATCHING2_ERROR_CONTEXT_NOT_STARTED = static_cast<int>(0x80550C08);
 static constexpr int SCE_NP_MATCHING2_ERROR_INVALID_CONTEXT_ID = static_cast<int>(0x80550C0B);
 static constexpr int SCE_NET_ERROR_RESOLVER_ETIMEDOUT = static_cast<int>(0x804101E2);
+static constexpr std::int32_t SCE_NP_SIGNALING_CONN_STATUS_INACTIVE = 0;
 static constexpr int MAX_CONTEXTS = 10;
 static constexpr std::uint64_t CREATE_CONTEXT_PARAMETER_SIZE = 0x28;
 
@@ -215,9 +216,10 @@ int APS5_VABI sceNpMatching2Terminate(void) {
     return 0;
 }
 
-int APS5_VABI sceNpMatching2AbortContextStart(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpMatching2AbortContextStart(std::uint16_t ctxId) {
+    (void)ctxId;
+    std::lock_guard lock(matching2Mutex);
+    return matching2Initialized ? 0 : SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceNpMatching2CreateContextA(void) {
@@ -380,8 +382,16 @@ int APS5_VABI sceNpMatching2SignalingGetConnectionInfoA(void) {
     return 0;
 }
 
-int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, std::uint64_t roomId, std::uint16_t memberId, std::int32_t* connStatus, void* peerAddr, std::uint16_t* peerPort) {
+    (void)roomId;
+    (void)memberId;
+    (void)peerAddr;
+    (void)peerPort;
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    if (!connStatus) NotImplemented_nid_no_patch(__func__);
+    if (const int error = CheckContext(ctxId)) return error;
+    *connStatus = SCE_NP_SIGNALING_CONN_STATUS_INACTIVE;
     return 0;
 }
 

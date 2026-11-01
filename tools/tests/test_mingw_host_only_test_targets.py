@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 from pathlib import Path
 import sys
@@ -54,6 +56,18 @@ class HostOnlyTargets(unittest.TestCase):
         build_dir = self.fixture([host, guest, libc, other, utility])
         source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
         self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["host_tests"])
+
+    def test_excludes_mingw_libc_import_library_from_host_only_targets(self):
+        guest = self.target("guest_mktime_tests", source="core/libs/tests/GuestMktime.cpp",
+                            fragment="C:/build/core/libs/libs/implib/liblibc.dll.a")
+        source_root = Path(self.temporary.name).resolve()
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, {guest["id"]: guest}), [])
+
+    def test_libc_link_does_not_accept_similarly_named_libraries(self):
+        for fragment in ("/build/notliblibc.dll.a", "/build/liblibc.dll.a.extra", "/build/liblibc.prx"):
+            with self.subTest(fragment=fragment):
+                target = self.target("host_tests", fragment=fragment)
+                self.assertFalse(build_mingw_host_only_tests.links_guest_libc(target))
 
     def test_excludes_a_transitive_guest_libc_dependency(self):
         helper = self.target("guest_helper", target_type="STATIC_LIBRARY", source="core/libs/tests/GuestHelper.cpp",
@@ -156,6 +170,89 @@ class HostOnlyTargets(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "no CMake File API index"):
                 build_mingw_host_only_tests.read_reply(Path(directory))
+
+    def test_wrong_shaped_file_api_documents_are_reported_cleanly(self):
+        cases = (
+            ("index", [], "CMake File API index"),
+            ("index", {"reply": []}, "CMake File API reply"),
+            ("index", {"reply": {"codemodel-v2": []}}, "CMake codemodel reference"),
+            ("model", [], "CMake codemodel"),
+            ("model", {"configurations": [[]], "paths": {"source": "."}}, "CMake configuration"),
+            ("model", {"configurations": [{"targets": [[]]}], "paths": {"source": "."}}, "CMake target reference"),
+            ("target", [], "CMake target"),
+        )
+        for location, document, expected in cases:
+            with self.subTest(location=location, expected=expected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                reply = root / "build" / ".cmake" / "api" / "v1" / "reply"
+                reply.mkdir(parents=True)
+                target = self.target("host_tests")
+                target_name = "target-host_tests.json"
+                (reply / target_name).write_text(json.dumps(target), encoding="utf-8")
+                model = {"configurations": [{"targets": [{"id": target["id"], "jsonFile": target_name}]}],
+                         "paths": {"source": str(root)}}
+                (reply / "codemodel.json").write_text(json.dumps(model), encoding="utf-8")
+                index = {"reply": {"codemodel-v2": {"jsonFile": "codemodel.json"}}}
+                (reply / "index-0001.json").write_text(json.dumps(index), encoding="utf-8")
+                path = {"index": reply / "index-0001.json", "model": reply / "codemodel.json",
+                        "target": reply / target_name}[location]
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, expected):
+                    build_mingw_host_only_tests.read_reply(root / "build")
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    self.assertEqual(build_mingw_host_only_tests.main([str(root / "build"), "--list-only"]), 1)
+                self.assertIn(expected, errors.getvalue())
+                self.assertNotIn("Traceback", errors.getvalue())
+
+    def test_wrong_shaped_target_members_are_reported_cleanly(self):
+        cases = (
+            ({"name": []}, "CMake target name"),
+            ({"link": []}, "CMake target link"),
+            ({"link": {"commandFragments": ["bad"]}}, "CMake link command fragments"),
+            ({"artifacts": ["bad"]}, "CMake target artifacts"),
+            ({"sources": ["bad"]}, "CMake target sources"),
+        )
+        for changes, expected in cases:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                reply = root / "build" / ".cmake" / "api" / "v1" / "reply"
+                reply.mkdir(parents=True)
+                target = self.target("host_tests")
+                target.update(changes)
+                (reply / "target.json").write_text(json.dumps(target), encoding="utf-8")
+                model = {"configurations": [{"targets": [{"id": "host_tests", "jsonFile": "target.json"}]}],
+                         "paths": {"source": str(root)}}
+                (reply / "codemodel.json").write_text(json.dumps(model), encoding="utf-8")
+                index = {"reply": {"codemodel-v2": {"jsonFile": "codemodel.json"}}}
+                (reply / "index-0001.json").write_text(json.dumps(index), encoding="utf-8")
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    self.assertEqual(build_mingw_host_only_tests.main([str(root / "build"), "--list-only"]), 1)
+                self.assertIn(expected, errors.getvalue())
+                self.assertNotIn("Traceback", errors.getvalue())
+
+
+    def test_library_filename_substring_does_not_exclude_a_host_test(self):
+        product = self.target("product_lib", target_type="STATIC_LIBRARY", source="core/libs/utility/src/Utility.cpp")
+        product["artifacts"] = [{"path": "core/libs/utility/libproduct_lib.a"}]
+        host = self.target("host_tests", fragment="C:/build/external/libprefix_libproduct_lib.a")
+        guest = self.target("product_tests", fragment='"C:/build/core/libs/utility/libproduct_lib.a"')
+        source_root, targets = build_mingw_host_only_tests.read_reply(self.fixture([product, host, guest]))
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["host_tests"])
+
+    def assert_exact_file_argument_links_product(self, fragment):
+        product = self.target("product_lib", target_type="STATIC_LIBRARY", source="core/libs/utility/src/Utility.cpp")
+        product["artifacts"] = [{"path": "core/libs/utility/libproduct_lib.a"}]
+        guest = self.target("product_tests", fragment=fragment)
+        source_root, targets = build_mingw_host_only_tests.read_reply(self.fixture([product, guest]))
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), [])
+
+    def test_gnu_exact_file_linker_argument_links_a_product_library(self):
+        self.assert_exact_file_argument_links_product("-l:libproduct_lib.a")
+
+    def test_gnu_exact_file_linker_argument_through_wl_links_a_product_library(self):
+        self.assert_exact_file_argument_links_product("-Wl,-l:libproduct_lib.a")
 
 
 if __name__ == "__main__":

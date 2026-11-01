@@ -2194,7 +2194,9 @@ private:
         image.depthBitsCompatible = image.depthBitsCompatible && memory.dataBits == 32u;
         image.constantSwizzleCompatible = image.constantSwizzleCompatible && (op == IrOpcode::ImageSampleRaw || op == IrOpcode::ImageGatherRaw);
         const bool cubeFaceLoad = op == IrOpcode::ImageRead && !memory.imageHasMip && memory.imageSampleFlags == 0u;
-        const bool cubeFaceSample = op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags == 0u || memory.imageSampleFlags == RdnaImageSampleFlagLevelZero || memory.imageSampleFlags == RdnaImageSampleFlagLod);
+        const auto addressedFlags = memory.imageSampleFlags & ~RdnaImageSampleFlagAdjust;
+        image.adjustedSample = image.adjustedSample || (op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0u);
+        const bool cubeFaceSample = op == IrOpcode::ImageSampleRaw && (addressedFlags == 0u || addressedFlags == RdnaImageSampleFlagLevelZero || addressedFlags == RdnaImageSampleFlagLod);
         const bool cubeFaceStore = op == IrOpcode::ImageWrite && !memory.imageHasMip;
         image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample || cubeFaceStore) && !memory.imagePacked && memory.imageByElements == 0u;
         image.volumeArraySampleCompatible = image.volumeArraySampleCompatible && cubeFaceSample && !memory.imageR128 && !memory.imagePacked && memory.imageByElements == 0u;
@@ -2211,6 +2213,7 @@ private:
         image.flatLineCompatible = image.flatLineCompatible && flatLineAccess && !memory.imagePacked && memory.imageByElements == 0u;
         image.flatVolumeLineCompatible = image.flatVolumeLineCompatible && (flatLineLoad || flatLineSample) && !memory.imagePacked && memory.imageByElements == 0u;
         image.dimensionQueryOnly = image.dimensionQueryOnly && op == IrOpcode::ImageQueryDimensions;
+        image.sampledOnly = image.sampledOnly && ImageOpcodeInfoOf(op).needsSampler;
         if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
             constexpr auto unsupported = RdnaImageSampleFlagLod | RdnaImageSampleFlagDerivative;
             if (op == IrOpcode::ImageGatherRaw || (memory.imageSampleFlags & unsupported) != 0u) image.emulatedCompare |= EmulatedCompare::Unsupported;

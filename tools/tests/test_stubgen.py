@@ -322,5 +322,116 @@ class ReadOnlyOutputTests(unittest.TestCase):
         self.assertEqual(err.newline, "\n")
 
 
+class CaseVariantOutputTests(unittest.TestCase):
+    def test_case_variant_outputs_are_refused_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            if not stubgen.case_insensitive_directory(root):
+                self.skipTest("the output directory is case-sensitive")
+            nids = root / "nids.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            cases = [["--module", "libSceExample", "--nids", str(nids), "--out", str(root / "REPORT.TXT"),
+                      "--td-out", str(root / "report.txt")]]
+            try:
+                link = root / "code-link.txt"
+                link.symlink_to(root / "REPORT.TXT")
+            except OSError:
+                link = None
+            if link is not None:
+                cases.append(["--module", "libSceExample", "--nids", str(nids), "--out", str(link),
+                              "--td-out", str(root / "report.txt")])
+            for arguments in cases:
+                with self.subTest(arguments=arguments):
+                    with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                        stubgen.main(arguments)
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertFalse((root / "REPORT.TXT").exists())
+                    self.assertFalse((root / "report.txt").exists())
+
+    def test_case_variant_output_with_an_existing_file_stays_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            if not stubgen.case_insensitive_directory(root):
+                self.skipTest("the output directory is case-sensitive")
+            nids = root / "nids.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            debt = root / "report.txt"
+            original = "existing debt\n"
+            debt.write_text(original, encoding="utf-8")
+            arguments = ["--module", "libSceExample", "--nids", str(nids), "--out", str(root / "REPORT.TXT"),
+                         "--td-out", str(debt)]
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                stubgen.main(arguments)
+            self.assertEqual(error.exception.code, 2)
+            self.assertEqual(debt.read_text(encoding="utf-8"), original)
+
+    def test_windows_link_targets_drop_the_extended_length_prefix(self):
+        with patch.object(stubgen.os, "name", "nt"):
+            self.assertEqual(stubgen.link_target("\\\\?\\C:\\out\\REPORT.TXT"), "C:\\out\\REPORT.TXT")
+            self.assertEqual(stubgen.link_target("\\\\?\\UNC\\host\\share\\a.txt"), "\\\\host\\share\\a.txt")
+            self.assertEqual(stubgen.link_target("..\\REPORT.TXT"), "..\\REPORT.TXT")
+        with patch.object(stubgen.os, "name", "posix"):
+            self.assertEqual(stubgen.link_target("\\\\?\\C:\\x"), "\\\\?\\C:\\x")
+
+    def test_case_variant_outputs_stay_distinct_on_case_sensitive_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            missing = root / "MiXeD.CaSe"
+            if missing.resolve().name != missing.name:
+                self.skipTest("Path.resolve() normalizes the case of missing files")
+            upper, lower = root / "REPORT.TXT", root / "report.txt"
+            try:
+                link = root / "code-link.txt"
+                link.symlink_to(upper)
+            except OSError:
+                link = None
+            with patch.object(stubgen, "case_insensitive_directory", return_value=False):
+                self.assertFalse(stubgen.same_file(upper, lower))
+                if link is not None:
+                    self.assertFalse(stubgen.same_file(link, lower))
+            if stubgen.case_insensitive_directory(root):
+                self.skipTest("the output directory is case-insensitive")
+            nids = root / "nids.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            arguments = ["--module", "libSceExample", "--nids", str(nids), "--out", str(upper),
+                         "--td-out", str(lower)]
+            self.assertEqual(stubgen.main(arguments), 0)
+            self.assertIn('APS5_EXPORT("AAAAAAAAAAA",', upper.read_text(encoding="utf-8"))
+            self.assertIn("unknown name, signature", lower.read_text(encoding="utf-8"))
+
+
+class SymlinkLoopTests(unittest.TestCase):
+    def test_looping_paths_are_usage_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, second = root / "first", root / "second"
+            try:
+                first.symlink_to(second)
+                second.symlink_to(first)
+            except OSError as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
+            nids = root / "nids.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            cases = {
+                "out": ["--nids", str(nids), "--out", str(first)],
+                "td-out": ["--nids", str(nids), "--out", str(root / "code.cpp"), "--td-out", str(first)],
+                "nids": ["--nids", str(first), "--out", str(root / "code.cpp")],
+                "parent": ["--nids", str(nids), "--out", str(first / "code.cpp")],
+            }
+            for name, arguments in cases.items():
+                with self.subTest(name), contextlib.redirect_stderr(io.StringIO()) as errors, \
+                        self.assertRaises(SystemExit) as error:
+                    stubgen.main(["--module", "libSceExample", *arguments])
+                self.assertEqual(error.exception.code, 2)
+                if name == "parent":
+                    self.assertTrue(any(repr(str(link))[1:-1] in errors.getvalue() for link in (first, second)), errors.getvalue())
+                else:
+                    self.assertIn(repr(str(first))[1:-1], errors.getvalue())
+                    self.assertIn("Too many levels of symbolic links", errors.getvalue())
+                self.assertTrue(first.is_symlink())
+                self.assertTrue(second.is_symlink())
+            self.assertFalse((root / "code.cpp").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
