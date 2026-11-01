@@ -1,16 +1,18 @@
 # libSceHidControl technical debt
 
-### Implemented from static analysis
+### Incomplete command transport
 
-- [libSceHidControl](../../../core/libs/prx/libSceHidControl/Export.cpp) - all 82 export functions are implemented from Ghidra 12.2.2 static analysis of `libSceHidControl.sprx` in the PS5 3.20 export inventory. Each function follows the decompiled per-function pattern: an `Init` guard (return `0x803b3002` "not ready" when uninitialized) followed by a single command send (the `PfccT7qURYE_C_D` style helper) to a device descriptor, then a post-send state check that aborts on mismatch; the two EQ-band value getters/setters return success pre-init per the decompiled bodies. Command op-codes, argument sizes and the `0x803b3001`/`0x803b3002` result codes are taken from the decompiled bodies. The host has no real device backend yet, so command results are the modeled `0x803b3001`/`0x803b3002`; this is a static-analysis model, not a console measurement.
+The PS5 3.20 decompilation supplies candidate command codes, argument layouts and pre-initialization checks for 68 named exports. The host implementation has no verified HID device backend and does not open a device. `sceHidControlInit` and command transport fail explicitly via `NotImplemented_nid_no_patch`; no command is sent and no output buffer is populated. These exports are **not implemented end-to-end**. The modeled pre-initialization guards return `0x803b3002` for the guarded functions, while the four EQ band value/preset-name paths return `0x803b3001` before initialization, according to the supplied static analysis. These are status values, not proof of device success or an authenticated hardware observation.
+
+The transport, descriptor lifecycle, command failure handling, output buffer layouts, synchronized state changes and ABI signatures still require independent verification before this library can claim working functionality.
 
 ### Unknown function info
 
-- [14 unresolved NIDs](../../../core/libs/prx/libSceHidControl/Export.cpp) - `libSceHidControlUnknown_..._nid_no_patch` (the 14 unresolved NIDs, plus the 5 named candidates) are import-resolution declarations. The 5 named ones are modeled from the decompiled command-send pattern; the 14 unresolved remain explicit NID aliases. The parameterless `int` return is a static-analysis result, not a console-measured ABI.
+- [14 unresolved NIDs](../../../core/libs/prx/libSceHidControl/Export.cpp) - `libSceHidControlUnknown_..._nid_no_patch` (the 14 unresolved NIDs, plus the 5 named candidates) are import-resolution declarations. The 5 named ones retain decompilation-based candidate signatures; the 14 unresolved remain explicit NID aliases and throw when called. The parameterless `int` return is a static-analysis result, not a console-measured ABI.
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceHidControl/Export.cpp) - 19 import-resolution declarations (5 named candidates and 14 unresolved NIDs). All entries are modeled from the decompiled `libSceHidControl.sprx` bodies. Parameterless `int` declarations are a static-analysis result, not a console-measured ABI.
+- [Additional exports](../../../core/libs/prx/libSceHidControl/Export.cpp) - 19 import-resolution declarations (5 named candidates and 14 unresolved NIDs). No working device transport is supplied; unresolved entries fail explicitly. Parameterless `int` declarations are a static-analysis result, not a console-measured ABI.
 
 #### Membership and identity evidence
 
