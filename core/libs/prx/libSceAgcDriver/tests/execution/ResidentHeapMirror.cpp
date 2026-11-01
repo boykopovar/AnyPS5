@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -414,10 +415,25 @@ void JoinedImportTests(AgcDriver::VulkanDevice& device) {
     const auto mirrored = AgcDriver::Graphics::HeapMirrorsWithin(begin, end);
     Require(before.mirrors == 0 && mirrored.mirrors == 2 && mirrored.bytes == 4 * Block, "resident heap mirror: two adjacent heaps hold " + std::to_string(before.mirrors) + " heap mirrors before the first dispatch and " + std::to_string(mirrored.mirrors) + " (" + std::to_string(mirrored.bytes >> 10u) + " KiB) after it, expected 0 and 2 (256 KiB); " + std::to_string(AgcDriver::Graphics::HostImportLiveBytes() >> 10u) + " KiB host imports live");
     const auto live = AgcDriver::Graphics::HostImportLiveBytes();
+    const auto beforeJoin = AgcDriver::Graphics::HostImportSetGeneration();
     Copy(device, begin + JoinedBytes - Threads * sizeof(std::uint32_t) / 2, output);
     Require(output.Data()[Threads / 2 - 1] == 0x41u && output.Data()[Threads / 2] == 0x42u, "resident heap mirror: a view across two adjacent heaps read " + Hex(output.Data()[Threads / 2 - 1]) + " " + Hex(output.Data()[Threads / 2]) + ", expected 0x41 0x42");
     const auto joined = AgcDriver::Graphics::HostImportLiveBytes() - live;
     Require(joined >= 2 * JoinedBytes, "resident heap mirror: a view across two adjacent heaps made no joined host import (" + std::to_string(joined >> 10u) + " KiB imported)");
+    Require(AgcDriver::Graphics::HostImportSetGeneration() != beforeJoin, "resident heap mirror: creating a joined import did not move the import set generation");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+        const auto* imported = AgcDriver::Graphics::HostImportFor(context, begin, 2 * JoinedBytes);
+        Require(imported != nullptr, "resident heap mirror: the joined host import was not reusable");
+        const auto generation = AgcDriver::Graphics::HostImportSetGeneration();
+        const auto identity = AgcDriver::Graphics::HostImportsIdentity(context);
+        for (unsigned hit = 0; hit < 3; ++hit) {
+            Require(AgcDriver::Graphics::HostImportFor(context, begin, 2 * JoinedBytes) == imported, "resident heap mirror: a repeated joined lookup replaced the import");
+            Require(AgcDriver::Graphics::HostImportSetGeneration() == generation, "resident heap mirror: a joined import cache hit moved the generation");
+            Require(AgcDriver::Graphics::HostImportsIdentity(context).inserted == identity.inserted, "resident heap mirror: a joined import cache hit changed insertion bookkeeping");
+        }
+    }
     Dispatch(device, begin, begin + JoinedBytes, output);
     CheckReads(output, "after the joined import", false);
     const auto released = AgcDriver::Graphics::HeapMirrorsWithin(begin, end);
