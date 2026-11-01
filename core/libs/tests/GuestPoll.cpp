@@ -327,6 +327,27 @@ static void PollsAHungUpSocketWithoutPollout() {
 }
 #endif
 
+static void PollsASocketClosedDuringTheWait() {
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const int socket = socket_nid_postfix(2, 2, 0);
+        Require(socket >= 0);
+        int result = 0;
+        short revents = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestPollDescriptor entry{socket, In, 0};
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 200);
+            revents = entry.revents;
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + attempt * 100));
+        Require(close_nid_postfix(socket) == 0);
+        waiter.join();
+        Require(result == 1 && revents == Invalid);
+    }
+}
+
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
@@ -433,4 +454,5 @@ int main() {
     Require(std::chrono::steady_clock::now() - inputStart >= std::chrono::milliseconds(25));
     PollsKqueues(listener);
     Require(close_nid_postfix(listener) == 0);
+    PollsASocketClosedDuringTheWait();
 }
