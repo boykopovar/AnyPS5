@@ -5,6 +5,7 @@
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"
 #include "Utf8.hpp"
 #include "Version.hpp"
+#include "RecoveredInventory.hpp"
 #include "ConverterCallbacks.hpp"
 #include "CString.hpp"
 #include "Space.hpp"
