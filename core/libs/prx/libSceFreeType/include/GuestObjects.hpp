@@ -26,6 +26,13 @@ struct GuestSize {
     FT_Size host = nullptr;
 };
 
+struct RasterTargetSpan {
+    unsigned char* begin = nullptr;
+    std::size_t bytes = 0;
+};
+
+RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target);
+
 struct GuestFace {
     GuestFaceRec rec{};
     GuestGlyphSlotRec slot{};

@@ -149,6 +149,18 @@ struct GuestGlyphSlotRec {
     void* internal;
 };
 
+struct GuestRasterParams {
+    const GuestBitmap* target;
+    const void* source;
+    std::int32_t flags;
+    void* graySpans;
+    void* blackSpans;
+    void* bitTest;
+    void* bitSet;
+    void* user;
+    GuestBBox clipBox;
+};
+
 struct GuestFaceRec {
     std::int64_t num_faces;
     std::int64_t face_index;
@@ -190,6 +202,7 @@ struct GuestPropIncreaseXHeight {
 };
 
 static_assert(sizeof(GuestMatrix) == 32 && offsetof(GuestMatrix, xy) == 8 && offsetof(GuestMatrix, yx) == 16 && offsetof(GuestMatrix, yy) == 24);
+static_assert(sizeof(GuestRasterParams) == 96 && offsetof(GuestRasterParams, flags) == 16 && offsetof(GuestRasterParams, graySpans) == 24 && offsetof(GuestRasterParams, user) == 56 && offsetof(GuestRasterParams, clipBox) == 64);
 static_assert(sizeof(GuestGeneric) == 16 && offsetof(GuestGeneric, finalizer) == 8);
 static_assert(sizeof(GuestBitmapSize) == 32 && offsetof(GuestBitmapSize, size) == 8);
 static_assert(sizeof(GuestCharMapRec) == 16 && offsetof(GuestCharMapRec, platform_id) == 12);
