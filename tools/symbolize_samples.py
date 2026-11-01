@@ -51,11 +51,14 @@ class PeModule:
         self.size = struct.unpack_from("<I", data, optional + 56)[0]
         export_rva, export_size = struct.unpack_from("<II", data, optional + 112)
         self.sections = []
+        self.raw_sections = []
+        self.file_size = len(data)
         for index in range(sections):
             entry = optional + optional_size + index * 40
             virtual_size, rva, raw_size, raw_pointer = struct.unpack_from("<IIII", data, entry + 8)
             characteristics = struct.unpack_from("<I", data, entry + 36)[0]
             self.sections.append((rva, max(virtual_size, raw_size), raw_pointer, characteristics))
+            self.raw_sections.append((rva, raw_size, raw_pointer))
         symbols = self.coff_symbols(data, symbol_table, symbol_count) if symbol_table and symbol_count else []
         self.exported = not symbols
         if self.exported and export_rva:
@@ -69,11 +72,16 @@ class PeModule:
             self.code.append((start, start + size, [address for address, _ in inside], [name for _, name in inside]))
         self.names = [name for _, name in symbols]
 
-    def offset(self, rva):
-        for start, size, raw, _ in self.sections:
-            if start <= rva < start + size:
-                return raw + rva - start
-        raise ValueError(f"RVA {rva:#x} is in no section")
+    def offset(self, rva, length=1):
+        return self.raw_range(rva, length)[0]
+
+    def raw_range(self, rva, length=1):
+        for start, size, raw in self.raw_sections:
+            if start <= rva < start + size and length <= start + size - rva:
+                offset = raw + rva - start
+                if offset + length <= self.file_size:
+                    return offset, min(raw + size, self.file_size)
+        raise ValueError(f"RVA range {rva:#x}+{length:#x} is outside file-backed section data")
 
     def coff_symbols(self, data, table, count):
         strings = table + count * 18
@@ -112,13 +120,13 @@ class PeModule:
         return result
 
     def export_symbols(self, data, rva, size):
-        directory = self.offset(rva)
+        directory = self.offset(rva, 40)
         functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
-        function_table = self.offset(function_rva)
         result = []
         if names:
-            name_table = self.offset(name_rva)
-            ordinal_table = self.offset(ordinal_rva)
+            function_table = self.offset(function_rva, functions * 4)
+            name_table = self.offset(name_rva, names * 4)
+            ordinal_table = self.offset(ordinal_rva, names * 2)
             for index in range(names):
                 ordinal = struct.unpack_from("<H", data, ordinal_table + index * 2)[0]
                 if ordinal >= functions:
@@ -126,8 +134,12 @@ class PeModule:
                 address = struct.unpack_from("<I", data, function_table + ordinal * 4)[0]
                 if rva <= address < rva + size:
                     continue
-                at = self.offset(struct.unpack_from("<I", data, name_table + index * 4)[0])
-                result.append((address, data[at:data.index(b"\0", at)].decode("utf-8", "replace")))
+                name = struct.unpack_from("<I", data, name_table + index * 4)[0]
+                at, limit = self.raw_range(name)
+                end = data.find(b"\0", at, limit)
+                if end < 0:
+                    raise ValueError("PE export name is unterminated in file-backed section data")
+                result.append((address, data[at:end].decode("utf-8", "replace")))
         return result
 
     def name(self, rva):
