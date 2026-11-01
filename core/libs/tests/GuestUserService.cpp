@@ -43,6 +43,7 @@ int main() {
     Require(foreground == USER_SERVICE_INITIAL_USER_ID);
 
     Require(sceUserServiceGetRegisteredUserIdList(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetLoginUserIdList(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     UserServiceRegisteredUserIdList registered{};
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
     Require(registered.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
