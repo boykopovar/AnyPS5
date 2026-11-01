@@ -46,17 +46,7 @@ void Check(int sampleRateHz, std::uint64_t numChannels, int defaultBitrateBps, i
     for (auto byte : guarded.after) Require(byte == 0xA5);
 }
 
-void TestLocalDefensiveChecks() {
-    WebRtcAudioCodecInfo info {};
-    auto construct = [&](int rate, std::uint64_t channels, int bitrate, int minimum, int maximum) {
-        _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(&info, rate, channels, bitrate, minimum, maximum);
-    };
-    RequireInvalidArgument([&] { construct(0, 1, 32000, 0, 64000); });
-    RequireInvalidArgument([&] { construct(-1, 1, 32000, 0, 64000); });
-    RequireInvalidArgument([&] { construct(48000, 0, 32000, 0, 64000); });
-    RequireInvalidArgument([&] { construct(48000, 1, 32000, -1, 64000); });
-    RequireInvalidArgument([&] { construct(48000, 1, 32000, 32001, 64000); });
-    RequireInvalidArgument([&] { construct(48000, 1, 32000, 0, 31999); });
+void TestNullObject() {
     RequireInvalidArgument([] { _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(nullptr, 48000, 1, 32000, 0, 64000); });
 }
 
@@ -69,7 +59,11 @@ int main() {
         Check(96000, 6, 128000, 0, 256000);
         Check(1, std::numeric_limits<std::uint64_t>::max(), 0, 0, 0);
         Check(std::numeric_limits<int>::max(), 1, std::numeric_limits<int>::max(), 0, std::numeric_limits<int>::max());
-        TestLocalDefensiveChecks();
+        Check(48000, 1, 32000, 40000, 64000);
+        Check(48000, 1, 32000, 0, 31999);
+        Check(0, 0, -5, -1, -9);
+        Check(-1, 1, 32000, 0, 64000);
+        TestNullObject();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

@@ -47,8 +47,7 @@
 extern "C" {
 
 void APS5_VABI _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(WebRtcAudioCodecInfo* info, int sampleRateHz, std::uint64_t numChannels, int defaultBitrateBps, int minBitrateBps, int maxBitrateBps) {
-    if (!info || sampleRateHz <= 0 || numChannels == 0 || minBitrateBps < 0 || minBitrateBps > defaultBitrateBps || defaultBitrateBps > maxBitrateBps)
-        throw std::invalid_argument("AudioCodecInfo requires an object and valid sample rate, channels and bitrate bounds");
+    if (!info) throw std::invalid_argument("AudioCodecInfo requires an object");
     info->sampleRateHz = sampleRateHz;
     info->numChannels = numChannels;
     info->defaultBitrateBps = defaultBitrateBps;
