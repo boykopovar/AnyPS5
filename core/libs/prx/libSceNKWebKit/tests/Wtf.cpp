@@ -779,9 +779,9 @@ void Run() {
 
 }  // namespace Wtf2Tests
 
-namespace Wtf2Tests { void TestURLsAndReallocation(); }
+namespace Wtf2Tests { void TestURLsAndReallocation(); void TestFileNameHelpers(); }
 
-void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); }
+void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestFileNameHelpers(); }
 
 namespace Wtf2Tests {
 
@@ -808,6 +808,190 @@ const auto IsHTTP = &_ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE;
 const auto JSRealloc = &_ZN3WTF14jsValueReallocEPvm;
 
 std::string ViewText(StringView view) { return Bytes(ViewUTF8(&view, 1)); }
+
+const auto EncodeName = &_ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE;
+const auto DecodeName = &_ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE;
+const auto LastComponent = &_ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE;
+
+bool NameIs8Bit(const String& value) { return value.impl && (value.impl->hashAndFlags & 4); }
+
+std::u16string NameUnits(const String& value) {
+    Check(value.impl != nullptr);
+    std::u16string units;
+    for (unsigned i = 0; i < value.impl->length; ++i) {
+        units.push_back(NameIs8Bit(value) ? static_cast<const unsigned char*>(value.impl->data)[i] : static_cast<const char16_t*>(value.impl->data)[i]);
+    }
+    return units;
+}
+
+String Wide(const std::u16string& units) { return Create16(units.data(), static_cast<unsigned>(units.size())); }
+
+String NameString(const char* text) { return Create8(U8(text), static_cast<unsigned>(std::strlen(text))); }
+
+void TestFileNameHelpers() {
+    for (unsigned c = 0; c < 128; ++c) {
+        char16_t unit = static_cast<char16_t>(c);
+        auto encoded = EncodeName(&(const String&)Wide(std::u16string(1, unit)));
+        bool escaped = c < 0x20 || c == 0x7F || std::strchr(" \"%*/:<>?\\|", static_cast<int>(c)) != nullptr;
+        if (escaped) {
+            static const char Hex[] = "0123456789ABCDEF";
+            std::u16string expected{u'%', static_cast<char16_t>(Hex[c >> 4]), static_cast<char16_t>(Hex[c & 15])};
+            Check(NameUnits(encoded) == expected);
+        } else {
+            Check(NameUnits(encoded) == std::u16string(1, unit));
+        }
+        Check(NameIs8Bit(encoded));
+    }
+
+    Text(EncodeName(&(const String&)NameString("a b/c%")), "a%20b%2Fc%25");
+    Text(EncodeName(&(const String&)NameString("#+.~ -_")), "#+.~%20-_");
+    Text(EncodeName(&(const String&)NameString("a\\b|c:d*e?f<g>h\"i")), "a%5Cb%7Cc%3Ad%2Ae%3Ff%3Cg%3Eh%22i");
+
+    auto accented = Wide(u"café");
+    Check(!NameIs8Bit(accented));
+    auto accentedEncoded = EncodeName(&accented);
+    Check(NameUnits(accentedEncoded) == u"café" && NameIs8Bit(accentedEncoded));
+    Check(accentedEncoded.impl != accented.impl);
+
+    const unsigned char latin1Source[] = {'c', 'a', 'f', 0xE9, '/'};
+    auto latin1Bytes = Create8(latin1Source, 5);
+    auto latin1Encoded = EncodeName(&latin1Bytes);
+    Check(NameUnits(latin1Encoded) == u"café%2F" && NameIs8Bit(latin1Encoded));
+    auto latin1Decoded = DecodeName(&latin1Encoded);
+    Check(NameUnits(latin1Decoded) == u"café/" && NameIs8Bit(latin1Decoded));
+
+    auto wide = Wide(u"a中 b");
+    auto wideEncoded = EncodeName(&wide);
+    Check(NameUnits(wideEncoded) == u"a中%20b" && !NameIs8Bit(wideEncoded));
+
+    auto paired = Wide(u"\xD83D\xDE00");
+    auto pairedEncoded = EncodeName(&paired);
+    Check(NameUnits(pairedEncoded) == u"\xD83D\xDE00" && !NameIs8Bit(pairedEncoded));
+
+    auto loneLeadEnd = Wide(u"a\xD83D");
+    Check(NameUnits(EncodeName(&loneLeadEnd)) == u"a%+D83D");
+    auto loneLeadMiddle = Wide(u"\xD83D" u"a");
+    Check(NameUnits(EncodeName(&loneLeadMiddle)) == u"%+D83Da");
+    auto loneTrailStart = Wide(u"\xDE00" u"a");
+    Check(NameUnits(EncodeName(&loneTrailStart)) == u"%+DE00a");
+    auto loneTrailMiddle = Wide(u"a\xDE00");
+    Check(NameUnits(EncodeName(&loneTrailMiddle)) == u"a%+DE00");
+    auto doubleLead = Wide(u"\xD83D\xD83D\xDE00");
+    Check(NameUnits(EncodeName(&doubleLead)) == u"%+D83D\xD83D\xDE00");
+    auto doubleTrail = Wide(u"\xD83D\xDE00\xDE00");
+    Check(NameUnits(EncodeName(&doubleTrail)) == u"\xD83D\xDE00%+DE00");
+    auto reversed = Wide(u"\xDE00\xD83D");
+    Check(NameUnits(EncodeName(&reversed)) == u"%+DE00%+D83D");
+
+    auto latinWide = Wide(u"a/é");
+    Check(!NameIs8Bit(latinWide) && !NameIs8Bit(wide) && !NameIs8Bit(paired));
+    auto latinWideEncoded = EncodeName(&latinWide);
+    Check(NameUnits(latinWideEncoded) == u"a%2Fé" && NameIs8Bit(latinWideEncoded));
+    auto highByte = Wide(u"\x00ff\x0100");
+    Check(NameUnits(EncodeName(&highByte)) == u"\x00ff\x0100");
+
+    String null;
+    Check(EncodeName(&null).impl == nullptr);
+    auto empty = NameString("");
+    auto emptyEncoded = EncodeName(&empty);
+    Check(emptyEncoded.impl == empty.impl && empty.impl->length == 0);
+    Throws([&] { EncodeName(nullptr); });
+
+    StringImpl privateEmpty{4, 0, nullptr, 0};
+    String privateHolder(&privateEmpty);
+    Check(EncodeName(&privateHolder).impl == &privateEmpty);
+    Check(DecodeName(&privateHolder).impl == &privateEmpty);
+    Check(LastComponent(&privateHolder).impl == &privateEmpty);
+    Check(privateEmpty.refCount == 4);
+
+    auto plain = NameString("name.txt");
+    auto plainEncoded = EncodeName(&plain);
+    Text(plainEncoded, "name.txt");
+    Check(plainEncoded.impl != plain.impl);
+
+    auto roundTrip = Wide(u"a b/\x01\x7Fé中\xD83D\xDE00\xD83D%\xDE00");
+    auto roundTripEncoded = EncodeName(&roundTrip);
+    Check(NameUnits(DecodeName(&roundTripEncoded)) == NameUnits(roundTrip));
+
+    Text(DecodeName(&(const String&)NameString("a%20b%2fc%2Fd")), "a b/c/d");
+    Text(DecodeName(&(const String&)NameString("%41")), "A");
+    Text(DecodeName(&(const String&)NameString("%+0041")), "A");
+    Text(DecodeName(&(const String&)NameString("plain+text")), "plain+text");
+    Text(DecodeName(&(const String&)NameString("%41%42")), "AB");
+    auto e9 = DecodeName(&(const String&)NameString("%+00e9"));
+    Check(NameUnits(e9) == u"é" && NameIs8Bit(e9));
+    auto latin1 = DecodeName(&(const String&)NameString("%E9"));
+    Check(NameUnits(latin1) == u"é" && NameIs8Bit(latin1));
+    auto cjk = DecodeName(&(const String&)NameString("x%+4E2Dy"));
+    Check(NameUnits(cjk) == u"x中y" && !NameIs8Bit(cjk));
+    auto lone = DecodeName(&(const String&)NameString("%+d83D"));
+    Check(NameUnits(lone) == u"\xD83D");
+    auto nul = DecodeName(&(const String&)NameString("a%00b"));
+    Check(NameUnits(nul) == std::u16string(u"a\0b", 3));
+    auto widePlain = Wide(u"中%41");
+    Check(NameUnits(DecodeName(&widePlain)) == u"中A");
+
+    for (const char* invalid : {"%", "%4", "a%4", "%G1", "%1G", "%+", "%+4", "%+41", "%+004", "%+00G1", "%+G041", "%+0G41", "%+00", "x%", "x%4"}) {
+        auto result = DecodeName(&(const String&)NameString(invalid));
+        Check(result.impl == nullptr);
+    }
+    auto truncatedInSharedParent = [&](const char* parentText, unsigned length) {
+        auto parent = NameString(parentText);
+        auto part = SharedSubstring(&parent, 0, length);
+        Check((part.impl->hashAndFlags & 3) == 2 && part.impl->length == length);
+        Check(DecodeName(&part).impl == nullptr);
+    };
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%41", 18);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+0041", 17);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+0041", 19);
+    truncatedInSharedParent("aaaaaaaaaaaaaaaa%+4141", 20);
+
+    auto invalidWide = Wide(u"中%4");
+    Check(DecodeName(&invalidWide).impl == nullptr);
+    auto nonHexWide = Wide(u"%١٢");
+    Check(DecodeName(&nonHexWide).impl == nullptr);
+
+    Check(DecodeName(&null).impl == nullptr);
+    auto emptyDecoded = DecodeName(&empty);
+    Check(emptyDecoded.impl == empty.impl);
+    Throws([&] { DecodeName(nullptr); });
+    auto unchanged = NameString("abc");
+    Check(DecodeName(&unchanged).impl != unchanged.impl);
+
+    auto sameImpl = [&](const char* path) {
+        auto input = NameString(path);
+        auto result = LastComponent(&input);
+        Check(result.impl == input.impl);
+    };
+    sameImpl("abc");
+    sameImpl("");
+    Check(LastComponent(&null).impl == nullptr);
+
+    Text(LastComponent(&(const String&)NameString("/abc")), "abc");
+    Text(LastComponent(&(const String&)NameString("a/b/c")), "c");
+    Text(LastComponent(&(const String&)NameString("a/b/")), "b");
+    Text(LastComponent(&(const String&)NameString("abc/")), "abc");
+    Text(LastComponent(&(const String&)NameString("a/")), "a");
+    Text(LastComponent(&(const String&)NameString("x/abc/")), "abc");
+    Text(LastComponent(&(const String&)NameString("/a/")), "a");
+    Text(LastComponent(&(const String&)NameString("/")), "");
+    Text(LastComponent(&(const String&)NameString("//")), "");
+    Text(LastComponent(&(const String&)NameString("a//")), "");
+    Text(LastComponent(&(const String&)NameString("///")), "");
+    Text(LastComponent(&(const String&)NameString("a/b//")), "");
+    Text(LastComponent(&(const String&)NameString("dir/file.txt")), "file.txt");
+    sameImpl("a\\b\\c");
+    sameImpl("a\\b\\c\\");
+
+    auto widePath = Wide(u"中/文/");
+    auto wideLast = LastComponent(&widePath);
+    Check(NameUnits(wideLast) == u"文" && !NameIs8Bit(wideLast));
+    auto wideNoSlash = Wide(u"中文");
+    Check(LastComponent(&wideNoSlash).impl == wideNoSlash.impl);
+    auto wideTail = Wide(u"a/文");
+    Check(NameUnits(LastComponent(&wideTail)) == u"文");
+    Throws([&] { LastComponent(nullptr); });
+}
 
 void TestURLsAndReallocation() {
     struct PinnedBits {
