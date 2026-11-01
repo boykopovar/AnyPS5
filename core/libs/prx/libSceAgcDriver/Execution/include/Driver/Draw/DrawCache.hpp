@@ -135,6 +135,8 @@ struct StageCapture {
 struct RelocatableUserWord {
     std::uint32_t reg;
     std::vector<std::pair<std::int64_t, std::uint32_t>> reads;
+    bool value = false;
+    std::uint32_t high = 0;
 };
 
 struct DrawRelocation {
