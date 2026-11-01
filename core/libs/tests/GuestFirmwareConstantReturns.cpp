@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "prx/libSceAvSetting/libSceAvSetting.hpp"
 #include "prx/libSceComposite/libSceComposite.hpp"
 #include "prx/libSceFsInternalForVsh/libSceFsInternalForVsh.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
@@ -12,6 +13,12 @@
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+void CheckAvSetting() {
+    constexpr int AvSettingError = static_cast<int>(0x802A00FF);
+    Require(sceAvSettingSetDisplayBlackLevel() == AvSettingError);
+    Require(sceAvSettingTerm() == AvSettingError);
+}
 
 void CheckComposite() {
     constexpr int Unsupported = static_cast<int>(0x80d40006);
@@ -70,6 +77,7 @@ void CheckDebugSyscore() {
 }
 
 int main() {
+    CheckAvSetting();
     CheckComposite();
     CheckFsInternal();
     CheckHttpCacheAndPlayReady();

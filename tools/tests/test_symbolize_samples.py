@@ -248,9 +248,12 @@ class SymbolizeSamplesTests(unittest.TestCase):
         module = self.libs / "libSceAgcDriver.prx"
         missing = self.root / "missing-libs"
         original = module.read_bytes()
-        with self.assertRaises(FileNotFoundError):
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
             symbolize_samples.main([str(samples), "--libs", str(self.libs),
                                     "--libs", str(missing), "--out", str(module)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn(missing.name, errors.getvalue())
         self.assertEqual(module.read_bytes(), original)
 
     def test_distinct_output_preserves_sample_captures(self):
@@ -285,11 +288,47 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertNotIn("data_obj", module.names)
         self.assertNotIn(".text", module.names)
 
+    def test_coff_long_names_stay_inside_the_declared_string_table(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        original = path.read_bytes()
+        table, count = struct.unpack_from("<II", original, 0x4C)
+        strings = table + count * 18
+        for length, offset in ((4, 4), (8, 4), (3, 4), (0x1000, 4), (32, 0), (32, 32)):
+            with self.subTest(length=length, offset=offset):
+                data = bytearray(original)
+                struct.pack_into("<I", data, strings, length)
+                struct.pack_into("<I", data, table + 3 * 18 + 4, offset)
+                path.write_bytes(data)
+                with self.assertRaisesRegex(ValueError, "COFF string table"):
+                    symbolize_samples.PeModule(path)
+
+    def test_coff_auxiliary_records_cannot_exceed_the_symbol_count(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        data = bytearray(path.read_bytes())
+        table, count = struct.unpack_from("<II", data, 0x4C)
+        data[table + (count - 1) * 18 + 17] = 1
+        path.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "COFF auxiliary"):
+            symbolize_samples.PeModule(path)
+
     def test_export_table_names_a_module_without_symbols(self):
         module = symbolize_samples.PeModule(self.libs / "libwinpthread-1.dll")
         self.assertTrue(module.exported)
         self.assertEqual(module.name(0x1030), "~first_func")
         self.assertEqual(module.name(0x1070), "~second_func")
+
+    def test_export_ordinals_stay_inside_the_declared_address_table(self):
+        path = self.libs / "libwinpthread-1.dll"
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x600 + 20, 1)
+        path.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "export ordinal"):
+            symbolize_samples.PeModule(path)
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.libs], {}, unverified=True, warn=warnings.append)
+        frame = "libwinpthread-1.dll+0x1070"
+        self.assertEqual(symbolizer.frame(frame), frame)
+        self.assertTrue(any("export ordinal" in warning for warning in warnings))
 
     def test_frames_keep_unknown_modules_and_out_of_range_addresses(self):
         symbolizer = symbolize_samples.Symbolizer([self.libs], {}, warn=lambda text: None, unverified=True)
@@ -362,6 +401,29 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn("libSceAgcDriver.prx!short", lines[2])
         self.assertEqual(errors, "")
 
+    def test_multiple_sampled_modules_with_the_same_name_are_not_symbolized(self):
+        samples = self.root / "worker.txt"
+        for second_timestamp in (TIMESTAMP, TIMESTAMP + 1):
+            for unverified in (False, True):
+                with self.subTest(second_timestamp=second_timestamp, unverified=unverified):
+                    samples.write_text(
+                        f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+                        f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {second_timestamp:#x}\n"
+                        "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+                    options = ("--unverified",) if unverified else ()
+                    lines, errors = self.run_main(samples, "--libs", self.libs, *options)
+                    self.assertIn("libSceAgcDriver.prx+0x1011", "\n".join(lines))
+                    self.assertNotIn("libSceAgcDriver.prx!short", "\n".join(lines))
+                    self.assertIn("multiple sampled modules", errors)
+
+    def test_module_record_lookup_is_case_insensitive(self):
+        samples = self.root / "worker.txt"
+        samples.write_text(f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+                           "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs)
+        self.assertIn("libSceAgcDriver.prx!short", "\n".join(lines))
+        self.assertEqual(errors, "")
+
     def test_thread_files_keep_each_heading_and_can_select_one_thread(self):
         samples = self.root / "threads.txt"
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
@@ -423,6 +485,56 @@ class SymbolizeSamplesTests(unittest.TestCase):
         bad.write_text("# header\nlibSceAgcDriver.prx+0x1011 many\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, r"bad\.collapsed\.txt:2:"):
             symbolize_samples.load(bad)
+
+    def test_unusable_inputs_are_usage_errors(self):
+        good = self.root / "good.collapsed.txt"
+        good.write_text("libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
+        bad = self.root / "bad.collapsed.txt"
+        bad.write_text("# header\nlibSceAgcDriver.prx+0x1011 many\n", encoding="utf-8")
+        binary = self.root / "binary.collapsed.txt"
+        binary.write_bytes(b"\xff\xfe\n")
+        cases = {
+            "missing samples": ([self.root / "missing.txt", "--libs", self.libs], "missing.txt"),
+            "undecodable samples": ([binary, "--libs", self.libs], "codec"),
+            "malformed samples": ([bad, "--libs", self.libs], "bad.collapsed.txt:2:"),
+            "malformed since": ([good, "--since", bad, "--libs", self.libs], "bad.collapsed.txt:2:"),
+            "missing libs": ([good, "--libs", self.root / "missing-libs"], "missing-libs"),
+            "unwritable out": ([good, "--libs", self.libs, "--out", self.root / "missing" / "out.txt"], "out.txt"),
+        }
+        for name, (arguments, message) in cases.items():
+            with self.subTest(name):
+                errors = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors), \
+                        self.assertRaises(SystemExit) as raised:
+                    symbolize_samples.main([str(argument) for argument in arguments])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("error:", errors.getvalue())
+                self.assertIn(message, errors.getvalue())
+                self.assertNotIn("Traceback", errors.getvalue())
+
+    def test_symbolic_link_loops_are_usage_errors(self):
+        good = self.root / "good.collapsed.txt"
+        good.write_text("libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
+        loop = self.root / "loop"
+        try:
+            loop.symlink_to(loop.name)
+        except OSError as error:
+            self.skipTest(f"Filesystem link unavailable: {error}")
+        cases = {
+            "out": [good, "--libs", self.libs, "--out", loop],
+            "samples": [loop, "--libs", self.libs, "--out", self.root / "out.txt"],
+            "since": [good, "--since", loop, "--libs", self.libs, "--out", self.root / "out.txt"],
+        }
+        for name, arguments in cases.items():
+            with self.subTest(name):
+                result = subprocess.run([sys.executable, symbolize_samples.__file__] + [str(argument) for argument in arguments],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("error:", result.stderr)
+                self.assertIn("loop", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(loop.is_symlink())
+                self.assertFalse((self.root / "out.txt").exists())
 
     def test_removed_module_warns_once_and_other_modules_still_resolve(self):
         missing = self.libs / "removed.prx"

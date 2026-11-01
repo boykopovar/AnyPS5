@@ -24,7 +24,7 @@ Incluye un [relinker](../../core/relinker) que convierte el ejecutable al format
 
 <sub>* Bibliotecas del sistema: porcentaje de las funciones conocidas por el proyecto hasta ahora (declaradas en [core/libs/prx](../../core/libs/prx)), no de todas las funciones del sistema de PS5. El total crece a medida que se declaran más funciones.</sub>
 
-Los estados no soportados o inesperados lanzan estrictamente `std::runtime_error`. `what()` se imprime en stderr y el proceso termina.
+Los estados no soportados o inesperados lanzan una excepción de C++, normalmente `std::runtime_error`. Una excepción que nada captura imprime su `what()` en stderr y termina el proceso.
 
 El [recompilador de shaders](../../core/shader/recompiler/Recompiler.cpp) produce SPIR-V correctamente (validado mediante [Spirv-Tools](../../3rdparty/SPIRV-Tools) cuando se compila con `ANYPS5_ENABLE_SPIRV_TOOLS`).
 
