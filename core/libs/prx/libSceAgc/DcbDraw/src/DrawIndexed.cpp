@@ -82,25 +82,30 @@ std::uint32_t APS5_VABI sceAgcDcbDrawIndexIndirectMultiGetSize() {
     return 64;
 }
 
-uint32_t* APS5_VABI sceAgcDcbDrawIndexMultiInstanced(CommandBuffer* buf, uint32_t index_count, const volatile void* index_addr, const volatile void* object_ids, uint32_t instance_count, uint64_t modifier) {
-    const auto geometry = reinterpret_cast<std::uintptr_t>(index_addr);
-    Agc::Command::CheckAddress(geometry, 2, __func__);
-    Agc::Command::Require(object_ids == nullptr, __func__, "per-object id base has no executor contract; expanding to one instanced draw");
-    const auto initiator = Agc::Command::DrawInitiator(modifier, true, __func__);
-    auto* packet = Agc::Command::Allocate(buf, 8, __func__);
-    packet[0] = Agc::Command::Header(0x2fu, 2);
-    packet[1] = instance_count;
-    packet[2] = Agc::Command::Header(0x27u, 6);
-    packet[3] = index_count == 0 ? 1u : index_count;
-    packet[4] = static_cast<std::uint32_t>(geometry);
-    packet[5] = static_cast<std::uint32_t>(static_cast<std::uint64_t>(geometry) >> 32u);
-    packet[6] = index_count;
-    packet[7] = initiator;
+uint32_t* APS5_VABI sceAgcDcbDrawIndexMultiInstanced(CommandBuffer* buf, uint32_t index_count, const volatile void* index_addr, const volatile void* object_ids, uint32_t instance_count, uint64_t) {
+    const auto geometry = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(index_addr));
+    const auto objects = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(object_ids));
+    auto* packet = Agc::Command::Allocate(buf, 15, __func__);
+    packet[0] = Agc::Command::Header(0x79u, 3, 4);
+    packet[1] = 0x342u;
+    packet[2] = 0xc6000006u;
+    packet[3] = Agc::Command::Header(0x3au, 9);
+    packet[4] = index_count;
+    packet[5] = static_cast<std::uint32_t>(geometry);
+    packet[6] = static_cast<std::uint32_t>(geometry >> 32u);
+    packet[7] = instance_count == 0 ? 1u : instance_count;
+    packet[8] = static_cast<std::uint32_t>(objects);
+    packet[9] = static_cast<std::uint32_t>(objects >> 32u);
+    packet[10] = instance_count;
+    packet[11] = 0x80u;
+    packet[12] = Agc::Command::Header(0x79u, 3, 4);
+    packet[13] = 0x342u;
+    packet[14] = 0xc6000000u;
     return packet;
 }
 
 uint32_t APS5_VABI sceAgcDcbDrawIndexMultiInstancedGetSize(void) {
-    return 32;
+    return 60;
 }
 
 }
