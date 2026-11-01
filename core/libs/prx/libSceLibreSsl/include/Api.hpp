@@ -250,6 +250,26 @@ struct LibreSslX509StoreContext {
     void* exData;
 };
 
+struct LibreSslAsn1Encoding {
+    unsigned char* enc;
+    std::int64_t len;
+    int modified;
+};
+
+struct LibreSslX509CertInfo {
+    void* version;
+    void* serialNumber;
+    void* signature;
+    void* issuer;
+    void* validity;
+    void* subject;
+    void* key;
+    void* issuerUid;
+    void* subjectUid;
+    void* extensions;
+    LibreSslAsn1Encoding enc;
+};
+
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
@@ -588,10 +608,10 @@ void APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(LibreSslX509VerifyPar
 int APS5_VABI X509_check_issued_nid_postfix(void);
 int APS5_VABI X509_free_nid_postfix(void);
 int APS5_VABI X509_get_ext_d2i_nid_postfix(void);
-int APS5_VABI X509_get_issuer_name_nid_postfix(void);
+void* APS5_VABI X509_get_issuer_name_nid_postfix(const LibreSslX509* certificate);
 int APS5_VABI X509_get_pubkey_nid_postfix(void);
-int APS5_VABI X509_get_serialNumber_nid_postfix(void);
-int APS5_VABI X509_get_subject_name_nid_postfix(void);
+void* APS5_VABI X509_get_serialNumber_nid_postfix(const LibreSslX509* certificate);
+void* APS5_VABI X509_get_subject_name_nid_postfix(const LibreSslX509* certificate);
 int APS5_VABI X509_load_crl_file_nid_postfix(void);
 int APS5_VABI X509_print_ex_nid_postfix(void);
 int APS5_VABI X509_verify_cert_nid_postfix(void);
