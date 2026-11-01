@@ -77,6 +77,9 @@ void MarkAgcRecord(void* output) {
 extern "C" {
 
 void* APS5_VABI sceFontSelectGraphicsAgc(std::uint32_t index) {
+    if (index == 0) {
+        NotImplemented_nid_no_patch(__func__);
+    }
     return nullptr;
 }
 

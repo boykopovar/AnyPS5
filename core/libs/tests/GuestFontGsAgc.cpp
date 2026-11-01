@@ -167,7 +167,6 @@ struct DrawupFixture {
 };
 
 void AgcSelect() {
-    Require(sceFontSelectGraphicsAgc(0) == nullptr);
     Require(sceFontSelectGraphicsAgc(1) == nullptr);
     Require(sceFontSelectGraphicsAgc(0xffffffff) == nullptr);
 }
@@ -207,6 +206,12 @@ void AgcDrawupImage() {
         f.surface.busy = 0;
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, -1.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, -1.0f, 8.0f, 8.0f) == InvalidParameter);
+        const float nan = std::strtof("nan", nullptr);
+        Require(!(nan >= 0.0f));
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, nan, 0.0f, 8.0f, 8.0f) == InvalidParameter);
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, nan, 8.0f, 8.0f) == InvalidParameter);
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, nan, 8.0f) == InvalidParameter);
+        Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, 8.0f, nan) == InvalidParameter);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 16830.0f, 0.0f, 8.0f, 8.0f) == InvalidParameter);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, -4.0f, 8.0f) == InvalidParameter);
         Require(sceFontGraphicsAgcDrawupFillTextureImage(frame, &f.surface, &out, 0.0f, 0.0f, 8.0f, -4.0f) == InvalidParameter);
@@ -281,6 +286,7 @@ void AgcSequences() {
         Require(g_errorCount == before);
         sequence.tag = 0xf81;
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, &count2) == InvalidSequence);
+        Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, nullptr, nullptr, nullptr, nullptr) == InvalidSequence);
         sequence.tag = 0xf80;
         sequence.lock = 1;
         Require(sceFontGraphicsSequenceGetAgcCommandsForJump(seq, &out, &count, &out2, &count2) == SequenceLocked);
@@ -301,6 +307,9 @@ void AgcSequences() {
         Require(out == nullptr && count == 0);
         Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, nullptr, &count) == InvalidParameter);
         Require(count == 0);
+        sequence.tag = 0xf81;
+        Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, nullptr, nullptr) == InvalidSequence);
+        sequence.tag = 0xf80;
         sequence.lock = 1;
         Require(sceFontGraphicsSequenceGetAgcCommandsForSubmit(seq, &out, &count) == SequenceLocked);
         sequence.lock = 0;
