@@ -6,7 +6,7 @@ STT_TLS. The Windows and macOS images resolve TPOFF64 and DTPOFF64 statically ag
 AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express. Every target
 rejects the link-time types GOT32, PLT32, GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's
 ld.so does not apply; the Windows and macOS images also reject other types they cannot apply, such as
-PC32 and 32."""
+PC32 and 32. Every target rejects a non-TLS relocation against an STT_TLS symbol, defined or imported."""
 
 from pathlib import Path
 import struct
@@ -26,10 +26,11 @@ TARGETS = {(): "linux", ("--lazy-binding",): "lazy", ("--windows",): "windows", 
 TLS_MEMSZ, TLS_ALIGN = 0x24, 16
 TLS_BLOCK = 0x30
 DEFAULT_BASE = 0x400000
-STRINGS = b"\0Tls\0Data\0ImportedTls\0"
+STRINGS = b"\0Tls\0Data\0ImportedTls\0Function\0libFunction.prx\0"
 TLS_NAME, DATA_NAME, IMPORT_NAME = 1, 5, 10
+FUNCTION_NAME, LIBRARY_NAME = 22, 31
 
-NULL, TLS_SYMBOL, DATA_SYMBOL, IMPORTED = 0, 1, 2, 3
+NULL, TLS_SYMBOL, DATA_SYMBOL, IMPORTED, FUNCTION = 0, 1, 2, 3, 4
 
 
 def image(relocations, tls=True, symbol_bytes=None, tls_memsz=TLS_MEMSZ):
@@ -47,12 +48,27 @@ def image(relocations, tls=True, symbol_bytes=None, tls_memsz=TLS_MEMSZ):
     struct.pack_into("<IBBHQQ", data, 0x4900 + TLS_SYMBOL * 24, TLS_NAME, 0x16, 0, 1, 0x10, 4)
     struct.pack_into("<IBBHQQ", data, 0x4900 + DATA_SYMBOL * 24, DATA_NAME, 0x11, 0, 1, 0x1100, 8)
     struct.pack_into("<IBBHQQ", data, 0x4900 + IMPORTED * 24, IMPORT_NAME, 0x16, 0, 0, 0, 0)
+    struct.pack_into("<IBBHQQ", data, 0x4900 + FUNCTION * 24, FUNCTION_NAME, 0x12, 0, 0, 0, 0)
     for index, (offset, kind, symbol, addend) in enumerate(relocations):
         struct.pack_into("<QQq", data, 0x4700 + index * 24, offset, symbol << 32 | kind, addend)
     tags = [(5, 0x600), (10, len(STRINGS)), (6, 0x900), (11, 24), (7, 0x700), (8, len(relocations) * 24), (9, 24), (0, 0)]
     if symbol_bytes is not None:
         tags.insert(-1, (0x6100003F, symbol_bytes))
     struct.pack_into("<IIQQQQQQ", data, 120, 2, 6, 0x4800, 0x800, 0x800, len(tags) * 16, len(tags) * 16, 8)
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", data, 0x4800 + index * 16, *tag)
+    return data
+
+
+def needing(data):
+    """The image with DT_NEEDED libFunction.prx first in its dynamic table, which the Windows entry stub
+    requires to bind imports."""
+    tags = [(1, LIBRARY_NAME)]
+    for position in range(0x4800, 0x4900, 16):
+        tags.append(struct.unpack_from("<qQ", data, position))
+        if tags[-1][0] == 0:
+            break
+    struct.pack_into("<QQ", data, 120 + 32, len(tags) * 16, len(tags) * 16)
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", data, 0x4800 + index * 16, *tag)
     return data
@@ -172,6 +188,39 @@ def main():
                     name, result.returncode, result.stdout, result.stderr)
                 assert not output.exists(), name
 
+        non_tls = "FAIL: Non-TLS relocation names an STT_TLS symbol (offset 0x4700)"
+        for kind in (1, 2, 6, 10):
+            for symbol in (TLS_SYMBOL, IMPORTED):
+                for flags, target in TARGETS.items():
+                    name = f"{target}-non-tls-{kind}-{symbol}"
+                    data = image([(0x1000, kind, symbol, 0)], symbol_bytes=96)
+                    result, output = relink(relinker, directory, name, data, *flags)
+                    assert result.returncode == 2 and non_tls in result.stderr, (name, result.returncode, result.stderr)
+                    assert not output.exists(), name
+            data = image([(0x1000, kind, DATA_SYMBOL, 0)], symbol_bytes=96)
+            result, output = relink(relinker, directory, f"non-tls-{kind}-data", data)
+            assert result.returncode == 0 and output.exists(), (kind, result.returncode, result.stderr)
+
+        bound = "Runtime-bound executable TLS template relocation is not supported"
+        for target, kind in ((0x1800, 1), (0x1800, 6), (0x1804, 1), (0x17fc, 6)):
+            data = needing(image([(target, kind, FUNCTION, 0)], symbol_bytes=120))
+            for flags in (("--windows",), ("--windows", "--lazy-binding")):
+                name = f"template-import-{target:x}-{kind}-{len(flags)}"
+                result, output = relink(relinker, directory, name, data, *flags)
+                assert result.returncode == 2 and f"FAIL: {bound} (offset {target:#x})" in result.stderr, (
+                    name, result.returncode, result.stderr)
+                assert not output.exists(), name
+            for flags, label in (((), "linux"), (("--lazy-binding",), "lazy"), (("--macos",), "macos")):
+                name = f"template-import-{target:x}-{kind}-{label}"
+                result, output = relink(relinker, directory, name, data, *flags)
+                assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stderr)
+        for target in (0x1100, 0x17f8, 0x1808):
+            data = needing(image([(target, 1, FUNCTION, 0)], symbol_bytes=120))
+            for flags in (("--windows",), ("--windows", "--lazy-binding")):
+                name = f"outside-template-import-{target:x}-{len(flags)}"
+                result, output = relink(relinker, directory, name, data, *flags)
+                assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stderr)
+
         failures = [
             ("tpoff32", [(0x1000, TPOFF32, NULL, 0)], True, (), "Unsupported relocation type 0x17"),
             ("tpoff32-invalid-sym", [(0x1000, TPOFF32, 0x1234, 0)], True, (), "Unsupported relocation type 0x17"),
@@ -187,7 +236,7 @@ def main():
             ("macos-32", [(0x1000, 10, NULL, 0)], True, ("--macos",), "Relocation type 10 is not supported for this target"),
             ("macos-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--macos",), "DTPMOD64 relocation is not supported"),
             ("macos-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--macos",), "Imported TLS relocation"),
-        ] + [(f"{target}-{name}", [(0x1000, kind, NULL, 0)], True, flags, f"Unsupported relocation type {kind:#x}")
+        ] + [(f"{target}-{name}", [(0x1000, kind, NULL, 0)], True, flags, f"Unsupported relocation type {kind:#x} (offset 0x4700)")
              for kind, name in LINK_TIME.items() for flags, target in TARGETS.items()]
         for name, relocations, has_tls, flags, error in failures:
             result, output = relink(relinker, directory, name, image(relocations, has_tls), *flags)

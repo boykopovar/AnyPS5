@@ -173,6 +173,45 @@ void TestStreams(const Fixture& fixture) {
     Require(held, "cannot hold 600 guest fopen streams");
 }
 
+void TestQueries() {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestEnoent = 2;
+    const char* names[] = {"generated.bin", "missing.bin"};
+    std::array<std::uint32_t, 2> ids{0, 0};
+    std::array<std::uint64_t, 2> sizes{1, 1};
+    std::uint32_t failed = 7;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, ids.data(), sizes.data(), &failed) == 0, "APR did not resolve a prefixed path");
+    Require(failed == 7 && sizes[0] == FileBytes, "APR did not report the prefixed file's size");
+    const auto id = ids[0];
+    ids = {0, 0};
+    sizes = {1, 1};
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing prefixed path");
+    Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing prefixed path");
+    std::uint64_t size = 0;
+    Require(sceKernelAprGetFileSize(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file size");
+    Require(sceKernelAprGetFileSize(id, &size) == 0 && size == FileBytes, "APR reported a wrong file size");
+    FileStat stat{};
+    Require(sceKernelAprGetFileStat(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file stat");
+    Require(sceKernelAprGetFileStat(id, &stat) == 0 && stat.st_size == static_cast<std::int64_t>(FileBytes), "APR reported a wrong file stat size");
+    std::vector<std::uint8_t> data(4096, 0xCC);
+    const Apr::ReadFileCommand command{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, id, 0, reinterpret_cast<std::uint64_t>(data.data()), data.size(), 100};
+    alignas(8) std::array<std::uint8_t, sizeof(command)> memory{};
+    std::memcpy(memory.data(), &command, sizeof(command));
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), memory.data()};
+    std::uint32_t result = 0xFFFFFFFFu;
+    std::uint32_t first = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, nullptr, &first) == -1 && *__error_nid_postfix() == GuestEinval && first == 0, "APR accepted a null result");
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(nullptr, 0, &result, &first) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null command buffer");
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null submission id");
+    Require(result == 0xFFFFFFFFu && first == 0, "a rejected APR submission wrote its result or id");
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, &first) == 0 && result == 0 && first != 0, "APR did not return a result and an id");
+    Require(sceKernelAprWaitCommandBuffer(first) == 0, "APR did not wait for the submission");
+    for (std::size_t index = 0; index < data.size(); ++index) Require(data[index] == FileByte(100 + index), "APR read through the submission with a result returned incorrect bytes");
+    std::uint32_t second = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 1, &result, &second) == 0 && second == first + 1, "APR submission ids did not count up");
+    Require(sceKernelAprWaitCommandBuffer(second) == 0, "APR did not wait for the second submission");
+}
+
 #ifdef _WIN32
 std::uintptr_t faultBegin = 0;
 std::size_t faultBytes = 0;
@@ -263,6 +302,8 @@ int main(int argc, char** argv) {
             TestRead(fixture, storage.Data());
         } else if (mode == "eof") {
             TestEof(fixture);
+        } else if (mode == "queries") {
+            TestQueries();
         } else if (mode == "errors") {
             TestErrors(fixture);
         } else if (mode == "streams") {

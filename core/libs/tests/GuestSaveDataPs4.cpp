@@ -26,16 +26,6 @@ void Check(bool condition, const std::string& what) {
     ++failures;
 }
 
-template <typename TFunction>
-bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 void TestTransferringMountPs4() {
     SceSaveDataTitleId title{};
     std::strcpy(title.data, "CUSA00001");
@@ -77,8 +67,8 @@ void TestDirNameSearchPs4() {
     Check(result.set_num == 0, "DirNameSearchPs4 writes zero set entries");
     Check(static_cast<unsigned char>(names[0].data[0]) == 0x5A, "DirNameSearchPs4 leaves the name buffer untouched");
 
-    Check(ThrowsRuntimeError([&] { sceSaveDataDirNameSearchPs4(nullptr, &result); }), "null cond throws");
-    Check(ThrowsRuntimeError([&] { sceSaveDataDirNameSearchPs4(&cond, nullptr); }), "null result throws");
+    Check(sceSaveDataDirNameSearchPs4(nullptr, &result) == SaveDataErrorParameter, "null cond returns PARAMETER in sceSaveDataDirNameSearchPs4");
+    Check(sceSaveDataDirNameSearchPs4(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearchPs4");
 }
 
 void TestSaveDataMemoryV1() {

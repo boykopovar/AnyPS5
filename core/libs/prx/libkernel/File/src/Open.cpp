@@ -143,6 +143,9 @@ static int MapFlags(int sceFlags) {
 #else
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/stat.h>
+#endif
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     return ::open(p.c_str(), nativeFlags, static_cast<mode_t>(mode));
 }
@@ -248,6 +251,16 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
 #endif
     }
     int fd = NativeOpen(native, MapFlags(flags), mode);
+#ifdef __APPLE__
+    if (fd >= 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == SCE_KERNEL_O_CREAT) {
+        struct stat opened{};
+        if (::fstat(fd, &opened) == 0 && S_ISDIR(opened.st_mode)) {
+            ::close(fd);
+            fd = -1;
+            errno = EISDIR;
+        }
+    }
+#endif
 #ifdef _WIN32
     if (fd < 0 && (errno != ENOENT || !native.has_filename())) {
         const int openError = errno;
@@ -477,6 +490,17 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     std::error_code error;
     if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) {
 #ifdef _WIN32
+        if (native.has_filename()) {
+            WIN32_FIND_DATAW found{};
+            if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
+                FindClose(find);
+                if ((found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
+                    if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
+                    RecordWrittenPath_nid_no_patch(native);
+                    return 0;
+                }
+            }
+        }
         const DWORD attributes = GetFileAttributesW(native.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;

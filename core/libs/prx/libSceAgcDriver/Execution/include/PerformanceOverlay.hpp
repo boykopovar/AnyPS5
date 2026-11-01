@@ -126,8 +126,8 @@ struct OverlayRect {
     std::uint32_t color = 0;
 };
 
-enum class OverlayColor : std::uint32_t { Background = 0, Text = 1, Graph = 2 };
-inline constexpr std::size_t OverlayColorCount = 3;
+enum class OverlayColor : std::uint32_t { Background = 0, Text = 1, Graph = 2, Panel = 3, Key = 4, Accent = 5, Field = 6 };
+inline constexpr std::size_t OverlayColorCount = 7;
 
 struct OverlayMetrics {
     static constexpr std::int32_t GlyphWidth = 5;
@@ -257,6 +257,7 @@ std::optional<std::uint64_t> ReadProcessPrivateBytes();
 std::optional<OverlayMemory> ParseCommitCharge(std::string_view meminfo);
 std::optional<OverlayMemory> ReadCommitCharge();
 std::optional<std::uint64_t> ReadPageFaults();
+std::optional<std::uint64_t> ReadPhysicalMemoryBytes();
 std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content);
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner);
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace);
@@ -281,6 +282,7 @@ public:
     std::uint32_t ShownPage() const { return page; }
     OverlayRect Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout);
     OverlayRect Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner);
+    OverlayRect RecordRects(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayLayout& layout);
     void Release(std::size_t slot) noexcept;
 
 private:
@@ -291,7 +293,7 @@ private:
     };
 
     VkRenderPass renderPass(VkFormat format, VkImageLayout initialLayout, VkImageLayout finalLayout);
-    VkPipeline pipeline(VkFormat format, VkRenderPass compatible);
+    VkPipeline pipeline(VkRenderPass compatible);
     void releaseTransient(Slot& slot) noexcept;
     void release() noexcept;
     struct DetailCounters {
@@ -323,7 +325,7 @@ private:
     VkShaderModule vertex = VK_NULL_HANDLE;
     VkShaderModule fragment = VK_NULL_HANDLE;
     std::map<std::tuple<VkFormat, VkImageLayout, VkImageLayout>, VkRenderPass> renderPasses;
-    std::map<VkFormat, VkPipeline> pipelines;
+    std::map<VkRenderPass, VkPipeline> pipelines;
     std::vector<Slot> slots;
     OverlayStatistics statistics;
     OverlayDetails details;

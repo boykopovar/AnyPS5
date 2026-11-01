@@ -59,7 +59,7 @@ struct OwnedImage {
 
 class Texture {
 public:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, const VkClearColorValue* clear = nullptr);
     Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
     // A view of a storage image's own VkImage: the sampled texture follows the image's content, so a
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
@@ -163,6 +163,7 @@ private:
     VkFormat blockFormat = VK_FORMAT_UNDEFINED;
     bool repackCopy = false;
     std::uint32_t copyWidth = 0, copyHeight = 0, copyLevels = 0, copyLayers = 0, copyElementBytes = 0;
+    std::uint32_t copyTexelsPerElement = 4;
 };
 
 VkFormat AttachmentProxyFormat(const Context& context, VkFormat format);
@@ -185,7 +186,7 @@ public:
     // so successive mip writes of a chain share one image and one write-back.
     VkImageView View(std::uint32_t mip);
     VkImageView FirstLayerView(std::uint32_t mip);
-    VkImageView StorageView(std::uint32_t mip, bool firstLayer);
+    VkImageView StorageView(std::uint32_t mip, bool firstLayer, bool uintStorage = false);
     VkImageView ElementView();
     VkImageView AtomicView(std::uint32_t mip, bool firstLayer);
     VkImageView Atomic64View(std::uint32_t mip, bool firstLayer);
@@ -217,6 +218,7 @@ public:
     // overlapping pending image, as before).
     static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr, bool waited = false);
     static void FlushAllPending(const char* reason);
+    static bool FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
@@ -343,6 +345,7 @@ public:
     static std::shared_ptr<StorageTexture> FindLive(std::uint64_t address, std::uint64_t bytes);
     // Whether the two surfaces differ in nothing but their address (and DCC metadata).
     bool SameSurfaceShape(const StorageTexture& other) const;
+    bool ImageCoversGuestBytes() const;
     // The copy HLE's buffer copy of one whole surface into another (VulkanDevice::CopyBuffer,
     // APS5_NO_COPY_ALIAS=1 disables): the source image's content is copied on the device into this
     // image, which is then dirty like a shader-written one (the guest bytes follow through the
@@ -356,6 +359,7 @@ public:
     const GuestTextureResource& Descriptor() const { return descriptor; }
     std::uint32_t ImageLayers() const { return geometry.imageLayers; }
     std::uint32_t ImageDepth() const { return geometry.imageDepth; }
+    VkFormat ImageFormat() const { return imageFormat; }
     // Content version: advances when the image is re-uploaded or a shader wrote it. Together with
     // Generation (the write generation guest memory was last known to match the content at) it
     // validates textures copied from this image.
@@ -400,6 +404,7 @@ private:
     // The regions of every array layer, or of the tracked layers `layers` selects.
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     void upload(const std::vector<bool>* layers = nullptr);
+    void clearImage(VkCommandBuffer commands, VkClearColorValue value, const VkImageSubresourceRange& range);
     std::vector<bool> cpuUploadLayers(const std::vector<bool>& units) const;
     void captureGuestBytes(const std::vector<bool>* layers);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
@@ -669,6 +674,7 @@ private:
     VkDeviceMemory proxyMemory = VK_NULL_HANDLE;
     VkImageView proxyView = VK_NULL_HANDLE;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
+    VkFormat imageFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     bool drawnListed = false;

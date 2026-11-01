@@ -81,5 +81,7 @@ ParsedParamJson parseParamSfo(const std::filesystem::path& paramSfoPath) {
         const auto param = integers.find("USER_DEFINED_PARAM_" + std::to_string(index + 1));
         if (param != integers.end()) result.userDefinedParams[index] = param->second;
     }
+    const auto attribute = integers.find("ATTRIBUTE");
+    result.paramSfoAttribute = attribute != integers.end() ? static_cast<std::uint32_t>(attribute->second) : 0u;
     return result;
 }
