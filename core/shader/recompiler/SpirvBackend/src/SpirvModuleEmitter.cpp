@@ -2169,6 +2169,8 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
     if (exp.kind == ExportTargetKind::Null || exp.en == 0u) {
         return;
     }
+    const bool preserveInactive = state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt &&
+        std::ranges::none_of(PixelInfo(state).merges, [&](const auto& merge) { return merge.target == exp.index; });
     const auto store = [&]() {
         const auto data = ctx.Arg(inst, 0);
         if (exp.kind == ExportTargetKind::Primitive) {
@@ -2234,7 +2236,13 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
             };
             constexpr std::uint32_t identityMapping = 0xe4u;
             value = state.registrationModules ? EmitValueIfElse(state, EmitCompareU32Constant(state, spv::OpIEqual, EmitAndConstant(state, mapping, 0xffu), identityMapping), vectorType, [&] { return exported; }, mapped) : mapped();
-            if (exp.index == 0u && !uintOutput && AlphaToCoverage(state)) StoreAlphaCoverage(state, value);
+            if (exp.index == 0u && !uintOutput && AlphaToCoverage(state)) {
+                if (preserveInactive) {
+                    EmitIfCondition(state, exec, [&]() { StoreAlphaCoverage(state, value); });
+                } else {
+                    StoreAlphaCoverage(state, value);
+                }
+            }
             const auto mode = MrtOutputMode(state, exp);
             const auto& merges = PixelInfo(state).merges;
             if (const auto merge = std::ranges::find(merges, exp.index, &TargetMerge::target); merge != merges.end()) {
@@ -2264,13 +2272,17 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassOutput, TypeF32Vector(state, 4u)), pointer, variable, ConstantU32(state, 0u));
             state.module.AddFunction(spv::OpStore, pointer, value);
+        } else if (preserveInactive) {
+            const auto previous = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, vectorType, previous, variable);
+            const auto lanes = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeBoolVector(state, 4u), lanes, exec, exec, exec, exec);
+            state.module.AddFunction(spv::OpStore, variable, Select(state, vectorType, lanes, value, previous));
         } else {
             state.module.AddFunction(spv::OpStore, variable, value);
         }
     };
-    const bool killedWhenInactive = state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt && exp.vm &&
-        state.pixelValidMaskVariable != 0u && std::ranges::none_of(PixelInfo(state).merges, [&](const auto& merge) { return merge.target == exp.index; });
-    if (killedWhenInactive) {
+    if (preserveInactive) {
         store();
     } else {
         EmitIfCondition(state, exec, store);
