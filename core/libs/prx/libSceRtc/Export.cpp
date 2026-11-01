@@ -580,8 +580,8 @@ int APS5_VABI sceRtcFormatRFC3339(char* dateTime, const RtcTick* utc, int timeZo
     const auto shift = static_cast<std::int64_t>(timeZoneMinutes) * TICKS_PER_MINUTE;
     if (rangeChecked() && (shift < 0 ? utc->tick < static_cast<std::uint64_t>(-shift) : utc->tick > std::numeric_limits<std::uint64_t>::max() - static_cast<std::uint64_t>(shift))) return SCE_RTC_ERROR_INVALID_VALUE;
     const RtcTick local{utc->tick + static_cast<std::uint64_t>(shift)};
-    if (local.tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_YEAR;
     const RtcDateTime time = fromTick(local.tick);
+    if (time.year < 1 || time.year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
     int written = std::snprintf(dateTime, 23, "%04u-%02u-%02uT%02u:%02u:%02u.%02u", time.year, time.month, time.day, time.hour, time.minute, time.second, time.microsecond / 10000);
     if (timeZoneMinutes == 0) {
         std::snprintf(dateTime + written, 2, "Z");
@@ -612,11 +612,11 @@ int APS5_VABI sceRtcFormatRFC2822(char* dateTime, const RtcTick* utc, int timeZo
     }
     if (timeZoneMinutes < -1439 || timeZoneMinutes > 1439) return SCE_RTC_ERROR_INVALID_VALUE;
     const RtcTick local{utc->tick + static_cast<std::uint64_t>(static_cast<std::int64_t>(timeZoneMinutes) * TICKS_PER_MINUTE)};
-    if (static_cast<std::int64_t>(local.tick) > static_cast<std::int64_t>(MAX_TICK)) return SCE_RTC_ERROR_INVALID_YEAR;
-    if (static_cast<std::int64_t>(utc->tick) < 0 || static_cast<std::int64_t>(local.tick) < 0) return SCE_RTC_ERROR_INVALID_VALUE;
     const RtcDateTime time = fromTick(local.tick);
+    if (static_cast<std::int64_t>(local.tick) >= 0 && (time.year < 1 || time.year > 9999)) return SCE_RTC_ERROR_INVALID_YEAR;
+    if (static_cast<std::int64_t>(utc->tick) < 0 || static_cast<std::int64_t>(local.tick) < 0) return SCE_RTC_ERROR_INVALID_VALUE;
     const int offset = timeZoneMinutes < 0 ? -timeZoneMinutes : timeZoneMinutes;
-    std::snprintf(dateTime, 32, "%s, %02u %s %04u %02u:%02u:%02u %c%02d%02d", WEEKDAY_NAMES[(local.tick / TICKS_PER_DAY + 1) % 7], time.day,
+    std::snprintf(dateTime, 32, "%s, %02u %s %04u %02u:%02u:%02u %c%02d%02d", WEEKDAY_NAMES[(daysFromCivil(time.year, time.month, time.day) + 1) % 7], time.day,
         MONTH_NAMES[time.month - 1], time.year, time.hour, time.minute, time.second, timeZoneMinutes < 0 ? '-' : '+', offset / 60, offset % 60);
     return 0;
 }
@@ -758,11 +758,11 @@ int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, in
         if (utc->tick < shift) return SCE_RTC_ERROR_INVALID_VALUE;
         localTick = utc->tick - shift;
     } else {
-        if (utc->tick > MAX_TICK || MAX_TICK - utc->tick < shift) return SCE_RTC_ERROR_INVALID_YEAR;
+        if (utc->tick > std::numeric_limits<std::uint64_t>::max() - shift) return SCE_RTC_ERROR_INVALID_VALUE;
         localTick = utc->tick + shift;
     }
-    if (localTick > MAX_TICK) return SCE_RTC_ERROR_INVALID_YEAR;
     const RtcDateTime time = fromTick(localTick);
+    if (time.year < 1 || time.year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
     int written = std::snprintf(date_time, 20, "%04u-%02u-%02uT%02u:%02u:%02u", time.year, time.month, time.day, time.hour, time.minute, time.second);
     if (precision != 0) {
         std::uint32_t divisor = 1;
