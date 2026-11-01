@@ -143,6 +143,11 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["relinker"], True)
         self.assertEqual(result["calls"], [["listCommits", "main", "author"]])
 
+    def test_pull_requests_run_one_macos_architecture_and_manual_runs_both(self):
+        macos = lambda result: [host.get("architectures", "native") for host in json.loads(result["outputs"]["relinker-hosts"]) if host["os"].startswith("macos")]
+        self.assertEqual(macos(self.run_gate([{"sha": "a"}], None)), ["native"])
+        self.assertEqual(macos(self.run_gate([{"sha": "a"}], None, manual=True)), ["native", "x86_64"])
+
     def test_author_with_only_merged_pull_requests_runs_the_relinker(self):
         result = self.run_gate([], {"total_count": 12, "incomplete_results": False, "items": []})
         self.assertIs(result["outputs"]["relinker"], True)
