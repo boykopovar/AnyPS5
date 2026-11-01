@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <stdexcept>
+#include <string>
 
 static_assert(sizeof(LibreSslX509VerifyParamId) == 56);
 static_assert(offsetof(LibreSslX509VerifyParamId, hostFlags) == 8);
@@ -90,14 +92,14 @@ void FreeStack(Stack* stack) {
 }
 
 char** Elements(const Stack* stack, const char* function) {
-    if (!stack->data) NotImplemented_nid_no_patch(function);
+    if (!stack->data) throw std::invalid_argument(std::string(function) + ": null element array");
     return stack->data;
 }
 
 bool Push(Stack* stack, void* element, const char* function) {
     if (!stack) return false;
     if (stack->numAlloc <= stack->num + 1) {
-        if (stack->numAlloc <= 0 || stack->num < 0) NotImplemented_nid_no_patch(function);
+        if (stack->numAlloc <= 0 || stack->num < 0) throw std::invalid_argument(std::string(function) + ": invalid stack size");
         auto* grown = static_cast<char**>(realloc_nid_postfix(stack->data, static_cast<std::size_t>(stack->numAlloc) * 2 * sizeof(char*)));
         if (!grown) return false;
         stack->data = grown;
@@ -204,7 +206,7 @@ void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store) {
 }
 
 int APS5_VABI X509_STORE_set_flags_nid_postfix(LibreSslX509Store* store, std::uint64_t flags) {
-    if (!store || !store->param) NotImplemented_nid_no_patch(__func__);
+    if (!store || !store->param) throw std::invalid_argument("X509_STORE_set_flags requires a store and verify parameters");
     store->param->flags |= flags;
     if (flags & PolicyMask) store->param->flags |= PolicyCheck;
     return 1;
@@ -240,7 +242,7 @@ LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Stor
 }
 
 int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* param, const char* name, std::size_t length) {
-    if (!param || !param->id) NotImplemented_nid_no_patch(__func__);
+    if (!param || !param->id) throw std::invalid_argument("X509_VERIFY_PARAM_set1_host requires verify parameters");
     auto* id = param->id;
     if (name && length == 0) length = std::strlen(name);
     if (name && std::memchr(name, '\0', length)) return 0;
