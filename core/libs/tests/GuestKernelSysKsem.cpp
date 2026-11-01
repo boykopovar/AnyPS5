@@ -66,6 +66,8 @@ void Timed() {
     std::intptr_t id = -1;
     Require(ksem_init_nid_postfix(&id, 0) == 0);
     const KernelTimespec invalid{0, 1000000000};
+    const KernelTimespec negative{-1, 0};
+    Require(ksem_timedwait_nid_postfix(id, &negative) == -1 && Error() == Einval);
     Require(ksem_timedwait_nid_postfix(id, &invalid) == -1 && Error() == Einval);
     const auto deadline = FromNow(std::chrono::milliseconds(150));
     const auto start = std::chrono::steady_clock::now();
