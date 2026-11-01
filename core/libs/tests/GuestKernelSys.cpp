@@ -800,6 +800,13 @@ void CheckAmmWaitConcurrentSubmits() {
     Require(sceKernelWaitCommandBufferCompletion(newest.load()) == 0);
 }
 
+void CheckSysconf() {
+    for (const int name : {-1, -2, -100, 0, 53, 54, 55, 69, 70, 71, 92, 98, 99, 100, 116, 117, 123, 124, 125, 126, 127, 128, 129, 130, 150, 200, 201, 1000, 0x7fffffff}) {
+        *__error_nid_postfix() = 0;
+        Require(sysconf_nid_postfix(name) == -1 && Error() == 22);
+    }
+}
+
 void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
     const auto directory = root.generic_string();
     for (const auto& path : {file, directory}) {
@@ -1149,6 +1156,7 @@ int main() {
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);
+    CheckSysconf();
     CheckCondattrClock();
     CheckAmmWriteCommands();
     CheckAmmWaitCompletion();
