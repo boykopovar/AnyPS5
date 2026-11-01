@@ -12,8 +12,79 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static std::string CaptureStderr(void (*body)()) {
+    std::fflush(stderr);
+    std::FILE* file = std::tmpfile();
+    Require(file != nullptr);
+#ifdef _WIN32
+    const int saved = _dup(_fileno(stderr));
+    _dup2(_fileno(file), _fileno(stderr));
+#else
+    const int saved = dup(fileno(stderr));
+    dup2(fileno(file), fileno(stderr));
+#endif
+    body();
+    std::fflush(stderr);
+#ifdef _WIN32
+    _dup2(saved, _fileno(stderr));
+    _close(saved);
+#else
+    dup2(saved, fileno(stderr));
+    close(saved);
+#endif
+    std::rewind(file);
+    std::string text;
+    char buffer[4096];
+    for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+    std::fclose(file);
+    return text;
+}
+
+static void QueryUnlistedTwiceAndListedOnce() {
+    NpEntitlementAccessAddcontEntitlementInfo info{};
+    NpUnifiedEntitlementLabel unlisted{};
+    std::memcpy(unlisted.data, "UNLISTEDADDON", 13);
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &unlisted, &info) == static_cast<int>(0x80558007));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &unlisted, &info) == static_cast<int>(0x80558007));
+    NpUnifiedEntitlementLabel listed{};
+    std::memcpy(listed.data, "SECONDADDON", 11);
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &listed, &info) == 0);
+}
+
+static void QueryUnlisted(const char* text, std::size_t length) {
+    NpEntitlementAccessAddcontEntitlementInfo info{};
+    NpUnifiedEntitlementLabel label{};
+    std::memcpy(label.data, text, length);
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &label, &info) == static_cast<int>(0x80558007));
+}
+
+static void QueryUnprintable() {
+    QueryUnlisted("BAD\nNAME\x1b[1m", 13);
+    QueryUnlisted("SLASH\\ADDON", 11);
+}
+
+static void QueryPastTheLimit() {
+    for (int i = 0; i < 70; ++i) {
+        char text[17]{};
+        std::snprintf(text, sizeof(text), "CAPADDON%02d", i);
+        QueryUnlisted(text, std::strlen(text));
+    }
+    QueryUnlisted("UNLISTEDADDON", 13);
+}
+
+static std::size_t Occurrences(const std::string& text, std::string_view needle) {
+    std::size_t count = 0;
+    for (auto at = text.find(needle); at != std::string::npos; at = text.find(needle, at + needle.size())) ++count;
+    return count;
+}
 
 static void SetEntitlements(const std::filesystem::path& file) {
 #ifdef _WIN32
@@ -105,6 +176,18 @@ int main(int argc, char** argv) {
         Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
         Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
     }
+    const auto log = CaptureStderr(QueryUnlistedTwiceAndListedOnce);
+    Require(Occurrences(log, "[entitlements] the title asked for the add-on UNLISTEDADDON, which ") == 1);
+    Require(log.find(file.filename().string() + " does not list, so it is reported as not installed\n") != std::string::npos);
+    Require(Occurrences(log, "[entitlements]") == 1);
+    const auto escaped = CaptureStderr(QueryUnprintable);
+    Require(escaped.find("the add-on BAD\\x0aNAME\\x1b[1m, which ") != std::string::npos);
+    Require(escaped.find("the add-on SLASH\\x5cADDON, which ") != std::string::npos);
+    Require(Occurrences(escaped, "\n") == 2 && escaped.find('\x1b') == std::string::npos);
+    const auto capped = CaptureStderr(QueryPastTheLimit);
+    Require(Occurrences(capped, "the add-on CAPADDON") == 61);
+    Require(Occurrences(capped, "[entitlements] the title asked for more than 64 add-ons that ") == 1);
+    Require(Occurrences(capped, "[entitlements]") == 62);
     std::filesystem::remove_all(root);
     std::puts("Guest entitlements passed");
     return 0;
