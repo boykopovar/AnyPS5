@@ -1658,4 +1658,5 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    selected_test = os.environ.get("UNWRAP_SELF_TEST")
+    unittest.main(argv=[sys.argv[0], selected_test] if selected_test else None)
