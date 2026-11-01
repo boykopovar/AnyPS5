@@ -23,6 +23,7 @@ void SetLanguage(const char* value) {
 
 int main() {
     Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetLoginUserIdList(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     int32_t userNumber = -1;
     Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserNumber(123, &userNumber) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
