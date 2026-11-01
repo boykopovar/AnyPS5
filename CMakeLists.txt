@@ -190,6 +190,9 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
+        add_test(NAME patch_lib_atrac9 COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_patch_lib_atrac9.py ${CMAKE_COMMAND})
+        set_tests_properties(patch_lib_atrac9 PROPERTIES TIMEOUT 60)
         add_test(NAME build_changed_guest_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_changed_guest_tests.py)
         add_test(NAME shader_cache_native_paths COMMAND ${Python3_EXECUTABLE}
@@ -217,6 +220,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap.py)
         add_test(NAME pr_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_labels.py)
+        add_test(NAME pr_ready COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py ProgressHistoryTests)
         add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
@@ -224,6 +229,10 @@ if(BUILD_TESTING)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
         add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
+        add_test(NAME shader_scan COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_shader_scan.py)
+        add_test(NAME progress_report_inputs COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_report_inputs.py)
         add_test(NAME tools_compdb_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compile_database_inventory.py)
         set_tests_properties(tools_compdb_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME progress_encoding COMMAND ${Python3_EXECUTABLE}
@@ -271,6 +280,8 @@ if(BUILD_TESTING)
         set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
+        add_test(NAME tools_base_ref COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_base_ref.py)
         add_test(NAME tools_configure_diff COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compare_configure_checks.py)
         set_tests_properties(tools_configure_diff PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
@@ -294,6 +305,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
         add_test(NAME sanitizer_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
+        add_test(NAME relinker_fuzz_fixture_warnings COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_fixture_warnings.py)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
         add_test(NAME tools_self_inspect COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_inspect_self.py)
@@ -341,6 +354,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py)
+        add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
