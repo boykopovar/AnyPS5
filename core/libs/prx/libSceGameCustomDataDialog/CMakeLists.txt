@@ -6,6 +6,7 @@ if(BUILD_TESTING)
     add_test_executable(guest_game_custom_data_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestGameCustomDataDialog.cpp)
     target_include_directories(guest_game_custom_data_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_game_custom_data_dialog_tests PRIVATE libSceGameCustomDataDialog)
+    configure_windows_unwind(guest_game_custom_data_dialog_tests)
     add_test(NAME guest_game_custom_data_dialog COMMAND guest_game_custom_data_dialog_tests)
     if(WIN32)
         set_tests_properties(guest_game_custom_data_dialog PROPERTIES ENVIRONMENT_MODIFICATION
