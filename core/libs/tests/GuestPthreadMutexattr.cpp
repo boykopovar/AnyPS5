@@ -55,6 +55,7 @@ static void CheckType() {
         Require(pthread_mutexattr_settype_nid_postfix(&attr, set) == 0);
         Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == set);
     }
+    Require(pthread_mutexattr_settype_nid_postfix(nullptr, 1) == GUEST_EINVAL);
     Require(pthread_mutexattr_settype_nid_postfix(&attr, 5) == GUEST_EINVAL);
     Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == 1);
     Require(Throws([&] { pthread_mutexattr_gettype_nid_postfix(&attr, nullptr); }));
