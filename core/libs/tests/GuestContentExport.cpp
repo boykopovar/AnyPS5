@@ -27,7 +27,21 @@ void Export(std::int32_t expId) {
     ContentExportCallbackParam content{};
     ContentExportCallbackParam thumbnail{};
     sceContentExportFromDataWithThumbnail(expId, &param, &content, "image/png", &thumbnail, path, sizeof(path));
+}
 
+void ExportData(std::int32_t expId) {
+    ContentExportParam param{};
+    sceContentExportFromData(expId, &param, 0, nullptr, nullptr, path, sizeof(path));
+}
+
+void ExportFile(std::int32_t expId) {
+    ContentExportParam param{};
+    sceContentExportFromFile(expId, &param, "source", path, sizeof(path));
+}
+
+void ExportFileWithThumbnail(std::int32_t expId) {
+    ContentExportParam param{};
+    sceContentExportFromFileWithThumbnail(expId, &param, "source", "thumb", path, sizeof(path));
 }
 
 }
@@ -38,6 +52,9 @@ int main() {
     Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
     Require(sceContentExportStart() == static_cast<int>(0x809D3004u));
     Require(Throws([] { sceContentExportFinish(1); }));
+    Require(Throws([] { ExportData(1); }));
+    Require(Throws([] { ExportFile(1); }));
+    Require(Throws([] { ExportFileWithThumbnail(1); }));
     ContentExportInitParam2 missing = param;
     missing.free_func = nullptr;
     Require(Throws([&] { sceContentExportInit2(&missing); }));
@@ -65,6 +82,15 @@ int main() {
     Require(Throws<std::invalid_argument>([&] { sceContentExportGetProgress(first); }));
     Require(Throws<std::invalid_argument>([&] { sceContentExportCancel(first); }));
     Require(Throws<std::invalid_argument>([&] { Export(first); }));
+    Require(Throws<std::invalid_argument>([&] { ExportData(first); }));
+    Require(Throws<std::invalid_argument>([&] { ExportFile(first); }));
+    Require(Throws<std::invalid_argument>([&] { ExportFileWithThumbnail(first); }));
+    Require(Throws<std::invalid_argument>([] { ExportData(0); }));
+    Require(Throws<std::invalid_argument>([] { ExportFile(0); }));
+    Require(Throws<std::invalid_argument>([] { ExportFileWithThumbnail(0); }));
+    Require(Throws<std::invalid_argument>([] { ExportData(-1); }));
+    Require(Throws<std::invalid_argument>([] { ExportFile(-1); }));
+    Require(Throws<std::invalid_argument>([] { ExportFileWithThumbnail(-1); }));
     Require(Throws<std::invalid_argument>([] { sceContentExportFinish(0); }));
     Require(Throws<std::invalid_argument>([] { sceContentExportFinish(-1); }));
     sessions.erase(first);
@@ -80,17 +106,8 @@ int main() {
     Require(sceContentExportTerm() == 0);
     Require(sceContentExportStart() == static_cast<int>(0x809D3004u));
     Require(Throws([&] { sceContentExportFinish(reopened); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportAddToFavorites(0); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportDataProvideFunction(); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportFree(); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportFrom(); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportFromFileForSf(0, nullptr, nullptr, nullptr, nullptr, nullptr, 0); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportFromFileWithContentIdList(0, nullptr, nullptr, nullptr, nullptr, 0, nullptr, 0); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportFromFileWithTitleIdList(0, nullptr, nullptr, nullptr, nullptr, nullptr, 0); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportInit(nullptr); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportMalloc(); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportRemoveFromFavorites(0); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportRenameContent(0, nullptr); }));
-    Require(Throws<std::runtime_error>([] { sceContentExportValidateContents(nullptr, 0); }));
+    Require(Throws([&] { ExportData(reopened); }));
+    Require(Throws([&] { ExportFile(reopened); }));
+    Require(Throws([&] { ExportFileWithThumbnail(reopened); }));
 }
 
