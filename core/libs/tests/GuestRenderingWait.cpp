@@ -67,6 +67,19 @@ int main() {
     try { sceAgcDriverWaitUntilSafeForRendering(&cursor, size - 1, 0, 7, 0); }
     catch (const std::invalid_argument&) { rejected = true; }
     Require(rejected && cursor == words.data() && words[0] == 0);
+    rejected = false;
+    try { sceAgcDriverWaitUntilSafeForRendering(nullptr, size, 0, 7, 0); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected);
+    std::uint32_t* nullCursor = nullptr;
+    rejected = false;
+    try { sceAgcDriverWaitUntilSafeForRendering(&nullCursor, size, 0, 7, 0); }
+    catch (const std::exception&) { rejected = true; }
+    Require(rejected && nullCursor == nullptr);
+    rejected = false;
+    try { sceAgcDriverWaitUntilSafeForRendering(&cursor, size, 0, 7, -1); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected && cursor == words.data());
     Require(sceAgcDriverWaitUntilSafeForRendering(&cursor, size, 0, 7, 0) == 0);
     Require(cursor == words.data() + size);
     Require(words[0] == AgcDriver::RenderingWaitPacketHeader && words[1] == 7 && words[2] == 0 && words[3] == 0);

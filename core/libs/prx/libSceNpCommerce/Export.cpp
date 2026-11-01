@@ -8,6 +8,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 
 namespace {
 
@@ -109,6 +110,7 @@ int APS5_VABI sceNpCommerceDialogOpen(const NpCommerceDialogParam* param) {
  if (!validateParam(*param)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  g_userData = param->userData;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
+ PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
  return 0;
 }
 
@@ -166,6 +168,7 @@ int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param) {
  if (!validateParam2(*param)) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
  g_userData = param->userData;
  g_status = COMMON_DIALOG_STATUS_FINISHED;
+ PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
  return 0;
 }
 

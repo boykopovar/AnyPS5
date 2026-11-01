@@ -5,6 +5,7 @@
 
 namespace {
 
+constexpr int efault = 14;
 constexpr int einval = 22;
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -18,6 +19,7 @@ int main() {
     Require(_sceUlobjmgrRegisterObject(0x1000, 0, &id) == einval);
     Require(id == 0xffffffffu);
     Require(_sceUlobjmgrRegisterObject(0x1000, 1, nullptr) == einval);
+    Require(_sceUlobjmgrRegisterObject(0x1000, 1, reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10))) == efault);
     Require(_sceUlobjmgrRegisterObject(0x1000, -1, &id) == 0);
     Require(id == 0);
 
@@ -32,6 +34,7 @@ int main() {
     Require(_sceUlobjmgrRegisterObject_nid_postfix(0x1000, 0, &nidId) == einval);
     Require(nidId == 0xffffffffu);
     Require(_sceUlobjmgrRegisterObject_nid_postfix(0x1000, 1, nullptr) == einval);
+    Require(_sceUlobjmgrRegisterObject_nid_postfix(0x1000, 1, reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10))) == efault);
     Require(_sceUlobjmgrRegisterObject_nid_postfix(0x1000, -1, &nidId) == 0);
     Require(nidId == 0);
 

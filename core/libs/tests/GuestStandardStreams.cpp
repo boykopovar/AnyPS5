@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <climits>
 #include <cstdlib>
 #include <fcntl.h>
@@ -88,8 +89,41 @@ static bool CheckFileBytes(const std::string& filename, const std::string& expec
     return false;
 }
 
+static void CheckGetcharPutchar() {
+    auto* const savedInput = __stdinp_nid_postfix;
+    auto* const savedOutput = __stdoutp_nid_postfix;
+    FileStream input(TemporaryFile::Open());
+    Require(fputc_nid_postfix('T', &input) == 'T' && fputc_nid_postfix(0xff, &input) == 0xff);
+    rewind_nid_postfix(&input);
+    __stdinp_nid_postfix = &input;
+    Require(getchar_nid_postfix() == 'T' && getchar_nid_postfix() == 0xff);
+    Require(getchar_nid_postfix() == EOF && feof_nid_postfix(&input) != 0 && ferror_nid_postfix(&input) == 0);
+    FileStream output(TemporaryFile::Open());
+    __stdoutp_nid_postfix = &output;
+    const int written[] = {putchar_nid_postfix('U'), putchar_nid_postfix(0x141), putchar_nid_postfix(-1)};
+    __stdinp_nid_postfix = savedInput;
+    __stdoutp_nid_postfix = savedOutput;
+    Require(written[0] == 'U' && written[1] == 0x41 && written[2] == 0xff);
+    rewind_nid_postfix(&output);
+    Require(fgetc_nid_postfix(&output) == 'U' && fgetc_nid_postfix(&output) == 0x41 && fgetc_nid_postfix(&output) == 0xff);
+    Require(fgetc_nid_postfix(&output) == EOF);
+    input.Close();
+    output.Close();
+}
+
+static void CheckGetcPutc() {
+    FileStream stream(TemporaryFile::Open());
+    Require(putc_nid_postfix('A', &stream) == 'A');
+    Require(putc_nid_postfix(0x141, &stream) == 0x41);
+    Require(putc_nid_postfix(-1, &stream) == 0xff);
+    rewind_nid_postfix(&stream);
+    Require(getc_nid_postfix(&stream) == 'A' && getc_nid_postfix(&stream) == 0x41 && getc_nid_postfix(&stream) == 0xff);
+    Require(getc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0 && ferror_nid_postfix(&stream) == 0);
+    stream.Close();
+}
+
 static void CheckUnlockedStreams() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     auto& guest = stream.GuestState();
     const auto originalFlags = guest.flags;
     for (const int value : {0, 0x7f, 0x80, 0xff, 0x1ab, -2}) {
@@ -131,7 +165,7 @@ static void CheckUnlockedStreams() {
 }
 
 static void CheckUnlockedQueries() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(feof_unlocked_nid_postfix(&stream) == 0 && ferror_unlocked_nid_postfix(&stream) == 0);
     Require(std::fgetc(stream.GetHandle()) == EOF);
     Require(feof_unlocked_nid_postfix(&stream) == 1 && ferror_unlocked_nid_postfix(&stream) == 0);
@@ -160,7 +194,7 @@ static void CheckUnlockedQueries() {
 }
 
 static void CheckTryLock() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     const auto tryFromOtherThread = [&] {
         int result = 0;
         std::thread other([&] {
@@ -216,7 +250,7 @@ static void CheckTryLock() {
 }
 
 static void CheckUnlockedStreamLock(bool write, int (APS5_VABI *query)(FileStream*) = nullptr) {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(std::fputc('A', stream.GetHandle()) == 'A');
     std::rewind(stream.GetHandle());
     std::atomic<bool> held = false, release = false, entered = false, done = false;
@@ -260,7 +294,7 @@ static void CheckUnlockedStreamLock(bool write, int (APS5_VABI *query)(FileStrea
 }
 
 static void CheckFgetsSize() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(fwrite_nid_postfix("line\n", 1, 5, &stream) == 5);
     rewind_nid_postfix(&stream);
 
@@ -282,9 +316,21 @@ static void CheckFgetsSize() {
     stream.Close();
 }
 
+static void CheckFgetsSizeOne() {
+    FileStream stream(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("line\n", 1, 5, &stream) == 5);
+    rewind_nid_postfix(&stream);
+    char buffer[8];
+    std::memset(buffer, '!', sizeof(buffer));
+    Require(fgets_nid_postfix(buffer, 1, &stream) == buffer && buffer[0] == '\0' && buffer[1] == '!');
+    Require(ftello_nid_postfix(&stream) == 0 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
+    Require(fgets_nid_postfix(buffer, sizeof(buffer), &stream) == buffer && std::strcmp(buffer, "line\n") == 0);
+    stream.Close();
+}
+
 static void CheckSupplementaryWideCharacters() {
     const char16_t text[] = u"A\U0001F600\n";
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(fputws_nid_postfix(text, &stream) == 4);
     rewind_nid_postfix(&stream);
     char bytes[8]{};
@@ -307,14 +353,14 @@ static void CheckSupplementaryWideCharacters() {
     Require(getwc_nid_postfix(&stream) == u'X' && getwc_nid_postfix(&stream) == 0xde00 && getwc_nid_postfix(&stream) == u'\n');
     stream.Close();
 
-    FileStream units(std::tmpfile());
+    FileStream units(TemporaryFile::Open());
     Require(fputwc_nid_postfix(0xd83d, &units) == 0xd83d && fputwc_nid_postfix(0xde00, &units) == 0xde00);
     rewind_nid_postfix(&units);
     Require(getwc_nid_postfix(&units) == 0xd83d && getwc_nid_postfix(&units) == 0xde00 && getwc_nid_postfix(&units) == -1);
     units.Close();
 
     for (const std::string_view malformed : {"\xC0\x80", "\xE0\x9F\xBF", "\xF0\x8F\xBF\xBF", "\xF4\x90\x80\x80", "\xF8\x88\x80\x80\x80"}) {
-        FileStream input(std::tmpfile());
+        FileStream input(TemporaryFile::Open());
         Require(fwrite_nid_postfix(malformed.data(), 1, malformed.size(), &input) == malformed.size());
         rewind_nid_postfix(&input);
         *__error_nid_postfix() = 0;
@@ -323,8 +369,21 @@ static void CheckSupplementaryWideCharacters() {
     }
 }
 
+static void CheckUngetcEndOfFile() {
+    FileStream stream(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("ab", 1, 2, &stream) == 2);
+    rewind_nid_postfix(&stream);
+    Require(ungetc_nid_postfix(EOF, &stream) == EOF);
+    Require(ftello_nid_postfix(&stream) == 0 && fgetc_nid_postfix(&stream) == 'a');
+    Require(fgetc_nid_postfix(&stream) == 'b' && fgetc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0);
+    Require(ungetc_nid_postfix(EOF, &stream) == EOF && feof_nid_postfix(&stream) != 0);
+    Require(ungetc_nid_postfix('z', &stream) == 'z' && feof_nid_postfix(&stream) == 0);
+    Require(fgetc_nid_postfix(&stream) == 'z' && fgetc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0);
+    stream.Close();
+}
+
 static void CheckRewind() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(fwrite_nid_postfix("ab", 1, 2, &stream) == 2);
     *__error_nid_postfix() = 7;
     rewind_nid_postfix(&stream);
@@ -399,7 +458,7 @@ static bool CheckBinaryModes() {
     for (const auto* mode : modes) {
         for (const bool reopen : {false, true}) {
             { std::ofstream seed(filename, std::ios::binary | std::ios::trunc); seed.write(original.data(), original.size()); Require(seed.good()); }
-            FileStream redirected(std::tmpfile());
+            FileStream redirected(TemporaryFile::Open());
             FileStream* stream = reopen ? freopen_nid_postfix(filename.c_str(), mode, &redirected) : fopen_nid_postfix(filename.c_str(), mode);
             Require(stream != nullptr);
             const bool update = std::strchr(mode, '+') != nullptr;
@@ -430,7 +489,7 @@ static bool CheckBinaryModes() {
         }
     }
     for (const auto* mode : {"", "q", "tr", "rx", "rbx"}) {
-        FileStream redirected(std::tmpfile());
+        FileStream redirected(TemporaryFile::Open());
         Require(fopen_nid_postfix(filename.c_str(), mode) == nullptr && *__error_nid_postfix() == 22);
         Require(freopen_nid_postfix(filename.c_str(), mode, &redirected) == nullptr && *__error_nid_postfix() == 22);
     }
@@ -582,7 +641,7 @@ static void CheckDescriptorAccessModes() {
 }
 
 static void CheckClosedStreamWrites() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(freopen_nid_postfix("missing-closed-stream-dir/out.log", "w", &stream) == nullptr);
     Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
     Require(fprintf_nid_postfix(&stream, "%d", 1) == -1 && *__error_nid_postfix() == 9);
@@ -618,7 +677,7 @@ static std::string FileText(const std::string& filename) {
 
 static void CheckClosedStreamReopen() {
     const auto filename = "anyps5-closed-reopen-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(fclose_nid_postfix(&stream) == 0);
     Require(freopen_nid_postfix("missing-closed-stream-dir/out.log", "w", &stream) == nullptr && *__error_nid_postfix() == 2);
     Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
@@ -720,7 +779,7 @@ static int CheckUpdateStandardOutput() {
 }
 
 static void CheckSetvbufInvalidMode() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     for (const int mode : {3, -1, INT_MAX}) Require(setvbuf_nid_postfix(&stream, nullptr, mode, 0) == EOF);
     char buffer[16];
     std::memset(buffer, 'z', sizeof(buffer));
@@ -775,7 +834,7 @@ int main(int argc, char** argv) {
     }
     Require(fdopen_nid_postfix(0, nullptr) == nullptr && *__error_nid_postfix() == 22);
     Require(fdopen_nid_postfix(0, "invalid") == nullptr && *__error_nid_postfix() == 22);
-    std::FILE* original = std::tmpfile();
+    std::FILE* original = TemporaryFile::Open();
     Require(original != nullptr);
     std::fputs("retained", original);
     std::fflush(original);
@@ -821,7 +880,7 @@ int main(int argc, char** argv) {
     Require(fileno_nid_postfix(__stderrp_nid_postfix) == 2);
     auto* const savedInput = __stdinp_nid_postfix;
     auto* const savedOutput = __stdoutp_nid_postfix;
-    FileStream customIn(std::tmpfile());
+    FileStream customIn(TemporaryFile::Open());
     Require(fputc_nid_postfix('T', &customIn) == 'T');
     std::rewind(customIn.GetHandle());
     __stdinp_nid_postfix = &customIn;
@@ -829,7 +888,7 @@ int main(int argc, char** argv) {
     Require(getchar_unlocked_nid_postfix() == EOF);
     Require(ungetc_nid_postfix('W', &customIn) == 'W');
     Require(getwchar_nid_postfix() == 'W');
-    FileStream customOut(std::tmpfile());
+    FileStream customOut(TemporaryFile::Open());
     __stdoutp_nid_postfix = &customOut;
     Require(putchar_unlocked_nid_postfix('U') == 'U');
     Require(putwchar_nid_postfix(u'V') == u'V');
@@ -838,14 +897,14 @@ int main(int argc, char** argv) {
     Require(fgetc_nid_postfix(&customOut) == 'V');
     __stdinp_nid_postfix = savedInput;
     __stdoutp_nid_postfix = savedOutput;
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     auto& guest = *reinterpret_cast<GuestFilePrefix*>(&stream);
     Require(&guest == &stream.GuestState());
     Require(guest.position == nullptr && guest.readRemaining == 0 && guest.writeRemaining == 0);
     Require(guest.descriptor == fileno_nid_postfix(&stream));
-    FileStream lineBuffered(std::tmpfile());
+    FileStream lineBuffered(TemporaryFile::Open());
     Require(setvbuf_nid_postfix(&lineBuffered, nullptr, 1, 0) == 0);
-    FileStream fullyBuffered(std::tmpfile());
+    FileStream fullyBuffered(TemporaryFile::Open());
     Require(setvbuf_nid_postfix(&fullyBuffered, nullptr, 0, 0) == 0);
     Require(setvbuf_nid_postfix(&stream, nullptr, 2, 0) == 0);
     Require(fputc_nid_postfix('A', &stream) == 'A');
@@ -866,7 +925,7 @@ int main(int argc, char** argv) {
     stream.Close();
     Require(guest.flags == 0 && guest.descriptor == -1);
 
-    FileStream wide(std::tmpfile());
+    FileStream wide(TemporaryFile::Open());
     Require(fputwc_nid_postfix(u'A', &wide) == u'A');
     Require(fputws_nid_postfix(u"B\x00E9", &wide) == 2);
     std::rewind(wide.GetHandle());
@@ -875,7 +934,7 @@ int main(int argc, char** argv) {
     Require(std::memcmp(wideBytes, "AB\xC3\xA9", 4) == 0);
     wide.Close();
 
-    FileStream wideIo(std::tmpfile());
+    FileStream wideIo(TemporaryFile::Open());
     Require(putwc_nid_postfix(u'H', &wideIo) == u'H');
     Require(putwc_nid_postfix(u'i', &wideIo) == u'i');
     Require(putwc_nid_postfix(u'\n', &wideIo) == u'\n');
@@ -911,7 +970,7 @@ int main(int argc, char** argv) {
     Require(fgetc_nid_postfix(&wideIo) == 'H');
     wideIo.Close();
 
-    FileStream roundTrip(std::tmpfile());
+    FileStream roundTrip(TemporaryFile::Open());
     Require(putwc_nid_postfix(u'é', &roundTrip) == u'é');
     Require(putwc_nid_postfix(u'\u20ac', &roundTrip) == u'\u20ac');
     Require(putwc_nid_postfix(u'\n', &roundTrip) == u'\n');
@@ -926,7 +985,7 @@ int main(int argc, char** argv) {
     Require(utfBuf[0] == u'é' && utfBuf[1] == u'\u20ac' && utfBuf[2] == u'\n' && utfBuf[3] == 0);
     roundTrip.Close();
 
-    FileStream midErr(std::tmpfile());
+    FileStream midErr(TemporaryFile::Open());
     Require(fputc_nid_postfix('A', &midErr) == 'A');
     Require(fputc_nid_postfix(0xff, &midErr) == 0xff);
     std::rewind(midErr.GetHandle());
@@ -935,7 +994,7 @@ int main(int argc, char** argv) {
     Require(ferror_nid_postfix(&midErr));
     midErr.Close();
 
-    FileStream formatted(std::tmpfile());
+    FileStream formatted(TemporaryFile::Open());
     const char expected[] = "guest 4294967297 1.25 1 2 3 4 5 6 7 8\n";
     Require(fprintf_nid_postfix(&formatted, "%s %ld %.2f %d %d %d %d %d %d %d %d\n",
         "guest", std::int64_t{4294967297}, 1.25, 1, 2, 3, 4, 5, 6, 7, 8) == sizeof(expected) - 1);
@@ -948,7 +1007,7 @@ int main(int argc, char** argv) {
     Require(std::strcmp(output, "  3.50:end") == 0);
     formatted.Close();
 
-    FileStream scanned(std::tmpfile());
+    FileStream scanned(TemporaryFile::Open());
     Require(fprintf_nid_postfix(&scanned, "%d %s", 42, "answer") == 9);
     std::rewind(scanned.GetHandle());
     Require(fscanf_nid_postfix(&scanned, "%*d") == 0);
@@ -964,7 +1023,7 @@ int main(int argc, char** argv) {
     Require(feof_nid_postfix(&scanned) && (scanned.GuestState().flags & 0x20));
     scanned.Close();
 
-    FileStream scanBinary(std::tmpfile());
+    FileStream scanBinary(TemporaryFile::Open());
     Require(std::fputs("0b101", scanBinary.GetHandle()) >= 0);
     std::rewind(scanBinary.GetHandle());
     int binaryValue = -1;
@@ -973,7 +1032,7 @@ int main(int argc, char** argv) {
     scanBinary.Close();
 
 #ifdef _WIN32
-    FileStream scanSuppressed(std::tmpfile());
+    FileStream scanSuppressed(TemporaryFile::Open());
     Require(std::fputs("12", scanSuppressed.GetHandle()) >= 0);
     std::rewind(scanSuppressed.GetHandle());
     int suppressedTarget = 321;
@@ -982,7 +1041,7 @@ int main(int argc, char** argv) {
     scanSuppressed.Close();
 #endif
 
-    FileStream scanMany(std::tmpfile());
+    FileStream scanMany(TemporaryFile::Open());
     Require(std::fputs("7 1 2 3 4 5 6 7 8 4294967297 -4294967298 4294967299 abc %!", scanMany.GetHandle()) >= 0);
     std::rewind(scanMany.GetHandle());
     int numbers[8]{};
@@ -1004,7 +1063,7 @@ int main(int argc, char** argv) {
     Require(fscanf_nid_postfix(&scanMany, "%d", &unmatched) == EOF && unmatched == 123);
     scanMany.Close();
 
-    FileStream positioned(std::tmpfile());
+    FileStream positioned(TemporaryFile::Open());
     constexpr std::int64_t largeOffset = INT64_C(4294967313);
     Require(fseeko_nid_postfix(&positioned, largeOffset, SEEK_SET) == 0);
     Require(ftello_nid_postfix(&positioned) == largeOffset);
@@ -1023,7 +1082,7 @@ int main(int argc, char** argv) {
     positioned.Close();
 
     const auto filename = "anyps5-reopen-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    FileStream redirected(std::tmpfile());
+    FileStream redirected(TemporaryFile::Open());
     Require(fgetc_nid_postfix(&redirected) == EOF && feof_nid_postfix(&redirected));
     Require(freopen_nid_postfix(filename.c_str(), "w+b", &redirected) == &redirected);
     Require(!feof_nid_postfix(&redirected));
@@ -1037,11 +1096,11 @@ int main(int argc, char** argv) {
     { std::ifstream input(filename, std::ios::binary); std::string contents; std::getline(input, contents);
       Require(contents == "RS"); }
     Require(std::filesystem::remove(filename));
-    FileStream failed(std::tmpfile());
+    FileStream failed(TemporaryFile::Open());
     Require(freopen_nid_postfix(filename.c_str(), "rb", &failed) == nullptr);
     Require(*__error_nid_postfix() == 2);
     Require(failed.GuestState().flags == 0 && failed.GuestState().descriptor == -1);
-    FileStream locked(std::tmpfile());
+    FileStream locked(TemporaryFile::Open());
     flockfile_nid_postfix(&locked);
     flockfile_nid_postfix(&locked);
 
@@ -1063,9 +1122,13 @@ int main(int argc, char** argv) {
     Require(fgetc_nid_postfix(&locked) == 'A' && fgetc_nid_postfix(&locked) == 'B');
     locked.Close();
     CheckRewind();
+    CheckUngetcEndOfFile();
     CheckFgetsSize();
+    CheckFgetsSizeOne();
     CheckSupplementaryWideCharacters();
     CheckUnlockedStreams();
+    CheckGetcPutc();
+    CheckGetcharPutchar();
     CheckUnlockedStreamLock(false);
     CheckUnlockedStreamLock(true);
     CheckUnlockedStreamLock(false, feof_unlocked_nid_postfix);

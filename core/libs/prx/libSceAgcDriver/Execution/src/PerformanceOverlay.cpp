@@ -35,6 +35,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <pdh.h>
 #include <psapi.h>
 #else
 #include <sys/resource.h>
@@ -537,6 +538,7 @@ OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample) {
     joined("UNIMPLEMENTED:", {shown(sample.unimplementedPerSecond, [&](double calls) { return count(calls) + "/S"; }), shown(sample.unimplementedTotal, [&](std::uint64_t calls) { return count(static_cast<double>(calls)) + " TOTAL"; })});
     joined("REFUSED SHADERS:", {shown(sample.refusedShaders, [&](std::uint64_t refused) { return count(static_cast<double>(refused)); })});
     joined("", {sample.title.empty() ? std::nullopt : std::optional<std::string>("TITLE: " + OverlayText(sample.title)), sample.presentMode.empty() ? std::nullopt : std::optional<std::string>("PRESENT: " + OverlayText(sample.presentMode))});
+    joined("FPS LIMIT:", {shown(sample.fpsLimit, [&](double limit) { return limit < 10000.0 ? rate(limit) : count(limit); })});
     return content;
 }
 
@@ -661,6 +663,26 @@ std::optional<OverlayMemory> ParseCommitCharge(std::string_view meminfo) {
 
 std::optional<OverlayMemory> ReadCommitCharge() {
 #ifdef _WIN32
+    struct CommitCounters {
+        PDH_HQUERY query = nullptr;
+        PDH_HCOUNTER committed = nullptr;
+        PDH_HCOUNTER limit = nullptr;
+        bool ready = PdhOpenQueryW(nullptr, 0, &query) == ERROR_SUCCESS
+            && PdhAddEnglishCounterW(query, L"\\Memory\\Committed Bytes", 0, &committed) == ERROR_SUCCESS
+            && PdhAddEnglishCounterW(query, L"\\Memory\\Commit Limit", 0, &limit) == ERROR_SUCCESS;
+    };
+    static CommitCounters counters;
+    static std::mutex mutex;
+    if (counters.ready) {
+        const std::lock_guard lock(mutex);
+        PDH_FMT_COUNTERVALUE committed{};
+        PDH_FMT_COUNTERVALUE limit{};
+        if (PdhCollectQueryData(counters.query) == ERROR_SUCCESS
+            && PdhGetFormattedCounterValue(counters.committed, PDH_FMT_LARGE, nullptr, &committed) == ERROR_SUCCESS
+            && PdhGetFormattedCounterValue(counters.limit, PDH_FMT_LARGE, nullptr, &limit) == ERROR_SUCCESS
+            && committed.largeValue > 0 && limit.largeValue > 0)
+            return OverlayMemory{static_cast<std::uint64_t>(committed.largeValue), static_cast<std::uint64_t>(limit.largeValue)};
+    }
     PERFORMANCE_INFORMATION information{};
     information.cb = sizeof(information);
     if (K32GetPerformanceInfo(&information, sizeof(information)) == 0) return std::nullopt;
@@ -956,6 +978,8 @@ void PerformanceOverlay::sampleDetails(OverlayStatistics::Clock::time_point at, 
         detailSample.hostImportBytes = OverlayMemory{imports.liveBytes, imports.liveBytes + Graphics::HostImportBudgetRemaining(context)};
     }
     detailSample.presentMode = std::string(OverlayPresentModeName(info.presentMode));
+    if (info.fpsLimit > 0.0) detailSample.fpsLimit = info.fpsLimit;
+    else detailSample.fpsLimit.reset();
     sampleTrace(at);
     detail.base = std::move(now);
     detail.repeats = 0;

@@ -27,6 +27,18 @@ struct PreparedImageMetadata {
     RuntimeAbi::ResourceMetadata metadata;
 };
 
+struct BufferSubstitute {
+    std::uint32_t word1 = 0;
+    std::uint32_t word3 = 0;
+    std::uint32_t misalignment = 0;
+    bool known = false;
+
+    bool operator==(const BufferSubstitute&) const = default;
+};
+
+bool BufferDescriptorPresent(const DescriptorValue& descriptor);
+BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index);
+
 struct DescriptorBindingPlan {
     std::vector<PreparedDescriptorBinding> bindings;
     std::vector<PreparedImageMetadata> imageMetadata;
@@ -37,7 +49,7 @@ struct DescriptorBindingPlan {
 
 class DescriptorBindingBuilder {
 public:
-    DescriptorBindingPlan Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings = {}, bool registrationModules = false, bool fragmentDescriptorSet = false) const;
+    DescriptorBindingPlan Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings = {}, bool registrationModules = false, bool fragmentDescriptorSet = false, std::span<const BufferSubstitute> substitutes = {}) const;
     DescriptorBindingPlan Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings) const;
     void Populate(BindingAllocationResult& allocation, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const ResolvedImageTables* tables = nullptr) const;
     void Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, std::span<const std::uint8_t> exportMappings = {}) const;

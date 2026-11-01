@@ -319,6 +319,16 @@ static void CheckStrtonum() {
     Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34);
 }
 
+static void CheckStrnlenSBounds() {
+    const char bounded[] = {'a', 'b', 'c'};
+    Require(strnlen_s_nid_postfix("abc", 0) == 0);
+    Require(strnlen_s_nid_postfix("", 4) == 0);
+    Require(strnlen_s_nid_postfix(bounded, sizeof(bounded)) == 3);
+    Require(strnlen_s_nid_postfix("abc", 2) == 2);
+    Require(strnlen_s_nid_postfix("ab\0cd", 5) == 2);
+    Require(strnlen_s_nid_postfix(nullptr, 0) == 0);
+}
+
 static void CheckCharacterConversionInSearches() {
     const char bytes[] = "a\xe9" "b\xe9" "c";
     Require(strchr_nid_postfix(bytes, 0xe9) == bytes + 1);
@@ -339,6 +349,7 @@ int main() {
     CheckBcopy();
     if (!CheckDirnameLengths()) return 1;
     CheckCharacterConversionInSearches();
+    CheckStrnlenSBounds();
     CheckBoundsCheckedFunctions();
     CheckCaseInsensitiveComparison();
     CheckSscanfS();
@@ -410,6 +421,19 @@ int main() {
     Require(strlcat_nid_postfix(buffer, "xyz", 0) == 3);
     buffer[0] = '\0';
     Require(strlcat_nid_postfix(buffer, "x", 1) == 1 && buffer[0] == '\0');
+    char copied[8] = "zzzzzzz";
+    Require(strlcpy_nid_postfix(copied, "abc", sizeof(copied)) == 3);
+    Require(std::memcmp(copied, "abc\0zzz", sizeof(copied)) == 0);
+    std::memset(copied, 'z', sizeof(copied));
+    Require(strlcpy_nid_postfix(copied, "abcdefghij", 4) == 10);
+    Require(std::memcmp(copied, "abc\0zzzz", sizeof(copied)) == 0);
+    std::memset(copied, 'z', sizeof(copied));
+    Require(strlcpy_nid_postfix(copied, "abcdefg", sizeof(copied)) == 7 && std::strcmp(copied, "abcdefg") == 0);
+    std::memset(copied, 'z', sizeof(copied));
+    Require(strlcpy_nid_postfix(copied, "abc", 0) == 3 && copied[0] == 'z');
+    Require(strlcpy_nid_postfix(copied, "abc", 1) == 3 && copied[0] == '\0' && copied[1] == 'z');
+    std::memset(copied, 'z', sizeof(copied));
+    Require(strlcpy_nid_postfix(copied, "", sizeof(copied)) == 0 && copied[0] == '\0' && copied[1] == 'z');
     char chained[8] = "zzzzzzz";
     char* end = stpcpy_nid_postfix(chained, "ab");
     Require(end == chained + 2 && *end == '\0' && chained[3] == 'z');

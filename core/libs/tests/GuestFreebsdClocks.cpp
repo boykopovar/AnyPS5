@@ -17,7 +17,13 @@ static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_VIRTUAL = 1;
 static constexpr int GUEST_CLOCK_PROF = 2;
 static constexpr int GUEST_CLOCK_MONOTONIC = 4;
+static constexpr int GUEST_CLOCK_UPTIME = 5;
+static constexpr int GUEST_CLOCK_UPTIME_PRECISE = 7;
+static constexpr int GUEST_CLOCK_UPTIME_FAST = 8;
 static constexpr int GUEST_CLOCK_REALTIME_PRECISE = 9;
+static constexpr int GUEST_CLOCK_REALTIME_FAST = 10;
+static constexpr int GUEST_CLOCK_MONOTONIC_PRECISE = 11;
+static constexpr int GUEST_CLOCK_MONOTONIC_FAST = 12;
 static constexpr int GUEST_CLOCK_SECOND = 13;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
 static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
@@ -116,6 +122,13 @@ static void RequireNeverDecreases(int clockId) {
         Require(current >= previous);
         previous = current;
     }
+}
+
+static void WallAndUptimeClocksReportSubsecondResolutions() {
+    const int clocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST, GUEST_CLOCK_MONOTONIC,
+                          GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST, GUEST_CLOCK_UPTIME, GUEST_CLOCK_UPTIME_PRECISE,
+                          GUEST_CLOCK_UPTIME_FAST};
+    for (const int clockId : clocks) ResolutionNanos(clockId);
 }
 
 static void SecondClockReportsWholeSeconds() {
@@ -225,6 +238,15 @@ static void CalendarConversionsInitializeTheirState() {
     }
     Require(sceKernelConvertLocaltimeToUtc(0, 0, nullptr, nullptr, nullptr) == SCE_OK);
     Require(sceKernelConvertUtcToLocaltime(0, nullptr, nullptr, nullptr) == SCE_OK);
+    auto* const badTime = reinterpret_cast<std::int64_t*>(static_cast<std::uintptr_t>(0x10));
+    auto* const badState = reinterpret_cast<KernelTimesec*>(static_cast<std::uintptr_t>(0x10));
+    auto* const badDst = reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10));
+    Require(sceKernelConvertLocaltimeToUtc(0, 0, badTime, nullptr, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertLocaltimeToUtc(0, 0, nullptr, badState, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertLocaltimeToUtc(0, 0, nullptr, nullptr, badDst) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertUtcToLocaltime(0, badTime, nullptr, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertUtcToLocaltime(0, nullptr, badState, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertUtcToLocaltime(0, nullptr, nullptr, badDst) == static_cast<int>(0x8002000eu));
 }
 
 static void RequireSettimeError(int clockId, const KernelTimespec* time, int error) {
@@ -322,6 +344,7 @@ static void CalendarConversionsFollowTheHostZone() {
 }
 
 static void KernelTimezoneIsUtc() {
+    SetTimeZone("UTC0");
     Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
     KernelTimezone zone{-1, -1};
     Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
@@ -337,6 +360,7 @@ int main() {
     CalendarConversionsFollowTheHostZone();
     TimezoneReportsTheStandardOffsetAndDaylightAmount();
     SecondClockReportsWholeSeconds();
+    WallAndUptimeClocksReportSubsecondResolutions();
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
