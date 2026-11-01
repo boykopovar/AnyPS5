@@ -218,6 +218,8 @@ foreach(LIB_DIR ${LIBS_DIRS})
     endif()
 endforeach()
 
+target_sources(libcairo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libcairo/FontOptions.cpp)
+
 if(WIN32)
     file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/release-implibs.txt CONTENT "${RELEASE_IMPLIBS}")
 endif()
@@ -1285,3 +1287,9 @@ endif()
 
 include(prx/libSceFreeType/CurveBounds.cmake)
 include(prx/libSceBeisobmf/Tests.cmake)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_cairo_font_options_tests tests/GuestCairoFontOptions.cpp prx/libcairo/FontOptions.cpp)
+    target_include_directories(guest_cairo_font_options_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME guest_cairo_font_options COMMAND guest_cairo_font_options_tests)
+endif()
