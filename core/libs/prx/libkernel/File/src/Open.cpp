@@ -458,7 +458,7 @@ static int StatNative(const std::filesystem::path& native, bool directory, FileS
 
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     std::string copy;
-    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
     path = copy.c_str();
     if (copy.empty()) return SceErrorFromErrno(2);
     std::filesystem::path native;
@@ -479,7 +479,7 @@ int StatInDirectory_nid_no_patch(int directory, const char* path, FileStat* sb, 
 
 int APS5_VABI sceKernelUnlink(const char* path) {
     std::string copy;
-    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceErrorFromErrno(error);
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return SceKernelError(error);
     path = copy.c_str();
     if (copy.empty()) return SceErrorFromErrno(2);
     if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
