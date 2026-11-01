@@ -123,8 +123,10 @@ def main():
                 other = tag if sce else SCE_TAGS[tag]
                 invalid += ((f"ambiguous-{tag}", ((7, 0x700), (8, 0), (9, 24)),
                              ((other, value),), "Both DT_OS_ and DT_ variants"),)
-            for tag in (17, 18, 19, 35, 36, 37):
+            for tag in (17, 18, 19):
                 invalid += ((f"unsupported-{tag}", (), ((tag, 24),), "relocations are not supported"),)
+            for tag in (35, 36, 37):
+                invalid += ((f"incomplete-relr-{tag}", (), ((tag, 24),), "Incomplete DT_RELR metadata"),)
             for name, tags, extra, error in invalid:
                 source = work / f"{sce}-{name}.elf"
                 source.write_bytes(fixture(sce, tags, extra_tags=extra))

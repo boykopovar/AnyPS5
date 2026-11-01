@@ -27,8 +27,7 @@ void ValidationPolicy::ValidateRelocationTypeSupported(const std::uint32_t reloc
     }
     if (_supportedRelocationTypes.find(relocationTypeValue) == _supportedRelocationTypes.end()) {
         std::ostringstream msg;
-        msg << "Unsupported relocation type 0x" << std::hex << relocationTypeValue
-            << " at offset 0x" << fileByteOffset;
+        msg << "Unsupported relocation type 0x" << std::hex << relocationTypeValue;
         throw RelinkerException(msg.str(), fileByteOffset);
     }
 }

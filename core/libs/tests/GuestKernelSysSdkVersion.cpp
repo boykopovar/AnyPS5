@@ -34,6 +34,7 @@ int main() {
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "process parameters were not installed");
 
     Require(sceKernelGetCompiledSdkVersion(nullptr) == static_cast<int>(0x80020016), "null output is not EINVAL");
+    Require(sceKernelGetCompiledSdkVersion(reinterpret_cast<std::int32_t*>(0x10)) == static_cast<int>(0x8002000e), "unwritable output is not EFAULT");
     std::array<std::int32_t, 2> output{-1, 0x5a5a5a5a};
     Require(sceKernelGetCompiledSdkVersion(output.data()) == 0, "query failed");
     Require(output[0] == 0x07008001, "version is not the 32-bit field at offset 0x10 of the process parameters");
