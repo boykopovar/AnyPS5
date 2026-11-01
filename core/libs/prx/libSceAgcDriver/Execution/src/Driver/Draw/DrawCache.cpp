@@ -26,6 +26,48 @@ bool Driver::drawEntries() {
     return entries;
 }
 
+std::uint32_t Driver::drawCacheBypassPercent() {
+    static const std::uint32_t percent = [] {
+        const char* text = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
+        return text != nullptr ? static_cast<std::uint32_t>(std::min<unsigned long long>(std::strtoull(text, nullptr, 10), 100)) : 5u;
+    }();
+    return percent;
+}
+
+DrawCacheBypass::DrawCacheBypass(std::uint32_t percent) : percent(std::min(percent, 100u)), minimumHits((Window * std::min(percent, 100u) + 99u) / 100u) {}
+
+bool DrawCacheBypass::Skip() {
+    auto current = state.load(std::memory_order_relaxed);
+    while ((current >> LeftShift) != 0) {
+        if (state.compare_exchange_weak(current, current - (std::uint64_t{1} << LeftShift), std::memory_order_relaxed)) {
+            bypassed.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::uint64_t DrawCacheBypass::TakeBypassed() {
+    return bypassed.exchange(0, std::memory_order_relaxed);
+}
+
+void DrawCacheBypass::Note(bool useful) {
+    if (minimumHits == 0) return;
+    auto current = state.load(std::memory_order_relaxed);
+    std::uint64_t next = 0;
+    do {
+        const auto lookups = (current & CountMask) + 1u;
+        const auto usefulLookups = ((current >> CountBits) & CountMask) + (useful ? 1u : 0u);
+        if (lookups < Window) {
+            next = (current & ~((CountMask << CountBits) | CountMask)) | (usefulLookups << CountBits) | lookups;
+            continue;
+        }
+        const auto low = usefulLookups >= minimumHits ? 0u : std::min<std::uint64_t>(((current >> LowShift) & LowMask) + 1u, LowWindowsToBypass + 3u);
+        const auto remaining = low >= LowWindowsToBypass ? std::uint64_t{std::min(BypassDraws, FirstBypassDraws << (low - LowWindowsToBypass))} : current >> LeftShift;
+        next = (remaining << LeftShift) | (low << LowShift);
+    } while (!state.compare_exchange_weak(current, next, std::memory_order_relaxed));
+}
+
 bool Driver::drawDataHits() {
     static const bool hits = std::getenv("APS5_NO_DRAW_DATA_HITS") == nullptr;
     return hits;
@@ -98,18 +140,33 @@ DrawKeySightings::DrawKeySightings(std::size_t keyCount) {
     bucketMask = buckets - 1;
 }
 
-bool DrawKeySightings::SeenBefore(std::uint64_t key) {
+std::size_t DrawKeySightings::bucketOf(std::uint64_t key) const {
     auto mixed = key;
     mixed = (mixed ^ (mixed >> 30u)) * 0xbf58476d1ce4e5b9ull;
     mixed = (mixed ^ (mixed >> 27u)) * 0x94d049bb133111ebull;
     mixed ^= mixed >> 31u;
-    const auto bucket = static_cast<std::size_t>(mixed) & bucketMask;
+    return static_cast<std::size_t>(mixed) & bucketMask;
+}
+
+bool DrawKeySightings::SeenBefore(std::uint64_t key) {
+    const auto bucket = bucketOf(key);
     auto* ways = keys.data() + bucket * Ways;
     if (std::find(ways, ways + filled[bucket], key) != ways + filled[bucket]) return true;
     ways[next[bucket]] = key;
     next[bucket] = static_cast<std::uint8_t>((next[bucket] + 1u) % Ways);
     if (filled[bucket] < Ways) ++filled[bucket];
     return false;
+}
+
+bool DrawKeySightings::Holds(std::uint64_t key) const {
+    const auto bucket = bucketOf(key);
+    const auto* ways = keys.data() + bucket * Ways;
+    return std::find(ways, ways + filled[bucket], key) != ways + filled[bucket];
+}
+
+bool Driver::drawKeySeen(std::uint64_t key) {
+    std::lock_guard cacheLock(drawCacheMutex);
+    return drawKeySightings && drawKeySightings->Holds(key);
 }
 
 bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
