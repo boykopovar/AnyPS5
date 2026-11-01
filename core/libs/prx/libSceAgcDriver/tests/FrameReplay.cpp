@@ -203,7 +203,10 @@ void testCaptureAndReplay(const std::filesystem::path& tool, bool pipelines) {
         const auto json = readFile(output);
         return std::string(reinterpret_cast<const char*>(json.data()), json.size());
     };
-    replay("", capture / "replay output.json");
+    const auto plain = replay("", capture / "replay output.json");
+    for (const auto* field : {"\"passes\"", "\"kept_reservations\"", "\"journal_s\""}) {
+        check(plain.find(field) == std::string::npos, std::string("the replay without --diagnostics printed ") + field + ": " + plain);
+    }
     if (pipelines) {
         check(std::getenv("APS5_HEADLESS_PIPELINE_CACHE") != nullptr, "the pipeline cache switch was not inherited");
         const auto warm = capture / "warm output.json";
@@ -216,10 +219,12 @@ void testCaptureAndReplay(const std::filesystem::path& tool, bool pipelines) {
         check(std::string(reinterpret_cast<const char*>(coldLog.data()), coldLog.size()).find("[pipeline-cache] loaded ") == std::string::npos, "--cold-pipelines loaded a cache with APS5_HEADLESS_PIPELINE_CACHE inherited");
         return;
     }
-    const auto repeated = replay("--repeat 3", capture / "repeat output.json");
+    const auto repeated = replay("--repeat 3 --diagnostics", capture / "repeat output.json");
     std::size_t passes = 0;
     for (auto found = repeated.find("\"frames\":2,\"p50\""); found != std::string::npos; found = repeated.find("\"frames\":2,\"p50\"", found + 1)) ++passes;
     check(passes == 3, "the repeated replay did not replay both frames in each of three passes: " + repeated);
+    check(repeated.find("{\"frames\":4,") != std::string::npos,"the repeated replay did not take its frame count from passes 2 and 3: " + repeated);
+    check(repeated.find("\"kept_reservations\":") != std::string::npos && repeated.find("\"journal_s\":") != std::string::npos, "--diagnostics did not add kept_reservations and journal_s: " + repeated);
 }
 
 void testConcurrentCopies(const std::filesystem::path& tool) {

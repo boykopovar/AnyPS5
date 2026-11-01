@@ -21,7 +21,6 @@ namespace {
 using namespace ShaderRegs;
 
 constexpr int GRAPHICS5_ERROR_INVALID_SHADER_HALVES = static_cast<int>(0x8a6c0008u);
-constexpr std::uint32_t SPI_SHADER_PGM_CHKSUM_GS = 0x080u;
 constexpr std::uint32_t SPI_SHADER_PGM_RSRC1_GS = 0x08Au;
 constexpr std::uint32_t SPI_SHADER_PGM_RSRC2_GS = 0x08Bu;
 constexpr std::uint32_t SPI_SHADER_PGM_CHKSUM_HS = 0x100u;
@@ -161,16 +160,7 @@ GeometryLayout ComputeGeometryLayout(const char* function, const Shader* front, 
         if (reg.offset == SPI_SHADER_PGM_RSRC1_GS) reg.value = resources[0];
         else if (reg.offset == SPI_SHADER_PGM_RSRC2_GS) reg.value = resources[1];
     }
-    for (std::uint32_t i = 0; i < front->num_sh_registers; ++i) {
-        const auto& reg = front->sh_registers[i];
-        if (reg.offset == SPI_SHADER_PGM_CHKSUM_GS || FindHalfRegister(back, reg.offset) != nullptr) continue;
-        layout.sh.push_back(reg);
-    }
     layout.cx.assign(back->cx_registers, back->cx_registers + back->num_cx_registers);
-    for (std::uint32_t i = 0; i < front->num_cx_registers; ++i) {
-        const auto& reg = front->cx_registers[i];
-        if (std::none_of(layout.cx.begin(), layout.cx.end(), [&](const ShaderRegister& other) { return other.offset == reg.offset; })) layout.cx.push_back(reg);
-    }
     if (layout.sh.size() > 0xff || layout.cx.size() > 0xff) Fail(function, "fused register count exceeds the shader header");
     layout.headerOffset = AlignUp(layout.codeBytes, alignof(Shader));
     layout.shOffset = AlignUp(layout.headerOffset + sizeof(Shader), alignof(ShaderRegister));
@@ -358,12 +348,7 @@ int APS5_VABI sceAgcFuseShaderHalves_nid_postfix(Shader* fused_result, const Sha
 int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Shader* front, const Shader* back) {
     if (dst == nullptr || front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
     if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
-    if (GeometryHalves(front)) {
-        const auto layout = ComputeGeometryLayout("sceAgcGetFusedShaderSize_0080", front, back);
-        dst->m_size = layout.sh.size() * sizeof(ShaderRegister);
-        dst->m_align = 4;
-        return 0;
-    }
+    if (GeometryHalves(front)) ComputeGeometryLayout("sceAgcGetFusedShaderSize_0080", front, back);
     dst->m_size = std::uint64_t{back->num_sh_registers} * sizeof(ShaderRegister);
     dst->m_align = 4;
     return 0;

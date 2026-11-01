@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_WRITEWATCHCOVERAGE_HPP
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -42,14 +43,18 @@ public:
         std::size_t first = 0;
         std::size_t last = 0;
         if (!excludedBlocks(address, bytes, first, last)) return false;
+        const auto offset = std::max(address, base) - base;
+        const auto firstPage = offset / PageBytes;
+        const auto endPage = (std::min<std::uint64_t>(address + bytes - base, size) + PageBytes - 1) / PageBytes;
         bool changed = false;
         for (auto block = first; block <= last; ++block) {
-            const auto pages = (std::min<std::uint64_t>(BlockBytes, size - block * BlockBytes) + PageBytes - 1) / PageBytes;
-            const auto mask = pageMask(0, pages);
-            changed = changed || excluded[block] != mask;
-            auto& stamp = excludedGenerations[block];
-            stamp = std::max(stamp, std::max<std::uint64_t>(generation, 1));
-            excluded[block] = mask;
+            const auto from = block == first ? firstPage % PagesPerBlock : 0;
+            const auto to = block == last ? (endPage - 1) % PagesPerBlock + 1 : PagesPerBlock;
+            const auto mask = pageMask(from, to);
+            changed = changed || (excluded[block] & mask) != mask;
+            auto& stamps = excludedGenerations[block];
+            for (auto page = from; page < to; ++page) stamps[page] = std::max(stamps[page], std::max<std::uint64_t>(generation, 1));
+            excluded[block] |= mask;
         }
         return changed;
     }
@@ -72,12 +77,17 @@ public:
         const auto last = (endPage - 1) / PagesPerBlock;
         bool changed = false;
         for (auto block = first; block <= last; ++block) {
-            const auto mask = pageMask(block == first ? firstPage % PagesPerBlock : 0, block == last ? (endPage - 1) % PagesPerBlock + 1 : PagesPerBlock);
-            if ((excluded[block] & mask) != 0 && excludedGenerations.at(block) < generation) {
+            const auto from = block == first ? firstPage % PagesPerBlock : 0;
+            const auto to = block == last ? (endPage - 1) % PagesPerBlock + 1 : PagesPerBlock;
+            if ((excluded[block] & pageMask(from, to)) == 0) continue;
+            const auto& stamps = excludedGenerations.at(block);
+            for (auto page = from; page < to; ++page) {
+                const auto bit = static_cast<std::uint16_t>(1u << page);
+                if ((excluded[block] & bit) == 0 || stamps[page] >= generation) continue;
+                excluded[block] &= static_cast<std::uint16_t>(~bit);
                 changed = true;
-                excluded[block] &= static_cast<std::uint16_t>(~mask);
-                if (excluded[block] == 0) excludedGenerations.erase(block);
             }
+            if (excluded[block] == 0) excludedGenerations.erase(block);
         }
         return changed;
     }
@@ -106,7 +116,7 @@ private:
     std::uint64_t base = 0;
     std::size_t size = 0;
     std::vector<std::uint16_t> excluded;
-    std::unordered_map<std::uint64_t, std::uint64_t> excludedGenerations;
+    std::unordered_map<std::uint64_t, std::array<std::uint64_t, PagesPerBlock>> excludedGenerations;
 };
 
 }
