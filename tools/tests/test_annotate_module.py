@@ -130,6 +130,23 @@ class ImportRelocationTests(unittest.TestCase):
         with self.assertRaisesRegex(annotate_module.ModuleError, "program header size"):
             annotate_module.Module(image)
 
+    def test_missing_program_headers_report_the_missing_dynamic_header(self):
+        for offset in (0, 63, 64):
+            with self.subTest(offset=offset):
+                image = bytearray(build_module())
+                struct.pack_into("<Q", image, 32, offset)
+                struct.pack_into("<H", image, 56, 0)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "^no PT_DYNAMIC program header$"):
+                    annotate_module.Module(image)
+
+    def test_nonempty_program_header_tables_must_fit_outside_the_elf_header(self):
+        for offset in (0, 63, len(build_module()) - 55, 1 << 63):
+            with self.subTest(offset=offset):
+                image = bytearray(build_module())
+                struct.pack_into("<Q", image, 32, offset)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "program header table is outside"):
+                    annotate_module.Module(image)
+
     def test_tables_cannot_read_file_padding_past_the_load_segment(self):
         for tag in (5, 6, 23):
             with self.subTest(tag=tag):

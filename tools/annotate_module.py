@@ -85,7 +85,7 @@ class Module:
         phentsize, phnum = self.unpack("<HH", 0x36)
         if phentsize != 56:
             raise ModuleError("unsupported ELF program header size")
-        if phoff < 64 or phoff + phnum * phentsize > len(self.data):
+        if (phnum and phoff < 64) or phoff + phnum * phentsize > len(self.data):
             raise ModuleError("ELF program header table is outside its supported file range")
         for index in range(phnum):
             kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
