@@ -162,6 +162,24 @@ def changed_paths(path):
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+def dependency_path(data, base):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        if sys.platform != "win32":
+            raise
+        return data.decode("mbcs")
+    if sys.platform != "win32":
+        return text
+    try:
+        ansi = data.decode("mbcs")
+    except UnicodeDecodeError:
+        return text
+    if ansi != text and os.path.exists(os.path.join(base, ansi)) and not os.path.exists(os.path.join(base, text)):
+        return ansi
+    return text
+
+
 def chunks(names):
     batch, size = [], 0
     for name in names:
@@ -205,7 +223,7 @@ def dump(build, out):
         if not line.startswith(b" ") and b": #deps" in line:
             current = build.key(line.split(b": #deps")[0].decode(build.encoding))
         elif line.strip() and current:
-            path = build.repo(line.strip().decode("utf-8"))
+            path = build.repo(dependency_path(line.strip(), build.path))
             if path:
                 deps[current].add(path)
     listing, listed = build.tests()

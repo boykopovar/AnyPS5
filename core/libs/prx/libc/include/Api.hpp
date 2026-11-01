@@ -745,6 +745,7 @@ long double APS5_VABI _LCosh_nid_postfix(long double x, long double y);
 long double APS5_VABI _LSinh_nid_postfix(long double x, long double y);
 int APS5_VABI _Fltrounds_nid_postfix(void);
 int APS5_VABI fegetenv_nid_postfix(GuestFloatingPointEnvironment* environment);
+int APS5_VABI fesetenv_nid_postfix(const GuestFloatingPointEnvironment* environment);
 long double APS5_VABI copysignl_nid_postfix(long double x, long double y);
 long double APS5_VABI fdiml_nid_postfix(long double x, long double y);
 long double APS5_VABI fmodl_nid_postfix(long double x, long double y);

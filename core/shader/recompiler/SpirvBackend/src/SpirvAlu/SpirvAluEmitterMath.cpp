@@ -1328,23 +1328,39 @@ std::uint32_t EmitFPSin(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto nearHalf = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3e800000u));
     const auto distance = Select(state, TypeF32(state), nearHalf, ExactSub(state, ConstantF32(state, 0x3f000000u), absolute), absolute);
     const auto pastEighth = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), distance, ConstantF32(state, 0x3e000000u));
-    const auto series = Select(state, TypeF32(state), pastEighth, CosTurnSeries(state, ExactSub(state, ConstantF32(state, 0x3e800000u), distance)), SinTurnSeries(state, distance));
+    const auto cosineLabel = state.module.AllocateId();
+    const auto sineLabel = state.module.AllocateId();
+    const auto mergeLabel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, pastEighth, cosineLabel, sineLabel);
+    EmitLabel(state, cosineLabel);
+    const auto cosine = CosTurnSeries(state, ExactSub(state, ConstantF32(state, 0x3e800000u), distance));
+    state.module.AddFunction(spv::OpBranch, mergeLabel);
+    EmitLabel(state, sineLabel);
+    const auto sine = SinTurnSeries(state, distance);
+    state.module.AddFunction(spv::OpBranch, mergeLabel);
+    EmitLabel(state, mergeLabel);
+    const auto series = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeF32(state), series, cosine, cosineLabel, sine, sineLabel);
     const auto value = SeriesWhenFar(state, EmitExt(state, TypeF32(state), GLSLstd450Sin, {Binary(state, spv::OpFMul, TypeF32(state), absolute, ConstantF32(state, 0x40c90fdbu))}), series);
     const auto linearConstant = Select(state, TypeF32(state), nearHalf, ConstantF32(state, 0x40c90fdbu), ConstantF32(state, 0x40c90fd5u));
     const auto linearLimit = GcnGuestShaders() ? Select(state, TypeU32(state), nearHalf, ConstantU32(state, 0x39800000u), ConstantU32(state, 0x39c00000u)) : ConstantU32(state, 0x39800000u);
     const auto result = TrigLinearNearZero(state, value, distance, linearConstant, linearLimit);
-    return Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseOr, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), result), signBits));
+    const auto signedResult = Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseOr, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), result), signBits));
+    const auto halfCycle = Binary(state, spv::OpFOrdEqual, TypeBool(state), absolute, ConstantF32(state, 0x3f000000u));
+    return Select(state, TypeF32(state), halfCycle, ConstantF32(state, 0u), signedResult);
 }
 
 std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto cycle = EmitTrigCycleF32(state, arg0, false);
     const auto absolute = EmitExt(state, TypeF32(state), GLSLstd450FAbs, {cycle});
     const auto distance = ExactSub(state, ConstantF32(state, 0x3e800000u), absolute);
-    const auto low = CosTurnSeries(state, absolute);
-    const auto middle = SinTurnSeries(state, distance);
-    const auto high = Unary(state, spv::OpFNegate, TypeF32(state), CosTurnSeries(state, ExactSub(state, ConstantF32(state, 0x3f000000u), absolute)));
     const auto pastEighth = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3e000000u));
     const auto pastThreeEighths = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3ec00000u));
+    const auto turns = Select(state, TypeF32(state), pastThreeEighths, ExactSub(state, ConstantF32(state, 0x3f000000u), absolute), absolute);
+    const auto low = CosTurnSeries(state, turns);
+    const auto middle = SinTurnSeries(state, distance);
+    const auto high = Unary(state, spv::OpFNegate, TypeF32(state), low);
     const auto series = Select(state, TypeF32(state), pastThreeEighths, high, Select(state, TypeF32(state), pastEighth, middle, low));
     const auto value = SeriesWhenFar(state, EmitExt(state, TypeF32(state), GLSLstd450Cos, {Binary(state, spv::OpFMul, TypeF32(state), absolute, ConstantF32(state, 0x40c90fdbu))}), series);
     return TrigLinearNearZero(state, value, distance, ConstantF32(state, 0x40c90fdbu), ConstantU32(state, 0x39800000u));

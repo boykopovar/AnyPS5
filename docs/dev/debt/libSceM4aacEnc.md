@@ -1,5 +1,10 @@
 # libSceM4aacEnc technical debt
 
+### Additional callable exports
+
+- [M4aac encoder export `dyjd6gEaAXw`](../../../core/libs/prx/libSceM4aacEnc/Export.cpp) is a function record with qualifier `D#A` in older and later version-labelled modules. Both map library ID 3 and module ID 0 to `libSceM4aacEnc`. Older module words: `0x08540001`, `0x03200004`; later: `0x13590001`, `0x13600007`. Both contain 18 function NIDs; sorted-LF SHA-256: `b60081c1301a28b192a54d084092ac13164556129b70ee7aa92407ff24256115`, using the [static ELF membership procedure](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298). Labels do not authenticate retail provenance; the digest identifies the NID set only. Independent verification requires a matching image. The name, signature and behavior are unverified; this declaration throws.
+
+
 ### Unknown function info
 
 - [libSceM4aacEnc](../../../core/libs/prx/libSceM4aacEnc/Export.cpp) (libSceM4aacEnc, sysmodule id `0x000000bc`) has no encoder, so all seventeen exports throw. PPSA03332 imports them and fails to load (`libSceM4aacEnc.prx: cannot open shared object file`) when the library is absent. The names are from the aerolib NID list: `sceM4aacEncClearContext`, `sceM4aacEncClearContextEx`, `sceM4aacEncCreateEncoder`, `sceM4aacEncCreateEncoderEx`, `sceM4aacEncDeleteEncoder`, `sceM4aacEncDeleteEncoderEx`, `sceM4aacEncEncode`, `sceM4aacEncEncodeEx`, `sceM4aacEncEncodeWithPriority`, `sceM4aacEncEncodeWithPriorityEx`, `sceM4aacEncFlush`, `sceM4aacEncFlushEx`, `sceM4aacEncFlushWithPriority`, `sceM4aacEncFlushWithPriorityEx`, `sceM4aacEncGetContext`, `sceM4aacEncInitialize` and `sceM4aacEncTerminate`

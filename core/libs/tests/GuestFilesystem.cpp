@@ -350,11 +350,13 @@ static void TestLongHostPathStat() {
     root /= L"anyps5-stat-long-" + std::to_wstring(std::chrono::steady_clock::now().time_since_epoch().count());
     auto deep = root;
     while (deep.native().size() < MAX_PATH + 24) deep /= std::wstring(40, L'd');
+    std::vector<std::filesystem::path> directories{root};
     Require(::CreateDirectoryW(ExtendedPath(root).c_str(), nullptr) != 0);
     auto directory = root;
     for (const auto& component : std::filesystem::path(deep).lexically_relative(root)) {
         directory /= component;
         Require(::CreateDirectoryW(ExtendedPath(directory).c_str(), nullptr) != 0);
+        directories.push_back(directory);
     }
     const auto file = deep / L"payload.bin";
     const auto handle = ::CreateFileW(ExtendedPath(file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -368,20 +370,24 @@ static void TestLongHostPathStat() {
     FileStat status{};
     Require(ResolvePath_nid_no_patch("/long-stat-host/payload.bin").native().size() > MAX_PATH);
     Require(sceKernelStat("/long-stat-host/payload.bin", &status) == 0 && status.st_size == 8);
+    Require(lstat_nid_postfix("/long-stat-host/payload.bin", &status) == 0 && status.st_size == 8 &&
+        (status.st_mode & 0170000) == 0100000);
     Require(sceKernelStat("/long-stat-host/missing.bin", &status) == static_cast<int>(0x80020002u));
+    Require(lstat_nid_postfix("/long-stat-host/missing.bin", &status) == -1 && *__error_nid_postfix() == 2);
     Require(sceKernelStat("/long-stat-host/", &status) == 0 && (status.st_mode & 0170000) == 0040000);
     RemovePathAlias_nid_no_patch("/long-stat-host");
     const auto extendedHost = ExtendedPath(deep).string();
     AddPathAlias_nid_no_patch("/long-stat-extended", extendedHost.c_str());
     Require(ResolvePath_nid_no_patch("/long-stat-extended/payload.bin").native().starts_with(L"\\\\?\\"));
     Require(sceKernelStat("/long-stat-extended/payload.bin", &status) == 0 && status.st_size == 8);
+    Require(lstat_nid_postfix("/long-stat-extended/payload.bin", &status) == 0 && status.st_size == 8 &&
+        (status.st_mode & 0170000) == 0100000);
     Require(sceKernelStat("/long-stat-extended/missing.bin", &status) == static_cast<int>(0x80020002u));
+    Require(lstat_nid_postfix("/long-stat-extended/missing.bin", &status) == -1 && *__error_nid_postfix() == 2);
     RemovePathAlias_nid_no_patch("/long-stat-extended");
-    ::DeleteFileW(ExtendedPath(file).c_str());
-    for (auto path = deep; ; path = path.parent_path()) {
-        ::RemoveDirectoryW(ExtendedPath(path).c_str());
-        if (path == root) break;
-    }
+    Require(::DeleteFileW(ExtendedPath(file).c_str()) != 0);
+    for (auto path = directories.rbegin(); path != directories.rend(); ++path)
+        Require(::RemoveDirectoryW(ExtendedPath(*path).c_str()) != 0);
 }
 #endif
 
