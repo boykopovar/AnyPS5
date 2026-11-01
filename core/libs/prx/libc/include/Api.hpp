@@ -727,6 +727,8 @@ float APS5_VABI _FSinh_nid_postfix(float x, float y);
 float APS5_VABI _FCosh_nid_postfix(float x, float y);
 short APS5_VABI _FDtest_nid_postfix(const float* value);
 short APS5_VABI _Dtest_nid_postfix(const double* value);
+short APS5_VABI _FDsign_nid_postfix(float value);
+short APS5_VABI _Dsign_nid_postfix(double value);
 int APS5_VABI __isnanf_nid_postfix(float x);
 int APS5_VABI isnanf_nid_postfix(float x);
 int APS5_VABI isnan_nid_postfix(double x);
