@@ -2,12 +2,16 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+
+extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 
 namespace {
 
@@ -106,8 +110,11 @@ std::int32_t APS5_VABI sceZlibGetResult(std::uint64_t requestId, std::uint32_t* 
     if (!destinationLength || !status) return INVALID_ARGUMENT;
     const auto found = results.find(requestId);
     if (found == results.end()) return NOT_FOUND;
-    *destinationLength = found->second.produced;
-    *status = found->second.status;
+    const int savedErrno = errno;
+    const bool copiedLength = GuestCopyOut_nid_no_patch(destinationLength, &found->second.produced, sizeof(found->second.produced));
+    const bool copiedStatus = GuestCopyOut_nid_no_patch(status, &found->second.status, sizeof(found->second.status));
+    errno = savedErrno;
+    if (!copiedLength || !copiedStatus) return INVALID_ARGUMENT;
     return 0;
 }
 
