@@ -5276,7 +5276,11 @@ CopyStats& Copies() {
 // region takes the path it would take without staging (Region::unstaged).
 std::shared_ptr<Buffer> stagingBuffer(const Context& context, std::size_t bytes, VkBufferUsageFlags usage) {
     try {
-        return std::make_shared<Buffer>(context, bytes, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (auto buffer = Buffer::WithinDeviceLocalHeadroom(context, bytes, usage)) return buffer;
+        static std::atomic<int> reported{0};
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[buffers] staging shadow of %zu bytes refused: its device-local heap is within an eighth of its budget\n", bytes);
+        Copies().stagingRefused.fetch_add(1, std::memory_order_relaxed);
+        return nullptr;
     } catch (const std::exception& error) {
         static std::atomic<int> reported{0};
         if (reported.fetch_add(1, std::memory_order_relaxed) < 4) std::fprintf(stderr, "[buffers] staging shadow of %zu bytes refused: %s\n", bytes, error.what());

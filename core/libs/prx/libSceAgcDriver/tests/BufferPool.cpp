@@ -63,6 +63,7 @@ struct MockDevice {
     unsigned binds = 0;
     unsigned maps = 0;
     unsigned unmaps = 0;
+    std::uint32_t typeBits = 3;
 };
 
 MockDevice mock;
@@ -76,7 +77,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateBuffer(VkDevice, const VkBufferCreateIn
 }
 
 VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer buffer, VkMemoryRequirements* requirements) {
-    *requirements = {mock.sizes.at(buffer), 256, 3};
+    *requirements = {mock.sizes.at(buffer), 256, mock.typeBits};
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
@@ -176,11 +177,15 @@ Context mockContext() {
 
 VkDeviceSize reportedBudget = 0;
 VkDeviceSize reportedUsage = 0;
+VkDeviceSize reportedSecondBudget = 0;
+VkDeviceSize reportedSecondUsage = 0;
 
 VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
     auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
     reported->heapBudget[0] = reportedBudget;
     reported->heapUsage[0] = reportedUsage;
+    reported->heapBudget[2] = reportedSecondBudget;
+    reported->heapUsage[2] = reportedSecondUsage;
 }
 
 std::uint64_t diagnosticBudgetQueries = 0;
@@ -255,6 +260,58 @@ void RefusedDevicePlacement() {
     }
     Expect(threw, "a refused device-local allocation without a host memory type did not fail");
     Expect(mock.liveBuffers.empty(), "a failed device buffer left its VkBuffer alive");
+}
+
+void StagingHeadroom() {
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 2048 * MiB;
+        reportedUsage = 1000 * MiB;
+        VkDeviceMemory retained = VK_NULL_HANDLE;
+        {
+            const auto shadow = Buffer::WithinDeviceLocalHeadroom(context, 24 * MiB, usage);
+            Expect(shadow != nullptr && mock.memoryTypes.at(MemoryOf(shadow->Handle())) == 0, "a staging buffer with room in its heap's budget was not made device-local");
+            if (shadow) retained = MemoryOf(shadow->Handle());
+        }
+        Expect(mock.memoryBytes.contains(retained), "a released staging buffer was not retained by the pool");
+        reportedUsage = 1900 * MiB;
+        const auto made = mock.allocations;
+        const auto buffers = mock.liveBuffers.size();
+        {
+            const auto reused = Buffer::WithinDeviceLocalHeadroom(context, 24 * MiB, usage);
+            Expect(reused != nullptr && MemoryOf(reused->Handle()) == retained && mock.allocations == made, "a retained staging buffer was refused within the last eighth of the budget, although reusing it allocates nothing");
+        }
+        const auto refused = Buffer::WithinDeviceLocalHeadroom(context, 40 * MiB, usage);
+        Expect(refused == nullptr && mock.allocations == made, "a staging buffer that needs a new allocation within the last eighth of its heap's budget was not refused");
+        Expect(mock.liveBuffers.size() == buffers, "a refused staging buffer left its VkBuffer alive");
+    }
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        context.memory.memoryHeapCount = 3;
+        context.memory.memoryHeaps[2] = {2048 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        context.memory.memoryTypeCount = 3;
+        context.memory.memoryTypes[2] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 2};
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 2048 * MiB;
+        reportedSecondBudget = 2048 * MiB;
+        mock.typeBits = 6;
+        const auto make = [&](const char* what, VkDeviceSize firstUsage, VkDeviceSize secondUsage, std::size_t bytes, bool expected) {
+            reportedUsage = firstUsage;
+            reportedSecondUsage = secondUsage;
+            const auto made = mock.allocations;
+            const auto shadow = Buffer::WithinDeviceLocalHeadroom(context, bytes, usage);
+            Expect((shadow != nullptr) == expected, std::string(what) + (expected ? ": refused" : ": made"));
+            if (shadow) Expect(mock.memoryTypes.at(MemoryOf(shadow->Handle())) == 2, std::string(what) + ": not allocated from the second device-local type");
+            else Expect(mock.allocations == made, std::string(what) + ": allocated although refused");
+        };
+        make("the first device-local heap is full, the buffer's mask allows only the second", 1900 * MiB, 1000 * MiB, 24 * MiB + 4096, true);
+        make("the second device-local heap is full, the buffer's mask allows only the second", 1000 * MiB, 1900 * MiB, 40 * MiB, false);
+    }
+    reportedSecondBudget = 0;
+    reportedSecondUsage = 0;
 }
 
 void AttachmentReclaim() {
@@ -1416,6 +1473,7 @@ int main(int argc, char** argv) {
         ImageMemoryOverBudget();
         HostPlacement();
         RefusedDevicePlacement();
+        StagingHeadroom();
         AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

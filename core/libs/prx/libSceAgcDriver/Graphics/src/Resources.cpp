@@ -49,7 +49,14 @@ VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsage
 
 }
 
-Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
+Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : Buffer(context, size, usage, properties, false) {}
+
+std::shared_ptr<Buffer> Buffer::WithinDeviceLocalHeadroom(const Context& context, std::size_t size, VkBufferUsageFlags usage) {
+    std::shared_ptr<Buffer> buffer(new Buffer(context, size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, true));
+    return buffer->ready ? buffer : nullptr;
+}
+
+Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, bool headroom) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
     Require(size != 0, "zero-sized GPU buffer");
     const bool addressable = (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0;
     Require(!addressable || context.bufferDeviceAddress, "buffer device address is not enabled");
@@ -98,6 +105,11 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         // write-combined memory, so the default host properties prefer cached host memory.
         const bool useSlab = (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 && BufferPool::SlabEligible(capacity, requirements.alignment, requirements.size, context.limits.nonCoherentAtomSize);
         allocation.memoryTypeIndex = context.BufferMemoryType(requirements.memoryTypeBits, properties, useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize);
+        if (headroom && !context.DeviceLocalHeadroom(allocation.memoryTypeIndex, useSlab ? BufferPool::SlabBlockBytes(capacity) : allocation.allocationSize)) {
+            context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+            buffer = VK_NULL_HANDLE;
+            return;
+        }
         if (useSlab) {
             const auto slot = cache->TakeSlot(context, allocation.memoryTypeIndex, capacity, addressable);
             memory = slot.memory;
