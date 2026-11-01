@@ -855,6 +855,42 @@ bool GetSocketOptionForKernel(int descriptor, int level, int option, void* value
 
 const bool g_socketOptionGetterRegistered = (KernelSetSocketOptionGetter_nid_no_patch(&GetSocketOptionForKernel), true);
 
+bool OwnsSocket(int descriptor) {
+    std::lock_guard lk(g_mutex);
+    return g_socks.count(descriptor) != 0;
+}
+
+int ErrorOf(std::int64_t result) {
+    return result < 0 ? *errno_slot() : 0;
+}
+
+const KernelSocketPoll::Forwards g_socketForwards{
+    [](int descriptor, const void* address, std::uint32_t length, int* error) {
+        if (!OwnsSocket(descriptor)) return false;
+        *error = ErrorOf(sceNetBind_nid_postfix(descriptor, address, length));
+        return true;
+    },
+    [](int descriptor, void* address, std::uint32_t* length, int* error) {
+        if (!OwnsSocket(descriptor)) return false;
+        *error = ErrorOf(sceNetGetsockname(descriptor, address, length));
+        return true;
+    },
+    [](int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, std::int64_t* result, int* error) {
+        if (!OwnsSocket(descriptor)) return false;
+        *result = sceNetSendto(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength);
+        *error = ErrorOf(*result);
+        return true;
+    },
+    [](int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, std::int64_t* result, int* error) {
+        if (!OwnsSocket(descriptor)) return false;
+        *result = sceNetRecvfrom(descriptor, buffer, static_cast<size_t>(length), flags, address, addressLength);
+        *error = ErrorOf(*result);
+        return true;
+    },
+};
+
+const bool g_socketForwardsRegistered = (KernelSetSocketForwards_nid_no_patch(&g_socketForwards), true);
+
 constexpr int GuestFcntlGetStatus = 3;
 constexpr int GuestFcntlSetStatus = 4;
 constexpr int GuestReadWrite = 2;

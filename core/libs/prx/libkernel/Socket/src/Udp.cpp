@@ -270,6 +270,10 @@ int Install(std::shared_ptr<Socket> socket) {
     }
     return number;
 }
+std::atomic<const KernelSocketPoll::Forwards*> socketForwards{nullptr};
+const KernelSocketPoll::Forwards* ForwardsFor(int descriptor) {
+    return GuestSockets::IsOpen(descriptor) ? nullptr : socketForwards.load(std::memory_order_acquire);
+}
 std::shared_ptr<Socket> Lookup(int descriptor) {
     std::lock_guard lock(socketsMutex);
     const auto found = sockets.find(descriptor);
@@ -650,6 +654,10 @@ extern "C" int KernelReserveSocketNumber_nid_no_patch(std::uintptr_t native) {
 
 extern "C" void KernelReleaseSocketNumber_nid_no_patch(int number) {
     ReleaseNumber(number);
+}
+
+extern "C" void KernelSetSocketForwards_nid_no_patch(const KernelSocketPoll::Forwards* forwards) {
+    socketForwards.store(forwards, std::memory_order_release);
 }
 
 namespace {
@@ -1545,6 +1553,8 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
     return result < 0 ? Fail(NativeError()) : result;
 }
 int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    int netError = 0;
+    if (const auto* forwards = ForwardsFor(descriptor); forwards != nullptr && forwards->bind(descriptor, address, length, &netError)) return netError == 0 ? 0 : Fail(netError);
     if (const int error = AddressLengthError(address, length)) return Fail(error);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
@@ -1596,6 +1606,8 @@ int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
     return unconnected ? Fail(57) : 0;
 }
 int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    int netError = 0;
+    if (const auto* forwards = ForwardsFor(descriptor); forwards != nullptr && forwards->getsockname(descriptor, address, length, &netError)) return netError == 0 ? 0 : Fail(netError);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (!address || !length) return Fail(14);
@@ -1657,6 +1669,9 @@ int APS5_VABI _ioctl_nid_postfix(int descriptor, std::uint64_t request, void* ar
 }
 std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length,
     int flags, const void* address, std::uint32_t addressLength) {
+    std::int64_t netResult = 0;
+    int netError = 0;
+    if (const auto* forwards = ForwardsFor(descriptor); forwards != nullptr && forwards->sendto(descriptor, buffer, length, flags, address, addressLength, &netResult, &netError)) return netError == 0 ? netResult : Fail(netError);
     std::array<unsigned char, 255> destinationCopy;
     if (address) {
         if (const int error = AddressLengthError(address, addressLength)) return Fail(error);
@@ -1694,6 +1709,9 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
 }
 std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
     int flags, void* address, std::uint32_t* addressLength) {
+    std::int64_t netResult = 0;
+    int netError = 0;
+    if (const auto* forwards = ForwardsFor(descriptor); forwards != nullptr && forwards->recvfrom(descriptor, buffer, length, flags, address, addressLength, &netResult, &netError)) return netError == 0 ? netResult : Fail(netError);
     std::uint32_t capacity = 0;
     if (addressLength && !GuestCopyIn_nid_no_patch(&capacity, addressLength, sizeof(capacity))) return Fail(14);
     const auto socket = Lookup(descriptor);
