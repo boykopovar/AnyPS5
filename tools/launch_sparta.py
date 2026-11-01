@@ -116,12 +116,12 @@ def launch_lock(path):
     with path.open("a+b") as stream:
         if os.name == "nt":
             import msvcrt
-            stream.seek(0)
-            if not stream.read(1):
-                stream.write(b"\0")
-                stream.flush()
-            stream.seek(0)
             try:
+                stream.seek(0)
+                if not stream.read(1):
+                    stream.write(b"\0")
+                    stream.flush()
+                stream.seek(0)
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
             except OSError as error:
                 raise ValueError("Another launcher is already using these settings") from error
