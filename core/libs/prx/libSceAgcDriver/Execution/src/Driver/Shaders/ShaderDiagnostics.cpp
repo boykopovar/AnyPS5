@@ -1,11 +1,36 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
+#include <charconv>
 #include <cstdlib>
 #include <functional>
+#include <optional>
 #include <string_view>
 
 namespace AgcDriver::DriverDetail {
+
+namespace {
+
+std::optional<std::set<std::uint64_t>> selectedPrograms() {
+    const char* value = std::getenv("APS5_DUMP_SHADERS");
+    if (value == nullptr || std::string_view(value) == "1") return std::nullopt;
+    std::set<std::uint64_t> programs;
+    std::string_view rest(value);
+    while (!rest.empty()) {
+        const auto comma = rest.find(',');
+        auto token = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+        if (token.starts_with("0x") || token.starts_with("0X")) token.remove_prefix(2);
+        std::uint64_t address = 0;
+        const auto [end, error] = std::from_chars(token.data(), token.data() + token.size(), address, 16);
+        if (token.empty() || error != std::errc{} || end != token.data() + token.size()) return std::nullopt;
+        programs.insert(address);
+    }
+    if (programs.empty()) return std::nullopt;
+    return programs;
+}
+
+}
 
 void Driver::reportSkip(const char* kind, const std::string& what) {
     static AgcDriver::Mutex reportedMutex;
@@ -60,6 +85,7 @@ std::string Driver::dumpRequest(std::uint64_t address, const ShaderRecompiler::R
     char hex[32];
     std::snprintf(hex, sizeof(hex), "%llx", static_cast<unsigned long long>(address));
     const std::string name = "shader_" + std::string(hex) + std::string(suffix) + ".req";
+    if (const auto selected = selectedPrograms(); selected.has_value() && !selected->contains(address)) return {};
     std::lock_guard lock(dumpMutex);
     if (!dumped.insert(name).second) return name;
     try {
