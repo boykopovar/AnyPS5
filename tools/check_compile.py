@@ -413,6 +413,7 @@ def main(argv=None):
                         help="check up to N translation units concurrently; diagnostics retain input order (default 1)")
     parser.add_argument("--base", help="branch the change is against (default: upstream/main, then origin/main, then main)")
     parser.add_argument("paths", nargs="*", help="translation units to check instead of the changed ones")
+    parser.add_argument("--dry-run", action="store_true", help="print planned syntax commands as JSON without executing a compiler")
     args = parser.parse_args(argv)
     try:
         root = repository()
@@ -422,8 +423,23 @@ def main(argv=None):
             base = base_ref.resolve(root, args.base)
             files = [root / path for path in changed(root, base)]
             if not files:
-                print(f"no changed translation unit against {base}")
+                print(json.dumps({"translation_units": []}) if args.dry_run else f"no changed translation unit against {base}")
                 return 0
+        if args.dry_run:
+            commands = index(args.build, root)
+            plan = []
+            for file in files:
+                source = file.resolve()
+                try:
+                    name = source.relative_to(root.resolve()).as_posix()
+                except ValueError:
+                    name = source.as_posix()
+                configurations = commands.get(name, [])
+                plan.append({"source": str(source), "commands": [
+                    {"directory": entry["directory"], "arguments": syntax_arguments(entry["arguments"], Path(entry["directory"]), source)
+                     if "arguments" in entry else syntax_only(entry, source)} for entry in configurations]})
+            print(json.dumps({"translation_units": plan}, indent=2))
+            return 0 if any(entry["commands"] for entry in plan) else 1
         checked, failed = check(root, args.build, files, args.jobs)
     except (json.JSONDecodeError, OSError, ValueError) as error:
         parser.error(str(error))
