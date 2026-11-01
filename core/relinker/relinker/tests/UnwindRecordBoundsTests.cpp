@@ -387,6 +387,20 @@ int main() {
             unterminatedRecordRejected = std::string(error.what()).find("CIE fields exceed record") != std::string::npos;
         }
         Require(unterminatedRecordRejected);
-        std::cout << "33 unwind record cases passed\n";
+        auto fdeZeroBytes = Fixture();
+        Io::WriteU32(fdeZeroBytes, 96, 0);
+        bool fdeZeroRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeZeroBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            fdeZeroRejected = std::string(error.what()).find("unsupported FDE record size") != std::string::npos;
+        }
+        Require(fdeZeroRejected);
+        auto fdeOverflowBytes = Fixture();
+        Io::WriteU32(fdeOverflowBytes, 96, 1000);
+        bool fdeOverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeOverflowBytes, {augLoad, augEh}, {}, {}); }
+        catch (const std::exception&) { fdeOverflowRejected = true; }
+        Require(fdeOverflowRejected);
+        std::cout << "35 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
