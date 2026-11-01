@@ -96,6 +96,17 @@ def decode_pages(out):
 
 
 def pull(data):
+    if not isinstance(data, dict):
+        raise ValueError("pull request must be an object")
+    if type(data.get("number")) is not int or data["number"] <= 0:
+        raise ValueError("pull request number must be a positive integer")
+    if not isinstance(data.get("title"), str) or data.get("state") not in ("open", "closed"):
+        raise ValueError("pull request needs a string title and an open or closed state")
+    if "body" not in data or (data["body"] is not None and not isinstance(data["body"], str)):
+        raise ValueError("pull request body must be a string or null")
+    labels = data.get("labels")
+    if not isinstance(labels, list) or any(not isinstance(label, dict) or not isinstance(label.get("name"), str) for label in labels):
+        raise ValueError("pull request labels must be objects with string names")
     return {"number": data["number"], "title": data["title"], "body": data["body"] or "",
             "labels": [label["name"] for label in data["labels"]], "state": data["state"]}
 
