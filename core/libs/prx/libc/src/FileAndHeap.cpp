@@ -569,8 +569,12 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fwrite: buffer address overflow");
     if (!stream->SwitchToWriting()) return 0;
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buffer, bytes);
+    const int previousError = errno;
+    errno = 0;
     const auto result = std::fwrite(buffer, size, count, handle);
+    const int nativeError = errno;
     stream->SyncStatus();
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 
@@ -636,8 +640,12 @@ int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     if (*str != '\0' && !stream->SwitchToWriting()) return -1;
+    const int previousError = errno;
+    errno = 0;
     const int result = std::fputs(str, native);
+    const int nativeError = errno;
     stream->SyncStatus();
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 
@@ -650,8 +658,12 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
 #elif defined(__APPLE__)
     if (native && !(native->_flags & __SWR)) return 0;
 #endif
+    const int previousError = errno;
+    errno = 0;
     const int result = std::fflush(native);
+    const int nativeError = errno;
     if (stream) stream->SyncStatus();
+    errno = nativeError != 0 ? GuestErrnoFromHost_nid_no_patch(nativeError) : previousError;
     return result;
 }
 
