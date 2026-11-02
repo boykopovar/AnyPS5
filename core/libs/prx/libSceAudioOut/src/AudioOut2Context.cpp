@@ -35,6 +35,7 @@ static constexpr std::uint64_t CALL_TRACE_FULL = 16;
 static constexpr std::uint32_t CUSHION_MS = 40;
 // Grains the device has not played are not allowed to run further ahead than this; newer ones are dropped.
 static constexpr std::uint32_t MAX_QUEUED_MS = 250;
+static constexpr std::uint32_t MAX_GRAIN = AUDIO_OUT2_SAMPLE_RATE * MAX_QUEUED_MS / 1000;
 // A blocking push on a full queue gives up after this long.
 static constexpr std::chrono::milliseconds FULL_WAIT_TIMEOUT{200};
 static constexpr std::chrono::milliseconds FULL_WAIT_STEP{1};
