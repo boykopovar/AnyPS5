@@ -276,7 +276,7 @@ int APS5_VABI ASN1_get_object_nid_postfix();
 int APS5_VABI SSL_provide_quic_data_nid_postfix();
 int APS5_VABI BIO_meth_new_nid_postfix();
 int APS5_VABI d2i_PUBKEY_nid_postfix();
-int APS5_VABI OBJ_find_sigid_algs_nid_postfix();
+int APS5_VABI OBJ_find_sigid_algs_nid_postfix(int signatureNid, int* digestNid, int* keyNid);
 int APS5_VABI Unknown_pdxCm9_plus_CCc4_nid_no_patch();
 int APS5_VABI Unknown_qGsc6uT6p1E_nid_no_patch();
 int APS5_VABI ERR_reason_error_string_nid_postfix();

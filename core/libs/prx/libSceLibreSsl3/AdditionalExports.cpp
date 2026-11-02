@@ -607,10 +607,6 @@ int APS5_VABI d2i_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI OBJ_find_sigid_algs_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI Unknown_pdxCm9_plus_CCc4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

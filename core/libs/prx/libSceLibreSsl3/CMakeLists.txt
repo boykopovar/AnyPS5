@@ -145,3 +145,17 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLU
         -- $<TARGET_FILE:guest_libressl3_mixed_evp_loader>)
     set_tests_properties(guest_libressl3_mixed_evp PROPERTIES TIMEOUT 20)
 endif()
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SignatureAlgorithms.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_signature_algorithms_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/SignatureAlgorithms.cpp)
+    target_include_directories(guest_libressl3_signature_algorithms_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_signature_algorithms_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_signature_algorithms_tests)
+    add_test(NAME guest_libressl3_signature_algorithms COMMAND guest_libressl3_signature_algorithms_tests)
+    set_tests_properties(guest_libressl3_signature_algorithms PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_signature_algorithms PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
