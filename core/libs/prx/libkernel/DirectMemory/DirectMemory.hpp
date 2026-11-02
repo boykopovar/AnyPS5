@@ -43,8 +43,8 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment = P
 int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, int descriptor, std::uint64_t offset, size_t alignment);
 void ReleaseFlexibleMappingRange(std::uintptr_t address, size_t len);
 int DoMapShared(void** addr, size_t len, int prot, HostSharedMemory object);
-int DoMprotect(const void* addr, size_t len, int prot);
-int DoMtypeprotect(const void* addr, size_t len, int type, int prot);
+int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart = true);
+int DoMtypeprotect(const void* addr, size_t len, int type, int prot, bool requireMappedStart = true);
 int DoMunmap(void* addr, size_t len);
 int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment);
 bool GuestProtection(uintptr_t addr, int* prot);
@@ -52,6 +52,7 @@ bool GuestReservation(std::uintptr_t addr, std::uintptr_t* start, std::uintptr_t
 bool GuestRangeMapped(std::uintptr_t start, std::uintptr_t end);
 void ForgetJitSharedMemory(int descriptor);
 void DuplicateJitSharedMemory(int from, int to);
+bool IsJitSharedMemory(int descriptor);
 void GuestPageTableUsage(std::uint64_t granularity, std::uint64_t* cpu_entries, std::uint64_t* gpu_entries);
 
 #endif
