@@ -91,6 +91,8 @@ def check_windows(relinker, work):
                        {'provider.prx': declared_provider(LIBRARY_VALUE, ('SyntheticProvider',), symbol='exported')}, [])
     output = convert(relinker, work / 'windows-library', ['--windows'], {'consumer.prx': importer(expected=LIBRARY_VALUE)})
     if native:
+        result = run(output)
+        assert result.returncode not in (0, ENTRY_VALUE), (result.returncode, result.stdout, result.stderr)
         libraries = output.parent / 'libs'
         libraries.mkdir()
         shutil.copyfile(provider.parent / 'app0' / 'sce_module' / 'provider.prx.guest.prx', libraries / (MODULE + '.dll'))
