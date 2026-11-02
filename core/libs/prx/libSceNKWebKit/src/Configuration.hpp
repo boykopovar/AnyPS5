@@ -165,4 +165,18 @@ public:
     std::vector<Retained<Object>> userStyleSheets;
 };
 
+class BackForwardListItem final : public ObjectOf<ObjectType::BackForwardListItem> {
+public:
+    std::u16string originalURL;
+    std::u16string url;
+    std::u16string title;
+};
+
+class BackForwardList final : public ObjectOf<ObjectType::BackForwardList> {
+public:
+    Retained<BackForwardListItem> currentItem;
+    std::vector<Retained<BackForwardListItem>> backList;
+    std::vector<Retained<BackForwardListItem>> forwardList;
+};
+
 }  // namespace NKWebKit

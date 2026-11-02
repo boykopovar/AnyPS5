@@ -12724,53 +12724,6 @@ int APS5_VABI WKAuthenticationDecisionListenerUseCredential() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBackForwardListClear() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListCopyBackListWithLimit() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListCopyForwardListWithLimit() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListGetBackItem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListGetBackListCount() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListGetCurrentItem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListGetForwardItem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListGetForwardListCount() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListGetItemAtIndex() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListItemCopyOriginalURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListItemCopyTitle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBackForwardListItemCopyURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKBundleAddOriginAccessAllowListEntry() {
     NotImplemented_nid_no_patch(__func__);
