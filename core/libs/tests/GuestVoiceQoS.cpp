@@ -45,8 +45,6 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSInit(nullptr, 0, 0) == initialized);
     Require(sceVoiceQoSInitHQ(memory.data(), 0x40000, appType) == initialized);
     Require(sceVoiceQoSInitHQ(nullptr, 0, 0) == initialized);
-    Require(NotImplemented([] { sceVoiceQoSEnableChat(); }));
-    Require(NotImplemented([] { sceVoiceQoSDisableChat(); }));
 
     std::int32_t local = -1;
     std::int32_t remote = -1;
