@@ -256,7 +256,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.userDataCount = static_cast<std::uint32_t>(request.context.userData.size());
     translateOptions.scratchDwords = request.context.compute.has_value() ? request.context.compute->scratchDwords : 0u;
     translateOptions.sharedMemoryBytes = DeviceMemoryLdsBytes(request);
-    translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled;
+    const bool hostInterpolationFirst = stageKind == ShaderStageKind::Pixel && request.target.fragmentShaderBarycentricEnabled && request.target.hostInterpolationFirst;
+    translateOptions.fragmentShaderBarycentricEnabled = request.target.fragmentShaderBarycentricEnabled && !hostInterpolationFirst;
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
@@ -265,6 +266,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
     translateOptions.inputInfo = inputInfo;
     translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
+    translateOptions.float64 = supports(spv::CapabilityFloat64);
 
     constexpr InstructionTranslator translator;
 
@@ -332,11 +334,11 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         }
     };
     simplify();
-    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled) program.Metadata().barycentricBuiltinsUnnormalized = request.target.fragmentBarycentricBuiltins;
-    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel, request.target.fragmentBarycentricBuiltins)) {
+    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled) program.Metadata().barycentricBuiltinsUnnormalized = request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst;
+    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel, request.target.fragmentBarycentricBuiltins && !hostInterpolationFirst)) {
         translateOptions.fragmentShaderBarycentricEnabled = true;
         program = translator.Translate(decoded, cfg, translateOptions);
-        program.Metadata().barycentricEmulation = true;
+        program.Metadata().barycentricEmulation = !hostInterpolationFirst;
         simplify();
     }
 
@@ -1492,7 +1494,13 @@ RecompileResult recompileOnce(const RecompileRequest& request) {
         return materializeResult(variant, request, snapshot);
     }
     const auto source = getSource(request);
-    materializer.Materialize(*acquirePlan(request, source, true), runtime, snapshot);
+    try {
+        materializer.Materialize(*acquirePlan(request, source, true), runtime, snapshot);
+    } catch (...) {
+        std::lock_guard lock(source->mutex);
+        source->program.reset();
+        throw;
+    }
     return materializeVariant(*source, request, snapshot);
 }
 
