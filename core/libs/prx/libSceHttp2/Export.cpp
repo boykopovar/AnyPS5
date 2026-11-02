@@ -116,7 +116,7 @@ static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
     if (!handle) return nullptr;
     if (create && !handle->transport) {
         if (handle->version != 3) NotImplemented_nid_no_patch("sceHttp2SendRequest: HTTP/1.x transport is not implemented");
-        handle->transport = Http2::CreateRequest_nid_no_patch(handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
+        handle->transport = Http2::CreateRequest_nid_no_patch(id, handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
     }
     if (!handle->transport) NotImplemented_nid_no_patch("sceHttp2: request has not been sent");
     return handle->transport;
@@ -264,8 +264,11 @@ int APS5_VABI sceHttp2SetRecvTimeOut(int id, uint32_t usec) {
     });
 }
 
-int APS5_VABI sceHttp2SetRedirectCallback(int id, void* cb_func, void* user_arg) {
-    return Update(id, __func__, [&](auto&) { if (cb_func || user_arg) NotImplemented_nid_no_patch("sceHttp2SetRedirectCallback"); });
+int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cb_func, void* user_arg) {
+    return Update(id, __func__, [&](auto& settings) {
+        settings.redirectCallback = cb_func;
+        settings.redirectArgument = user_arg;
+    });
 }
 
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t content_length) {
@@ -286,8 +289,11 @@ int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec) {
     });
 }
 
-int APS5_VABI sceHttp2SetSslCallback(int id, void* cb_func, void* user_arg) {
-    return Update(id, __func__, [&](auto&) { if (cb_func || user_arg) NotImplemented_nid_no_patch("sceHttp2SetSslCallback"); });
+int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cb_func, void* user_arg) {
+    return Update(id, __func__, [&](auto& settings) {
+        settings.sslCallback = cb_func;
+        settings.sslArgument = user_arg;
+    });
 }
 
 int APS5_VABI sceHttp2SetTimeOut(int id, uint32_t usec) {
