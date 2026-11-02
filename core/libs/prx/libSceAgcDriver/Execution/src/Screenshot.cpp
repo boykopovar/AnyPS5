@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <ios>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -72,10 +73,10 @@ std::filesystem::path AgcDriver::Screenshot::Write(std::string_view titleId, std
     const auto folder = directory();
     std::filesystem::create_directories(folder);
     const auto path = unusedPath(folder, std::string(titleId) + "-" + localTimestamp());
-    std::ofstream file;
-    file.exceptions(std::ios::failbit | std::ios::badbit);
-    file.open(path, std::ios::binary);
+    std::ofstream file(path, std::ios::binary);
+    if (!file) throw std::ios_base::failure("opening screenshot " + path.string() + " failed");
     file.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
     file.close();
+    if (!file) throw std::ios_base::failure("writing screenshot " + path.string() + " failed");
     return path;
 }

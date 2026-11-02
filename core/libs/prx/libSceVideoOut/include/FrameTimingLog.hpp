@@ -7,6 +7,7 @@
 #include <exception>
 #include <fstream>
 #include <functional>
+#include <ios>
 #include <locale>
 #include <mutex>
 #include <ostream>
@@ -22,9 +23,9 @@ public:
     FrameTimingLog() {
         pending.reserve(maxReports);
         file.rdbuf()->pubsetbuf(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        file.exceptions(std::ios::badbit | std::ios::failbit);
         file.imbue(std::locale::classic());
         file.open("frame-timing.log", std::ios::out | std::ios::binary | std::ios::trunc);
+        if (!file) throw std::ios_base::failure("opening frame-timing.log failed");
         worker = std::jthread([this](std::stop_token token) { run(token); });
     }
 
@@ -52,6 +53,10 @@ public:
     }
 
 private:
+    void requireGood() const {
+        if (!file) throw std::ios_base::failure("writing frame-timing.log failed");
+    }
+
     void run(std::stop_token token) {
         try {
             std::vector<Report> reports;
@@ -67,14 +72,17 @@ private:
                 }
                 for (const auto& report : reports) report(file);
                 reports.clear();
+                requireGood();
                 if (stopping) break;
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= flushAt) {
                     file.flush();
+                    requireGood();
                     flushAt = now + std::chrono::seconds(1);
                 }
             }
             file.close();
+            requireGood();
         } catch (...) {
             std::lock_guard lock(mutex);
             failure = std::current_exception();
