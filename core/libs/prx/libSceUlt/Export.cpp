@@ -610,7 +610,7 @@ int APS5_VABI sceUltWaitingQueueResourcePoolDestroy(void* pool) {
 }
 
 std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t numData, std::uint64_t dataSize, std::uint32_t numQueueObject) {
-    const auto nodeArea = 32ull * (numQueueObject + 2u * numData + 3u);
+    const auto nodeArea = 32ull * (std::uint64_t{numQueueObject} + 2ull * numData + 3ull);
     if (dataSize != 0 && numData > (UINT64_MAX - nodeArea) / dataSize) {
         throw std::out_of_range("ULT queue work area size overflow");
     }
