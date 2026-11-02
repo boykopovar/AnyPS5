@@ -24,6 +24,7 @@ static void SetEnvironment(const char* name, const std::string& value) {
 
 namespace {
 
+constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
 constexpr int errorInvalidHandle = static_cast<int>(0x80260503);
 constexpr std::uint32_t formatStereoFloat = 2u << 8;
 constexpr AudioOut2PortHandle portSentinel = 0x6B6B;
@@ -80,6 +81,16 @@ void UncreatedContextIsInvalid() {
     Require(sceAudioOut2ContextDestroy(live) == 0, "a live context was not destroyed");
 }
 
+void OversizedGrainIsRefused() {
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+    constexpr AudioOut2ContextHandle sentinel = 0x6B6B;
+    AudioOut2ContextHandle context = sentinel;
+    params.num_grains = 0xFFFFFFFFu;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == errorInvalidArgument, "a grain of 4 GiB frames was not refused");
+    Require(context == sentinel, "a refused context creation wrote a handle");
+}
+
 }
 
 int main() {
@@ -89,6 +100,7 @@ int main() {
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
     UncreatedContextIsInvalid();
     DestroyedContextIsInvalid();
+    OversizedGrainIsRefused();
     std::filesystem::remove(path);
     std::puts("audio out2 context handles: PASS");
     return 0;
