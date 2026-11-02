@@ -255,7 +255,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || !waitFreeBefore(submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind other queues for event", submission.received);
+                        while (!released() && !poll(released)) stall.Check("order behind other queues for event", submission.received, &lock);
                     }
                     rethrowFailure();
                 }
@@ -268,7 +268,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
                         StallWatch stall(id);
-                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received);
+                        while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received, &lock);
                     }
                     rethrowFailure();
                 }
