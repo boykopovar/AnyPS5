@@ -354,6 +354,7 @@ struct SpirvTarget {
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
     bool hostInterpolationFirst = false;
+    bool shaderImageMinLod = false;
 };
 
 struct BindingLayout {
