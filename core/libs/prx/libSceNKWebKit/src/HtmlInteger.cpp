@@ -23,6 +23,8 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// Derived from neonmodder123/PS5-WebKit-11.x/Source/WebCore/html/parser/HTMLParserIdioms.cpp@80f77e94c63ee7202eec3d4b5b1a021dd89011ba
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
