@@ -254,6 +254,8 @@ struct SpirvEmitterState {
     std::uint32_t sampleMaskInputVariable = 0;
     std::uint32_t quadSampleCoverage = 0;
     std::uint32_t sampleOrderWord = 0;
+    std::uint32_t alphaCoverageVariable = 0;
+    std::uint32_t exportedCoverageVariable = 0;
     std::uint32_t subgroupLocalInvocationIdVariable = 0;
     std::uint32_t subgroupIdVariable = 0;
     std::uint32_t perVertexVariable = 0;

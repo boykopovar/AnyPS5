@@ -599,6 +599,17 @@ void StoreCoverage(SpirvEmitterState& state, std::uint32_t mask) {
     state.module.AddFunction(spv::OpStore, pointer, mask);
 }
 
+void StoreCombinedCoverage(SpirvEmitterState& state, std::uint32_t coverage, std::uint32_t own, std::uint32_t other) {
+    if (own == 0u) {
+        StoreCoverage(state, coverage);
+        return;
+    }
+    state.module.AddFunction(spv::OpStore, own, coverage);
+    const auto loaded = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeI32(state), loaded, other);
+    StoreCoverage(state, Binary(state, spv::OpBitwiseAnd, TypeI32(state), coverage, loaded));
+}
+
 void StoreDitheredAlphaCoverage(SpirvEmitterState& state, std::uint32_t color) {
     constexpr std::array<std::uint32_t, 8> twoSampleMasks{{
     0x00000000u, 0x02000002u, 0x01000201u, 0x01020201u, 0x01020101u, 0x03020103u, 0x03010303u, 0x03030303u,
@@ -640,7 +651,7 @@ void StoreDitheredAlphaCoverage(SpirvEmitterState& state, std::uint32_t color) {
     const auto pixel = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpShiftLeftLogical, TypeU32(state), parity[0], ConstantU32(state, 1u)), parity[1]);
     const auto shift = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), pixel, ConstantU32(state, 3u));
     const auto mask = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeU32(state), packed, shift), ConstantU32(state, 255u));
-    StoreCoverage(state, Unary(state, spv::OpBitcast, TypeI32(state), mask));
+    StoreCombinedCoverage(state, Unary(state, spv::OpBitcast, TypeI32(state), mask), state.alphaCoverageVariable, state.exportedCoverageVariable);
 }
 
 void StoreAlphaCoverage(SpirvEmitterState& state, std::uint32_t color) {
@@ -654,7 +665,7 @@ void StoreAlphaCoverage(SpirvEmitterState& state, std::uint32_t color) {
     state.module.AddFunction(spv::OpFUnordLessThan, TypeBool(state), below, alpha, ConstantF32(state, 0x3f000000u));
     const auto mask = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelect, TypeI32(state), mask, below, ConstantI32(state, 0), ConstantI32(state, -1));
-    StoreCoverage(state, mask);
+    StoreCombinedCoverage(state, mask, state.alphaCoverageVariable, state.exportedCoverageVariable);
 }
 
 std::uint32_t ExportRawComponent(SpirvValueEmitContext& ctx, std::uint32_t vector, std::uint32_t component) {
@@ -1852,7 +1863,12 @@ void EmitProgram(SpirvEmitterState& state) {
         for (std::uint32_t pixel = 3u; pixel-- > 0u;) selected = Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, quad, pixel), word(pixel), selected);
         state.sampleOrderWord = selected;
     }
-    if (AlphaToCoverage(state)) StoreCoverage(state, ConstantI32(state, -1));
+    if (AlphaToCoverage(state)) {
+        StoreCoverage(state, ConstantI32(state, -1));
+        for (const auto variable : {state.alphaCoverageVariable, state.exportedCoverageVariable}) {
+            if (variable != 0u) state.module.AddFunction(spv::OpStore, variable, ConstantI32(state, -1));
+        }
+    }
     EmitBdaAnchors(state);
     if (state.pointSizeVariable != 0u && state.inputInfo.vertex != nullptr && state.inputInfo.vertex->pointList) {
         const auto& vertex = *state.inputInfo.vertex;
@@ -2206,7 +2222,7 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 const auto raw = ExportRawComponent(ctx, data, 2);
                 const auto value = state.module.AllocateId();
                 state.module.AddFunction(spv::OpBitcast, TypeI32(state), value, raw);
-                StoreCoverage(state, value);
+                StoreCombinedCoverage(state, value, state.exportedCoverageVariable, state.alphaCoverageVariable);
             }
             return;
         }
