@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -50,6 +52,14 @@ struct ThreadWaitState {
     std::atomic<int> own{0};
     std::atomic<int>* bound = &own;
 };
+
+struct DeferredDrain {
+    void (*run)(void*);
+    void* argument;
+};
+
+std::mutex drainBoxesLock;
+std::unordered_map<unsigned long, std::vector<DeferredDrain>> drainBoxes;
 ThreadWaitState& WaitState() {
 #ifdef _WIN32
     return WindowsThreadLocal<ThreadWaitState>::Get();
@@ -72,6 +82,7 @@ void DrainApcs() {
     state->fetch_sub(1, std::memory_order_seq_cst);
     if (testAlert) testAlert();
     else SleepEx(0, TRUE);
+    ReapDeliveryDrain();
 }
 
 DWORD AlertableWait(DWORD count, const HANDLE* handles, DWORD milliseconds) {
@@ -158,6 +169,48 @@ struct Waiter {
         for (const auto sleepTimer : sleepTimers) if (sleepTimer) CloseHandle(sleepTimer);
     }
 };
+
+std::atomic<void (*)()>& DrainPostHook() {
+    static std::atomic<void (*)()> hook{nullptr};
+    return hook;
+}
+
+void SetDeliveryDrainPostHook(void (*hook)()) {
+    DrainPostHook().store(hook, std::memory_order_release);
+}
+
+void QueueForDeliveryDrain(unsigned long thread, const std::atomic<bool>* targetFinished, void (*run)(void*), void* argument) {
+    if (const auto hook = DrainPostHook().load(std::memory_order_acquire)) hook();
+    bool queued = false;
+    {
+        const std::lock_guard lock(drainBoxesLock);
+        if (targetFinished == nullptr || !targetFinished->load(std::memory_order_acquire)) {
+            drainBoxes[thread].push_back({run, argument});
+            queued = true;
+        }
+    }
+    if (!queued) run(argument);
+}
+
+void ReapDeliveryDrain() {
+    std::vector<DeferredDrain> deferred;
+    {
+        const std::lock_guard lock(drainBoxesLock);
+        const auto box = drainBoxes.find(GetCurrentThreadId());
+        if (box != drainBoxes.end()) {
+            deferred = std::move(box->second);
+            drainBoxes.erase(box);
+        }
+    }
+    for (const auto& entry : deferred) entry.run(entry.argument);
+}
+
+std::size_t DeliveryDrainPending() {
+    const std::lock_guard lock(drainBoxesLock);
+    std::size_t pending = 0;
+    for (const auto& box : drainBoxes) pending += box.second.size();
+    return pending;
+}
 
 namespace {
 
