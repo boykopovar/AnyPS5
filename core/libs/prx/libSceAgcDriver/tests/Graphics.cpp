@@ -7602,8 +7602,8 @@ void publishReasonTests() {
     using AgcDriver::Graphics::PublishReasonFor;
     Require(PublishReasonFor("memory access") == PublishReason::Hook, "a CPU memory access is not counted as a hook publish");
     Require(PublishReasonFor("storage refresh") == PublishReason::Upload, "a storage refresh is not counted as an upload publish");
-    Require(PublishReasonFor("cache eviction") == PublishReason::Other, "a flush reason the classifier does not list is counted as a hook publish");
-    Require(PublishReasonFor(nullptr) == PublishReason::Other, "a flush without a reason is counted as a hook publish");
+    Require(PublishReasonFor("cache eviction") == PublishReason::Other, "an unlisted flush reason is not counted under other");
+    Require(PublishReasonFor(nullptr) == PublishReason::Other, "a flush without a reason is not counted under other");
 }
 
 void storageTextureBudgetTests() {
