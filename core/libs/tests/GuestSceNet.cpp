@@ -788,6 +788,9 @@ static void CheckRejectedArguments() {
         Require(std::memcmp(mac.data, untouched.data(), untouched.size()) == 0);
     }
     Require(Failed(sceNetGetMacAddress(nullptr, 1), 22));
+    Require(Failed(sceNetGetMacAddress(reinterpret_cast<NetEtherAddr*>(std::uintptr_t{0x10}), 0), 14));
+    Require(sceNetGetMacAddress(&mac, 0) == 0);
+    Require(std::memcmp(mac.data, "\x02\x50\x53\x35\x00\x01", sizeof(mac.data)) == 0);
 
     for (const int flags : {1, 0x10000, -1}) Require(Failed(sceNetResolverCreate("rejected-resolver", 0, flags), 22));
 
@@ -2807,6 +2810,7 @@ int main() {
     Require(sceNetResolverAbort(other, 0) == static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9);
     Require(sceNetResolverAbort(-1, 1) == static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9);
     Require(sceNetResolverGetError(resolver, nullptr) == static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
+    Require(Failed(sceNetResolverGetError(resolver, reinterpret_cast<int*>(std::uintptr_t{0x10})), 14));
     Require(sceNetClearDnsCache(0) == 0);
     ipv4.fill(0xA5);
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0 && ipv4[0] == 127);

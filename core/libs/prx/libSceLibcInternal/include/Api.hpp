@@ -94,6 +94,7 @@ std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const ch
 int APS5_VABI _ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(const char* path, std::int64_t* seconds, std::int64_t* nanoseconds);
 int APS5_VABI _ZNSt10filesystem9_Make_dirEPKcS1__nid_postfix(const char* path, const char* existing);
 bool APS5_VABI _ZNSt10filesystem11_Remove_dirEPKc_nid_postfix(const char* path);
+void APS5_VABI sceLibcInternalPadCompleteDestructor_nid_no_patch(void* self);
 int APS5_VABI _ZNSt10filesystem7_UnlinkEPKc_nid_postfix(const char* path);
 int APS5_VABI _ZNSt10filesystem6_ChmodEPKcNS_5permsE_nid_postfix(const char* path, int perms);
 bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target);
@@ -109,6 +110,9 @@ int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
 void* APS5_VABI sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void* tag) noexcept;
 void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment);
+void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
 
 int APS5_VABI sceLibcMspaceSetMallocCallback();
 int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();

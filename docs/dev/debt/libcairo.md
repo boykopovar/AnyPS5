@@ -1,8 +1,12 @@
 # libcairo technical debt
 
+### Functional
+
+- [Cairo affine matrices](../../../core/libs/prx/libcairo/Matrix.cpp) - Ten pure affine operations implement the documented [Cairo matrix API](https://www.cairographics.org/manual/cairo-cairo-matrix-t.html), including multiplication with aliased outputs, singular inversion status and point/distance transforms. The 48-byte `cairo_matrix_t` layout and C signatures are public; the PS5 library revision and native behavior have not been measured. These functions do not require the other 151 pending surface, font or rendering exports.
+
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 161 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and the [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 151 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
 
 | Name | NID |
 | --- | --- |
@@ -19,7 +23,6 @@
 | `cairo_user_to_device` | `3grQ1jCgta8` |
 | `cairo_reference` | `3pmBdB-bl8w` |
 | `cairo_set_antialias` | `3urTbaMTNyE` |
-| `cairo_matrix_translate` | `4C5ObvulD3I` |
 | `cairo_rotate` | `4FH5hyIXo9k` |
 | `cairo_image_surface_create_from_png_stream` | `4dvdsqyLM8c` |
 | `cairo_get_fill_rule` | `4e7O-m-JWVM` |
@@ -31,10 +34,7 @@
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
 | `cairo_scaled_font_destroy` | `6Y3HHedGzlw` |
 | `cairo_pattern_reference` | `6qRL52tLOII` |
-| `cairo_matrix_scale` | `7DS-qtZoKjM` |
-| `cairo_matrix_invert` | `8Aa+vkMrTB8` |
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
-| `cairo_matrix_init_translate` | `8cDupwx3X+Y` |
 | `cairo_surface_get_type` | `8viKdiZL7j4` |
 | `cairo_in_stroke` | `8zMm0QOWZAA` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
@@ -51,7 +51,6 @@
 | `cairo_surface_reference` | `Dv1FqxQxOkw` |
 | `cairo_copy_path` | `E2E+DDLhCRg` |
 | `cairo_rectangle` | `E5LkpnAY7po` |
-| `cairo_matrix_multiply` | `E5rWAm1VaRM` |
 | `cairo_get_matrix` | `EItmXRLen7w` |
 | `cairo_user_to_device_distance` | `F2ZShEhLU8Y` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
@@ -71,14 +70,11 @@
 | `cairo_has_current_point` | `JwQxC4dA5DY` |
 | `cairo_pattern_create_linear` | `K62jNcRGQdY` |
 | `cairo_destroy` | `K6aayzvQMlE` |
-| `cairo_matrix_init` | `KuArfZk6xEU` |
 | `cairo_clip_extents` | `LJNqwiDWTm0` |
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
-| `cairo_matrix_transform_point` | `LdSTmOZ-KDs` |
 | `cairo_image_surface_get_format` | `LrT15KUYBvc` |
 | `cairo_region_create` | `MGMwq9DNMyE` |
 | `cairo_fill` | `Ndvm8s28Gyc` |
-| `cairo_matrix_transform_distance` | `NsFZqlmmZ9E` |
 | `cairo_transform` | `OHgp1uE8P2c` |
 | `cairo_set_line_join` | `Ori3CK8Sx6g` |
 | `cairo_pop_group_to_source` | `Oyzf6kDk6Ns` |
@@ -107,7 +103,6 @@
 | `cairo_append_path` | `XX9tocaUX+g` |
 | `cairo_region_union_rectangle` | `Ya+vgrJjBQE` |
 | `cairo_region_reference` | `Yarxt1LHaf0` |
-| `cairo_matrix_init_identity` | `ZFmp0rD1F14` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
 | `cairo_get_line_join` | `azNGOQLubLc` |
@@ -154,7 +149,6 @@
 | `cairo_move_to` | `smpeN8iWrcc` |
 | `cairo_scale` | `suww6V0qqpU` |
 | `cairo_get_operator` | `tYTJIi4s6t0` |
-| `cairo_matrix_rotate` | `uIoYWKOA9yo` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
 | `cairo_surface_get_content` | `ut+atyIgpQw` |

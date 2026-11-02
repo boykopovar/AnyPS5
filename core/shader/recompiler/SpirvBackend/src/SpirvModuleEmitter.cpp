@@ -1810,7 +1810,10 @@ void EmitProgram(SpirvEmitterState& state) {
     if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.module.AddFunction(spv::OpVariable, TypeU32ArrayPointer(state, spv::StorageClassFunction, LdsStorageDwords(state)), state.ldsVariable, spv::StorageClassFunction);
     }
-    if (state.requirements.functionScratch) {
+    if (ScratchPoolActive(state)) {
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), state.scratchPoolCandidateVariable, spv::StorageClassFunction);
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), state.scratchPoolWonVariable, spv::StorageClassFunction);
+    } else if (state.requirements.functionScratch) {
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.module.AddFunction(spv::OpVariable, TypeU32ArrayPointer(state, spv::StorageClassFunction, state.program.Info().scratchDwords), state.scratchVariable.at(half), spv::StorageClassFunction);
         }
@@ -1841,6 +1844,7 @@ void EmitProgram(SpirvEmitterState& state) {
         }
     }
     EmitLdsBufferBase(state);
+    EmitScratchPoolAcquire(state);
     if (state.requirements.ldsLock) {
         const auto firstInvocation = state.module.AllocateId();
         state.module.AddFunction(spv::OpIEqual, TypeBool(state), firstInvocation, EmitLocalInvocationIndex(state), ConstantU32(state, 0u));
@@ -1949,7 +1953,7 @@ void EmitProgram(SpirvEmitterState& state) {
             state.module.AddFunction(spv::OpKill);
             EmitLabel(state, mergeLabel);
         }
-        state.module.AddFunction(spv::OpReturn);
+        EmitReturnReleasingScratch(state);
     } else {
         StructuredFunctionState functionState;
         EmitControlFlow(ctx, functionState, program);

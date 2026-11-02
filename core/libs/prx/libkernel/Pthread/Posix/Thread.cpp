@@ -40,6 +40,7 @@ static bool AcceptsSchedParam(int policy, int priority) {
     return (priority >= 256 && priority <= 767) || (priority >= 896 && priority <= 959);
 }
 static constexpr std::size_t GUEST_CPUSET_BYTES = 32;
+static constexpr std::size_t GUEST_GETAFFINITY_ERANGE_BYTES = 24;
 static constexpr int GUEST_ERANGE = 34;
 
 extern "C" {
@@ -271,8 +272,8 @@ int APS5_VABI pthread_getprio_nid_postfix(Pthread thread) {
 
 int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset) {
     if (!thread) return PosixThread::GUEST_EINVAL;
-    if (cpusetSize >= GUEST_CPUSET_BYTES) return GUEST_ERANGE;
-    if (cpusetSize != 8 && cpusetSize != 16) NotImplemented_nid_no_patch("pthread_getaffinity_np with a set other than 8, 16 or 32 bytes and more");
+    if (cpusetSize < sizeof(KernelCpumask) || cpusetSize >= GUEST_GETAFFINITY_ERANGE_BYTES) return GUEST_ERANGE;
+    if (cpusetSize > 16) NotImplemented_nid_no_patch("pthread_getaffinity_np with a set of 17 to 23 bytes");
     if (!cpuset) return PosixThread::GUEST_EFAULT;
     KernelCpumask mask = 0;
     const int result = scePthreadGetaffinity(thread, &mask);
