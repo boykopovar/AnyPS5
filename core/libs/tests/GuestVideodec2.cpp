@@ -778,11 +778,11 @@ void testAvcPictureMetadata() {
         check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " after a PPS replaced under the same SPS differs");
     }) == ippp.size(), "AVC pictures after a PPS replaced under the same SPS are missing");
     auto otherSps = ippp;
-    const std::array<std::uint8_t, 33> secondSps{0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x0a, 0x56, 0x84, 0x7b, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x22, 0x6a, 0x22, 0, 0, 0, 1, 0x68, 0xa3};
-    const std::array<std::uint8_t, 3> secondPpsTail{0x83, 0xcb, 0x20};
-    otherSps[2].insert(otherSps[2].begin() + 6, secondPpsTail.begin(), secondPpsTail.end());
-    otherSps[2].insert(otherSps[2].begin() + 6, secondSps.begin(), secondSps.end());
+    const std::array<std::uint8_t, 35> secondSpsAndPps{0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x0a, 0x56, 0x84, 0x7b, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x22, 0x6a,
+        0, 0, 0, 1, 0x68, 0xa3, 0x83, 0xcb, 0x20};
+    otherSps[2].insert(otherSps[2].begin() + 6, secondSpsAndPps.begin(), secondSpsAndPps.end());
     check(decodeAll(66, otherSps, [&](const OutputInfo& output, std::size_t picture) {
+        check(hash(output) == hashes[picture], "AVC picture " + std::to_string(picture) + " decodes differently after a PPS moved to an identical SPS 1");
         if (picture < 2) check(avcFields(queryAvc(output)) == avcFields(plain[picture]), "AVC picture " + std::to_string(picture) + " before a PPS moved to another SPS differs");
         else checkUnprojected(output, sizeof(AvcPictureInfo));
     }) == ippp.size(), "AVC pictures after a PPS moved to another SPS are missing");
