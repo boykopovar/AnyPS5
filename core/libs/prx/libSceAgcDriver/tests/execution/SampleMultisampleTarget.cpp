@@ -1398,7 +1398,10 @@ void InitialContents(AgcDriver::VulkanDevice& device, bool snapshots = false) {
             const auto expected = StoreInitial(block, Samples, 0u, false);
             const auto loaded = LoadSamples(device, block);
             Require(loaded == expected, "a cold varying texture lost its initial samples before snapshotting");
-            CheckColorSnapshot(device, color, block, loaded);
+            const auto* begin = reinterpret_cast<const std::byte*>(block.data);
+            const std::vector<std::byte> before(begin, begin + block.bytes);
+            const auto snapshot = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, color);
+            Require(snapshot.original == before && snapshot.current == before && std::equal(before.begin(), before.end(), begin), "a cold texture snapshot changed its samples, padding or guest bytes");
             std::puts("native color snapshot: varying texture first-use baseline retained without a prior draw");
         }
         Block block(BlockBytes);
