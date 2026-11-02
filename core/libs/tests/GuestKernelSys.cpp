@@ -1,5 +1,6 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libSceAmpr/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
@@ -333,6 +334,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldload_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldstat_nid_postfix(1, paths.Unreadable()); });
     posixFault([&] { return kldstat_nid_postfix(1, paths.Boundary()); });
     const std::int32_t statVersion = 1056;
@@ -355,14 +357,14 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
 
 void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
     const auto created = (root / "rejected").string();
-    for (const auto& target : {std::string(".."), std::string("../x"), std::string("a/../b"), std::string("a/../../x"), std::string("/abs")})
+    for (const auto& target : {std::string("a/../b"), std::string("a/../../x"), std::string("/abs")})
         Require(SymlinkTargetThrows(target.c_str(), created));
 #ifdef _WIN32
     for (const auto& target : {std::string("C:/"), std::string("\\\\server\\share")})
         Require(SymlinkTargetThrows(target.c_str(), created));
 #endif
     const auto links = [](const std::string& created, const char* target) {
-        char buffer[16];
+        char buffer[64];
         const auto length = std::strlen(target);
         return readlink_nid_postfix(created.c_str(), buffer, sizeof(buffer)) == static_cast<std::int64_t>(length) &&
             std::memcmp(buffer, target, length) == 0;
@@ -376,6 +378,29 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
         const auto ellipsis = (root / "accepted-ellipsis").string();
         Require(symlink_nid_postfix("...", ellipsis.c_str()) == 0 && links(ellipsis, "..."));
         Require(RemoveSymlink(nested) && RemoveSymlink(dots) && RemoveSymlink(ellipsis));
+        const auto climb = root / "climb";
+        Require(std::filesystem::create_directories(climb / "deeper"));
+        const auto readsFile = [](const std::string& link) {
+            const int fd = sceKernelOpen(link.c_str(), SCE_KERNEL_O_RDONLY, 0);
+            char byte = 0;
+            const bool read = fd >= 0 && sceKernelRead(fd, &byte, 1) == 1 && byte == 'x';
+            return fd >= 0 && sceKernelClose(fd) == 0 && read;
+        };
+        const auto up = (climb / "up").string();
+        Require(symlink_nid_postfix("../file.txt", up.c_str()) == 0 && links(up, "../file.txt") && readsFile(up));
+        const auto inner = (climb / "inner").string();
+        Require(symlink_nid_postfix("deeper/../../file.txt", inner.c_str()) == 0 && links(inner, "deeper/../../file.txt") && readsFile(inner));
+        const auto parent = (climb / "parent").string();
+        Require(symlink_nid_postfix("..", parent.c_str()) == 0 && links(parent, "..") && readsFile((climb / "parent" / "file.txt").string()));
+        const auto parentDangling = (climb / "dangling").string();
+        Require(symlink_nid_postfix("../missing/x", parentDangling.c_str()) == 0 && links(parentDangling, "../missing/x"));
+        const auto mount = "/anyps5-symlink-climb-mount";
+        AddPathAlias_nid_no_patch(mount, std::filesystem::absolute(climb).string().c_str());
+        Require(symlink_nid_postfix("deeper/../up", (std::string(mount) + "/kept").c_str()) == 0 && readsFile((climb / "kept").string()));
+        RemovePathAlias_nid_no_patch(mount);
+        Require(RemoveSymlink(up) && RemoveSymlink(inner) && RemoveSymlink(parent) && RemoveSymlink(parentDangling));
+        Require(RemoveSymlink((climb / "kept").string()));
+        Require(std::filesystem::remove(climb / "deeper") && std::filesystem::remove(climb));
     } else {
         Require(link == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink target success cases not tested\n");
@@ -465,15 +490,19 @@ void CheckSchedSetscheduler() {
     Require(sched_setscheduler_nid_postfix(0, 1, nullptr) == -1 && Error() == 14);
     Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, &param) == -1 && Error() == 3);
     Require(sched_setscheduler_nid_postfix(-1, 1, &param) == -1 && Error() == 3);
-    for (const int policy : {-1, 0, 4, 7}) Require(sched_setscheduler_nid_postfix(0, policy, &param) == -1 && Error() == 22);
+    Require(sched_setscheduler_nid_postfix(0, 1, reinterpret_cast<const KernelSchedParam*>(std::uintptr_t{0x10})) == -1 && Error() == 14);
+    Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, reinterpret_cast<const KernelSchedParam*>(std::uintptr_t{0x10})) == -1 && Error() == 14);
+    for (const int pid : {0, getpid_nid_postfix()}) {
+        for (const int policy : {-1, 0, 1, 2, 3, 4, 7}) {
+            Require(sched_setscheduler_nid_postfix(pid, policy, &param) == -1 && Error() == 1);
+            param.sched_priority = 300;
+            Require(sched_setscheduler_nid_postfix(pid, policy, &param) == -1 && Error() == 1);
+            param.sched_priority = 700;
+        }
+    }
     int policy = 0;
     KernelSchedParam current{};
-    Require(sched_setscheduler_nid_postfix(0, 1, &param) == 0);
-    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 1 && current.sched_priority == 700);
-    param.sched_priority = 300;
-    Require(sched_setscheduler_nid_postfix(0, 3, &param) == 0);
-    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 3 && current.sched_priority == 300);
-    Require(scePthreadSetschedparam(self, savedPolicy, &saved) == 0);
+    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == savedPolicy && current.sched_priority == saved.sched_priority);
 }
 
 void CheckCondattrClock() {
@@ -489,7 +518,7 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrSetclock(&attr, Monotonic) == 0);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Monotonic);
     bool getclockThrew = false;
-    try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::runtime_error&) { getclockThrew = true; }
+    try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::invalid_argument&) { getclockThrew = true; }
     Require(getclockThrew);
     Require(scePthreadCondattrDestroy(&attr) == 0 && attr == nullptr);
     clock = -1;
@@ -971,6 +1000,8 @@ static void CheckProcessQueries() {
         std::int32_t enabled = -1;
         Require(query(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
         Require(query(&workaround, 3, nullptr) == static_cast<int>(0x8002000E));
+        Require(query(reinterpret_cast<const KernelTitleWorkaround*>(0x10), 3, &enabled) == static_cast<int>(0x8002000E));
+        Require(query(&workaround, 3, reinterpret_cast<std::int32_t*>(0x10)) == static_cast<int>(0x8002000E));
         Require(query(nullptr, 0x80, &enabled) == static_cast<int>(0x8002000E));
         Require(query(&workaround, 0x80, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
         Require(query(&workaround, -1, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
@@ -1015,16 +1046,33 @@ void CheckDescriptorPathconf(F fn, int descriptor) {
 }
 
 template <typename F>
+void CheckPipeBufferPathconf(F fn, int descriptor) {
+    Require(fn(descriptor, 6) == 512);
+    Require(fn(descriptor, 53) == 200112);
+    for (const int name : {0, 1, 4, 5, 7, 8, 12, 18, 54, 55, 61, -1})
+        Require(fn(descriptor, name) == -1 && Error() == 22);
+}
+
+template <typename F>
 void CheckPipePathconf(F fn) {
     int ends[2]{-1, -1};
     Require(pipe_nid_postfix(ends) == 0);
-    for (const int end : ends) {
-        Require(fn(end, 6) == 512);
-        Require(fn(end, 53) == 200112);
-        for (const int name : {0, 1, 4, 5, 7, 8, 12, 18, 54, 55, 61, -1})
-            Require(fn(end, name) == -1 && Error() == 22);
-    }
+    for (const int end : ends) CheckPipeBufferPathconf(fn, end);
     Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
+}
+
+template <typename F>
+void CheckSocketPathconf(F fn) {
+    for (const int type : {1, 2}) {
+        const int descriptor = socket_nid_postfix(2, type, 0);
+        Require(descriptor >= 0);
+        CheckPipeBufferPathconf(fn, descriptor);
+        Require(close_nid_postfix(descriptor) == 0);
+        const int net = sceNetSocket("pathconf", 2, type, 0);
+        Require(net >= 0);
+        CheckPipeBufferPathconf(fn, net);
+        Require(sceNetSocketClose(net) == 0);
+    }
 }
 
 int Kenv(int what, const char* name, const char* value, int len) {
@@ -1140,6 +1188,8 @@ int main() {
     Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);
     Require(profil_nid_postfix(reinterpret_cast<void*>(0x10), 4096, 0, 0) == 0);
     Require(profil_nid_postfix(nullptr, 0, 0, 0) == 0);
+    Require(is_in_sandbox_nid_postfix() == 1);
+    Require(sceKernelIsInSandbox() == 1);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);
@@ -1180,6 +1230,9 @@ int main() {
     CheckDescriptorPathconf(_fpathconf_nid_postfix, descriptor);
     CheckPipePathconf(fpathconf_nid_postfix);
     CheckPipePathconf(_fpathconf_nid_postfix);
+    Require(sceNetInit_nid_postfix() == 0);
+    CheckSocketPathconf(fpathconf_nid_postfix);
+    CheckSocketPathconf(_fpathconf_nid_postfix);
     const int kqueueDescriptor = kqueue_nid_postfix();
     Require(kqueueDescriptor >= 0);
     CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
@@ -1193,6 +1246,11 @@ int main() {
     CheckUnsupportedPathconf(_fpathconf_nid_postfix, sharedMemoryDescriptor);
     Require(close_nid_postfix(sharedMemoryDescriptor) == 0);
     Require(shm_unlink_nid_postfix(namedSharedMemory.c_str()) == 0);
+    const int anonymousSharedMemoryDescriptor = shm_open_nid_postfix(reinterpret_cast<const char*>(1), SCE_KERNEL_O_RDWR, 0600);
+    Require(anonymousSharedMemoryDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, anonymousSharedMemoryDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, anonymousSharedMemoryDescriptor);
+    Require(close_nid_postfix(anonymousSharedMemoryDescriptor) == 0);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, reinterpret_cast<KernelStatfs*>(viaPublic)) == -1 && Error() == 9);
     Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);
@@ -1407,6 +1465,18 @@ int main() {
     Require(kldfind_nid_postfix("") == -1 && Error() == 2);
     Require(kldfind_nid_postfix("kernel") == -1 && Error() == 2);
     Require(kldfind_nid_postfix("missing.ko") == -1 && Error() == 2);
+    Require(kldload_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(kldload_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(kldload_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    const auto kldDirectory = "/" + root.filename().generic_string();
+    const auto kldHeader = (root / "kld-header.ko").string();
+    std::ofstream(kldHeader, std::ios::binary | std::ios::trunc) << "XELF";
+    for (const std::string name : {std::string(), std::string("nomodule"), std::string("missing.ko"), kldDirectory + "/missing.ko",
+                                   kldDirectory + "/file.txt", kldDirectory, kldDirectory + "/file.txt/child", kldDirectory + "/kld-header.ko"}) {
+        *__error_nid_postfix() = 0;
+        Require(kldload_nid_postfix(name.c_str()) == -1 && Error() == 1);
+    }
+    Require(std::filesystem::remove(kldHeader));
     Require(kldnext_nid_postfix(-1) == -1 && Error() == 2);
     Require(kldnext_nid_postfix(0) == 0);
     Require(kldnext_nid_postfix(1) == -1 && Error() == 2);
@@ -1503,6 +1573,9 @@ int main() {
     Require(lchflags_nid_postfix((file + "/child").c_str(), 0) == -1 && Error() == 20);
     Require(lchflags_nid_postfix(file.c_str(), 0x20) == -1 && Error() == 45);
     Require(lchflags_nid_postfix(file.c_str(), 0x200000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x20000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x2 | 0x40000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x40000 | 0x20) == -1 && Error() == 45);
     const auto symbolic = (root / "symbolic").string();
     const int created = symlink_nid_postfix("original.bin", symbolic.c_str());
     if (created == 0) {
@@ -1833,6 +1906,54 @@ int main() {
         Require(fchmodat_nid_postfix(base, "chmod-loop-a", 0600, 0) == -1 && Error() == 62);
         Require(fchmodat_nid_postfix(base, "chmod-link.txt/child", 0600, 0) == -1 && Error() == 20);
         Require(RemoveSymlink(chmodLink) && RemoveSymlink(chmodDangling) && RemoveSymlink(chmodLoopA) && RemoveSymlink(chmodLoopB));
+    }
+    const auto prefixDangling = (root / "prefix-dangling").string();
+    const auto prefixLoopA = (root / "prefix-loop-a").string();
+    const auto prefixLoopB = (root / "prefix-loop-b").string();
+    if (symlink_nid_postfix("prefix-missing", prefixDangling.c_str()) == 0) {
+        Require(symlink_nid_postfix("prefix-loop-b", prefixLoopA.c_str()) == 0 && symlink_nid_postfix("prefix-loop-a", prefixLoopB.c_str()) == 0);
+        FileStat prefixStatus{};
+        char prefixBuffer[16]{};
+        const auto belowDangling = prefixDangling + "/child";
+        const auto belowLoop = prefixLoopA + "/child";
+        Require(stat_nid_postfix(belowDangling.c_str(), &prefixStatus) == -1 && Error() == 2);
+        Require(lstat_nid_postfix(belowDangling.c_str(), &prefixStatus) == -1 && Error() == 2);
+        Require(chmod_nid_postfix(belowDangling.c_str(), 0600) == -1 && Error() == 2);
+        Require(utimes_nid_postfix(belowDangling.c_str(), nullptr) == -1 && Error() == 2);
+        Require(unlink_nid_postfix(belowDangling.c_str()) == -1 && Error() == 2);
+        Require(open_nid_postfix(belowDangling.c_str(), 0, 0) == -1 && Error() == 2);
+        Require(fchmodat_nid_postfix(base, "prefix-dangling/child", 0600, 0) == -1 && Error() == 2);
+        Require(readlink_nid_postfix(belowDangling.c_str(), prefixBuffer, sizeof(prefixBuffer)) == -1 && Error() == 2);
+        Require(linkat_nid_postfix(-100, belowDangling.c_str(), -100, (root / "prefix-linked").string().c_str(), 0x400) == -1 && Error() == 2);
+        Require(stat_nid_postfix(belowLoop.c_str(), &prefixStatus) == -1 && Error() == 62);
+        const auto prefixThroughFile = (root / "prefix-through-file").string();
+        Require(symlink_nid_postfix("file.txt/x", prefixThroughFile.c_str()) == 0);
+        const auto belowThroughFile = prefixThroughFile + "/child";
+        Require(stat_nid_postfix(belowThroughFile.c_str(), &prefixStatus) == -1 && Error() == 20);
+        Require(chmod_nid_postfix(belowThroughFile.c_str(), 0600) == -1 && Error() == 20);
+        Require(fchmodat_nid_postfix(base, "prefix-through-file/child", 0600, 0) == -1 && Error() == 20);
+#ifdef _WIN32
+        std::filesystem::create_directories(root / "prefix-up" / "deep");
+        { std::ofstream file(root / "prefix-up" / "f2"); file << "x"; }
+        const auto upDirectory = (root / "prefix-up-link").string();
+        const auto upFile = (root / "prefix-up" / "deep" / "pa").string();
+        const auto createHostLink = [](const std::string& link, const wchar_t* target, DWORD flags) {
+            return CreateSymbolicLinkW(std::filesystem::path(link).c_str(), target, flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+        };
+        Require(createHostLink(upDirectory, L"prefix-up\\deep", SYMBOLIC_LINK_FLAG_DIRECTORY) && createHostLink(upFile, L"..\\f2\\x", 0));
+        const auto belowUp = upDirectory + "/pa/child";
+        Require(stat_nid_postfix(belowUp.c_str(), &prefixStatus) == -1 && Error() == 20);
+        Require(RemoveSymlink(upFile) && RemoveSymlink(upDirectory));
+#endif
+        const auto prefixChainEnd = (root / "prefix-chain-end").string();
+        const auto prefixChainStart = (root / "prefix-chain-start").string();
+        Require(symlink_nid_postfix("file.txt/x", prefixChainEnd.c_str()) == 0);
+        Require(symlink_nid_postfix("prefix-chain-end", prefixChainStart.c_str()) == 0);
+        const auto belowChain = prefixChainStart + "/child";
+        Require(stat_nid_postfix(belowChain.c_str(), &prefixStatus) == -1 && Error() == 20);
+        Require(RemoveSymlink(prefixChainStart) && RemoveSymlink(prefixChainEnd));
+        Require(RemoveSymlink(prefixThroughFile));
+        Require(RemoveSymlink(prefixDangling) && RemoveSymlink(prefixLoopA) && RemoveSymlink(prefixLoopB));
     }
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);

@@ -247,6 +247,24 @@ class AnnotateModuleTests(unittest.TestCase):
         self.run_tool(build_module(), "--no-names")
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
 
+    def test_a_temporary_directory_outside_the_ansi_code_page_is_disassembled(self):
+        temporary = self.root / "тест 界 \U0001f3ae"
+        temporary.mkdir()
+        with mock.patch.object(tempfile, "tempdir", str(temporary)):
+            summary = self.annotate(build_module())
+        self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+        self.assertTrue(instruction(self.read(".asm").splitlines(), "call").endswith("; -> " + IMPORT_NAME))
+        self.assertEqual([], list(temporary.iterdir()))
+
+    def test_objdump_found_through_a_relative_path_entry_is_disassembled(self):
+        found = Path(annotate_module.gnu_objdump()).absolute()
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(found.parent.parent)
+        with mock.patch.dict(os.environ, {"PATH": found.parent.name}):
+            self.assertFalse(Path(annotate_module.gnu_objdump()).is_absolute())
+            summary = self.annotate(build_module())
+        self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+
     def test_mismatching_database_name_is_not_used(self):
         wrong = self.root / "wrong.csv"
         wrong.write_text("%s sceKernelOther\n" % nid(IMPORT_NAME), encoding="utf-8")
@@ -334,6 +352,40 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertIn("1 exports, 1 tls", summary)
         self.assertIn("tls+%#x %s %s\n" % (EXPORT_ADDRESS, symbol_name(TLS_NAME), TLS_NAME), self.read(".exports.txt"))
         self.assertNotIn("export " + TLS_NAME, self.read(".asm"))
+
+    def test_private_symbols_are_not_reported_as_exports(self):
+        for binding in (0, 1, 2, 10):
+            for visibility in (0, 1, 2, 3):
+                for kind in (2, 6):
+                    with self.subTest(binding=binding, visibility=visibility, kind=kind):
+                        symbols = [(EXPORT_NAME, 1, binding << 4 | kind, EXPORT_ADDRESS)]
+                        module = bytearray(build_module(symbols=symbols, relocations=()))
+                        module[0x2040 + 24 + 5] = visibility
+                        summary = self.annotate(bytes(module))
+                        visible = binding != 0 and visibility in (0, 3)
+                        expected = []
+                        if visible:
+                            prefix = "tls+" if kind == 6 else ""
+                            expected.append("%s%#x %s %s" % (prefix, EXPORT_ADDRESS, symbol_name(EXPORT_NAME), EXPORT_NAME))
+                        self.assertEqual(self.read(".exports.txt").splitlines(), expected)
+                        self.assertIn("%d exports, %d tls" % (visible and kind == 2, visible and kind == 6), summary)
+                        self.assertEqual("; ===== export " + EXPORT_NAME in self.read(".asm"), visible and kind == 2)
+
+    def test_private_alias_does_not_hide_a_public_export(self):
+        for hash_kind in ("sysv", "gnu"):
+            for visibility in (1, 2):
+                with self.subTest(hash_kind=hash_kind, visibility=visibility):
+                    symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+                    tags = DEFAULT_TAGS if hash_kind == "sysv" else (GNU_HASH,) + DEFAULT_TAGS[1:]
+                    module = bytearray(build_module(symbols=symbols, tags=tags, kind=hash_kind))
+                    module[0x2040 + 3 * 24 + 5] = visibility
+                    summary = self.annotate(bytes(module))
+                    self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+                    self.assertEqual(self.read(".exports.txt").splitlines(),
+                                     ["%#x %s %s" % (EXPORT_ADDRESS, symbol_name(EXPORT_NAME), EXPORT_NAME)])
+                    self.assertIn("; ===== export " + EXPORT_NAME, self.read(".asm"))
+                    self.assertNotIn("; ===== export " + SECOND_IMPORT_NAME, self.read(".asm"))
+                    self.assertIn("; -> " + IMPORT_NAME, self.read(".asm"))
 
     def test_export_at_address_zero_is_kept(self):
         symbols = [(IMPORT_NAME, 0, 0x12, 0), (EXPORT_NAME, 1, 0x12, 0)]
@@ -547,6 +599,118 @@ class InputProtectionTests(unittest.TestCase):
             with self.assertRaisesRegex(annotate_module.ModuleError, "separate from the input"):
                 annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
             self.assertEqual(module.read_bytes(), original)
+
+
+class OutputProtectionTests(unittest.TestCase):
+    def test_windows_readlink_target_prefixes(self):
+        targets = (("\\\\?\\C:\\reports\\exports.txt", "C:\\reports\\exports.txt"),
+                   ("\\\\?\\UNC\\server\\reports\\exports.txt", "\\\\server\\reports\\exports.txt"),
+                   ("report.exports.txt", "report.exports.txt"))
+        for target, expected in targets:
+            with self.subTest(target=target), mock.patch.object(os, "name", "nt"):
+                self.assertEqual(annotate_module.link_target(target), expected)
+            with self.subTest(posix_target=target), mock.patch.object(os, "name", "posix"):
+                self.assertEqual(annotate_module.link_target(target), target)
+
+    def test_dangling_report_aliases_with_nonfollowing_resolve(self):
+        for shape in ("relative", "absolute", "chained", "unrelated"):
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                module = root / "input.prx"
+                original = build_module()
+                module.write_bytes(original)
+                imports = root / "report.imports.txt"
+                exports = root / "report.exports.txt"
+                assembly = root / "report.asm"
+                assembly.write_bytes(b"previous disassembly")
+                target = root / "unrelated.txt" if shape == "unrelated" else exports
+                links = {imports: str(target) if shape == "absolute" else target.name}
+                if shape == "chained":
+                    links = {imports: "intermediate", root / "intermediate": exports.name}
+                resolve = Path.resolve
+                is_symlink = Path.is_symlink
+                readlink = os.readlink
+                def nonfollowing_resolve(path, *args, **kwargs):
+                    return path.absolute() if path in links else resolve(path, *args, **kwargs)
+                def simulated_symlink(path):
+                    return path in links or is_symlink(path)
+                def simulated_readlink(path):
+                    return links[path] if path in links else readlink(path)
+                with mock.patch.object(Path, "resolve", nonfollowing_resolve), \
+                     mock.patch.object(Path, "is_symlink", simulated_symlink), \
+                     mock.patch.object(os, "readlink", simulated_readlink):
+                    if shape == "unrelated":
+                        self.assertFalse(annotate_module.same_file(imports, exports))
+                    else:
+                        with self.assertRaisesRegex(annotate_module.ModuleError, "outputs must name different files"):
+                            annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
+                self.assertEqual(module.read_bytes(), original)
+                self.assertEqual(assembly.read_bytes(), b"previous disassembly")
+                self.assertFalse(exports.exists())
+
+    def test_hardlinked_reports_are_rejected_before_any_write(self):
+        suffixes = (".imports.txt", ".exports.txt", ".asm")
+        for left, right in ((0, 1), (0, 2), (1, 2)):
+            with self.subTest(left=suffixes[left], right=suffixes[right]), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                module = root / "input.prx"
+                original = build_module()
+                module.write_bytes(original)
+                outputs = [root / ("report" + suffix) for suffix in suffixes]
+                outputs[left].write_bytes(b"previous linked reports")
+                os.link(outputs[left], outputs[right])
+                outputs[3 - left - right].write_bytes(b"previous independent report")
+                previous = [path.read_bytes() for path in outputs]
+                with self.assertRaisesRegex(annotate_module.ModuleError, "outputs must name different files"):
+                    annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
+                self.assertEqual(module.read_bytes(), original)
+                self.assertEqual([path.read_bytes() for path in outputs], previous)
+
+    def test_dangling_symlinked_reports_are_rejected_before_any_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            imports = root / "report.imports.txt"
+            exports = root / "report.exports.txt"
+            try:
+                imports.symlink_to(exports)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows symbolic-link privileges unavailable")
+                raise
+            assembly = root / "report.asm"
+            assembly.write_bytes(b"previous disassembly")
+            with self.assertRaisesRegex(annotate_module.ModuleError, "outputs must name different files"):
+                annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
+            self.assertEqual(module.read_bytes(), original)
+            self.assertTrue(imports.is_symlink())
+            self.assertFalse(exports.exists())
+            self.assertEqual(assembly.read_bytes(), b"previous disassembly")
+
+    def test_cli_rejects_report_alias_without_success_output(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU objdump unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            imports = root / "report.imports.txt"
+            imports.write_bytes(b"previous reports")
+            exports = root / "report.exports.txt"
+            os.link(imports, exports)
+            result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("outputs must name different files", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(module.read_bytes(), original)
+            self.assertEqual(imports.read_bytes(), b"previous reports")
+            self.assertEqual(exports.read_bytes(), b"previous reports")
+            self.assertFalse((root / "report.asm").exists())
 
 
 if __name__ == "__main__":

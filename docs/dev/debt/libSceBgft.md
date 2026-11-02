@@ -42,3 +42,5 @@ Candidate names marked **aerolib** occur in the [repository-pinned table](https:
 | `Unknown` | `85axuUkg9eE` | unresolved | `0x480` | 23 |
 | `Unknown` | `fJnnIc5sHOU` | unresolved | `0x2f0` | 18 |
 | `Unknown` | `tBOVSvi9EjY` | unresolved | `0x530` | 17 |
+
+- [Older callable NIDs](../../../core/libs/prx/libSceBgft/Export.cpp): 2 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
