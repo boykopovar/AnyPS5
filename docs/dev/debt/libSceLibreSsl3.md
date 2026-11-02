@@ -2,7 +2,9 @@
 
 ### Functional
 
-- [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation, encrypted transport and `tls_config_set_cert_mem` still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
+- [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
+
+- [libtls memory and protocol settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Six additional exports copy CA/certificate memory, set unvalidated protocol bits, parse LibreSSL protocol tokens (including first-negation defaults and comma/colon separation), and mutate client-certificate and hostname-verification settings. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c) and `tls_keypair.c`. TLS transport, certificate parsing/verification and cipher-list validation are still unimplemented; `tls_config_set_ciphers` continues to throw. PS5 runtime values and guest ownership ABI are unverified.
 
 - [OpenSSL_version](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - other firmware revisions are unverified. Selectors 0 through 5 follow the public firmware 13.40 measurements in [discussion #8981](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214); unknown selectors follow LibreSSL 4.0.0 and return `not available`. No independent console test was run.
 
@@ -30,14 +32,13 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 165 still-unimplemented callable exports: 155 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The ten libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond their preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 159 still-unimplemented callable exports: 149 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The sixteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
 | `EC_KEY_set_asn1_flag` | `++b0FizBrJk` |
 | `BIO_set_init` | `+STC2BUY9vY` |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
-| `tls_config_set_cert_mem` | `+bQfpiUHRVk` |
 | `SSL_SESSION_get_protocol_version` | `0BW+8jTsY54` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
 | `SSL_SESSION_get_timeout` | `0JcHkrKJ9iw` |
@@ -110,7 +111,6 @@
 | `ECDSA_SIG_new` | `R3NyckUcClU` |
 | `BN_dup` | `RMhEgJs6KLI` |
 | `EVP_sha512_256` | `Sea+FOS2GOI` |
-| `tls_config_set_ca_mem` | `Sqn+7yQmQWc` |
 | `EVP_PKEY_derive_init` | `Ssfu1yw4Em4` |
 | `X509V3_EXT_conf_nid` | `TKGJOgbeyuA` |
 | `X509_sign` | `TpBvY92mrSM` |
@@ -132,7 +132,6 @@
 | `SSL_process_quic_post_handshake` | `aKGUCnoiE+k` |
 | `unknown` | `aLdgrI2jAF0` |
 | `EC_POINT_clear_free` | `aSO3Svp7umY` |
-| `tls_config_set_protocols` | `agQxMaXVE8o` |
 | `d2i_PKCS8_PRIV_KEY_INFO` | `as+t2ZOg5fw` |
 | `ECDSA_do_sign` | `ba4o0Ih6kSs` |
 | `SSL_CTX_set_ciphersuites` | `bpOQdoGE2es` |
@@ -181,14 +180,11 @@
 | `EVP_aes_128_ccm` | `uM9UnC8KFjY` |
 | `RSA_set0_key` | `uihDBp74nLI` |
 | `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
-| `tls_config_verify_client` | `v1vHv4jOJxQ` |
 | `EVP_PKEY_cmp` | `vLuIwBfrxrk` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
 | `PKCS5_PBKDF2_HMAC` | `vnwZHU5FvBQ` |
 | `ASN1_OCTET_STRING_free` | `vo-cv5gnPUA` |
-| `tls_config_parse_protocols` | `vu4FgwGayHY` |
 | `SSL_CTX_set_post_handshake_auth` | `wHdymWL7CbE` |
-| `tls_config_insecure_noverifyname` | `wNQT6Zn4UG4` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
 | `ASN1_TYPE_free` | `whL1IRBxFZA` |
 | `ECDSA_SIG_set0` | `xVv3qlSRldc` |

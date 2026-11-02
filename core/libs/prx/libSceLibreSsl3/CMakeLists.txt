@@ -16,6 +16,17 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/LibTls.cp
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_libtls_settings_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LibTlsSettings.cpp)
+    target_include_directories(guest_libressl3_libtls_settings_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_libtls_settings_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_libtls_settings_tests)
+    add_test(NAME guest_libressl3_libtls_settings COMMAND guest_libressl3_libtls_settings_tests)
+    set_tests_properties(guest_libressl3_libtls_settings PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_libtls_settings PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
     add_test_executable(guest_libressl3_libtls_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LibTls.cpp)
     target_include_directories(guest_libressl3_libtls_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl3_libtls_tests PRIVATE libSceLibreSsl3 libc)
