@@ -507,11 +507,6 @@ int APS5_VABI SSL_get_error_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_get_ex_data_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_get_fd_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
