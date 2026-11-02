@@ -18,6 +18,10 @@ static constexpr int SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT = static_cast<
 static constexpr int SCE_NP_COMMUNITY_ERROR_INVALID_ID = static_cast<int>(0x8055070E);
 static constexpr int SCE_NP_COMMUNITY_ERROR_INVALID_TYPE = static_cast<int>(0x80550711);
 static constexpr int SCE_NP_LOOKUP_ERROR_SYNCHRONOUS_REQUEST = static_cast<int>(0x80550307);
+static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8055B301);
+static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED = static_cast<int>(0x8055B302);
+static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x8055B305);
+static constexpr int SCE_NP_SERVICE_CHECKER2_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x8055B304);
 static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 static constexpr std::size_t MAX_TITLE_CONTEXTS = 32;
@@ -51,6 +55,14 @@ struct Service {
 
 Service lookup(1, 1);
 Service wordFilter(WORD_FILTER_TITLE_CTX_ID_OFFSET + 1, WORD_FILTER_REQUEST_ID_OFFSET + 1);
+
+struct ServiceChecker2 {
+    std::mutex mutex;
+    bool initialized = false;
+    std::unordered_set<int> requests;
+    int nextRequest = 1;
+};
+ServiceChecker2 serviceChecker2;
 
 int AddTitleContext(Service& service) {
     std::lock_guard lock(service.mutex);
@@ -369,37 +381,58 @@ int APS5_VABI sceNpLookupNetTerm() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpServiceChecker2IntAbortRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpServiceChecker2IntAbortRequest(int requestId) {
+    std::lock_guard lock(serviceChecker2.mutex);
+    if (!serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED;
+    serviceChecker2.requests.erase(requestId);
     return 0;
 }
-int APS5_VABI sceNpServiceChecker2IntCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId) {
+    std::lock_guard lock(serviceChecker2.mutex);
+    if (!serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED;
+    if (!requestId) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
+    const int id = serviceChecker2.nextRequest++;
+    serviceChecker2.requests.insert(id);
+    *requestId = id;
     return 0;
 }
-int APS5_VABI sceNpServiceChecker2IntDestroyRequest() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpServiceChecker2IntDestroyRequest(int requestId) {
+    std::lock_guard lock(serviceChecker2.mutex);
+    if (!serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED;
+    serviceChecker2.requests.erase(requestId);
     return 0;
 }
 int APS5_VABI sceNpServiceChecker2IntFinalize() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(serviceChecker2.mutex);
+    serviceChecker2.requests.clear();
+    serviceChecker2.initialized = false;
     return 0;
 }
-int APS5_VABI sceNpServiceChecker2IntGetServiceAvailability() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpServiceChecker2IntGetServiceAvailability(int requestId, const void* npId, void* result) {
+    std::lock_guard lock(serviceChecker2.mutex);
+    if (!serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED;
+    if (!npId || !result) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
+    if (!serviceChecker2.requests.contains(requestId)) return SCE_NP_SERVICE_CHECKER2_ERROR_REQUEST_NOT_FOUND;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpServiceChecker2IntGetServiceAvailabilityA() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpServiceChecker2IntGetServiceAvailabilityA(int requestId, int userId, void* result) {
+    std::lock_guard lock(serviceChecker2.mutex);
+    if (!serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED;
+    if (userId == -1 || !result) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
+    if (!serviceChecker2.requests.contains(requestId)) return SCE_NP_SERVICE_CHECKER2_ERROR_REQUEST_NOT_FOUND;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpServiceChecker2IntInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(serviceChecker2.mutex);
+    if (serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_ALREADY_INITIALIZED;
+    serviceChecker2.requests.clear();
+    serviceChecker2.nextRequest = 1;
+    serviceChecker2.initialized = true;
     return 0;
 }
-int APS5_VABI sceNpServiceChecker2IntIsSetServiceType() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpServiceChecker2IntIsSetServiceType(const std::uint32_t* serviceTypes, std::uint32_t serviceType) {
+    if (!serviceTypes || serviceType > 9) return 0;
+    return static_cast<int>((serviceTypes[serviceType >> 5] >> serviceType) & 1);
 }
 int APS5_VABI sceNpServiceCheckerIntAbortRequest() {
     NotImplemented_nid_no_patch(__func__);

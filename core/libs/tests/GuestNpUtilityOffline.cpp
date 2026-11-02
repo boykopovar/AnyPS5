@@ -120,6 +120,43 @@ void CheckWordFilter() {
     Require(sceNpLookupDeleteTitleCtx(context) == InvalidId, "sceNpLookupDeleteTitleCtx", "a word filter context was found among the lookup contexts");
 }
 
+void CheckServiceChecker2() {
+    constexpr int AlreadyInitialized = static_cast<int>(0x8055B301u);
+    constexpr int NotInitialized = static_cast<int>(0x8055B302u);
+    constexpr int RequestNotFound = static_cast<int>(0x8055B304u);
+    constexpr int CheckerInvalidArgument = static_cast<int>(0x8055B305u);
+    int request = 0;
+    Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created before initialization");
+    Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "initialization failed");
+    Require(sceNpServiceChecker2IntInitialize() == AlreadyInitialized, "sceNpServiceChecker2IntInitialize", "a second initialization was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntCreateRequest", "a null output was taken");
+    Require(sceNpServiceChecker2IntCreateRequest(&request) == 0 && request == 1, "sceNpServiceChecker2IntCreateRequest", "the first request is not id 1");
+    std::uint32_t availability = 0xA5A5A5A5;
+    Require(sceNpServiceChecker2IntGetServiceAvailability(request, nullptr, &availability) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null NpId was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(request, selfNpId, nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailability", "a null output was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(request + 100, selfNpId, &availability) == RequestNotFound, "sceNpServiceChecker2IntGetServiceAvailability", "an unknown request was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(request, selfNpId, &availability) == SignedOut, "sceNpServiceChecker2IntGetServiceAvailability", "the lookup did not return SIGNED_OUT");
+    Require(availability == 0xA5A5A5A5, "sceNpServiceChecker2IntGetServiceAvailability", "an availability was written");
+    Require(sceNpServiceChecker2IntGetServiceAvailabilityA(request, -1, &availability) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailabilityA", "user -1 was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailabilityA(request, 1, nullptr) == CheckerInvalidArgument, "sceNpServiceChecker2IntGetServiceAvailabilityA", "a null output was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailabilityA(request + 100, 1, &availability) == RequestNotFound, "sceNpServiceChecker2IntGetServiceAvailabilityA", "an unknown request was taken");
+    Require(sceNpServiceChecker2IntGetServiceAvailabilityA(request, 1, &availability) == SignedOut, "sceNpServiceChecker2IntGetServiceAvailabilityA", "the lookup did not return SIGNED_OUT");
+    Require(availability == 0xA5A5A5A5, "sceNpServiceChecker2IntGetServiceAvailabilityA", "an availability was written");
+    int second = 0;
+    Require(sceNpServiceChecker2IntCreateRequest(&second) == 0 && second == 2, "sceNpServiceChecker2IntCreateRequest", "the second request is not id 2");
+    Require(sceNpServiceChecker2IntDestroyRequest(second) == 0, "sceNpServiceChecker2IntDestroyRequest", "destroying the request failed");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(second, selfNpId, &availability) == RequestNotFound, "sceNpServiceChecker2IntDestroyRequest", "a destroyed request was found");
+    Require(sceNpServiceChecker2IntAbortRequest(request) == 0, "sceNpServiceChecker2IntAbortRequest", "aborting the request failed");
+    const std::uint32_t serviceTypes[1] = {0x5};
+    Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 0) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 0 was not set");
+    Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 1) == 0, "sceNpServiceChecker2IntIsSetServiceType", "bit 1 was set");
+    Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 2) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 2 was not set");
+    Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 10) == 0, "sceNpServiceChecker2IntIsSetServiceType", "type 10 was taken");
+    Require(sceNpServiceChecker2IntIsSetServiceType(nullptr, 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "a null mask was taken");
+    Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization failed");
+    Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created after finalization");
+}
+
 void CheckBandwidthTestInitStart() {
     Require(sceNpBandwidthTestInitStart() == SignedOut, "sceNpBandwidthTestInitStart", "starting a test while signed out did not return SIGNED_OUT");
     Require(sceNpBandwidthTestInitStart() == sceNpBandwidthTestInitStartDownload(nullptr), "sceNpBandwidthTestInitStart", "the answer differs from sceNpBandwidthTestInitStartDownload");
@@ -259,6 +296,7 @@ int main() {
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
     CheckBandwidthTestInitStart();
     CheckBandwidthTestShutdownWithDetailedInfo();
+    CheckServiceChecker2();
     CheckLookup();
     CheckWordFilter();
     CheckLookupAsync();
