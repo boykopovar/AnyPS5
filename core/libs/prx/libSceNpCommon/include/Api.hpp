@@ -153,6 +153,11 @@ struct NpTitleIdObject {
     NpTitleId titleId;
 };
 
+struct NpTitleSecretObject {
+    const void* const* vtable;
+    NpTitleSecret secret;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpGetSandboxMode();
@@ -261,6 +266,12 @@ void APS5_VABI sceNpGlobalHeapGetAllocator(NpAllocator* allocator);
 void APS5_VABI sceNpGlobalHeapGetAllocatorEx(NpAllocatorEx* allocator);
 NpAllocator* APS5_VABI sceNpGlobalHeapGetAllocatorPtr(void);
 NpAllocatorEx* APS5_VABI sceNpGlobalHeapGetAllocatorExPtr(void);
+NpAllocator* APS5_VABI _sceNpAllocatorExConvertAllocator(NpAllocatorEx* allocator);
+void* APS5_VABI _sceNpAllocatorExMalloc(NpAllocatorEx* allocator, std::size_t size);
+void* APS5_VABI _sceNpAllocatorExRealloc(NpAllocatorEx* allocator, void* pointer, std::size_t size);
+void APS5_VABI _sceNpAllocatorExFree(NpAllocatorEx* allocator, void* pointer);
+char* APS5_VABI _sceNpAllocatorExStrdup(NpAllocatorEx* allocator, const char* text);
+char* APS5_VABI _sceNpAllocatorExStrndup(NpAllocatorEx* allocator, const char* text, std::size_t maxLength);
 void* APS5_VABI _ZN3sce2np6ObjectnwEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator);
 void* APS5_VABI _ZN3sce2np6ObjectnaEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator);
 void APS5_VABI _ZN3sce2np6ObjectdlEPvR14SceNpAllocator(void* object, NpAllocator* allocator);
@@ -358,8 +369,7 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
 int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* dstLength);
 
 int APS5_VABI _ZN3sce2np10CancelableC2Ev(void);
-int APS5_VABI sceNpUtilXmlEscape(void);
-int APS5_VABI _sceNpAllocatorExRealloc(void);
+int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required);
 int APS5_VABI _ZN3sce2np8WorkItem6CancelEi(void);
 int APS5_VABI _ZN3sce2np9WorkQueue11GetItemByIdEi(void);
 int APS5_VABI _ZN3sce2np14JsonDocBuilderC2ERKNS0_9JsonValueE(void);
@@ -370,7 +380,6 @@ int APS5_VABI _ZN3sce2np10EventQueueC2EP16SceNpAllocatorEx(void);
 int APS5_VABI _ZN3sce2np16StreamReadBufferD1Ev(void);
 int APS5_VABI _ZNK3sce2np9EventFlag6IsInitEv(void);
 int APS5_VABI _ZN3sce2np10CancelLockC2Ev(void);
-int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(void);
 int APS5_VABI _ZN3sce2np8WorkItem10SetRunningEv(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient21CreateRequestForAsyncEPiiPKvm(void);
 int APS5_VABI _ZN3sce2np18HttpConnectionPool13InvalidateAllEv(void);
@@ -397,7 +406,7 @@ int APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void);
 int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTypePKcPcS5_iPPhPmPiPvESA_(void);
 int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std::size_t bufferSize, std::size_t* required);
 int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void);
-int APS5_VABI sceNpUtilXmlUnescape(void);
+int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required);
 int APS5_VABI sceNpXmlParse(void);
 int APS5_VABI _ZN3sce2np9WorkQueue15GetFinishedItemENS0_14WorkItemStatusE(void);
 int APS5_VABI _ZN3sce2np9EventFlag4PollEmjPm(void);
@@ -435,12 +444,10 @@ int APS5_VABI _ZN3sce2np7Callout11CalloutFuncEPv(void);
 int APS5_VABI _ZThn8_N3sce2np6HandleD1Ev(void);
 int APS5_VABI _ZN3sce2np6Handle4InitEv(void);
 int APS5_VABI _ZThn16_N3sce2np10MemoryFileD1Ev(void);
-int APS5_VABI _sceNpAllocatorExFree(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient7ConnectEPKvm(void);
 int APS5_VABI _ZN3sce2np7RingBufC1Ev(void);
 int APS5_VABI _ZN3sce2np10MemoryFileD1Ev(void);
 int APS5_VABI _ZN3sce2np9HttpTrans21GetResponseStatusCodeEPNS0_6HandleEPi(void);
-int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(void);
 int APS5_VABI _ZN3sce2np14CalloutContextD1Ev(void);
 int APS5_VABI _ZN3sce2np14JsonDocBuilderC1ERKNS0_9JsonValueE(void);
 int APS5_VABI _ZN3sce2np9HttpTransD2Ev(void);
@@ -540,6 +547,30 @@ bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, con
 bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* lhs, const NpTitleIdObject* rhs);
 bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs);
 
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1Ev(NpTitleSecretObject* self);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2Ev(NpTitleSecretObject* self);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1ERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1ERK16SceNpTitleSecret(NpTitleSecretObject* self, const NpTitleSecret* secret);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(NpTitleSecretObject* self, const NpTitleSecret* secret);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1EPKvm(NpTitleSecretObject* self, const void* data, std::size_t size);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2EPKvm(NpTitleSecretObject* self, const void* data, std::size_t size);
+void APS5_VABI _ZN3sce2np13NpTitleSecretD1Ev(NpTitleSecretObject* self);
+void APS5_VABI _ZN3sce2np13NpTitleSecretD2Ev(NpTitleSecretObject* self);
+void APS5_VABI _ZN3sce2np13NpTitleSecretD0Ev(NpTitleSecretObject* self);
+NpTitleSecretObject* APS5_VABI _ZN3sce2np13NpTitleSecretaSERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other);
+int APS5_VABI _ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(NpTitleSecretObject* self, const void* data, std::size_t size);
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret7IsEmptyEv(const NpTitleSecretObject* self);
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsEPvm(const NpTitleSecretObject* self, const void* data, std::size_t size);
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsERKS1_(const NpTitleSecretObject* self, const NpTitleSecretObject* other);
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsERK16SceNpTitleSecret(const NpTitleSecretObject* self, const NpTitleSecret* secret);
+int APS5_VABI _ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(NpTitleSecretObject* out, const char* hex, std::size_t length);
+int APS5_VABI _ZN3sce2np13NpTitleSecret8BuildHexERKS1_Pcmb(const NpTitleSecretObject* secret, char* hex, std::size_t size, bool uppercase);
+bool APS5_VABI _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(const NpTitleSecretObject* lhs, const NpTitleSecretObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpTitleSecret* lhs, const NpTitleSecretObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERKNS0_13NpTitleSecretERK16SceNpTitleSecret(const NpTitleSecretObject* lhs, const NpTitleSecret* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretES3_(const NpTitleSecretObject* lhs, const NpTitleSecretObject* rhs);
+bool APS5_VABI _ZN3sce2npneERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpTitleSecret* lhs, const NpTitleSecretObject* rhs);
 int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read);
 int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read);
 int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read);
