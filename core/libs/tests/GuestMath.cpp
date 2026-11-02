@@ -2794,6 +2794,7 @@ static void CheckExpm1fConsoleBits() {
     }
 }
 
+
 static void CheckAtanConsoleBits() {
     constexpr std::uint64_t atanCases[][2] = {
         {0x0000000000000000ull, 0x0000000000000000ull}, {0x8000000000000000ull, 0x8000000000000000ull},
