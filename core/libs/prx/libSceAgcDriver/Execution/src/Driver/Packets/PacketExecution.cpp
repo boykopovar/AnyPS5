@@ -161,6 +161,7 @@ void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
 }
 
 void Driver::execute(Submission& submission) {
+    const Graphics::Recorder::LaneScope laneScope(Graphics::Recorder::LaneOfQueue(submission.queue));
     auto* submissionTiming = includeTimingSubmission(submission, true);
     struct FlipHold {
         Driver& driver;
