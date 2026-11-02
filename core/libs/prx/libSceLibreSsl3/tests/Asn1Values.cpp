@@ -111,6 +111,12 @@ void Failures() {
     try { ASN1_STRING_set_nid_postfix(&string, string.data + string.length, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw && string.data == previous && string.length == 1);
+    Require(ASN1_STRING_set_nid_postfix(&string, nullptr, 0) == 1);
+    previous = string.data;
+    threw = false;
+    try { ASN1_STRING_set_nid_postfix(&string, string.data, 1); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && string.data == previous && string.length == 0);
     for (int invalid : {-2, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
         Require(ASN1_STRING_set_nid_postfix(&string, "old", 3) == 1);
         ExpectClear(string);
