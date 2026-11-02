@@ -176,11 +176,11 @@ struct TargetUse {
 
 class MultisampleTarget : public std::enable_shared_from_this<MultisampleTarget> {
 public:
-    MultisampleTarget(const Context& context, const ColorTarget& target, std::optional<VkClearColorValue> knownClear = std::nullopt) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
+    MultisampleTarget(const Context& context, const ColorTarget& target, std::optional<VkClearColorValue> knownClear = std::nullopt, bool guestSamples = false) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
         this->context.bufferPool.reset();
         if (target.dccAddress != 0) metadataValid = std::make_shared<std::atomic<bool>>(true);
         std::shared_ptr<Buffer> initialUpload;
-        const auto initial = knownClear.has_value() ? knownClear : target.dccAddress != 0 || target.cmaskFastClear ? std::optional{initialDccClear(target)} : initialColorContents(context, target, initialUpload);
+        const auto initial = guestSamples ? std::optional<VkClearColorValue>{} : knownClear.has_value() ? knownClear : target.dccAddress != 0 || target.cmaskFastClear ? std::optional{initialDccClear(target)} : initialColorContents(target, initialUpload);
         if (target.dccAddress != 0) cleared = initial;
         const auto samples = static_cast<VkSampleCountFlagBits>(target.samples);
         Require((context.limits.framebufferColorSampleCounts & samples) != 0, "the device cannot render color with the target's sample count");
@@ -220,6 +220,7 @@ public:
             flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
             Require(storageSupports(format, VK_IMAGE_USAGE_STORAGE_BIT, 0u) && storageSupports(target.format, usage | VK_IMAGE_USAGE_STORAGE_BIT, flags), "the device cannot initialize the multisampled color target through its unsigned storage view");
             usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+            if (!initialUpload) initialUpload = guestSampleUpload(target);
         }
         twinFormat = colorTwinFormat(context, target.format);
         if (twinFormat != VK_FORMAT_UNDEFINED) {
@@ -748,7 +749,7 @@ private:
 
     VkImageView initialView = VK_NULL_HANDLE;
 
-    std::optional<VkClearColorValue> initialColorContents(const Context& uploadContext, const ColorTarget& use, std::shared_ptr<Buffer>& initialUpload) {
+    std::optional<VkClearColorValue> initialColorContents(const ColorTarget& use, std::shared_ptr<Buffer>& initialUpload) {
         Require(use.cmaskAddress == 0, "initial multisample color samples with CMASK require a modeled metadata import");
         Require(use.layers == 1u && use.arraySlice == 0u && use.arrayLastSlice == 0u && use.depth == 1u && use.depthSlice == 0u && use.mipCount == 1u && use.mip == 0u && !use.mipTail, "initial multisample array, volume or mip contents are not implemented");
         Require(FindGuestColorTargetFormat(use.format, use.elementBytes).has_value(), "initial multisample color format or element size is unsupported");
@@ -765,15 +766,27 @@ private:
             if (ClearColorForTexel(use.format, use.elementBytes, pattern, clear)) return clear;
         }
         Require(use.tileMode == ColorTileMode::RenderTarget, "nonuniform initial multisample color tiling is not implemented");
-        const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, use.elementBytes, use.samples, use.extent.width, use.extent.height, 1u, use.pipeBankXor);
-        Require(layout.Bytes() == initialColor.size(), "initial multisample color layout and footprint differ");
-        const auto elements = static_cast<std::uint64_t>(use.extent.width) * use.extent.height * use.samples;
-        Require(elements != 0 && elements <= std::numeric_limits<std::uint32_t>::max(), "initial multisample color element count is unsupported");
-        const auto alignedBytes = (layout.LinearBytes() + 3u) & ~std::uint64_t{3};
-        Require(alignedBytes <= std::numeric_limits<std::size_t>::max(), "initial multisample color exceeds host address space");
-        initialUpload = std::make_shared<Buffer>(uploadContext, static_cast<std::size_t>(alignedBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        layout.Detile(initialColor, initialUpload->Bytes().first(static_cast<std::size_t>(layout.LinearBytes())));
+        initialUpload = guestSampleUpload(use, initialColor);
         return std::nullopt;
+    }
+
+    std::shared_ptr<Buffer> guestSampleUpload(const ColorTarget& use, std::span<const std::byte> snapshot = {}) {
+        Require(use.cmaskAddress == 0 && use.dccAddress == 0, "uploading multisampled guest color under compression metadata is not implemented");
+        Require(use.layers == 1u && use.arraySlice == 0u && use.arrayLastSlice == 0u && use.depth == 1u && use.depthSlice == 0u && use.mipCount == 1u && use.mip == 0u && !use.mipTail, "uploading multisampled guest color of arrays, volumes or mips is not implemented");
+        Require(use.tileMode == ColorTileMode::RenderTarget || use.tileMode == ColorTileMode::Z64KBX, "non-uniform multisampled guest color tiling is not implemented");
+        const MultisampleTextureLayout layout(use.tileMode == ColorTileMode::Z64KBX ? TextureTileMode::kZ64KBX : TextureTileMode::kR64KBX, use.elementBytes, use.samples, use.extent.width, use.extent.height, 1u, use.pipeBankXor);
+        Require(layout.Bytes() == MultisampledColorBytes(use) && layout.Bytes() <= std::numeric_limits<std::size_t>::max(), "the multisampled guest color layout and footprint differ");
+        Require(layout.LinearBytes() / use.elementBytes <= std::numeric_limits<std::uint32_t>::max(), "the multisampled guest color element count is unsupported");
+        std::vector<std::byte> guest;
+        if (snapshot.empty()) {
+            guest.resize(static_cast<std::size_t>(layout.Bytes()));
+            GuestMemory::Read(use.address, guest);
+            snapshot = guest;
+        }
+        Require(snapshot.size() == layout.Bytes(), "the multisampled guest color snapshot and footprint differ");
+        auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>((layout.LinearBytes() + 3u) & ~std::uint64_t{3}), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        layout.Detile(snapshot, staging->Bytes().first(static_cast<std::size_t>(layout.LinearBytes())));
+        return staging;
     }
 
     VkClearColorValue initialDccClear(const ColorTarget& use) {
@@ -1171,21 +1184,16 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     if (!htileCleared) std::memcpy(&value, memory, sizeof(value));
     char held[16];
     std::snprintf(held, sizeof(held), "0x%08x", value);
-    const auto repeated = htileCleared ? memory + bytes : std::mismatch(memory + sizeof(value), memory + bytes, memory).first;
-    if (repeated != memory + bytes) {
-        char offset[32];
-        std::snprintf(offset, sizeof(offset), "+0x%llx", static_cast<unsigned long long>(repeated - memory));
-        refuse(std::string("whose color memory ") + range + " does not hold one repeated 32-bit value (" + held + " until " + offset + ")");
-    }
+    const bool uniform = htileCleared || std::equal(memory + sizeof(value), memory + bytes, memory);
     VkClearColorValue clear{};
-    if (!MultisampledFillClearColor(use, value, clear)) refuse(std::string("whose color memory ") + range + " holds " + held + ", which has no exact clear value in its format");
-    auto target = std::make_shared<MultisampleTarget>(context, use, clear);
+    if (uniform && !MultisampledFillClearColor(use, value, clear)) refuse(std::string("whose color memory ") + range + " holds " + held + ", which has no exact clear value in its format");
+    auto target = std::make_shared<MultisampleTarget>(context, use, uniform ? std::optional{clear} : std::nullopt, !uniform);
     target->Keep();
     targets().push_back(std::move(target));
     auto& created = *targets().back();
     created.use->hostOnly.store(written, std::memory_order_release);
     guard(context, use, created.active, created.metadataValid, created.use);
-    created.colorFill.NoteFill(use.address, static_cast<std::size_t>(bytes), value);
+    if (uniform) created.colorFill.NoteFill(use.address, static_cast<std::size_t>(bytes), value);
     created.fromTexture = true;
     created.htileAddress = resource.dccAddress;
     created.htileBytes = htileBytes;
