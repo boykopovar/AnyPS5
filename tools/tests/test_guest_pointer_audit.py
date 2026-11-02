@@ -61,9 +61,22 @@ class AccessTests(unittest.TestCase):
         source = (
             "int APS5_VABI sceExampleField(Info* out) { const int v = 1;\n"
             "  return GuestCopyOut_nid_no_patch(&out->size, &v, sizeof(out->size)) ? 0 : 14; }\n"
+            "int APS5_VABI sceExampleArray(Info* out) { const char v[4]{};\n"
+            "  return GuestCopyOut_nid_no_patch(out->name, v, sizeof(v)) ? 0 : 14; }\n"
             "int APS5_VABI sceExampleSize(Info* info) { return static_cast<int>(sizeof(*info) + alignof(decltype(info[0]))); }\n"
         )
         self.assertEqual(findings(source), [])
+
+    def test_evaluated_safe_call_arguments_are_accesses(self):
+        source = (
+            "int APS5_VABI sceExampleSize(Info* p) { Info local{}; return GuestCopyIn_nid_no_patch(&local, p, p->size); }\n"
+            "int APS5_VABI sceExampleLength(const char* p) { char v[8]{}; return GuestCopyIn_nid_no_patch(v, p, std::strlen(p)); }\n"
+        )
+        self.assertEqual(findings(source), [("sceExampleSize", "p", ["member"]), ("sceExampleLength", "p", ["library call"])])
+
+    def test_comparisons_in_call_arguments_do_not_hide_operands(self):
+        source = "int APS5_VABI sceExampleClamp(int* p, int n, int limit) { int source[2]{}; std::copy_n(source, n < limit ? n : limit, p); return 0; }\n"
+        self.assertEqual(findings(source), [("sceExampleClamp", "p", ["library call"])])
 
     def test_every_pointer_operand_of_a_copy_or_fill_is_checked(self):
         source = (

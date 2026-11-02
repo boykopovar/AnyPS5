@@ -8,8 +8,8 @@ import progress
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
-SAFE = ("GuestCopyIn_nid_no_patch", "GuestCopyOut_nid_no_patch", "CopyGuestString_nid_no_patch",
-        "CopyGuestPath_nid_no_patch", "CopyGuestEnvironment_nid_no_patch")
+SAFE = {"GuestCopyIn_nid_no_patch": (0, 1), "GuestCopyOut_nid_no_patch": (0, 1), "CopyGuestString_nid_no_patch": (0,),
+        "CopyGuestPath_nid_no_patch": (0,), "CopyGuestEnvironment_nid_no_patch": (0,)}
 UNEVALUATED = ("sizeof", "alignof", "decltype", "noexcept")
 RAW_CALLS = {
     "memcpy": (0, 1), "memmove": (0, 1), "memset": (0,), "memcmp": (0, 1),
@@ -18,16 +18,17 @@ RAW_CALLS = {
 }
 PARAMETER = re.compile(r"([A-Za-z_][\w:<>,\s]*?(?:[*&]+\s*(?:const\b\s*)?)+)\s*(\w+)\s*$")
 RAW_CALL = re.compile(rf"\b(?:std::|::)?({'|'.join(RAW_CALLS)})\s*\(")
-QUIET_CALL = re.compile(rf"\b({'|'.join(SAFE + UNEVALUATED)})\s*\(")
+QUIET_CALL = re.compile(rf"\b({'|'.join((*SAFE, *UNEVALUATED))})\s*\(")
 CAST = re.compile(r"^(?:\(\s*[\w\s:*<>]+\)(?=\s*\S)|(?:reinterpret|static|const)_cast\s*<[^>]*>|\()\s*")
 
 
-def split_top_level(text):
+def split_top_level(text, angles=True):
+    opening, closing_brackets = ("(<[{", ")>]}") if angles else ("([{", ")]}")
     parts, depth, start = [], 0, 0
     for index, character in enumerate(text):
-        if character in "(<[{":
+        if character in opening:
             depth += 1
-        elif character in ")>]}":
+        elif character in closing_brackets:
             depth -= 1
         elif character == "," and depth == 0:
             parts.append((start, text[start:index]))
@@ -63,10 +64,17 @@ def pointer_parameters(signature):
 def quiet(body):
     blanked = list(body)
     for match in QUIET_CALL.finditer(body):
-        start, end = match.end() - 1, closing(body, match.end() - 1)
-        for index in range(start + 1, end):
-            if blanked[index] != "\n":
-                blanked[index] = " "
+        open_paren = match.end() - 1
+        end = closing(body, open_paren)
+        spans = [(open_paren + 1, end)]
+        if match.group(1) in SAFE:
+            arguments = split_top_level(body[open_paren + 1:end], angles=False)
+            spans = [(open_paren + 1 + offset, open_paren + 1 + offset + len(text))
+                     for position, (offset, text) in enumerate(arguments) if position in SAFE[match.group(1)]]
+        for start, stop in spans:
+            for index in range(start, stop):
+                if blanked[index] != "\n":
+                    blanked[index] = " "
     return "".join(blanked)
 
 
@@ -88,7 +96,7 @@ def accesses(body, name):
         found += [(match.end() - 1, kind) for match in re.finditer(pattern, body)]
     for match in RAW_CALL.finditer(body):
         open_paren = match.end() - 1
-        arguments = split_top_level(body[open_paren + 1:closing(body, open_paren)])
+        arguments = split_top_level(body[open_paren + 1:closing(body, open_paren)], angles=False)
         for position in RAW_CALLS[match.group(1)]:
             if position < len(arguments) and names_parameter(arguments[position][1], name):
                 found.append((open_paren + 1 + arguments[position][0], "library call"))
