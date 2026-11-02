@@ -4,6 +4,7 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <cstdio>
 #include <exception>
 #include <initializer_list>
@@ -13,6 +14,7 @@
 namespace {
 
 constexpr int GUEST_EDEADLK = 11;
+constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_EINVAL = 22;
 constexpr int SCE_FAILED_CALL = static_cast<int>(0x8001ffffu);
 constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
@@ -25,6 +27,21 @@ constexpr int KIND_ADAPTIVE = 4;
 using MutexInit = int (APS5_VABI*)(PthreadMutex*, const PthreadMutexattr*);
 
 int failures = 0;
+
+struct StackQueryState {
+    std::atomic<bool> queried{false};
+    std::atomic<bool> release{false};
+    void* address = nullptr;
+    std::size_t size = 0;
+};
+
+void* APS5_VABI QueryStack(void* argument) {
+    auto* state = static_cast<StackQueryState*>(argument);
+    pthread_getstack_np_nid_postfix(&state->address, &state->size);
+    state->queried.store(true, std::memory_order_release);
+    while (!state->release.load(std::memory_order_acquire)) scePthreadYield();
+    return argument;
+}
 
 template<typename TCall>
 void Case(const char* name, TCall call) {
@@ -122,12 +139,38 @@ void TestRwlockattr() {
     });
 }
 
+void TestStack() {
+    Case("pthread_getstack_np", [] {
+        void* address = nullptr;
+        std::size_t size = 0;
+        pthread_getstack_np_nid_postfix(&address, &size);
+        if (!address || size < 16384) return false;
+        if (pthread_getstack_np_nid_postfix(nullptr, &size) != GUEST_EFAULT) return false;
+        address = nullptr;
+        if (pthread_getstack_np_nid_postfix(&address, nullptr) != GUEST_EFAULT || !address) return false;
+        PthreadAttr attr = nullptr;
+        if (pthread_attr_init_nid_postfix(&attr) != 0) return false;
+        constexpr std::size_t ChildStackSize = 256 * 1024;
+        if (pthread_attr_setstacksize_nid_postfix(&attr, ChildStackSize) != 0) return false;
+        StackQueryState state;
+        Pthread child = nullptr;
+        if (pthread_create_nid_postfix(&child, &attr, QueryStack, &state) != 0) return false;
+        while (!state.queried.load(std::memory_order_acquire)) scePthreadYield();
+        if (!state.address || state.size != ChildStackSize) return false;
+        state.release.store(true, std::memory_order_release);
+        void* result = nullptr;
+        if (pthread_join_nid_postfix(child, &result) != 0 || result != &state) return false;
+        return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+}
+
 }
 
 int main(int argc, char** argv) {
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "rwlockattr") TestRwlockattr();
     else if (mode == "kind") TestKind();
+    else if (mode == "stack") TestStack();
     else return 2;
     if (failures == 0) std::printf("all cases passed\n");
     return failures == 0 ? 0 : 1;
