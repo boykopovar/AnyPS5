@@ -6166,7 +6166,51 @@ bool StorageTexture::unchangedSinceBaseline(std::uint64_t from, std::uint64_t to
     return GuestMemory::EqualsCommittedUnsynced(from, std::span<const std::byte>(baseline).subspan(offset, static_cast<std::size_t>(to - from)));
 }
 
+void StorageTexture::PrepareLinearDraw() {
+    if (descriptor.tileMode != TextureTileMode::kLinear) return;
+    WriteBack();
+    FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), this, "linear draw baseline");
+    linearDrawOriginal.reset();
+    uploadReason = "linear draw baseline";
+    Refresh();
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, "a recorded linear target needs an active recorder");
+    const auto bytes = sliceLinearBytes * arrayLayers;
+    Require(bytes <= std::numeric_limits<std::size_t>::max() / 2, "a linear target snapshot exceeds addressable memory");
+    auto snapshot = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(bytes * 2), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    auto regions = CopyRegions();
+    for (auto& region : regions) region.bufferOffset += bytes;
+    recorder->Keep(snapshot);
+    recorder->KeepBytes(snapshot.get(), snapshot->Size());
+    const auto commands = recorder->Commands();
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, snapshot->Handle(), static_cast<std::uint32_t>(regions.size()), regions.data());
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+    linearDrawOriginal = std::move(snapshot);
+}
+
+void StorageTexture::FinishLinearDraw() {
+    if (descriptor.tileMode != TextureTileMode::kLinear) return;
+    FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), nullptr, "linear target");
+    if (!anyLayerPending()) linearDrawOriginal.reset();
+}
+
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
+    const auto drawOriginal = linearDrawOriginal;
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
@@ -6216,6 +6260,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         for (auto at = layerBegin(layer) & ~(block - 1); at < end; at += block) generations[static_cast<std::size_t>((at - spanBegin) / block)] = unitBlockGeneration(layer, at);
     }
     const auto drawn = drawnArea();
+    const bool rectStore = drawn.rect && drawOriginal == nullptr;
     std::vector<std::uint8_t> changedBlocks(spanBlocks);
     std::vector<std::uint8_t> cpuBlocks(drawn.drawn ? spanBlocks : 0);
     const bool tracked = GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks, cpuBlocks);
@@ -6243,8 +6288,15 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (!layers[layer]) continue;
         const auto begin = layerBegin(layer);
         const auto end = begin + layerBytes(layer);
+        if (drawOriginal != nullptr) {
+            for (auto at = begin & ~(block - 1); at < end; at += block) {
+                if (changedBlocks[static_cast<std::size_t>((at - spanBegin) / block)] == GuestMemory::BlockWritten) skippedLayer[layer] = true;
+            }
+            keep.emplace_back(begin, end);
+            continue;
+        }
         const bool unknown = tracked ? layerGeneration[layer] == 0 : !compared[layer];
-        if (unknown && !drawn.rect) {
+        if (unknown && !rectStore) {
             unsavedOutsideWatch = unsavedOutsideWatch || !tracked;
             keep.emplace_back(begin, end);
             continue;
@@ -6257,13 +6309,13 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             const auto index = static_cast<std::size_t>((at - spanBegin) / block);
             const bool kept = keptAtUnwatchHolds(from, layer);
             const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (compared[layer] || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !unchangedSinceBaseline(from, to));
-            if (written && (!drawn.rect || (tracked && !kept && !unknown && cpuBlocks[index] == 0))) {
+            if (written && (!rectStore || (tracked && !kept && !unknown && cpuBlocks[index] == 0))) {
                 skippedAny = true;
                 skippedLayer[layer] = true;
                 ++skipped;
                 continue;
             }
-            if (written && drawn.rect) skippedLayer[layer] = true;
+            if (written && rectStore) skippedLayer[layer] = true;
             if (!keep.empty() && keep.back().second == from) keep.back().second = to;
             else keep.emplace_back(from, to);
         }
@@ -6278,10 +6330,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         std::fprintf(stderr, "[flush] image 0x%llx+0x%llx keeps %zu CPU-written 64 KiB blocks (first stored byte at +0x%llx, %zu ranges stored, generation %llu)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), skipped, static_cast<unsigned long long>(first - descriptor.baseAddress), keep.size(), static_cast<unsigned long long>(generation));
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
-    if (drawn.rect) spans = drawnSpans(drawn, keep);
-    const auto& stores = drawn.rect ? spans : keep;
-    const auto stampBegin = drawn.rect && !stores.empty() ? stores.front().first : firstStored;
-    const auto stampEnd = drawn.rect && !stores.empty() ? stores.back().second : lastStored;
+    if (rectStore) spans = drawnSpans(drawn, keep);
+    const auto& stores = rectStore ? spans : keep;
+    const auto stampBegin = rectStore && !stores.empty() ? stores.front().first : firstStored;
+    const auto stampEnd = rectStore && !stores.empty() ? stores.back().second : lastStored;
     // Taken before this write-back stamps anything (see advanceAdjacent), with the 64 KiB block span
     // its stamps cover.
     const auto firstBlock = stampBegin / block;
@@ -6354,7 +6406,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             ++Profile().storageDirectWriteBacks;
             return;
         }
-        if (drawn.rect) {
+        if (rectStore) {
             PublishShadow(stampBegin, static_cast<std::size_t>(stampEnd - stampBegin), PublishScope::PartialUnits, PublishReason::Upload);
             const auto storedBytes = storeDrawnRect(drawn, segments, stores, saveUnits);
             countStorageWriteBack(storedBytes, true, true);
@@ -6375,11 +6427,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         // The whole-layer copies below overwrite the interior units of the span; the edge units
         // keep a neighbour's shadowed results in the rest of their bytes, which reach the import
         // first (this write-back's stamps then make those units stale).
-        PublishShadow(firstStored, static_cast<std::size_t>(lastStored - firstStored), PublishScope::PartialUnits, PublishReason::Upload);
+        PublishShadow(firstStored, static_cast<std::size_t>(lastStored - firstStored), drawOriginal != nullptr ? PublishScope::Whole : PublishScope::PartialUnits, PublishReason::Upload);
         // The surface lives in host-imported memory: the retiler writes into device scratch and the
         // untouched blocks are copied into the imported bytes in place, recorded behind the work that
         // produced the image; nothing crosses to the CPU.
-        auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        auto linear = drawOriginal != nullptr ? drawOriginal : std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         auto tiledScratch = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         std::vector<CopiedBytes> copied;
         for (const auto& [from, to] : keep) copied.push_back({from - descriptor.baseAddress, to - descriptor.baseAddress, from - descriptor.baseAddress});
@@ -6405,7 +6457,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             recorder->FlushStoresOverlapping(firstStored, static_cast<std::size_t>(lastStored - firstStored));
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageWriteBack);
-            if (linear) recorder->Keep(linear, linear->Size());
+            if (linear) {
+                recorder->Keep(linear, drawOriginal != nullptr ? 0 : linear->Size());
+                if (drawOriginal != nullptr) recorder->KeepBytes(linear.get(), linear->Size());
+            }
             recorder->Keep(tiledScratch, tiledScratch->Size());
             for (const auto& slab : padding.slabs) recorder->Keep(slab);
             // The image itself must outlive the recorded retile: the cache may evict it right after.
@@ -6453,6 +6508,18 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
                 detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                if (drawOriginal != nullptr) {
+                    const auto address = descriptor.baseAddress + geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+                    const auto offset = geometry.LinearLayerOffset(layer) + mip.linearOffset;
+                    for (const auto& segment : segments) {
+                        const auto begin = std::max(address, segment.begin);
+                        const auto end = std::min(address + mip.tiledSize, segment.end);
+                        if (begin >= end) continue;
+                        Require(end - address <= UINT32_MAX, "a linear target write-back exceeds addressable shader offsets");
+                        detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), offset, segment.import->buffer, HostImportOffset(*segment.import, begin), mip, true, layer, false,
+                            {.rangeBegin = static_cast<std::uint32_t>(begin - address), .rangeEnd = static_cast<std::uint32_t>(end - address), .tiledBase = static_cast<std::uint32_t>(begin - address)}, sliceLinearBytes * arrayLayers + offset);
+                    }
+                }
             }
         }
         {
@@ -6465,7 +6532,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
                     const auto end = std::min(to, segment.end);
                     if (begin < end) copies.push_back({begin - descriptor.baseAddress, HostImportOffset(*segment.import, begin), end - begin});
                 }
-                if (!copies.empty()) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, tiledScratch->Handle(), segment.import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
+                if (drawOriginal == nullptr && !copies.empty()) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, tiledScratch->Handle(), segment.import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
             }
             if (!saveUnits.empty()) {
                 std::vector<VkBufferCopy> saves;
@@ -6550,7 +6617,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     std::vector<bool> unsaved = layerOriginal;
     unsaved.flip();
     for (const auto& [begin, end] : unitRuns(unsaved)) {
-        if (drawn.rect) {
+        if (rectStore) {
             GuestMemory::ReadCommitted(descriptor.baseAddress + begin, std::span(original).subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin)));
             continue;
         }
@@ -6563,6 +6630,8 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     DeviceBuffer linear(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     Buffer host(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    std::unique_ptr<Buffer> drawBefore;
+    if (drawOriginal != nullptr) drawBefore = std::make_unique<Buffer>(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     if (profile) Profile().storageAlloc += timer.lap();
     // Start from the uploaded bytes so padding and untouched texels keep their guest values.
     std::memcpy(host.Bytes().data(), original.data(), original.size());
@@ -6570,6 +6639,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     detiler.BeginBatch();
     CommandBatch batch(context);
     const auto commands = batch.Handle();
+    if (drawBefore != nullptr) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        CopyBuffer(context, commands, drawOriginal->Handle(), sliceLinearBytes * arrayLayers, drawBefore->Handle(), 0, drawBefore->Bytes().size());
+    }
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     CopyBuffer(context, commands, host.Handle(), 0, tiled.Handle(), 0, original.size());
     VkImageMemoryBarrier toSource{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -6617,7 +6690,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     APS5_LOG_CHARS_OUT_DEBUG("StorageTexture writeback done");
     std::uint64_t storedBytes = 0;
     for (const auto& [from, to] : stores) storedBytes += to - from;
-    countStorageWriteBack(drawn.rect ? storedBytes : guestBytes, false, drawn.drawn);
+    countStorageWriteBack(rectStore ? storedBytes : guestBytes, false, drawn.drawn);
     if (profile) Profile().storageGpu += timer.lap();
     if (dump) {
         char name[64];
@@ -6631,6 +6704,18 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     }
     // Store only the kept ranges' blocks that changed, so concurrent CPU writes to untouched texels
     // survive; `original` follows for the stored layers (the others' guest bytes are unchanged).
+    if (drawBefore != nullptr) {
+        const auto before = drawBefore->Bytes();
+        for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+            for (std::uint32_t level = 0; level < mips.size(); ++level) {
+                if (!geometry.HasLayer(level, layer)) continue;
+                const auto& mip = mips[level];
+                for (const auto& [begin, end] : CoveredMipBytes(TextureTileMode::kLinear, elementBytes, mip)) {
+                    std::memcpy(original.data() + geometry.GuestLayerOffset(layer) + mip.tiledOffset + begin, before.data() + geometry.LinearLayerOffset(layer) + mip.linearOffset + begin, static_cast<std::size_t>(end - begin));
+                }
+            }
+        }
+    }
     const auto current = host.Bytes();
     for (const auto& [from, to] : stores) {
         const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);

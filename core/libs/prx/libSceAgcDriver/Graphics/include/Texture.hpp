@@ -26,6 +26,7 @@
 namespace AgcDriver::Graphics {
 
 class Buffer;
+class DeviceBuffer;
 class ResidentColor;
 class CommandBatch;
 class StorageTexture;
@@ -276,6 +277,8 @@ public:
     VkImageView AttachmentProxyView();
     void RecordAttachmentProxyLoad(VkCommandBuffer commands, VkImageLayout attachmentLayout) const;
     void RecordAttachmentProxyStore(VkCommandBuffer commands, VkImageLayout attachmentLayout) const;
+    void PrepareLinearDraw();
+    void FinishLinearDraw();
     void WriteBack();
     // Deferred write-back (APS5_EAGER_WRITEBACK=1 stores at once instead).
     void MarkDirty();
@@ -770,6 +773,7 @@ private:
     std::vector<bool> layerOriginal;
     std::map<std::uint64_t, std::uint64_t> keptAtUnwatch;
     std::shared_ptr<Buffer> savedBytes;
+    std::shared_ptr<DeviceBuffer> linearDrawOriginal;
     std::vector<std::uint64_t> savedTicket;
     std::uint64_t lastSaveTicket = 0;
     // The storage cache let the image go (Flush): a lookup makes a new image of the surface, so

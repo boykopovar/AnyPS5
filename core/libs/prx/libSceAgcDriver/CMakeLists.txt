@@ -45,6 +45,17 @@ add_custom_command(
         DEPENDS "${agcTextureDetileShaderSource}" glslang-standalone
         VERBATIM
 )
+set(agcTextureDetileChangedShaderSpv ${agcTextureDetileGeneratedDir}/TextureDetileChanged.spv)
+set(agcTextureDetileChangedShaderHeader ${agcTextureDetileGeneratedDir}/TextureDetileChanged_spv.h)
+add_custom_command(
+        OUTPUT "${agcTextureDetileChangedShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DBYTE_OUTPUT=1 -o "${agcTextureDetileChangedShaderSpv}" "${agcTextureDetileShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTextureDetileChangedShaderSpv} -DOUTPUT=${agcTextureDetileChangedShaderHeader}
+        -DSYMBOL=TEXTURE_DETILE_CHANGED_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcTextureDetileShaderSource}" glslang-standalone
+        VERBATIM
+)
 set(agcTextureDetileImageShaderSpv ${agcTextureDetileGeneratedDir}/TextureDetileImage.spv)
 set(agcTextureDetileImageShaderHeader ${agcTextureDetileGeneratedDir}/TextureDetileImage_spv.h)
 add_custom_command(
@@ -366,6 +377,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcSampleOrderShaderHeaders}
         ${agcTextureDetileShaderHeader}
+        ${agcTextureDetileChangedShaderHeader}
         ${agcReadbackHeaders}
         ${agcMultisampleUploadHeader}
         ${agcCmaskClearShaderHeader}
