@@ -939,7 +939,7 @@ LibreSslStack* APS5_VABI SSL_get_peer_cert_chain_nid_postfix(const LibreSslSsl* 
 LibreSslX509* APS5_VABI SSL_get_peer_certificate_nid_postfix(const LibreSslSsl* ssl);
 void* APS5_VABI SSL_get_rbio_nid_postfix(const LibreSslSsl* ssl);
 void* APS5_VABI SSL_get_privatekey_nid_postfix(const LibreSslSsl* ssl);
-int APS5_VABI SSL_get_servername_nid_postfix(void);
+const char* APS5_VABI SSL_get_servername_nid_postfix(const LibreSslSsl* ssl, int type);
 int APS5_VABI SSL_get_shutdown_nid_postfix(const LibreSslSsl* ssl);
 std::int64_t APS5_VABI SSL_get_verify_result_nid_postfix(const LibreSslSsl* ssl);
 void* APS5_VABI SSL_get_wbio_nid_postfix(const LibreSslSsl* ssl);

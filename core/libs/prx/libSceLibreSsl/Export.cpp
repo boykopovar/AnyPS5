@@ -471,13 +471,6 @@ LibreSslX509* APS5_VABI SSL_get_peer_certificate_nid_postfix(const LibreSslSsl* 
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI SSL_get_servername_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-
 int APS5_VABI SSL_library_init_nid_postfix(void) {
     return 1;
 }
