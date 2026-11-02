@@ -228,7 +228,7 @@ void testDeferredBuffer() {
 }
 
 void testCpuFlipOrder() {
-    const bool inOrder = std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
+    const bool inOrder = APS5_ENABLE_TIMING_LOG || std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::vector<std::byte> allocation(65536 + 65535);
@@ -255,7 +255,7 @@ void testCpuFlipOrder() {
     std::thread flipThread([&] { check(sceVideoOutSubmitFlip(handle, 0, 1, 5) == 0, "the flip thread's flip was not accepted"); });
     flipThread.join();
     const bool ahead = flipsWithin(1, std::chrono::milliseconds(inOrder ? 1000 : 8000));
-    if (inOrder) check(!ahead, "with APS5_CPU_FLIP_IN_ORDER a flip completed while a queue-0 submission ahead of it was held");
+    if (inOrder) check(!ahead, "with CPU flips in order a flip completed while a queue-0 submission ahead of it was held");
     else check(ahead, "a flip from a thread that never submitted queue-0 work waited for a held queue-0 submission");
     first->Release();
     check(flipsWithin(1, std::chrono::seconds(30)), "the flip thread's flip did not complete");
@@ -523,6 +523,13 @@ void testControls() {
         check(!cfg->groups[3].occupied && !cfg->buffers[15].Occupied(), "a refused registration past the last buffer registered something");
     }
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffers with set reserved pointers were rejected");
+    constexpr int slotOccupied = static_cast<int>(0x80290010u);
+    VideoOutBuffers again{storage.data(), nullptr, {nullptr, nullptr}};
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &again, 1, &attribute, 0, nullptr) == slotOccupied, "a registration over a registered set and its buffers did not fail with SLOT_OCCUPIED");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->buffers[0].groupIndex == 0 && cfg->groups[0].occupied, "a refused registration released the registered set");
+    }
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "VRR status event triggered without a VRR change");
     KernelEvent vrrStatus{};
