@@ -71,9 +71,9 @@ int main() {
         auto symbolic=good;symbolic.Symbolic=true;Domain::GuestRuntime symbolicRuntime;Reject([&]{Elfpatcher::GuestModuleWriter().WriteWindows(symbolic,symbolicRuntime);},"DF_SYMBOLIC");
         for(unsigned kind=0;kind<10;++kind){auto g=good;auto& s=g.Symbols[2];switch(kind){case 0:s.Value+=8;break;case 1:s.Size+=1;break;case 2:s.Info=0x22;break;case 3:s.Info=0x11;break;case 4:s.Visibility=0;break;case 5:s.Section=2;break;case 6:g.Symbols[1].Info=s.Info=0x11;break;case 7:g.Symbols[1].Section=s.Section=Relinker::AbsoluteSection;break;case 8:g.Symbols[1].Info=s.Info=0x16;g.Dynamic.RelaData.clear();break;case 9:g.Symbols[1].Info=s.Info=0x10;break;}Check(!Relinker::IdenticalOrdinaryFunctionExport(g.Symbols[1],s),"nonordinary/conflicting tuple accepted");Domain::GuestRuntime r;Reject([&]{Elfpatcher::GuestModuleWriter().WriteWindows(g,r);},kind==8?"TLS":"Duplicate guest export");}
         Check(Domain::DeclaredImportModule("same#A#B",{{1,"one"},{2,"two"}})=="one"&&Domain::DeclaredImportModule("same#A#C",{{1,"one"},{2,"two"}})=="two","module-qualified IDs merged");
-        Check(Domain::DeclaredImportModule("own#A#A",{{1,"one"}},0).empty()&&Domain::ImportModule("own#A#A",{{1,"one"}},{},0).empty(),"an import of the module's own ID named a dependency");
-        Check(Domain::DeclaredImportModule("listed#A#B",{{1,"one"}},1)=="one","a dependency sharing the module's own ID was dropped");
-        Reject([&]{static_cast<void>(Domain::DeclaredImportModule("other#A#D",{{1,"one"}},0));},"Unknown import module ID");
+        Check(Domain::DeclaredImportModule("own#A#A",{{1,"one"}},{0}).empty()&&Domain::ImportModule("own#A#A",{{1,"one"}},{},{0}).empty(),"an import of the module's own ID named a dependency");
+        Check(Domain::DeclaredImportModule("listed#A#B",{{1,"one"}},{1})=="one","a dependency sharing the module's own ID was dropped");
+        Reject([&]{static_cast<void>(Domain::DeclaredImportModule("other#A#D",{{1,"one"}},{0}));},"Unknown import module ID");
         auto zeroBucket=Fixture();Io::WriteU32(zeroBucket,0x2600,0);
         Reject([&]{Relinker::GuestImageReader().Read("generic.prx",zeroBucket,true);},"Invalid SysV hash header");
         auto zeroChain=Fixture();Io::WriteU32(zeroChain,0x2604,0);

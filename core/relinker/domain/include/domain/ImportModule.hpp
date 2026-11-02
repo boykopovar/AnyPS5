@@ -4,7 +4,7 @@
 #include <domain/Types.hpp>
 #include <algorithm>
 #include <array>
-#include <optional>
+#include <set>
 #include <span>
 #include <string_view>
 
@@ -30,7 +30,7 @@ inline std::string ImportModuleName(std::string name) {
     return name;
 }
 
-inline std::string DeclaredImportModule(const std::string& symbol, const std::map<std::uint64_t, std::string>& modules, std::optional<std::uint64_t> ownModule = std::nullopt) {
+inline std::string DeclaredImportModule(const std::string& symbol, const std::map<std::uint64_t, std::string>& modules, const std::set<std::uint64_t>& ownModules = {}) {
     if (modules.empty()) return {};
     const auto first = symbol.find('#');
     if (first == std::string::npos) return {};
@@ -47,7 +47,7 @@ inline std::string DeclaredImportModule(const std::string& symbol, const std::ma
     }
     const auto module = modules.find(id);
     if (module == modules.end()) {
-        if (ownModule == id) return {};
+        if (ownModules.contains(id)) return {};
         throw RelinkerException("Unknown import module ID: " + symbol);
     }
     auto name = module->second;
@@ -57,8 +57,8 @@ inline std::string DeclaredImportModule(const std::string& symbol, const std::ma
 }
 
 inline std::string ImportModule(const std::string& symbol, const std::map<std::uint64_t, std::string>& modules,
-    std::span<const std::string> dependencies = {}, std::optional<std::uint64_t> ownModule = std::nullopt) {
-    auto name = DeclaredImportModule(symbol, modules, ownModule);
+    std::span<const std::string> dependencies = {}, const std::set<std::uint64_t>& ownModules = {}) {
+    auto name = DeclaredImportModule(symbol, modules, ownModules);
     if (name.empty()) return {};
     if (ModuleSuffix(name).empty()) name += ".prx";
     if (std::find(dependencies.begin(), dependencies.end(), name) != dependencies.end()) return name;
