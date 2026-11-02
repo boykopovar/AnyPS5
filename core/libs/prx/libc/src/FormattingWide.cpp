@@ -167,7 +167,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             length += static_cast<char>(*format++);
             if ((length == "h" && *format == u'h') || (length == "l" && *format == u'l')) length += static_cast<char>(*format++);
         }
-        const char16_t conversion = *format;
+        char16_t conversion = *format;
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
         if (!secure && conversion < 0x80) length = LibcDetail::ApplicableLength(length, static_cast<char>(conversion));
@@ -251,6 +251,13 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
+        } else if (!secure && conversion == u'%') {
+            AppendPadded(out, u"%", left, width);
+        } else if (!secure && !In(conversion, "cCdiouxXaAeEfFgGpsSn")) {
+            std::u16string text(1, u'%');
+            text.push_back(conversion);
+            if (conversion >= 0xd800 && conversion < 0xdc00 && *format >= 0xdc00 && *format < 0xe000) text.push_back(*format++);
+            AppendPadded(out, text, left, width);
         } else {
             throw std::invalid_argument("Unsupported format conversion");
         }

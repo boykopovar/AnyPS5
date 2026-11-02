@@ -113,7 +113,7 @@ static void CheckPointer() {
         buffer == std::u16string(u"[      1234][1234      ][00001234][0000001a]"), "vswprintf %p width and precision");
     Require(Format(buffer, 64, u"[%.0p][%p]", address(0), address(0)) == 5 &&
         buffer == std::u16string(u"[][0]"), "vswprintf %p with a zero precision prints nothing");
-    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == 6 && buffer == std::u16string(u"[1234]"), "vswprintf %lp ignores the l");
+    Require(Format(buffer, 64, u"[%l", address(0x1234)) == -1, "vswprintf a conversion cut short after a length is refused");
 }
 
 static void CheckCount() {
@@ -222,7 +222,7 @@ static void CheckSwprintf() {
     char16_t wide[16];
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
-    Require(swprintf_nid_postfix(wide, 16, u"%q") < 0 && wide[0] == 0, "swprintf invalid conversion");
+    Require(swprintf_nid_postfix(wide, 16, u"%l") < 0 && wide[0] == 0, "swprintf invalid conversion");
     for (const char16_t* format : {u"%99999999999d", u"%.99999999999d", u"%4294967296s", u"%.4294967296s", u"%2147483648ls", u"%.2147483648ls"}) {
         wide[0] = u'x';
         Require(swprintf_nid_postfix(wide, 16, format, 7, u"a") < 0 && wide[0] == 0, "swprintf width or precision beyond int");
@@ -231,6 +231,34 @@ static void CheckSwprintf() {
     Require(swprintf_nid_postfix(wide, 16, u"%*d", INT_MIN, 7) < 0 && wide[0] == 0, "swprintf INT_MIN width");
     Require(swprintf_nid_postfix(wide, 16, u"%*d", -5, 7) == 5 && wide == std::u16string(u"7    "), "swprintf negative width");
 }
+
+static void CheckMeasuredWideConversions() {
+    char16_t buffer[48];
+    Require(swprintf_nid_postfix(buffer, 48, u"%qd|%qu|%qx|%qo", -5ll, 7ull, 255ull, 8ull) == 15 &&
+        buffer == std::u16string(u"%qd|%qu|%qx|%qo"), "swprintf q forms print literally");
+    Require(swprintf_nid_postfix(buffer, 48, u"%D|%hD|%O|%U|%jD", -5ll, 7ll, 8ll, 9ull, -6ll) == 14 &&
+        buffer == std::u16string(u"%D|%D|%O|%U|%D"), "swprintf D O U forms print literally");
+    Require(swprintf_nid_postfix(buffer, 48, u"[%5%][%-5%][%y][%5y][%-3y]") == 30 &&
+        buffer == std::u16string(u"[    %][%    ][%y][   %y][%y ]"), "swprintf measured unknown and percent widths");
+    Require(swprintf_nid_postfix(buffer, 48, u"%05y") == 5 && buffer == std::u16string(u"   %y"),
+        "swprintf zero flag on measured unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%l5d|%lqd|%qc|%lhd|%l*d|%m") == 22 &&
+        buffer == std::u16string(u"%5d|%qd|%qc|%hd|%*d|%m"), "swprintf measured unsupported forms print literally");
+    Require(swprintf_nid_postfix(buffer, 48, u"100%") < 0 && buffer[0] == 0, "swprintf rejects unsafe trailing percent");
+    Require(swprintf_nid_postfix(buffer, 48, u"ab%5") < 0 && buffer[0] == 0, "swprintf rejects trailing width");
+    Require(swprintf_nid_postfix(buffer, 48, u"%d%l", 7) < 0 && buffer[0] == 0, "swprintf rejects trailing length");
+    Require(swprintf_nid_postfix(buffer, 48, u"%") < 0 && buffer[0] == 0, "swprintf rejects lone percent");
+    Require(Format(buffer, 48, u"%d%", 7) < 0 && buffer[0] == 0, "vswprintf rejects trailing percent");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%y") < 0 && buffer[0] == 0, "snwprintf_s unknown conversion");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"100%") < 0 && buffer[0] == 0, "snwprintf_s trailing percent");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%D", 1ll) < 0 && buffer[0] == 0, "snwprintf_s %D");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%qd", 5ll) < 0 && buffer[0] == 0, "snwprintf_s %qd");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%qX", -5ll) < 0 && buffer[0] == 0, "snwprintf_s %qX");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%O", 8ll) < 0 && buffer[0] == 0, "snwprintf_s %O");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%U", 8ll) < 0 && buffer[0] == 0, "snwprintf_s %U");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%5%") < 0 && buffer[0] == 0, "snwprintf_s unknown conversion with a width");
+}
+
 
 static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const GuestTm* time) {
     try {
@@ -444,6 +472,7 @@ int main() {
     CheckSwprintf();
     CheckFloat();
     CheckSecureWideBoundary();
+    CheckMeasuredWideConversions();
     CheckWcsftime();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");
     Check(u"%.1s", "\xc3\xa9\xc3\xa8", u"\u00e9");
