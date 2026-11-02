@@ -100,6 +100,20 @@ bool Replay(const char* path) {
             return false;
         }
         std::printf("  code -> %s\n", name.c_str());
+        if (request.request.graphics.has_value()) {
+            const auto& linked = request.request.graphics->linkedPrograms;
+            for (std::size_t index = 0; index < linked.size(); ++index) {
+                const auto linkedName = name + ".linked" + std::to_string(index);
+                const auto& linkedCode = linked[index].binary.code;
+                std::ofstream linkedFile(linkedName, std::ios::binary);
+                linkedFile.write(reinterpret_cast<const char*>(linkedCode.data()), static_cast<std::streamsize>(linkedCode.size() * sizeof(linkedCode[0])));
+                if (!linkedFile) {
+                    std::printf("  could not write %s\n", linkedName.c_str());
+                    return false;
+                }
+                std::printf("  linked program %zu (stage %u, 0x%llx) -> %s\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), linkedName.c_str());
+            }
+        }
     }
     if (g_assembly) {
         const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(request.request.shader.code);
