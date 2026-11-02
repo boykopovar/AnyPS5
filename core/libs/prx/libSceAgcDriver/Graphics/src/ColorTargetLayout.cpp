@@ -127,6 +127,11 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
             pitch = (width + pitchAlignment - 1u) / pitchAlignment * pitchAlignment;
             break;
         }
+        case ColorTileMode::GcnLinear: {
+            const auto pitchAlignment = std::max(8u, 64u / bytesPerElement);
+            pitch = (width + pitchAlignment - 1u) / pitchAlignment * pitchAlignment;
+            break;
+        }
         case ColorTileMode::S4KBX:
         case ColorTileMode::D4KBX:
         case ColorTileMode::Z64KBX:
@@ -179,7 +184,7 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
 }
 
 std::size_t ColorTargetLayout::offset(std::uint32_t x, std::uint32_t y) const {
-    if (mode == ColorTileMode::Linear) return (static_cast<std::size_t>(y) * pitch + x) * elementBytes;
+    if (ColorTileModeIsLinear(mode)) return (static_cast<std::size_t>(y) * pitch + x) * elementBytes;
     const auto block = static_cast<std::size_t>(y / blockHeight) * (pitch / blockWidth) + x / blockWidth;
     if (gcn) {
         std::uint32_t inBlock = 0;

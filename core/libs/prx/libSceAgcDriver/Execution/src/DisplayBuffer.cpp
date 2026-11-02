@@ -184,7 +184,6 @@ std::vector<std::byte> DecodeDisplayBuffer(const DisplayBuffer& buffer, std::spa
         timing.Mark("detile_convert");
         return pixels;
     }
-    const auto blocksPerRow = (buffer.width + 127u) / 128u;
     const bool rgba = DisplayRedLow(buffer.pixelFormat);
     const bool pq = DisplayPq(buffer.pixelFormat);
     const float whiteNits = pq ? PqToSdrWhiteNits(AgcDriver::CurrentHostHdr()) : 0.0f;
@@ -194,9 +193,7 @@ std::vector<std::byte> DecodeDisplayBuffer(const DisplayBuffer& buffer, std::spa
     timing.Mark("validate_allocate");
     for (std::uint32_t y = 0; y < buffer.height; ++y) {
         for (std::uint32_t x = 0; x < buffer.width; ++x) {
-            const auto pitch = buffer.pitchInPixel == 0 ? buffer.width : buffer.pitchInPixel;
-            const auto tiled = buffer.tilingMode == 1 ? (static_cast<std::size_t>(y) * pitch + x) * 4u
-                : (static_cast<std::size_t>(y / 128u) * blocksPerRow + x / 128u) * 65536u + tileOffset(x, y);
+            const auto tiled = texelOffset(buffer, x, y, 4u);
             const auto linear = (static_cast<std::size_t>(y) * buffer.width + x) * 4;
             decodeTexel(source.data() + tiled, pixels.data() + linear, rgba, tenBit, pq, whiteNits);
         }

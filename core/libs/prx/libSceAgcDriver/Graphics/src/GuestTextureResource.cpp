@@ -116,13 +116,16 @@ std::optional<std::array<std::uint32_t, 8>> R128ResidentLevelWords(std::span<con
     return rebased;
 }
 
+std::uint64_t descriptorBase(std::span<const std::uint32_t> words) {
+    return (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & (ShaderRecompiler::GcnGuestShaders() ? 0x3fffffffffull : 0xffffffffffull);
+}
+
 }
 
 bool IsNullTextureResource(std::span<const std::uint32_t> words) {
     Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
-    const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
     const auto type = (words[3] >> 28u) & 0xfu;
-    return base40 == 0 || type <= 1;
+    return descriptorBase(words) == 0 || type <= 1;
 }
 
 GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descriptor) {
@@ -134,8 +137,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     if (gcn) local[6] = local[7] = 0u;
     const std::span<const std::uint32_t> words(local);
 
-    const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
-    auto baseAddress = base40 << 8u;
+    auto baseAddress = descriptorBase(words) << 8u;
     Require(baseAddress != 0, "guest texture descriptor has a null base address");
 
     const auto minLod = (words[1] >> 8u) & 0xfffu;
