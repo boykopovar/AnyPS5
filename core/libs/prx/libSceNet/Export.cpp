@@ -172,6 +172,19 @@ constexpr int NET_MSG_DONTWAIT = 0x80;
 constexpr int NET_MSG_NOSIGNAL = 0x20000;
 constexpr int NET_UIO_MAXIOV = 1024;
 
+bool RawProtocolEntry(int family, int protocol) {
+    if (family == NET_AF_INET6) {
+        switch (protocol) {
+        case 4: case 41: case 43: case 44: case 47: case 58: case 60: case 103: case 255: return true;
+        default: return false;
+        }
+    }
+    switch (protocol) {
+    case 1: case 2: case 4: case 41: case 46: case 47: case 55: case 97: case 103: case 255: return true;
+    default: return false;
+    }
+}
+
 #ifdef _WIN32
 using NativeSocket = SOCKET;
 using NativeLength = int;
@@ -1599,9 +1612,10 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         return 0;
     }
     if (level == NET_SOL_SOCKET && optname == NET_SO_PROTOCOL) {
-        if (socket.type == NET_SOCK_RAW) NotImplemented_nid_no_patch(__func__);
-        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(socket.protocol)));
-        std::memcpy(optval, &socket.protocol, *optlen);
+        if (socket.type == NET_SOCK_RAW && socket.protocol == 0) NotImplemented_nid_no_patch(__func__);
+        const int protocol = socket.type == NET_SOCK_RAW && !RawProtocolEntry(socket.family, socket.protocol) ? 0 : socket.protocol;
+        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(protocol)));
+        std::memcpy(optval, &protocol, *optlen);
         return 0;
     }
     if (level == NET_IPPROTO_IPV6) {
