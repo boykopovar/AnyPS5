@@ -332,12 +332,6 @@ bool TranslationContext::outputModifierApplies(std::uint32_t denormalShift) cons
     return !ieeeMode && ((mode >> denormalShift) & 2u) == 0u;
 }
 
-void TranslationContext::rejectHalfOrDoubleOutputModifier(const RdnaOperand& operand) const {
-    if (operand.omod != 0u && outputModifierApplies(6u)) {
-        throw std::runtime_error("output modifier on an f16 or f64 result with f16/f64 output denormals flushed is not implemented");
-    }
-}
-
 IrU32 TranslationContext::quietNan32(IrU32 bits) {
     return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x00400000u))) : bits;
 }
@@ -414,8 +408,42 @@ IrF32 TranslationContext::applyF32ResultModifiers(const RdnaOperand& operand, Ir
     return value;
 }
 
+IrF32 TranslationContext::scaleF16Result(std::uint32_t omod, IrF32 value) {
+    IrValue& bits = ir.BitCastU32(value.Value());
+    IrValue& magnitude = ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu));
+    IrValue& sign = ir.BitwiseAnd(bits, ir.Constant(0x80000000u));
+    IrValue* result = nullptr;
+    if (omod == 3u) {
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x39000000u)), sign, ir.ISub(bits, ir.Constant(0x00800000u)));
+    } else {
+        const std::uint32_t exponentStep = omod == 1u ? 0x00800000u : 0x01000000u;
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x47800000u - exponentStep)), ir.IAdd(bits, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x47800000u)));
+    }
+    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x38800000u)), sign, *result);
+    result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7f7fffffu)), bits, *result);
+    return IrF32(ir.BitCastF32(*result));
+}
+
+IrU32 TranslationContext::scaleF16Bits(std::uint32_t omod, IrU32 bits) {
+    IrValue& raw = bits.Value();
+    IrValue& magnitude = ir.BitwiseAnd(raw, ir.Constant(0x7fffu));
+    IrValue& sign = ir.BitwiseAnd(raw, ir.Constant(0x8000u));
+    IrValue* result = nullptr;
+    if (omod == 3u) {
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0800u)), sign, ir.ISub(raw, ir.Constant(0x0400u)));
+    } else {
+        const std::uint32_t exponentStep = omod == 1u ? 0x0400u : 0x0800u;
+        result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x7c00u - exponentStep)), ir.IAdd(raw, ir.Constant(exponentStep)), ir.BitwiseOr(sign, ir.Constant(0x7c00u)));
+    }
+    result = &ir.Select(ir.ULessThan(magnitude, ir.Constant(0x0400u)), sign, *result);
+    result = &ir.Select(ir.UGreaterThan(magnitude, ir.Constant(0x7bffu)), raw, *result);
+    return IrU32(*result);
+}
+
 IrF32 TranslationContext::applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value) {
-    rejectHalfOrDoubleOutputModifier(operand);
+    if (operand.omod != 0u && outputModifierApplies(6u)) {
+        value = scaleF16Result(operand.omod, value);
+    }
     if (!operand.clamp) {
         return value;
     }
@@ -442,7 +470,9 @@ IrF32 TranslationContext::clampF16Overflow(IrF32 value, std::initializer_list<Ir
 }
 
 IrU32 TranslationContext::clampF16Bits(const RdnaOperand& operand, IrU32 bits) {
-    rejectHalfOrDoubleOutputModifier(operand);
+    if (operand.omod != 0u && outputModifierApplies(6u)) {
+        bits = scaleF16Bits(operand.omod, bits);
+    }
     if (!operand.clamp) {
         return bits;
     }

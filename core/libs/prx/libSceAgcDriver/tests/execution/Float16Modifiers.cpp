@@ -189,15 +189,6 @@ void Check() {
     }
 }
 
-bool RefusesOutputModifier(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
-    try {
-        Run(device, code, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false});
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()).find("output modifier on an f16") != std::string::npos;
-    }
-    return false;
-}
-
 }
 
 int main() {
@@ -208,7 +199,11 @@ int main() {
         Check();
         Run(*device, Code, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
         Check();
-        Require(RefusesOutputModifier(*device, Code), "float16 modifiers: an output modifier with f16 output denormals flushed was not refused");
+        Run(*device, Code, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false});
+        Require((Output[1] & 0xffffu) == 0xf099u, "float16 modifiers: lane 0 v_add_f16 mul:2 was not scaled");
+        Require((Output[12] & 0xffffu) == 0x77abu, "float16 modifiers: lane 0 v_max3_f16 mul:2 was not scaled");
+        Require((Output[14] & 0xffffu) == 0xe899u, "float16 modifiers: lane 0 v_min3_f16 div:2 was not scaled");
+        Require((Output[15] & 0xffffu) == 0x77abu, "float16 modifiers: lane 0 v_fma_f16 mul:2 was not scaled");
         const std::pair<std::span<const std::uint32_t>, const char*> ternaries[] = {
             {Min3Div2, "v_min3_f16 div:2"},
             {Max3Mul2, "v_max3_f16 mul:2"},
@@ -218,7 +213,7 @@ int main() {
         for (const auto& [code, name] : ternaries) {
             Run(*device, code, std::nullopt);
             Run(*device, code, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
-            Require(RefusesOutputModifier(*device, code), std::string("float16 modifiers: ") + name + " with f16 output denormals flushed was not refused");
+            Run(*device, code, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false});
         }
         std::puts("float16 modifiers tests passed");
         return 0;
