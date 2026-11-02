@@ -1,6 +1,11 @@
+add_library(system_service_host_locale INTERFACE)
+if(APPLE)
+    target_link_libraries(system_service_host_locale INTERFACE "-framework CoreFoundation")
+endif()
+
 add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp PendingExports.cpp LoadExec.cpp)
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage)
+target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage system_service_host_locale)
 configure_windows_unwind(libSceSystemService)
 
 if(BUILD_TESTING)
@@ -81,6 +86,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_system_service PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_system_service_status_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceStatus.cpp)
+    target_include_directories(guest_system_service_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_status_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_status_tests)
+    foreach(statusMode IN ITEMS suspend sessions shell devices)
+        add_test(NAME guest_system_service_status_${statusMode} COMMAND guest_system_service_status_tests ${statusMode})
+        if(WIN32)
+            set_tests_properties(guest_system_service_status_${statusMode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test_executable(guest_system_service_language_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceLanguage.cpp)
     target_include_directories(guest_system_service_language_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_system_service_language_tests PRIVATE libSceSystemService libc)
@@ -89,6 +105,38 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_system_service_language PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(system_service_language_locale_tests ${LIBS_INCLUDE_DIR}/tests/SystemServiceLanguageLocale.cpp)
+    target_include_directories(system_service_language_locale_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(system_service_language_locale_tests PRIVATE system_service_host_locale)
+    configure_host_test_executable(system_service_language_locale_tests)
+    add_test(NAME system_service_language_locale COMMAND system_service_language_locale_tests)
+    set_tests_properties(system_service_language_locale PROPERTIES TIMEOUT 20)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_system_service_language_auto_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceLanguageAuto.cpp)
+        target_include_directories(guest_system_service_language_auto_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_system_service_language_auto_tests PRIVATE libSceSystemService libc system_service_host_locale)
+        configure_windows_unwind(guest_system_service_language_auto_tests)
+        set(languageAutoIndex 0)
+        foreach(languageAutoCase IN ITEMS
+                "4,-,-,de_DE.UTF-8,-,auto,0"
+                "17,-,-,pt_BR.UTF-8,-,AUTO,0"
+                "10,-,-,zh_TW.UTF-8,-,Auto,0"
+                "11,-,-,zh_CN.UTF-8,-,auto,0"
+                "20,es_MX.UTF-8,fr_FR.UTF-8,de_DE.UTF-8,-,auto,0"
+                "2,-,fr_FR.UTF-8,de_DE.UTF-8,-,auto,0"
+                "3,-,-,en_US.UTF-8,es:fr,auto,0"
+                "18,-,-,en_GB.UTF-8@euro,-,auto,0"
+                "0,-,-,ja_JP.UTF-8,-,auto,0"
+                "1,-,-,C,es,auto,1"
+                "1,-,-,-,-,auto,1"
+                "1,-,-,lt_LT.UTF-8,-,auto,1"
+                "30,-,-,lt_LT.UTF-8,lt:uk:fr,auto,0")
+            string(REPLACE "," ";" languageAutoArguments "${languageAutoCase}")
+            add_test(NAME guest_system_service_language_auto_${languageAutoIndex} COMMAND guest_system_service_language_auto_tests ${languageAutoArguments})
+            set_tests_properties(guest_system_service_language_auto_${languageAutoIndex} PROPERTIES TIMEOUT 20)
+            math(EXPR languageAutoIndex "${languageAutoIndex} + 1")
+        endforeach()
     endif()
     add_test_executable(guest_system_service_time_zone_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceTimeZone.cpp)
     target_include_directories(guest_system_service_time_zone_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -131,6 +179,24 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
+    add_test_executable(guest_system_service_activation_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceActivation.cpp)
+    target_include_directories(guest_system_service_activation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_activation_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_activation_tests)
+    add_test(NAME guest_system_service_activation COMMAND guest_system_service_activation_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_service_activation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_system_service_ps_button_event_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServicePSButtonEvent.cpp)
+    target_include_directories(guest_system_service_ps_button_event_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_ps_button_event_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_ps_button_event_tests)
+    add_test(NAME guest_system_service_ps_button_event COMMAND guest_system_service_ps_button_event_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_service_ps_button_event PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_system_kill_app_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemKillApp.cpp)
     target_include_directories(guest_system_kill_app_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_system_kill_app_tests PRIVATE libSceSystemService libc)

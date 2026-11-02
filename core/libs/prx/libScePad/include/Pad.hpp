@@ -113,6 +113,18 @@ struct PadVirtualDeviceParameter;
 struct PadVirtualDeviceId;
 struct PadVirtualDeviceComponentInformation;
 
+struct PadContainerIdInformation {
+    std::uint32_t size;
+    char id[0x2000];
+};
+
+struct PadVolumeGain {
+    std::uint8_t speakerVolume;
+    std::uint8_t headsetVolume;
+    std::uint8_t padding;
+    std::uint8_t micGain;
+};
+
 struct PadVirtualTriggerInternalState {
     std::uint32_t states[2];
     std::uint8_t mode;
@@ -155,6 +167,14 @@ int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInfor
 int APS5_VABI scePadGetExtControllerInformation(int handle, void* info);
 int APS5_VABI scePadSetProcessPrivilege(int privilege);
 int APS5_VABI scePadSetParticularMode(bool mode);
+int APS5_VABI scePadGetParticularMode(void);
+int APS5_VABI scePadGetControllerBusType(int handle, int* busType);
+int APS5_VABI scePadGetJackState(int handle, int* state);
+int APS5_VABI scePadIsControllerUpdateRequired(int handle);
+int APS5_VABI scePadGetContainerIdInformation(int handle, PadContainerIdInformation* info);
+int APS5_VABI scePadIsSupportedAudioFunction(int handle);
+int APS5_VABI scePadSetAudioOutPath(int handle, int path);
+int APS5_VABI scePadSetVolumeGain(int handle, const PadVolumeGain* gain);
 int APS5_VABI scePadInit_nid_postfix(void);
 int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void* param);
 int APS5_VABI scePadOpenExt(int userId, int type, int index, const void* param);
