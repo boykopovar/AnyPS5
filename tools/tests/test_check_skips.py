@@ -146,7 +146,7 @@ class CheckSkipsTests(unittest.TestCase):
                 for arguments in (("--job", "linux"), ("--job", "windows"), ("--list",)):
                     with self.subTest(report=report, arguments=arguments):
                         result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), *arguments],
-                                                capture_output=True, text=True, timeout=5)
+                                                capture_output=True, encoding="utf-8", timeout=5)
                         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                         self.assertIn("expected a JUnit", result.stderr)
                         self.assertNotIn("Traceback", result.stderr)
@@ -172,7 +172,7 @@ class CheckSkipsTests(unittest.TestCase):
                     with self.subTest(job=job, report=report):
                         result = subprocess.run(
                             [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                            capture_output=True, text=True)
+                            capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         self.assertIn("1 test(s) skipped, all expected", result.stdout)
 
@@ -201,7 +201,7 @@ class CheckSkipsTests(unittest.TestCase):
                     with self.subTest(job=job, report=report):
                         result = subprocess.run(
                             [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                            capture_output=True, text=True)
+                            capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_video_out_high_frame_rate skipped", result.stdout)
 
@@ -218,7 +218,7 @@ class CheckSkipsTests(unittest.TestCase):
                     with self.subTest(job=job, reason=reason):
                         result = subprocess.run(
                             [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                            capture_output=True, text=True)
+                            capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_video_out_high_frame_rate skipped", result.stdout)
 
@@ -231,7 +231,7 @@ class CheckSkipsTests(unittest.TestCase):
                 with self.subTest(job=job):
                     result = subprocess.run(
                         [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                        capture_output=True, text=True)
+                        capture_output=True, encoding="utf-8")
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("agc_disabled", result.stderr)
                     self.assertIn("disabled", result.stderr)
@@ -256,7 +256,7 @@ class CheckSkipsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
             junit.write_text(xml, encoding="utf-8")
-            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"], capture_output=True, encoding="utf-8")
         self.assertEqual(result.returncode, 1)
         self.assertIn("error: odd skipped", result.stdout)
         self.assertNotIn("error: geometry skipped", result.stdout)
@@ -266,7 +266,7 @@ class CheckSkipsTests(unittest.TestCase):
             with self.subTest(job=job), tempfile.TemporaryDirectory() as directory:
                 junit = Path(directory) / "junit.xml"
                 junit.write_text(f'<testsuite><testcase name="gpu"><skipped>\n{reason}\n</skipped></testcase></testsuite>', encoding="utf-8")
-                result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, text=True)
+                result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, encoding="utf-8")
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("all expected", result.stdout)
 
@@ -279,7 +279,7 @@ class CheckSkipsTests(unittest.TestCase):
                 with self.subTest(job=job):
                     result = subprocess.run(
                         [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                        capture_output=True, text=True)
+                        capture_output=True, encoding="utf-8")
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn("all expected", result.stdout)
 
@@ -289,7 +289,7 @@ class CheckSkipsTests(unittest.TestCase):
             junit.write_text('<testsuite><testcase name="shader_subgroup"><skipped/><system-out>skipped, the device lacks shaderSubgroupClock</system-out></testcase></testsuite>', encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, "-I", str(TOOL), str(junit), "--job", "windows"],
-                capture_output=True, text=True)
+                capture_output=True, encoding="utf-8")
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("error: shader_subgroup skipped", result.stdout)
 
@@ -304,7 +304,7 @@ class CheckSkipsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
             junit.write_text(xml, encoding="utf-8")
-            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--list"], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--list"], capture_output=True, encoding="utf-8")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("normal: skipped, device limitation", result.stdout)
             self.assertIn("indented: skipped, host imports are unavailable", result.stdout)
