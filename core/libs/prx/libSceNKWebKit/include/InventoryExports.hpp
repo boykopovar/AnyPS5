@@ -1568,7 +1568,6 @@ int APS5_VABI _ZN3WTF10StringImpl31convertToUppercaseWithoutLocaleEv();
 int APS5_VABI _ZN3WTF10StringImpl57convertToLowercaseWithoutLocaleStartingAtFailingIndex8BitEj();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIDsEE();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE();
-int APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_();
 int APS5_VABI _ZN3WTF10StringImpl7replaceEDsDs();
 int APS5_VABI _ZN3WTF10StringImpl7replaceEDsPKhj();
 int APS5_VABI _ZN3WTF10StringView11SplitResult8Iterator17findNextSubstringEv();
