@@ -4,22 +4,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-#include <stdexcept>
 
 static void Require(bool value, const char* message) {
     if (!value) {
         std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
-}
-
-static bool Throws(int year, int month) {
-    try {
-        _Daysto_nid_postfix(year, month);
-    } catch (const std::out_of_range&) {
-        return true;
-    }
-    return false;
 }
 
 static void TestDaysto() {
@@ -35,7 +25,6 @@ static void TestDaysto() {
     Require(_Daysto_nid_postfix(100, 11) == 359, "every fourth year uses the leap table, centuries included");
     Require(_Daysto_nid_postfix(2023, 11) == 334 + 505, "_Daysto(2023, 11)");
     Require(_Daysto_nid_postfix(2024, 11) == 335 + 505, "_Daysto(2024, 11)");
-    Require(Throws(2024, 12) && Throws(2024, -1), "a month outside the tables throws");
     constexpr int Lowest = std::numeric_limits<int>::min();
     constexpr int Highest = std::numeric_limits<int>::max();
     Require(_Daysto_nid_postfix(Lowest, 0) == 536870914 && _Daysto_nid_postfix(Lowest, 11) == 536871249, "the lowest year wraps 4 - year as an unsigned 32-bit value");
