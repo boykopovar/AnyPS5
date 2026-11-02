@@ -23708,34 +23708,6 @@ int APS5_VABI _ZN7WebCore15HTMLLinkElement7relListEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore15HTTPHeaderFieldC1EON3WTF6StringES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15HTTPHeaderFieldC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15HTTPHeaderFieldC2EON3WTF6StringES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15HTTPHeaderFieldC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15HTTPHeaderFieldD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15HTTPHeaderFieldD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15HTTPHeaderFieldaSERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore15HitTestLocationC1ERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -38229,14 +38201,6 @@ int APS5_VABI _ZNK7WebCore15HTMLLinkElement2asEv() {
 }
 
 int APS5_VABI _ZNK7WebCore15HTMLLinkElement3relEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore15HTTPHeaderField4nameEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK7WebCore15HTTPHeaderField5valueEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
