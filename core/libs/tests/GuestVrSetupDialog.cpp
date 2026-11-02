@@ -27,6 +27,20 @@ int main() {
     Require(sceVrSetupDialogTerminate() == kErrNotInitialized);
     Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
     Require(sceVrSetupDialogOpen(&param) == kErrNotInitialized);
+    VrSetupDialogParam invalidParam = param;
+    invalidParam.size = 0;
+    Require(sceVrSetupDialogOpen(&invalidParam) == kErrArgNull);
+    invalidParam.size = 55;
+    Require(sceVrSetupDialogOpen(&invalidParam) == kErrArgNull);
+    invalidParam.size = 57;
+    Require(sceVrSetupDialogOpen(&invalidParam) == kErrArgNull);
+    invalidParam.size = sizeof(param);
+    invalidParam.reserved8 = 1;
+    Require(sceVrSetupDialogOpen(&invalidParam) == kErrArgNull);
+    invalidParam.reserved8 = 0;
+    invalidParam.reserved9 = 1;
+    Require(sceVrSetupDialogOpen(&invalidParam) == kErrArgNull);
+    invalidParam.reserved9 = 0;
     Require(sceVrSetupDialogClose() == kErrNotInitialized);
     Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
     Require(sceVrSetupDialogGetResult(result) == kErrNotInitialized);
@@ -62,11 +76,23 @@ int main() {
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
 
+    Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
+    param.size = 55;
+    Require(sceVrSetupDialogOpen(&param) == kErrArgNull);
+    param.size = sizeof(param);
+    Require(sceVrSetupDialogOpen(&param) == 0);
+    Require(sceVrSetupDialogGetStatus() == kStatusFinished);
+
     Require(sceVrSetupDialogClose() == 0);
     Require(sceVrSetupDialogTerminate() == 0);
     Require(sceVrSetupDialogTerminate() == kErrNotInitialized);
     Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
+    Require(sceVrSetupDialogOpen(&param) == kErrNotInitialized);
+    Require(sceVrSetupDialogClose() == kErrNotInitialized);
     Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
+    result[0] = -1;
+    Require(sceVrSetupDialogGetResult(result) == kErrNotInitialized);
+    Require(result[0] == -1 && result[1] == -1);
     Require(sceVrSetupDialogGetStatus() == kStatusNone);
     Require(sceVrSetupDialogUpdateStatus() == kStatusNone);
 
@@ -77,4 +103,14 @@ int main() {
     Require(sceVrSetupDialogGetResult(result) == kErrNotFinished);
     Require(result[0] == kResultUserCanceled && result[1] == -1);
     Require(sceVrSetupDialogTerminate() == 0);
+    Require(sceVrSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
+    Require(sceVrSetupDialogOpen(&param) == kErrNotInitialized);
+    Require(sceVrSetupDialogClose() == kErrNotInitialized);
+    Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
+    result[0] = -1;
+    Require(sceVrSetupDialogGetResult(result) == kErrNotInitialized);
+    Require(result[0] == -1 && result[1] == -1);
+    Require(sceVrSetupDialogGetStatus() == kStatusNone);
+    Require(sceVrSetupDialogUpdateStatus() == kStatusNone);
 }

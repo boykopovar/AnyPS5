@@ -114,3 +114,47 @@ test("returns sink and folder cleanup failures without hiding either", async () 
     "Could not remove incomplete output folder partial-linux/: directory permission denied"
   ]);
 });
+
+test("concurrent cleanup shares one removal and prevents commit until it settles", { timeout: 3000 }, async () => {
+  let finish;
+  let calls = 0;
+  const parent = { removeEntry() { calls++; return new Promise(resolve => { finish = resolve; }); } };
+  const transaction = new OutputDirectoryTransaction(parent, "partial", {});
+  const first = transaction.discard();
+  const second = transaction.discard();
+  assert.equal(first, second);
+  assert.throws(() => transaction.commit(), /no longer active/u);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  finish();
+  await Promise.all([first, second]);
+  await transaction.discard();
+  assert.equal(calls, 1);
+  assert.throws(() => transaction.commit(), /no longer active/u);
+});
+
+test("concurrent cleanup observes the same rejection and can retry", { timeout: 3000 }, async () => {
+  let fail;
+  let calls = 0;
+  const parent = { removeEntry() {
+    calls++;
+    return calls === 1 ? new Promise((resolve, reject) => { fail = reject; }) : Promise.resolve();
+  } };
+  const transaction = new OutputDirectoryTransaction(parent, "partial", {});
+  const first = transaction.discard();
+  const second = transaction.discard();
+  const results = Promise.allSettled([first, second]);
+  await Promise.resolve();
+  const error = new Error("busy");
+  fail(error);
+  assert.deepEqual(await results, [{ status: "rejected", reason: error }, { status: "rejected", reason: error }]);
+  await transaction.discard();
+  assert.equal(calls, 2);
+});
+
+test("synchronous removal failure restores an active transaction", async () => {
+  const transaction = new OutputDirectoryTransaction({ removeEntry() { throw new Error("busy"); } }, "partial", {});
+  await assert.rejects(transaction.discard(), /busy/u);
+  transaction.commit();
+  await transaction.discard();
+});

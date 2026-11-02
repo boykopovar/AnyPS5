@@ -70,6 +70,8 @@ class FileStream {
     bool guestError = false;
     bool randomDevice = false;
     bool directory = false;
+    char16_t lowSurrogate = 0;
+    unsigned pushedBack = 0;
 
 public:
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
@@ -111,6 +113,8 @@ public:
         _handle = nullptr;
         _guest.flags = 0;
         _guest.descriptor = -1;
+        lowSurrogate = 0;
+        pushedBack = 0;
     }
 
     void RestoreHostStandard(std::FILE* stream, int kept) {
@@ -131,6 +135,8 @@ public:
     void MarkRandomDevice() {
         randomDevice = true;
         _guest.descriptor = -1;
+        lowSurrogate = 0;
+        pushedBack = 0;
     }
 
     bool IsRandomDevice() const {
@@ -145,12 +151,39 @@ public:
         return directory;
     }
 
+    bool Adopt(std::FILE* handle) {
+        _handle = handle;
+        _guest = {};
+        guestError = false;
+        randomDevice = false;
+        lowSurrogate = 0;
+        pushedBack = 0;
+        if (!_handle) return false;
+        _guest.flags = 0x10;
+#ifdef _WIN32
+        const int descriptor = _fileno(_handle);
+#else
+        const int descriptor = ::fileno(_handle);
+#endif
+        _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
+        return true;
+    }
+
     bool Reopen(const std::filesystem::path& filename, const char* mode,
         [[maybe_unused]] std::FILE* (*open)(const std::filesystem::path&, const std::string&) = nullptr) {
+        if (!_handle) {
+            if (!open || filename.empty()) {
+                errno = ENOENT;
+                return false;
+            }
+            return Adopt(open(filename, mode));
+        }
         auto* previous = GetHandle();
         _guest = {};
         guestError = false;
         randomDevice = false;
+        lowSurrogate = 0;
+        pushedBack = 0;
 #ifdef _WIN32
         std::wstring wideMode;
         for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));
@@ -206,15 +239,7 @@ public:
         _handle = std::freopen(filename.c_str(), mode, previous);
         if (kept >= 0) RestoreHostStandard(previous, kept);
 #endif
-        if (!_handle) return false;
-        _guest.flags = 0x10;
-#ifdef _WIN32
-        const int descriptor = _fileno(_handle);
-#else
-        const int descriptor = ::fileno(_handle);
-#endif
-        _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
-        return true;
+        return Adopt(_handle);
     }
     void PublishStatus(bool endOfFile, bool error) {
         __atomic_store_n(&_guest.readRemaining, 0, __ATOMIC_RELAXED);
@@ -319,7 +344,7 @@ public:
     }
 
     void KeepDirectoryReadError(bool failed) {
-        if (failed && directory && (_guest.flags & 0x40) != 0) errno = 21;
+        if (failed && directory && (__atomic_load_n(&_guest.flags, __ATOMIC_RELAXED) & 0x40) != 0) errno = 21;
     }
 
     void SetError() {
@@ -334,6 +359,24 @@ public:
         SyncStatus();
     }
 
+    char16_t TakeLowSurrogate() {
+        if (pushedBack != 0) return 0;
+        return std::exchange(lowSurrogate, char16_t{0});
+    }
+
+    void SetLowSurrogate(char16_t unit) {
+        lowSurrogate = unit;
+        pushedBack = 0;
+    }
+
+    void NotePushback() {
+        if (lowSurrogate != 0) ++pushedBack;
+    }
+
+    void NoteWideRead() {
+        if (pushedBack != 0) --pushedBack;
+    }
+
     int Close() {
         GetHandle();
 #ifdef _WIN32
@@ -343,6 +386,8 @@ public:
         const int result = std::fclose(std::exchange(_handle, nullptr));
         _guest.flags = 0;
         _guest.descriptor = -1;
+        lowSurrogate = 0;
+        pushedBack = 0;
         return result;
     }
 };

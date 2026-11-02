@@ -39,6 +39,7 @@ int main() {
     Require(scePlayerReviewDialogInitialize() == COMMON_DIALOG_ERROR_ALREADY_INITIALIZED);
     Require(scePlayerReviewDialogGetStatus() == COMMON_DIALOG_STATUS_INITIALIZED);
     Require(scePlayerReviewDialogUpdateStatus() == COMMON_DIALOG_STATUS_INITIALIZED);
+    Require(scePlayerReviewDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == COMMON_DIALOG_ERROR_NOT_FINISHED);
     Require(scePlayerReviewDialogTerminate() == 0);
     Require(scePlayerReviewDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
@@ -99,6 +100,14 @@ int main() {
     Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == COMMON_DIALOG_ERROR_NOT_FINISHED);
     Require(result[0] == -1 && result[1] == -1 && result[3] == -1);
     Require(result[2] == -1);
+    Require(scePlayerReviewDialogTerminate() == 0);
+    Require(scePlayerReviewDialogInitialize() == 0);
+    param.mode = 1;
+    Require(scePlayerReviewDialogOpen(&param) == 0);
+    Require(scePlayerReviewDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
+    result[2] = -1;
+    Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == COMMON_DIALOG_RESULT_USER_CANCELED);
+    Require(result[2] == COMMON_DIALOG_RESULT_USER_CANCELED);
     Require(scePlayerReviewDialogTerminate() == 0);
     Require(scePlayerReviewDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(scePlayerReviewDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));

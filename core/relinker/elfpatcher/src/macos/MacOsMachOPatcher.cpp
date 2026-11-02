@@ -59,7 +59,8 @@ MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBas
 std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines) {
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("macOS target does not support --windows-diagnostics");
-    static_cast<void>(lazyBinding);
+    if (lazyBinding)
+        throw Domain::RelinkerException("macOS target does not support --lazy-binding");
 
     Windows::WindowsLoadImage image(sourceElf, originalHeaders, true, fixedBase ? *fixedBase - Windows::LoadRva : Windows::ImageBase);
     if (originalPltGotVaddr != 0)
@@ -81,11 +82,7 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
         const auto info = symbols[offset + 4];
         const auto visibility = symbols[offset + 5] & 3;
         if (section == SHN_UNDEF || (info >> 4) == 0 || visibility == 1 || visibility == 2) continue;
-        if (((info >> 4) != STB_GLOBAL && (info >> 4) != STB_WEAK) ||
-            ((info & 15) != STT_NOTYPE && (info & 15) != 1 && (info & 15) != STT_FUNC && (info & 15) != STT_TLS))
-            throw Domain::RelinkerException("Unsupported macOS executable export attributes");
         const auto name = "_" + Windows::ReadString(dynamicSection.DynStrData, Io::ReadU32(symbols, offset));
-        if (name.size() == 1) throw Domain::RelinkerException("Empty macOS executable export");
         const auto value = Io::ReadU64(symbols, offset + 8);
         const auto flags = (info >> 4) == STB_WEAK ? ExportWeakDefinition : std::uint64_t{0};
         if ((info & 15) == STT_TLS) {
