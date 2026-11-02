@@ -4,6 +4,19 @@ set_source_files_properties(UserContext.cpp PROPERTIES COMPILE_OPTIONS -fno-omit
 target_link_libraries(libSceLibcInternal PRIVATE ${CMAKE_DL_LIBS})
 target_sources(libSceLibcInternal PRIVATE Directory.cpp)
 target_sources(libSceLibcInternal PRIVATE InventoryExports.cpp)
+target_sources(libSceLibcInternal PRIVATE Pad.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libc_internal_pad_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcInternalPad.cpp)
+    target_include_directories(guest_libc_internal_pad_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_internal_pad_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_libc_internal_pad_tests)
+    add_test(NAME guest_libc_internal_pad COMMAND guest_libc_internal_pad_tests)
+    set_tests_properties(guest_libc_internal_pad PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_internal_pad PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()
 target_sources(libSceLibcInternal PRIVATE InitOnce.cpp)
 target_sources(libSceLibcInternal PRIVATE Mutex.cpp)
 target_sources(libSceLibcInternal PRIVATE AlignedNew.cpp)
@@ -44,6 +57,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 target_sources(libSceLibcInternal PRIVATE Err.cpp)
+target_sources(libSceLibcInternal PRIVATE ExceptionDestructors.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libc_internal_exception_destructors_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcInternalExceptionDestructors.cpp)
+    target_include_directories(guest_libc_internal_exception_destructors_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_internal_exception_destructors_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_libc_internal_exception_destructors_tests)
+    add_test(NAME guest_libc_internal_exception_destructors COMMAND guest_libc_internal_exception_destructors_tests)
+    set_tests_properties(guest_libc_internal_exception_destructors PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_internal_exception_destructors PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()
 configure_windows_unwind(libSceLibcInternal)
 target_sources(libSceLibcInternal PRIVATE FilesystemStatistics.cpp PathStatistics.cpp)
 target_sources(libSceLibcInternal PRIVATE Inet.cpp)
@@ -109,6 +135,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_utime PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
+    if(NOT WIN32)
+        add_test_executable(guest_posix_spawn_errors_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixSpawnErrors.cpp)
+        target_include_directories(guest_posix_spawn_errors_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_posix_spawn_errors_tests PRIVATE libSceLibcInternal libc libkernel)
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/spawn-errors)
+        add_test(NAME guest_posix_spawn_errors COMMAND guest_posix_spawn_errors_tests)
+        set_tests_properties(guest_posix_spawn_errors PROPERTIES TIMEOUT 20
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/spawn-errors)
+    endif()
     add_test_executable(guest_posix_spawn_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixSpawn.cpp)
     target_include_directories(guest_posix_spawn_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_posix_spawn_tests PRIVATE libSceLibcInternal libc libkernel)
@@ -118,6 +153,19 @@ if(BUILD_TESTING)
     add_asan_test_options(guest_posix_spawn handle_sigbus=0)
     if(WIN32)
         set_tests_properties(guest_posix_spawn PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+    add_test_executable(guest_posix_spawn_optional_pid_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixSpawnOptionalPid.cpp)
+    target_include_directories(guest_posix_spawn_optional_pid_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_spawn_optional_pid_tests PRIVATE libSceLibcInternal libc libkernel)
+    configure_windows_unwind(guest_posix_spawn_optional_pid_tests)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/spawn-optional-pid)
+    add_test(NAME guest_posix_spawn_optional_pid COMMAND guest_posix_spawn_optional_pid_tests)
+    set_tests_properties(guest_posix_spawn_optional_pid PROPERTIES TIMEOUT 20
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/spawn-optional-pid)
+    add_asan_test_options(guest_posix_spawn_optional_pid handle_sigbus=0)
+    if(WIN32)
+        set_tests_properties(guest_posix_spawn_optional_pid PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
     add_test_executable(guest_program_name_tests ${LIBS_INCLUDE_DIR}/tests/GuestProgramName.cpp)
@@ -221,4 +269,41 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libc_filesystem PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
+endif()
+
+target_sources(libSceLibcInternal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Sigvec.cpp)
+
+if(BUILD_TESTING AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    add_test_executable(guest_sigvec_modules_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestSigvecModules.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
+    target_include_directories(guest_sigvec_modules_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
+    target_link_libraries(guest_sigvec_modules_tests PRIVATE ${CMAKE_DL_LIBS})
+    set_source_files_properties(${LIBS_INCLUDE_DIR}/tests/GuestSigvecModules.cpp PROPERTIES COMPILE_OPTIONS "-fno-exceptions;-fno-asynchronous-unwind-tables")
+    if(MINGW)
+        target_compile_options(guest_sigvec_modules_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(guest_sigvec_modules_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_library(sigvec_modules_exceptions SHARED ${LIBS_INCLUDE_DIR}/tests/SigvecModulesExceptions.cpp)
+    target_include_directories(sigvec_modules_exceptions PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(sigvec_modules_exceptions PRIVATE libc)
+    set_target_properties(sigvec_modules_exceptions PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    configure_windows_unwind(sigvec_modules_exceptions)
+    add_dependencies(guest_sigvec_modules_tests libc libkernel libSceLibcInternal nid_patcher sigvec_modules_exceptions)
+    set(sigvecAllocatorArgument)
+    if(TARGET mimalloc)
+        set(sigvecAllocatorArgument -DALLOCATOR_DIRECTORY=$<TARGET_FILE_DIR:mimalloc>)
+    endif()
+    add_test(NAME guest_sigvec_modules COMMAND ${CMAKE_COMMAND}
+        -DEXCEPTION_PROBE=$<TARGET_FILE:sigvec_modules_exceptions>
+        -DPATCHER=$<TARGET_FILE:nid_patcher>
+        -DLIBC=$<TARGET_FILE:libc>
+        -DKERNEL=$<TARGET_FILE:libkernel>
+        -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
+        ${sigvecAllocatorArgument}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sigvec-modules
+        -P ${LIBS_INCLUDE_DIR}/tests/SigvecModules.cmake
+        -- "$<TARGET_FILE:guest_sigvec_modules_tests>")
+    set_tests_properties(guest_sigvec_modules PROPERTIES TIMEOUT 20)
 endif()

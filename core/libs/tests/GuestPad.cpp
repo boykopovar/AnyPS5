@@ -4,6 +4,9 @@
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <vector>
+#include <set>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -215,6 +218,10 @@ static void CheckHandleQueries(int user, int handle) {
     PadMotionSensorPosition position{1.0f, 2.0f, 3.0f};
     Require(scePadGetMotionSensorPosition(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetMotionSensorPosition(closed, &position) == PAD_ERROR_INVALID_HANDLE);
+    for (const int invalid : {-1, 0, 9999}) {
+        Require(scePadGetMotionSensorPosition(invalid, &position) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadGetMotionSensorPosition(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
+    }
     Require(scePadGetMotionSensorPosition(handle, &position) == notConnected);
     Require(position.x == 1.0f && position.y == 2.0f && position.z == 3.0f);
 
@@ -489,6 +496,12 @@ static void CheckSpecialPort(int user, int handle) {
     Require(scePadRead_nid_postfix(special, data, 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadReadState(special, data) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetControllerInformation(special, &info) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(special, &vibration) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(special, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    for (const int invalidHandle : {-1, -2, -100}) {
+        Require(scePadSetVibration(invalidHandle, &vibration) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetVibration(invalidHandle, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    }
     Require(scePadGetHandle(user, 0, 0) == handle);
     Require(scePadReadState(handle, data) == PAD_OK);
     const int other = user + 1;
@@ -644,6 +657,8 @@ static void CheckVibrationForce(int user, int handle) {
     Require(scePadSetVibrationForce(special, &strong) == PAD_OK && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(special, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(special) == PAD_OK);
+    Require(scePadSetVibration(special, &strong) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(special, nullptr) == PAD_ERROR_INVALID_HANDLE);
     const PadVibrationParam off{0, 0};
     Require(scePadSetVibrationForce(handle, &off) == PAD_OK && VibrationIs(0, 0, 0));
 }
@@ -663,6 +678,18 @@ static void CheckTriggerEffect(int user, int handle) {
     const std::array<std::uint8_t, 11> weapon{0x25, 0x24, 0x00, 0x07};
     const std::array<std::uint8_t, 11> feedback{0x21, 0x80, 0x03, 0x00, 0x00, 0x40, 0x12};
     const std::array<std::uint8_t, 11> off{0x05};
+    Require(scePadSetTriggerEffect(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, param.data()) == PAD_ERROR_INVALID_HANDLE);
+    for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    param[0] = 0x4;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
+    param[0] = 0;
+    command(0, 7, {0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
+    command(0, 0, {0, 0, 0});
+    command(1, 7, {0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
+    command(1, 0, {0, 0, 0});
     command(0, 2, {2, 5, 8});
     command(1, 1, {7, 3, 0});
     param[0] = 0x1;
@@ -821,6 +848,29 @@ static void CheckInjectedQueueTimes(const std::filesystem::path& path) {
     PadPublishInput_nid_postfix(PadInputState{});
 }
 
+void CheckConcurrentSpecialOpens() {
+    constexpr int threads = 8;
+    for (int round = 0; round < 200; ++round) {
+        std::array<int, threads> handles{};
+        std::atomic<int> ready{0};
+        std::vector<std::thread> workers;
+        for (int index = 0; index < threads; ++index) {
+            workers.emplace_back([&, index] {
+                ready.fetch_add(1);
+                while (ready.load() < threads) std::this_thread::yield();
+                handles[index] = scePadOpen_nid_postfix(0x20000000 + index, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+            });
+        }
+        for (auto& worker : workers) worker.join();
+        const std::set<int> distinct(handles.begin(), handles.end());
+        Require(distinct.size() == threads);
+        for (const auto handle : handles) {
+            Require(handle >= 0);
+            Require(scePadClose_nid_postfix(handle) == PAD_OK);
+        }
+    }
+}
+
 static void CheckPortZeroWithdrawn() {
     constexpr int user = 0x10000000;
     constexpr int noHandle = static_cast<int>(0x80920008);
@@ -866,6 +916,7 @@ static void CheckPortZeroWithdrawn() {
 }
 
 int main() {
+    CheckConcurrentSpecialOpens();
     CheckInputCommands();
     std::uint32_t accessibilityState = 7;
     Require(scePadGetAccessibilityControllerState(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
@@ -935,8 +986,10 @@ int main() {
     constexpr int user = 0x10000000;
 
     Require(scePadGetHandle(user, 0, 0) == noHandle);
+    for (const int invalidUser : {-1, 0, 0x10000005}) Require(scePadGetHandle(invalidUser, 0, 0) == noHandle);
     Require(scePadOpen_nid_postfix(user, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadOpen_nid_postfix(user, 0, 1, nullptr) == static_cast<int>(0x809b0003));
+    for (const int type : {3, 4}) Require(scePadOpen_nid_postfix(user, type, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     for (const int type : {0, 2, 3, 4}) Require(scePadOpen_nid_postfix(-1, type, 0, nullptr) == static_cast<int>(0x809b0001));
     Require(scePadOpen_nid_postfix(-1, 0, 1, nullptr) == static_cast<int>(0x809b0001));
     Require(scePadOpen_nid_postfix(-1, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -967,6 +1020,7 @@ int main() {
     Require(handle > 0);
     Require(scePadUnknown_n3kSX62fgNo() == PAD_OK);
     Require(scePadGetHandle(user, 0, 0) == handle);
+    for (const int invalidUser : {-1, 0, 0x10000005}) Require(scePadGetHandle(invalidUser, 0, 0) == noHandle);
     CheckSpecialPort(user, handle);
     CheckTiltCorrection(handle);
     CheckAngularVelocityDeadband(handle);
@@ -1002,7 +1056,10 @@ int main() {
     Require(scePadResetLightBar(handle + 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
     Require(scePadSetMotionSensorState(handle, false) == PAD_OK);
-    Require(scePadSetMotionSensorState(handle + 1, true) == PAD_ERROR_INVALID_HANDLE);
+    for (const int invalid : {-1, 0, handle + 1, 9999}) {
+        Require(scePadSetMotionSensorState(invalid, true) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetMotionSensorState(invalid, false) == PAD_ERROR_INVALID_HANDLE);
+    }
     Require(scePadSetVibrationMode(handle, 1) == 0);
     Require(scePadSetVibrationMode(handle, 2) == 0);
     Require(scePadSetVibrationMode(handle, 3) == 0);
@@ -1079,7 +1136,11 @@ int main() {
     Require(scePadSetVibration(handle2, &vibFull) == PAD_OK);
     Require(scePadSetVibration(handle2, &vibMixed) == PAD_OK);
     Require(scePadSetVibration(handle2 + 99, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
-    Require(scePadSetVibration(-1, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+    for (const int invalidHandle : {-1, -2, -100, -9999}) {
+        Require(scePadSetVibration(invalidHandle, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetVibration(invalidHandle, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    }
+    Require(scePadSetVibration(handle2 + 99, nullptr) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
 
     const PadLightBarParam lightOff{0, 0, 0};
@@ -1091,6 +1152,12 @@ int main() {
     Require(scePadSetLightBar(handle2 + 99, &lightColor) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetLightBar(-1, &lightColor) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetLightBar(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+
+    const std::array<std::uint8_t, 120> triggerZero{};
+    Require(scePadSetTriggerEffect(handle2, triggerZero.data()) == PAD_OK);
+    Require(scePadSetTriggerEffect(handle2 + 99, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetTriggerEffect(-1, triggerZero.data()) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetTriggerEffect(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
 
     PadInputState p0MotionSample{};
     p0MotionSample.hasMotion = true;
