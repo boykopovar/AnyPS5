@@ -131,6 +131,7 @@ constexpr int NET_ETIMEDOUT = 60;
 constexpr int NET_ECONNREFUSED = 61;
 constexpr int NET_EHOSTUNREACH = 65;
 constexpr int NET_ENOTINIT = 200;
+constexpr int NET_RESOLVER_ENOSUPPORT = 227;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
 constexpr int NET_CONFIG_ERROR_NULL_FLAGS = static_cast<int>(0x8041130Eu);
@@ -2700,23 +2701,19 @@ int APS5_VABI sceNetShowRouteWithMemory(std::int32_t poolId) {
 }
 
 int APS5_VABI sceNetResolverConnectAbort(NetResolverConnection* connection, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return fail(NET_RESOLVER_ENOSUPPORT);
 }
 
 int APS5_VABI sceNetResolverConnectCreate(const char* name, std::int32_t socketType, NetResolverConnection* connection, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return fail(NET_RESOLVER_ENOSUPPORT);
 }
 
 int APS5_VABI sceNetResolverConnect(NetResolverConnection* connection, const char* hostname, std::uint16_t port, const NetResolverConnectOption* option) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return fail(NET_RESOLVER_ENOSUPPORT);
 }
 
 int APS5_VABI sceNetResolverConnectDestroy(NetResolverConnection* connection) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return fail(NET_RESOLVER_ENOSUPPORT);
 }
 
 int APS5_VABI sceNetSetDns6Info(const NetDns6Info* info, std::uint32_t flags) {
