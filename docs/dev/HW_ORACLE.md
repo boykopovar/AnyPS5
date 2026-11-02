@@ -119,7 +119,7 @@ The report's `runtime` field says which side produced it.
 
 - Compute only.
 - Whole waves: Python pads the rows with zeros to the wave size, so cross-lane instructions see the padded lanes.
-- At most 1024 lanes per dispatch.
+- At most 1024 lanes per dispatch (512 with `--wave64`).
 - No `coarse`.
 - The assembly target comes from the AMD driver on Windows or from `HW_ORACLE_TARGET`; the recompiler has no target of its
   own, and the encoding assembled is the RDNA2 one.
