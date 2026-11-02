@@ -323,6 +323,39 @@ void testStatEvent() {
     }
 }
 
+void testStatPropertyPaths() {
+    for (const bool literalFirst : {false, true}) {
+        NpUniversalDataSystemEvent event;
+        const auto literals = [&] {
+            event.properties.Set("player.steps", std::uint32_t{99});
+            auto dotted = std::make_shared<NpUniversalDataSystemEventPropertyObject>();
+            dotted->Set("depth", std::uint32_t{99});
+            event.properties.Set("player.inner", dotted);
+            auto empty = std::make_shared<NpUniversalDataSystemEventPropertyObject>();
+            empty->Set("count", std::uint32_t{99});
+            event.properties.Set("", empty);
+        };
+        if (literalFirst) literals();
+        event.properties.Set("count", std::uint32_t{4});
+        auto player = std::make_shared<NpUniversalDataSystemEventPropertyObject>();
+        player->Set("steps", std::uint32_t{5});
+        player->Set("inner.depth", std::uint32_t{99});
+        auto inner = std::make_shared<NpUniversalDataSystemEventPropertyObject>();
+        inner->Set("depth", std::uint32_t{7});
+        player->Set("inner", inner);
+        event.properties.Set("player", player);
+        if (!literalFirst) literals();
+        const auto before = Uds::Describe(event.properties);
+        const auto converted = Uds::StatEvent(event);
+        check(converted.properties.size() == 3, "literal property names were converted into nested stat paths");
+        const auto& properties = converted.properties;
+        check(properties[0].path == "count" && properties[0].value == 4 && properties[1].path == "player.steps" && properties[1].value == 5 &&
+                  properties[2].path == "player.inner.depth" && properties[2].value == 7,
+              "literal property names replaced genuine nested values");
+        check(Uds::Describe(event.properties) == before, "stat path conversion changed the original event");
+    }
+}
+
 void testLocaleIndependentNumberFormatting() {
     const char* previous = std::setlocale(LC_NUMERIC, nullptr);
     check(previous != nullptr, "the current locale could not be read");
@@ -413,6 +446,7 @@ int main() {
         testEventSizeAndString();
         testRecognition();
         testStatEvent();
+        testStatPropertyPaths();
         testLocaleIndependentNumberFormatting();
         testPostingIgnoredEvents();
         std::puts("UDS event tests passed");
