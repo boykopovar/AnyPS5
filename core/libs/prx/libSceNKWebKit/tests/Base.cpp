@@ -351,6 +351,42 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestNavigation() {
+    Require(WKNavigationActionGetTypeID() == 86);
+    Require(WKNavigationResponseGetTypeID() == 88);
+
+    auto action = NKWebKit::Make<NKWebKit::NavigationAction>();
+    const void* actionRef = NKWebKit::ToRef(action);
+    Require(!WKNavigationActionShouldPerformDownload(actionRef));
+    action->shouldPerformDownload = true;
+    Require(WKNavigationActionShouldPerformDownload(actionRef));
+
+    auto response = NKWebKit::Make<NKWebKit::NavigationResponse>();
+    const void* responseRef = NKWebKit::ToRef(response);
+    Require(!WKNavigationResponseCanShowMIMEType(responseRef));
+    response->canShowMIMEType = true;
+    Require(WKNavigationResponseCanShowMIMEType(responseRef));
+
+    bool threw = false;
+    try {
+        WKNavigationActionShouldPerformDownload(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKNavigationResponseCanShowMIMEType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(actionRef);
+    WKRelease(responseRef);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -373,6 +409,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestNavigation();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;

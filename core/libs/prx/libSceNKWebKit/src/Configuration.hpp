@@ -123,6 +123,16 @@ public:
     std::uint32_t persistence = 0;
 };
 
+class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
+public:
+    bool shouldPerformDownload = false;
+};
+
+class NavigationResponse final : public ObjectOf<ObjectType::NavigationResponse> {
+public:
+    bool canShowMIMEType = false;
+};
+
 class GeolocationPosition final : public ObjectOf<ObjectType::GeolocationPosition> {
 public:
     GeolocationPosition(double timestamp, double latitude, double longitude, double accuracy,

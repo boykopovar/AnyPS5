@@ -14352,9 +14352,6 @@ int APS5_VABI WKMouseEventMake() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKNavigationActionShouldPerformDownload() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKNavigationDataCopyNavigationDestinationURL() {
     NotImplemented_nid_no_patch(__func__);
@@ -14372,9 +14369,6 @@ int APS5_VABI WKNavigationDataCopyURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKNavigationResponseCanShowMIMEType() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKNotificationCopyBody() {
     NotImplemented_nid_no_patch(__func__);
