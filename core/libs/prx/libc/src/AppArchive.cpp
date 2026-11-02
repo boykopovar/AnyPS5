@@ -129,9 +129,41 @@ std::vector<AppArchiveDirectoryEntry> AppArchiveList_nid_no_patch(std::uint32_t 
     for (std::uint32_t index = 0; index < count; ++index) {
         ZArchiveReader::DirEntry entry{};
         if (!reader.GetDirEntry(handle, index, entry)) throw std::runtime_error("app0.zar is damaged: directory entry " + std::to_string(index) + " cannot be read");
-        entries.push_back({std::string(entry.name), entry.isDirectory});
+        entries.push_back({std::string(entry.name), entry.isDirectory, 0, entry.size});
     }
     return entries;
+}
+
+std::vector<AppArchiveDirectoryEntry> AppArchiveListDirectory_nid_no_patch(const std::filesystem::path& hostPath) {
+    AppArchiveNode directory{};
+    if (!AppArchiveLookup_nid_no_patch(hostPath, &directory) || !directory.Directory)
+        throw std::invalid_argument("AppArchiveListDirectory: path is not an app0.zar directory");
+    auto entries = AppArchiveList_nid_no_patch(directory.Handle);
+    for (auto& entry : entries) {
+        AppArchiveNode node{};
+        std::u8string name;
+        name.reserve(entry.Name.size());
+        for (const unsigned char value : entry.Name) name.push_back(static_cast<char8_t>(value));
+        if (!AppArchiveLookup_nid_no_patch(hostPath / std::filesystem::path(name), &node))
+            throw std::runtime_error("app0.zar is damaged: directory child " + entry.Name + " cannot be looked up");
+        entry.Handle = node.Handle;
+        entry.Size = node.Size;
+    }
+    return entries;
+}
+
+std::vector<AppArchiveDirectoryEntry> AppArchiveListUnshadowedDirectory_nid_no_patch(const std::filesystem::path& hostPath, const std::vector<std::string>& hostNames) {
+    auto entries = AppArchiveListDirectory_nid_no_patch(hostPath);
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [&hostNames](const AppArchiveDirectoryEntry& entry) {
+        return std::any_of(hostNames.begin(), hostNames.end(), [&entry](const std::string& name) {
+            return SameComponent(name, entry.Name);
+        });
+    }), entries.end());
+    return entries;
+}
+
+bool AppArchiveNameMatches_nid_no_patch(const std::string& left, const std::string& right) {
+    return SameComponent(left, right);
 }
 
 void AppArchiveReady_nid_no_patch() {
@@ -139,7 +171,8 @@ void AppArchiveReady_nid_no_patch() {
 }
 
 void AppArchiveRefuseOnly_nid_no_patch(const std::filesystem::path& hostPath, const char* guestPath, const char* operation) {
-    if (AppArchiveOnly_nid_no_patch(hostPath)) NotImplemented_nid_no_patch((std::string(operation) + " " + guestPath + " in app0.zar").c_str());
+    if (!AppArchiveOnly_nid_no_patch(hostPath)) return;
+    NotImplemented_nid_no_patch((std::string(operation) + " " + guestPath + " in app0.zar").c_str());
 }
 
 void AppArchiveRefuseMergedListing_nid_no_patch(const std::filesystem::path& hostPath, const char* guestPath) {

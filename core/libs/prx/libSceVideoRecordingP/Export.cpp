@@ -189,4 +189,13 @@ int APS5_VABI videoRecordingUnknown_iQS6DUtLybE(void) {
  return 0;
 }
 
+int APS5_VABI sceVideoRecordingGetCopyrightImageMemory() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceVideoRecordingCloseWithTruncationByHandle() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+
 }

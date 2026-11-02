@@ -130,7 +130,8 @@ int APS5_VABI sceContentExportStart(void) {
 int APS5_VABI sceContentExportGetProgress(std::int32_t expId) {
     std::lock_guard lock(g_sessionMutex);
     RequireSession(__func__, expId);
-    throw std::runtime_error(std::string(__func__) + ": progress requires the calling title SDK compatibility mode");
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentExportCancel(std::int32_t expId) {
@@ -142,7 +143,8 @@ int APS5_VABI sceContentExportCancel(std::int32_t expId) {
 int APS5_VABI sceContentExportFromDataWithThumbnail(std::int32_t expId, const ContentExportParam* param, const ContentExportCallbackParam* contentCallbackParam, const char* thumbnailType, const ContentExportCallbackParam* thumbnailCallbackParam, char* path, std::size_t pathBufferLength) {
     std::lock_guard lock(g_sessionMutex);
     RequireSession(__func__, expId);
-    throw std::runtime_error(std::string(__func__) + ": the host has no media library to export into");
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentExportTerm(void) {

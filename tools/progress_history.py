@@ -75,7 +75,10 @@ def cache_signature():
 def load_cache(path, signature):
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: history cache JSON is too deeply nested") from error
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1 or not isinstance(data.get("rules"), str) or not isinstance(data.get("commits"), dict):
         raise ValueError(f"{path}: invalid history cache")
     if data["rules"] != signature:
@@ -105,7 +108,7 @@ def save_cache(path, signature, commits):
             temporary = Path(output.name)
             json.dump({"schema_version": 1, "rules": signature, "commits": commits}, output, sort_keys=True)
             output.write("\n")
-        if path.exists():
+        if os.name != "nt" and path.exists():
             temporary.chmod(stat.S_IMODE(path.stat().st_mode))
         os.replace(temporary, path)
     finally:
@@ -138,7 +141,10 @@ def labelled(day, span):
 
 
 def scale(peak):
-    step = next(s for s in (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000) if peak <= s * 4)
+    magnitude = 1
+    while peak > 20 * magnitude:
+        magnitude *= 10
+    step = next(s * magnitude for s in (1, 2, 5) if peak <= s * magnitude * 4) if magnitude > 1 else 5
     return step, max(step, -(-peak // step) * step)
 
 
@@ -199,6 +205,50 @@ def chart(points):
     return "\n".join(out)
 
 
+def gained(points, days):
+    last = date.fromisoformat(points[-1]["date"])
+    before = [p for p in points if (last - date.fromisoformat(p["date"])).days >= days]
+    start = before[-1] if before else points[0]
+    return points[-1]["libraries"]["done"] - start["libraries"]["done"]
+
+
+def weekly_badge(points):
+    value = f"{gained(points, 7):+,} functions"
+    return progress.badge("implemented in 7 days", points[-1]["libraries"], value, "#2f81f7")
+
+
+def daily(points):
+    bars = [(p["date"], p["libraries"]["done"] - q["libraries"]["done"]) for q, p in zip(points, points[1:])]
+    if not bars:
+        return ""
+    step, peak = scale(max(max(change for _, change in bars), 1))
+    lowest = min(min(change for _, change in bars), 0)
+    height, top = 214, 34
+    base = top + 150 * peak / (peak - lowest)
+    py = lambda v: base - v / (peak - lowest) * 150
+    slot = (WIDTH - LEFT - RIGHT) / len(bars)
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {height}" role="img" '
+           'aria-label="System library functions implemented per day" '
+           f'font-family="sans-serif" font-size="12" fill="{TEXT}">',
+           f'<rect width="{WIDTH}" height="{height}" rx="6" fill="{BACKGROUND}"/>',
+           f'<text x="{LEFT}" y="{top - 12}" font-size="13" font-weight="bold">System library functions implemented per day</text>']
+    for tick in range(0, peak + 1, step):
+        out.append(f'<line x1="{LEFT}" x2="{WIDTH - RIGHT}" y1="{py(tick):.1f}" y2="{py(tick):.1f}" stroke="{GRID}"/>'
+                   f'<text x="{LEFT - 6}" y="{py(tick) + 4:.1f}" text-anchor="end" fill="{MUTED}">{tick:,}</text>')
+    for index, (day, change) in enumerate(bars):
+        x, y = LEFT + index * slot, py(max(change, 0))
+        out.append(f'<rect x="{x + slot * 0.15:.1f}" y="{y:.1f}" width="{slot * 0.7:.1f}" height="{abs(py(change) - base):.1f}" '
+                   f'fill="{SERIES[0][2]}"><title>{day}: {change:+,} implemented</title></rect>')
+        label = labelled(date.fromisoformat(day), len(bars))
+        if label:
+            out.append(f'<text x="{x + slot / 2:.1f}" y="{top + 168}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>')
+    week = gained(points, 7)
+    out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{top + 16}" fill="{TEXT}" font-weight="bold">Last 7 days {week:+,}</text>'
+               f'<text x="{WIDTH - RIGHT + 8}" y="{top + 34}" fill="{MUTED}">Last day {bars[-1][1]:+,}</text>')
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def page(points):
     rows = "\n".join(f'<tr><td>{p["date"]}</td>' + "".join(
         f'<td>{p[name]["done"]}/{p[name]["total"]}</td><td>{p[name]["percent"]}%</td>' for name, _, _ in SERIES) + "</tr>"
@@ -212,12 +262,13 @@ def page(points):
         '</head><body>',
         '<h1>Progress history</h1>',
         chart(points),
+        daily(points),
         f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is declared. Library '
         'functions are declared in the <code>prx</code> sources; the shader total is the AMD RDNA 1 + RDNA 2 instruction list '
         f'(<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
         'One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point is measured '
         f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> rules and instruction list, '
-        'so the series is comparable across days. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
+        'so the series is comparable across days. The bars are the change in implemented library functions from one point to the next. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
         '<table><tr><th>Date</th>' + "".join(f'<th>{escape(label)}</th><th>%</th>' for _, label, _ in SERIES) + '</tr>',
         rows,
@@ -226,16 +277,24 @@ def page(points):
     ]) + "\n"
 
 
+def same_location(first, second):
+    return os.path.normcase(os.path.realpath(first)) == os.path.normcase(os.path.realpath(second))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     parser.add_argument("--ref", default="HEAD", help="branch or commit whose first-parent history is measured")
     parser.add_argument("--cache", type=Path, help="reuse per-commit counts while the scanner, ISA list and Python version match")
     args = parser.parse_args(argv)
+    outputs = [args.output / name for name in ("history.json", "history.svg", "history.html", "badge-week.svg")]
     try:
+        for index, path in enumerate(outputs):
+            for other in outputs[index + 1:]:
+                if (path.exists() and other.exists() and path.samefile(other)) or same_location(path, other):
+                    raise ValueError(f"generated reports cannot alias each other: {path.name} and {other.name}")
         if args.cache:
-            outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
-            if any(args.cache.resolve() == path.resolve() or
+            if any(same_location(args.cache, path) or
                    (args.cache.exists() and path.exists() and args.cache.samefile(path)) for path in outputs):
                 raise ValueError("history cache must differ from generated reports")
         points = collect(args.ref, args.cache)
@@ -243,10 +302,14 @@ def main(argv=None):
         parser.error(str(error))
     if not points:
         parser.error("no commit with a measurable tree")
-    args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
-    (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
-    (args.output / "history.html").write_text(page(points), encoding="utf-8")
+    try:
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
+        (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
+        (args.output / "history.html").write_text(page(points), encoding="utf-8")
+        (args.output / "badge-week.svg").write_text(weekly_badge(points), encoding="utf-8")
+    except OSError as error:
+        parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")
 
 

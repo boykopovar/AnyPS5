@@ -77,12 +77,12 @@ def object_type_cases(relinker, directory):
     cases = ((0, "ET_NONE inputs do not specify an ELF object type"),
              (1, "ET_REL relocatable inputs are not supported"),
              (4, "ET_CORE core dumps are not executable images"),
-             (2, None), (3, None), (0xFE10, None), (0xFE18, None))
+             *((value, f"Unsupported ELF object type 0x{value:x}") for value in (5, 0x1234, 0xFE00, 0xFE01, 0xFE04, 0xFFFF)),
+             (2, "ET_EXEC inputs are linked at fixed addresses"),
+             (3, None), (0xFE10, None), (0xFE18, None))
     for mode, flags in enumerate(MODES):
         for filter_level in (0, 1, 2):
             for object_type, error in cases:
-                if object_type == 2 and ("--windows" in flags or "--macos" in flags):
-                    continue
                 case = Path(directory) / f"type-{mode}-{filter_level}-{object_type}"
                 case.mkdir()
                 source = case / "input.elf"

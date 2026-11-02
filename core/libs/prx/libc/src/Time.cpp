@@ -6,9 +6,8 @@
 #include <cstring>
 #include <cstdio>
 #include <limits>
-#include <memory>
 #include <mutex>
-#include <new>
+#include <type_traits>
 #include <stdexcept>
 #include <string>
 
@@ -244,80 +243,118 @@ constexpr const char* MONTH_FULL_NAMES[] = {"January", "February", "March", "Apr
     "October", "November", "December"};
 constexpr int YEAR_BASE = 1900;
 
-bool isLeapYearSum(int year, int base) {
-    return isLeapYear(year % 400 + base % 400);
-}
-
+template<typename TChar>
 struct FormatBuffer {
-    char* cursor;
-    char* limit;
-    bool full;
+    TChar* cursor;
+    std::size_t remaining;
+    bool full = false;
+    bool failed = false;
 };
 
-void addPiece(FormatBuffer& buffer, const char* text, std::size_t length) {
-    if (buffer.full) return;
-    if (length > static_cast<std::size_t>(buffer.limit - buffer.cursor)) {
+template<typename TChar>
+void addPiece(FormatBuffer<TChar>& buffer, const TChar* text, std::size_t length) {
+    if (buffer.full || buffer.failed) return;
+    if (length > buffer.remaining) {
         buffer.full = true;
         return;
     }
-    std::memcpy(buffer.cursor, text, length);
+    std::memcpy(buffer.cursor, text, length * sizeof(TChar));
     buffer.cursor += length;
+    buffer.remaining -= length;
 }
 
-void addText(FormatBuffer& buffer, const char* text) {
-    addPiece(buffer, text, std::strlen(text));
+template<typename TChar>
+void addText(FormatBuffer<TChar>& buffer, const char* text) {
+    if (buffer.full || buffer.failed) return;
+    if constexpr (std::is_same_v<TChar, char>) {
+        addPiece(buffer, text, std::strlen(text));
+    } else {
+        if (buffer.remaining == 0) return;
+        unsigned char state[16]{};
+        const char* source = text;
+        const std::size_t required = mbsrtowcs_nid_postfix(nullptr, &source, 0, state);
+        if (required == static_cast<std::size_t>(-1)) {
+            buffer.failed = true;
+            return;
+        }
+        std::memset(state, 0, sizeof(state));
+        source = text;
+        const std::size_t length = mbsrtowcs_nid_postfix(buffer.cursor, &source, buffer.remaining, state);
+        if (length == static_cast<std::size_t>(-1)) buffer.failed = true;
+        else if (required <= buffer.remaining) {
+            buffer.cursor += length;
+            buffer.remaining -= length;
+        }
+    }
 }
 
 int clampedField(std::int64_t value, int modulus) {
     return value < 0 ? 0 : static_cast<int>(value % modulus);
 }
 
-void addNumber(FormatBuffer& buffer, std::int64_t value, int modulus, const char* format) {
+template<typename TChar>
+void addNumber(FormatBuffer<TChar>& buffer, std::int64_t value, int modulus, const char* format) {
     char text[16];
     std::snprintf(text, sizeof(text), format, clampedField(value, modulus));
     addText(buffer, text);
 }
 
 const char* tableName(int index, const char* const* names, const char* const* shortNames, int count) {
-    if (index < 0) return shortNames[0];
-    return index < count ? names[index] : "";
+    const auto field = static_cast<std::int32_t>(static_cast<std::uint32_t>(index) * 2u + (names == shortNames ? 0u : 1u));
+    if (field < 0) return shortNames[0];
+    if (field >= 2 * count) return "";
+    return field % 2 == 0 ? shortNames[field / 2] : names[field / 2];
 }
 
 int twoDigitYear(std::int64_t year) {
     return static_cast<int>((year % 100 + 100) % 100);
 }
 
-std::int64_t weekOfYear(const GuestTm& time, int shift) {
-    return (static_cast<std::int64_t>(time.tm_yday) + 7 - (static_cast<std::int64_t>(time.tm_wday) + shift) % 7) / 7;
+int wrapped(std::int64_t value) {
+    return static_cast<int>(static_cast<std::uint32_t>(value));
+}
+
+int weekOfYear(const GuestTm& time, int shift) {
+    return wrapped(static_cast<std::int64_t>(time.tm_yday) + 7 - wrapped(static_cast<std::int64_t>(time.tm_wday) + shift) % 7) / 7;
 }
 
 struct IsoWeek {
-    std::int64_t year;
+    int year;
     int week;
 };
 
-IsoWeek isoWeek(const GuestTm& time) {
-    if (time.tm_yday < 0) NotImplemented_nid_no_patch("strftime: ISO week of a negative tm_yday");
-    if (time.tm_yday >= (isLeapYearSum(time.tm_year, YEAR_BASE) ? 366 : 365)) NotImplemented_nid_no_patch("strftime: ISO week of a tm_yday past the year");
-    if (time.tm_wday < -6) NotImplemented_nid_no_patch("strftime: ISO week of a tm_wday below -6");
-    int base = YEAR_BASE;
-    std::int64_t yday = time.tm_yday;
-    for (;;) {
-        const int length = isLeapYearSum(time.tm_year, base) ? 366 : 365;
-        const std::int64_t bottom = (yday + 11 - time.tm_wday) % 7 - 3;
-        std::int64_t top = bottom - length % 7;
-        if (top < -3) top += 7;
-        top += length;
-        if (yday >= top) return {static_cast<std::int64_t>(time.tm_year) + base + 1, 1};
-        if (yday >= bottom) return {static_cast<std::int64_t>(time.tm_year) + base, static_cast<int>(1 + (yday - bottom) / 7)};
-        --base;
-        yday += isLeapYearSum(time.tm_year, base) ? 366 : 365;
-    }
+bool isoLeapYear(int year) {
+    return year % 4 == 0 && (year % 100 != 0 || year / 400 == 100 || year / 400 == -300);
 }
 
-void formatTime(FormatBuffer& buffer, const char* format, const GuestTm& time);
+bool midweek(int weekday) {
+    return weekday >= 2 && weekday <= 4;
+}
 
-void addZoneOffset(FormatBuffer& buffer, const GuestTm& time) {
+IsoWeek isoWeek(const GuestTm& time) {
+    const int leap = isoLeapYear(time.tm_year) ? 1 : 0;
+    const int span = wrapped(static_cast<std::int64_t>(time.tm_wday) - time.tm_yday);
+    const int firstWeekday = wrapped(static_cast<std::int64_t>(span) + 371) % 7;
+    const int nextFirstWeekday = (leap + firstWeekday + 365) % 7;
+    const int nextYear = wrapped(static_cast<std::int64_t>(time.tm_year) + 1);
+    if (midweek(nextFirstWeekday) && wrapped(static_cast<std::int64_t>(time.tm_yday) - leap) >= 366 - nextFirstWeekday) return {nextYear, 1};
+    const int mondayWeekday = wrapped(static_cast<std::int64_t>(time.tm_wday) + 6) % 7;
+    const int week = wrapped(static_cast<std::int64_t>(time.tm_yday) - mondayWeekday + 7) / 7 + (midweek(firstWeekday) ? 1 : 0);
+    if (week < 0) return {nextYear, 1};
+    if (week > 0) return {time.tm_year, week};
+    const int previousYear = wrapped(static_cast<std::int64_t>(time.tm_year) - 1);
+    const int previousLeap = isoLeapYear(previousYear) ? 1 : 0;
+    const int previousFirstWeekday = wrapped(static_cast<std::int64_t>(span) + 13 - previousLeap) % 7;
+    if (midweek((previousLeap + previousFirstWeekday + 365) % 7)) return {previousYear, 0};
+    const int lastWeekday = wrapped(static_cast<std::int64_t>(span) + 13) % 7;
+    return {previousYear, (372 + previousLeap - lastWeekday) / 7 + (midweek(previousFirstWeekday) ? 1 : 0)};
+}
+
+template<typename TChar, typename TFormatChar>
+void formatTime(FormatBuffer<TChar>& buffer, const TFormatChar* format, const GuestTm& time);
+
+template<typename TChar>
+void addZoneOffset(FormatBuffer<TChar>& buffer, const GuestTm& time) {
     std::int64_t east = -timezone_nid_postfix + (time.tm_isdst > 0 ? 3600 : 0);
     const char sign = east < 0 ? '-' : '+';
     if (east < 0) east = -east;
@@ -326,7 +363,8 @@ void addZoneOffset(FormatBuffer& buffer, const GuestTm& time) {
     addText(buffer, text);
 }
 
-bool addConversion(FormatBuffer& buffer, char conversion, const GuestTm& time) {
+template<typename TChar, typename TFormatChar>
+bool addConversion(FormatBuffer<TChar>& buffer, TFormatChar conversion, const GuestTm& time) {
     const std::int64_t year = static_cast<std::int64_t>(time.tm_year) + YEAR_BASE;
     switch (conversion) {
     case 'a': addText(buffer, tableName(time.tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7)); return true;
@@ -342,7 +380,7 @@ bool addConversion(FormatBuffer& buffer, char conversion, const GuestTm& time) {
     case 'e': addNumber(buffer, time.tm_mday, 100, "%2d"); return true;
     case 'F': formatTime(buffer, "%Y-%m-%d", time); return true;
     case 'g': addNumber(buffer, twoDigitYear(isoWeek(time).year), 100, "%02d"); return true;
-    case 'G': addNumber(buffer, isoWeek(time).year, 10000, "%04d"); return true;
+    case 'G': addNumber(buffer, static_cast<std::int64_t>(isoWeek(time).year) + YEAR_BASE, 10000, "%04d"); return true;
     case 'H': addNumber(buffer, time.tm_hour, 100, "%02d"); return true;
     case 'I': addNumber(buffer, (static_cast<std::int64_t>(time.tm_hour) + 11) % 12 + 1, 100, "%02d"); return true;
     case 'j': addNumber(buffer, static_cast<std::int64_t>(time.tm_yday) + 1, 1000, "%03d"); return true;
@@ -374,10 +412,28 @@ bool addConversion(FormatBuffer& buffer, char conversion, const GuestTm& time) {
     }
 }
 
-void formatTime(FormatBuffer& buffer, const char* format, const GuestTm& time) {
-    for (; *format != '\0' && !buffer.full; ++format) {
+template<typename TFormatChar>
+bool addWideConversion(FormatBuffer<std::uint16_t>& buffer, TFormatChar conversion, const GuestTm& time) {
+    std::string text(64, '\0');
+    for (;;) {
+        FormatBuffer<char> expanded{text.data(), text.size()};
+        if (!addConversion(expanded, conversion, time)) return false;
+        if (!expanded.full && expanded.remaining != 0) {
+            *expanded.cursor = '\0';
+            addText(buffer, text.c_str());
+            return true;
+        }
+        if (text.size() > text.max_size() / 2) throw std::length_error("wcsftime conversion exceeds string capacity");
+        text.resize(text.size() * 2);
+    }
+}
+
+template<typename TChar, typename TFormatChar>
+void formatTime(FormatBuffer<TChar>& buffer, const TFormatChar* format, const GuestTm& time) {
+    for (; *format != '\0' && !buffer.full && !buffer.failed; ++format) {
         if (*format != '%' || format[1] == '\0') {
-            addPiece(buffer, format, 1);
+            const TChar literal = *format;
+            addPiece(buffer, &literal, 1);
             continue;
         }
         ++format;
@@ -385,17 +441,27 @@ void formatTime(FormatBuffer& buffer, const char* format, const GuestTm& time) {
             if (format[1] == '\0') throw std::invalid_argument("strftime: the format ends after an E or O modifier");
             ++format;
         }
-        if (!addConversion(buffer, *format, time)) {
-            const char unknown[] = {'%', *format};
-            addPiece(buffer, unknown, sizeof(unknown));
+        if constexpr (std::is_same_v<TChar, char>) {
+            if (!addConversion(buffer, *format, time)) {
+                const char unknown[] = {'%', *format};
+                addPiece(buffer, unknown, sizeof(unknown));
+            }
+        } else if (!addWideConversion(buffer, *format, time)) {
+            const TChar unknown[] = {'%', *format};
+            const std::size_t length = buffer.remaining < 2 ? buffer.remaining : 2;
+            std::memcpy(buffer.cursor, unknown, length * sizeof(TChar));
+            if (buffer.remaining >= 2) {
+                buffer.cursor += 2;
+                buffer.remaining -= 2;
+            }
         }
     }
 }
 
 std::size_t formatGuestTime(char* destination, std::size_t size, const char* format, const GuestTm& time) {
-    FormatBuffer buffer{destination, destination + size, false};
+    FormatBuffer<char> buffer{destination, size};
     formatTime(buffer, format == nullptr ? "%c" : format, time);
-    if (buffer.full || buffer.cursor == buffer.limit) return 0;
+    if (buffer.full || buffer.remaining == 0) return 0;
     *buffer.cursor = '\0';
     return static_cast<std::size_t>(buffer.cursor - destination);
 }
@@ -560,8 +626,9 @@ int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
         return time;
     }
 #endif
-    if (approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY) {
-        moved = calendarCycles(approximate - firstOrdinary, CALENDAR_CYCLE_SECONDS) * CALENDAR_CYCLE_SECONDS;
+    if (!ordinary || approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY) {
+        if (approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY)
+            moved = calendarCycles(approximate - firstOrdinary, CALENDAR_CYCLE_SECONDS) * CALENDAR_CYCLE_SECONDS;
         GuestTm window{};
         if (!utcCalendarFields(approximate - moved, window)) return -1;
         window.tm_isdst = host.tm_isdst;
@@ -604,7 +671,7 @@ char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
 
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer) {
     if (const GuestTm* local = localtime_nid_postfix(timer)) return asctime_nid_postfix(local);
-    static char unknown[26];
+    static thread_local char unknown[26];
     std::memcpy(unknown, "??? ??? ?? ??:??:?? ????\n", sizeof(unknown));
     errno = EINVAL;
     return unknown;
@@ -615,43 +682,25 @@ size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* forma
 }
 
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr) {
-    constexpr int GuestEnomem = 12;
     constexpr int GuestEinval = 22;
-    constexpr auto Failed = static_cast<std::size_t>(-1);
     if (format == nullptr) throw std::invalid_argument("wcsftime: null format");
     if (timeptr == nullptr) throw std::invalid_argument("wcsftime: null time");
     if (str == nullptr) return 0;
-    const std::uint16_t* formatCursor = format;
-    const std::size_t formatLength = wcsrtombs_nid_postfix(nullptr, &formatCursor, 0, nullptr);
-    if (formatLength == Failed) return 0;
-    const std::unique_ptr<char[]> narrowFormat(new (std::nothrow) char[formatLength + 1]);
-    if (!narrowFormat) {
-        errno = GuestEnomem;
-        return 0;
-    }
-    wcsrtombs_nid_postfix(narrowFormat.get(), &formatCursor, formatLength + 1, nullptr);
-
     const auto maxCharacterBytes = static_cast<std::size_t>(_Getmbcurmax_nid_postfix());
     if (std::numeric_limits<std::size_t>::max() / maxCharacterBytes <= count) {
         errno = GuestEinval;
         return 0;
     }
-    const std::unique_ptr<char[]> narrow(new (std::nothrow) char[count * maxCharacterBytes]);
-    if (!narrow) {
-        errno = GuestEnomem;
-        return 0;
-    }
     const int callerError = errno;
-    if (strftime_nid_postfix(narrow.get(), count * maxCharacterBytes, narrowFormat.get(), timeptr) == 0) {
-        errno = callerError;
-        return 0;
-    }
-    const char* narrowCursor = narrow.get();
-    const std::size_t length = mbsrtowcs_nid_postfix(nullptr, &narrowCursor, 0, nullptr);
-    if (length == Failed || length >= count) return 0;
-    mbsrtowcs_nid_postfix(str, &narrowCursor, count, nullptr);
-
-    return length;
+    const ZoneScope zone;
+    tzset_nid_postfix();
+    FormatBuffer<std::uint16_t> buffer{str, count};
+    formatTime(buffer, format, *timeptr);
+    if (buffer.failed) return 0;
+    errno = callerError;
+    if (buffer.full || buffer.remaining == 0) return 0;
+    *buffer.cursor = 0;
+    return count - buffer.remaining;
 }
 
 // The guest's CLOCKS_PER_SEC is 1000000: clock() reports process CPU time in microseconds.

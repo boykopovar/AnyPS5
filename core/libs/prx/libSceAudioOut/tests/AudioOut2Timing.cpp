@@ -1,4 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2Internal.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
 #include <chrono>
@@ -9,10 +11,13 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
+#include <mutex>
 #include <random>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -22,6 +27,14 @@ static void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+static void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -159,6 +172,144 @@ void TestLevelExcludesCushion() {
     Require(result == queueFull);
     Require(accepted >= cushionGrains + queueDepth);
     session.Close();
+}
+
+void TestDeviceLevelDoesNotWaitForTheContext(bool low) {
+    Session session("anyps5_audio_out2_level_poll.raw", low);
+    auto& context = *reinterpret_cast<AudioOut2Context*>(session.context);
+    Require(context.device != 0);
+    std::promise<void> started;
+    auto ready = started.get_future();
+    std::unique_lock lock(context.lock);
+    auto poll = std::async(std::launch::async, [&] {
+        started.set_value();
+        std::uint32_t level = 99;
+        std::uint32_t available = 99;
+        Require((low ? sceAudioOut2LoContextGetQueueLevel : sceAudioOut2ContextGetQueueLevel)(session.context, &level, &available) == 0);
+        return std::pair{level, available};
+    });
+    ready.wait();
+    const bool completed = poll.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+    lock.unlock();
+    const auto result = poll.get();
+    session.Close();
+    Require(completed);
+    Require(result.first == 0 && result.second == queueDepth);
+}
+
+void TestLevelWithoutADeviceUsesThePlaybackClock() {
+    Session session("anyps5_audio_out2_no_device.raw");
+    auto& context = *reinterpret_cast<AudioOut2Context*>(session.context);
+    SDL_CloseAudioDevice(std::exchange(context.device, 0));
+    context.deviceBacked = false;
+    context.queued = queueDepth;
+    context.playHead = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    std::uint32_t level = 99;
+    std::uint32_t available = 99;
+    Require(sceAudioOut2ContextGetQueueLevel(session.context, &level, &available) == 0);
+    Require(level == queueDepth && available == 0);
+    context.playHead = std::chrono::steady_clock::now() - std::chrono::seconds(5);
+    Require(sceAudioOut2LoContextGetQueueLevel(session.context, &level, &available) == 0);
+    Require(level == 0 && available == queueDepth);
+    session.Close();
+}
+
+void TestBlockingPushWaitsForRoomWithoutADevice() {
+    SetEnvironment("SDL_DISKAUDIOFILE", std::filesystem::temp_directory_path().string());
+    constexpr std::uint32_t paced = 1024;
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0);
+    params.num_grains = paced;
+    params.queue_depth = queueDepth;
+    AudioOut2ContextHandle handle = 0;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &handle) == 0);
+    Require(reinterpret_cast<AudioOut2Context*>(handle)->device == 0);
+    std::uint32_t level = 99;
+    std::uint32_t available = 99;
+    for (std::uint32_t round = 0; round < 4; round++) {
+        Require(sceAudioOut2ContextPush(handle, 1) == 0);
+        Require(sceAudioOut2ContextGetQueueLevel(handle, &level, &available) == 0);
+        Require(level < queueDepth && available > 0);
+    }
+    Require(sceAudioOut2ContextDestroy(handle) == 0);
+}
+
+AudioOut2ContextHandle CreateContextOnATestClock() {
+    SetEnvironment("SDL_DISKAUDIOFILE", std::filesystem::temp_directory_path().string());
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0);
+    params.num_grains = grain;
+    params.queue_depth = queueDepth;
+    AudioOut2ContextHandle handle = 0;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &handle) == 0);
+    auto& context = *reinterpret_cast<AudioOut2Context*>(handle);
+    std::lock_guard lock(context.lock);
+    Require(context.device == 0);
+    const auto start = std::chrono::steady_clock::now();
+    context.clockForTest = start;
+    context.playHead = start;
+    return handle;
+}
+
+void PlayOneGrainOnTheTestClock(AudioOut2ContextHandle handle) {
+    auto& context = *reinterpret_cast<AudioOut2Context*>(handle);
+    std::lock_guard lock(context.lock);
+    *context.clockForTest += std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(static_cast<double>(grain) / frequency)) + std::chrono::microseconds(1);
+}
+
+template<class Predicate>
+bool ContextReaches(AudioOut2ContextHandle handle, std::chrono::milliseconds limit, Predicate predicate) {
+    auto& context = *reinterpret_cast<AudioOut2Context*>(handle);
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    for (;;) {
+        {
+            std::lock_guard lock(context.lock);
+            if (predicate(context)) return true;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+std::uint32_t QueueLevelNow(AudioOut2ContextHandle handle) {
+    std::uint32_t level = 99;
+    std::uint32_t available = 99;
+    Require(sceAudioOut2ContextGetQueueLevel(handle, &level, &available) == 0);
+    Require(level + available == queueDepth);
+    return level;
+}
+
+void TestBlockingPushStaysBlockedUntilPlaybackFreesASlot() {
+    const auto handle = CreateContextOnATestClock();
+    for (std::uint32_t push = 0; push + 1 < queueDepth; push++) Require(sceAudioOut2ContextPush(handle, 1) == 0);
+    Require(QueueLevelNow(handle) == queueDepth - 1);
+    auto push = std::async(std::launch::async, [handle] { return sceAudioOut2ContextPush(handle, 1); });
+    std::uint64_t pushesOnceQueued = 0;
+    Require(ContextReaches(handle, std::chrono::seconds(10), [&](const AudioOut2Context& context) {
+        pushesOnceQueued = context.pushes;
+        return context.queued == queueDepth;
+    }));
+    Require(pushesOnceQueued == queueDepth - 1);
+    Require(push.wait_for(std::chrono::seconds(0)) == std::future_status::timeout);
+    Require(QueueLevelNow(handle) == queueDepth);
+    PlayOneGrainOnTheTestClock(handle);
+    Require(push.get() == 0);
+    Require(QueueLevelNow(handle) == queueDepth - 1);
+    Require(sceAudioOut2ContextDestroy(handle) == 0);
+}
+
+void TestBlockingPushOnAFullQueueQueuesOnlyOnceASlotIsFree() {
+    const auto handle = CreateContextOnATestClock();
+    for (std::uint32_t push = 0; push < queueDepth; push++) Require(sceAudioOut2ContextPush(handle, 0) == 0);
+    Require(sceAudioOut2ContextPush(handle, 0) == queueFull);
+    auto push = std::async(std::launch::async, [handle] { return sceAudioOut2ContextPush(handle, 1); });
+    Require(!ContextReaches(handle, std::chrono::seconds(1), [](const AudioOut2Context& context) { return context.queued > queueDepth; }));
+    Require(push.wait_for(std::chrono::seconds(0)) == std::future_status::timeout);
+    PlayOneGrainOnTheTestClock(handle);
+    PlayOneGrainOnTheTestClock(handle);
+    Require(push.get() == 0);
+    Require(QueueLevelNow(handle) == queueDepth - 1);
+    Require(sceAudioOut2ContextDestroy(handle) == 0);
 }
 
 void TestPrimingAfterRunningDry() {
@@ -312,10 +463,17 @@ void TestLowLatencyQueueLevelFillsToTheDepth() {
 }
 
 int main() {
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     TestReadAtNextPush();
     TestRecreatedPort();
     TestLevelExcludesCushion();
+    TestDeviceLevelDoesNotWaitForTheContext(false);
+    TestDeviceLevelDoesNotWaitForTheContext(true);
+    TestLevelWithoutADeviceUsesThePlaybackClock();
+    TestBlockingPushStaysBlockedUntilPlaybackFreesASlot();
+    TestBlockingPushOnAFullQueueQueuesOnlyOnceASlotIsFree();
+    TestBlockingPushWaitsForRoomWithoutADevice();
     TestPrimingAfterRunningDry();
     TestLowLatencyCallsRejectBadArguments();
     TestLowLatencyReadsAtNextPush();

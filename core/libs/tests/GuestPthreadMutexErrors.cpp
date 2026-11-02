@@ -101,8 +101,8 @@ static void CheckLoops(PthreadMutexattr* attr) {
     Require(pthread_mutex_getspinloops_np_nid_postfix(&mutex, &count) == POSIX_EINVAL);
     Require(pthread_mutex_setspinloops_np_nid_postfix(&mutex, 1) == POSIX_EINVAL);
     Require(pthread_mutex_getyieldloops_np_nid_postfix(&mutex, &count) == POSIX_EINVAL && count == -1);
-    Require(scePthreadMutexSetyieldloops(&mutex, 1) == SCE_OK);
-    Require(pthread_mutex_setyieldloops_np_nid_postfix(&mutex, 1) == 0);
+    Require(scePthreadMutexSetyieldloops(&mutex, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutex_setyieldloops_np_nid_postfix(&mutex, 1) == POSIX_EINVAL);
     Require(mutex == DestroyedMutex);
 
     for (const int type : {1, 2, 3}) {

@@ -1,0 +1,5 @@
+LIBRARY ucrtbase.dll
+EXPORTS
+    __acrt_iob_func
+    fputs
+    fflush

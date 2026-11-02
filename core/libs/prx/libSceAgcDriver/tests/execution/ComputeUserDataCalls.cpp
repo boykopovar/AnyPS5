@@ -4,6 +4,7 @@
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -11,6 +12,11 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -92,6 +98,25 @@ void Register(bool wave32) {
     AgcDriverRegisterShader_nid_postfix(&header.shader);
 }
 
+const void* LongCallee() {
+    constexpr std::size_t page = 4096u;
+    constexpr std::size_t words = 20000u;
+    constexpr std::size_t committed = (words * 4u + page - 1u) / page * page;
+#ifdef _WIN32
+    auto* block = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, committed + page, MEM_RESERVE, PAGE_NOACCESS));
+    Require(block != nullptr && VirtualAlloc(block, committed, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot reserve the long callee");
+#else
+    void* mapped = mmap(nullptr, committed + page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED && mprotect(mapped, committed, PROT_READ | PROT_WRITE) == 0, "cannot reserve the long callee");
+    auto* block = static_cast<std::uint32_t*>(mapped);
+#endif
+    block[0] = 0x4a020281u;
+    for (std::size_t word = 1; word + 1u < words; ++word) block[word] = 0xbf800000u;
+    block[words - 1u] = 0xbe80200eu;
+    for (std::size_t word = words; word < committed / 4u; ++word) block[word] = 0xbf810000u;
+    return block;
+}
+
 template <typename TAction>
 void ExpectFailure(TAction action, const char* expected) {
     try {
@@ -114,10 +139,12 @@ int main(int argc, char** argv) {
             if (!device) return VulkanTestSkipped;
         }
         if (registered) Register(true);
+        const auto* longCallee = LongCallee();
         for (const bool wave32 : registered ? std::vector<bool>{true} : std::vector<bool>{false, true}) {
             Check(AddFive.data(), AddSixtyFour.data(), wave32, 3u * (5u + 64u), "two user-data callees called from a loop");
             Check(AddOne.data(), AddSixtyFour.data(), wave32, 3u * (1u + 64u), "the first callee replaced");
             Check(AddSixtyFour.data(), AddSixtyFour.data(), wave32, 3u * (64u + 64u), "one callee behind both pointers");
+            Check(longCallee, AddSixtyFour.data(), wave32, 3u * (1u + 64u), "a callee of 20,000 dwords whose last page is followed by unreadable memory");
         }
         const auto* unmapped = reinterpret_cast<const void*>(std::uintptr_t{0x1000u});
         ExpectFailure([&] { Dispatch(AddFive.data(), unmapped, registered); }, "is not readable");

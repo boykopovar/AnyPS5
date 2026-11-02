@@ -11,7 +11,6 @@
 namespace File {
 
 std::optional<int> OpenArchivedFile(const std::filesystem::path& native, int flags);
-void RefuseMergedDirectory(const std::filesystem::path& native);
 bool IsArchivedFile(int fd);
 void RefuseArchivedFile(int fd, const char* operation);
 std::optional<std::int64_t> ReadArchivedFile(int fd, void* buf, std::size_t nbytes, const std::int64_t* offset);

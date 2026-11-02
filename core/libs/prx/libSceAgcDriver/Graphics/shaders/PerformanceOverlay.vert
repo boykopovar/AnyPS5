@@ -3,7 +3,7 @@
 layout(location = 0) in ivec4 area;
 layout(location = 1) in uint color;
 layout(push_constant) uniform Parameters {
-    vec4 palette[3];
+    vec4 palette[7];
     vec2 extent;
 } parameters;
 layout(location = 0) flat out uint paletteIndex;

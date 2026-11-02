@@ -86,14 +86,7 @@ static void Validation() {
     CHECK(sceUltUlthreadRuntimeGetWorkAreaSize(1, 1) == 1184);
     CHECK(sceUltConditionVariableDestroy(nullptr) == -2139029503);
     CHECK(sceUltReaderWriterLockDestroy(nullptr) == Null);
-    bool threwInfo = false;
-    try {
-        sceUltGetConditionVariableInfo(nullptr, nullptr, nullptr, 0);
-
-    } catch (const std::runtime_error&) {
-        threwInfo = true;
-    }
-    CHECK(threwInfo);
+    CHECK(sceUltGetConditionVariableInfo(nullptr, nullptr, nullptr, 0) == Null);
 }
 
 static void TryJoin() {

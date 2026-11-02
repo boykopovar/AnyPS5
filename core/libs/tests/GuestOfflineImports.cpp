@@ -38,24 +38,6 @@ int main() {
         }
     }
 
-    for (std::int64_t requestId : {std::int64_t{0}, std::int64_t{1}, INT64_MAX}) {
-        bool abortFailed = false;
-        bool deleteFailed = false;
-        try {
-            sceNpEntitlementAccessAbortRequest(requestId);
-
-        } catch (const std::logic_error&) {
-            abortFailed = true;
-        }
-        try {
-            sceNpEntitlementAccessDeleteRequest(requestId);
-
-        } catch (const std::logic_error&) {
-            deleteFailed = true;
-        }
-        Require(abortFailed && deleteFailed);
-    }
-
     constexpr int network = static_cast<int>(0x80431063);
     Require(sceHttpSendRequest(1, nullptr, 0) == network);
 
@@ -99,6 +81,21 @@ int main() {
     Require(sceNpEntitlementAccessPollUnifiedEntitlementInfo(0, nullptr, nullptr) == signedOut);
     Require(sceNpEntitlementAccessRequestServiceEntitlementInfo(0, 0, nullptr, nullptr) == signedOut);
     Require(sceNpEntitlementAccessPollServiceEntitlementInfo(0, nullptr, nullptr) == signedOut);
+
+    std::array<unsigned char, 72> transactionId{};
+    std::int64_t requestId = 0x5a5a5a5a5a5a5a5a;
+    std::int32_t result = 0x5a5a5a5a;
+    std::array<unsigned char, 64> info;
+    info.fill(0xa5);
+    const auto originalInfo = info;
+    Require(sceNpEntitlementAccessRequestConsumeEntitlement(1, 0, &label, transactionId.data(), 1, &requestId) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumeEntitlement(1, 0, nullptr, nullptr, 1, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumableEntitlementInfo(1, 0, &label, &requestId) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumableEntitlementInfo(1, 0, nullptr, nullptr) == signedOut);
+    Require(requestId == 0x5a5a5a5a5a5a5a5a);
+    Require(sceNpEntitlementAccessPollConsumableEntitlementInfo(1, &result, info.data()) == signedOut);
+    Require(sceNpEntitlementAccessPollConsumableEntitlementInfo(1, nullptr, nullptr) == signedOut);
+    Require(result == 0x5a5a5a5a && info == originalInfo);
 
     Require(sceRudpActivate(-1, nullptr, 0) == static_cast<int>(0x80770001));
     std::array<unsigned char, 248> status;

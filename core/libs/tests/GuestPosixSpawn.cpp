@@ -9,19 +9,24 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #else
 extern "C" int kill(int, int);
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
-#if defined(__linux__)
+#ifndef _WIN32
 extern char** environ;
 #endif
 
@@ -198,6 +203,10 @@ static void CheckSpawn() {
     Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(&processId, "missing.elf", nullptr, &uninitializedAttributes, arguments, nullptr); }));
     Check(ThrowsInvalidArgument([&] { posix_spawn_nid_postfix(&processId, nullptr, nullptr, nullptr, arguments, nullptr); }));
     Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(&processId, nullptr, nullptr, nullptr, arguments, nullptr); }));
+    Check(posix_spawn_nid_postfix(nullptr, missing.c_str(), &actions, &attributes, arguments, environment) == NoSuchFile);
+    Check(posix_spawnp_nid_postfix(nullptr, "missing.elf", &actions, &attributes, arguments, nullptr) == NoSuchFile);
+    Check(ThrowsInvalidArgument([&] { posix_spawn_nid_postfix(nullptr, nullptr, nullptr, nullptr, arguments, nullptr); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(nullptr, nullptr, nullptr, nullptr, arguments, nullptr); }));
 
     Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0 && posix_spawnattr_destroy_nid_postfix(&attributes) == 0);
     std::filesystem::remove_all(directory);
@@ -209,13 +218,20 @@ static std::filesystem::path OwnExecutablePath() {
     const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
     own.resize(length);
     return std::filesystem::path(own);
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> executable(size);
+    std::error_code error;
+    if (_NSGetExecutablePath(executable.data(), &size) != 0) return {};
+    return std::filesystem::canonical(executable.data(), error);
 #else
     std::error_code error;
     return std::filesystem::read_symlink("/proc/self/exe", error);
 #endif
 }
 
-static std::int32_t SpawnChild(const char* role) {
+static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId, bool usePath = false) {
     const auto own = OwnExecutablePath();
     const auto target = own.parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + own.extension().string()).c_str()));
     std::error_code error;
@@ -229,20 +245,37 @@ static std::int32_t SpawnChild(const char* role) {
     char* arguments[] = {program, nullptr};
     std::vector<std::string> entries;
 #ifdef _WIN32
-    char** const parentEnvironment = _environ;
+    const LPWCH block = GetEnvironmentStringsW();
+    Check(block != nullptr);
+    for (const wchar_t* entry = block; *entry != L'\0'; entry += std::wcslen(entry) + 1) {
+        const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry, -1, nullptr, 0, nullptr, nullptr);
+        Check(size > 0);
+        std::string narrow(static_cast<std::size_t>(size), '\0');
+        Check(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry, -1, narrow.data(), size, nullptr, nullptr) == size);
+        narrow.pop_back();
+        entries.push_back(std::move(narrow));
+    }
+    FreeEnvironmentStringsW(block);
 #else
-    char** const parentEnvironment = environ;
-#endif
-    for (char** entry = parentEnvironment; entry != nullptr && *entry != nullptr; ++entry)
+    for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry)
         entries.push_back(*entry);
+#endif
     entries.push_back(std::string("ANYPS5_POSIX_SPAWN_ROLE=") + role);
     std::vector<char*> environment;
     for (auto& entry : entries)
         environment.push_back(entry.data());
     environment.push_back(nullptr);
+    if (usePath) {
+        Check(posix_spawnp_nid_postfix(processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
+    } else {
+        Check(posix_spawn_nid_postfix(processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
+    }
+    return processId != nullptr ? *processId : 0;
+}
+
+static std::int32_t SpawnChild(const char* role) {
     std::int32_t processId = 0;
-    Check(posix_spawn_nid_postfix(&processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
-    Check(processId > 0);
+    Check(SpawnChildExplicit(role, &processId) > 0);
     return processId;
 }
 
@@ -250,6 +283,15 @@ static void CleanupChild() {
     std::error_code error;
     std::filesystem::remove(OwnExecutablePath().parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + OwnExecutablePath().extension().string()).c_str())), error);
     std::filesystem::remove_all(std::filesystem::current_path() / "app0", error);
+}
+
+static void CheckSpawnNullProcessId(bool usePath) {
+    Check(SpawnChildExplicit("child-exit-42", nullptr, usePath) == 0);
+    int status = -1;
+    const int reaped = waitpid_nid_postfix(-1, &status, 0);
+    Check(reaped > 0);
+    Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == 42);
+    CleanupChild();
 }
 
 static void CheckSpawnedChild(const char* role, int expectedCode) {
@@ -335,10 +377,12 @@ int main() {
 #ifndef _WIN32
         if (std::strcmp(role, "child-stop") == 0) {
             std::raise(SIGSTOP);
+            std::this_thread::sleep_for(std::chrono::seconds(2));
             std::_Exit(44);
         }
         if (std::strcmp(role, "child-kill-bus") == 0) std::raise(SIGBUS);
         if (std::strcmp(role, "child-kill-sys") == 0) std::raise(SIGSYS);
+        if (std::strcmp(role, "child-kill-usr1") == 0) std::raise(SIGUSR1);
 #endif
         if (std::strcmp(role, "child-sleep") == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -353,6 +397,8 @@ int main() {
     CheckAttributes();
     CheckFileActions();
     CheckSpawn();
+    CheckSpawnNullProcessId(false);
+    CheckSpawnNullProcessId(true);
     CheckSpawnedChild("child-exit-42", 42);
     CheckSpawnedChild("child-sleep", 43);
     CheckSpawnedChild("child-exit-neg", 255);
@@ -361,6 +407,7 @@ int main() {
     CheckStoppedChild();
     CheckKilledChild("child-kill-bus", 10);
     CheckKilledChild("child-kill-sys", 12);
+    CheckKilledChild("child-kill-usr1", 30);
 #else
     CheckTerminatedChild("child-laze", 0xC0000005u, 11);
     CheckTerminatedChild("child-laze", 0xC0000096u, 4);

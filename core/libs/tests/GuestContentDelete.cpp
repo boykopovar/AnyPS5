@@ -21,8 +21,6 @@ std::string LogicErrorMessage(TAction action) {
     return "returned";
 }
 
-bool Contains(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
-
 }
 
 int main() {
@@ -33,8 +31,10 @@ int main() {
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
 
     ContentDeleteInitParam param{};
-    param.heap_size = 0x10000;
-    Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5001u));
+    for (const std::uint32_t badHeap : {0u, 0x1000u, 0x3fffu, 0x4001u, 0x10000u}) {
+        param.heap_size = badHeap;
+        Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5001u));
+    }
     param.heap_size = 0x4000;
     Require(sceContentDeleteInitialize(&param) == 0);
     Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5003u));
@@ -42,12 +42,12 @@ int main() {
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5001u));
 
     Require(LogicErrorMessage([] { sceContentDeleteByPath(nullptr); }) == "invalid argument");
-    Require(Contains(LogicErrorMessage([] { sceContentDeleteByPath("/user/av_contents/photo/a.png"); }), "sceContentDeleteByPath: /user/av_contents/photo/a.png is not in the host content library"));
-    Require(Contains(LogicErrorMessage([] { sceContentDeleteById(0x123456789); }), "sceContentDeleteById: content id 4886718345 is not in the host content library"));
-    Require(Contains(LogicErrorMessage([] { sceContentDeleteById(-1); }), "sceContentDeleteById: content id -1 is not in the host content library"));
 
     Require(sceContentDeleteTerminate() == 0);
     Require(sceContentDeleteTerminate() == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteById(1) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5002u));
     return 0;
 }

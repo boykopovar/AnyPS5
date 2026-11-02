@@ -36,6 +36,25 @@ void testPacketSize() {
     }
 }
 
+
+
+void testSystemSoftwareVersion() {
+    std::array<std::uint32_t, 3> packet{0xc0020000u, 0xbeefcafeu, 0};
+    std::uint32_t version = 0;
+    check(sceAgcDcbGetSystemSoftwareVersion(&version, packet.data()) == 0, "assigned system software version");
+    check(version == 0xbeefcafeu, "system software version uses the second packet word");
+    check(packet[0] == 0xc0020000u && packet[1] == 0xbeefcafeu, "query does not modify the packet");
+
+    std::array<std::uint32_t, 2> tooShort{0xc0000000u, 0xbeefcafeu};
+    expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, tooShort.data()); });
+    expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(nullptr, packet.data()); });
+    expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, nullptr); });
+    for (const auto header : {0x80000000u, 0x3fff1000u, 0x40001000u, 0x00027600u}) {
+        std::array<std::uint32_t, 3> invalidHeader{header, 0xbeefcafeu, 0};
+        expectFailure([&] { sceAgcDcbGetSystemSoftwareVersion(&version, invalidHeader.data()); });
+    }
+}
+
 void testRejections() {
     for (const auto header : {0x80000000u, 0x3fff1000u, 0x40001000u, 0x00047600u}) {
         std::uint32_t word = header;
@@ -53,6 +72,7 @@ int main() {
     try {
         testPacketSize();
         testRejections();
+        testSystemSoftwareVersion();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC packet info tests passed");
         return 0;

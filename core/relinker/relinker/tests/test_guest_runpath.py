@@ -60,6 +60,11 @@ def main():
             assert result.returncode == 2 and "run path must be absolute or begin with $ORIGIN" in result.stderr, (
                 run_path, result.returncode, result.stdout, result.stderr)
             assert not output.exists()
+        output = work / "repeated.elf"
+        result = subprocess.run([str(relinker), "--rpath", "$ORIGIN/a", "--rpath", "$ORIGIN/b", str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode != 0 and "--rpath cannot be repeated" in result.stdout + result.stderr and not output.exists(), (
+            result.returncode, result.stdout, result.stderr)
         assert not failures, failures
         print(f"Guest run path tests passed: {checked} module/path combinations")
 

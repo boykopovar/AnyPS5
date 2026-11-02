@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_beisobmf_boxes_tests ${CMAKE_CURRENT_LIST_DIR}/../../tests/GuestBeisobmfBoxes.cpp)
+    target_include_directories(guest_beisobmf_boxes_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../..)
+    target_link_libraries(guest_beisobmf_boxes_tests PRIVATE libSceBeisobmf libc)
+    configure_windows_unwind(guest_beisobmf_boxes_tests)
+    add_test(NAME guest_beisobmf_boxes COMMAND guest_beisobmf_boxes_tests)
+    if(WIN32)
+        set_tests_properties(guest_beisobmf_boxes PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceBeisobmf>")
+    endif()
+endif()

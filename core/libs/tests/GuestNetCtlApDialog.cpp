@@ -37,8 +37,10 @@ int main() {
     std::memset(result, 0x5a, sizeof(result));
 
     Require(sceNetCtlApDialogTerminate() == kErrNotInitialized);
+    Require(sceNetCtlApDialogOpen(nullptr) == kErrArgNull);
     Require(sceNetCtlApDialogOpen(&param) == kErrNotInitialized);
     Require(sceNetCtlApDialogClose() == kErrNotInitialized);
+    Require(sceNetCtlApDialogGetResult(nullptr) == kErrArgNull);
     Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotInitialized);
     Require(sceNetCtlApDialogGetStatus() == kStatusNone);
     Require(sceNetCtlApDialogUpdateStatus() == kStatusNone);
@@ -78,11 +80,25 @@ int main() {
     Require(sceNetCtlApDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceNetCtlApDialogTerminate() == 0);
     Require(sceNetCtlApDialogTerminate() == kErrNotInitialized);
+    Require(sceNetCtlApDialogOpen(nullptr) == kErrArgNull);
+    Require(sceNetCtlApDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNetCtlApDialogClose() == kErrNotInitialized);
+    Require(sceNetCtlApDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotInitialized);
     Require(sceNetCtlApDialogGetStatus() == kStatusNone);
+    Require(sceNetCtlApDialogUpdateStatus() == kStatusNone);
 
     Require(sceNetCtlApDialogInitialize() == 0);
     Require(sceNetCtlApDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceNetCtlApDialogGetStatus() == kStatusInitialized);
     Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotFinished);
     Require(sceNetCtlApDialogTerminate() == 0);
+    Require(sceNetCtlApDialogTerminate() == kErrNotInitialized);
+    Require(sceNetCtlApDialogOpen(nullptr) == kErrArgNull);
+    Require(sceNetCtlApDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNetCtlApDialogClose() == kErrNotInitialized);
+    Require(sceNetCtlApDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceNetCtlApDialogGetResult(reinterpret_cast<NetCtlApDialogResult*>(result)) == kErrNotInitialized);
+    Require(sceNetCtlApDialogGetStatus() == kStatusNone);
+    Require(sceNetCtlApDialogUpdateStatus() == kStatusNone);
 }

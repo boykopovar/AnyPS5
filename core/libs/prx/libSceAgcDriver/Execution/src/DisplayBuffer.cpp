@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/HalfFloatScanout.hpp"
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -39,7 +41,19 @@ std::uint32_t tileOffset64(std::uint32_t x, std::uint32_t y) {
     return ((x << 3u) & 0x0008u) ^ ((x << 4u) & 0x0460u) ^ ((x << 5u) & 0x0300u) ^ ((x << 6u) & 0x0800u) ^ ((x << 9u) & 0x8000u) ^ ((x << 10u) & 0x2000u) ^ ((y << 4u) & 0x0010u) ^ ((y << 6u) & 0x0080u) ^ ((y << 5u) & 0x0f00u) ^ ((y << 10u) & 0x5000u);
 }
 
+const Graphics::ColorTargetLayout& gcnLayout(const DisplayBuffer& buffer, std::uint32_t texelBytes) {
+    thread_local std::optional<Graphics::ColorTargetLayout> layout;
+    thread_local std::array<std::uint32_t, 3> key{};
+    const std::array<std::uint32_t, 3> wanted{buffer.pitchInPixel, buffer.height, texelBytes};
+    if (!layout || key != wanted) {
+        layout.emplace(buffer.pitchInPixel, buffer.height, Graphics::ColorTileMode::GcnDisplay2D, texelBytes);
+        key = wanted;
+    }
+    return *layout;
+}
+
 std::size_t texelOffset(const DisplayBuffer& buffer, std::uint32_t x, std::uint32_t y, std::uint32_t texelBytes) {
+    if (buffer.tilingMode == DisplayTilingGcn) return gcnLayout(buffer, texelBytes).Offset(x, y);
     if (buffer.tilingMode == 1) {
         const auto pitch = buffer.pitchInPixel == 0 ? buffer.width : buffer.pitchInPixel;
         return (static_cast<std::size_t>(y) * pitch + x) * texelBytes;
@@ -130,9 +144,14 @@ std::size_t DisplayBufferSize(const DisplayBuffer& buffer) {
         throw std::runtime_error(message);
     }
     require(!halfFloat || buffer.dccAddress == 0, "VideoOut: DCC metadata on a 16-bit float display buffer is not implemented");
-    require(buffer.alignment == 65536u || (buffer.alignment == 4096u && buffer.tilingMode == 1), "VideoOut: 4 KiB display buffer alignment is only supported for linear buffers");
+    require(buffer.alignment == 65536u || (buffer.alignment == 4096u && (buffer.tilingMode == 1 || buffer.tilingMode == DisplayTilingGcn)), "VideoOut: 4 KiB display buffer alignment is only supported for linear and PS4 buffers");
     require(buffer.address != 0 && (buffer.address & (buffer.alignment - 1u)) == 0, buffer.alignment == 65536u ? "VideoOut: display buffer requires 64 KiB alignment" : "VideoOut: display buffer requires 4 KiB alignment");
-    require(buffer.tilingMode <= 1, "VideoOut: unsupported display tiling mode");
+    require(buffer.tilingMode <= 1 || buffer.tilingMode == DisplayTilingGcn, "VideoOut: unsupported display tiling mode");
+    if (buffer.tilingMode == DisplayTilingGcn) {
+        require(buffer.dccAddress == 0 && !DisplayHalfFloat(buffer.pixelFormat), "VideoOut: PS4 display buffers carry no DCC and no half-float texels");
+        require(buffer.pitchInPixel >= buffer.width && buffer.pitchInPixel % 128u == 0, "VideoOut: PS4 tiled display pitch is not padded to 128 pixels");
+        return gcnLayout(buffer, DisplayTexelBytes(buffer.pixelFormat)).Bytes();
+    }
     require(buffer.tilingMode != 0 || buffer.pitchInPixel == 0, "VideoOut: tiled display pitch is unsupported");
     require(buffer.dccAddress == 0 || buffer.tilingMode == 0, "VideoOut: a linear display buffer cannot carry DCC metadata");
     require(buffer.dccAddress != 0 || buffer.dccClearColor == 0, "VideoOut: a DCC clear color needs DCC metadata");

@@ -138,7 +138,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         if (tables != 0 && storesThroughAddressesCached(shader.program->spirv)) bdaReadOnly = false;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
-        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || loopGuarded));
+        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || shader.program->descriptorFaults != 0 || loopGuarded));
     }
     if (usesBda) {
         Require(context.bufferDeviceAddress, "buffer device address is not enabled");
@@ -151,7 +151,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
 }
 
 VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
-    if (allocation.guest) return guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment);
+    if (allocation.guest) return wholeDwordRange(guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment));
     if (allocation.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
         Require(context.emptyBuffer != VK_NULL_HANDLE, "no placeholder buffer for a null V#");
         return {context.emptyBuffer, 0, allocation.size};
@@ -162,6 +162,11 @@ VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
     }
     Require(allocation.buffer != nullptr, "shader data has no buffer owner");
     return {allocation.buffer->Handle(), 0, allocation.size};
+}
+
+VkDescriptorBufferInfo ShaderResources::wholeDwordRange(VkDescriptorBufferInfo info) const {
+    if (context.exactRobustLoads && info.range >= 4u) info.range &= ~VkDeviceSize{3};
+    return info;
 }
 
 }

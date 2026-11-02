@@ -2,6 +2,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -56,7 +57,7 @@ class StderrCapture {
     FileStream stream;
 
 public:
-    StderrCapture() : previous(__stderrp_nid_postfix), stream(std::tmpfile()) { __stderrp_nid_postfix = &stream; }
+    StderrCapture() : previous(__stderrp_nid_postfix), stream(TemporaryFile::Open()) { __stderrp_nid_postfix = &stream; }
     ~StderrCapture() {
         __stderrp_nid_postfix = previous;
         stream.Close();

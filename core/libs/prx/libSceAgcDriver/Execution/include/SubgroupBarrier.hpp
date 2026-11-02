@@ -13,6 +13,10 @@ inline bool WorkgroupScopeFenceUsable(VkDriverId driver) {
     return driver != VK_DRIVER_ID_AMD_PROPRIETARY;
 }
 
+inline bool LdsLockFencesRequired(VkDriverId driver) {
+    return driver == VK_DRIVER_ID_MOLTENVK;
+}
+
 }
 
 #endif

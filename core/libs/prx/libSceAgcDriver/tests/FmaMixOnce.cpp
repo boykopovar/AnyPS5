@@ -82,7 +82,7 @@ int main() {
         const auto one = Compile(1);
         const auto three = Compile(3);
         Check(three.words - one.words < one.words - none.words, "fma mix once: 2 more v_fma_mixlo/mixhi_f16 added " + std::to_string(three.words - one.words) + " SPIR-V words, as many as the first one with its shared emulation (" + std::to_string(one.words - none.words) + ")");
-        Check(one.functions == none.functions + 1u, "fma mix once: one v_fma_mixlo_f16 emitted " + std::to_string(one.functions - none.functions) + " functions more than none, expected one shared emulation function");
+        Check(one.functions == none.functions + 2u, "fma mix once: one v_fma_mixlo_f16 emitted " + std::to_string(one.functions - none.functions) + " functions more than none, expected one shared f32 path and its shared exact emulation");
         Check(three.functions == one.functions, "fma mix once: two more v_fma_mixlo/mixhi_f16 in the same float mode emitted " + std::to_string(three.functions - one.functions) + " more functions, expected calls to the shared one");
         std::printf("fma mix once tests passed (%zu words without v_fma_mix, %zu for 1, %zu for 3)\n", none.words, one.words, three.words);
         return 0;

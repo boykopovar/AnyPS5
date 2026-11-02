@@ -49,7 +49,7 @@ int APS5_VABI sceSpPthreadMutexLock(PthreadMutex* mutex);
 int APS5_VABI sceSpPthreadMutexUnlock(PthreadMutex* mutex);
 int APS5_VABI sceSpPthreadMutexattrDestroy(PthreadMutexattr* attr);
 int APS5_VABI sceSpPthreadMutexattrInit(PthreadMutexattr* attr);
-int APS5_VABI sceSpPthreadMutexattrSetprioceiling();
+int APS5_VABI sceSpPthreadMutexattrSetprioceiling(PthreadMutexattr* attr, int prioceiling);
 int APS5_VABI sceSpPthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol);
 int APS5_VABI sceSpPthreadMutexattrSettype(PthreadMutexattr* attr, int type);
 int APS5_VABI sceSpPthreadSetprio(Pthread thread, int prio);

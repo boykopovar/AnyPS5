@@ -19,5 +19,8 @@ int APS5_VABI sceMouseMbusInit();
 int APS5_VABI sceMouseSetHandType();
 int APS5_VABI sceMouseSetPointerSpeed();
 int APS5_VABI sceMouseSetProcessPrivilege();
+int APS5_VABI sceMouseReadAbsolutePosition();
+int APS5_VABI sceMouseSetAbsoluteHighPrecisionMode();
+int APS5_VABI sceMouseSetAbsoluteVirtualScreenSize();
 
 }

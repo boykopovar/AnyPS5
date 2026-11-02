@@ -223,6 +223,11 @@ static void ReportPlaceholders() {
     }
 }
 
+static void ReportExportLinked() {
+    auto* volatile linked = &sceNpUniversalDataSystemIntInitialize;
+    Require(linked != nullptr, "sceNpUniversalDataSystemIntInitialize is not linked");
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-data-" + std::to_string(std::random_device{}()));
@@ -236,6 +241,7 @@ int main() {
     ReportTrophyData(context);
     PostUnlocks(context);
     ReportPlaceholders();
+    ReportExportLinked();
 
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
