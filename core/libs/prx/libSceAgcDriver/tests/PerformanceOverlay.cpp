@@ -689,7 +689,7 @@ void pageTwoSamplerTest(const Device& device) {
     const auto present = [&](std::chrono::milliseconds at, std::uint64_t address, std::uint64_t drops) { overlay.NotePresent(start + at, VkExtent2D{640, 360}, AgcDriver::OverlayPresentInfo{address, VK_PRESENT_MODE_FIFO_KHR, drops}); };
     present(0ms, 0x1000, 7);
     const auto& sample = overlay.DetailSample();
-    Require(sample.commit.has_value() && sample.unimplementedTotal.has_value() && sample.presentMode == "fifo" && sample.pipelinesCompiling == std::optional<std::uint64_t>{0}, "page 2's first sample does not read the commit charge, the unimplemented calls, the compile backlog and the present mode");
+    Require(sample.commit.has_value() == AgcDriver::ReadCommitCharge().has_value() && sample.unimplementedTotal.has_value() && sample.presentMode == "fifo" && sample.pipelinesCompiling == std::optional<std::uint64_t>{0}, "page 2's first sample does not read the commit charge where the system reports one, the unimplemented calls, the compile backlog and the present mode");
     Require(!sample.flipsPerSecond && !sample.pageFaultsPerSecond && !sample.cpuCopyMegabytesPerSecond && sample.busy.empty() && sample.phases.empty(), "page 2's first sample shows rates before a second has passed");
     Require(sample.hostImports.has_value() == (context.hostImportAlignment != 0), "the host import line does not follow the device's host import support");
     std::thread([] {

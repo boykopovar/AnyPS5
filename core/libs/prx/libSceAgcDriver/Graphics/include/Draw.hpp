@@ -37,6 +37,12 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
 void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
 void CheckPixelFunctionLds(const Context& context);
 void ReleasePixelFunctionLds(VkDevice device);
+bool UsesMeshWindow(std::span<const CompiledShader> shaders);
+bool ValidationKey(const Context& context, std::span<const CompiledShader> shaders, const State& state, std::vector<std::uint64_t>& key);
+VkDescriptorSetLayout MeshWindowSetLayout(const Context& context);
+void PrepareMeshWindow(const Context& context);
+void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
+void ReleaseMeshWindow(VkDevice device);
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 
@@ -77,6 +83,13 @@ struct MeshArgumentRules {
     std::uint32_t maxTotal;
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+struct MeshGrid {
+    std::uint32_t groups;
+    std::uint32_t instances;
+    std::uint32_t layers;
+    std::uint32_t layerStride;
+};
+std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances);
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules);
 
 // Why DrawWithRecipe did not record from the recipe (the caller then runs Draw): the draw is not

@@ -582,6 +582,10 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 }
 
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
+    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32)) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
     KernelTimespec value{};
     if (ReadClock(clockId, &value) != 0) return -1;
     if (tp == nullptr) {
@@ -724,9 +728,8 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
         *__error_nid_postfix() = GUEST_EINVAL;
         return -1;
     }
-    char requested[48];
-    std::snprintf(requested, sizeof(requested), "%lld.%09lld", static_cast<long long>(time.tv_sec), static_cast<long long>(time.tv_nsec));
-    throw std::runtime_error(std::string("clock_settime: setting CLOCK_REALTIME to ") + requested + " is not supported, the host clock is not changed");
+    NotImplemented_nid_no_patch("clock_settime");
+    return 0;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
@@ -821,17 +824,35 @@ int APS5_VABI sceKernelConvertLocaltimeToUtc(int64_t local_time, int64_t reserve
     (void)reserved;
     const HostZone guess = HostZoneAt(local_time);
     const HostZone zone = HostZoneAt(local_time - guess.standardEast - guess.daylight);
-    if (utc_time != nullptr) *utc_time = local_time - zone.standardEast - zone.daylight;
-    if (timezone != nullptr) *timezone = ZoneState(local_time, zone);
-    if (dst_seconds != nullptr) *dst_seconds = static_cast<int32_t>(HostDaylightAmount(local_time - zone.standardEast - zone.daylight));
+    if (utc_time != nullptr) {
+        const int64_t converted = local_time - zone.standardEast - zone.daylight;
+        if (!GuestCopyOut_nid_no_patch(utc_time, &converted, sizeof(converted))) return SceKernelErrorEfault;
+    }
+    if (timezone != nullptr) {
+        const KernelTimesec state = ZoneState(local_time, zone);
+        if (!GuestCopyOut_nid_no_patch(timezone, &state, sizeof(state))) return SceKernelErrorEfault;
+    }
+    if (dst_seconds != nullptr) {
+        const int32_t daylight = static_cast<int32_t>(HostDaylightAmount(local_time - zone.standardEast - zone.daylight));
+        if (!GuestCopyOut_nid_no_patch(dst_seconds, &daylight, sizeof(daylight))) return SceKernelErrorEfault;
+    }
     return 0;
 }
 
 int APS5_VABI sceKernelConvertUtcToLocaltime(int64_t utc_time, int64_t* local_time, KernelTimesec* st, int32_t* dst_sec) {
     const HostZone zone = HostZoneAt(utc_time);
-    if (local_time != nullptr) *local_time = utc_time + zone.standardEast + zone.daylight;
-    if (st != nullptr) *st = ZoneState(utc_time, zone);
-    if (dst_sec != nullptr) *dst_sec = static_cast<int32_t>(zone.daylight);
+    if (local_time != nullptr) {
+        const int64_t converted = utc_time + zone.standardEast + zone.daylight;
+        if (!GuestCopyOut_nid_no_patch(local_time, &converted, sizeof(converted))) return SceKernelErrorEfault;
+    }
+    if (st != nullptr) {
+        const KernelTimesec state = ZoneState(utc_time, zone);
+        if (!GuestCopyOut_nid_no_patch(st, &state, sizeof(state))) return SceKernelErrorEfault;
+    }
+    if (dst_sec != nullptr) {
+        const int32_t daylight = static_cast<int32_t>(zone.daylight);
+        if (!GuestCopyOut_nid_no_patch(dst_sec, &daylight, sizeof(daylight))) return SceKernelErrorEfault;
+    }
     return 0;
 }
 
@@ -849,12 +870,10 @@ int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
 }
 
 uint64_t APS5_VABI sceKernelReadTsc(void) {
-    if (TimeScale() == 1.0) return __rdtsc();
-    static const std::uint64_t origin = __rdtsc();
-    return origin + static_cast<std::uint64_t>(static_cast<double>(__rdtsc() - origin) * TimeScale());
+    return __rdtsc();
 }
 
-uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
+std::uint64_t APS5_VABI HostTscFrequency_nid_no_patch() {
     static const std::uint64_t frequency = [] {
         const CurrentCpuPin pin;
         const std::uint64_t startNanos = RawMonotonicNanos();
@@ -864,6 +883,11 @@ uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
         const std::uint64_t elapsedTicks = __rdtsc() - startTicks;
         return static_cast<std::uint64_t>(static_cast<long double>(elapsedTicks) * 1000000000.0L / static_cast<long double>(elapsedNanos));
     }();
+    return frequency;
+}
+
+uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
+    static const std::uint64_t frequency = static_cast<std::uint64_t>(static_cast<double>(HostTscFrequency_nid_no_patch()) / TimeScale());
     return frequency;
 }
 

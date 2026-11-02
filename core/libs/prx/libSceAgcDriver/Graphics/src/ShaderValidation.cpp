@@ -121,7 +121,7 @@ struct Module {
             return;
         }
         // One gl_ClipDistance array holds the guest clip distances and the recompiler's all-zero position distance.
-        if (!input && ((value == spv::BuiltInClipDistance && (vertex || stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)) || (value == spv::BuiltInCullDistance && (vertex || stage == Stage::Mesh)))) {
+        if (!input && ((value == spv::BuiltInClipDistance && (vertex || stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)) || (value == spv::BuiltInCullDistance && (vertex || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)))) {
             const auto signature = Signature(type);
             auto& count = value == spv::BuiltInClipDistance ? clipDistances : cullDistances;
             Require(count == 0 && signature.size() == 6 && signature.starts_with("f32[") && signature[4] >= '1' && signature[4] <= '8' && signature[5] == ']', "invalid or duplicate clip or cull distance output");
@@ -168,7 +168,7 @@ struct Module {
     }
 };
 
-Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, std::span<const std::uint32_t> primitiveLocations = {}) {
+Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool shaderResourceMinLod, std::span<const std::uint32_t> primitiveLocations = {}) {
     using Stage = ShaderRecompiler::ShaderStage;
     Require(compiled.program != nullptr, "missing compiled shader");
     const auto& shader = *compiled.program;
@@ -273,7 +273,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 if ((vertex || control || evaluation || mesh) && (capability == spv::CapabilityClipDistance || capability == spv::CapabilityCullDistance)) {
                     char word[16];
                     std::snprintf(word, sizeof(word), "0x%08x", state.paClVsOutCntl);
-                    Require(capability == spv::CapabilityClipDistance ? shaderClipDistance : (vertex || mesh) && shaderCullDistance, std::string("vertex clip or cull distance needs shaderClipDistance or shaderCullDistance, which the device lacks (PA_CL_VS_OUT_CNTL=") + word + ")");
+                    Require(capability == spv::CapabilityClipDistance ? shaderClipDistance : (vertex || evaluation || mesh) && shaderCullDistance, std::string("vertex clip or cull distance needs shaderClipDistance or shaderCullDistance, which the device lacks (PA_CL_VS_OUT_CNTL=") + word + ")");
                 }
 
                 // Enabled unconditionally or by the device setup in VulkanDevice.
@@ -282,6 +282,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilityImage1D ||
                     capability == spv::CapabilityImageGatherExtended ||
                     capability == spv::CapabilityImageQuery ||
+                    (shaderResourceMinLod && capability == spv::CapabilityMinLod) ||
                     ((vertex || control || evaluation || mesh) && shaderClipDistance && capability == spv::CapabilityClipDistance) ||
                     (vertex && capability == spv::CapabilityDrawParameters) ||
                     (fragment && geometryShader && capability == spv::CapabilityGeometry) ||
@@ -289,7 +290,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     (fragment && sampleRateShading && capability == spv::CapabilityInterpolationFunction) ||
                     capability == spv::CapabilityImageMSArray ||
                     capability == spv::CapabilityStorageImageMultisample ||
-                    ((vertex || mesh) && shaderCullDistance && capability == spv::CapabilityCullDistance) ||
+                    ((vertex || evaluation || mesh) && shaderCullDistance && capability == spv::CapabilityCullDistance) ||
                     capability == spv::CapabilityStorageImageWriteWithoutFormat ||
                     capability == spv::CapabilityStorageImageReadWithoutFormat ||
                     capability == spv::CapabilityInt64 ||
@@ -595,6 +596,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
+            if (*decoration.set == ShaderRecompiler::MeshWindowDescriptorSet) {
+                Require(mesh && *decoration.binding == 0u, "mesh window buffer binding is wrong");
+                continue;
+            }
             if (*decoration.set == ShaderRecompiler::PixelFunctionLdsDescriptorSet) {
                 Require(fragment && *decoration.binding == 0u, "pixel function LDS buffer binding is wrong");
                 continue;
@@ -664,7 +669,7 @@ bool DeclaresEarlyFragmentTests(const ShaderRecompiler::RecompileResult& program
     return false;
 }
 
-std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool meshShader) {
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool meshShader, bool shaderResourceMinLod) {
     using Stage = ShaderRecompiler::ShaderStage;
     const bool tessellation = state.stages.path == ShaderPath::Tessellation;
     const bool mesh = state.stages.path == ShaderPath::Geometry;
@@ -702,7 +707,7 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         Require(shaders[i].program != nullptr, "missing compiled shader");
         Require(shaders[i].stage == expected, "graphics stage order disagrees");
         for (const auto& binding : shaders[i].program->bindings) Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || (shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "graphics resource uses a descriptor set other than its stage's");
-        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading, bufferInt64Atomics, shaderClipDistance, shaderCullDistance, viewportIndexLayer, runtimeDescriptorArray, demoteToHelperInvocation, shaderTerminateInvocation, primitiveLocations);
+        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading, bufferInt64Atomics, shaderClipDistance, shaderCullDistance, viewportIndexLayer, runtimeDescriptorArray, demoteToHelperInvocation, shaderTerminateInvocation, shaderResourceMinLod, primitiveLocations);
         if (i != 0) {
             for (const auto& [location, signature] : current.inputs) {
                 const auto output = previous.outputs.find(location);

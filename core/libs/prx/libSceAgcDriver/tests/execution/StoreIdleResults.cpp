@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -13,6 +14,7 @@
 #include <mutex>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -86,8 +88,9 @@ int main(int argc, char** argv) {
         }
         std::vector<std::uint32_t> storage((BlockBytes + 0x10000u) / 4u);
         const bool wake = argc == 2 && std::string_view(argv[1]) == "--idle-epoch-wake";
-        std::vector<std::uint32_t> nextStorage(wake ? (BlockBytes + 0x10000u) / 4u : 0u);
-        auto* nextTexels = wake ? reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(nextStorage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu}) : nullptr;
+        const bool disabled = argc == 2 && std::string_view(argv[1]) == "--disabled-idle-store";
+        std::vector<std::uint32_t> nextStorage(wake || disabled ? (BlockBytes + 0x10000u) / 4u : 0u);
+        auto* nextTexels = wake || disabled ? reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(nextStorage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu}) : nullptr;
         struct ShutdownGuard {
             ~ShutdownGuard() { try { AgcDriverShutdown_nid_postfix(); } catch (...) {} }
         } shutdown;
@@ -127,9 +130,30 @@ int main(int argc, char** argv) {
             cpu = nextTexels;
             Store(nextTexels);
         }
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (!stored() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        Require(stored(), "the queue-idle store did not bring the result to guest memory without a direct flush or further submission");
+        if (disabled) {
+            const auto pendingDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (!AgcDriver::Graphics::StorageTexture::AnyPending() && std::chrono::steady_clock::now() < pendingDeadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "disabled idle store fixture did not observe pending storage results");
+            const auto dormant = [] { return AgcDriver::DriverDetail::queue0Dormant.load(std::memory_order_relaxed); };
+            const auto dormantDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!dormant() && std::chrono::steady_clock::now() < dormantDeadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            Require(dormant(), "with APS5_NO_IDLE_STORE queue 0 kept polling over pending storage results with every queue idle instead of waiting");
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            Require(AgcDriver::Graphics::StorageTexture::AnyPending() && !stored(), "with APS5_NO_IDLE_STORE the idle store still brought the result to guest memory");
+            const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> nextRange{{{AddressOf(nextTexels), AddressOf(nextTexels) + bytes}}};
+            Require(!AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(nextRange), "disabled idle store fixture found a result pending over the second texture before its dispatch");
+            Store(nextTexels);
+            const auto wakeDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (!AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(nextRange) && std::chrono::steady_clock::now() < wakeDeadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            Require(AgcDriver::Graphics::StorageTexture::AnyPendingOverlaps(nextRange), "queue 0 did not run a submission made after it waited with APS5_NO_IDLE_STORE");
+            const auto parkedAgainDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!dormant() && std::chrono::steady_clock::now() < parkedAgainDeadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            Require(dormant(), "with APS5_NO_IDLE_STORE queue 0 kept polling after running the second dispatch instead of waiting again");
+        } else {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (!stored() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            Require(stored(), "the queue-idle store did not bring the result to guest memory without a direct flush or further submission");
+        }
 
         AgcDriverShutdown_nid_postfix();
         {

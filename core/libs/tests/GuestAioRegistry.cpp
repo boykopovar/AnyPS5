@@ -160,8 +160,10 @@ static std::condition_variable g_aioGateChanged;
 static bool g_aioGateEntered = false;
 static bool g_aioGateReleased = false;
 static bool g_aioGateFails = false;
+static std::uintptr_t g_aioGateSource = 0;
 
-static void HoldAioSource(std::uintptr_t, std::size_t) {
+static void HoldAioSource(std::uintptr_t address, std::size_t) {
+    if (address != g_aioGateSource) return;
     std::unique_lock lock(g_aioGateMutex);
     g_aioGateEntered = true;
     g_aioGateChanged.notify_all();
@@ -180,6 +182,7 @@ static void CheckAioProcessingOwnership(bool fail) {
     KernelAioRwRequest request{0, 1, &byte, &result, -1};
     std::int32_t submittedId = -7;
     bool submitFailed = false;
+    g_aioGateSource = reinterpret_cast<std::uintptr_t>(&byte);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(HoldAioSource);
     std::thread submitter([&] {
         try { Check(sceKernelAioSubmitWriteCommands(&request, 1, 1, &submittedId) == 0); }
