@@ -61,6 +61,11 @@ void TestValidation() {
     param = Valid(output.data(), output.size());
     param.setupPacketSize = 0x10000;
     Require(Create(param) == InvalidSetup, "a setup packet that does not fit the 16-bit length field is refused");
+    auto shortSetup = Setup;
+    shortSetup[7] = 13;
+    param = Valid(output.data(), output.size());
+    param.setupPacket = shortSetup.data();
+    Require(Create(param) == InvalidSetup, "a first setup part longer than the packet is refused");
     param = Valid(nullptr, 0);
     Require(Create(param) == InvalidParameter, "a null output is refused before its size");
     param = Valid(output.data(), 9);
