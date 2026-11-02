@@ -123,7 +123,7 @@ def audit(libraries):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="List exported functions that access a guest pointer parameter directly instead of through GuestCopyIn, GuestCopyOut or the CopyGuest* helpers.")
+    parser = argparse.ArgumentParser(description="List exported functions that access a guest pointer parameter directly instead of through GuestCopyIn, GuestCopyOut or the CopyGuest* helpers. A report, not a gate: it always exits 0 and does not follow a pointer passed to another function.")
     parser.add_argument("libraries", nargs="*", help="library directories under core/libs/prx (default: all)")
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
     args = parser.parse_args(argv)
