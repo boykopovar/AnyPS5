@@ -1471,6 +1471,14 @@ void ApplyDepthRemap(const Context& context, State& state) {
     state.depthClamp = true;
 }
 
+std::optional<std::uint64_t> BorderColorTableBase(const Registers& registers, std::uint32_t low) {
+    const auto address = registers.find(low);
+    if (address == registers.end()) return std::nullopt;
+    const auto high = registers.find(low + 1u);
+    const auto upper = high == registers.end() ? 0u : high->second & 0xffu;
+    return (static_cast<std::uint64_t>(address->second) << 8u) | (static_cast<std::uint64_t>(upper) << 40u);
+}
+
 static bool SignedNormalizedFormat(VkFormat format) {
     return format == VK_FORMAT_R8_SNORM || format == VK_FORMAT_R16_SNORM || format == VK_FORMAT_R8G8_SNORM || format == VK_FORMAT_R16G16_SNORM || format == VK_FORMAT_R8G8B8A8_SNORM || format == VK_FORMAT_B8G8R8A8_SNORM || format == VK_FORMAT_R16G16B16A16_SNORM;
 }

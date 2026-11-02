@@ -515,6 +515,7 @@ private:
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
     VkDescriptorBufferInfo wholeDwordRange(VkDescriptorBufferInfo info) const;
     void noteReusable();
+    std::optional<BorderColor> readBorderColor(std::span<const std::uint32_t> words);
     void reportDescriptorCaches() const;
     // What a sampled texture was proved current against when the build (or the last full Revalidate)
     // looked it up, so the next Revalidate can repeat the proof from write stamps and the DCC keys
@@ -645,8 +646,10 @@ private:
         bool integerBorder = false;
         bool singleLevelImage = false;
         bool mipmappedImage = false;
+        std::optional<BorderColor> tableColor;
     };
     std::vector<SamplerSource> samplerSources;
+    bool readsBorderColorTable = false;
     bool reusable = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;

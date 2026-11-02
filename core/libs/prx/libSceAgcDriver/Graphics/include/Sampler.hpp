@@ -37,6 +37,7 @@ private:
     bool requiresFilterMinmax = false;
     bool opaqueBlackBorder = false;
     bool requiresNonSeamlessCube = false;
+    bool customBorder = false;
 };
 
 // One VkSampler per distinct S# (its 4 words plus the shader's depth-compare use and the
@@ -50,7 +51,7 @@ public:
     explicit SamplerCache(std::size_t capacity = 1024);
     SamplerCache(const SamplerCache&) = delete;
     SamplerCache& operator=(const SamplerCache&) = delete;
-    std::shared_ptr<Sampler> Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven = false, bool forceDegammaPaired = false, bool integerBorder = false);
+    std::shared_ptr<Sampler> Get(const Context& context, std::span<const std::uint32_t> words, bool compareEnable, bool unnormalizedProven = false, bool forceDegammaPaired = false, bool integerBorder = false, const BorderColor* tableColor = nullptr);
     // APS5_PROFILE_DRAW counters: lookups served by an existing sampler, and samplers created.
     std::uint64_t Hits() const { return hits; }
     std::uint64_t Misses() const { return misses; }
@@ -61,7 +62,7 @@ private:
         std::uint64_t lastUse;
     };
     AgcDriver::Mutex mutex;
-    std::map<std::array<std::uint32_t, 5>, Entry> entries;
+    std::map<std::array<std::uint32_t, 9>, Entry> entries;
     std::uint64_t clock = 0;
     std::size_t capacity;
     std::uint64_t hits = 0;
