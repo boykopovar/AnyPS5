@@ -13,6 +13,7 @@
 namespace {
 
 constexpr int Eintr = 4;
+constexpr int Efault = 14;
 constexpr int Einval = 22;
 constexpr int SigBlock = 1;
 constexpr int SigSetmask = 3;
@@ -105,6 +106,11 @@ int main() {
         Require(Same(CurrentMask(), before));
         const Timespec zero{0, 0};
         Require(pselect_nid_postfix(-1, nullptr, nullptr, nullptr, &zero, nullptr) == -1 && Error() == Einval);
+        const auto* unmapped = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+        Require(pselect_nid_postfix(0, nullptr, nullptr, nullptr, unmapped, &blocked) == -1 && Error() == Efault);
+        Require(Same(CurrentMask(), before));
+        Require(pselect_nid_postfix(0, nullptr, nullptr, nullptr, &zero, unmapped) == -1 && Error() == Efault);
+        Require(Same(CurrentMask(), before));
     }
     Require(signal_nid_postfix(SigUsr1, Count) != reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(-1)));
     const SignalSet empty{};
@@ -126,6 +132,12 @@ int main() {
     {
         RaiseBlocked(blocked);
         Require(pselect_nid_postfix(0, nullptr, nullptr, nullptr, nullptr, &empty) == -1 && Error() == Eintr && caught == 1);
+        caught = 0;
+    }
+    {
+        RaiseBlocked(blocked);
+        const Timespec limit{0, 300000000};
+        Require(pselect_nid_postfix(1, reinterpret_cast<void*>(std::uintptr_t{0x10}), nullptr, nullptr, &limit, &empty) == -1 && Error() == Efault && caught == 1);
         caught = 0;
     }
     {

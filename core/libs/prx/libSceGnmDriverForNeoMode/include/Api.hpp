@@ -4,6 +4,8 @@
 
 extern "C" {
 
+int APS5_VABI sceGnmIsDebugResetAvailable();
+
 int APS5_VABI sceGnmBeginWorkload(std::uint32_t stream, std::uint64_t* workload);
 int APS5_VABI sceGnmComputeWaitOnAddress(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t address, std::uint32_t mask, std::uint32_t compare, std::uint32_t reference);
 int APS5_VABI sceGnmComputeWaitSemaphore(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t semaphoreAddress, std::uint32_t flags);
@@ -11,7 +13,7 @@ int APS5_VABI sceGnmCreateWorkloadStream(std::uint64_t name, std::uint32_t* stre
 int APS5_VABI sceGnmDebugModuleReset(void);
 int APS5_VABI sceGnmDebugReset(void);
 int APS5_VABI sceGnmDestroyWorkloadStream(void);
-int APS5_VABI sceGnmDingDongForWorkload(void);
+int APS5_VABI sceGnmDingDongForWorkload(std::uint32_t vqueueId, std::uint32_t nextOffsetDw, std::uint64_t workloadId);
 int APS5_VABI sceGnmDispatchDirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t threadsX, std::uint32_t threadsY, std::uint32_t threadsZ, std::uint32_t flags);
 int APS5_VABI sceGnmDispatchIndirect(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t dataOffset, std::uint32_t flags);
 int APS5_VABI sceGnmDispatchIndirectOnMec(std::uint32_t* cmdbuf, std::uint32_t size, std::uint64_t args, std::uint32_t modifier);
@@ -30,7 +32,7 @@ int APS5_VABI sceGnmDrawInitDefaultHardwareState200(std::uint32_t* cmdbuf, std::
 int APS5_VABI sceGnmDrawInitDefaultHardwareState350(std::uint32_t* cmdbuf, std::uint32_t size);
 int APS5_VABI sceGnmDrawInitToDefaultContextState(std::uint32_t* cmdbuf, std::uint32_t size);
 int APS5_VABI sceGnmDrawInitToDefaultContextState400(std::uint32_t* cmdbuf, std::uint32_t size);
-int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(void);
+int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(std::uint32_t* cmdbuf, std::uint32_t size);
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void);
 int APS5_VABI sceGnmDrawOpaqueAuto(void);
 int APS5_VABI sceGnmDriverInternalRetrieveGnmInterface(void);
@@ -78,7 +80,7 @@ int APS5_VABI sceGnmQueryResourceRegistrationUserMemoryRequirements(void);
 int APS5_VABI sceGnmRaiseUserExceptionEvent(void);
 int APS5_VABI sceGnmRegisterGdsResource(void);
 int APS5_VABI sceGnmRegisterGnmLiveCallbackConfig(void);
-int APS5_VABI sceGnmRegisterOwner(void);
+int APS5_VABI sceGnmRegisterOwner(void* handle, const char* name);
 int APS5_VABI sceGnmRegisterOwnerForSystem(void);
 int APS5_VABI sceGnmRegisterResource(void);
 int APS5_VABI sceGnmRequestFlipAndSubmitDoneForWorkload(void);

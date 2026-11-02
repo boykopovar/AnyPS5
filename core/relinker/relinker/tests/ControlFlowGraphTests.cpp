@@ -1,6 +1,7 @@
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <codegen/CodegenException.hpp>
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <initializer_list>
@@ -9,6 +10,28 @@
 #include <string>
 #include <limits>
 #include <chrono>
+#include <cstdlib>
+#include <new>
+
+namespace {
+
+bool failAllocations = false;
+
+}
+
+void* operator new(std::size_t size) {
+    if (failAllocations) throw std::bad_alloc();
+    if (void* memory = std::malloc(size == 0 ? 1 : size)) return memory;
+    throw std::bad_alloc();
+}
+
+void operator delete(void* memory) noexcept {
+    std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+    std::free(memory);
+}
 
 namespace {
 
@@ -143,6 +166,41 @@ void CheckRelocatedTransfers() {
     RequireOffsets(*unresolved, {0, 6, 7, 8});
 }
 
+void CheckSegmentRelativeTransfers() {
+    for (const auto segment : {0x00, 0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65}) {
+        for (const bool address32 : {false, true}) {
+            for (const bool call : {false, true}) {
+                Bytes text;
+                if (segment != 0) text.push_back(static_cast<std::uint8_t>(segment));
+                if (address32) text.push_back(0x67);
+                text.insert(text.end(), {0xff, static_cast<std::uint8_t>(call ? 0x15 : 0x25), 0, 0, 0, 0});
+                const auto next = text.size();
+                text.push_back(0xc3);
+                text.resize(32, 0x90);
+                text.push_back(0xc3);
+                const auto slot = TextAddress + 0x1000;
+                SetDisplacement(text, next - 4, next, slot);
+                Pointers pointers;
+                pointers.Slots = {{address32 ? static_cast<std::uint32_t>(slot) : slot, TextAddress + 32}};
+                const auto graph = BuildControlFlowGraph(text, TextAddress, TextAddress, {}, pointers);
+                std::unordered_set<VirtualAddress> expected{TextAddress};
+                if (call) expected.insert(TextAddress + next);
+                if (segment != 0x64 && segment != 0x65) expected.insert(TextAddress + 32);
+                Require(graph->ReachableVaddrs() == expected, "Segment-relative transfer followed a flat relocation slot");
+                if (segment == 0x64 || segment == 0x65) {
+                    text[32] = 0x0f;
+                    const auto unmapped = BuildControlFlowGraph(text, TextAddress, TextAddress, {}, pointers);
+                    Require(unmapped->ReachableVaddrs() == expected, "Segment-relative transfer decoded unrelated bytes");
+                    const auto explicitRoot = BuildControlFlowGraph(Bytes(text.begin(), text.begin() + 32), TextAddress,
+                        TextAddress, {TextAddress + 31}, pointers);
+                    expected.insert(TextAddress + 31);
+                    Require(explicitRoot->ReachableVaddrs() == expected, "Segment-relative transfer discarded an explicit root");
+                }
+            }
+        }
+    }
+}
+
 void CheckAddressSizeOverride() {
     constexpr auto slot = TextAddress + 0x1000;
     Bytes text{0x67, 0xff, 0x15, 0, 0, 0, 0, 0x90, 0xc3, 0x67, 0xff, 0x25, 0, 0, 0, 0, 0x90, 0x90, 0xc3};
@@ -175,6 +233,12 @@ void CheckCodeAddresses() {
     RequireOffsets(*ordinary, {0, 7});
     const auto addresses = BuildControlFlowGraph(text, TextAddress, TextAddress, {}, pointers, true);
     RequireOffsets(*addresses, {0, 7, 16});
+    for (const std::uint8_t segment : {0x64, 0x65}) {
+        auto prefixed = text;
+        prefixed.insert(prefixed.begin(), segment);
+        const auto graph = BuildControlFlowGraph(prefixed, TextAddress, TextAddress, {}, pointers, true);
+        RequireOffsets(*graph, {0, 8, 17});
+    }
 }
 
 void CheckSpeculativeRoots() {
@@ -255,6 +319,45 @@ void CheckBorrowedReachability() {
     RequireOffsets(*first, {0, 1, 3, 4});
 }
 
+void CheckReachedMap() {
+    const Pointers pointers;
+    const Bytes text{0x90, 0x90, 0xc3, 0x90, 0xc3};
+    const std::span<const std::uint8_t> code(text);
+    std::vector<std::uint8_t> reached(text.size(), 0);
+    reached[1] = 1;
+    Require(ExtendControlFlowGraph(code, TextAddress, TextAddress, {}, pointers, false, reached) == std::vector<VirtualAddress>{TextAddress},
+            "The walk did not stop at an instruction the map already marks");
+    Require(ExtendControlFlowGraph(code, TextAddress, TextAddress + 3, {TextAddress + 4, TextAddress + 3}, pointers, false, reached) == std::vector<VirtualAddress>{TextAddress + 3, TextAddress + 4},
+            "Newly reached instructions were not returned once each in address order");
+    Require(reached == std::vector<std::uint8_t>{1, 1, 0, 1, 1}, "The map does not mark exactly the reached instructions");
+    Require(ExtendControlFlowGraph(code, TextAddress, TextAddress, {TextAddress + 3}, pointers, false, reached).empty(), "A walk of reached code returned instructions");
+    std::vector<std::uint8_t> shortMap(text.size() - 1, 0);
+    bool threw = false;
+    try {
+        ExtendControlFlowGraph(code, TextAddress, TextAddress, {}, pointers, false, shortMap);
+    } catch (const RelinkerException&) {
+        threw = true;
+    }
+    Require(threw, "A map shorter than the text was accepted");
+}
+
+void CheckAllocationFailureDuringWalk() {
+    const Pointers pointers;
+    Bytes text(8192, 0x90);
+    text.push_back(0xc3);
+    std::unordered_set<VirtualAddress> reachable;
+    bool threw = false;
+    try {
+        BuildControlFlowGraph(std::span<const std::uint8_t>(text), TextAddress, TextAddress, {}, pointers, false, reachable, [](std::uint64_t count) {
+            if (count >= 4096) failAllocations = true;
+        });
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    failAllocations = false;
+    Require(threw, "An allocation failure during the walk did not reach the caller as std::bad_alloc");
+}
+
 void CheckAddressOverflow() {
     const Pointers pointers;
     const Bytes text{0x90, 0xc3};
@@ -265,6 +368,27 @@ void CheckAddressOverflow() {
         threw = true;
     }
     Require(threw, "Text section address space overflow was not rejected");
+
+    threw = false;
+    try {
+        Relinker::FindRelativeJumpTables(text, std::numeric_limits<VirtualAddress>::max(), {});
+    } catch (const RelinkerException&) {
+        threw = true;
+    }
+    Require(threw, "Relative jump table text section address space overflow was not rejected");
+
+    threw = false;
+    try {
+        std::size_t tableEnd = 0;
+        Relinker::FindTrailingRelativeJumpTable(text, std::numeric_limits<VirtualAddress>::max(), &tableEnd);
+    } catch (const RelinkerException&) {
+        threw = true;
+    }
+    Require(threw, "Trailing relative jump table address space overflow was not rejected");
+
+    const auto lastAddress = std::numeric_limits<VirtualAddress>::max() - text.size();
+    Require(Relinker::FindRelativeJumpTables(text, lastAddress, {}).empty(), "Relative jump tables at the end of the address space were rejected");
+    Require(Relinker::FindTrailingRelativeJumpTable(text, lastAddress) == text.size(), "Trailing relative jump table at the end of the address space was rejected");
 }
 
 void CheckHighVirtualAddress() {
@@ -363,6 +487,49 @@ void CheckRelativeJumpTables() {
     cutShort[49] = 0x5d;
     cutShort[50] = 0xc3;
     Require(Relinker::FindRelativeJumpTables(cutShort, TextAddress, {{TextAddress, TextAddress + cutShort.size()}}).empty(), "Table followed by more of its function was accepted");
+}
+
+Bytes GapStubTable(std::initializer_list<std::uint8_t> stub) {
+    constexpr std::size_t function = 16;
+    constexpr std::size_t tableOffset = 40;
+    Bytes text(64, 0x90);
+    for (std::size_t i = 0; i < function; ++i) text[i] = 0xcc;
+    std::copy(stub.begin(), stub.end(), text.begin());
+    text[function] = 0x48;
+    text[function + 1] = 0x8d;
+    text[function + 2] = 0x05;
+    SetDisplacement(text, function + 3, function + 7, TextAddress + tableOffset);
+    text[function + 7] = 0xe8;
+    SetDisplacement(text, function + 8, function + 12, TextAddress);
+    text[function + 12] = 0xc3;
+    for (std::size_t i = function + 13; i < tableOffset; ++i) text[i] = 0xcc;
+    text[tableOffset] = 0x0f;
+    text[tableOffset + 1] = 0x78;
+    text[tableOffset + 2] = 0x33;
+    text[tableOffset + 3] = 0x1e;
+    return text;
+}
+
+std::vector<Relinker::RelativeJumpTable> GapStubTables(const Bytes& text) {
+    return Relinker::FindRelativeJumpTables(text, TextAddress, {{TextAddress + 16, TextAddress + 29}, {TextAddress + text.size(), TextAddress + text.size() + 8}});
+}
+
+void CheckGapWalkBranchTargets() {
+    const auto returning = GapStubTables(GapStubTable({0xc3}));
+    Require(returning.size() == 1 && returning[0].Begin == TextAddress + 40, "A gap stub that returns hid the data table");
+
+    Bytes direct = GapStubTable({0xe9, 0, 0, 0, 0});
+    SetDisplacement(direct, 1, 5, TextAddress + 40);
+    Require(GapStubTables(direct).empty(), "A jump from a called gap stub into the table was missed");
+
+    Bytes afterOneByte = GapStubTable({0x55, 0xe9, 0, 0, 0, 0});
+    SetDisplacement(afterOneByte, 2, 6, TextAddress + 40);
+    Require(GapStubTables(afterOneByte).empty(), "A jump after a one-byte instruction in a gap stub was missed");
+
+    Bytes chained = GapStubTable({0xe9, 0, 0, 0, 0, 0xc3, 0xcc, 0xcc, 0xe9, 0, 0, 0, 0});
+    SetDisplacement(chained, 1, 5, TextAddress + 8);
+    SetDisplacement(chained, 9, 13, TextAddress + 40);
+    Require(GapStubTables(chained).empty(), "A jump from a gap stub reached only through another gap stub was missed");
 }
 
 void CheckEmbeddedDataTables() {
@@ -626,11 +793,14 @@ int main() {
         CheckCallsBeforeZeroPadding();
         CheckCallsThatStillFallThrough();
         CheckRelocatedTransfers();
+        CheckSegmentRelativeTransfers();
         CheckAddressSizeOverride();
         CheckCodeAddresses();
         CheckSpeculativeRoots();
         CheckTrailingZeroRoots();
         CheckBorrowedReachability();
+        CheckReachedMap();
+        CheckAllocationFailureDuringWalk();
         CheckAddressOverflow();
         CheckHighVirtualAddress();
         CheckRelativeJumpTables();
@@ -639,6 +809,7 @@ int main() {
         CheckStubBeforeUndecodableData();
         CheckTableWithPaddingAndReturnBytes();
         CheckLargeZeroGaps();
+        CheckGapWalkBranchTargets();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {

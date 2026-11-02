@@ -633,6 +633,7 @@ std::size_t ResamplerHeld(const Instance& instance, std::size_t channels) {
     const auto& resampler = instance.resampler;
     if (resampler.frames.empty() || channels == 0) return 0;
     const std::size_t frames = resampler.frames.size() / channels;
+    if (resampler.position >= static_cast<double>(frames)) return 0;
     const auto next = static_cast<std::size_t>(resampler.position);
     return frames > next ? frames - next : 0;
 }
@@ -655,8 +656,8 @@ void ResamplerProduce(Instance& instance, PcmOutputs& outputs, std::size_t chann
     const std::size_t available = resampler.frames.size() / channels;
     std::vector<std::uint8_t> frame(frameBytes);
     while (outputs.Room() >= frameBytes) {
+        if (available <= 2 || resampler.position >= static_cast<double>(available - 2)) break;
         const auto index = static_cast<std::size_t>(resampler.position);
-        if (index + 2 >= available) break;
         const double t = resampler.position - static_cast<double>(index);
         for (std::size_t channel = 0; channel < channels; ++channel) {
             const double p0 = resampler.frames[(index - 1) * channels + channel];
@@ -671,7 +672,7 @@ void ResamplerProduce(Instance& instance, PcmOutputs& outputs, std::size_t chann
             resampler.ratio = std::max(0.0f, resampler.ratio + resampler.change);
         }
     }
-    const auto index = std::min(static_cast<std::size_t>(resampler.position), available);
+    const auto index = resampler.position >= static_cast<double>(available) ? available : static_cast<std::size_t>(resampler.position);
     if (index > 1) {
         resampler.frames.erase(resampler.frames.begin(), resampler.frames.begin() + static_cast<std::ptrdiff_t>((index - 1) * channels));
         resampler.position -= static_cast<double>(index - 1);
@@ -944,7 +945,12 @@ void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint
         if (field + 0x18 <= end && std::memcmp(stream + field, "LAME", 4) == 0) {
             const std::uint32_t delay = (std::uint32_t{stream[field + 0x15]} << 4u) | (stream[field + 0x16] >> 4u);
             const std::uint32_t padding = ((std::uint32_t{stream[field + 0x16]} & 0x0Fu) << 8u) | stream[field + 0x17];
-            if ((flags & 0x01u) && frames > 0) frame->total_samples = frames * frame->samples_per_channel - (delay + padding);
+            if ((flags & 0x01u) && frames > 0) {
+                const std::uint64_t samples = std::uint64_t{frames} * frame->samples_per_channel;
+                const std::uint64_t trimmed = std::uint64_t{delay} + padding;
+                const std::uint64_t total = samples > trimmed ? samples - trimmed : 0;
+                frame->total_samples = static_cast<std::uint32_t>(std::min<std::uint64_t>(total, UINT32_MAX));
+            }
             frame->encoder_delay = frame->samples_per_channel + delay + 529;
             frame->ofl_type = MP3_OFL_LAME;
         }
@@ -1686,6 +1692,7 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
         if (job.flags) {
             instance->gapless.skippedSamples = 0;
             instance->segmentSamples = 0;
+            instance->totalDecodedSamples = 0;
         }
         WriteResult(job.sideband, job.sidebandSize, 0);
         break;
@@ -1812,6 +1819,27 @@ std::uint8_t* BeginConsoleJob(std::uint8_t* job, const void* returnAddress) {
 void* EndConsoleJob(std::uint8_t* job, std::uint8_t* end, std::uint32_t instance) {
     PutConsoleChunk(job, ConsoleChunk::Job, instance, static_cast<std::uint32_t>(end - job) - 2 * sizeof(std::uint32_t));
     return end;
+}
+
+constexpr std::uint64_t CONSOLE_RUN_FLAGS = 0x0000E00000001FFF;
+
+std::uint8_t* KeepConsoleWords(std::uint8_t* at, std::uint32_t keep, std::uint32_t low, std::uint32_t word) {
+    std::uint32_t words[2];
+    std::memcpy(words, at, sizeof(words));
+    words[0] = (words[0] & keep) | low;
+    words[1] = word;
+    std::memcpy(at, words, sizeof(words));
+    return at + sizeof(words);
+}
+
+std::uint8_t* KeepConsoleBuffer(std::uint8_t* at, ConsoleChunk kind, const void* address, std::size_t size) {
+    at = KeepConsoleWords(at, 0xFFFFFFE0u, static_cast<std::uint32_t>(kind), static_cast<std::uint32_t>(size));
+    std::memcpy(at, &address, sizeof(address));
+    return at + sizeof(address);
+}
+
+std::uint8_t* KeepConsoleFlags(std::uint8_t* at, ConsoleChunk kind, std::uint64_t flags) {
+    return KeepConsoleWords(at, 0xFC000000u, static_cast<std::uint32_t>(kind) | ((static_cast<std::uint32_t>(flags >> 32) & 0xFFFFFu) << 6), static_cast<std::uint32_t>(flags));
 }
 
 struct ConsoleJob {
@@ -2184,9 +2212,29 @@ void* APS5_VABI sceAjmBatchJobRunSplitBufferRa(void* position, uint32_t instance
 }
 
 void* APS5_VABI sceAjmBatchJobRunBufferRa(void* position, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size, void* return_address) {
-    const AjmBuffer input{const_cast<void*>(data_input), data_input_size};
-    const AjmBuffer output{data_output, data_output_size};
-    return sceAjmBatchJobRunSplitBufferRa(position, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size, return_address);
+    auto* job = static_cast<std::uint8_t*>(position);
+    auto* at = job + 2 * sizeof(std::uint32_t);
+    if (return_address) at = KeepConsoleBuffer(at, ConsoleChunk::ReturnAddress, return_address, 0);
+    at = KeepConsoleBuffer(at, ConsoleChunk::InputRunBuffer, data_input, data_input_size);
+    at = KeepConsoleFlags(at, ConsoleChunk::RunFlags, flags & CONSOLE_RUN_FLAGS);
+    at = KeepConsoleBuffer(at, ConsoleChunk::OutputRunBuffer, data_output, data_output_size);
+    at = KeepConsoleBuffer(at, ConsoleChunk::OutputControlBuffer, sideband_output, sideband_output_size);
+    KeepConsoleWords(job, 0xFC000000u, (instance & 0xFFFFFu) << 6, static_cast<std::uint32_t>(at - job) - 2 * sizeof(std::uint32_t));
+    return at;
+}
+
+void* APS5_VABI sceAjmBatchJobInlineBuffer(void* position, const void* data_input, size_t data_input_size, const void** batch_address) {
+    const std::size_t size = (data_input_size + 7) & ~std::size_t{7};
+    auto* at = static_cast<std::uint8_t*>(position);
+    std::uint32_t words[2];
+    std::memcpy(words, at, sizeof(words));
+    words[0] = (words[0] & ~0x1Fu) | static_cast<std::uint32_t>(ConsoleChunk::InlineBuffer);
+    words[1] = static_cast<std::uint32_t>(size);
+    std::memcpy(at, words, sizeof(words));
+    at += sizeof(words);
+    if (data_input_size) std::memcpy(at, data_input, data_input_size);
+    *batch_address = at;
+    return at + size;
 }
 
 int APS5_VABI sceAjmBatchStartBuffer(uint32_t context, const uint8_t* batch, uint32_t batch_size, int priority, AjmBatchError* error, uint32_t* batch_id) {

@@ -4,8 +4,12 @@ file(MAKE_DIRECTORY "${WORK}")
 file(WRITE "${source}" "float MultiplyAdd(float a, float b, float c) { return a * b + c; }\n")
 separate_arguments(options NATIVE_COMMAND "${OPTIONS}")
 list(FILTER options INCLUDE REGEX "^-f")
+set(target)
+foreach(architecture IN LISTS ARCHITECTURES)
+    list(APPEND target -arch ${architecture})
+endforeach()
 foreach(flags IN ITEMS "" ";${options}")
-    execute_process(COMMAND "${COMPILER}" -std=gnu++20 -O2 -mfma ${flags} -S "${source}" -o "${assembly}"
+    execute_process(COMMAND "${COMPILER}" ${target} -std=gnu++20 -O2 -mfma ${flags} -S "${source}" -o "${assembly}"
                     RESULT_VARIABLE result ERROR_VARIABLE error)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "compiling the contraction probe failed: ${error}")
