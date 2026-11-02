@@ -1,5 +1,6 @@
 import contextlib
 import copy
+from functools import lru_cache
 import io
 import json
 import sys
@@ -21,6 +22,19 @@ SUMMARY = {
 }
 TEMPLATE = ("- [ ] Unblocks: <!-- title ID and Game bring-up discussion, e.g. PPSA01325 #3232, or none -->\n"
             "- [ ] Depends on: none\n")
+
+
+@lru_cache(maxsize=2)
+def excessive_json_value(opening, closing):
+    depth = sys.getrecursionlimit() + 64
+    for _ in range(8):
+        value = opening * depth + "0" + closing * depth
+        try:
+            json.loads(value)
+        except RecursionError:
+            return opening * (depth + 128) + "0" + closing * (depth + 128)
+        depth *= 2
+    raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
 def summary(commit):
@@ -101,6 +115,8 @@ class NumbersTests(unittest.TestCase):
             ("<!-- " + summary("a") + " -->\n" + summary("b"), False),
             (summary("a") + "\r\n" + summary("b") + "\r\n", True),
             (summary("a") + "\n{" + "[" * 100000 + "\n" + summary("b"), True),
+            (summary("a") + '\n{"x": ' + excessive_json_value("[", "]") + "}\n" + summary("b"), True),
+            (summary("a") + '\n{"x": ' + excessive_json_value('{"x":', "}") + "}\n" + summary("b"), True),
         ]
         for body, expected in cases:
             with self.subTest(body=body[:40]):
