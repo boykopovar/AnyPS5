@@ -1,5 +1,9 @@
 # libSceShellUIUtil technical debt
 
+### Functional
+
+- [sceShellUIUtilLaunchByUri](../../../core/libs/prx/libSceShellUIUtil/Export.cpp), [sceShellUIUtilGetAppUrl](../../../core/libs/prx/libSceShellUIUtil/Export.cpp), and [sceShellUIUtilLaunchTask](../../../core/libs/prx/libSceShellUIUtil/Export.cpp) validate basic parameter structures and return `0x80B8000A` (`SHELLUIUTIL_ERROR_INVALID_ARGUMENT`) when passed null pointers, undersized parameter blocks (`size < 8`), zero capacity, or negative task tokens. Valid arguments proceed to `NotImplemented_nid_no_patch` as background IPC dispatch and shell services remain unimplemented.
+
 ### Unknown function info
 
 - [libSceShellUIUtil](../../../core/libs/prx/libSceShellUIUtil/Export.cpp) remains unimplemented. Native wrappers confirm the export signatures, including two input strings, output buffer, 32-bit capacity and optional 32-bit output size for `GetAppUrl`. The precise string meanings and the second word of the 8-byte `LaunchByUri` parameter require the receiving IPC service; the wrapper only checks its leading size. Task completion, IPC errors and lifecycle behavior are not implemented.
