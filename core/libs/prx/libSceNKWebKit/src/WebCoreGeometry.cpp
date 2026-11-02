@@ -100,8 +100,8 @@ bool IsRoundedRectRenderable(const RoundedRect& rr) {
     int brh = rr.m_radii.m_bottomRight.m_height.m_value;
     return tlw >= 0 && tlh >= 0 && blw >= 0 && blh >= 0
         && trw >= 0 && trh >= 0 && brw >= 0 && brh >= 0
-        && (tlw + trw) <= w && (blw + brw) <= w
-        && (tlh + blh) <= h && (trh + brh) <= h;
+        && static_cast<std::int64_t>(tlw) + trw <= w && static_cast<std::int64_t>(blw) + brw <= w
+        && static_cast<std::int64_t>(tlh) + blh <= h && static_cast<std::int64_t>(trh) + brh <= h;
 }
 
 }  // namespace
