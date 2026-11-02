@@ -141,10 +141,13 @@ std::uint64_t ProgramHeaderLayoutBuilder::ComputeExtraBlockVaddr(
 }
 
 std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
+    const auto lastStack = std::find_if(originalHeaders.rbegin(), originalHeaders.rend(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; });
+    const auto lastStackPtr = lastStack != originalHeaders.rend() ? &(*lastStack) : nullptr;
     std::vector<Domain::ProgramHeader> kept;
     for (const auto& ph : originalHeaders) {
         if (_segmentFilter->ShouldSkip(ph)) continue;
         if (ph.Type == PT_GNU_RELRO && !hasWritableLoadCoverage(originalHeaders, ph)) continue;
+        if (ph.Type == PT_GNU_STACK && &ph != lastStackPtr) continue;
         kept.push_back(ph);
     }
     return kept;
