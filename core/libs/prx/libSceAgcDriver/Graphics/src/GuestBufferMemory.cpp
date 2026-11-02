@@ -320,6 +320,9 @@ struct HostImports {
 #endif
     std::uint64_t useCounter = 0;
     std::uint64_t buildFloor = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatchedNotes;
+    bool unwatchProbed = false;
+    bool probeUnwatched = false;
     std::uint64_t frameFloor = 0;
     std::uint64_t previousFrameFloor = 0;
     std::uint64_t framesEnded = 0;
@@ -342,6 +345,15 @@ struct HostImports {
     std::size_t recentSize = 0;
     std::size_t recentNext = 0;
 };
+
+void drainUnwatchedNotes(HostImports& state) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> notes;
+    {
+        std::lock_guard lock(state.mutex);
+        notes.swap(state.unwatchedNotes);
+    }
+    for (const auto& [base, bytes] : notes) StorageTexture::NoteRangeUnwatched(base, static_cast<std::size_t>(bytes));
+}
 
 HostImports& Imports() {
     static HostImports imports;
@@ -1282,6 +1294,13 @@ void settleImportsNow(const Context& context, HostImports& state, std::uint64_t 
     rewatchSettledImports(state);
 }
 #endif
+std::atomic<std::uint64_t> importWindow{0};
+
+void shrinkImportWindow() {
+    constexpr std::uint64_t allocation = 65536;
+    const auto current = importWindow.load(std::memory_order_relaxed);
+    if (current == 0 || current > allocation) importWindow.store(allocation, std::memory_order_relaxed);
+}
 
 void decideImportWatch(const Context& context, HostImports& state) {
     if (state.watchDevice == context.device) return;
@@ -1307,6 +1326,8 @@ void decideImportWatch(const Context& context, HostImports& state) {
     state.watchDevice = context.device;
     state.unwatchImports = false;
     state.unwatchDmaBufImports = false;
+    state.unwatchProbed = false;
+    state.probeUnwatched = false;
     if (context.hostImportAlignment == 0 || !GuestMemory::WriteWatched()) return;
     if (request == ImportWatchRequest::Watch) {
         std::fprintf(stderr, "[write-watch] host imports stay watched (APS5_WRITE_WATCH_IMPORTS=watch)\n");
@@ -1324,6 +1345,9 @@ void decideImportWatch(const Context& context, HostImports& state) {
         std::fprintf(stderr, "[write-watch] host imports resolve write protection: unknown (probe failed at %s, %d); imported ranges are compared\n", probe.failure, static_cast<int>(probe.result));
     } else {
         state.unwatchImports = probe.writtenAfterSubmit != 0 || probe.writtenAfterFill != 0;
+        state.probeUnwatched = state.unwatchImports;
+        state.unwatchProbed = state.unwatchImports;
+        if (state.unwatchProbed) shrinkImportWindow();
         std::fprintf(stderr, "[write-watch] host imports resolve write protection: %s (%u of %u scratch pages written after a GPU read, %u after a GPU write, %u after the import); imported ranges %s\n", state.unwatchImports ? "yes" : "no", probe.writtenAfterSubmit, probe.pages, probe.writtenAfterFill, probe.writtenAtImport, state.unwatchImports ? "are compared" : "stay watched");
     }
     state.unwatchDmaBufImports = state.unwatchImports;
@@ -1441,7 +1465,6 @@ std::size_t leasedIndexContaining(const GuestAllocations::Lease& lease, std::uin
     return range.readable && address < range.address + range.bytes ? index : lease.size();
 }
 
-std::atomic<std::uint64_t> importWindow{0};
 
 ImportRun leasedRun(const GuestAllocations::Lease& lease, std::size_t first, std::size_t last) {
     ImportRun run{lease[first]->address, lease[last]->address + lease[last]->bytes - lease[first]->address, {}};
@@ -1938,6 +1961,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
             return current;
         }
     }
+    decideImportWatch(context, state);
     const auto budget = evict ? 0 : effectiveBudget(context, state);
     const auto index = leasedIndexContaining(lease, address);
     const auto windowBounds = index != lease.size() && end != 0 ? importWindowBounds(*lease[index], address, end, context.hostImportAlignment) : std::nullopt;
@@ -2222,6 +2246,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
 #endif
     entry.unwatched = step == nullptr && !(entry.dmaBuf ? watchedDmaBuf : watchedHostPointer);
+    if (entry.unwatched) state.unwatchedNotes.emplace_back(base, bytes);
     if (step != nullptr) {
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(std::exchange(entry.alias, nullptr));
@@ -2401,7 +2426,10 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
     std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatched;
     const auto check = [&](std::map<std::uint64_t, HostImport>::iterator it) {
         if (sameRange(it->second, lease, budget)) {
-            if (it->second.unwatched) GuestMemory::Unwatch(it->first, it->second.bytes);
+            if (it->second.unwatched && GuestMemory::Watched(it->first, static_cast<std::size_t>(it->second.bytes)) && leasedRangeOwner(lease, it->first) != nullptr) {
+                GuestMemory::Unwatch(it->first, it->second.bytes);
+                state.unwatchedNotes.emplace_back(it->first, it->second.bytes);
+            }
             return std::next(it);
         }
         static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
@@ -4076,13 +4104,15 @@ ImportWatch PrepareImportWatch(const Context& context) {
     return state.unwatchImports ? ImportWatch::Unwatch : ImportWatch::Watch;
 }
 
-void SetImportWatch(const Context& context, ImportWatch watch) {
+void SetImportWatch(const Context& context, ImportWatch watch, bool probed) {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     state.watchDevice = context.device;
     state.unwatchImports = watch == ImportWatch::Unwatch;
+    state.unwatchProbed = state.unwatchImports && (probed || state.probeUnwatched);
     state.unwatchDmaBufImports = state.unwatchImports;
     state.gateRefusals.clear();
+    if (state.unwatchProbed) shrinkImportWindow();
 }
 
 void SetHostImportWindow(std::uint64_t bytes) {
@@ -4280,27 +4310,68 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     ensurePinWaiter();
     auto& state = Imports();
-    std::lock_guard lock(state.mutex);
+    const HostImport* result = nullptr;
+    bool notes = false;
+    {
+        std::lock_guard lock(state.mutex);
 #ifdef _WIN32
-    settleUnwatchedImports(context, state);
+        settleUnwatchedImports(context, state);
 #endif
-    // A hit is only valid while the registry has not changed since the imports were reconciled.
-    if (!importsStale(context, state)) {
-        if (recentImportsEnabled()) {
-            if (const auto* entry = recentImport(state, address, address + bytes)) {
-                entry->lastUse = ++state.useCounter;
-                return entry;
+        const auto frame = state.framesEnded;
+        // A hit is only valid while the registry has not changed since the imports were reconciled.
+        if (!importsStale(context, state)) {
+            if (recentImportsEnabled()) {
+                if (const auto* entry = recentImport(state, address, address + bytes)) {
+                    entry->lastUse = ++state.useCounter;
+                    entry->lastUseFrame = frame;
+                    result = entry;
+                }
+            }
+            if (result == nullptr) {
+                if (const auto* entry = findImport(state, address, address + bytes)) {
+                    entry->lastUse = ++state.useCounter;
+                    entry->lastUseFrame = frame;
+                    if (recentImportsEnabled()) rememberImport(state, entry);
+                    result = entry;
+                }
             }
         }
-        if (const auto* entry = findImport(state, address, address + bytes)) {
-            entry->lastUse = ++state.useCounter;
-            if (recentImportsEnabled()) rememberImport(state, entry);
-            return entry;
+        if (result == nullptr) {
+            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+            refreshImports(context, state, lease);
+            result = importAccess(context, state, address, address + bytes, lease, requester);
+            if (result != nullptr) result->lastUseFrame = frame;
         }
+        notes = !state.unwatchedNotes.empty();
     }
+    if (notes) drainUnwatchedNotes(state);
+    return result;
+}
+
+constexpr std::uint64_t IdleImportFrames = 60;
+
+std::size_t RetireIdleImports(const Context& context) {
+    if (context.hostImportAlignment == 0) return 0;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device || !state.unwatchProbed) return 0;
+    const auto frame = state.framesEnded;
+    const auto* recorder = Recorder::Active();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> rewatch;
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    refreshImports(context, state, lease);
-    return importAccess(context, state, address, address + bytes, lease, requester);
+    for (auto it = state.imports.begin(); it != state.imports.end();) {
+        const auto& entry = it->second;
+        if (!entry.unwatched || entry.lastUseFrame + IdleImportFrames > frame || (recorder != nullptr && !recorder->PendingWriteSettled(entry.base, static_cast<std::size_t>(entry.bytes)))) {
+            ++it;
+            continue;
+        }
+        if (leasedRangeOwner(lease, entry.base) != nullptr) rewatch.emplace_back(entry.base, entry.base + entry.bytes);
+        const auto next = std::next(it);
+        retireImport(context.device, state, it, lease);
+        it = next;
+    }
+    GuestMemory::Rewatch(rewatch);
+    return rewatch.size();
 }
 
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
@@ -4309,6 +4380,19 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
     std::lock_guard lock(state.mutex);
     if (importsStale(context, state)) return nullptr;
     return findImport(state, address, address + bytes);
+}
+
+bool HostImportsUnwatch(const Context& context) {
+    if (context.hostImportAlignment == 0) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    decideImportWatch(context, state);
+    return state.unwatchProbed;
+}
+
+const HostImport* StorageImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester) {
+    if (HostImportsUnwatch(context) && GuestMemory::Watched(address, bytes)) return ExistingHostImportFor(context, address, bytes);
+    return HostImportFor(context, address, bytes, requester);
 }
 
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes) {
