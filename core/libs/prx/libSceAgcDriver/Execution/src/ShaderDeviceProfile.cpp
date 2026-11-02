@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "BdaAbi.hpp"
+#include "CacheKey.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 
@@ -83,6 +84,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     Require(std::ranges::find(extensionViews, "SPV_KHR_terminate_invocation") == extensionViews.end() || (terminate != nullptr && terminate->shaderTerminateInvocation == VK_TRUE), "shader device profile advertises a disabled feature: shaderTerminateInvocation");
     this->target.supportedCapabilities = capabilities;
     this->target.supportedExtensions = extensionViews;
+    ShaderRecompiler::RecompileCacheKey::SealFeatureDigest(this->target);
 }
 
 }

@@ -1,9 +1,12 @@
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+
+BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", "core/CMakeLists.txt", ".gitmodules")
 
 
 def object_document(value, path, name):
@@ -179,6 +182,7 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
     changed = {Path(path).as_posix() for path in changed_paths if path}
     broad_change = any(
         path in {"CMakeLists.txt", ".github/workflows/build.yml", "tools/build_mingw_host_only_tests.py"}
+        or path.startswith(BUILD_WIDE_PREFIXES)
         or path.startswith("core/libs/") and (
             path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
         )
@@ -214,7 +218,7 @@ def main(argv=None):
     parser.add_argument("--list-only", action="store_true")
     args = parser.parse_args(argv)
     try:
-        source_root, targets = read_reply(args.build_dir.resolve())
+        source_root, targets = read_reply(Path(os.path.realpath(args.build_dir)))
         changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
         selected = host_only_test_targets(source_root, targets, changed_paths)
         if not selected:
