@@ -426,6 +426,9 @@ void CheckTransferFillers() {
     for (int packet = 0; packet < 3; ++packet) Require(transfer->isoPacketDescriptors[packet].length == 16, "iso packet length not set");
     Require(sceUsbdGetIsoPacketBuffer(transfer, 0) == data && sceUsbdGetIsoPacketBuffer(transfer, 1) == data + 16 && sceUsbdGetIsoPacketBuffer(transfer, 2) == data + 32, "iso packet buffers do not follow the packet lengths");
     Require(sceUsbdGetIsoPacketBuffer(transfer, 3) == nullptr, "a packet past the last one has a buffer");
+    sceUsbdSetIsoPacketLengths(transfer, 17);
+    Require(sceUsbdGetIsoPacketBuffer(transfer, 2) == nullptr, "a packet that runs past the transfer buffer has a buffer");
+    sceUsbdSetIsoPacketLengths(transfer, 16);
     std::uint8_t control[12] = {};
     sceUsbdFillControlSetup(control, 0x80, 6, 0x0100, 0x0409, 4);
     Require(control[0] == 0x80 && control[1] == 6 && control[2] == 0x00 && control[3] == 0x01 && control[4] == 0x09 && control[5] == 0x04 && control[6] == 4 && control[7] == 0, "control setup not packed little-endian");
