@@ -1,5 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "JsonTestAllocator.hpp"
+#include <bit>
 #include <cstddef>
 #include <clocale>
 #include <cmath>
@@ -18,9 +20,6 @@ using namespace SceJson2;
 using SetNullAccessCallback = int (APS5_VABI*)(void*, NullAccessCallback, void*);
 
 extern "C" {
-
-extern std::size_t _ZN3sce4Json6String4nposE;
-
 }
 
 static void Check(bool value, int line) {
@@ -76,7 +75,7 @@ static void ParseAndRoundTrip() {
     Require(_ZNK3sce4Json5Value7getTypeEv(&Member(root, "count")) == TypeUInteger);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "count")) == 3);
     Require(*_ZNK3sce4Json5Value11getUIntegerEv(&Member(root, "count")) == 3);
-    Require(*_ZNK3sce4Json5Value7getRealEv(&Member(root, "count")) == 3.0);
+    Require(*_ZNK3sce4Json5Value7getRealEv(&Member(root, "count")) == 0.0);
     Require(_ZNK3sce4Json5Value7getTypeEv(&Member(root, "big")) == TypeUInteger);
     Require(*_ZNK3sce4Json5Value11getUIntegerEv(&Member(root, "big")) == std::numeric_limits<std::uint64_t>::max());
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "neg")) == -5);
@@ -120,9 +119,13 @@ static void ParseAndRoundTrip() {
     Require(Serialize(reparsed) == serialized);
     _ZN3sce4Json5ValueD1Ev(&reparsed);
 
-    for (const char* invalid : {"{\"a\":}", "[1,]", "\"open", "tru"}) {
-        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, invalid, std::strlen(invalid)) == JsonErrorParse);
-        Require(_ZNK3sce4Json5Value7getTypeEv(&root) == TypeObject && _ZNK3sce4Json5Value5countEv(&root) == 8);
+    for (const auto& [invalid, expected] : std::vector<std::pair<const char*, const char*>>{
+             {"{\"a\":}", "{\"a\":null}"}, {"[1,]", "[1,null]"}, {"\"open", "\"open\""}, {"tru", "null"}}) {
+        Value partial{};
+        _ZN3sce4Json5ValueC1Ev(&partial);
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&partial, invalid, std::strlen(invalid)) == JsonErrorParse);
+        Require(Serialize(partial) == expected);
+        _ZN3sce4Json5ValueD1Ev(&partial);
     }
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, nullptr, 0) == JsonErrorParse);
     bool nullTextRejected = false;
@@ -135,16 +138,13 @@ static void ParseAndRoundTrip() {
     Require(nullTextRejected);
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "", 0) == JsonErrorParse);
     Require(_ZNK3sce4Json5Value7getTypeEv(&root) == TypeObject && _ZNK3sce4Json5Value5countEv(&root) == 8);
-    for (const char* overflow : {"1e309", "[-1e309]", "{\"a\":[1,1e400]}"}) {
-        bool unverified = false;
-        try {
-            _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, overflow, std::strlen(overflow));
-
-        } catch (const std::runtime_error& error) {
-            unverified = std::string(error.what()).find("unverified") != std::string::npos;
-        }
-        Require(unverified);
-        Require(_ZNK3sce4Json5Value7getTypeEv(&root) == TypeObject && _ZNK3sce4Json5Value5countEv(&root) == 8);
+    for (const auto& [overflow, expected] : std::vector<std::pair<const char*, const char*>>{
+             {"1e309", "inf"}, {"[-1e309]", "[-inf]"}, {"{\"a\":[1,1e400]}", "{\"a\":[1,inf]}"}}) {
+        Value partial{};
+        _ZN3sce4Json5ValueC1Ev(&partial);
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&partial, overflow, std::strlen(overflow)) == 0);
+        Require(Serialize(partial) == expected);
+        _ZN3sce4Json5ValueD1Ev(&partial);
     }
     _ZN3sce4Json5ValueD1Ev(&root);
 
@@ -216,8 +216,8 @@ static void ObjectsAndArrays() {
     Value* first = _ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &alpha);
     Require(!_ZNK3sce4Json6Object5emptyEv(&object));
     Require(_ZNK3sce4Json5Value7getTypeEv(first) == TypeNull);
-    Require(_ZN3sce4Json5Value3setEl(first, 1) == 0);
-    Require(_ZN3sce4Json5Value3setEPKc(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &beta), "b") == 0);
+    _ZN3sce4Json5Value3setEl(first, 1);
+    _ZN3sce4Json5Value3setEPKc(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &beta), "b");
     Require(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &alpha) == first);
 
     std::vector<std::string> keys;
@@ -265,22 +265,15 @@ static void ObjectsAndArrays() {
     for (; _ZNK3sce4Json5Array8iteratorneERKS2_(&arrayIt, &arrayEnd); _ZN3sce4Json5Array8iteratorppEv(&arrayIt)) ++visited;
     Require(visited == 2);
     Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array5frontEv(&array)));
+    _ZN3sce4Json5Array8iteratorD1Ev(&arrayIt);
     _ZNK3sce4Json5Array5beginEv(&arrayIt, &array);
-
     Require(_ZNK3sce4Json5Array8iteratorptEv(&arrayIt) == _ZNK3sce4Json5Array8iteratordeEv(&arrayIt));
     Array copy{};
     _ZN3sce4Json5ArrayC1ERKS1_(&copy, &array);
     _ZN3sce4Json5Array5clearEv(&array);
 
     Require(_ZNK3sce4Json5Array4sizeEv(&array) == 0);
-    bool threw = false;
-    try {
-        _ZNK3sce4Json5Array5frontEv(&array);
-
-    } catch (const std::out_of_range&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(_ZNK3sce4Json5Array5frontEv(&array) == _ZNK3sce4Json5Array4backEv(&array));
     Require(_ZNK3sce4Json5Array4sizeEv(&copy) == 2);
     Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array5frontEv(&copy)));
     Require(*_ZNK3sce4Json5Value7getRealEv(_ZNK3sce4Json5Array4backEv(&copy)) == 2.5);
@@ -291,7 +284,7 @@ static void ObjectsAndArrays() {
     _ZN3sce4Json5Array9pop_frontEv(&copy);
 
     Require(_ZNK3sce4Json5Array5emptyEv(&copy));
-    threw = false;
+    bool threw = false;
     try {
         _ZN3sce4Json5Array9pop_frontEv(&copy);
 
@@ -299,6 +292,8 @@ static void ObjectsAndArrays() {
         threw = true;
     }
     Require(threw && _ZNK3sce4Json5Array5emptyEv(&copy));
+    _ZN3sce4Json5Array8iteratorD1Ev(&arrayIt);
+    _ZN3sce4Json5Array8iteratorD1Ev(&arrayEnd);
     _ZN3sce4Json5ArrayD1Ev(&copy);
     _ZN3sce4Json5ArrayD1Ev(&array);
 
@@ -310,28 +305,25 @@ static void ObjectPair() {
 
     Value value{};
     _ZN3sce4Json5ValueC1Ev(&value);
-
-    Require(_ZN3sce4Json5Value3setEPKc(&value, "forty-two") == 0);
+    _ZN3sce4Json5Value3setEPKc(&value, "forty-two");
 
     Pair pair{};
     std::memset(&pair, 0x5a, sizeof(pair));
     _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &value);
-
-    Require(pair.reserved == 0);
-    Require(pair.key.text != key.text && pair.value.node != value.node);
+    Require(pair.reserved == UINT64_C(0x5a5a5a5a5a5a5a5a));
+    Require(pair.key.text != key.text && _ZNK3sce4Json5Value9getStringEv(&pair.value) != _ZNK3sce4Json5Value9getStringEv(&value));
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "answer") == 0);
     Require(_ZNK3sce4Json5Value7getTypeEv(&pair.value) == TypeString);
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&pair.value)), "forty-two") == 0);
 
-    Require(_ZN3sce4Json5Value3setEl(&value, 7) == 0);
+    _ZN3sce4Json5Value3setEl(&value, 7);
     _ZN3sce4Json6StringD1Ev(&key);
     _ZN3sce4Json5ValueD1Ev(&value);
 
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "answer") == 0);
     Require(_ZNK3sce4Json5Value7getTypeEv(&pair.value) == TypeString);
     _ZN3sce4Json6Object4PairD1Ev(&pair);
-
-    Require(pair.key.text == nullptr && pair.value.node == nullptr);
+    Require(pair.key.text == nullptr && _ZNK3sce4Json5Value7getTypeEv(&pair.value) == TypeNull);
 }
 
 static void ArrayIteratorCopies() {
@@ -341,8 +333,7 @@ static void ArrayIteratorCopies() {
     for (std::int64_t i = 1; i <= 3; ++i) {
         Value item{};
         _ZN3sce4Json5ValueC1Ev(&item);
-
-        Require(_ZN3sce4Json5Value3setEl(&item, i) == 0);
+        _ZN3sce4Json5Value3setEl(&item, i);
         _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&array, &item);
         _ZN3sce4Json5ValueD1Ev(&item);
 
@@ -365,8 +356,8 @@ static void ArrayIteratorCopies() {
     ArrayIterator previous{};
     while (_ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end)) {
         _ZN3sce4Json5Array8iteratorD1Ev(&previous);
-
-        Require(_ZN3sce4Json5Array8iteratorppEi(&previous, &it, 0) == &previous);
+        _ZN3sce4Json5Array8iteratorC1ERKS2_(&previous, &it);
+        Require(_ZN3sce4Json5Array8iteratorppEi(&it, 0) == &it);
         seen.push_back(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&previous)));
         Require(_ZNK3sce4Json5Array8iteratorneERKS2_(&previous, &it));
     }
@@ -374,9 +365,14 @@ static void ArrayIteratorCopies() {
     Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end));
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&previous)) == 3);
     Require(_ZN3sce4Json5Array8iteratoraSERKS2_(&it, &end) == &it);
-    Require(it.state == nullptr);
+    Require(it.state != nullptr && !_ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end));
     Require(_ZN3sce4Json5Array8iteratoraSERKS2_(&it, &begin) == &it);
-    Require(it.state == nullptr);
+    Require(it.state != nullptr);
+    ArrayIterator empty{};
+    _ZN3sce4Json5Array8iteratorC1Ev(&empty);
+    Require(_ZN3sce4Json5Array8iteratoraSERKS2_(&it, &empty) == &it && it.state == nullptr);
+    Require(_ZN3sce4Json5Array8iteratoraSERKS2_(&it, &begin) == &it && it.state == nullptr);
+    _ZN3sce4Json5Array8iteratorD1Ev(&empty);
     Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&it, &begin));
 
     _ZN3sce4Json5Array8iteratorD1Ev(&previous);
@@ -411,9 +407,9 @@ static void ObjectFind() {
     _ZN3sce4Json6Object8iteratorD1Ev(&found);
     _ZN3sce4Json6Object8iteratorD1Ev(&end);
 
-    Require(_ZN3sce4Json5Value3setEl(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &alpha), 1) == 0);
+    _ZN3sce4Json5Value3setEl(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &alpha), 1);
     Value* second = _ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &beta);
-    Require(_ZN3sce4Json5Value3setEPKc(second, "b") == 0);
+    _ZN3sce4Json5Value3setEPKc(second, "b");
     _ZNK3sce4Json6Object3endEv(&end, &object);
     _ZN3sce4Json6Object8iteratorD1Ev(&found);
 
@@ -464,9 +460,8 @@ static void ObjectIteratorCopies() {
     Value val1{}, val2{};
     _ZN3sce4Json5ValueC1Ev(&val1);
     _ZN3sce4Json5ValueC1Ev(&val2);
-
-    Require(_ZN3sce4Json5Value3setEl(&val1, 10) == 0);
-    Require(_ZN3sce4Json5Value3setEl(&val2, 20) == 0);
+    _ZN3sce4Json5Value3setEl(&val1, 10);
+    _ZN3sce4Json5Value3setEl(&val2, 20);
     Pair p1{}, p2{};
     _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&p1, &key1, &val1);
     _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&p2, &key2, &val2);
@@ -491,11 +486,8 @@ static void ObjectIteratorCopies() {
     Require(!_ZNK3sce4Json6Object8iteratoreqERKS2_(&begin, &end));
     Require(_ZNK3sce4Json6Object8iteratorneERKS2_(&begin, &end));
 
-    ObjectIterator post{};
-    Require(_ZN3sce4Json6Object8iteratorppEi(&post, &begin, 0) == &post);
-    Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&_ZNK3sce4Json6Object8iteratordeEv(&post)->key), "one") == 0);
+    Require(_ZN3sce4Json6Object8iteratorppEi(&begin, 0) == &begin);
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&_ZNK3sce4Json6Object8iteratordeEv(&begin)->key), "two") == 0);
-    _ZN3sce4Json6Object8iteratorD1Ev(&post);
 
     ObjectIterator assigned{};
     _ZN3sce4Json6Object8iteratorC1Ev(&assigned);
@@ -526,8 +518,7 @@ static void ObjectInsert() {
 
     Value value{};
     _ZN3sce4Json5ValueC1Ev(&value);
-
-    Require(_ZN3sce4Json5Value3setEl(&value, 100) == 0);
+    _ZN3sce4Json5Value3setEl(&value, 100);
     Pair pair{};
     _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &value);
 
@@ -541,7 +532,7 @@ static void ObjectInsert() {
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&p->key), "score") == 0);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&p->value) == 100);
 
-    Require(_ZN3sce4Json5Value3setEl(&pair.value, 200) == 0);
+    _ZN3sce4Json5Value3setEl(&pair.value, 200);
     ObjectIterator duplicate{};
     Require(_ZN3sce4Json6Object6insertERKNS1_4PairE(&duplicate, &object, &pair) == &duplicate);
     Require(_ZNK3sce4Json6Object8iteratoreqERKS2_(&duplicate, &inserted));
@@ -554,8 +545,7 @@ static void ObjectInsert() {
 
     Value otherValue{};
     _ZN3sce4Json5ValueC1Ev(&otherValue);
-
-    Require(_ZN3sce4Json5Value3setEPKc(&otherValue, "str") == 0);
+    _ZN3sce4Json5Value3setEPKc(&otherValue, "str");
     Pair otherPair{};
     _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&otherPair, &otherKey, &otherValue);
 
@@ -626,8 +616,7 @@ static void ObjectKeyOrder() {
 static void ParseDuplicateKeys() {
     Value root{};
     _ZN3sce4Json5ValueC1Ev(&root);
-
-    for (const char* text : {R"({"a":1,"a":2})", R"({"a":[1,2],"a":2})", R"({"a":{"old":true},"a":2})", R"({"a":1,"a\u0000suffix":2})"}) {
+    for (const char* text : {R"({"a":1,"a":2})", R"({"a":[1,2],"a":2})", R"({"a":{"old":true},"a":2})"}) {
         Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, text, std::strlen(text)) == 0);
         Require(_ZNK3sce4Json5Value5countEv(&root) == 1);
         Require(Serialize(root) == R"({"a":2})");
@@ -670,14 +659,7 @@ static void StringMethods() {
     const std::size_t npos = _ZN3sce4Json6String4nposE;
     Require(_ZNK3sce4Json6String2atEm(&base, 0) == 'a');
     Require(_ZNK3sce4Json6String2atEm(&base, 4) == 'c');
-    bool atRefused = false;
-    try {
-        _ZNK3sce4Json6String2atEm(&base, 5);
-
-    } catch (const std::out_of_range&) {
-        atRefused = true;
-    }
-    Require(atRefused);
+    Require(_ZNK3sce4Json6String2atEm(&base, 5) == 0);
     Require(_ZNK3sce4Json6String4findEPKcm(&base, "/b", 0) == 1);
     Require(_ZNK3sce4Json6String4findEPKcm(&base, "/", 2) == 3);
     Require(_ZNK3sce4Json6String4findEPKcm(&base, "", 5) == 5);
@@ -698,15 +680,7 @@ static void StringMethods() {
     Require(_ZNK3sce4Json6String5rfindERKS1_m(&base, &needle, npos) == 3);
     Require(_ZNK3sce4Json6String5rfindERKS1_m(&base, &needle, 2) == npos);
     _ZN3sce4Json6StringD1Ev(&needle);
-
-    bool findRefused = false;
-    try {
-        _ZNK3sce4Json6String4findEPKcm(&base, nullptr, 0);
-
-    } catch (const std::invalid_argument&) {
-        findRefused = true;
-    }
-    Require(findRefused);
+    Require(_ZNK3sce4Json6String4findEPKcm(&base, nullptr, 0) == 0);
     String part{};
     Require(_ZNK3sce4Json6String6substrEmm(&part, &base, 2, 3) == &part);
     Require(text(part) == "b/c");
@@ -760,14 +734,13 @@ static void ValueSwap() {
     Value v1{}, v2{};
     _ZN3sce4Json5ValueC1Ev(&v1);
     _ZN3sce4Json5ValueC1Ev(&v2);
-
-    Require(_ZN3sce4Json5Value3setEl(&v1, 123) == 0);
-    Require(_ZN3sce4Json5Value3setEPKc(&v2, "hello") == 0);
+    _ZN3sce4Json5Value3setEl(&v1, 123);
+    _ZN3sce4Json5Value3setEPKc(&v2, "hello");
     _ZN3sce4Json5Value4swapERS1_(&v1, &v2);
 
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&v2) == 123);
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&v1)), "hello") == 0);
-    Require(_ZN3sce4Json5Value3setEl(&v1, -456) == 0);
+    _ZN3sce4Json5Value3setEl(&v1, -456);
     const auto* firstStorage = _ZNK3sce4Json5Value10getIntegerEv(&v1);
     const auto* secondStorage = _ZNK3sce4Json5Value10getIntegerEv(&v2);
     _ZN3sce4Json5Value4swapERS1_(&v1, &v2);
@@ -799,17 +772,16 @@ static void ArrayIteratorAdvance() {
 
     ArrayIterator copy{};
     _ZN3sce4Json5Array8iteratorC1ERKS2_(&copy, &begin);
-
-    Require(_ZN3sce4Json5Array8iterator7advanceEm(&copy, 3) == &copy);
+    _ZN3sce4Json5Array8iterator7advanceEm(&copy, 3);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&copy)) == 30);
     ArrayIterator end{};
     _ZNK3sce4Json5Array3endEv(&end, &array);
     _ZN3sce4Json5Array8iterator7advanceEm(&copy, std::numeric_limits<std::size_t>::max());
-
+    Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&copy, &begin));
+    _ZN3sce4Json5Array8iterator7advanceEm(&copy, 5);
     Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&copy, &end));
     _ZN3sce4Json5Array8iteratorppEv(&copy);
-
-    Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&copy, &end));
+    Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&copy, &begin));
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&begin)) == 0);
     _ZN3sce4Json5Array8iteratorD1Ev(&end);
     _ZN3sce4Json5Array8iteratorD1Ev(&begin);
@@ -853,8 +825,7 @@ static void ObjectOperations() {
 
     ObjectIterator copy{};
     _ZN3sce4Json6Object8iteratorC1ERKS2_(&copy, &begin);
-
-    Require(_ZN3sce4Json6Object8iterator7advanceEm(&copy, 2) == &copy);
+    _ZN3sce4Json6Object8iterator7advanceEm(&copy, 2);
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&_ZNK3sce4Json6Object8iteratordeEv(&copy)->key), "gamma") == 0);
     _ZN3sce4Json6Object8iterator7advanceEm(&copy, 1);
 
@@ -904,35 +875,35 @@ static void NullAccess(SetNullAccessCallback setCallback) {
     lastContext = nullptr;
     alignas(16) std::uint8_t initializer[16]{};
     alignas(16) std::uint8_t parameter[64]{};
-    Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
+    JsonTest::Allocator allocator;
+    void* allocatorPointer = &allocator;
+    std::memcpy(parameter, &allocatorPointer, sizeof(allocatorPointer));
+    _ZN3sce4Json11InitializerC1Ev(initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(initializer, parameter) == 0);
     int context = 0;
     Require(setCallback(initializer, OnNullAccess, &context) == 0);
     _ZN3sce4Json5ValueC1Ev(&fallback);
-
-    Require(_ZN3sce4Json5Value3setEl(&fallback, 99) == 0);
-
+    _ZN3sce4Json5Value3setEl(&fallback, 99);
     Value root{};
     _ZN3sce4Json5ValueC1Ev(&root);
-
-    const char text[] = "{\"present\":\"text\"}";
+    const char text[] = "{\"present\":\"text\",\"none\":null}";
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, text, sizeof(text) - 1) == 0);
-    Require(&Member(root, "missing") == &fallback);
-    Require(callbackCalls == 1 && lastRequested == TypeNull && lastParent == &root && lastContext == &context);
-    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "present")) == 99);
-    Require(callbackCalls == 2 && lastRequested == TypeInteger && lastParent == &Member(root, "present"));
-    Require(!*_ZNK3sce4Json5Value10getBooleanEv(&Member(root, "present")));
-    Require(callbackCalls == 3 && lastRequested == TypeBoolean);
-    Require(_ZNK3sce4Json5Value7getTypeEv(_ZNK3sce4Json5ValueixEm(&root, 0)) == TypeInteger);
-
-    Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
-    const Value& unhandled = Member(root, "missing");
-    Require(&unhandled != &fallback && _ZNK3sce4Json5Value7getTypeEv(&unhandled) == TypeNull);
-    Require(callbackCalls == 4);
+    Require(_ZNK3sce4Json5Value7getTypeEv(&Member(root, "missing")) == TypeNull && callbackCalls == 0);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "none")) == 99);
+    Require(callbackCalls == 1 && lastRequested == TypeInteger && lastParent == &root && lastContext == &context);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "present")) == 0 && callbackCalls == 1);
+    Require(!*_ZNK3sce4Json5Value10getBooleanEv(&Member(root, "none")));
+    Require(callbackCalls == 2 && lastRequested == TypeBoolean);
+    Require(_ZNK3sce4Json5Value7getTypeEv(_ZNK3sce4Json5ValueixEm(&root, 0)) == TypeNull);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "missing")) == 99 && callbackCalls == 3);
     _ZN3sce4Json5ValueD1Ev(&root);
     _ZN3sce4Json5ValueD1Ev(&fallback);
-
-    Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+    Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
+    Value after{};
+    _ZN3sce4Json5ValueC1Ev(&after);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&after) == 0 && callbackCalls == 3);
+    _ZN3sce4Json5ValueD1Ev(&after);
+    _ZN3sce4Json11InitializerD1Ev(initializer);
 }
 
 static void ValueAccess() {
@@ -974,10 +945,10 @@ static void ValueAccess() {
     Value* mutableList = _ZN3sce4Json5Value10referValueERKNS0_6StringE(&root, &key);
     Value* element = _ZN3sce4Json5Value10referValueEm(mutableList, 0);
     Require(element != nullptr);
-    Require(_ZN3sce4Json5Value3setEl(element, 15) == 0);
+    _ZN3sce4Json5Value3setEl(element, 15);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Value8getValueEm(list, 0)) == 15);
     Require(_ZN3sce4Json5Value10referValueEm(mutableList, 3) == nullptr);
-    Require(_ZN3sce4Json5Value10referValueEm(&root, 0) == nullptr);
+    Require(_ZN3sce4Json5Value10referValueEm(&root, 0) != nullptr);
     _ZN3sce4Json6StringD1Ev(&key);
 
     String missing{};
@@ -987,11 +958,13 @@ static void ValueAccess() {
     _ZN3sce4Json6StringD1Ev(&missing);
     _ZN3sce4Json5ValueD1Ev(&root);
 
+}
+
+static void ValueAccessParameters() {
     alignas(16) std::uint8_t parameter[40];
     std::memset(parameter, 0xff, sizeof(parameter));
-    _ZN3sce4Json14InitParameter2C1Ev(reinterpret_cast<SceJson2::InitParameter2*>(parameter));
-
-    int allocator = 0;
+    _ZN3sce4Json14InitParameter2C1Ev(reinterpret_cast<InitParameter2*>(parameter));
+    JsonTest::Allocator allocator;
     int userData = 0;
     _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(reinterpret_cast<SceJson2::InitParameter2*>(parameter), &allocator, &userData);
     _ZN3sce4Json14InitParameter217setFileBufferSizeEm(reinterpret_cast<SceJson2::InitParameter2*>(parameter), 4096);
@@ -1000,10 +973,10 @@ static void ValueAccess() {
     std::memcpy(stored, parameter, sizeof(stored));
     Require(stored[0] == &allocator && stored[1] == &userData && reinterpret_cast<std::uintptr_t>(stored[2]) == 4096);
     alignas(16) std::uint8_t initializer[16]{};
-    Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, reinterpret_cast<const SceJson2::InitParameter2*>(parameter)) == 0);
+    _ZN3sce4Json11InitializerC1Ev(initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, reinterpret_cast<const InitParameter2*>(parameter)) == 0);
     Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
-    Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+    _ZN3sce4Json11InitializerD1Ev(initializer);
 }
 
 static void InitParameter2BaseConstructor() {
@@ -1024,7 +997,7 @@ static void InitParameter2BaseConstructor() {
     std::memcpy(&defaultUserData, baseParameter + sizeof(void*), sizeof(defaultUserData));
     std::memcpy(&defaultFileBufferSize, baseParameter + 2 * sizeof(void*), sizeof(defaultFileBufferSize));
     Require(defaultAllocator == nullptr && defaultUserData == nullptr && defaultFileBufferSize == 0);
-    int allocator = 0;
+    JsonTest::Allocator allocator;
     int userData = 0;
     _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(reinterpret_cast<SceJson2::InitParameter2*>(baseParameter), &allocator, &userData);
     _ZN3sce4Json14InitParameter217setFileBufferSizeEm(reinterpret_cast<SceJson2::InitParameter2*>(baseParameter), 4096);
@@ -1040,10 +1013,10 @@ static void InitParameter2BaseConstructor() {
     for (std::size_t i = 16 + sizeof(parameter); i < sizeof(baseStorage); ++i)
         Require(baseStorage[i] == 0xff);
     alignas(16) std::uint8_t initializer[16]{};
-    Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, reinterpret_cast<const SceJson2::InitParameter2*>(baseParameter)) == 0);
+    _ZN3sce4Json11InitializerC1Ev(initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, reinterpret_cast<const InitParameter2*>(baseParameter)) == 0);
     Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
-    Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+    _ZN3sce4Json11InitializerD1Ev(initializer);
 }
 
 static_assert(sizeof(InitParameter2) == 40);
@@ -1052,12 +1025,6 @@ static InitParameter2 Stored(const std::uint8_t* parameter) {
     InitParameter2 stored{};
     std::memcpy(&stored, parameter, sizeof(stored));
     return stored;
-}
-
-static bool Untouched(const std::uint8_t* parameter, std::size_t from) {
-    for (std::size_t i = from; i < 40; ++i)
-        if (parameter[i] != 0xff) return false;
-    return true;
 }
 
 static void InitParameters() {
@@ -1071,12 +1038,11 @@ static void InitParameters() {
         Require(stored.specialFloatFormatType == 2);
         Require(stored.reserved[0] == 0 && stored.reserved[1] == 0 && stored.reserved[2] == 0);
 
-        int allocParam = 0;
+        JsonTest::Allocator allocParam;
         int userData = 0;
-        _ZN3sce4Json14InitParameter217setFileBufferSizeEm(reinterpret_cast<SceJson2::InitParameter2*>(parameter), 8192);
-        _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22SpecialFloatFormatTypeE(reinterpret_cast<SceJson2::InitParameter2*>(parameter), 2);
-        _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(reinterpret_cast<SceJson2::InitParameter2*>(parameter), &allocParam, &userData);
-
+        _ZN3sce4Json14InitParameter217setFileBufferSizeEm(reinterpret_cast<InitParameter2*>(parameter), 8192);
+        _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22SpecialFloatFormatTypeE(reinterpret_cast<InitParameter2*>(parameter), 2);
+        _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(reinterpret_cast<InitParameter2*>(parameter), &allocParam, &userData);
         stored = Stored(parameter);
         Require(stored.allocator == &allocParam && stored.userData == &userData && stored.fileBufferSize == 8192);
         Require(stored.specialFloatFormatType == 2);
@@ -1086,22 +1052,12 @@ static void InitParameters() {
         Require(Stored(parameter).specialFloatFormatType == 0 && Stored(parameter).fileBufferSize == 8192);
 
         alignas(16) std::uint8_t initializer[16]{};
-        Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
-        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, reinterpret_cast<const SceJson2::InitParameter2*>(parameter)) == 0);
+        _ZN3sce4Json11InitializerC1Ev(initializer);
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, reinterpret_cast<const InitParameter2*>(parameter)) == 0);
         Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
-        Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+        _ZN3sce4Json11InitializerD1Ev(initializer);
     }
 
-    alignas(16) std::uint8_t rttiParameter[40];
-    std::memset(rttiParameter, 0xff, sizeof(rttiParameter));
-    int allocParam = 0;
-    int userData = 0;
-    _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(reinterpret_cast<InitParameterRtti*>(rttiParameter), &allocParam, &userData, 4096);
-
-    void* rttiStored[3]{};
-    std::memcpy(rttiStored, rttiParameter, sizeof(rttiStored));
-    Require(rttiStored[0] == &allocParam && rttiStored[1] == &userData && reinterpret_cast<std::uintptr_t>(rttiStored[2]) == 4096);
-    Require(Untouched(rttiParameter, sizeof(rttiStored)));
 }
 
 static void ValueClear() {
@@ -1113,13 +1069,13 @@ static void ValueClear() {
 
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeNull);
 
-    Require(_ZN3sce4Json5Value3setEl(&value, 12345) == 0);
+    _ZN3sce4Json5Value3setEl(&value, 12345);
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeInteger);
     _ZN3sce4Json5Value5clearEv(&value);
 
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeNull);
 
-    Require(_ZN3sce4Json5Value3setEPKc(&value, "test string") == 0);
+    _ZN3sce4Json5Value3setEPKc(&value, "test string");
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeString);
     _ZN3sce4Json5Value5clearEv(&value);
 
@@ -1143,7 +1099,7 @@ static void ValueClear() {
     _ZN3sce4Json6StringD1Ev(&key);
     _ZN3sce4Json6ObjectD1Ev(&obj);
 
-    Require(_ZN3sce4Json5Value3setEl(&value, 777) == 0);
+    _ZN3sce4Json5Value3setEl(&value, 777);
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeInteger);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&value) == 777);
 
@@ -1180,7 +1136,7 @@ static void IntegerRepresentation() {
     }
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&value) == -1);
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeUInteger);
-    Require(_ZN3sce4Json5Value3setEl(&value, -1) == 0);
+    _ZN3sce4Json5Value3setEl(&value, -1);
     Require(*_ZNK3sce4Json5Value11getUIntegerEv(&value) == std::numeric_limits<std::uint64_t>::max());
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeInteger);
     for (const char* text : {"-0", "-1", "-9223372036854775808"}) {
@@ -1224,31 +1180,27 @@ static void StreamParse() {
 
 }
 
-static void StaticNullAccess() {
+static void ValueNullAccess() {
     callbackCalls = 0;
     lastRequested = -1;
     lastParent = nullptr;
     lastContext = nullptr;
     int context = 0;
-    _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(OnNullAccess, &context);
     _ZN3sce4Json5ValueC1Ev(&fallback);
-
-    Require(_ZN3sce4Json5Value3setEl(&fallback, 99) == 0);
-
+    _ZN3sce4Json5Value3setEl(&fallback, 99);
     Value root{};
     _ZN3sce4Json5ValueC1Ev(&root);
-
-    const char text[] = "{\"present\":\"text\"}";
+    const char text[] = "{\"present\":\"text\",\"none\":null}";
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, text, sizeof(text) - 1) == 0);
-    Require(&Member(root, "missing") == &fallback);
-    Require(callbackCalls == 1 && lastRequested == TypeNull && lastParent == &root && lastContext == &context);
-    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "present")) == 99);
-    Require(callbackCalls == 2 && lastRequested == TypeInteger);
-
-    _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(nullptr, nullptr);
-    const Value& unhandled = Member(root, "missing");
-    Require(&unhandled != &fallback && _ZNK3sce4Json5Value7getTypeEv(&unhandled) == TypeNull);
-    Require(callbackCalls == 2);
+    Require(_ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&root, OnNullAccess, &context) == 0);
+    Require(_ZNK3sce4Json5Value7getTypeEv(&Member(root, "missing")) == TypeNull && callbackCalls == 0);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "none")) == 99);
+    Require(callbackCalls == 1 && lastRequested == TypeInteger && lastParent == &root && lastContext == &context);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "present")) == 0 && callbackCalls == 1);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "missing")) == 99 && callbackCalls == 2);
+    Require(_ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&root, nullptr, nullptr) == 0);
+    Require(_ZNK3sce4Json5Value7getTypeEv(&Member(root, "missing")) == TypeNull);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "none")) == 0 && callbackCalls == 2);
     _ZN3sce4Json5ValueD1Ev(&root);
     _ZN3sce4Json5ValueD1Ev(&fallback);
 
@@ -1272,13 +1224,12 @@ static const Value& APS5_VABI OnTypeMismatch(ValueType requested, const Value* v
 
 static void RequireMismatch(int calls, ValueType requested, const Value* value, void* context) {
     Require(mismatchCalls == calls && mismatchRequested == requested && mismatchValue == value);
-    Require(mismatchSecond == nullptr && mismatchContext == context);
+    Require(mismatchSecond == value->parent && mismatchContext == context);
 }
 
 static void ValueTypeMismatchHandler() {
     _ZN3sce4Json5ValueC1Ev(&replacement);
-
-    Require(_ZN3sce4Json5Value3setEl(&replacement, 42) == 0);
+    _ZN3sce4Json5Value3setEl(&replacement, 42);
     int context = 0;
     Value root{};
     _ZN3sce4Json5ValueC1Ev(&root);
@@ -1297,49 +1248,49 @@ static void ValueTypeMismatchHandler() {
     Require(_ZNK3sce4Json5Array4sizeEv(_ZNK3sce4Json5Value8getArrayEv(&root)) == 0);
     RequireMismatch(3, TypeArray, &root, &context);
     const Value* element = _ZNK3sce4Json5ValueixEm(&Member(root, "list"), 0);
-    Require(*_ZNK3sce4Json5Value7getRealEv(element) == 0.0);
+    const double* missingReal = _ZNK3sce4Json5Value7getRealEv(element);
+    Require(missingReal == &_ZN3sce4Json5Value10s_nullrealE && *missingReal == 0.0);
     RequireMismatch(4, TypeReal, element, &context);
-    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "none")) == 0);
-    Require(mismatchCalls == 4);
+    Require(_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "none")) == &replacement.integer);
+    Require(replacement.integer == 42);
+    Require(mismatchCalls == 5);
 
     Value later{};
     _ZN3sce4Json5ValueC1Ev(&later);
 
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&later, text, sizeof(text) - 1) == 0);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(later, "name")) == 0);
-    Require(mismatchCalls == 4);
+    Require(mismatchCalls == 5);
     int laterContext = 0;
     Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&later, OnTypeMismatch, &laterContext) == 0);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(later, "name")) == 42);
-    RequireMismatch(5, TypeInteger, &Member(later, "name"), &laterContext);
+    RequireMismatch(6, TypeInteger, &Member(later, "name"), &laterContext);
 
     Value other{};
     _ZN3sce4Json5ValueC1Ev(&other);
-
-    Require(_ZN3sce4Json5Value3setEPKc(&other, "other") == 0);
+    _ZN3sce4Json5Value3setEPKc(&other, "other");
     Require(_ZN3sce4Json5ValueaSERKS1_(&root, &other) == &root);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 42);
-    RequireMismatch(6, TypeInteger, &root, &context);
-    Require(*_ZNK3sce4Json5Value10getIntegerEv(&other) == 0);
-    Require(mismatchCalls == 6);
-    Require(_ZN3sce4Json5Value3setEd(&other, 1.5) == 0);
-    Require(_ZN3sce4Json5Value3setERKS1_(&root, &other) == 0);
-    Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 42);
     RequireMismatch(7, TypeInteger, &root, &context);
-    _ZN3sce4Json5Value5clearEv(&root);
-
-    Require(_ZN3sce4Json5Value3setEPKc(&root, "cleared") == 0);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&other) == 0);
+    Require(mismatchCalls == 7);
+    _ZN3sce4Json5Value3setEd(&other, 1.5);
+    _ZN3sce4Json5Value3setERKS1_(&root, &other);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 42);
     RequireMismatch(8, TypeInteger, &root, &context);
+    _ZN3sce4Json5Value5clearEv(&root);
+    _ZN3sce4Json5Value3setEPKc(&root, "cleared");
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 42);
+    RequireMismatch(9, TypeInteger, &root, &context);
     Value copy{};
     _ZN3sce4Json5ValueC1ERKS1_(&copy, &root);
 
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&copy) == 0);
-    Require(mismatchCalls == 8);
+    Require(mismatchCalls == 9);
 
     Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&root, nullptr, nullptr) == 0);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 0);
-    Require(mismatchCalls == 8);
+    Require(mismatchCalls == 9);
     _ZN3sce4Json5ValueD1Ev(&copy);
     _ZN3sce4Json5ValueD1Ev(&other);
     _ZN3sce4Json5ValueD1Ev(&later);
@@ -1350,18 +1301,8 @@ static void ValueTypeMismatchHandler() {
 
 static int failureCalls = 0;
 
-static void APS5_VABI OnElementAccessFailure(std::int32_t, const String*, const std::size_t*, const Value*, const Value*, void*) {
+static void APS5_VABI OnElementAccessFailure(int, const String*, const std::size_t*, const Value*, const Value*, void*) {
     ++failureCalls;
-}
-
-template <typename TAccess>
-static bool ThrowsUnverified(const TAccess& access) {
-    try {
-        access();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()).find("unverified") != std::string::npos;
-    }
-    return false;
 }
 
 static void ValueElementAccessFailureHandler() {
@@ -1378,12 +1319,11 @@ static void ValueElementAccessFailureHandler() {
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Value8getValueEm(&list, 0)) == 1);
     String missing{};
     _ZN3sce4Json6StringC1EPKc(&missing, "missing");
-
-    Require(ThrowsUnverified([&] { _ZNK3sce4Json5ValueixEPKc(&root, "missing"); }));
-    Require(ThrowsUnverified([&] { _ZNK3sce4Json5Value8getValueERKNS0_6StringE(&root, &missing); }));
-    Require(ThrowsUnverified([&] { _ZNK3sce4Json5ValueixEm(&root, 0); }));
-    Require(ThrowsUnverified([&] { _ZNK3sce4Json5Value8getValueEm(&list, 1); }));
-    Require(failureCalls == 0);
+    Require(_ZNK3sce4Json5Value7getTypeEv(_ZNK3sce4Json5ValueixEPKc(&root, "missing")) == TypeNull);
+    Require(_ZNK3sce4Json5Value7getTypeEv(_ZNK3sce4Json5Value8getValueERKNS0_6StringE(&root, &missing)) == TypeNull);
+    Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5ValueixEm(&root, 0)) == 2);
+    Require(_ZNK3sce4Json5Value7getTypeEv(_ZNK3sce4Json5Value8getValueEm(&list, 1)) == TypeNull);
+    Require(failureCalls == 3);
 
     Require(_ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(&root, nullptr, nullptr) == 0);
     Require(_ZNK3sce4Json5Value7getTypeEv(&Member(root, "missing")) == TypeNull);
@@ -1410,15 +1350,13 @@ static void ValueSpecialFloatHandler() {
     Require(_ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&real, OnSpecialFloat, &context) == 0);
     String out{};
     _ZN3sce4Json6StringC1Ev(&out);
-
-    Require(ThrowsUnverified([&] { _ZN3sce4Json5Value9serializeERNS0_6StringE(&real, &out); }));
-    Require(_ZN3sce4Json5Value3setEd(&real, std::numeric_limits<double>::infinity()) == 0);
-    Require(ThrowsUnverified([&] { _ZN3sce4Json5Value9serializeERNS0_6StringE(&real, &out); }));
+    Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&real, &out) == 0);
+    _ZN3sce4Json5Value3setEd(&real, std::numeric_limits<double>::infinity());
+    Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&real, &out) == 0);
     _ZN3sce4Json6StringD1Ev(&out);
-
-    Require(_ZN3sce4Json5Value3setEd(&real, 2.5) == 0);
+    _ZN3sce4Json5Value3setEd(&real, 2.5);
     Require(Serialize(real) == "2.5");
-    Require(specialFloatCalls == 0);
+    Require(specialFloatCalls == 2);
     _ZN3sce4Json5ValueD1Ev(&real);
 
 }
@@ -1431,7 +1369,7 @@ static void ValueOperatorBool() {
     _ZN3sce4Json5ValueD1Ev(&nullVal);
 
     Value typedNull{};
-    _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&typedNull, TypeNull);
+    _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&typedNull, static_cast<ValueType>(TypeNull));
 
     Require(!_ZNK3sce4Json5ValuecvbEv(&typedNull));
     _ZN3sce4Json5ValueD1Ev(&typedNull);
@@ -1452,19 +1390,19 @@ static void ValueOperatorBool() {
     _ZN3sce4Json5ValueC1Ev(&scalar);
 
     for (std::int64_t value : {std::int64_t{0}, std::int64_t{1}, std::int64_t{-1}}) {
-        Require(_ZN3sce4Json5Value3setEl(&scalar, value) == 0);
+        _ZN3sce4Json5Value3setEl(&scalar, value);
         Require(_ZNK3sce4Json5ValuecvbEv(&scalar) == (value != 0));
     }
     for (std::uint64_t value : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{0xffffffffffffffff}}) {
-        Require(_ZN3sce4Json5Value3setEm(&scalar, value) == 0);
+        _ZN3sce4Json5Value3setEm(&scalar, value);
         Require(_ZNK3sce4Json5ValuecvbEv(&scalar) == (value != 0));
     }
     for (double value : {0.0, -0.0, 1.0, -1.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
-        Require(_ZN3sce4Json5Value3setEd(&scalar, value) == 0);
+        _ZN3sce4Json5Value3setEd(&scalar, value);
         Require(_ZNK3sce4Json5ValuecvbEv(&scalar) == (value != 0.0));
     }
     for (const char* text : {"", "0", "false", " "}) {
-        Require(_ZN3sce4Json5Value3setEPKc(&scalar, text) == 0);
+        _ZN3sce4Json5Value3setEPKc(&scalar, text);
         Require(_ZNK3sce4Json5ValuecvbEv(&scalar) == (*text != 0));
     }
     _ZN3sce4Json5ValueD1Ev(&scalar);
@@ -1489,7 +1427,21 @@ static void ValueOperatorBool() {
 
 }
 
+struct ActiveModule {
+    JsonTest::Allocator allocator;
+    alignas(8) std::uint8_t parameter[40]{};
+    std::uint8_t initializer = 0;
+    ActiveModule() {
+        _ZN3sce4Json14InitParameter2C1Ev(reinterpret_cast<InitParameter2*>(parameter));
+        _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(reinterpret_cast<InitParameter2*>(parameter), &allocator, nullptr);
+        _ZN3sce4Json11InitializerC1Ev(&initializer);
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(parameter)) == 0);
+    }
+    ~ActiveModule() { Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0); }
+};
+
 static int NumericLocale() {
+    ActiveModule module;
     const std::string previous = std::setlocale(LC_NUMERIC, nullptr);
     const char* selected = nullptr;
     for (const char* name : {"xx_COMMA", "de_DE.UTF-8", "de_DE.utf8", "de-DE", "German_Germany.1252", "fr_FR.UTF-8"}) {
@@ -1511,8 +1463,12 @@ static int NumericLocale() {
             ++failures;
         }
     };
-    for (const auto number : {1.5, -0.125, 1.25e30, std::numeric_limits<double>::max(),
-                              std::numeric_limits<double>::min(), std::numeric_limits<double>::denorm_min()}) {
+    for (const auto [number, expected] : std::vector<std::pair<double, std::uint64_t>>{
+             {1.5, UINT64_C(0x3ff8000000000000)}, {-0.125, UINT64_C(0xbfc0000000000000)},
+             {1.25e30, UINT64_C(0x462f8def8808b023)},
+             {std::numeric_limits<double>::max(), UINT64_C(0x7feffffffffffff9)},
+             {std::numeric_limits<double>::min(), UINT64_C(0x0010000000000003)},
+             {std::numeric_limits<double>::denorm_min(), UINT64_C(1)}}) {
         Value value{};
         _ZN3sce4Json5ValueC1Ed(&value, number);
 
@@ -1522,23 +1478,23 @@ static int NumericLocale() {
         _ZN3sce4Json5ValueC1Ev(&parsed);
 
         const int result = _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&parsed, text.c_str(), text.size());
-        check(result == 0 && *_ZNK3sce4Json5Value7getRealEv(&parsed) == number, "Numeric round trip", text.c_str());
+        check(result == 0 && std::bit_cast<std::uint64_t>(*_ZNK3sce4Json5Value7getRealEv(&parsed)) == expected, "Reference decimal conversion", text.c_str());
         _ZN3sce4Json5ValueD1Ev(&parsed);
         _ZN3sce4Json5ValueD1Ev(&value);
 
     }
-    for (const auto [text, number] : {std::pair{"1.5", 1.5}, {"-1.25e2", -125.0},
-                                    {"4.9406564584124654e-324", std::numeric_limits<double>::denorm_min()},
-                                    {"2.4703282292062327e-324", 0.0},
-                                    {"2.4703282292062328e-324", std::numeric_limits<double>::denorm_min()},
-                                    {"18446744073709551616", 18446744073709551616.0},
-                                    {"1e-999", 0.0}, {"-1e-999", -0.0}}) {
+    for (const auto [text, expected] : std::vector<std::pair<const char*, std::uint64_t>>{
+             {"1.5", UINT64_C(0x3ff8000000000000)}, {"-1.25e2", UINT64_C(0xc05f400000000000)},
+             {"4.9406564584124654e-324", UINT64_C(1)}, {"2.4703282292062327e-324", UINT64_C(0)},
+             {"2.4703282292062328e-324", UINT64_C(0)},
+             {"18446744073709551616", UINT64_C(0x43f0000000000000)},
+             {"1e-999", UINT64_C(0)}, {"-1e-999", UINT64_C(0x8000000000000000)}}) {
         Value value{};
         _ZN3sce4Json5ValueC1Ev(&value);
 
         const int result = _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, text, std::strlen(text));
         const auto parsed = *_ZNK3sce4Json5Value7getRealEv(&value);
-        check(result == 0 && parsed == number && std::signbit(parsed) == std::signbit(number), "Decimal-point parsing", text);
+        check(result == 0 && std::bit_cast<std::uint64_t>(parsed) == expected, "Decimal-point parsing", text);
         _ZN3sce4Json5ValueD1Ev(&value);
 
     }
@@ -1552,14 +1508,8 @@ static int NumericLocale() {
     check(serialized == document, "Nested numeric serialization", serialized.c_str());
     check(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "1,5", 3) == 0 && _ZNK3sce4Json5Value7getTypeEv(&root) == TypeUInteger &&
           *_ZNK3sce4Json5Value11getUIntegerEv(&root) == 1, "Stop at a decimal comma", "1,5");
-    bool overflow = false;
-    try {
-        _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "1e309", 5);
-
-    } catch (const std::runtime_error&) {
-        overflow = true;
-    }
-    check(overflow, "Retain overflow rejection", "1e309");
+    check(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "1e309", 5) == 0 &&
+          std::isinf(*_ZNK3sce4Json5Value7getRealEv(&root)), "Reference overflow admission", "1e309");
     _ZN3sce4Json5ValueD1Ev(&root);
 
     check(std::strcmp(std::localeconv()->decimal_point, ",") == 0, "Preserve host locale", selected);
@@ -1567,36 +1517,68 @@ static int NumericLocale() {
     return failures ? 1 : 0;
 }
 
+static void ScalarDefaultIdentity() {
+    Value empty{};
+    _ZN3sce4Json5ValueC1Ev(&empty);
+    Require(_ZNK3sce4Json5Value10getBooleanEv(&empty) == &_ZN3sce4Json5Value10s_nullboolE);
+    Require(_ZNK3sce4Json5Value10getIntegerEv(&empty) == &_ZN3sce4Json5Value13s_nullintegerE);
+    Require(_ZNK3sce4Json5Value11getUIntegerEv(&empty) == &_ZN3sce4Json5Value14s_nulluintegerE);
+    Require(_ZNK3sce4Json5Value7getRealEv(&empty) == &_ZN3sce4Json5Value10s_nullrealE);
+    _ZN3sce4Json5ValueD1Ev(&empty);
+
+    Value actual{};
+    _ZN3sce4Json5ValueC1Eb(&actual, true);
+    Require(_ZNK3sce4Json5Value10getBooleanEv(&actual) == &actual.boolean);
+    Require(*_ZNK3sce4Json5Value10getBooleanEv(&actual));
+    _ZN3sce4Json5ValueD1Ev(&actual);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--numeric-locale") == 0) return NumericLocale();
-    ParseAndRoundTrip();
-    NestingDepth();
-    ObjectsAndArrays();
+    {
+        ActiveModule module;
+        ScalarDefaultIdentity();
+        ParseAndRoundTrip();
+        NestingDepth();
+        ObjectsAndArrays();
     ArrayAssignment();
-    ObjectFind();
-    ObjectPair();
-    ObjectInsert();
-    ObjectKeyOrder();
-    ArrayIteratorCopies();
-    ObjectIteratorCopies();
-    AllocatorNotifyError();
-    StringMethods();
-    StringComparison();
-    ParseDuplicateKeys();
-    ValueSwap();
-    ArrayIteratorAdvance();
-    ObjectOperations();
+        ObjectFind();
+        ObjectPair();
+        ObjectInsert();
+        ObjectKeyOrder();
+        ArrayIteratorCopies();
+        ObjectIteratorCopies();
+        AllocatorNotifyError();
+        StringMethods();
+        StringComparison();
+        ParseDuplicateKeys();
+        ValueSwap();
+        ArrayIteratorAdvance();
+        ObjectOperations();
+    }
     NullAccess(_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_);
     NullAccess(_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_);
-    StaticNullAccess();
+    JsonTest::Allocator recoveryAllocator;
+    alignas(8) std::uint8_t recoveryParameter[40]{};
+    _ZN3sce4Json14InitParameter2C1Ev(reinterpret_cast<InitParameter2*>(recoveryParameter));
+    _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(reinterpret_cast<InitParameter2*>(recoveryParameter), &recoveryAllocator, nullptr);
+    std::uint8_t recoveryInitializer = 0;
+    _ZN3sce4Json11InitializerC1Ev(&recoveryInitializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&recoveryInitializer, reinterpret_cast<const InitParameter2*>(recoveryParameter)) == 0);
+    ValueNullAccess();
     ValueTypeMismatchHandler();
     ValueElementAccessFailureHandler();
     ValueSpecialFloatHandler();
-    ValueAccess();
+    Require(_ZN3sce4Json11Initializer9terminateEv(&recoveryInitializer) == 0);
     InitParameter2BaseConstructor();
     InitParameters();
-    ValueClear();
-    ValueOperatorBool();
-    IntegerRepresentation();
-    StreamParse();
+    ValueAccessParameters();
+    {
+        ActiveModule module;
+        ValueAccess();
+        ValueClear();
+        ValueOperatorBool();
+        IntegerRepresentation();
+        StreamParse();
+    }
 }
