@@ -1,5 +1,6 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
+#include "SpirvBackend/SpirvSpannedUniformity.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterState.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
@@ -308,6 +309,10 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         state.requirements.ldsBufferInt64Atomics = true;
     }
     const bool int64Atomics = std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != state.supportedCapabilities.end();
+    if (!int64Atomics && state.requirements.bufferInt64Atomics && !state.requirements.bufferInt64AtomicsExact) {
+        state.requirements.bufferInt64Atomics = false;
+        state.requirements.bufferInt64AtomicsSplit = true;
+    }
     state.requirements.bufferU64View = state.requirements.bufferInt64Atomics || (state.requirements.coherentBufferPairs && int64Atomics);
     if (HostSubgroupSingleLane(state)) {
         state.requirements.subgroupBallot = false;
@@ -342,13 +347,17 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
+    auto words = state.module.Finalize();
+    if (state.spannedWave) {
+        if (auto reason = SpannedBarrierInDivergentFlow(words)) throw SpannedWaveUnsupported(*reason);
+    }
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->bdaStores = state.bdaWritePointerFunction != 0;
         info->meshWindowBuffer = state.meshWindowBuffer;
     }
-    return state.module.Finalize();
+    return words;
 }
 
 }

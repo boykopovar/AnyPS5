@@ -380,6 +380,14 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_wrapped_exports.py)
         add_test(NAME pr_overlap_own_branch COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_own_branch.py)
+        add_test(NAME main_sync_renames COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_main_sync_renames.py RenamedPathsTests.test_feature_rename_keeps_the_original_path)
+        set_tests_properties(main_sync_renames PROPERTIES TIMEOUT 20)
+        foreach(test_case IN ITEMS test_feature_rename_with_detection_disabled test_main_rename_keeps_the_original_path test_main_rename_with_detection_disabled)
+            add_test(NAME main_sync_renames_${test_case} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_main_sync_renames.py RenamedPathsTests.${test_case})
+            set_tests_properties(main_sync_renames_${test_case} PROPERTIES TIMEOUT 20)
+        endforeach()
         add_test(NAME pr_overlap_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_errors.py)
         add_test(NAME pr_overlap_branch_scan COMMAND ${Python3_EXECUTABLE}
@@ -462,6 +470,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_body_bom.py)
         add_test(NAME conventions_blob_reads COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_blob_reads.py)
+        add_test(NAME ab_split_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ab_split_csv.py)
+        set_tests_properties(ab_split_csv PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_agent_files COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}

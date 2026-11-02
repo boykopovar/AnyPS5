@@ -234,7 +234,6 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
     Require(context.provokingVertexLast, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
     const bool meshPrimitives = state.stages.path == ShaderPath::Geometry && state.stages.mesh;
     Require(!state.stages.tessellation && (meshPrimitives || (state.stages.path == ShaderPath::Vertex && !state.stages.mesh)), "last provoking vertex is unsupported for generated primitive pipelines");
-    Require(!meshPrimitives || state.topology != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "last provoking vertex is unsupported for triangle fans assembled for a geometry program");
     Require(state.rectList || state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "last provoking vertex is unsupported for this primitive topology");
     for (const auto& shader : shaders) {
         if (shader.stage != ShaderRecompiler::ShaderStage::Fragment) continue;
@@ -341,6 +340,8 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, identity.low);
         appendKey(key, identity.high);
         appendKey(key, shader.pushConstantOffset);
+        appendKey(key, state.meshLayerBase);
+        appendKey(key, state.meshLayerCount);
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
             if (HeapShader(shader)) {
@@ -540,7 +541,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
                 heapMappingInfos[i].pNext = stages[i].pNext;
                 stages[i].pNext = &heapMappingInfos[i];
             }
-            specializations.emplace_back(shader);
+            specializations.emplace_back(shader, state.meshLayerBase, state.meshLayerCount);
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {
@@ -1059,6 +1060,8 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         // Where the stage's push constants sit in the block (AssemblePushConstants).
         append(key, shader.pushConstantOffset);
     }
+    append(key, state.meshLayerBase);
+    append(key, state.meshLayerCount);
     append(key, PushConstantStages(shaders));
     append(key, input.bindings.size());
     for (const auto& binding : input.bindings) {

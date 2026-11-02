@@ -239,6 +239,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     stageCapture.regions = context.shaderMemory.TakeRecentRegions();
     stageCapture.supplied = context.shaderMemory.SuppliedBlocks();
     stageCapture.userDataUse = capture->userDataUse;
+    stageCapture.registeredViews = std::make_shared<const std::vector<ShaderRecompiler::RegisteredImageView>>(capture->snapshot.registeredImages);
     context.recompiled[i] = true;
     context.memory = context.shaderMemory.Regions();
 
@@ -357,6 +358,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             if (stageCapture.compiled == nullptr || !stageCapture.Cacheable() || !CacheableResult(*stageCapture.compiled)) continue;
             auto variant = std::make_shared<DispatchVariant>();
             variant->compiled = stageCapture.compiled;
+            variant->registeredViews = stageCapture.registeredViews;
             if (programs[i].binary.stage == ShaderRecompiler::ShaderStage::Mesh) {
                 std::copy_n(programs[i].userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord, variant->meshIndexDescriptor.size(), variant->meshIndexDescriptor.begin());
             }
