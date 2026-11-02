@@ -103,7 +103,7 @@ def report_overlaps_dump(report, dump):
         return True
     exists = report.exists()
     for path in dump.rglob("*"):
-        if path.is_symlink() and path.is_dir() and destination.is_relative_to(comparison_path(path)):
+        if path.is_dir() and destination.is_relative_to(comparison_path(path)):
             return True
         if exists and path.is_file() and report.samefile(path):
             return True

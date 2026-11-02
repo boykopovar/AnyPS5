@@ -147,6 +147,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvSpannedUniformity.cpp
 
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvBufferAccess.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvScratchPool.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvConstants.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvDescriptors.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvFormatConvert.cpp
@@ -269,6 +270,7 @@ function(add_shader_recompiler target runtimeTarget)
             ReadWholeFile
             Recompile
             RecompileCacheKey::ContextHash
+            RecompileCacheKey::SealFeatureDigest
             RecompileResult
             PrepareShader
             GetPreparedCode

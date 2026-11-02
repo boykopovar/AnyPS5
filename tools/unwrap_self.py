@@ -53,6 +53,7 @@ MAX_OUTPUT_FACTOR = 4
 MIN_OUTPUT_LIMIT = 256 * 1024 * 1024
 PT_NULL = 0
 PT_LOAD = 1
+PT_DYNAMIC = 2
 PT_NOTE = 4
 PT_PHDR = 6
 ENTROPY_LIMIT = 7.5
@@ -159,6 +160,9 @@ def parse_elf(data):
 
 
 def place_segments(data, headers, records):
+    for header in headers:
+        if header["type"] == PT_NULL:
+            header.update(flags=0, offset=0, vaddr=0, size=0, memory=0, align=0, source=0)
     loads = [header for header in headers if header["type"] == PT_LOAD]
     used = set()
     placed = set()
@@ -218,7 +222,7 @@ def place_segments(data, headers, records):
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue
-        if header["vaddr"] != 0 or header["type"] == PT_PHDR:
+        if header["vaddr"] != 0 or header["type"] in (PT_PHDR, PT_DYNAMIC, PT_TLS):
             host = load_for(header["vaddr"], header["size"])
             if host is None:
                 if header["size"] == 0:
