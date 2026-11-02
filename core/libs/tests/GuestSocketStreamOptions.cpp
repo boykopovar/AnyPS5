@@ -106,7 +106,18 @@ int main() {
     for (const int segment : {1000, 175, 0, -1}) {
         Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, TcpMaximumSegment, &segment, sizeof(segment)), Invalid));
     }
-    Require(Set(fresh, TcpLevel, TcpMaximumSegment, 300) && Get(fresh, TcpLevel, TcpMaximumSegment) == 300);
+    for (const int segment : {176, 300, 536})
+        Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, TcpMaximumSegment, &segment, sizeof(segment)), Invalid));
+    Require(Get(fresh, TcpLevel, TcpMaximumSegment) == 536);
+    const int fresh6 = socket_nid_postfix(28, 1, 0);
+    if (fresh6 >= 0) {
+        Require(Get(fresh6, TcpLevel, TcpMaximumSegment) == 1220);
+        Require(close_nid_postfix(fresh6) == 0);
+    }
+    Require(Set(client, TcpLevel, TcpMaximumSegment, 176) && Get(client, TcpLevel, TcpMaximumSegment) == 216);
+    Require(Set(client, TcpLevel, TcpMaximumSegment, 200) && Get(client, TcpLevel, TcpMaximumSegment) == 216);
+    const int larger = 400;
+    Require(Fails(setsockopt_nid_postfix(client, TcpLevel, TcpMaximumSegment, &larger, sizeof(larger)), Invalid));
     Require(Get(fresh, TcpLevel, 0x100) == 7200 && Get(fresh, TcpLevel, 0x200) == 75 && Get(fresh, TcpLevel, 0x400) == 8);
     Require(Set(fresh, TcpLevel, 0x100, 60) && Get(fresh, TcpLevel, 0x100) == 60);
     Require(Set(fresh, TcpLevel, 0x100, 0) && Get(fresh, TcpLevel, 0x100) == 7200);

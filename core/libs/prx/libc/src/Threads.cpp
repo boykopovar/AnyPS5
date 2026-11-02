@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <limits>
+#include <list>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -18,6 +19,7 @@
 #include <system_error>
 #include <thread>
 #include <time.h>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -204,6 +206,10 @@ int APS5_VABI _Mtx_init_with_name_nid_postfix(void** handle, int type, const cha
     return _Mtx_init_nid_postfix(handle, type);
 }
 
+int APS5_VABI _Mtx_init_with_default_name_override_nid_postfix(void** handle, int type, const char* name) {
+    return _Mtx_init_with_name_nid_postfix(handle, type, name);
+}
+
 void APS5_VABI _Mtx_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Mtx_destroy: null mutex handle pointer");
@@ -380,8 +386,16 @@ int SignalCondition_nid_no_patch(void** handle) {
     return threadSuccess;
 }
 
+static std::atomic<unsigned> registeredProcessorCount{0};
+
+void RegisterProcessorCount_nid_no_patch(unsigned count) {
+    registeredProcessorCount.store(count, std::memory_order_release);
+}
+
 unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
-    return std::thread::hardware_concurrency();
+    const unsigned count = registeredProcessorCount.load(std::memory_order_acquire);
+    if (count == 0) throw std::runtime_error("std::thread::hardware_concurrency: libkernel has not registered the processor count");
+    return count;
 }
 
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
@@ -422,6 +436,53 @@ int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {
     return SignalCondition_nid_no_patch(handle);
 }
 
+struct AtThreadExitEntry {
+    std::thread::id thread;
+    DinkumwareCondition* condition;
+    DinkumwareMutex* mutex;
+    int* ready;
+};
+
+static std::mutex atThreadExitLock;
+static std::list<AtThreadExitEntry> atThreadExitEntries;
+
+void APS5_VABI _Cnd_do_broadcast_at_thread_exit_nid_postfix() noexcept {
+    const auto thread = std::this_thread::get_id();
+    std::list<AtThreadExitEntry> pending;
+    {
+        const std::lock_guard<std::mutex> lock(atThreadExitLock);
+        for (auto entry = atThreadExitEntries.begin(); entry != atThreadExitEntries.end();) {
+            if (entry->thread == thread) {
+                auto moved = entry++;
+                pending.splice(pending.end(), atThreadExitEntries, moved);
+            } else {
+                ++entry;
+            }
+        }
+    }
+    for (const auto& entry : pending) {
+        if (entry.ready) *entry.ready = 1;
+        void* condition = entry.condition;
+        _Cnd_broadcast_nid_postfix(&condition);
+        void* mutex = entry.mutex;
+        _Mtx_unlock_nid_postfix(&mutex);
+    }
+}
+
+void APS5_VABI _Cnd_register_at_thread_exit_nid_postfix(void* conditionHandle, void* mutexHandle, int* ready) {
+    auto* condition = ResolveCondition(&conditionHandle, "_Cnd_register_at_thread_exit");
+    auto* mutex = ResolveMutex(&mutexHandle, "_Cnd_register_at_thread_exit");
+    const std::lock_guard<std::mutex> lock(atThreadExitLock);
+    atThreadExitEntries.push_back({std::this_thread::get_id(), condition, mutex, ready});
+}
+
+void APS5_VABI _Cnd_unregister_at_thread_exit_nid_postfix(void* mutexHandle) {
+    auto* mutex = ResolveMutex(&mutexHandle, "_Cnd_unregister_at_thread_exit");
+    const std::lock_guard<std::mutex> lock(atThreadExitLock);
+    atThreadExitEntries.erase(std::remove_if(atThreadExitEntries.begin(), atThreadExitEntries.end(),
+        [mutex](const AtThreadExitEntry& entry) { return entry.mutex == mutex; }), atThreadExitEntries.end());
+}
+
 static_assert(offsetof(GuestPad, condition) == 0x8 && offsetof(GuestPad, mutex) == 0x10 && offsetof(GuestPad, started) == 0x18 && sizeof(GuestPad) == 0x20);
 
 [[noreturn]] void ThrowCppError_nid_no_patch(int code);
@@ -460,7 +521,9 @@ void RegisterPthreadDetach_nid_no_patch(PthreadDetachFn_nid_no_patch fn) {
 static void* APS5_VABI PadEntry_nid_no_patch(void* argument) {
     auto* pad = static_cast<GuestPad*>(argument);
     const auto go = pad->vtable[0];
-    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(go(pad)));
+    const auto result = go(pad);
+    _Cnd_do_broadcast_at_thread_exit_nid_postfix();
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(result));
 }
 
 void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(GuestPad* pad) {
@@ -570,6 +633,10 @@ int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
     return ThreadForwards(__func__).equal(first, second);
 }
 
+int APS5_VABI _Thrd_lt_nid_postfix(void* first, void* second) {
+    return reinterpret_cast<std::uintptr_t>(first) < reinterpret_cast<std::uintptr_t>(second);
+}
+
 void* APS5_VABI _Thrd_current_nid_postfix(void) {
     return ThreadForwards(__func__).self();
 }
@@ -579,6 +646,7 @@ void* APS5_VABI _Thrd_id_nid_postfix(void) {
 }
 
 [[noreturn]] void APS5_VABI _Thrd_exit_nid_postfix(int code) {
+    _Cnd_do_broadcast_at_thread_exit_nid_postfix();
     ThreadForwards(__func__).exit(reinterpret_cast<void*>(static_cast<std::uintptr_t>(static_cast<unsigned int>(code))));
     std::abort();
 }

@@ -146,10 +146,14 @@ void TestErrors() {
     Require(sceCesUtf8ToUtf32(nullptr, 4, &consumed, &scalar) == INVALID_SRC_BUFFER);
     Require(sceCesUtf8ToUtf32(emoji, 4, &consumed, nullptr) == INVALID_DST_BUFFER);
     Require(sceCesUtf8ToUcs2(emoji, 4, &consumed, nullptr) == INVALID_DST_BUFFER);
+    Require(sceCesUtf8ToUtf16(nullptr, 4, &consumed, units, 2, &produced) == INVALID_SRC_BUFFER);
+    Require(sceCesUtf8ToUtf16be(nullptr, 4, &consumed, units, 2, &produced) == INVALID_SRC_BUFFER);
+    Require(sceCesUtf8ToUtf16le(nullptr, 4, &consumed, units, 2, &produced) == INVALID_SRC_BUFFER);
     Require(sceCesUtf8ToUtf16(emoji, 4, &consumed, nullptr, 2, &produced) == INVALID_DST_BUFFER);
     Require(sceCesUtf16ToUtf8(nullptr, 1, &consumed, bytes, 4, &produced) == INVALID_SRC_BUFFER);
     Require(sceCesUtf16ToUtf8(high, 0, &consumed, bytes, 4, &produced) == SRC_BUFFER_END);
     Require(sceCesUtf32beToUtf8(nullptr, bytes, 4, &produced) == INVALID_SRC_BUFFER);
+    Require(sceCesUtf32leToUtf8(nullptr, bytes, 4, &produced) == INVALID_SRC_BUFFER);
     Require(sceCesUtf32ToUtf8(0, nullptr, 4, &produced) == INVALID_DST_BUFFER);
     Require(sceCesUtf8ToUtf32(emoji, 5, nullptr, &scalar) == 0 && scalar == 0x1F600);
     Require(sceCesUtf8ToUtf16(emoji, 5, nullptr, units, 2, nullptr) == 0 && units[0] == 0xD83D && units[1] == 0xDE00);

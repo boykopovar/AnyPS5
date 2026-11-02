@@ -122,6 +122,12 @@ int main() {
     Require(sceNpSignalingSetContextOption(2, 1, 1) == CtxNotFound, "sceNpSignalingTerminate", "a context created before termination is still found");
     Require(sceNpSignalingCreateContext(&owner, nullptr, nullptr, &created) == 0 && created == 1, "sceNpSignalingCreateContext", "termination did not release the contexts and restart the ids at 1");
     Require(sceNpSignalingTerminate() == 0, "sceNpSignalingTerminate", "the second termination failed");
+    Require(sceNpSignalingTerminate() == NotInitialized, "sceNpSignalingTerminate", "terminating when already terminated did not return NOT_INITIALIZED");
+    Require(sceNpSignalingDeleteContext(1) == NotInitialized, "sceNpSignalingDeleteContext", "deleting context post-termination did not return NOT_INITIALIZED");
+    Require(sceNpSignalingActivateConnection(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingActivateConnection", "activating connection post-termination did not return NOT_INITIALIZED");
+    Require(sceNpSignalingTerminateConnection(1, 1) == NotInitialized, "sceNpSignalingTerminateConnection", "terminating connection post-termination did not return NOT_INITIALIZED");
+    Require(sceNpSignalingDeactivateConnection(1, 1) == NotInitialized, "sceNpSignalingDeactivateConnection", "deactivating connection post-termination did not return NOT_INITIALIZED");
+    Require(sceNpSignalingGetConnectionInfo(1, 1, 1, nullptr) == NotInitialized, "sceNpSignalingGetConnectionInfo", "getting connection info post-termination did not return NOT_INITIALIZED");
 
     if (failures != 0) return 1;
     std::puts("NpSignaling offline tests passed");

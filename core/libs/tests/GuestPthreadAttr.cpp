@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -53,15 +54,45 @@ static ReportedAttributes Query(Pthread thread) {
 
 static void CheckStackSizeLimit() {
     PthreadAttr attr = nullptr;
+    PthreadAttr unset = nullptr;
+    Require(scePthreadAttrSetstacksize(nullptr, MIN_STACK_SIZE) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetstacksize(&unset, MIN_STACK_SIZE) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     std::size_t stackSize = 0;
     Require(scePthreadAttrSetstacksize(&attr, MIN_STACK_SIZE) == SCE_OK);
     Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
-    Require(scePthreadAttrSetstacksize(&attr, MIN_STACK_SIZE - 1) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadAttrSetstacksize(&attr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    for (const std::size_t rejected : std::array<std::size_t, 6>{0, 1, 512, 4096, 8192, MIN_STACK_SIZE - 1}) {
+        Require(scePthreadAttrSetstacksize(&attr, rejected) == SCE_KERNEL_ERROR_EINVAL);
+        Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
+    }
     Require(pthread_attr_setstacksize_nid_postfix(&attr, MIN_STACK_SIZE - 1) == GUEST_EINVAL);
     Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    Require(scePthreadAttrSetstacksize(&attr, MIN_STACK_SIZE) == SCE_KERNEL_ERROR_EINVAL);
+}
+
+static void CheckGuardSize() {
+    PthreadAttr attr = nullptr;
+    std::size_t guardSize = 0;
+    PthreadAttr unset = nullptr;
+    Require(scePthreadAttrGetguardsize(nullptr, &guardSize) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetguardsize(&unset, &guardSize) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetguardsize(nullptr, 4096) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetguardsize(&unset, 4096) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(scePthreadAttrInit(&attr) == SCE_OK);
+    Require(scePthreadAttrGetguardsize(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == 4096);
+
+    for (const std::size_t size : std::array<std::size_t, 5>{0, 4096, 8192, 16384, 65536}) {
+        Require(scePthreadAttrSetguardsize(&attr, size) == SCE_OK);
+        guardSize = 0;
+        Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_OK && guardSize == size);
+    }
+
+    Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    Require(scePthreadAttrGetguardsize(&attr, &guardSize) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetguardsize(&attr, 4096) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 static void CheckSoloSched() {
@@ -134,18 +165,27 @@ static void* APS5_VABI Worker(void* arg) {
 static void CheckSchedulingAttributes() {
     int inherit = -1;
     int scope = -1;
+    PthreadAttr unset = nullptr;
     Require(pthread_attr_getinheritsched_nid_postfix(nullptr, &inherit) == GUEST_EINVAL);
     Require(pthread_attr_setinheritsched_nid_postfix(nullptr, EXPLICIT_SCHED) == GUEST_EINVAL);
     Require(pthread_attr_getscope_nid_postfix(nullptr, &scope) == GUEST_EINVAL);
     Require(pthread_attr_setscope_nid_postfix(nullptr, SCOPE_SYSTEM) == GUEST_EINVAL);
+    Require(scePthreadAttrGetinheritsched(nullptr, &inherit) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetinheritsched(&unset, &inherit) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetinheritsched(nullptr, EXPLICIT_SCHED) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetinheritsched(&unset, EXPLICIT_SCHED) == SCE_KERNEL_ERROR_EINVAL);
 
     PthreadAttr attr = nullptr;
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == GUEST_EINVAL);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, EXPLICIT_SCHED) == GUEST_EINVAL);
     Require(pthread_attr_getscope_nid_postfix(&attr, &scope) == GUEST_EINVAL);
     Require(pthread_attr_setscope_nid_postfix(&attr, SCOPE_SYSTEM) == GUEST_EINVAL);
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_KERNEL_ERROR_EINVAL);
 
     Require(scePthreadAttrInit(&attr) == SCE_OK);
+    Require(scePthreadAttrGetinheritsched(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_OK && inherit == INHERIT_SCHED);
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == 0 && inherit == INHERIT_SCHED);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, 1) == GUEST_ENOTSUP);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, -1) == GUEST_ENOTSUP);
@@ -153,6 +193,19 @@ static void CheckSchedulingAttributes() {
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == 0 && inherit == EXPLICIT_SCHED);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, INHERIT_SCHED) == 0);
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == 0 && inherit == INHERIT_SCHED);
+
+    Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_OK);
+    inherit = -1;
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_OK && inherit == EXPLICIT_SCHED);
+    Require(scePthreadAttrSetinheritsched(&attr, INHERIT_SCHED) == SCE_OK);
+    inherit = -1;
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_OK && inherit == INHERIT_SCHED);
+
+    for (const int rejected : {-1, 1, 2, 3, 5, 8, 16, 100}) {
+        Require(scePthreadAttrSetinheritsched(&attr, rejected) == SCE_KERNEL_ERROR_EOPNOTSUPP);
+        inherit = -1;
+        Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_OK && inherit == INHERIT_SCHED);
+    }
 
     Require(pthread_attr_getscope_nid_postfix(&attr, &scope) == 0 && scope == SCOPE_SYSTEM);
     Require(pthread_attr_setscope_nid_postfix(&attr, 1) == GUEST_EINVAL);
@@ -165,20 +218,15 @@ static void CheckSchedulingAttributes() {
 
     Require(pthread_attr_getscope_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
 
-    bool threw = false;
-    try {
-        pthread_attr_getinheritsched_nid_postfix(&attr, nullptr);
-
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(pthread_attr_getinheritsched_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
 
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == GUEST_EINVAL);
     Require(pthread_attr_setinheritsched_nid_postfix(&attr, EXPLICIT_SCHED) == GUEST_EINVAL);
     Require(pthread_attr_getscope_nid_postfix(&attr, &scope) == GUEST_EINVAL);
     Require(pthread_attr_setscope_nid_postfix(&attr, SCOPE_SYSTEM) == GUEST_EINVAL);
+    Require(scePthreadAttrGetinheritsched(&attr, &inherit) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 static void CheckThreadScope() {
@@ -196,6 +244,8 @@ static void CheckThreadScope() {
     PthreadAttr queryAttr = nullptr;
     Require(scePthreadAttrInit(&queryAttr) == SCE_OK);
     Require(scePthreadAttrGet(thread, &queryAttr) == SCE_OK);
+    int reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == EXPLICIT_SCHED);
     int scope = -1;
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_PROCESS);
 
@@ -218,10 +268,15 @@ static void CheckThreadScope() {
 
     Require(scePthreadAttrInit(&queryAttr) == SCE_OK);
     Require(scePthreadAttrGet(inheritedThread, &queryAttr) == SCE_OK);
+    reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == INHERIT_SCHED);
     scope = -1;
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_SYSTEM);
+    Require(pthread_attr_setinheritsched_nid_postfix(&queryAttr, EXPLICIT_SCHED) == 0);
     Require(pthread_attr_get_np_nid_postfix(inheritedThread, &queryAttr) == 0);
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_SYSTEM);
+    reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == INHERIT_SCHED);
     Require(scePthreadAttrDestroy(&queryAttr) == SCE_OK);
 
     releaseInherited.set_value();
@@ -319,8 +374,25 @@ static void CheckEndedThreads() {
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
 }
 
+static void CheckGetprioOfTheCallingThread() {
+    const Pthread self = scePthreadSelf();
+    int original = 0;
+    Require(scePthreadGetprio(self, &original) == SCE_OK);
+    int priority = 0;
+    Require(scePthreadSetprio(self, UPDATED_PRIORITY) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == UPDATED_PRIORITY);
+    Require(scePthreadSetprio(self, CREATION_PRIORITY) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == CREATION_PRIORITY);
+    Require(scePthreadGetprio(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadSetprio(self, original) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
+}
+
 int main() {
+    CheckGetprioOfTheCallingThread();
     CheckStackSizeLimit();
+    CheckGuardSize();
     CheckSoloSched();
     CheckSchedArguments();
     CheckSchedulingAttributes();
@@ -346,6 +418,11 @@ int main() {
     Require(reported.stackSize == STACK_SIZE);
     Require(reported.detachState == DETACH_JOINABLE);
 
+    for (const int rejected : {-1, 0, 255, 768, 895, 960, 1023, 131840}) Require(scePthreadSetprio(thread, rejected) == SCE_KERNEL_ERROR_EINVAL);
+    for (const int accepted : {256, 900, 959, 65792, -65280}) {
+        Require(scePthreadSetprio(thread, accepted) == SCE_OK);
+        Require(Query(thread).priority == accepted);
+    }
     Require(scePthreadSetprio(thread, UPDATED_PRIORITY) == SCE_OK);
     Require(scePthreadSetaffinity(thread, UPDATED_AFFINITY) == SCE_OK);
     reported = Query(thread);

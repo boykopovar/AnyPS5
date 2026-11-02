@@ -79,7 +79,16 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         throw std::runtime_error("unsupported optional header magic");
     }
 
+    const std::size_t fixedOptionalSize = dataDirectoryOffset - optionalHeaderOffset;
+    if (sizeOfOptionalHeader < fixedOptionalSize) throw std::runtime_error("truncated optional header");
+    std::size_t directoryCount = 0u;
+    if (sizeOfOptionalHeader >= fixedOptionalSize + sizeof(std::uint32_t)) {
+        const auto declared = Read<std::uint32_t>(pe, optionalHeaderOffset + fixedOptionalSize - sizeof(std::uint32_t));
+        directoryCount = std::min<std::size_t>(declared, (sizeOfOptionalHeader - fixedOptionalSize) / sizeof(PeDataDirectory));
+    }
+
     if (!options.executable) {
+        if (directoryCount < 1u) throw std::runtime_error("no export directory");
         const auto exportDir = Read<PeDataDirectory>(pe, dataDirectoryOffset);
         if (exportDir.VirtualAddress == 0u) throw std::runtime_error("no export directory");
 
@@ -238,7 +247,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     }
 
     constexpr std::size_t kImportDirIndex = 1u;
-    if (dataDirectoryOffset + (kImportDirIndex + 1u) * sizeof(PeDataDirectory) > pe.size())
+    if (directoryCount < kImportDirIndex + 1u)
         return;
 
     const auto importDir = Read<PeDataDirectory>(pe, dataDirectoryOffset + kImportDirIndex * sizeof(PeDataDirectory));
@@ -253,12 +262,6 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         std::uint32_t FirstThunk;
     };
 
-    if (options.executable) {
-        for (const auto index : {4u, 11u, 13u}) {
-            const auto directory = Read<PeDataDirectory>(pe, dataDirectoryOffset + index * sizeof(PeDataDirectory));
-            if (directory.VirtualAddress || directory.Size) throw std::runtime_error("signed, bound or delay-loaded PE imports are not supported in --exec mode");
-        }
-    }
     struct ImportUse {
         std::size_t NameOffset;
         std::size_t LookupOffset;
@@ -315,19 +318,28 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         importDescOffset += sizeof(PeImportDescriptor);
     }
     const auto importMap = ResolveImportNids(importNames, excludedExports, options);
-    if (!options.executable) {
-        for (const auto& item : imports) {
-            const auto& name = importMap.at(item.Name);
-            if (name.size() > item.Name.size()) throw std::runtime_error("import NID longer than original name: " + item.Name);
-            std::memcpy(pe.data() + item.NameOffset, name.c_str(), name.size() + 1);
-        }
-        return;
+    const auto fitsInPlace = [&](const ImportUse& item) {
+        return !options.executable && importMap.at(item.Name).size() <= item.Name.size();
+    };
+    const bool growsImports = options.executable || std::any_of(imports.begin(), imports.end(), [&](const ImportUse& item) {
+        return !fitsInPlace(item) && importMap.at(item.Name) != item.Name;
+    });
+    for (const auto index : {4u, 11u, 13u}) {
+        if (index >= directoryCount) continue;
+        const auto directory = Read<PeDataDirectory>(pe, dataDirectoryOffset + index * sizeof(PeDataDirectory));
+        if (growsImports && (directory.VirtualAddress || directory.Size))
+            throw std::runtime_error("signed, bound or delay-loaded PE imports are not supported when import names move to a new section");
+    }
+    for (const auto& item : imports) {
+        if (!fitsInPlace(item)) continue;
+        const auto& name = importMap.at(item.Name);
+        std::memcpy(pe.data() + item.NameOffset, name.c_str(), name.size() + 1);
     }
     std::vector<std::uint8_t> strings;
     std::unordered_map<std::string, std::uint32_t> stringOffsets;
     for (const auto& item : imports) {
         const auto& name = importMap.at(item.Name);
-        if (name == item.Name || stringOffsets.contains(name)) continue;
+        if (name == item.Name || fitsInPlace(item) || stringOffsets.contains(name)) continue;
         if (strings.size() & 1u) strings.push_back(0);
         if (strings.size() > 0xffffffffu - name.size() - 3u) throw std::runtime_error("PE import string table overflow");
         stringOffsets.emplace(name, static_cast<std::uint32_t>(strings.size()));
@@ -372,7 +384,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     Write(pe, optionalHeaderOffset + 64u, std::uint32_t{0});
     for (const auto& item : imports) {
         const auto& name = importMap.at(item.Name);
-        if (name == item.Name) continue;
+        if (name == item.Name || fitsInPlace(item)) continue;
         const auto rva = section.VirtualAddress + stringOffsets.at(name);
         for (const auto offset : {item.LookupOffset, item.AddressOffset}) {
             if (magic == 0x20bu) Write(pe, offset, std::uint64_t{rva});

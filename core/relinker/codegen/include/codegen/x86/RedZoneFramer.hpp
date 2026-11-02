@@ -22,6 +22,9 @@ struct RedZoneFrameReport {
     std::size_t Framed = 0;
     std::size_t FramedWithoutFramePointer = 0;
     std::size_t Exits = 0;
+    std::size_t WidenedPrologues = 0;
+    std::size_t WidenedExits = 0;
+    std::size_t WidenedOperands = 0;
     std::size_t MovedOperands = 0;
     std::size_t OperandStubs = 0;
     std::size_t StubbedOperands = 0;

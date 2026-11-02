@@ -16,13 +16,14 @@ def fixture(second_code: bytes, with_import: bool = False) -> bytearray:
     image[0x210:0x215] = b"\xe9\xfb\x05\x00\x00"
     image[0x800:0x800 + len(second_code)] = second_code
     struct.pack_into("<QQq", image, 0x700, 0x310, 8, 0x1210)
-    tags = ([(1, 4), (5, 0x600), (10, 12), (6, 0x620), (11, 24)] if with_import else
+    tags = ([(1, 5), (5, 0x600), (10, 12), (6, 0x620), (11, 24)] if with_import else
             [(5, 0x600), (10, 1), (6, 0x620), (11, 24)])
     tags += [
             (7, 0x700), (8, 48 if with_import else 24), (9, 24), (0, 0)]
     if with_import:
         tags.insert(-1, (0x6100003f, 48))
-        image[0x600:0x600 + len(b"foo\x00lib.so\x00")] = b"foo\x00lib.so\x00"
+        image[0x600:0x600 + len(b"\x00foo\x00lib.so\x00")] = b"\x00foo\x00lib.so\x00"
+        struct.pack_into("<I", image, 0x638, 1)
         struct.pack_into("<QQq", image, 0x718, 0x300, (1 << 32) | 6, 0)
     struct.pack_into("<IIQQQQQQ", image, 64,
                      1, 6, 0, 0, 0, 0x800, 0x800, 0x1000)
@@ -131,6 +132,78 @@ def main():
                                         capture_output=True, text=True, timeout=20)
                 assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr, (name, options, result)
                 assert not output.exists(), (name, options)
+
+        phdr3 = {"flags": (4, "I"), "offset": (8, "Q"), "address": (16, "Q"),
+                 "paddr": (24, "Q"), "filesz": (32, "Q"), "memsz": (40, "Q")}
+
+        def overlap_image(previous_file, previous_memory, extra=b"", **later):
+            image = fixture(b"\x90\xc3")
+            image += bytes(extra)
+            struct.pack_into("<Q", image, 176 + 32, previous_file)
+            struct.pack_into("<Q", image, 176 + 40, previous_memory)
+            for field, value in later.items():
+                offset, code = phdr3[field]
+                struct.pack_into("<" + code, image, 232 + offset, value)
+            return image
+
+        def load_segments(data):
+            phoff = struct.unpack_from("<Q", data, 32)[0]
+            phnum = struct.unpack_from("<H", data, 56)[0]
+            segments = []
+            for index in range(phnum):
+                kind, flags, _, address, _, _, memory, _ = struct.unpack_from("<IIQQQQQQ", data, phoff + index * 56)
+                if kind == 1 and memory:
+                    segments.append((address, memory, flags))
+            return sorted(segments)
+
+        def relink(image, options, name):
+            source = work / (name + ".elf")
+            source.write_bytes(bytes(image))
+            output = work / (name + ".out")
+            if output.exists():
+                output.unlink()
+            result = subprocess.run([str(relinker), "--skip-sce-module", "--skip-syscall-check",
+                                     *options, str(source), str(output)], capture_output=True, text=True, timeout=20)
+            return result, output
+
+        for name, image in (("congruent-tail-overlap", overlap_image(0x602, 0x602)),
+                            ("congruent-bss-overlap", overlap_image(0x20, 0x602, filesz=0, memsz=2))):
+            for options in image_targets:
+                result, output = relink(image, options, name)
+                assert result.returncode == 0 and output.exists(), (name, options, result.stdout, result.stderr)
+            result, linux_output = relink(image, [], name + "-linux")
+            segments = load_segments(linux_output.read_bytes())
+            assert all(a[0] + a[1] <= b[0] for a, b in zip(segments, segments[1:])), (name, segments)
+            assert any(memory == 0x600 for _, memory, _ in segments), (name, segments)
+
+        for name, image in (("overlap-differing-bytes", overlap_image(0x602, 0x602, offset=0x810)),
+                            ("overlap-past-later-end", overlap_image(0x700, 0x700)),
+                            ("overlap-nonzero-over-bss", overlap_image(0x602, 0x602, filesz=0, memsz=2)),
+                            ("overlap-bss-over-nonzero-file", overlap_image(0x20, 0x602)),
+                            ("overlap-same-start", overlap_image(0x20, 0x20, address=0x1200, paddr=0x1200, offset=0x200, filesz=0x40, memsz=0x40)),
+                            ("overlap-write-execute-unaligned", overlap_image(0x602, 0x602, flags=6))):
+            for options in image_targets:
+                result, output = relink(image, options, name)
+                assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr \
+                    and not output.exists(), (name, options, result.stdout, result.stderr)
+
+        aligned = overlap_image(0xe02, 0xe02, extra=bytes(0x2000),
+                                flags=6, offset=0x1000, address=0x2000, paddr=0x2000, filesz=2, memsz=2)
+        for options in image_targets:
+            result, output = relink(aligned, options, "overlap-write-execute-aligned")
+            assert result.returncode == 0 and output.exists(), (options, result.stdout, result.stderr)
+        result, windows = relink(aligned, ["--windows"], "overlap-write-execute-aligned-windows")
+        data = windows.read_bytes()
+        lfanew = struct.unpack_from("<I", data, 0x3c)[0]
+        table = lfanew + 24 + struct.unpack_from("<H", data, lfanew + 20)[0]
+        for index in range(struct.unpack_from("<H", data, lfanew + 6)[0]):
+            characteristics = struct.unpack_from("<I", data, table + index * 40 + 36)[0]
+            assert not (characteristics & 0x80000000 and characteristics & 0x20000000), (index, hex(characteristics))
+
+        result, output = relink(fixture(b"\x90\xc3"), [], "no-overlap-control")
+        assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
+        control = load_segments(output.read_bytes())
+        assert any(memory == 0x20 for _, memory, _ in control) and any(memory == 2 for _, memory, _ in control), control
     print("Executable segment tests passed")
 
 

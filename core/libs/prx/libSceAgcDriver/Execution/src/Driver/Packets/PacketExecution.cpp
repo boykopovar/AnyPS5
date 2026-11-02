@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
@@ -10,6 +11,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include <atomic>
@@ -24,6 +26,24 @@ namespace AgcDriver::DriverDetail {
 namespace {
 
 constexpr std::uint32_t eopSelfSignalFlipLimit = 4;
+
+struct RingOrder {
+    std::uint32_t queue = 0xffffffffu;
+    std::uint64_t serial = 0;
+    bool afterDispatch = false;
+};
+
+thread_local RingOrder ringOrder;
+
+void noteRingPacket(std::uint32_t queueId, std::uint64_t serial, std::uint32_t opcode, std::uint32_t header) {
+    if (ringOrder.queue != queueId || ringOrder.serial != serial) ringOrder = {queueId, serial, false};
+    if (opcode == 0x15 || opcode == 0x16 || opcode == 0x76) return;
+    if (opcode == 0x10) {
+        const auto sub = (header >> 2u) & 0x3fu;
+        if ((header & 0xfcu) == 0 || sub == 0x0b || sub == 0x0c) return;
+    }
+    ringOrder.afterDispatch = false;
+}
 
 bool orderedFills() {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_FILLS") == nullptr;
@@ -61,18 +81,18 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
             if (packet.size() < 7) return false;
             const auto destination = Pm4::DmaDestination(packet);
             if (destination == Pm4::DmaDestinationNowhere) return true;
-            if (destination == Pm4::DmaSelectGds) return true;
             const auto bytes = Pm4::DmaBytes(packet);
             if (bytes == 0) return true;
             const auto source = Pm4::DmaSource(packet);
             if ((source == 0 || source == 3) && DrawPipeline::Queue0().Overlaps(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u), bytes)) return false;
-            const auto address = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
+            if (source == Pm4::DmaSelectGds && DrawPipeline::Queue0().Overlaps(Pm4::GdsAddress() + packet[2], bytes)) return false;
+            const auto address = destination == Pm4::DmaSelectGds ? Pm4::GdsAddress() + packet[4] : packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
             return !DrawPipeline::Queue0().Overlaps(address, bytes);
         }
         case 0x3c: case 0x93: {
             if (packet.size() < 5) return false;
-            const std::uint64_t awaited = packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u);
             const auto bytes = Pm4::WaitAwaitedBytes(packet);
+            const std::uint64_t awaited = (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
             if (DrawPipeline::Queue0().Overlaps(awaited, bytes)) return false;
             GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), bytes, bytes);
             return Pm4::WaitSatisfiedUnchecked(packet);
@@ -271,7 +291,9 @@ void Driver::execute(const Submission& submission) {
         }
         if (APS5_ENABLE_TIMING_LOG && submission.queue == 0 && pendingFrameTiming == nullptr) includeTimingSubmission(submission, false);
         PerformanceContext timingContext(submission.queue == 0 ? pendingFrameTiming.get() : FrameTiming::Async());
+        if (submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled()) noteRingPacket(submission.queue, submission.serial, opcode, header);
         PerformanceTimer timing("Driver.Packet");
+        if (!predicated) noteLabelIssue(packet, submission.queue);
         if (pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && (enqueueLabelPacket(packet, opcode, submission.queue) || enqueueDmaPacket(packet, opcode, submission.queue, queue))) {
             traceLabel(packet, submission.queue);
             recent.Record(cursor);
@@ -285,14 +307,16 @@ void Driver::execute(const Submission& submission) {
             if (value.has_value() && Pm4::WaitComparesValue(packet, *value)) {
                 ++waitOutcomes().fromRecorderSameQueue;
                 gateOpened() = true;
+                noteLabelPass(packet, submission.queue);
                 recent.Record(cursor);
                 cursor = nextCursor;
                 continue;
             }
-            if (!DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) && Pm4::WaitSatisfiedUnchecked(packet)) {
+            if (!DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) && Pm4::WaitSatisfiedUnchecked(packet) && !OwnStoreRejects(packet, awaited, awaitedBytes, submission.queue)) {
                 bumpEpoch(&EpochBumps::waits);
                 ++waitOutcomes().atEntry;
                 gateOpened() = true;
+                noteLabelPass(packet, submission.queue);
                 recent.Record(cursor);
                 cursor = nextCursor;
                 continue;
@@ -315,6 +339,7 @@ void Driver::execute(const Submission& submission) {
                 cursor = opcode == 0x3f ? submission.conditionalEnds.at(cursor) : nextCursor;
                 continue;
             }
+            noteLabelIssue(packet, submission.queue);
         }
         if (opcode == 0x3f) {
             cursor = nextCursor;
@@ -406,8 +431,19 @@ void Driver::execute(const Submission& submission) {
             }
             if (!flipInterruptDeferred) deliverFlipEopInterrupt(submission.queue);
             ++flipsCounted;
+            Graphics::NoteHostImportFrame();
             if (batchesAtFlip != 0) flipSerial = batchesAtFlip;
             flipBatchesUnsignaled += unsignaledAtFlip;
+            if (Graphics::AbConfigured()) {
+                static const auto abClock = std::chrono::steady_clock::now();
+                std::vector<std::string> abLines;
+                {
+                    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
+                    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                    abLines = Graphics::AbAtPresent(flipsCounted.load(), std::chrono::duration<double>(std::chrono::steady_clock::now() - abClock).count());
+                }
+                for (const auto& line : abLines) AgcDriver::ProfilePrint_nid_no_patch("%s", line.c_str());
+            }
 
             timing.Mark("flip_flush");
             timing.FinishPacket(submission.serial, cursor, 0xffffu, count);
@@ -433,6 +469,15 @@ void Driver::execute(const Submission& submission) {
                     timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
                 }
             }
+            const bool ringOverlap = submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled();
+            if (ringOverlap) Graphics::Recorder::SetDispatchOrder(submission.queue + 1u, ringOrder.afterDispatch);
+            struct ClearOrder {
+                bool active;
+                ~ClearOrder() {
+                    if (active) Graphics::Recorder::SetDispatchOrder(0, false);
+                }
+            } clearOrder{ringOverlap};
+            if (ringOverlap) ringOrder.afterDispatch = true;
             if (opcode == 0x15) timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
             else timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
             Pm4::NoteDispatchRegisters(packet, queue);
@@ -442,6 +487,7 @@ void Driver::execute(const Submission& submission) {
             static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
             const auto waitStart = traceGpu ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             timed(&WorkerProfile::waitMs, [&] { waitMemory(packet, submission.queue, recent, submission.received, submission.heldAtSubmit.contains(cursor)); });
+            noteLabelPass(packet, submission.queue);
             gateOpened() = true;
             if (traceGpu && std::chrono::steady_clock::now() - waitStart > std::chrono::milliseconds(200)) {
 

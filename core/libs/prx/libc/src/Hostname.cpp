@@ -6,7 +6,7 @@
 #include <cstring>
 
 extern "C" int APS5_VABI gethostname_nid_postfix(char* name, std::size_t length) {
-    constexpr char hostname[] = "AnyPS5";
+    constexpr char hostname[] = "";
     if (name == nullptr) return 0;
     const int savedError = errno;
     const auto count = std::min(length, sizeof(hostname));

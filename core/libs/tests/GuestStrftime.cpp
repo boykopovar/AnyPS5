@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include <cstddef>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -79,6 +80,23 @@ int main() {
         char name[24];
         std::snprintf(name, sizeof(name), "index %d", value);
         Check(name, time, "%a|%A|%b|%B|%m|%u|%w", expected[value + 3]);
+    }
+
+    struct WrappedName {
+        int value;
+        const char* expected;
+    };
+    constexpr WrappedName wrapped[] = {
+        {-2147483647 - 1, "Sun|Sunday|Jan|January"}, {-1884104312, "|||"}, {-1073741825, "|||"}, {-1073741824, "Sun|Sun|Jan|Jan"},
+        {536870912, "|||"}, {1073741823, "|||"}, {1073741824, "Sun|Sun|Jan|Jan"}, {1526330116, "Sun|Sun|Jan|Jan"}, {2147483647, "Sun|Sun|Jan|Jan"},
+    };
+    for (const auto& item : wrapped) {
+        GuestTm time = base;
+        time.tm_wday = item.value;
+        time.tm_mon = item.value;
+        char name[32];
+        std::snprintf(name, sizeof(name), "wrapped index %d", item.value);
+        Check(name, time, "%a|%A|%b|%B", item.expected);
     }
 
     struct Field {
@@ -165,7 +183,7 @@ int main() {
     constexpr Iso outOfRangeWeeks[] = {
         {126, 0, 11, -2, 10, "01|01"}, {126, 1, 5, 4, 400, "57|57"}, {126, 3, 11, -19, 100, "16|16"}, {126, 9, 5, -16, 277, "40|41"},
         {126, 0, 19, -12, 18, "04|04"}, {126, 0, 1, 6, 1365, "95|95"}, {97, 0, 1, 6, 415, "59|59"}, {113, 11, 31, 1, 365, "53|53"},
-        {7, 11, 31, 1, 365, "53|53"}, {126, 9, 24, 6, 296, "42|42"},
+        {7, 11, 31, 1, 365, "53|53"}, {126, 9, 24, 6, 296, "42|42"}, {126, 0, 1, 5, INT_MAX, "00|00"}, {126, 0, 1, INT_MAX, 10, "02|03"},
     };
     for (const auto& week : outOfRangeWeeks) {
         GuestTm time = base;
@@ -177,6 +195,24 @@ int main() {
         char name[48];
         std::snprintf(name, sizeof(name), "week number wday %d yday %d", week.wday, week.yday);
         Check(name, time, "%U|%W", week.expected);
+    }
+
+    constexpr Iso outOfRangeIsoWeeks[] = {
+        {126, 0, 1, 5, -25, "2027|27|01"}, {126, 0, 1, 5, -13, "2025|25|00"}, {126, 0, 1, 5, -1, "2025|25|52"},
+        {126, 1, 5, 4, 400, "2027|27|01"}, {97, 0, 1, 6, 415, "1997|97|59"}, {113, 11, 31, 1, 365, "2013|13|53"},
+        {126, 0, 19, -12, 18, "2026|26|04"}, {100, 11, 28, 1, 362, "2001|01|01"}, {INT_MAX, 0, 1, 4, 400, "0000|52|01"},
+        {INT_MIN, 0, 1, 5, -13, "5547|47|00"},
+    };
+    for (const auto& week : outOfRangeIsoWeeks) {
+        GuestTm time = base;
+        time.tm_year = week.year;
+        time.tm_mon = week.mon;
+        time.tm_mday = week.mday;
+        time.tm_wday = week.wday;
+        time.tm_yday = week.yday;
+        char name[64];
+        std::snprintf(name, sizeof(name), "ISO week %d wday %d yday %d", week.year, week.wday, week.yday);
+        Check(name, time, "%G|%g|%V", week.expected);
     }
 
     char text[8];
@@ -235,6 +271,13 @@ int main() {
     past.tm_wday = 7;
     past.tm_mon = 12;
     CheckAsctime("names past the tables", past, "   2 13:05:09 2026\n");
+    GuestTm wrappedNames = base;
+    wrappedNames.tm_wday = 1073741824;
+    wrappedNames.tm_mon = -1073741825;
+    CheckAsctime("wrapped names", wrappedNames, "Sun   2 13:05:09 2026\n");
+    wrappedNames.tm_wday = -1073741825;
+    wrappedNames.tm_mon = -2147483647 - 1;
+    CheckAsctime("wrapped names from INT_MIN", wrappedNames, " Jan  2 13:05:09 2026\n");
     GuestTm big = base;
     big.tm_mday = 40;
     big.tm_hour = 25;

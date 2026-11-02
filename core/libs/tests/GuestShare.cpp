@@ -13,6 +13,17 @@ void Require(bool value) { if (!value) std::abort(); }
 }
 
 int main() {
+    Require(sceShareInitialize(0, 0, 0) == 0);
+    Require(sceShareFeaturePermit(0) == 0);
+    Require(sceShareFeaturePermit(1) == 0);
+    Require(sceShareFeatureProhibit(0) == 0);
+    Require(sceShareFeatureProhibit(1) == 0);
+    Require(sceShareRegisterContentEventCallback(nullptr, nullptr) == 0);
+    Require(sceShareUnregisterContentEventCallback(nullptr) == 0);
+    Require(sceShareSetCaptureSource(0, nullptr) == 0);
+    Require(sceShareSetContentParam(nullptr) == 0);
+    Require(sceShareSetContentParam("test") == 0);
+    Require(sceShareSetScreenshotOverlayImage(nullptr, 0, 0, 0) == 0);
     constexpr std::int32_t notSupported = static_cast<std::int32_t>(0x81960007);
     std::uint8_t param[64]{};
 
@@ -75,5 +86,6 @@ int main() {
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == 0);
     title.push_back('a');
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == invalidParam);
+    Require(sceShareTerminate() == 0);
     return 0;
 }

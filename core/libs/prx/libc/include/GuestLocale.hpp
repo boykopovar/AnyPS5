@@ -5,10 +5,18 @@
 #include <cstdint>
 #include "general/VabiMacros.hpp"
 
+struct GuestTm;
+
 namespace GuestLocale {
 
 struct LocinfoStorage {
     alignas(std::uint64_t) unsigned char bytes[64];
+};
+
+struct SceV2Locinfo {
+    std::uint64_t reserved;
+    const char* name;
+    const char* classicName;
 };
 
 struct Facet;
@@ -24,6 +32,30 @@ struct Facet {
     const FacetVtable* vtable;
     std::uint32_t references;
     std::uint32_t reserved;
+};
+
+struct TimeInfo {
+    const char* amPm;
+    const char* days;
+    const char* abbreviatedDays;
+    const char* fullDays;
+    const char* months;
+    const char* abbreviatedMonths;
+    const char* fullMonths;
+    const char* formats;
+    const char* dateTimeFormat;
+    const char* dateFormat;
+    const char* timeFormat;
+    const char* timeFormatAmPm;
+    const char* eraFormats;
+    const char* eraDateTimeFormat;
+    const char* eraDateFormat;
+    const char* eraTimeFormat;
+    const char* eraTimeFormatAmPm;
+    const char* era;
+    const char* alternativeDigits;
+    const char* daylightSaving;
+    const char* timeZone;
 };
 
 struct Implementation {
@@ -44,6 +76,9 @@ struct String {
     std::uint64_t size;
     std::uint64_t capacity;
 };
+
+void* AllocateStringStorage(std::size_t bytes);
+void ReleaseStringStorage(String& string);
 
 struct CollateFacet {
     Facet base;
@@ -87,9 +122,22 @@ struct NumpunctVtable {
     String* (APS5_VABI *truename)(String* result, const NumpunctFacet* self);
 };
 
-struct UnsupportedMethodsVtable {
+struct WideNumpunctFacet {
+    Facet base;
+    const char* grouping;
+    std::uint16_t decimalPoint;
+    std::uint16_t thousandsSep;
+    const std::uint16_t* falsename;
+    const std::uint16_t* truename;
+};
+
+struct WideNumpunctVtable {
     FacetVtable facet;
-    void (APS5_VABI *methods[8])();
+    std::uint16_t (APS5_VABI *decimalPoint)(const WideNumpunctFacet* self);
+    std::uint16_t (APS5_VABI *thousandsSep)(const WideNumpunctFacet* self);
+    String* (APS5_VABI *grouping)(String* result, const WideNumpunctFacet* self);
+    String* (APS5_VABI *falsename)(String* result, const WideNumpunctFacet* self);
+    String* (APS5_VABI *truename)(String* result, const WideNumpunctFacet* self);
 };
 
 struct IosBase {
@@ -106,12 +154,66 @@ struct IosBase {
     Implementation** locale;
 };
 
+struct Streambuf;
+
+struct StreambufVtable {
+    const void* reserved[4];
+    int (APS5_VABI *overflow)(Streambuf* self, int character);
+};
+
+struct Streambuf {
+    const StreambufVtable* vtable;
+    const void* reserved[7];
+    char** putNext;
+    const void* reservedCounts[3];
+    char** putEnd;
+};
+
+struct OutputIterator {
+    bool failed;
+    Streambuf* buffer;
+};
+
+struct TimePutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
+};
+
+struct NumPutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *putBool)(const Facet* self, OutputIterator out, IosBase* stream, char fill, bool value);
+    OutputIterator (APS5_VABI *putLong)(const Facet* self, OutputIterator out, IosBase* stream, char fill, std::int64_t value);
+    OutputIterator (APS5_VABI *putUnsignedLong)(const Facet* self, OutputIterator out, IosBase* stream, char fill, std::uint64_t value);
+    OutputIterator (APS5_VABI *putLongLong)(const Facet* self, OutputIterator out, IosBase* stream, char fill, std::int64_t value);
+    OutputIterator (APS5_VABI *putUnsignedLongLong)(const Facet* self, OutputIterator out, IosBase* stream, char fill, std::uint64_t value);
+    OutputIterator (APS5_VABI *putDouble)(const Facet* self, OutputIterator out, IosBase* stream, char fill, double value);
+    OutputIterator (APS5_VABI *putLongDouble)(const Facet* self, OutputIterator out, IosBase* stream, char fill, long double value);
+    OutputIterator (APS5_VABI *putPointer)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const void* value);
+};
+
+struct CtypeVtable {
+    FacetVtable facet;
+    const void* caseMethods[4];
+    char (APS5_VABI *widen)(const Facet* self, char character);
+    const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, char* destination);
+};
+
+static_assert(offsetof(StreambufVtable, overflow) == 0x20);
+static_assert(offsetof(Streambuf, putNext) == 0x40);
+static_assert(offsetof(Streambuf, putEnd) == 0x60);
+static_assert(sizeof(OutputIterator) == 0x10);
+static_assert(offsetof(TimePutVtable, put) == 0x20);
+static_assert(offsetof(NumPutVtable, putBool) == 0x20);
+static_assert(offsetof(NumPutVtable, putPointer) == 0x58);
+static_assert(offsetof(CtypeVtable, widenRange) == 0x48);
 static_assert(sizeof(Facet) == 0x10);
 static_assert(offsetof(Implementation, facets) == 0x10);
 static_assert(offsetof(Implementation, facetCount) == 0x18);
 static_assert(offsetof(Implementation, transparent) == 0x24);
 static_assert(offsetof(Implementation, name) == 0x28);
 static_assert(offsetof(IosBase, state) == 0x10);
+static_assert(offsetof(IosBase, precision) == 0x1c);
+static_assert(offsetof(IosBase, width) == 0x20);
 static_assert(offsetof(IosBase, storage) == 0x28);
 static_assert(offsetof(IosBase, callbacks) == 0x30);
 static_assert(offsetof(IosBase, locale) == 0x38);
@@ -133,8 +235,23 @@ static_assert(offsetof(NumpunctFacet, falsename) == 0x20);
 static_assert(offsetof(NumpunctFacet, truename) == 0x28);
 static_assert(offsetof(NumpunctVtable, decimalPoint) == 0x20);
 static_assert(offsetof(NumpunctVtable, truename) == 0x40);
+static_assert(sizeof(WideNumpunctFacet) == 0x30);
+static_assert(offsetof(WideNumpunctFacet, grouping) == 0x10);
+static_assert(offsetof(WideNumpunctFacet, decimalPoint) == 0x18);
+static_assert(offsetof(WideNumpunctFacet, thousandsSep) == 0x1a);
+static_assert(offsetof(WideNumpunctFacet, falsename) == 0x20);
+static_assert(offsetof(WideNumpunctFacet, truename) == 0x28);
+static_assert(offsetof(WideNumpunctVtable, decimalPoint) == 0x20);
+static_assert(offsetof(WideNumpunctVtable, truename) == 0x40);
 static_assert(alignof(LocinfoStorage) == 8);
+static_assert(sizeof(SceV2Locinfo) == 24);
+static_assert(offsetof(SceV2Locinfo, name) == 8);
+static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 
 }
+
+inline constexpr std::size_t kNumPutCharVtableSlots = 14;
+static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
+extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
 
 #endif
