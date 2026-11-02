@@ -567,20 +567,20 @@ std::int64_t APS5_VABI readlinkat_nid_postfix(int fd, const char* path, char* bu
     if (size > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) return Fail(GuestEinval);
     std::string copy;
     if (const int error = CopyPath(path, copy)) return Fail(error);
-    if (fd == GuestAtFdcwd || *path == '/') return readlink_nid_postfix(path, buffer, size);
+    if (fd == GuestAtFdcwd || copy[0] == '/') return readlink_nid_postfix(copy.c_str(), buffer, size);
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
     if (base == nullptr) return Fail(error);
     return ReadNativeLink(std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                          std::filesystem::path(reinterpret_cast<const char8_t*>(path)), buffer, size);
+                          std::filesystem::path(reinterpret_cast<const char8_t*>(copy.c_str())), buffer, size);
 }
 
 std::int64_t APS5_VABI pathconf_nid_postfix(const char* path, int name) {
     std::string copy;
     if (const int error = CopyPath(path, copy)) return Fail(error);
-    if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return Fail(GuestEnametoolong);
+    if (copy.size() >= GuestPathMax || HasLongComponent(copy.c_str())) return Fail(GuestEnametoolong);
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native)) return Fail(error);
+    if (const int error = ResolvePathError_nid_no_patch(copy.c_str(), native)) return Fail(error);
     std::error_code error;
     const auto status = std::filesystem::status(native, error);
     if (error) return Fail(error == std::errc::no_such_file_or_directory && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestError(error));
@@ -755,9 +755,9 @@ int APS5_VABI settimeofday_nid_postfix(const KernelTimeval* tv, const KernelTime
 int APS5_VABI chroot_nid_postfix(const char* path) {
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return static_cast<int>(Fail(GuestEnametoolong));
+    if (copy.size() >= GuestPathMax || HasLongComponent(copy.c_str())) return static_cast<int>(Fail(GuestEnametoolong));
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(path, native)) return static_cast<int>(Fail(error));
+    if (const int error = ResolvePathError_nid_no_patch(copy.c_str(), native)) return static_cast<int>(Fail(error));
     std::error_code error;
     const auto status = std::filesystem::status(native, error);
     if (status.type() == std::filesystem::file_type::not_found) return static_cast<int>(Fail(HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestEnoent));
