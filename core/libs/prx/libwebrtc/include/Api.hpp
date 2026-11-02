@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libwebrtc/include/AudioDecoder.hpp"
+#include "prx/libwebrtc/include/AudioEncoderEncodedInfo.hpp"
 #include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
 #include "prx/libwebrtc/include/AudioEncoder.hpp"
 #include "prx/libwebrtc/include/AudioFrame.hpp"
@@ -279,7 +280,7 @@ WebRtcAnaStats* APS5_VABI _ZNK6webrtc12AudioEncoder11GetANAStatsEv_nid_postfix(W
 void APS5_VABI _ZN6webrtc8ANAStatsC1Ev_nid_postfix(WebRtcAnaStats* stats);
 int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(void);
-int APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(WebRtcAudioEncoderEncodedInfo* self);
 int APS5_VABI _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(void);
