@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
-from test_guest_module_directories import module_with_symbol, needed_libraries
+from test_guest_module_directories import module_with_soname, module_with_symbol, needed_libraries
 
 
 NEEDED = b"needed.prx"
@@ -286,6 +286,22 @@ def main():
             assert not list((case / "app0").rglob("*.guest.prx"))
             if not windows:
                 assert needed_libraries(output.read_bytes()) == ["needed.prx"]
+
+            case = work / f"{windows}-debug-name-soname"
+            (case / "sce_module").mkdir(parents=True)
+            (case / "sce_module" / "needed.prx").write_bytes(module_with_symbol(True))
+            (case / "sce_module" / "needed.sprx").write_bytes(module_with_soname("needed.debug_prx"))
+            result, output = convert(case, windows, b"needed.debug_prx")
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            assert output.exists(), output
+
+            case = work / f"{windows}-debug-name-same-stem"
+            (case / "sce_module").mkdir(parents=True)
+            (case / "sce_module" / "needed.prx").write_bytes(module_with_symbol(True))
+            (case / "sce_module" / "needed.sprx").write_bytes(module_with_symbol(True))
+            result, output = convert(case, windows, b"needed.debug_prx")
+            assert result.returncode == 2 and "Ambiguous needed module: needed.debug_prx" in result.stderr, (result.stdout, result.stderr)
+            assert not output.exists(), output
 
             case = work / f"{windows}-ambiguous"
             for name in ("first", "second"):
