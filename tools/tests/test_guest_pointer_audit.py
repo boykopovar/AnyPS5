@@ -79,6 +79,14 @@ class AccessTests(unittest.TestCase):
             ("sceExampleFillValue", "p", ["index"]),
         ])
 
+    def test_format_strings_are_pointer_operands(self):
+        source = (
+            "int APS5_VABI sceExampleSn(const char* p) { char values[32]{}; return std::snprintf(values, sizeof(values), p, 1); }\n"
+            "int APS5_VABI sceExampleS(const char* p) { char values[32]{}; return sprintf(values, p, 1); }\n"
+            "int APS5_VABI sceExampleValue(const char* p) { char values[32]{}; return std::snprintf(values, sizeof(values), \"%p\", p); }\n"
+        )
+        self.assertEqual(findings(source), [("sceExampleSn", "p", ["library call"]), ("sceExampleS", "p", ["library call"])])
+
     def test_line_is_the_earliest_access_of_any_kind(self):
         entry, = guest_pointer_audit.audit_text(progress.code("int APS5_VABI sceExampleEarly(Info* p)\n{\n  p[0] = {};\n  p->field = 1;\n  return 0;\n}\n"))
         self.assertEqual((entry["line"], entry["kinds"]), (3, ["index", "member"]))
