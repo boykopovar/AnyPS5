@@ -139,16 +139,6 @@ int APS5_VABI ipmimgr_call_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI is_in_sandbox_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldload_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI kmq_notify_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -408,11 +398,6 @@ int APS5_VABI sceKernelAddResource(void) {
 }
 
 int APS5_VABI sceKernelAllocateDirectMemory2(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelAllocateDirectMemoryForApp(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1333,11 +1318,6 @@ int APS5_VABI sceKernelIsGenuineN(void) {
     return 1;
 }
 
-int APS5_VABI sceKernelIsInSandbox(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelIsM2DeviceAttached(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1493,11 +1473,6 @@ int APS5_VABI sceKernelPrepareToSuspendProcess(void) {
 }
 
 int APS5_VABI sceKernelProtectDirectMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelProtectDirectMemoryForPID(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2028,11 +2003,6 @@ int APS5_VABI scePthreadMutexInitForInternalLibc(PthreadMutex* mutex, const Pthr
     return SceResult(pthread_mutex_init_nid_postfix(mutex, attr));
 }
 
-int APS5_VABI scePthreadMutexIsowned(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI scePthreadMutexattrGetgen(const PthreadMutexattr* attr, int* generation) {
     return SceResult(pthread_mutexattr_getgen_np_nid_postfix(attr, generation));
 }
@@ -2144,17 +2114,7 @@ int APS5_VABI tcgetsid_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI tcsetsid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI unmount_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI utrace_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

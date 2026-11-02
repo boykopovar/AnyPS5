@@ -6,6 +6,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/RenameDot.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "tests/TemporaryFile.hpp"
@@ -173,6 +174,10 @@ static void TestParentTraversal() {
     checkInvalid("/" + root.generic_string() + "/missing/..", 2);
     checkInvalid(root.generic_string() + "/missing/../../" + root.generic_string(), 2);
     AddPathAlias_nid_no_patch("parent-test-mount", std::filesystem::absolute(root).string().c_str());
+    const char* missingCreateAlias = "/parent-test-mount/missing-create/";
+    Require(sceKernelOpen(missingCreateAlias, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0600) == SCE_KERNEL_ERROR_ENOENT);
+    Require(open_nid_postfix(missingCreateAlias, SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT, 0600) == -1 && *__error_nid_postfix() == 2);
+    Require(!std::filesystem::exists(root / "missing-create"));
     checkInvalid("/PARENT-TEST-MOUNT/missing/..", 2);
     checkInvalid("/parent-test-mount/present.txt/..", 20);
     FileStat status{};
@@ -789,6 +794,76 @@ int main() {
     Require(rename_nid_postfix(file.string().c_str(), renamed.string().c_str()) == -1);
     Require(*__error_nid_postfix() == 2);
     Require(rename_nid_postfix(renamed.string().c_str(), file.string().c_str()) == 0);
+    {
+        const auto linkedDirectory = root / "rename-linked-directory";
+        const auto emptyDirectory = root / "rename-empty-directory";
+        const auto directoryLink = root / "rename-directory.link";
+        const auto movingLink = root / "rename-moving.link";
+        const auto movingFile = root / "rename-moving.txt";
+        const auto occupiedFile = root / "rename-occupied.txt";
+        Require(std::filesystem::create_directory(linkedDirectory) && std::filesystem::create_directory(emptyDirectory));
+        { std::ofstream stream(linkedDirectory / "kept.txt"); stream << "kept"; }
+        { std::ofstream stream(movingFile); stream << "moved"; }
+        { std::ofstream stream(occupiedFile); stream << "occupied"; }
+#ifdef _WIN32
+        const DWORD directoryLinkFlags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE | SYMBOLIC_LINK_FLAG_DIRECTORY;
+        const bool renameLinked = CreateSymbolicLinkW(directoryLink.wstring().c_str(), L"rename-linked-directory", directoryLinkFlags) &&
+            CreateSymbolicLinkW(movingLink.wstring().c_str(), L"rename-linked-directory", directoryLinkFlags);
+#else
+        std::error_code renameLinkError;
+        std::filesystem::create_directory_symlink("rename-linked-directory", directoryLink, renameLinkError);
+        if (!renameLinkError) std::filesystem::create_directory_symlink("rename-linked-directory", movingLink, renameLinkError);
+        const bool renameLinked = !renameLinkError;
+#endif
+        if (renameLinked) {
+            Require(rename_nid_postfix(movingLink.string().c_str(), emptyDirectory.string().c_str()) == -1 && *__error_nid_postfix() == 21);
+            Require(std::filesystem::is_directory(emptyDirectory) && std::filesystem::is_empty(emptyDirectory));
+            Require(rename_nid_postfix(movingLink.string().c_str(), occupiedFile.string().c_str()) == 0);
+            Require(!std::filesystem::exists(movingLink) && std::filesystem::is_regular_file(occupiedFile / "kept.txt"));
+            Require(rename_nid_postfix(movingFile.string().c_str(), directoryLink.string().c_str()) == 0);
+            Require(!std::filesystem::exists(movingFile) && std::filesystem::is_regular_file(directoryLink));
+            { std::ifstream stream(directoryLink); std::string contents; std::getline(stream, contents); Require(contents == "moved"); }
+            Require(std::filesystem::is_regular_file(linkedDirectory / "kept.txt"));
+            Require(unlink_nid_postfix(directoryLink.string().c_str()) == 0);
+#ifdef _WIN32
+            Require(RemoveDirectoryW(occupiedFile.wstring().c_str()) != 0);
+#else
+            Require(unlink_nid_postfix(occupiedFile.string().c_str()) == 0);
+#endif
+        } else {
+#ifdef _WIN32
+            RemoveDirectoryW(movingLink.wstring().c_str());
+            RemoveDirectoryW(directoryLink.wstring().c_str());
+#else
+            unlink_nid_postfix(movingLink.string().c_str());
+            unlink_nid_postfix(directoryLink.string().c_str());
+#endif
+            unlink_nid_postfix(occupiedFile.string().c_str());
+            unlink_nid_postfix(movingFile.string().c_str());
+            std::fprintf(stderr, "symbolic links unavailable: the rename link cases not tested\n");
+        }
+#ifdef _WIN32
+        const auto directoryJunction = root / "rename-directory.junction";
+        const auto movingJunction = root / "rename-moving.junction";
+        const auto junctionFile = root / "rename-junction-moving.txt";
+        const auto junctionOccupied = root / "rename-junction-occupied.txt";
+        { std::ofstream stream(junctionFile); stream << "moved"; }
+        { std::ofstream stream(junctionOccupied); stream << "occupied"; }
+        const auto junctionTargetPath = std::filesystem::absolute(linkedDirectory).wstring();
+        for (const auto& made : {directoryJunction, movingJunction})
+            Require(_wsystem((L"cmd /c mklink /J \"" + made.wstring() + L"\" \"" + junctionTargetPath + L"\" >nul").c_str()) == 0);
+        Require(rename_nid_postfix(movingJunction.string().c_str(), emptyDirectory.string().c_str()) == -1 && *__error_nid_postfix() == 21);
+        Require(std::filesystem::is_directory(emptyDirectory) && std::filesystem::is_empty(emptyDirectory));
+        Require(rename_nid_postfix(movingJunction.string().c_str(), junctionOccupied.string().c_str()) == 0);
+        Require(!std::filesystem::exists(movingJunction) && std::filesystem::is_regular_file(junctionOccupied / "kept.txt"));
+        Require(rename_nid_postfix(junctionFile.string().c_str(), directoryJunction.string().c_str()) == 0);
+        Require(!std::filesystem::exists(junctionFile) && std::filesystem::is_regular_file(directoryJunction));
+        Require(std::filesystem::is_regular_file(linkedDirectory / "kept.txt"));
+        Require(RemoveDirectoryW(junctionOccupied.wstring().c_str()) && unlink_nid_postfix(directoryJunction.string().c_str()) == 0);
+#endif
+        std::filesystem::remove_all(linkedDirectory);
+        std::filesystem::remove(emptyDirectory);
+    }
     {
         const auto area = root / "libc_rename";
         const auto sourceFile = area / "source.txt";
@@ -1575,6 +1650,7 @@ int main() {
         Require(sceKernelRmdir(directoryLink.string().c_str()) == static_cast<int>(0x80020014u));
         Require(rmdir_nid_postfix(danglingDirectoryLink.string().c_str()) == -1 && *__error_nid_postfix() == 20);
         Require((GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && std::filesystem::is_directory(linkedDirectory));
+        Require(unlink_nid_postfix((root / "directory-li*").string().c_str()) == -1 && *__error_nid_postfix() != 5 && (GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
         Require(unlink_nid_postfix(directoryLink.string().c_str()) == 0 && unlink_nid_postfix(danglingDirectoryLink.string().c_str()) == 0);
     }
 #else
@@ -1703,6 +1779,17 @@ int main() {
             }
             Require(rejected);
         }
+        auto* reopened = fopen_nid_postfix(presentName.c_str(), "rb");
+        Require(reopened != nullptr && freopen_nid_postfix(device, "r", reopened) == reopened);
+        std::memset(first, 0, sizeof(first));
+        std::memset(second, 0, sizeof(second));
+        Require(fread_nid_postfix(first, 1, sizeof(first), reopened) == sizeof(first));
+        Require(fread_nid_postfix(second, 1, sizeof(second), reopened) == sizeof(second));
+        Require(std::memcmp(first, second, sizeof(first)) != 0);
+        Require(feof_nid_postfix(reopened) == 0 && ferror_nid_postfix(reopened) == 0);
+        Require(freopen_nid_postfix(presentName.c_str(), "rb", reopened) == reopened);
+        Require(fread_nid_postfix(first, 1, sizeof(first), reopened) == std::filesystem::file_size(present) && fgetc_nid_postfix(reopened) == -1);
+        Require(freopen_nid_postfix(device, "rb", reopened) == reopened && fclose_nid_postfix(reopened) == 0);
     }
     Require(unlink_nid_postfix(presentName.c_str()) == 0 && !std::filesystem::exists(present));
     const auto empty = root / "empty";
