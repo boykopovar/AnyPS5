@@ -85,6 +85,8 @@ public:
                         throw RelinkerException("Strict filter: relative relocation has a symbol", slot);
                 }
                 const auto target = read<std::uint64_t>(*rela + offset + 16);
+                if (target > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                    throw RelinkerException("Strict filter: relative relocation target address is negative", slot);
                 const auto [recorded, inserted] = input.Pointers.emplace(slot, target);
                 if (input.ImportSlots.contains(slot) || (!inserted && recorded->second != target))
                     throw RelinkerException("Strict filter: overlapping pointer relocations", slot);

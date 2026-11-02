@@ -283,7 +283,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto low = Binary(state, spv::OpShiftRightLogical, TypeU32(state), load(lowIndex), shift);
     const auto high = EmitValueOrZero(state, unaligned, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), load(highIndex), highShift));
     const auto value = combine(low, high);
-    return (access.memoryAccess & spv::MemoryAccessVolatileMask) != 0u ? value : EmitValueOrZero(state, inBounds, value);
+    return (access.memoryAccess & spv::MemoryAccessVolatileMask) != 0u || (state.requirements.readOnlyStorage && access.memoryAccess == 0u) ? value : EmitValueOrZero(state, inBounds, value);
 }
 
 std::uint32_t byteBuffers(SpirvEmitterState& state) {

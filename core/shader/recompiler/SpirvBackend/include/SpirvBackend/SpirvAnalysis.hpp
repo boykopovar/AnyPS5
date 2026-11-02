@@ -30,14 +30,17 @@ struct SpirvRequirements {
     bool imageInt64Atomics = false;
     bool sharedInt64Atomics = false;
     bool float64 = false;
+    bool float64NeedsDevice = false;
     bool float64Interpolation = false;
     bool coherentBuffers = false;
     bool coherentBufferAlias = false;
+    bool readOnlyStorage = false;
     std::vector<std::uint32_t> capabilities;
     std::vector<std::string> extensions;
 };
 
 [[nodiscard]] SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program);
+[[nodiscard]] bool IsIntegerFloat64Opcode(IrOpcode opcode);
 inline constexpr std::uint32_t FunctionLdsDwordLimit = 8192u;
 inline constexpr std::uint32_t PixelFunctionStorageDwords = 4096u;
 inline constexpr std::uint32_t PixelFunctionLdsDescriptorSet = 2u;

@@ -253,6 +253,8 @@ def pe_headers(path, data):
     count = unpack("<I", data, optional + directory - 4, path, "data directory count")[0]
     if count == 0:
         raise AuditError(f"{path}: PE file declares no data directories")
+    if count > (optional_size - directory) // 8:
+        raise AuditError(f"{path}: PE data directory count {count} exceeds optional header size {optional_size}")
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
     sections = [unpack("<8sIIIIIIHHI", data, optional + optional_size + index * 40, path, f"PE section {index}") for index in range(section_count)]
 
@@ -834,8 +836,10 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         library = record["library"]
         if library and not available(library):
             missing[library] += 1
-    for _, needed in (module_imports or {}).values():
+    for module, (_, needed) in (module_imports or {}).items():
         for library in needed:
+            if module.endswith(".guest.prx") and library == "ld-linux-x86-64.so.2":
+                continue
             if not available(library):
                 missing[library] += 1
     return ordered, dict(sorted(missing.items()))

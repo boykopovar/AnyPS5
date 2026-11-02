@@ -40,6 +40,9 @@ bool RuntimeValidator::Validate(IrValue* raw, bool requireUniform) {
         return valid;
     };
     const auto op = inst.Opcode();
+    if (_activeMask != nullptr && inst.Type() == IrType::Bool && ActiveMaskImplies(_activeMask, &inst)) {
+        return finish(true);
+    }
     if (op == IrOpcode::ReadConst) {
         IrValue* slot = inst.ArgumentCount() == 2 ? inst.Argument(1)->Resolve() : nullptr;
         if (inst.ArgumentCount() != 2 || inst.Argument(0)->Resolve()->Opcode() == IrOpcode::Void || inst.Argument(0)->Resolve()->Opcode() != IrOpcode::GetSrtResource || slot == nullptr || !slot->HasImmediate() || slot->Type() != IrType::U32 || slot->ImmediateU32() >= _program.srtReads.size()) {
@@ -114,6 +117,13 @@ bool RuntimeValidator::Validate(IrValue* raw, bool requireUniform) {
         if (!IsRawRead(_program, inst) || handle == nullptr || handle->Opcode() != expected) {
             return finish(false);
         }
+    } else if (op == IrOpcode::CompositeExtractU32x4) {
+        IrValue* source = inst.ArgumentCount() == 2u ? inst.Argument(0)->Resolve() : nullptr;
+        IrValue* index = inst.ArgumentCount() == 2u ? inst.Argument(1)->Resolve() : nullptr;
+        if (source == nullptr || source->Opcode() != IrOpcode::CompositeConstructU32x4 || source->ArgumentCount() != 4u || index == nullptr || !index->HasImmediate() || index->Type() != IrType::U32 || index->ImmediateU32() >= 4u) {
+            return finish(false);
+        }
+        return finish(Validate(source->Argument(index->ImmediateU32())));
     } else if (op == IrOpcode::CompositeExtractU64) {
         IrValue* index = inst.ArgumentCount() == 2 ? inst.Argument(1)->Resolve() : nullptr;
         if (index == nullptr || !index->HasImmediate() || index->Type() != IrType::U32 || index->ImmediateU32() >= 2u) {
