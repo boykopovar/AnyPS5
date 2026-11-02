@@ -2,10 +2,15 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "Optimization/SrtWalker.hpp"
 #include "ThreadOwned.hpp"
 #include <algorithm>
 #include <atomic>
@@ -35,6 +40,8 @@ struct CaptureProfile {
     // were read raw on the driver's evidence, or were read both ways (verify) and differed.
     std::atomic<std::uint64_t> pagesWordwise{0};
     std::atomic<std::uint64_t> wordWaits{0};
+    std::atomic<std::uint64_t> branchReadsRefused{0};
+    std::atomic<std::uint64_t> branchCapturesRedone{0};
     std::atomic<std::uint64_t> wordWaitNanoseconds{0};
     std::atomic<std::uint64_t> wordsRaw{0};
     std::atomic<std::uint64_t> wordsVerified{0};
@@ -69,6 +76,55 @@ struct CaptureProfile {
 
 constexpr std::uint64_t WordWaitNanoseconds = 50000;
 
+std::uint64_t imageViewGeneration(void*) {
+    return GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+}
+
+bool normalizeImageView(void*, std::uint32_t maxArrayLayers, std::array<std::uint32_t, 8>& descriptor, ShaderRecompiler::SrtImageViewIdentity& identity) {
+    identity.generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    if (((descriptor[3] >> 28u) & 0xfu) != 12u) return false;
+    const auto resource = Graphics::DecodeTextureResource(descriptor);
+    identity.address = resource.baseAddress;
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(resource.baseAddress), false);
+    if (range != nullptr) {
+        identity.hasRange = true;
+        identity.readable = range->readable;
+        identity.writable = range->writable;
+        identity.gpu = range->gpu;
+        identity.rangeAddress = range->address;
+        identity.rangeBytes = range->bytes;
+        identity.allocationAddress = range->allocationAddress;
+        identity.allocationBytes = range->allocationBytes;
+        identity.backingSerial = range->backingSerial;
+    }
+    if (maxArrayLayers == 0u || resource.dimension != Graphics::TextureDimension::k1DArray || range == nullptr) return false;
+    const auto rawCount = resource.depthOrLastArray >= resource.baseArray ? resource.depthOrLastArray - resource.baseArray + 1u : 0u;
+    const auto geometry = Graphics::DescribeSurface(resource);
+    if (geometry.layerBytes == 0u || geometry.thick || geometry.layers != resource.depthOrLastArray + 1u) return false;
+    if (const auto xorMode = Graphics::XorSwizzleMode(resource.tileMode); xorMode != 0u) {
+        const auto* equation = Graphics::FindTextureSwizzleEquation(xorMode, Graphics::BytesPerElement(resource.format));
+        if (equation == nullptr || std::any_of(equation->bits.begin(), equation->bits.end(), [](std::uint32_t bit) { return (bit & 0xff000000u) != 0u; })) return false;
+    }
+    if (!range->readable || !range->gpu || range->bytes == 0u || range->address > std::numeric_limits<std::uint64_t>::max() - range->bytes || range->allocationAddress > std::numeric_limits<std::uint64_t>::max() - range->allocationBytes) return false;
+    const auto rangeEnd = range->address + range->bytes;
+    const auto allocationEnd = range->allocationAddress + range->allocationBytes;
+    if (resource.baseAddress < range->address || resource.baseAddress > rangeEnd || range->address < range->allocationAddress || rangeEnd > allocationEnd) return false;
+    const auto offset = resource.baseAddress - range->address;
+    if (offset % geometry.layerBytes != 0u) return false;
+    const auto coveredBytes = rangeEnd - resource.baseAddress;
+    if (coveredBytes % geometry.layerBytes != 0u) return false;
+    const auto completeSlices = coveredBytes / geometry.layerBytes;
+    if (completeSlices <= resource.baseArray) return false;
+    if (rawCount <= maxArrayLayers) return false;
+    const auto available = completeSlices - resource.baseArray;
+    const auto effectiveCount = std::min<std::uint64_t>(rawCount, available);
+    if (effectiveCount == 0u || effectiveCount == rawCount) return false;
+    const auto lastArray = static_cast<std::uint64_t>(resource.baseArray) + effectiveCount - 1u;
+    if (lastArray > 0x1fffu) return false;
+    descriptor[4] = (descriptor[4] & ~0x1fffu) | static_cast<std::uint32_t>(lastArray);
+    return true;
+}
+
 bool WordwisePages() {
     static const bool wordwise = std::getenv("APS5_NO_WORDWISE_CAPTURE") == nullptr;
     return wordwise;
@@ -92,6 +148,11 @@ std::uint64_t NanosecondsSince(std::chrono::steady_clock::time_point started) {
 CaptureProfile& CaptureTotals() {
     static CaptureProfile profile;
     return profile;
+}
+
+bool BranchesSkipPendingWords() {
+    static const bool skip = std::getenv("APS5_WAIT_PENDING_BRANCHES") == nullptr;
+    return skip;
 }
 
 std::atomic<ShaderMemory::WaitedMsProvider> waitedMsProvider{nullptr};
@@ -372,6 +433,10 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
                 waited = page.wordwise && (self.hookWaits != nullptr ? self.hookWaits() != waitsBefore : true);
                 word = verifiedWord;
             }
+        } else if (page.wordwise && policy == PendingWrite::Sync && !forcedRaw && !self.waitBranches && BranchesSkipPendingWords() && ShaderRecompiler::SrtEvaluatingBranch()) {
+            ++self.branchReadsRefused;
+            if (CaptureProfiled()) ++CaptureTotals().branchReadsRefused;
+            return false;
         } else {
             // On a word-wise page the bytes before the hook's wait are kept for the observer.
             const bool observed = page.wordwise && policy == PendingWrite::Sync && self.observe != nullptr && GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(word));
@@ -722,11 +787,29 @@ std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> ShaderMemory
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle) {
-    return capture(request, handle, nullptr);
+    return captureWaitingOnFailure(request, handle, nullptr);
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(const ShaderRecompiler::PreparedShaderInvocation& invocation) {
-    return capture(invocation.Request(), nullptr, &invocation);
+    return captureWaitingOnFailure(invocation.Request(), nullptr, &invocation);
+}
+
+std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::captureWaitingOnFailure(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation) {
+    branchReadsRefused = 0;
+    try {
+        return capture(request, handle, invocation);
+    } catch (const std::exception&) {
+        if (branchReadsRefused == 0u) throw;
+    }
+    if (CaptureProfiled()) ++CaptureTotals().branchCapturesRedone;
+    struct WaitBranches {
+        bool& wait;
+        explicit WaitBranches(bool& flag) : wait(flag) { wait = true; }
+        ~WaitBranches() { wait = false; }
+        WaitBranches(const WaitBranches&) = delete;
+        WaitBranches& operator=(const WaitBranches&) = delete;
+    } waiting(waitBranches);
+    return capture(request, handle, invocation);
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation) {
@@ -750,6 +833,8 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.unchangedSince = &unchangedSince;
     runtime.supplyWords = &supplyWords;
     runtime.descriptorScope = &descriptorScope;
+    runtime.normalizeImageView = &normalizeImageView;
+    runtime.imageViewGeneration = &imageViewGeneration;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
@@ -772,7 +857,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
             const auto materializeNs = ShaderRecompiler::ResourceMaterializer::MaterializeNanoseconds();
             const auto evaluateNs = ShaderRecompiler::ResourceMaterializer::EvaluateNanoseconds();
             const auto walkNs = captureNs > resolveNs + pageNs + wordNs + specializationNs ? captureNs - resolveNs - pageNs - wordNs - specializationNs : 0;
-            AgcDriver::ProfilePrint_nid_no_patch( "[capture] %llu captures: %llu word reads, %llu pages fetched (%llu read word by word over pending GPU writes: %llu words waited %.2f s, %llu read raw on evidence, %llu verified with %llu mismatches, %llu served from known values, %llu hook reads not observed: no GPU wait), capture (plan lookup + materialize) %.1f s, %llu KiB registered code this capture; sub-phases (s, us per capture): source resolve %.2f/%.1f, walk %.2f/%.1f, specialization (every materialize) %.2f/%.1f, page reads %.2f/%.1f, word reads %.2f/%.1f, hook GPU waits inside %.2f/%.1f, materialize %.2f/%.1f (SRT evaluate %.2f/%.1f); source handle memo %llu hits, %llu resolves\n", static_cast<unsigned long long>(totals.captures.load()), static_cast<unsigned long long>(totals.reads.load()), static_cast<unsigned long long>(totals.pages.load()), static_cast<unsigned long long>(totals.pagesWordwise.load()), static_cast<unsigned long long>(totals.wordWaits.load()), totals.wordWaitNanoseconds.load() / 1e9, static_cast<unsigned long long>(totals.wordsRaw.load()), static_cast<unsigned long long>(totals.wordsVerified.load()), static_cast<unsigned long long>(totals.wordMismatches.load()), static_cast<unsigned long long>(totals.wordsKnown.load()), static_cast<unsigned long long>(totals.observationsSkipped.load()), captureNs / 1e9, static_cast<unsigned long long>(initialBytes / 1024), resolveNs / 1e9, resolveNs / captures / 1e3, walkNs / 1e9, walkNs / captures / 1e3, specializationNs / 1e9, specializationNs / captures / 1e3, pageNs / 1e9, pageNs / captures / 1e3, wordNs / 1e9, wordNs / captures / 1e3, hookNs / 1e9, hookNs / captures / 1e3, materializeNs / 1e9, materializeNs / captures / 1e3, evaluateNs / 1e9, evaluateNs / captures / 1e3, static_cast<unsigned long long>(totals.handleHits.load()), static_cast<unsigned long long>(totals.handleMisses.load()));
+            AgcDriver::ProfilePrint_nid_no_patch( "[capture] %llu captures: %llu word reads, %llu pages fetched (%llu read word by word over pending GPU writes: %llu words waited %.2f s, %llu read raw on evidence, %llu verified with %llu mismatches, %llu served from known values, %llu hook reads not observed: no GPU wait, %llu branch condition reads over pending GPU writes left the branch unpruned instead of waiting, %llu captures redone waiting after one failed), capture (plan lookup + materialize) %.1f s, %llu KiB registered code this capture; sub-phases (s, us per capture): source resolve %.2f/%.1f, walk %.2f/%.1f, specialization (every materialize) %.2f/%.1f, page reads %.2f/%.1f, word reads %.2f/%.1f, hook GPU waits inside %.2f/%.1f, materialize %.2f/%.1f (SRT evaluate %.2f/%.1f); source handle memo %llu hits, %llu resolves\n", static_cast<unsigned long long>(totals.captures.load()), static_cast<unsigned long long>(totals.reads.load()), static_cast<unsigned long long>(totals.pages.load()), static_cast<unsigned long long>(totals.pagesWordwise.load()), static_cast<unsigned long long>(totals.wordWaits.load()), totals.wordWaitNanoseconds.load() / 1e9, static_cast<unsigned long long>(totals.wordsRaw.load()), static_cast<unsigned long long>(totals.wordsVerified.load()), static_cast<unsigned long long>(totals.wordMismatches.load()), static_cast<unsigned long long>(totals.wordsKnown.load()), static_cast<unsigned long long>(totals.observationsSkipped.load()), static_cast<unsigned long long>(totals.branchReadsRefused.load()), static_cast<unsigned long long>(totals.branchCapturesRedone.load()), captureNs / 1e9, static_cast<unsigned long long>(initialBytes / 1024), resolveNs / 1e9, resolveNs / captures / 1e3, walkNs / 1e9, walkNs / captures / 1e3, specializationNs / 1e9, specializationNs / captures / 1e3, pageNs / 1e9, pageNs / captures / 1e3, wordNs / 1e9, wordNs / captures / 1e3, hookNs / 1e9, hookNs / captures / 1e3, materializeNs / 1e9, materializeNs / captures / 1e3, evaluateNs / 1e9, evaluateNs / captures / 1e3, static_cast<unsigned long long>(totals.handleHits.load()), static_cast<unsigned long long>(totals.handleMisses.load()));
         }
     }
     return capture;
