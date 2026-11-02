@@ -332,7 +332,6 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineLibrary.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineCache.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineBinaryStore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineJournal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
@@ -345,7 +344,9 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestBufferMemory.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MapImportGate.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidentMirror.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ReferenceStorage.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
@@ -399,6 +400,7 @@ set(agcZlibIncludeDir ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.cpp PROPERTIES
         INCLUDE_DIRECTORIES ${agcZlibIncludeDir}
 )
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
 
 add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${agcDriverSources}
@@ -912,7 +914,28 @@ if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    add_test(NAME agc_driver_fill_completion_labels_cpu_overlap COMMAND agc_driver_fill_completion_labels_tests --cpu-overlap)
+    add_test(NAME agc_driver_fill_completion_labels_cpu_disjoint COMMAND agc_driver_fill_completion_labels_tests --cpu-disjoint)
+    add_test(NAME agc_driver_fill_completion_labels_submitted COMMAND agc_driver_fill_completion_labels_tests --submitted)
+    add_test(NAME agc_driver_fill_completion_labels_inline COMMAND agc_driver_fill_completion_labels_tests)
+    add_test(NAME agc_driver_fill_completion_labels_chain COMMAND agc_driver_fill_completion_labels_tests)
+    add_test(NAME agc_driver_fill_completion_labels_late COMMAND agc_driver_fill_completion_labels_tests)
+    set(agcFillCompletionLabelTests agc_driver_fill_completion_labels agc_driver_fill_completion_labels_cpu_overlap agc_driver_fill_completion_labels_cpu_disjoint agc_driver_fill_completion_labels_submitted agc_driver_fill_completion_labels_inline agc_driver_fill_completion_labels_chain agc_driver_fill_completion_labels_late)
+    set_tests_properties(${agcFillCompletionLabelTests} PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_OPPORTUNISTIC_REAP=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_property(TEST agc_driver_fill_completion_labels_inline APPEND PROPERTY ENVIRONMENT "APS5_LABEL_RUNS_INLINE=1")
+    set_property(TEST agc_driver_fill_completion_labels_chain APPEND PROPERTY ENVIRONMENT "APS5_FILL_CHAIN=1")
+    set_property(TEST agc_driver_fill_completion_labels_late APPEND PROPERTY ENVIRONMENT "APS5_LABEL_TRUST_LATE=1")
+    if(WIN32)
+        set_tests_properties(agc_driver_fill_completion_labels_cpu_overlap agc_driver_fill_completion_labels_cpu_disjoint agc_driver_fill_completion_labels_submitted agc_driver_fill_completion_labels_inline agc_driver_fill_completion_labels_chain agc_driver_fill_completion_labels_late PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     get_directory_property(agcRegisteredTests TESTS)
     list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal|agc_pipeline_store_replay_growth)$")
     set_property(TEST ${agcRegisteredTests} APPEND PROPERTY ENVIRONMENT "APS5_NO_PIPELINE_JOURNAL=1")
 endif()
+
+target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
