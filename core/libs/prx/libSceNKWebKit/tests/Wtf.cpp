@@ -1,6 +1,16 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libc/include/General.hpp"
+#include <chrono>
+#include <filesystem>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -375,6 +385,174 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 
+static void TestMappedFiles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto construct = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb;
+    const auto readOnly = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb;
+    const auto fromPath = &_ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto fromPathBase = &_ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto destroy = &_ZN3WTF14FileSystemImpl14MappedFileDataD1Ev;
+    const auto destroyBase = &_ZN3WTF14FileSystemImpl14MappedFileDataD2Ev;
+    const auto map = &_ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE;
+    WTF::MappedFileData mapped{};
+    bool success = true;
+    readOnly(&mapped, -1, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    destroy(&mapped);
+    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-mapped", reinterpret_cast<const char*>(hostPath.c_str()));
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-mapped/file.bin"));
+    fromPath(&mapped, path, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    int handle = open(path, 2, true, true);
+    Require(handle >= 0);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && !mapped.data && !mapped.size);
+    destroyBase(&mapped);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "abcdef", 6) == 0);
+    VirtualQueryInfo info{};
+    void* address = mapped.data;
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) == 0);
+    close(handle);
+    Require(std::memcmp(mapped.data, "abcdef", 6) == 0);
+    destroy(&mapped);
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) != 0);
+    handle = open(path, 2, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'S';
+    char contents[6]{};
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroy(&mapped);
+    construct(&mapped, handle, 2, 1, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'P';
+    Require(sceKernelLseek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroyBase(&mapped);
+    construct(&mapped, handle, 1, 0, success);
+    Require(success);
+    static_cast<char*>(mapped.data)[1] = 'W';
+    destroy(&mapped);
+    close(handle);
+    fromPathBase(&mapped, path, 1, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroyBase(&mapped);
+    handle = open(path, 0, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    Require(map(&mapped, handle, 0, 1));
+    Require(mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroy(&mapped);
+    close(handle);
+#ifndef _WIN32
+    std::filesystem::resize_file(root / "file.bin", std::uint64_t{1} << 32);
+    handle = open(path, 0, true, false);
+    readOnly(&mapped, handle, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    close(handle);
+#endif
+    RemovePathAlias_nid_no_patch("/nkwebkit-mapped");
+    std::filesystem::remove_all(root);
+}
+
+static void TestFileHandles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto seek = &_ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE;
+    const auto truncate = &_ZN3WTF14FileSystemImpl12truncateFileEix;
+    const auto openAndLock = &_ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE;
+    const auto unlockAndClose = &_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-handles", reinterpret_cast<const char*>(hostPath.c_str()));
+    const char* guestPath = "/nkwebkit-handles/\xC3\xA9.bin";
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(guestPath));
+    Require(open(path, 0, true, false) == -1);
+    Require(openAndLock(path, 0, 1) == -1);
+    NKWebKit::WtfAbi::String nullPath;
+    Require(open(nullPath, 0, true, false) == -1);
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    int handle = open(path, 1, false, false);
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(handle >= 0);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    Require(seek(handle, 2, 0) == 2);
+    Require(seek(handle, 1, 1) == 3);
+    Require(seek(handle, -1, 2) == 5);
+    Require(truncate(handle, 4));
+    Require(seek(handle, 0, 2) == 4);
+    Require(!truncate(handle, -1));
+    close(handle);
+    Require(handle == -1);
+    close(handle);
+    Require(handle == -1);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / std::filesystem::path(u8"é.bin")).permissions() & std::filesystem::perms::mask) == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+#endif
+    handle = open(path, 0, true, false);
+    Require(handle >= 0);
+    char bytes[8]{};
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 4);
+    Require(std::memcmp(bytes, "abcd", 4) == 0);
+    Require(!truncate(handle, 1));
+    close(handle);
+    for (int mode = 0; mode != 3; ++mode) Require(open(path, mode, true, true) == -1);
+    Require(std::filesystem::file_size(root / std::filesystem::path(u8"é.bin")) == 4);
+    handle = open(path, 2, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 4);
+    Require(sceKernelWrite(handle, "ef", 2) == 2);
+    Require(seek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 6);
+    Require(std::memcmp(bytes, "abcdef", 6) == 0);
+    close(handle);
+    handle = open(path, 1, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 0);
+    Require(sceKernelClose(handle) == 0);
+    handle = sceKernelOpen(guestPath, SCE_KERNEL_O_RDONLY, 0);
+    Require(handle >= 0);
+    close(handle);
+    Require(handle == -1);
+    handle = openAndLock(path, 2, 2);
+    Require(handle >= 0 && sceKernelWrite(handle, "x", 1) == 1);
+    unlockAndClose(handle);
+    Require(seek(handle, 0, 0) == -1);
+    Require(!truncate(-1, 0));
+    Require(seek(-1, 0, 0) == -1);
+    handle = -2;
+    close(handle);
+    Require(handle == -1);
+    auto allPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/all.bin"));
+#ifndef _WIN32
+    const auto allMask = ::umask(0);
+#endif
+    handle = open(allPath, 2, true, true);
+#ifndef _WIN32
+    ::umask(allMask);
+#endif
+    Require(handle >= 0);
+    close(handle);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "all.bin").permissions() & std::filesystem::perms::mask) == static_cast<std::filesystem::perms>(0666));
+#endif
+    auto readPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/read.bin"));
+    handle = open(readPath, 0, false, true);
+    Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 0);
+    close(handle);
+    RemovePathAlias_nid_no_patch("/nkwebkit-handles");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     TestAdditionalWtf();
     TestMemoryAllocations();
@@ -384,6 +562,8 @@ int main() {
     TestString();
     TestWebCorePure();
     TestJscAndPal();
+    TestMappedFiles();
+    TestFileHandles();
     return 0;
 }
 

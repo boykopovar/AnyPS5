@@ -3,7 +3,7 @@
 ### Unknown function info
 
 - [WebKit API objects](../../../core/libs/prx/libSceNKWebKit/src/Object.hpp) (libSceNKWebKit) - `WK*` objects are host objects numbered with `API::Object::Type` as [APIObject.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/APIObject.h) builds for PlayStation, with ApplicationManifest, InspectorExtension, WebExtension and WebAuthn types off and PopupMenuItem and AccessibilityObject on per [OptionsPlayStation.cmake](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/cmake/OptionsPlayStation.cmake); the console module version, its type numbers and its object layouts are unverified, so these objects cannot be passed to a console WebKit module. A null or wrong-type reference throws where WebKit dereferences it.
-- [WTF and WebCore value layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfStringAbi.hpp) (libSceNKWebKit) - `WTF::String`, `StringImpl`, `StringView`, `CString`, `URL` and the WebCore geometry, transform and `Color` layouts follow the release 64-bit headers at the [pinned source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h) and are pinned with `static_assert`; they are tested on Windows, not against console binaries. `StringImpl::destroy`, atom and symbol strings and external buffers still throw, so a string whose last reference guest code drops terminates.
+- [WTF and WebCore value layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfStringAbi.hpp) (libSceNKWebKit) - `WTF::String`, `StringImpl`, `StringView`, `CString`, `URL` and the WebCore geometry, transform and `Color` layouts follow the release 64-bit headers at the [pinned source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h) and are pinned with `static_assert`; they are tested on Windows, not against console binaries. `StringImpl::destroy`, atom and symbol strings and external buffers still throw, so a string whose last reference guest code drops terminates. The `MappedFileData` pointer-and-unsigned layout follows the pinned source, not a measured console object.
 - [Media preferences](../../../core/libs/prx/libSceNKWebKit/src/Preferences.cpp) (libSceNKWebKit) - unset `MediaSourceEnabled`, `EncryptedMediaAPIEnabled` and `SourceBufferChangeTypeEnabled` getters throw, and feature-key setters for `EncryptedMediaAPIEnabled`, `SourceBufferChangeTypeEnabled` and `WebMParserEnabled` throw, because the PlayStation media player configuration behind `ENABLE_MEDIA_SOURCE` and `ENABLE_ENCRYPTED_MEDIA` is not in the pinned source. Other defaults evaluate [UnifiedWebPreferences.yaml](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml) for PlayStation; downstream console overrides are unverified.
 
 ### Functional
@@ -14,10 +14,11 @@
 - [Dictionary key order](../../../core/libs/prx/libSceNKWebKit/src/Dictionary.cpp) (libSceNKWebKit) - `WKDictionaryCopyKeys` returns keys sorted by UTF-16 code unit, not in the `WTF::HashMap` iteration order of [WKDictionary.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKDictionary.cpp).
 - [Out-of-line colors](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColor.cpp) (libSceNKWebKit) - `WebCore::Color` operations on an out-of-line value (extended color spaces in [Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h)) throw; only inline 8-bit sRGBA values are handled.
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
+- [WTF mapped files](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - archive-backed file mappings remain unsupported by guest `mmap`; `MappedFileData` inherits that libkernel gap. PlayStation links `mmap` through an SDK `__wrap_mmap` whose implementation is absent from the pinned source; any additional wrapper behavior is unverified.
 
 ### Known export names; ABI prototypes unverified
 
-- The 127 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
+- The 126 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
 
 ### Older callable exports
 
@@ -27,7 +28,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7439 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7427 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -1657,21 +1658,12 @@
 | `_ZN3WTF14AtomStringImpl6lookUpEPKhj` | `BuAIhZn+1Rs` |
 | `_ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE` | `wfDoJ0yldXQ` |
 | `_ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE` | `nsUltDlbQsU` |
-| `_ZN3WTF14FileSystemImpl12truncateFileEix` | `Hf+v9bM1guY` |
-| `_ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE` | `DhTjWwepv6I` |
-| `_ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb` | `7S1e4l2WT+4` |
-| `_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb` | `ACazp+XQF6E` |
-| `_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb` | `d+G-F27Z0RI` |
-| `_ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb` | `kvKr7MWgCMI` |
-| `_ZN3WTF14FileSystemImpl14MappedFileDataD1Ev` | `GhSIARptbG8` |
-| `_ZN3WTF14FileSystemImpl14MappedFileDataD2Ev` | `xONraGfpcUI` |
 | `_ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_` | `Cubm05Z7E7I` |
 | `_ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE` | `DM39YN-X56M` |
 | `_ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_` | `dbycEreQEcg` |
 | `_ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE` | `dlR6Z857IFs` |
 | `_ZN3WTF14FileSystemImpl18hardLinkOrCopyFileERKNS_6StringES3_` | `8R3APcMguxY` |
 | `_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE` | `yUU8KDyU5Xw` |
-| `_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi` | `QpQN5xlV+7w` |
 | `_ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_` | `1tXDV45yh2Y` |
 | `_ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE` | `bmn8kprCF+U` |
 | `_ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE` | `sxavOcVMOFA` |
@@ -1683,10 +1675,7 @@
 | `_ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE` | `3TsXk8jA39E` |
 | `_ZN3WTF14FileSystemImpl8hardLinkERKNS_6StringES3_` | `PduV0fym+xE` |
 | `_ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_` | `Pr98fHFIZlQ` |
-| `_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb` | `SQRcDBsMDZU` |
 | `_ZN3WTF14FileSystemImpl8realPathERKNS_6StringE` | `5DmxNjwctv4` |
-| `_ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE` | `sJKs4SnHxXk` |
-| `_ZN3WTF14FileSystemImpl9closeFileERi` | `WNXNRq0O8PY` |
 | `_ZN3WTF14SymbolRegistry12symbolForKeyERKNS_6StringE` | `4eO+y6WtOIw` |
 | `_ZN3WTF14SymbolRegistryD1Ev` | `4wHuG6WpyF0` |
 | `_ZN3WTF14SymbolRegistryD2Ev` | `l8UKHjO29+w` |

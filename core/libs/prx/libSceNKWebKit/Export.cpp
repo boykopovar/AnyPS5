@@ -12244,10 +12244,6 @@ int APS5_VABI _ZN3JSC21MarkedJSValueRefArrayC1EP15OpaqueJSContextj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore4Page14renderTreeSizeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -18996,38 +18992,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14FileSystemImpl14setMetadataURLERKNS_6StringES3_S3_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19049,10 +19013,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl18hardLinkOrCopyFileERKNS_6StringES3_() {
 }
 
 int APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -19100,19 +19060,7 @@ int APS5_VABI _ZN3WTF14FileSystemImpl8moveFileERKNS_6StringES3_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF14FileSystemImpl8realPathERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl9closeFileERi() {
     NotImplemented_nid_no_patch(__func__);
 }
 

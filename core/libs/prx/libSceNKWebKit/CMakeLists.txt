@@ -20,7 +20,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/quickjs/LICENSE DESTINATION licenses/
 file(GLOB nkWebKitSources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_library(libSceNKWebKit SHARED EXCLUDE_FROM_ALL Export.cpp DateParsing.cpp CharactersToNumber.cpp ${nkWebKitSources})
 target_include_directories(libSceNKWebKit PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceNKWebKit PUBLIC libSceJsc PRIVATE qjs libc)
+target_link_libraries(libSceNKWebKit PUBLIC libSceJsc PRIVATE qjs libc libkernel)
 configure_windows_unwind(libSceNKWebKit)
 
 if(BUILD_TESTING)
@@ -54,6 +54,9 @@ if(BUILD_TESTING)
         target_include_directories(nkwebkit_${testName}_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(nkwebkit_${testName}_tests PRIVATE libSceNKWebKit libSceJsc libc)
         configure_windows_unwind(nkwebkit_${testName}_tests)
+        if(testName STREQUAL "wtf")
+            target_link_libraries(nkwebkit_${testName}_tests PRIVATE libkernel)
+        endif()
         add_test(NAME nkwebkit_${testName} COMMAND nkwebkit_${testName}_tests)
         if(WIN32)
             set_tests_properties(nkwebkit_${testName} PROPERTIES ENVIRONMENT_MODIFICATION
