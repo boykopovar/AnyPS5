@@ -82,7 +82,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
 - [WebCore text dumps](../../../core/libs/prx/libSceNKWebKit/src/WebCoreDump.cpp) (libSceNKWebKit) - the `operator<<(TextStream&, ...)` overloads for geometry, transforms, `ScrollAlignment` and scrolling and graphics enums follow the pinned [`FloatPoint.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatPoint.cpp), [`GraphicsTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/GraphicsTypes.cpp) and [`ScrollTypes.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollTypes.cpp); expectations are hand-derived and not checked against console binaries. They rely on the `TextStream` exports and layout of the WTF text change. `XYZ_D65` prints `XYZ-D50`, as in that source; a `CompositeOperator` or `BlendMode` outside its name table throws.
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6400 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [WebCore layout values](../../../core/libs/prx/libSceNKWebKit/src/WebCoreLayout.cpp) (libSceNKWebKit) - `GridPosition`, `Length` functions and `unitedBoundingBoxes` follow the pinned [`GridPosition.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/rendering/style/GridPosition.h), [`LengthFunctions.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/LengthFunctions.cpp) and [`FloatQuad.cpp`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatQuad.cpp); no public tests exist, so expectations are hand-derived from that source and not checked against console binaries. `GridPosition`, `Length` and `WTF::Vector` layouts are taken from that source. Release-build semantics apply to ASSERT paths; a Calculated `Length` and a null `this` throw.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6392 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -2104,9 +2105,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore12GCController41setJavaScriptGarbageCollectorTimerEnabledEb` | `EwZGwzhgDAA` |
 | `_ZN7WebCore12GCController43garbageCollectOnAlternateThreadForDebuggingEb` | `o+RkbLSDzsw` |
 | `_ZN7WebCore12GCController9singletonEv` | `YxDQKiFZy2k` |
-| `_ZN7WebCore12GridPosition15setSpanPositionEiRKN3WTF6StringE` | `uJOiRR205j8` |
-| `_ZN7WebCore12GridPosition19setExplicitPositionEiRKN3WTF6StringE` | `p9Wh6mJoIyU` |
-| `_ZN7WebCore12GridPosition24setMaxPositionForTestingEj` | `LSCqsMBsDt8` |
 | `_ZN7WebCore12HTMLDocument5widthEv` | `UzxpjXk1rBk` |
 | `_ZN7WebCore12HTMLDocument6heightEv` | `sap+QiqYRhA` |
 | `_ZN7WebCore12ISOWebVTTCue5parseERN3JSC8DataViewERj` | `SOa1TPmDQJA` |
@@ -2439,7 +2437,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore14XMLHttpRequestD2Ev` | `yrbzVXtDvXg` |
 | `_ZN7WebCore14endOfParagraphERKNS_15VisiblePositionENS_27EditingBoundaryCrossingRuleE` | `0QZ4ACiysus` |
 | `_ZN7WebCore14stopResolveDNSEm` | `EvaWvuniNCE` |
-| `_ZN7WebCore14valueForLengthERKNS_6LengthENS_10LayoutUnitE` | `Aioru3Sp3WQ` |
 | `_ZN7WebCore15ActiveDOMObject15suspendIfNeededEv` | `q629pGti59c` |
 | `_ZN7WebCore15ActiveDOMObject20queueTaskInEventLoopENS_10TaskSourceEON3WTF8FunctionIFvvEEE` | `CM8jw+2tnHc` |
 | `_ZN7WebCore15ActiveDOMObject4stopEv` | `7Uoplf70Yus` |
@@ -3195,11 +3192,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore19UserContentProviderD1Ev` | `auKLpZXdSfw` |
 | `_ZN7WebCore19UserContentProviderD2Ev` | `9cFgcwjP8fw` |
 | `_ZN7WebCore19enclosingLayoutRectERKNS_9FloatRectE` | `BRAEBSsyFho` |
-| `_ZN7WebCore19floatValueForLengthERKNS_6LengthEf` | `aaPDegynKuY` |
 | `_ZN7WebCore19makeMapBetweenRectsERKNS_9FloatRectES2_` | `ACv0fKVga70` |
 | `_ZN7WebCore19serializationForCSSERKNS_5ColorE` | `13YTEVlQaOM` |
 | `_ZN7WebCore19toAutofillFieldNameERKN3WTF10AtomStringE` | `PhM-93-E9p8` |
-| `_ZN7WebCore19unitedBoundingBoxesERKN3WTF6VectorINS_9FloatQuadELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE` | `WzM2QIMJhO8` |
 | `_ZN7WebCore19watchAdaptationNameEv` | `ndXiA4gT0qY` |
 | `_ZN7WebCore20ApplicationCacheHost17maybeLoadResourceERNS_14ResourceLoaderERKNS_15ResourceRequestERKN3WTF3URLE` | `zMV+5IFxYFI` |
 | `_ZN7WebCore20ApplicationCacheHost25maybeLoadFallbackForErrorEPNS_14ResourceLoaderERKNS_13ResourceErrorE` | `R45OuqCl6l8` |
@@ -5383,8 +5378,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore12DOMTokenList5valueEv` | `PWzIeSR0K-Q` |
 | `_ZNK7WebCore12DOMTokenList8containsERKN3WTF10AtomStringE` | `ZNMUPGLACI0` |
 | `_ZNK7WebCore12EventHandler27capsLockStateMayHaveChangedEv` | `Wb664WLzebs` |
-| `_ZNK7WebCore12GridPosition12spanPositionEv` | `DM1eyIdcmqw` |
-| `_ZNK7WebCore12GridPosition15integerPositionEv` | `UiuOtk07joA` |
 | `_ZNK7WebCore12NamedNodeMap12getNamedItemERKN3WTF10AtomStringE` | `fgqfPqcWPM0` |
 | `_ZNK7WebCore12NamedNodeMap14getNamedItemNSERKN3WTF10AtomStringES4_` | `HopnL7CuhJk` |
 | `_ZNK7WebCore12NamedNodeMap4itemEj` | `x0OgOogmxQM` |
