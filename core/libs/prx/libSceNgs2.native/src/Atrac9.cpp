@@ -348,9 +348,10 @@ static int ParseAtrac9Loop(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
     return SCE_NGS2_OK;
 }
 
-static int ParseAtrac9(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
+static int ParseAtrac9(const RiffChunks& chunks, std::size_t size, Ngs2WaveformInfo& info) {
     const auto* format = chunks.format;
     if (chunks.formatSize < FMT_ATRAC9_SIZE || chunks.fact == nullptr || chunks.factSize < FACT_ATRAC9_SIZE) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
+    if (chunks.dataSize > size - chunks.dataOffset) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     std::uint8_t config[4];
     std::memcpy(config, format + FMT_CONFIG_OFFSET, sizeof(config));
     Atrac9CodecInfo codec{};
@@ -420,7 +421,7 @@ static int ParseWaveform(const RiffChunks& chunks, std::size_t size, Ngs2Wavefor
         if (chunks.formatSize < FMT_EXTENSIBLE_SIZE) return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
         const auto* guid = chunks.format + FMT_GUID_OFFSET;
         if (std::memcmp(guid, PCM_GUID, sizeof(PCM_GUID)) == 0) return ParsePcm(chunks, size, info, false);
-        if (std::memcmp(guid, ATRAC9_GUID, sizeof(ATRAC9_GUID)) == 0) return ParseAtrac9(chunks, info);
+        if (std::memcmp(guid, ATRAC9_GUID, sizeof(ATRAC9_GUID)) == 0) return ParseAtrac9(chunks, size, info);
         if (chunks.formatSize == FMT_ATRAC9_SIZE) throw std::runtime_error("NGS2: parsing an extensible waveform of format size 0x34 without the ATRAC9 GUID is not implemented");
         if (std::memcmp(guid, TYPE_43_GUID, sizeof(TYPE_43_GUID)) == 0) throw std::runtime_error("NGS2: parsing waveform type 0x43 is not implemented");
         return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
