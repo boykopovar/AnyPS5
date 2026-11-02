@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <atomic>
@@ -255,6 +256,9 @@ void TestInitialUserLogout() {
     UserServiceSetUserConnected_nid_postfix(0, true);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
     Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+    errno = 71;
+    Require(sceUserServiceGetLoginUserIdList(reinterpret_cast<UserServiceLoginUserIdList*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
