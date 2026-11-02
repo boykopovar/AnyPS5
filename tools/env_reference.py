@@ -58,7 +58,7 @@ def line_reads(line, prefixes=PREFIXES):
 
 
 def documented_pattern(prefixes):
-    return re.compile(r"`(" + _name(prefixes) + r")`")
+    return re.compile(r"^\|[ \t]*`(" + _name(prefixes) + r")`[ \t]*\|", re.M)
 
 
 def kind_of(reader, window):
