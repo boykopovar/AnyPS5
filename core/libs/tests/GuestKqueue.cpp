@@ -189,6 +189,30 @@ static void CreateAndClose() {
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
 }
 
+static void SocketReplacesDescriptor() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd | EvOneshot, 0, 1, &marker)) == 0);
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(dup2_nid_postfix(pair[0], kq) == kq);
+    KernelEvent event{};
+    RequireFailure(Wait(kq, &event, 1), GuestEbadf);
+    Require(close_nid_postfix(kq) == 0);
+    const int watcher = kqueue_nid_postfix();
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(write_nid_postfix(pipe[1], "x", 1) == 1);
+    Require(Apply(watcher, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvAdd)) == 0);
+    Require(Poll(watcher, &event, 1) == 1);
+    Require(dup2_nid_postfix(pair[1], pipe[0]) == pipe[0]);
+    Require(Poll(watcher, &event, 1) == 0);
+    RequireFailure(Apply(watcher, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvDelete)), GuestEnoent);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(watcher) == 0);
+}
+
 static void Timers() {
     const int kq = kqueue_nid_postfix();
     int marker = 0;
@@ -1625,6 +1649,7 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    SocketReplacesDescriptor();
     Timers();
     TimerReadd();
     UnsupportedFilters();
