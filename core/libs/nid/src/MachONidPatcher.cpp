@@ -188,7 +188,7 @@ std::optional<TrieLocation> FindTrie(const std::vector<std::uint8_t>& binary, co
     return found;
 }
 
-void ParseTrieNode(const std::vector<std::uint8_t>& data, std::size_t start, std::size_t end, std::size_t node, std::string& prefix, std::set<std::size_t>& visited, std::vector<MachOExport>& out) {
+void ParseTrieNode(const std::vector<std::uint8_t>& data, std::size_t start, std::size_t end, std::size_t node, std::string& prefix, std::set<std::size_t>& visited, std::vector<MachOExport>& out, std::size_t depth) {
     if (node >= end - start) throw std::runtime_error("export trie node out of bounds");
     if (!visited.insert(node).second) throw std::runtime_error("export trie has a cycle");
     std::size_t cursor = start + node;
@@ -216,7 +216,7 @@ void ParseTrieNode(const std::vector<std::uint8_t>& data, std::size_t start, std
         const auto child = ReadUleb(data, cursor, end);
         const auto length = prefix.size();
         prefix += label;
-        ParseTrieNode(data, start, end, static_cast<std::size_t>(child), prefix, visited, out);
+        ParseTrieNode(data, start, end, static_cast<std::size_t>(child), prefix, visited, out, depth + 1);
         prefix.resize(length);
     }
 }
@@ -227,7 +227,7 @@ std::vector<MachOExport> ParseTrie(const std::vector<std::uint8_t>& binary, std:
     if (size == 0) return exports;
     std::string prefix;
     std::set<std::size_t> visited;
-    ParseTrieNode(binary, offset, std::size_t{offset} + size, 0, prefix, visited, exports);
+    ParseTrieNode(binary, offset, std::size_t{offset} + size, 0, prefix, visited, exports, 0);
     return exports;
 }
 
