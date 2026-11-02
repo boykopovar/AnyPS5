@@ -5340,6 +5340,22 @@ void verifySplitWaterfallImageTable() {
 
 void verifyDescriptorPhis() {
     using namespace ShaderRecompiler;
+    {
+        IrValue exec(IrOpcode::GetExec, IrType::U64, 0u);
+        IrValue controlledQuad(IrOpcode::WqmU64, IrType::U64, 1u);
+        controlledQuad.AddArgument(&exec);
+        require(Detail::HoldsControlValue(&controlledQuad, 8u), "descriptor provenance: a whole-quad EXEC mask lost its control origin");
+        IrValue userRegister(IrOpcode::Void, IrType::ScalarReg, 2u);
+        userRegister.SetRegister({RegisterBank::UserData, 0u});
+        IrValue userData(IrOpcode::GetUserData, IrType::U32, 3u);
+        userData.AddArgument(&userRegister);
+        IrValue userPair(IrOpcode::CompositeConstructU64, IrType::U64, 4u);
+        userPair.AddArgument(&userData);
+        userPair.AddArgument(&userData);
+        IrValue uncontrolledQuad(IrOpcode::WqmU64, IrType::U64, 5u);
+        uncontrolledQuad.AddArgument(&userPair);
+        require(!Detail::HoldsControlValue(&uncontrolledQuad, 8u), "descriptor provenance: a whole-quad user-data value acquired a control origin");
+    }
     constexpr std::uint32_t Format8888UNorm = 56;
     constexpr std::uint32_t Type2D = 9;
     struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
