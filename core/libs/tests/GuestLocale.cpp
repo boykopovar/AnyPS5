@@ -31,6 +31,7 @@ extern std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsI
 extern std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17];
 extern std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[14];
 extern std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14];
+extern std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18];
 
 }
 
@@ -501,6 +502,15 @@ static void CheckFacetGetcat() {
     Require(_ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&punct, &locale) == 4);
 }
 
+static void CheckWideCtypeVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt5ctypeIwE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 static void CheckCtypeVtableObject() {
     for (std::uintptr_t& slot : _ZTVSt5ctypeIcE_nid_postfix) {
         Require(slot == 0);
@@ -576,6 +586,7 @@ int main() {
     CheckNumGetWideVtableObject();
     CheckNumPutVtableObject();
     CheckCtypeVtableObject();
+    CheckWideCtypeVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
