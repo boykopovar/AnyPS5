@@ -2420,7 +2420,7 @@ int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
     }
     // Keep guest identity stable without exposing the host adapter address.
     const std::uint8_t mac[6] = {0x02, 0x50, 0x53, 0x35, 0x00, 0x01};
-    std::memcpy(addr->data, mac, 6);
+    if (!GuestCopyOut_nid_no_patch(addr, mac, sizeof(mac))) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -2584,7 +2584,7 @@ int APS5_VABI sceNetResolverGetError(int rid, int* status) {
     std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
     if (resolver == g_resolvers.end()) return fail(NET_EBADF);
-    *status = resolver->second.error;
+    if (!GuestCopyOut_nid_no_patch(status, &resolver->second.error, sizeof(*status))) return fail(NET_EFAULT);
     return 0;
 }
 

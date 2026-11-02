@@ -93,12 +93,14 @@ class Module:
     def read_tags(self):
         tags = {}
         offset, size = self.dynamic
-        for position in range(offset, offset + size, 16):
+        if offset + size > len(self.data):
+            raise ModuleError("PT_DYNAMIC extends past the end of the file")
+        for position in range(offset, offset + size - 15, 16):
             tag, value = self.unpack("<qQ", position)
             if tag == DT_NULL:
-                break
+                return tags
             tags.setdefault(tag, value)
-        return tags
+        raise ModuleError("PT_DYNAMIC has no complete DT_NULL terminator")
 
     def require_tag(self, tag, name):
         if tag not in self.tags:
@@ -319,11 +321,17 @@ def resolved_path(path):
             break
         target = Path(link_target(os.readlink(path)))
         path = target if target.is_absolute() else path.parent / target
-    return path.resolve()
+    try:
+        return path.resolve(strict=True)
+    except FileNotFoundError:
+        return path.resolve()
 
 
 def same_file(left, right):
-    return resolved_path(left) == resolved_path(right) or (left.exists() and right.exists() and left.samefile(right))
+    try:
+        return resolved_path(left) == resolved_path(right) or (left.exists() and right.exists() and left.samefile(right))
+    except (OSError, RuntimeError) as error:
+        raise ModuleError(f"cannot resolve annotation path {left} or {right}: {error}") from error
 
 
 def annotate(module_path, prefix, namer):
