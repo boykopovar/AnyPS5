@@ -70,10 +70,10 @@ int main() {
 
     Require(scale(nullptr, 1920) == InvalidArg, "ExtensionScalePosition took a null position");
     Require(scale(&position, 0) == InvalidArg && position == 100, "ExtensionScalePosition took a scale of 0");
-    const std::array<std::array<std::uint16_t, 3>, 6> rows{{{65535, 1920, 1919}, {32768, 1920, 960}, {0, 1920, 0}, {65535, 1, 0}, {1, 65535, 1}, {40000, 1080, 659}}};
+    const std::array<std::array<std::uint16_t, 3>, 9> rows{{{65535, 1920, 1919}, {32768, 1920, 960}, {0, 1920, 0}, {65535, 1, 0}, {1, 65535, 1}, {40000, 1080, 659}, {1, 2, 1}, {32767, 2, 1}, {100, 1920, 3}}};
     for (const auto& [input, size, expected] : rows) {
         position = input;
-        Require(scale(&position, size) == Ok && position == expected, "ExtensionScalePosition didn't round position * (scale - 1) / 65535");
+        Require(scale(&position, size) == Ok && position == expected, "ExtensionScalePosition didn't round position * (scale - 1) / 65535 up");
     }
 
     Require(setConfig(handle, nullptr) == InvalidArg, "ExtensionSetConfig took a null config");

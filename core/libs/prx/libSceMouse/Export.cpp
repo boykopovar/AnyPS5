@@ -143,7 +143,7 @@ int APS5_VABI sceMouseExtensionScalePosition(std::uint16_t* position, std::uint1
     if (!Mouse::IsInitialized()) return MOUSE_ERROR_NOT_INITIALIZED;
     if (position == nullptr || scale == 0) return MOUSE_ERROR_INVALID_ARG;
     const std::uint32_t scaled = static_cast<std::uint32_t>(*position) * (scale - 1u);
-    *position = static_cast<std::uint16_t>((scaled + 0x7fffu) / 0xffffu);
+    *position = static_cast<std::uint16_t>((scaled + 0xfffeu) / 0xffffu);
     return MOUSE_OK;
 }
 
