@@ -238,7 +238,6 @@ struct SpirvEmitterState {
     std::uint32_t meshWindowBaseVariable = 0;
     std::unordered_set<const IrValue*> meshWindowBufferStores;
     std::unordered_set<const IrValue*> meshWindowBufferLoads;
-    std::vector<bool> meshWindowEntryLive;
     std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t samplerVariable = 0;
     std::vector<SpirvTableImageVariable> tableImageVariables;
