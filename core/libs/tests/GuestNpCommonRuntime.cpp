@@ -620,6 +620,19 @@ void TestCalloutSelfTermination() {
     Require(context.initialized == 0, "the context terminates from another thread");
 }
 
+void TestCalloutFarDeadline() {
+    NpCalloutContext context {};
+    NpCallout callout {};
+    Require(sceNpCalloutInitCtx(&context, "np-far", 0x4000, 0, 0) == 0, "a callout context starts for a far deadline");
+    Require(sceNpCalloutStartOnCtx64(&context, &callout, UINT64_MAX, RecordUnexpected, nullptr) == 0,
+        "a callout with the largest delay is queued");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    int wasPending = 0;
+    Require(sceNpCalloutStopOnCtx(&context, &callout, &wasPending) == 0 && wasPending == 1,
+        "a callout whose deadline would overflow is not run at once");
+    sceNpCalloutTermCtx(&context);
+}
+
 bool Equals(const char* actual, const char* expected) {
     return std::strcmp(actual, expected) == 0;
 }
@@ -1473,6 +1486,7 @@ int main() {
     TestHexAndCopies();
     TestCallouts();
     TestCalloutSelfTermination();
+    TestCalloutFarDeadline();
     TestIds();
     TestJid();
     TestLanguagesAndDebugIds();
