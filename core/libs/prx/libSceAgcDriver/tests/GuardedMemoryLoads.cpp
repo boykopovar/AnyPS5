@@ -6,6 +6,7 @@
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "PipelineSpecialization.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -18,6 +19,9 @@
 #include <vector>
 
 namespace {
+
+constexpr std::uint32_t PoolDwords = 514u;
+constexpr std::uint32_t PoolHeader = 2u;
 
 using namespace ShaderRecompiler;
 
@@ -145,6 +149,15 @@ public:
         std::vector<std::uint32_t> reads;
         std::uint32_t previous = 0;
         std::uint32_t current = 0;
+        const bool pooled = std::ranges::any_of(names, [](const auto& entry) { return entry.second == "scratch_pool"; });
+        if (pooled) {
+            std::size_t scan = cursor;
+            for (; scan < words.size() && (words[scan] & 0xffff) != spv::OpControlBarrier; scan += words[scan] >> 16) {
+                if ((words[scan] & 0xffff) == spv::OpLabel) current = words[scan + 1];
+            }
+            require(scan < words.size(), "scratch pool slot acquisition has no workgroup barrier");
+            cursor = scan + (words[scan] >> 16);
+        }
         for (std::size_t steps = 0; steps < 4096; ++steps) {
             const auto instruction = std::span(words).subspan(cursor, words[cursor] >> 16);
             const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffff);
@@ -161,6 +174,7 @@ public:
                 require((pointer[0] & 0xffff) == spv::OpAccessChain, "guest read is not an indexed access");
                 reads.push_back(value(pointer.back()));
                 if (rootName(instruction[3]) == "scratch_dwords") require(pointerStorage(instruction[3]) == spv::StorageClassFunction, "scratch selection accessed non-private storage");
+                if (rootName(instruction[3]) == "scratch_pool") require(pointerStorage(instruction[3]) == spv::StorageClassStorageBuffer, "scratch pool accessed outside a storage buffer");
                 if (rootName(instruction[3]).starts_with("buffers")) require(instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
             }
             if (opcode == spv::OpBranch || opcode == spv::OpBranchConditional) {
@@ -200,7 +214,7 @@ private:
 
     bool isGuestPointer(std::uint32_t id) const {
         const auto name = rootName(id);
-        return name == "lds_dwords" || name == "gds" || name == "scratch_dwords" || name.starts_with("buffers");
+        return name == "lds_dwords" || name == "gds" || name == "scratch_dwords" || name == "scratch_pool" || name.starts_with("buffers");
     }
 
     std::uint32_t value(std::uint32_t id) const {
@@ -247,10 +261,12 @@ private:
         case spv::OpLogicalNot: return !argument(3);
         case spv::OpArrayLength:
             require(isGuestPointer(instruction[3]), "unknown array length in access fixture");
-            return 16;
+            return rootName(instruction[3]) == "scratch_pool" ? PoolDwords : 16;
+        case spv::OpUDiv: return argument(3) / argument(4);
+        case spv::OpAtomicIDecrement: return 0;
         case spv::OpLoad:
             require(!isGuestPointer(instruction[3]), "guest data unexpectedly controls a fixture access");
-            require(rootName(instruction[3]) == "vsharp" || rootName(instruction[3]).find("subgroup") != std::string::npos, "unknown input to access condition");
+            require(rootName(instruction[3]) == "vsharp" || rootName(instruction[3]) == "scratch_pool_slot" || rootName(instruction[3]) == "gl_LocalInvocationIndex" || rootName(instruction[3]).find("subgroup") != std::string::npos, "unknown input to access condition");
             return 0;
         default: throw std::runtime_error("unsupported opcode in access condition: " + std::to_string(opcode));
         }
@@ -461,9 +477,9 @@ int main() {
     run("private scratch selection", [] {
         const LoadCase test{ResourceKind::Scratch, IrOpcode::LoadAddressU32, IrType::U32};
         for (const bool robust : {false, true}) {
-            expectReads(test, robust, false, 8, {0});
-            expectReads(test, robust, true, 64, {0});
-            expectReads(test, robust, true, 8, {2});
+            expectReads(test, robust, false, 8, {PoolHeader});
+            expectReads(test, robust, true, 64, {PoolHeader});
+            expectReads(test, robust, true, 8, {PoolHeader + 2u});
         }
     });
     if (failures != 0) {
