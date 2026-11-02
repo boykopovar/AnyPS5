@@ -43,8 +43,9 @@ struct ContextStorage {
     GraphicsStyle style{};
     SavedState* saved{};
 
-    explicit ContextStorage(int error = kSuccess, bool staticError = false)
-        : status(error), immortal(staticError) {}
+    explicit ContextStorage(int error = kSuccess, bool staticError = false,
+                            CairoSurface* initialTarget = nullptr)
+        : status(error), immortal(staticError), target(initialTarget) {}
 };
 
 ContextStorage* State(CairoContext* context) {
@@ -58,7 +59,8 @@ CairoContext* Handle(ContextStorage* state) {
 CairoContext* ErrorContext(int status) {
     static ContextStorage noMemory(kNoMemory, true);
     static ContextStorage invalidMatrix(kInvalidMatrix, true);
-    static ContextStorage nullPointer(kNullPointer, true);
+    static ContextStorage nullPointer(kNullPointer, true,
+                                     CairoSurfaceError(kNoMemory));
     static ContextStorage invalidRestore(kInvalidRestore, true);
     switch (status) {
     case kInvalidMatrix: return Handle(&invalidMatrix);
@@ -87,6 +89,11 @@ void ReleaseStorage(ContextStorage* state) {
 }
 
 void ReplaceMatrix(ContextStorage* state, const CairoMatrix& candidate) {
+    const double determinant = candidate.xx * candidate.yy - candidate.yx * candidate.xy;
+    if (determinant == 0 || !std::isfinite(determinant)) {
+        state->status = kInvalidMatrix;
+        return;
+    }
     CairoMatrix inverse = candidate;
     if (cairo_matrix_invert(&inverse) != kSuccess) {
         state->status = kInvalidMatrix;
@@ -163,6 +170,10 @@ CairoSurface* APS5_VABI cairo_get_target(CairoContext* context) {
 void APS5_VABI cairo_translate(CairoContext* context, double tx, double ty) {
     auto* state = Valid(context);
     if (!state) return;
+    if (!std::isfinite(tx) || !std::isfinite(ty)) {
+        state->status = kInvalidMatrix;
+        return;
+    }
     CairoMatrix matrix = state->matrix;
     cairo_matrix_translate(&matrix, tx, ty);
     ReplaceMatrix(state, matrix);
@@ -198,8 +209,9 @@ void APS5_VABI cairo_set_matrix(CairoContext* context, const CairoMatrix* matrix
 }
 
 void APS5_VABI cairo_get_matrix(CairoContext* context, CairoMatrix* matrix) {
+    if (!matrix) return;
     auto* state = Valid(context);
-    if (state && matrix) *matrix = state->matrix;
+    *matrix = state ? state->matrix : kIdentity;
 }
 
 void APS5_VABI cairo_identity_matrix(CairoContext* context) {
