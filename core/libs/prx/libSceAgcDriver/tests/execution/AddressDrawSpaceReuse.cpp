@@ -33,6 +33,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <span>
 #include <string>
 #include <vector>
@@ -843,6 +844,110 @@ void MultisampleTargetOutside(Scene& scene) {
     Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1 && Builds() == built, "address draw space reuse: a draw after a resident multisample target appeared outside its space counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected one reuse");
 }
 
+class InjectedFailures {
+public:
+    InjectedFailures(std::uint32_t keeps, AgcDriver::Graphics::DrawStopForTest stop) {
+        AgcDriver::Graphics::SetSpaceKeepFailuresForTest(keeps);
+        AgcDriver::Graphics::SetDrawStopAfterResolveForTest(stop);
+    }
+
+    ~InjectedFailures() {
+        AgcDriver::Graphics::SetSpaceKeepFailuresForTest(0);
+        AgcDriver::Graphics::SetDrawStopAfterResolveForTest(AgcDriver::Graphics::DrawStopForTest::None);
+    }
+
+    InjectedFailures(const InjectedFailures&) = delete;
+    InjectedFailures& operator=(const InjectedFailures&) = delete;
+};
+
+struct KeepFailure {
+    const char* what;
+    std::uint32_t keeps;
+    AgcDriver::Graphics::DrawStopForTest stop;
+};
+
+constexpr std::array<KeepFailure, 3> KeepFailures{{
+    {"an unrecorded draw that returned early", 1, AgcDriver::Graphics::DrawStopForTest::ReturnAfterResolve},
+    {"a draw whose preparation threw", 1, AgcDriver::Graphics::DrawStopForTest::ThrowAfterResolve},
+    {"a recorded draw", 2, AgcDriver::Graphics::DrawStopForTest::None},
+}};
+
+std::size_t Retained() {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    return AgcDriver::Graphics::RetainedSpaceCount();
+}
+
+std::string RetainedText(std::size_t now, std::size_t before) {
+    return std::to_string(now) + " retained, " + std::to_string(before) + " before";
+}
+
+void FailKeep(Scene& scene, const KeepFailure& failure) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    const Outcomes outcomes;
+    bool reported = false;
+    {
+        const InjectedFailures injected(failure.keeps, failure.stop);
+        try {
+            scene.Draw();
+        } catch (const std::bad_alloc&) {
+            reported = true;
+        }
+    }
+    Require(reported, std::string("address draw space reuse: ") + failure.what + " whose space keep failed did not report the failure");
+    Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1, std::string("address draw space reuse: ") + failure.what + " whose space keep failed counted " + outcomes.Text() + ", expected one reuse");
+}
+
+void CompleteHeldBatch(Scene& scene) {
+    const std::array<std::uint32_t, 4> pattern{};
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(scene.device.FillBuffer(scene.spare.Address(), 16, pattern), "address draw space reuse: the fill that completes the held batch was not recorded on the GPU");
+    }
+    scene.Wait();
+}
+
+void HeldSpaceRetaken(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    scene.Store(scene.constants, 0, 110);
+    for (const auto& failure : KeepFailures) {
+        Require(scene.DrawnColor() == 110 && scene.DrawnColor() == 110, std::string("address draw space reuse: the draws before ") + failure.what + " whose space keep failed did not read the guest constant");
+        const auto retained = Retained();
+        FailKeep(scene, failure);
+        CompleteHeldBatch(scene);
+        const Outcomes outcomes;
+        const auto built = Builds();
+        const auto color = scene.DrawnColor();
+        Require(color == 110, std::string("address draw space reuse: the draw after ") + failure.what + " whose space keep failed read " + std::to_string(color) + " instead of 110");
+        Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1 && Builds() == built, std::string("address draw space reuse: a draw after the batch that held the space of ") + failure.what + " whose space keep failed completed counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected the held space retaken and reused");
+        Require(Retained() == retained, std::string("address draw space reuse: a space held by its cached build after ") + failure.what + " whose space keep failed was retained (" + RetainedText(Retained(), retained) + ")");
+    }
+}
+
+void HeldSpaceInUse(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    scene.Store(scene.constants, 0, 100);
+    for (const auto& failure : KeepFailures) {
+        Require(scene.DrawnColor() == 100 && scene.DrawnColor() == 100, std::string("address draw space reuse: the draws before ") + failure.what + " whose space keep failed did not read the guest constant");
+        const auto retained = Retained();
+        FailKeep(scene, failure);
+        {
+            const Outcomes outcomes;
+            const auto built = Builds();
+            scene.Draw();
+            Require(outcomes[AddressDrawReuse::InUse] == 1 && outcomes.Total() == 1 && Builds() == built + 1, std::string("address draw space reuse: a draw before the batch that held the space of ") + failure.what + " whose space keep failed completed counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected one refusal for a space in use and a build");
+            const auto kept = Retained();
+            Require(kept == retained + 1, std::string("address draw space reuse: the space held by ") + failure.what + " whose space keep failed was not retained when a fresh build replaced its cached build (" + RetainedText(kept, retained) + ")");
+            const auto color = scene.Color();
+            Require(color == 100, std::string("address draw space reuse: the fresh build after ") + failure.what + " whose space keep failed read " + std::to_string(color) + " instead of 100");
+        }
+        const Outcomes outcomes;
+        const auto color = scene.DrawnColor();
+        Require(color == 100, std::string("address draw space reuse: the draw after the batch that held the space of ") + failure.what + " completed read " + std::to_string(color) + " instead of 100");
+        Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1, std::string("address draw space reuse: the draw after the batch that held the space of ") + failure.what + " completed counted " + outcomes.Text() + ", expected the fresh build reused");
+        Require(Retained() == retained, std::string("address draw space reuse: the retained space of ") + failure.what + " whose space keep failed was not released once its batch completed (" + RetainedText(Retained(), retained) + ")");
+    }
+}
+
 void Disabled(Scene& scene) {
     scene.Store(scene.constants, 0, 70);
     Require(scene.DrawnColor() == 70, "address draw space reuse: the first draw with reuse off did not read the guest constant");
@@ -885,6 +990,11 @@ constexpr std::array<NamedCase, 14> DefaultCases{{
     {"multisample-target-outside", MultisampleTargetOutside},
 }};
 
+constexpr std::array<NamedCase, 2> HeldCases{{
+    {"held-space-retaken", HeldSpaceRetaken},
+    {"held-space-in-use", HeldSpaceInUse},
+}};
+
 constexpr std::array<NamedCase, 3> TransitionCases{{
     {"unchanged", UnchangedInputs},
     {"idle-free", IdleFree},
@@ -897,8 +1007,9 @@ int main(int argc, char** argv) {
     try {
         const std::string mode = argc > 1 ? argv[1] : "";
         const std::string only = mode == "--case" && argc > 2 ? argv[2] : "";
-        Require(mode.empty() || mode == "--off" || mode == "--transitions" || mode == "--verify" || !only.empty(), "usage: [--off | --transitions | --verify | --case <name>]");
+        Require(mode.empty() || mode == "--off" || mode == "--transitions" || mode == "--verify" || mode == "--held" || !only.empty(), "usage: [--off | --transitions | --verify | --held | --case <name>]");
         Require(mode != "--verify" || std::getenv("APS5_VERIFY_ADDRESS_DRAW_REUSE") != nullptr, "address draw space reuse: --verify needs APS5_VERIFY_ADDRESS_DRAW_REUSE=1");
+        Require(mode != "--held" || std::getenv("APS5_RELEASE_ON_UNLOCK") != nullptr, "address draw space reuse: --held needs APS5_RELEASE_ON_UNLOCK=1");
         LimitPinWait();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -913,7 +1024,7 @@ int main(int argc, char** argv) {
             if (mode == "--off") {
                 Disabled(scene);
             } else {
-                const std::span<const NamedCase> cases = mode == "--transitions" ? std::span<const NamedCase>(TransitionCases) : std::span<const NamedCase>(DefaultCases);
+                const std::span<const NamedCase> cases = mode == "--transitions" ? std::span<const NamedCase>(TransitionCases) : mode == "--held" ? std::span<const NamedCase>(HeldCases) : std::span<const NamedCase>(DefaultCases);
                 bool ran = false;
                 for (const auto& entry : cases) {
                     if (!only.empty() && only != entry.name) continue;

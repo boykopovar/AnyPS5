@@ -172,6 +172,9 @@ using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t
 AddressDrawReuseCounts AddressDrawReuseCounters();
 const char* AddressDrawReuseName(AddressDrawReuse outcome);
 std::uint64_t AddressDrawReuseVerifications();
+enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
+void SetSpaceKeepFailuresForTest(std::uint32_t count);
+void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
 
 }
 

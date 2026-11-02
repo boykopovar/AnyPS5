@@ -40,6 +40,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -2273,8 +2274,15 @@ std::function<void()> indirectRecordCheck(const IndirectRecord* indirect) {
     };
 }
 
+std::atomic<std::uint32_t> spaceKeepFailures{0};
+std::atomic<int> stopAfterResolve{0};
+
 std::shared_ptr<std::shared_ptr<const void>> reserveSpaceKeep(Recorder& recorder, const ShaderResources& resources) {
     if (!resources.SpaceReuse()) return nullptr;
+    if (spaceKeepFailures.load(std::memory_order_relaxed) != 0) {
+        spaceKeepFailures.fetch_sub(1, std::memory_order_relaxed);
+        throw std::bad_alloc();
+    }
     auto slot = std::make_shared<std::shared_ptr<const void>>();
     recorder.Keep(slot);
     return slot;
@@ -3231,6 +3239,11 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
     auto& resolved = prepared.resolved;
     resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    if (stopAfterResolve.load(std::memory_order_relaxed) != 0) {
+        const auto stop = stopAfterResolve.exchange(0, std::memory_order_relaxed);
+        if (stop == 1) return false;
+        if (stop == 2) throw std::runtime_error("injected failure after the draw's resources were resolved");
+    }
     auto& resources = resolved.resources;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         auto& binding = targets[index];
@@ -4167,6 +4180,14 @@ AddressDrawReuseCounts AddressDrawReuseCounters() {
 
 const char* AddressDrawReuseName(AddressDrawReuse outcome) {
     return static_cast<std::size_t>(outcome) < AddressDrawReuseNames.size() ? AddressDrawReuseNames[static_cast<std::size_t>(outcome)] : "?";
+}
+
+void SetSpaceKeepFailuresForTest(std::uint32_t count) {
+    spaceKeepFailures.store(count, std::memory_order_relaxed);
+}
+
+void SetDrawStopAfterResolveForTest(DrawStopForTest stop) {
+    stopAfterResolve.store(static_cast<int>(stop), std::memory_order_relaxed);
 }
 
 std::uint64_t AddressDrawReuseVerifications() {
