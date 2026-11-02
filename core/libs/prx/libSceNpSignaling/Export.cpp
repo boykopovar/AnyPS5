@@ -20,7 +20,6 @@ static constexpr int SCE_NP_SIGNALING_ERROR_OWN_NP_ID = static_cast<int>(0x80552
 static constexpr int CONTEXT_OPTION_FLAG = 1;
 static constexpr int MAX_CONTEXT_ID = 8;
 static constexpr std::uint32_t CONTEXT_FLAG_BIT = 0x2;
-static constexpr std::uint32_t CONN_STATUS_INACTIVE = 0;
 
 namespace {
 struct SignalingNpId {
@@ -195,16 +194,8 @@ int APS5_VABI sceNpSignalingActivateConnectionA(int ctxId, const NpSignalingAcco
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
-int APS5_VABI sceNpSignalingGetConnectionStatus(int ctxId, int connId, std::uint32_t* outStatus, std::uint32_t* outPeerAddr, std::uint16_t* outPeerPort) {
-    (void)connId;
-    (void)outPeerAddr;
-    (void)outPeerPort;
-    std::lock_guard lock(signalingMutex);
-    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
-    if (!outStatus) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
-    if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
-    *outStatus = CONN_STATUS_INACTIVE;
-    return 0;
+int APS5_VABI sceNpSignalingGetConnectionStatus(int, int, std::uint32_t*, std::uint32_t*, std::uint16_t*) {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpSignalingGetConnectionInfoA(int ctxId, int connId, int infoCode, void* outInfo) {
@@ -237,12 +228,8 @@ int APS5_VABI sceNpSignalingGetConnectionFromPeerAddress(int ctxId, std::uint32_
     return SCE_NP_SIGNALING_ERROR_CONN_NOT_FOUND;
 }
 
-int APS5_VABI sceNpSignalingGetConnectionFromPeerAddressA(int ctxId, const NpSignalingAccountPlatformPair* peerAddr, int* outConnId) {
-    std::lock_guard lock(signalingMutex);
-    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
-    if (!peerAddr || !outConnId) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
-    if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
-    return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+int APS5_VABI sceNpSignalingGetConnectionFromPeerAddressA(int, const NpSignalingAccountPlatformPair*, int*) {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpSignalingGetContextOption(int ctxId, int optionId, int* outOptionValue) {
@@ -256,12 +243,8 @@ int APS5_VABI sceNpSignalingGetContextOption(int ctxId, int optionId, int* outOp
     return 0;
 }
 
-int APS5_VABI sceNpSignalingGetPeerNetInfoA(int ctxId, const void* peerAccount, std::uint32_t* outReqId) {
-    std::lock_guard lock(signalingMutex);
-    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
-    if (!peerAccount || !outReqId) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
-    if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
-    return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+int APS5_VABI sceNpSignalingGetPeerNetInfoA(int, const void*, std::uint32_t*) {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpSignalingCancelPeerNetInfo(int ctxId, int reqId) {
@@ -282,12 +265,8 @@ int APS5_VABI sceNpSignalingGetPeerNetInfoResult(int ctxId, int connId, NpSignal
     return SCE_NP_SIGNALING_ERROR_RESULT_NOT_FOUND;
 }
 
-int APS5_VABI sceNpSignalingGetConnectionStatistics(NpSignalingConnectionStatistics* stats) {
-    std::lock_guard lock(signalingMutex);
-    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
-    if (!stats) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
-    *stats = NpSignalingConnectionStatistics{};
-    return 0;
+int APS5_VABI sceNpSignalingGetConnectionStatistics(NpSignalingConnectionStatistics*) {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceNpSignalingGetLocalNetInfo() {
