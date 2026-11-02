@@ -1,6 +1,9 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpTrophy/include/InventoryExports.hpp"
 #include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -417,14 +420,13 @@ int APS5_VABI sceNpTrophyConfigGetTrophyTitleDetails(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTrophyConfigHasGroupFeature(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyConfigHasGroupFeature(const std::uint8_t* config) {
+    if (!config) return 0;
+    return config[0x90] & 1;
 }
 
-int APS5_VABI sceNpTrophyGroupArrayGetNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyGroupArrayGetNum(const std::uint32_t* groupArray) {
+    return std::popcount(groupArray[0]);
 }
 
 int APS5_VABI sceNpTrophyIntAbortHandle(void) {
@@ -482,19 +484,23 @@ int APS5_VABI sceNpTrophyIntNetSyncTitles(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTrophyNumInfoGetTotal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo) {
+    return static_cast<int>(numInfo[0] + numInfo[1] + numInfo[2] + numInfo[3]);
 }
 
-int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray) {
+    int count = 0;
+    for (std::size_t index = 0; index < 16; ++index) {
+        flagArray[index] = setInfo[index] | setInfo[16 + index] | setInfo[32 + index] | setInfo[48 + index];
+        count += std::popcount(flagArray[index]);
+    }
+    return count;
 }
 
-int APS5_VABI sceNpTrophySetInfoGetTrophyNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo) {
+    int count = 0;
+    for (std::size_t index = 0; index < 64; ++index) count += std::popcount(setInfo[index]);
+    return count;
 }
 
 int APS5_VABI sceNpTrophyShowTrophyList(void) {
@@ -558,8 +564,7 @@ int APS5_VABI sceNpTrophySystemCreateHandle(void) {
 }
 
 int APS5_VABI sceNpTrophySystemDbgCtl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemDebugLockTrophy(void) {
@@ -588,13 +593,11 @@ int APS5_VABI sceNpTrophySystemDestroyTrophyConfig(void) {
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetGroupIcon(void) {
@@ -718,13 +721,11 @@ int APS5_VABI sceNpTrophySystemRemoveUserData(void) {
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemUnregisterTitleSyncedCallback(void) {
@@ -786,5 +787,67 @@ int APS5_VABI sceNpTrophySystemWrapRemoveUserData(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetailsArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTitleData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetails() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+O9vU1CpGZA", libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+not13BEdVI", libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FJZW2oHUHFk", libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_bGnKq23jqek_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("bGnKq23jqek", libSceNpTrophyUnknown_bGnKq23jqek_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lX611WLCvX0", libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("n4AHGHb-pfY", libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch);
 
 }

@@ -1,0 +1,9 @@
+add_test_executable(agc_fragment_barycentric_tests EXCLUDE_FROM_ALL tests/FragmentBarycentric.cpp)
+target_include_directories(agc_fragment_barycentric_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+set_target_properties(agc_fragment_barycentric_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_fragment_barycentric_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_fragment_barycentric_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_fragment_barycentric COMMAND agc_fragment_barycentric_tests)
+endif()
