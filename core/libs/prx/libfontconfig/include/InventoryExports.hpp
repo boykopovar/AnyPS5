@@ -1,51 +1,52 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libfontconfig/include/Types.hpp"
 
 extern "C" {
 
-int APS5_VABI FcLangSetDestroy();
-int APS5_VABI FcPatternRemove();
-int APS5_VABI FcPatternGetInteger();
+void APS5_VABI FcLangSetDestroy(FcLangSet* set);
+FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id);
+FcResult APS5_VABI FcPatternGetInteger(const FcPattern* pattern, const char* object, int id, int* value);
 int APS5_VABI FcConfigGetCurrent();
-int APS5_VABI FcPatternGetBool();
-int APS5_VABI FcPatternAddBool();
+FcResult APS5_VABI FcPatternGetBool(const FcPattern* pattern, const char* object, int id, FcBool* value);
+FcBool APS5_VABI FcPatternAddBool(FcPattern* pattern, const char* object, FcBool value);
 int APS5_VABI FcFontList();
 int APS5_VABI FcFontSetMatch();
 int APS5_VABI FcConfigSubstitute();
-int APS5_VABI FcPatternGetMatrix();
+FcResult APS5_VABI FcPatternGetMatrix(const FcPattern* pattern, const char* object, int id, FcMatrix** value);
 int APS5_VABI FcInit();
 int APS5_VABI FcInitBringUptoDate();
-int APS5_VABI FcPatternGetString();
+FcResult APS5_VABI FcPatternGetString(const FcPattern* pattern, const char* object, int id, FcChar8** value);
 int APS5_VABI FcFontRenderPrepare();
-int APS5_VABI FcPatternAddDouble();
-int APS5_VABI FcPatternDuplicate();
+FcBool APS5_VABI FcPatternAddDouble(FcPattern* pattern, const char* object, double value);
+FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern);
 int APS5_VABI FcFontMatch();
 int APS5_VABI FcPatternFilter();
 int APS5_VABI FcConfigCreate();
 int APS5_VABI FcPatternGetFTFace();
-int APS5_VABI FcPatternEqual();
+FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second);
 int APS5_VABI FcCharSetSubtractCount();
-int APS5_VABI FcPatternAddInteger();
-int APS5_VABI FcLangSetAdd();
+FcBool APS5_VABI FcPatternAddInteger(FcPattern* pattern, const char* object, int value);
+FcBool APS5_VABI FcLangSetAdd(FcLangSet* set, const FcChar8* language);
 int APS5_VABI FcFontSort();
 int APS5_VABI FcCharSetMerge();
 int APS5_VABI FcPatternGetCharSet();
 int APS5_VABI FcCharSetDestroy();
-int APS5_VABI FcPatternDel();
+FcBool APS5_VABI FcPatternDel(FcPattern* pattern, const char* object);
 int APS5_VABI FcConfigDestroy();
-int APS5_VABI FcPatternReference();
+void APS5_VABI FcPatternReference(FcPattern* pattern);
 int APS5_VABI FcObjectSetDestroy();
-int APS5_VABI FcPatternGet();
-int APS5_VABI FcPatternAddMatrix();
-int APS5_VABI FcPatternAddString();
+FcResult APS5_VABI FcPatternGet(const FcPattern* pattern, const char* object, int id, FcValue* value);
+FcBool APS5_VABI FcPatternAddMatrix(FcPattern* pattern, const char* object, const FcMatrix* value);
+FcBool APS5_VABI FcPatternAddString(FcPattern* pattern, const char* object, const FcChar8* value);
 int APS5_VABI FcFontSetCreate();
-int APS5_VABI FcLangSetHasLang();
+FcLangResult APS5_VABI FcLangSetHasLang(const FcLangSet* set, const FcChar8* language);
 int APS5_VABI FcCharSetCreate();
-int APS5_VABI FcLangSetCreate();
+FcLangSet* APS5_VABI FcLangSetCreate();
 int APS5_VABI FcFreeTypeCharIndex();
 int APS5_VABI FcFontSetAdd();
-int APS5_VABI FcPatternDestroy();
+void APS5_VABI FcPatternDestroy(FcPattern* pattern);
 int APS5_VABI FcCharSetAddChar();
 int APS5_VABI FcMatrixMultiply();
 int APS5_VABI FcPatternAddCharSet();
@@ -54,7 +55,7 @@ int APS5_VABI FcObjectSetBuild();
 int APS5_VABI FcPatternAddLangSet();
 int APS5_VABI FcFontSetDestroy();
 int APS5_VABI FcPatternGetLangSet();
-int APS5_VABI FcPatternCreate();
+FcPattern* APS5_VABI FcPatternCreate();
 int APS5_VABI FcConfigReference();
 int APS5_VABI FcPatternFormat();
 
