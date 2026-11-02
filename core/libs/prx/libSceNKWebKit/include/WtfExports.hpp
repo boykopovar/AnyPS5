@@ -7,6 +7,44 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace NKWebKit::WtfAbi {
+
+struct BinarySemaphore {
+    bool isSet{false};
+    std::uint8_t lock{0};
+    bool hasWaiters{false};
+};
+
+static_assert(sizeof(BinarySemaphore) == 3 && alignof(BinarySemaphore) == 1);
+static_assert(offsetof(BinarySemaphore, isSet) == 0);
+static_assert(offsetof(BinarySemaphore, lock) == 1);
+static_assert(offsetof(BinarySemaphore, hasWaiters) == 2);
+
+struct ParkResult {
+    bool wasUnparked{false};
+    std::intptr_t token{0};
+};
+
+struct UnparkResult {
+    bool didUnparkThread{false};
+    bool mayHaveMoreThreads{false};
+    bool timeToBeFair{false};
+};
+
+template<typename Signature> struct ScopedLambda;
+
+template<typename Result, typename... Args>
+struct ScopedLambda<Result(Args...)> {
+    Result (APS5_VABI *impl)(void*, Args...);
+    void* arg;
+};
+
+static_assert(sizeof(ParkResult) == 16 && offsetof(ParkResult, token) == 8);
+static_assert(sizeof(UnparkResult) == 3 && alignof(UnparkResult) == 1);
+static_assert(sizeof(ScopedLambda<bool()>) == 16 && offsetof(ScopedLambda<bool()>, arg) == 8);
+
+}  // namespace NKWebKit::WtfAbi
+
 extern "C" {
 
 [[noreturn]] void APS5_VABI WTFCrash();
@@ -60,6 +98,14 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl23convertToASCIIUppercaseE
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKhj(const unsigned char* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl9substringEjj(const NKWebKit::WtfAbi::StringImpl* self, unsigned start, unsigned length);
+unsigned APS5_VABI _ZN3WTF10ParkingLot11unparkCountEPKvj(const void* address, unsigned count);
+void APS5_VABI _ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12UnparkResultEEEE(const void* address, const NKWebKit::WtfAbi::ScopedLambda<std::intptr_t(NKWebKit::WtfAbi::UnparkResult)>& callback);
+NKWebKit::WtfAbi::ParkResult APS5_VABI _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE(const void* address, const NKWebKit::WtfAbi::ScopedLambda<bool()>& validation, const NKWebKit::WtfAbi::ScopedLambda<void()>& beforeSleep, const WTF::TimeWithDynamicClockType& timeout);
+void APS5_VABI _ZN3WTF10ParkingLot9unparkAllEPKv(const void* address);
+NKWebKit::WtfAbi::UnparkResult APS5_VABI _ZN3WTF10ParkingLot9unparkOneEPKv(const void* address);
+void APS5_VABI _ZN3WTF4Lock10unlockSlowEv(std::uint8_t* self);
+void APS5_VABI _ZN3WTF4Lock13safepointSlowEv(std::uint8_t* self);
+void APS5_VABI _ZN3WTF4Lock8lockSlowEv(std::uint8_t* self);
 void* APS5_VABI _ZN3WTF10fastCallocEmm(std::size_t count, std::size_t size);
 void* APS5_VABI _ZN3WTF10fastMallocEm(std::size_t size);
 char* APS5_VABI _ZN3WTF10fastStrDupEPKc(const char* str);
@@ -237,5 +283,8 @@ WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF7SecondsmiERKNS_24TimeWithDynami
 WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsplENS_13MonotonicTimeE(const WTF::Seconds* self, WTF::MonotonicTime other);
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other);
 WTF::MonotonicTime APS5_VABI _ZNK3WTF8WallTime24approximateMonotonicTimeEv(const WTF::WallTime* self);
+
+void APS5_VABI _ZN3WTF15BinarySemaphore6signalEv(NKWebKit::WtfAbi::BinarySemaphore* self);
+bool APS5_VABI _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE(NKWebKit::WtfAbi::BinarySemaphore* self, const WTF::TimeWithDynamicClockType& timeout);
 
 }

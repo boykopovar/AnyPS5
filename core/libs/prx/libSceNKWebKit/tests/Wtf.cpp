@@ -2,6 +2,13 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cmath>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <functional>
+#include <future>
+#include <thread>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -375,7 +382,12 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 
+void TestParkingLot();
+void TestBinarySemaphore();
+
 int main() {
+    TestParkingLot();
+    TestBinarySemaphore();
     TestAdditionalWtf();
     TestMemoryAllocations();
     TestAllocationBoundaries();
@@ -970,3 +982,233 @@ void TestURLsAndReallocation() {
 }
 
 }  // namespace Wtf2Tests
+
+namespace {
+
+using NKWebKit::WtfAbi::ParkResult;
+using NKWebKit::WtfAbi::UnparkResult;
+using NKWebKit::WtfAbi::ScopedLambda;
+constexpr auto Unpark = _ZN3WTF10ParkingLot9unparkOneEPKv;
+constexpr auto UnparkCount = _ZN3WTF10ParkingLot11unparkCountEPKvj;
+constexpr auto UnparkAll = _ZN3WTF10ParkingLot9unparkAllEPKv;
+constexpr auto LockSlow = _ZN3WTF4Lock8lockSlowEv;
+constexpr auto UnlockSlow = _ZN3WTF4Lock10unlockSlowEv;
+constexpr auto SafepointSlow = _ZN3WTF4Lock13safepointSlowEv;
+
+template<typename Result, typename... Args>
+Result APS5_VABI InvokeParkCallback(void* context, Args... args) {
+    return (*static_cast<std::function<Result(Args...)>*>(context))(args...);
+}
+
+ParkResult ParkAt(const void* address, std::function<bool()> validation, std::function<void()> beforeSleep, TimeWithDynamicClockType timeout) {
+    const ScopedLambda<bool()> validate{InvokeParkCallback<bool>, &validation};
+    const ScopedLambda<void()> before{InvokeParkCallback<void>, &beforeSleep};
+    return _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE(address, validate, before, timeout);
+}
+
+void UnparkWith(const void* address, std::function<std::intptr_t(UnparkResult)> function) {
+    const ScopedLambda<std::intptr_t(UnparkResult)> callback{InvokeParkCallback<std::intptr_t, UnparkResult>, &function};
+    _ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12UnparkResultEEEE(address, callback);
+}
+
+TimeWithDynamicClockType Deadline(double seconds, ClockType clock = ClockType::Monotonic) {
+    auto result = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(clock);
+    result.m_value += seconds;
+    return result;
+}
+
+void Await(std::future<void>& future) {
+    Require(future.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    future.get();
+}
+
+struct ParkingWorker {
+    ParkResult result;
+    std::promise<void> ready;
+    std::thread thread;
+
+    void Start(const void* address) {
+        auto future = ready.get_future();
+        thread = std::thread([&, address] {
+            result = ParkAt(address, [] { return true; }, [&] { ready.set_value(); }, Deadline(5));
+        });
+        Await(future);
+    }
+
+    void Join(std::intptr_t token = 0) {
+        thread.join();
+        Require(result.wasUnparked && result.token == token);
+    }
+};
+
+void InlineLock(std::uint8_t& storage) {
+    std::uint8_t expected = 0;
+    if (!std::atomic_ref(storage).compare_exchange_strong(expected, 1, std::memory_order_acquire)) LockSlow(&storage);
+}
+
+void InlineUnlock(std::uint8_t& storage) {
+    std::uint8_t expected = 1;
+    if (!std::atomic_ref(storage).compare_exchange_strong(expected, 0, std::memory_order_release)) UnlockSlow(&storage);
+}
+
+void TestLockContention() {
+    std::uint8_t storage = 1;
+    std::atomic_ref byte(storage);
+    unsigned counter = 0;
+    std::array<std::thread, 4> threads;
+    for (auto& thread : threads) {
+        thread = std::thread([&] {
+            for (unsigned i = 0; i < 1000; ++i) {
+                InlineLock(storage);
+                ++counter;
+                InlineUnlock(storage);
+            }
+        });
+    }
+    const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!(byte.load() & 2) && std::chrono::steady_clock::now() < limit) std::this_thread::yield();
+    Require(byte.load() == 3);
+    SafepointSlow(&storage);
+    Require(byte.load() & 1);
+    InlineUnlock(storage);
+    for (auto& thread : threads) thread.join();
+    Require(counter == 4000 && byte.load() == 0);
+    byte.store(0x80);
+    LockSlow(&storage);
+    Require(byte.load() == 0x81);
+    SafepointSlow(&storage);
+    Require(byte.load() == 0x81);
+    UnlockSlow(&storage);
+    Require(byte.load() == 0x80);
+    byte.store(3);
+    UnlockSlow(&storage);
+    Require(byte.load() == 0);
+    byte.store(3);
+    std::promise<void> queued;
+    auto ready = queued.get_future();
+    std::thread successor([&] {
+        const auto handoff = ParkAt(&storage, [&] { return byte.load() == 3; }, [&] { queued.set_value(); }, Deadline(5));
+        Require(handoff.wasUnparked && handoff.token == 1 && (byte.load() & 1));
+        UnlockSlow(&storage);
+    });
+    Await(ready);
+    SafepointSlow(&storage);
+    Require(byte.load() & 1);
+    UnlockSlow(&storage);
+    successor.join();
+    Require(byte.load() == 0);
+}
+
+}  // namespace
+
+void TestParkingLot() {
+    int address = 0;
+    int otherAddress = 0;
+    unsigned beforeCount = 0;
+    const TimeWithDynamicClockType forever{std::numeric_limits<double>::infinity(), ClockType::Monotonic};
+    auto result = ParkAt(&address, [] { return false; }, [&] { ++beforeCount; }, forever);
+    Require(!result.wasUnparked && result.token == 0 && beforeCount == 0);
+    for (const auto clock : {ClockType::Wall, ClockType::Monotonic, ClockType::Approximate}) {
+        result = ParkAt(&address, [] { return true; }, [&] { ++beforeCount; }, Deadline(-1, clock));
+        Require(!result.wasUnparked && result.token == 0);
+        const auto timeout = Deadline(0.005, clock);
+        result = ParkAt(&address, [] { return true; }, [] {}, timeout);
+        Require(!result.wasUnparked && _ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(&timeout).m_value >= timeout.m_value);
+    }
+    Require(beforeCount == 3);
+    result = ParkAt(&address, [] { return true; }, [&] {
+        const auto wake = Unpark(&address);
+        Require(wake.didUnparkThread && !wake.mayHaveMoreThreads && !wake.timeToBeFair);
+    }, Deadline(-1));
+    Require(result.wasUnparked && result.token == 0);
+    result = ParkAt(&address, [] { return true; }, [&] {
+        UnparkWith(&address, [](UnparkResult wake) {
+            Require(wake.didUnparkThread && !wake.mayHaveMoreThreads);
+            return -123;
+        });
+    }, forever);
+    Require(result.wasUnparked && result.token == -123);
+    auto empty = Unpark(&address);
+    Require(!empty.didUnparkThread && !empty.mayHaveMoreThreads && !empty.timeToBeFair);
+    bool callbackRan = false;
+    UnparkWith(&address, [&](UnparkResult wake) {
+        callbackRan = true;
+        Require(!wake.didUnparkThread && !wake.mayHaveMoreThreads && !wake.timeToBeFair);
+        return 17;
+    });
+    Require(callbackRan && UnparkCount(&address, 10) == 0);
+
+    std::array<ParkingWorker, 2> pair;
+    for (auto& worker : pair) worker.Start(&address);
+    UnparkWith(&address, [](UnparkResult wake) {
+        Require(wake.didUnparkThread && wake.mayHaveMoreThreads);
+        return 456;
+    });
+    pair[0].Join(456);
+    const auto last = Unpark(&address);
+    Require(last.didUnparkThread && !last.mayHaveMoreThreads && !last.timeToBeFair);
+    pair[1].Join();
+
+    std::array<ParkingWorker, 4> workers;
+    for (auto& worker : workers) worker.Start(&address);
+    ParkingWorker other;
+    other.Start(&otherAddress);
+    Require(UnparkCount(&address, 0) == 0);
+    Require(UnparkCount(&address, 2) == 2);
+    workers[0].Join();
+    workers[1].Join();
+    UnparkAll(&address);
+    workers[2].Join();
+    workers[3].Join();
+    Require(Unpark(&otherAddress).didUnparkThread);
+    other.Join();
+    Require(UnparkCount(&address, 20) == 0);
+    UnparkAll(&address);
+    TestLockContention();
+}
+
+void TestBinarySemaphore() {
+    using NKWebKit::WtfAbi::BinarySemaphore;
+    constexpr auto signal = _ZN3WTF15BinarySemaphore6signalEv;
+    constexpr auto wait = _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE;
+    BinarySemaphore semaphore{};
+    for (auto clock : {ClockType::Monotonic, ClockType::Wall, ClockType::Approximate}) {
+        const auto past = Deadline(-1, clock);
+        Require(!wait(&semaphore, past));
+        signal(&semaphore);
+        signal(&semaphore);
+        Require(wait(&semaphore, past));
+        Require(!wait(&semaphore, past));
+        Require(!wait(&semaphore, Deadline(0.002, clock)));
+    }
+    auto until = [](auto predicate) {
+        const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < limit) std::this_thread::yield();
+        Require(predicate());
+    };
+    for (unsigned i = 0; i < 24; ++i) {
+        BinarySemaphore shared{};
+        std::promise<bool> completed;
+        auto result = completed.get_future();
+        std::thread worker([&] { completed.set_value(wait(&shared, Deadline(5))); });
+        until([&] { return std::atomic_ref(shared.hasWaiters).load(); });
+        signal(&shared);
+        Require(result.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        Require(result.get());
+        worker.join();
+        Require(!wait(&shared, Deadline(-1)));
+        Require(!shared.isSet && !shared.lock && !shared.hasWaiters);
+    }
+    BinarySemaphore contended{};
+    InlineLock(contended.lock);
+    std::promise<bool> completed;
+    auto result = completed.get_future();
+    std::thread worker([&] { completed.set_value(wait(&contended, Deadline(5))); });
+    until([&] { return std::atomic_ref(contended.lock).load() & 2; });
+    contended.isSet = true;
+    InlineUnlock(contended.lock);
+    Require(result.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    Require(result.get());
+    worker.join();
+    Require(!wait(&contended, Deadline(-1)));
+}
