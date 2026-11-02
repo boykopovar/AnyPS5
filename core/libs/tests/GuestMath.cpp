@@ -1432,6 +1432,14 @@ static void CheckAtanhConsoleBits() {
         Require(errno == (item.error != 0 ? item.error : 1234));
     }
 }
+static void CheckAtanhEdgeFlags() {
+    for (const double input : {2.0, -2.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), -std::numeric_limits<double>::quiet_NaN()}) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(atanh_nid_postfix(input)) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+}
+
 
 
 
@@ -2976,6 +2984,7 @@ int main() {
     CheckExpm1ScalingRounding();
     CheckAtanhConsoleBits();
     CheckAtanhDomainEnvironment();
+    CheckAtanhEdgeFlags();
     CheckLog10ConsoleBits();
     CheckLog10EdgeFlags();
     CheckLog2ConsoleBits();
