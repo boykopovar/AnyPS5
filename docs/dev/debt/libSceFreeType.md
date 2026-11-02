@@ -1,5 +1,8 @@
 # libSceFreeType technical debt
 
+- [FT_Face_SetUnpatentedHinting](../../../core/libs/prx/libSceFreeType/src/FaceCompat.cpp) (libSceFreeType) - console signature is unverified; the adapter forwards to bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftpatent.c), where the call is deprecated, ignores the value and always returns false
+- [FT_Face_CheckTrueTypePatents](../../../core/libs/prx/libSceFreeType/src/FaceCompat.cpp) (libSceFreeType) - console signature is unverified; the adapter forwards to bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftpatent.c), where the call is deprecated and always returns false
+- [FT_Get_Font_Format](../../../core/libs/prx/libSceFreeType/src/FaceCompat.cpp) (libSceFreeType) - console signature is unverified; the adapter forwards to bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). The returned string is static native storage, valid for the life of the process
 ### Unknown function info
 - [autofitter glyph-to-script-map](../../../core/libs/prx/libSceFreeType/src/ModuleProperties.cpp) assumes the FreeType LP64 face/map carrier and translates the guest face to its host face. The returned 16-bit map borrows host face storage and is valid only while that face is alive; the setter returns the bundled FreeType error. This is an exception to the general unsupported-property note below. Console ABI, glyph classification and firmware behavior are unverified.
 
