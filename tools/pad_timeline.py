@@ -86,7 +86,7 @@ def main():
     parser.add_argument("--gap-ms", type=int, default=200)
     args = parser.parse_args()
     try:
-        if args.timeline.resolve() == args.path.resolve() or (args.path.exists() and os.path.samefile(args.timeline, args.path)):
+        if os.path.realpath(args.timeline) == os.path.realpath(args.path) or (args.path.exists() and os.path.samefile(args.timeline, args.path)):
             raise ValueError("the command file must be separate from the timeline JSON")
         if args.path.is_dir():
             raise ValueError(f"{args.path} is a directory")
@@ -95,7 +95,7 @@ def main():
         document = json.loads(args.timeline.read_text(encoding="utf-8"))
         text = compile_timeline(document, next_sequence(args.path), args.repeat, args.gap_ms)
         queue_timeline(args.path, text)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         parser.exit(2, f"pad_timeline: {error}\n")
     print(f"Queued {len(text.splitlines()) - 1} timed events in {args.path}")
 

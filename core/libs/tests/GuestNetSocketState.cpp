@@ -22,9 +22,36 @@ static void CheckOption(int socket, int option, int expected) {
     }
 }
 
+static void RequireError(int result, int error) {
+    Require(result == static_cast<int>(0x80410100u | static_cast<std::uint32_t>(error)));
+    Require(*sceNetErrnoLoc() == error);
+}
+
+static void CheckStateErrors(int family) {
+    const int datagram = sceNetSocket("errors-datagram", family, 2, 17);
+    const int stream = sceNetSocket("errors-stream", family, 1, 6);
+    const int closed = sceNetSocket("errors-closed", family, 1, 6);
+    Require(datagram >= 0 && stream >= 0 && closed >= 0);
+    Require(sceNetSocketClose(closed) == 0);
+    for (const int how : {-1, 3}) RequireError(sceNetShutdown(stream, how), 22);
+    RequireError(sceNetShutdown(closed, 1), 9);
+    RequireError(sceNetListen(closed, 1), 9);
+    RequireError(sceNetListen(datagram, 1), 45);
+    RequireError(sceNetAccept(closed, nullptr, nullptr), 9);
+    RequireError(sceNetAccept(stream, nullptr, nullptr), 22);
+    std::array<std::uint8_t, 28> address{};
+    std::uint32_t size = family == 2 ? 16 : 28;
+    address[0] = static_cast<std::uint8_t>(size);
+    address[1] = static_cast<std::uint8_t>(family);
+    RequireError(sceNetBind_nid_postfix(closed, address.data(), size), 9);
+    RequireError(sceNetGetsockname(closed, address.data(), &size), 9);
+    for (const int socket : {stream, datagram}) Require(sceNetSocketClose(socket) == 0);
+}
+
 int main() {
     Require(sceNetInit_nid_postfix() == 0);
     for (const int family : {2, 28}) {
+        CheckStateErrors(family);
         const int datagram = sceNetSocket("state-datagram", family, 2, 17);
         const int listener = sceNetSocket("state-listener", family, 1, 6);
         const int client = sceNetSocket("state-client", family, 1, 6);
