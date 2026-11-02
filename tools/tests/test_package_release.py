@@ -270,6 +270,44 @@ class ReleasePackageTests(unittest.TestCase):
             with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
                 self.assertEqual(archive.extractfile("libs/licenses/" + archive_name).read(), content)
 
+    def test_harfbuzz_library_archives_include_the_bundled_notices(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched HarfBuzz library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library")
+        notices = {
+            "COPYING": ("harfbuzz.txt", b"HarfBuzz redistribution notice\n"),
+            "src/ms-use/COPYING": ("harfbuzz-ms-use.txt", b"Microsoft USE redistribution notice\n"),
+        }
+        for name, (_, content) in notices.items():
+            source = self.source / "3rdparty/harfbuzz" / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        for variant in ("", "-unpatched"):
+            with zipfile.ZipFile(self.output / f"prx-linux{variant}-v1.zip") as archive:
+                for name, content in notices.values():
+                    self.assertEqual(archive.read("libs/licenses/" + name), content)
+            with tarfile.open(self.output / f"prx-linux{variant}-v1.tar.gz") as archive:
+                for name, content in notices.values():
+                    self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
+    def test_harfbuzz_release_without_a_required_notice_is_rejected(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched HarfBuzz library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library")
+        source = self.source / "3rdparty/harfbuzz"
+        (source / "src/ms-use").mkdir(parents=True)
+        for missing in ("COPYING", "src/ms-use/COPYING"):
+            for name in ("COPYING", "src/ms-use/COPYING"):
+                file = source / name
+                file.unlink(missing_ok=True)
+                if name != missing:
+                    file.write_bytes(b"Required notice\n")
+            with self.subTest(missing=missing):
+                with self.assertRaisesRegex(RuntimeError, "COPYING"):
+                    package_release.package("linux", self.build, self.output, "v1")
+                self.assertFalse(self.output.exists())
+
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
         (self.unpatched.parent / "libSceOpusDec.prx").write_bytes(b"unpatched library")

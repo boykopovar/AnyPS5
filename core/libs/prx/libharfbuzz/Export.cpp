@@ -3,143 +3,99 @@
 
 extern "C" {
 
-int APS5_VABI hb_blob_create() {
+int APS5_VABI hb_blob_create_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_add_utf16() {
+int APS5_VABI hb_face_create_for_tables_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_create() {
+int APS5_VABI hb_face_destroy_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_destroy() {
+int APS5_VABI hb_font_create_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_get_direction() {
+int APS5_VABI hb_font_destroy_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_get_glyph_infos() {
+int APS5_VABI hb_font_funcs_create_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_get_glyph_positions() {
+int APS5_VABI hb_font_funcs_make_immutable_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_get_length() {
+int APS5_VABI hb_font_funcs_set_glyph_extents_func_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_guess_segment_properties() {
+int APS5_VABI hb_font_funcs_set_glyph_func_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_reset() {
+int APS5_VABI hb_font_funcs_set_glyph_h_advance_func_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_set_direction() {
+int APS5_VABI hb_font_funcs_set_glyph_h_origin_func_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_buffer_set_script() {
+int APS5_VABI hb_font_funcs_set_nominal_glyph_func_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_face_create_for_tables() {
+int APS5_VABI hb_font_funcs_set_variation_glyph_func_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_face_destroy() {
+int APS5_VABI hb_font_make_immutable_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_create() {
+int APS5_VABI hb_font_set_funcs_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_destroy() {
+int APS5_VABI hb_font_set_ppem_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_funcs_create() {
+int APS5_VABI hb_font_set_scale_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_funcs_make_immutable() {
+int APS5_VABI hb_ft_face_create_cached_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_funcs_set_glyph_extents_func() {
+int APS5_VABI hb_icu_script_to_script_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_funcs_set_glyph_func() {
+int APS5_VABI hb_ot_layout_language_find_feature_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_funcs_set_glyph_h_advance_func() {
+int APS5_VABI hb_ot_layout_script_get_language_tags_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_funcs_set_glyph_h_origin_func() {
+int APS5_VABI hb_ot_layout_table_get_script_tags_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_funcs_set_nominal_glyph_func() {
+int APS5_VABI hb_ot_tag_to_script_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI hb_font_funcs_set_variation_glyph_func() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_font_make_immutable() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_font_set_funcs() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_font_set_ppem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_font_set_scale() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ft_face_create_cached() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_icu_script_to_script() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ot_layout_language_find_feature() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ot_layout_script_get_language_tags() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ot_layout_table_get_script_tags() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_ot_tag_to_script() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI hb_shape() {
+int APS5_VABI hb_shape_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
