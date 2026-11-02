@@ -8,19 +8,6 @@
 #include <source_location>
 #include <stdexcept>
 
-extern "C" {
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RequestMemberEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V118RequestMatchPlayerEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V118RequestTeamResultsEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V119AdditionalStatisticEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V120RequestPlayerResultsEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V120RequestTeamStatisticEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V122RequestPlayerStatisticEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V123RequestTeamMemberResultEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V126RequestTeamMemberStatisticEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
-}
-
 namespace {
 
 void Require(bool value, std::source_location at = std::source_location::current()) {
