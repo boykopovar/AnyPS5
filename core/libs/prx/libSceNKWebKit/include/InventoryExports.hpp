@@ -26,7 +26,6 @@ int APS5_VABI WKSecurityOriginCopyDatabaseIdentifier();
 int APS5_VABI WKSecurityOriginCreate();
 int APS5_VABI WKSecurityOriginCreateFromString();
 int APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier();
-int APS5_VABI WKUserContentURLPatternMatchesURL();
 int APS5_VABI WKURLRequestCreateWithWKURL();
 int APS5_VABI JSContextCreateBacktrace();
 int APS5_VABI JSRemoteInspectorDisableAutoStart();

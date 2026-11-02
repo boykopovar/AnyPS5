@@ -101,10 +101,6 @@ int APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKUserContentURLPatternMatchesURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKURLRequestCreateWithWKURL() {
     NotImplemented_nid_no_patch(__func__);
 }

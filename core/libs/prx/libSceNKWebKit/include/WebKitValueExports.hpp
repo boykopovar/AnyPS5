@@ -152,6 +152,7 @@ const void* APS5_VABI WKUserContentURLPatternCreate(const void* patternRef);
 std::uint32_t APS5_VABI WKUserContentURLPatternGetTypeID();
 bool APS5_VABI WKUserContentURLPatternIsValid(const void* urlPatternRef);
 bool APS5_VABI WKUserContentURLPatternMatchesSubdomains(const void* urlPatternRef);
+bool APS5_VABI WKUserContentURLPatternMatchesURL(const void* urlPatternRef, const void* urlRef);
 std::uint32_t APS5_VABI WKUserMediaPermissionCheckGetTypeID();
 std::uint32_t APS5_VABI WKUserMediaPermissionRequestGetTypeID();
 std::uint32_t APS5_VABI WKUserScriptGetTypeID();
