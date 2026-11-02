@@ -84,7 +84,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             if (tag == 0) { terminated = true; break; }
             const auto value = Io::ReadU64(bytes, offset + 8);
             if (tag == 1 || (tag >= 0x61000000 && tag != 0x6ffffef5 && tag != 0x6100003f && (tag < 0x61000027 || tag > 0x6100003b))) continue;
-            if (!tags.emplace(tag, value).second) throw Domain::RelinkerException("Code analysis: duplicate dynamic tag", offset);
+            const auto [position, inserted] = tags.emplace(tag, value);
+            if (!inserted && position->second != value) throw Domain::RelinkerException("Code analysis: conflicting duplicate dynamic tag", offset);
         }
         if (!terminated) throw Domain::RelinkerException("Code analysis: unterminated dynamic segment");
     }
