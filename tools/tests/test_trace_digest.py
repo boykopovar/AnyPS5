@@ -203,6 +203,21 @@ class TraceDigestTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             trace_digest.validate_interval(first)
 
+    def test_owned_storage_interval_counts_are_separate(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        old = interval_line(30.0, 60.0, 20.0, 5.0)
+        first["owned_draw_counts"] = {"OwnedDraw.reused": 2}
+        first["owned_storage_counts"] = {"OwnedStorage.reused": 5}
+        trace_digest.validate_interval(first)
+        result = trace_digest.digest_intervals([first, old])
+        self.assertEqual(result["intervals"][0]["owned_storage_counts"], {"OwnedStorage.reused": 5})
+        text = trace_digest.markdown_intervals(result)
+        self.assertIn("OwnedStorage.reused", text)
+        self.assertIn("| 2 | - |", text)
+        first["owned_storage_counts"] = {"bad": -1}
+        with self.assertRaises(ValueError):
+            trace_digest.validate_interval(first)
+
     def test_empty_summary_jsonl_files_remain_valid(self):
         path = self.trace.with_name("aps5-summary.jsonl")
         for text in ("", "\n \t\r\n"):

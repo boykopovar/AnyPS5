@@ -248,19 +248,21 @@ void SummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":35.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
-        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
+        "\"owned_draw_counts\":{},\"owned_storage_counts\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
     Check(line == expected, "summary line changed");
     auto unboundSummary = summary;
     unboundSummary.ownedDrawUnbound = 3;
     const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
-    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"owned_storage_counts\":{},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
     auto counted = threads;
     counted[0].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 5});
     counted[1].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 3});
     counted[1].totals.push_back({"OwnedDraw.reused", nullptr, {}, 2});
     counted[0].totals.push_back({"OwnedDraw.arm_blocks_requested", nullptr, {}, 17});
+    counted[0].totals.push_back({"OwnedStorage.reused", nullptr, {}, 4});
     const auto countedLine = TraceFormat::Summary(summary, counted, presents);
     Check(countedLine.find("\"owned_draw_counts\":{\"OwnedDraw.arm_attempt\":8,\"OwnedDraw.arm_blocks_requested\":17,\"OwnedDraw.reused\":2}") != std::string::npos, "named owned counts were not summed across threads");
+    Check(countedLine.find("\"owned_storage_counts\":{\"OwnedStorage.reused\":4}") != std::string::npos, "storage counts were not separated from draw counts");
     const std::vector<TraceThread::Total> before{{"OwnedDraw.arm_attempt", nullptr, {}, 2}};
     const std::vector<TraceThread::Total> after{{"OwnedDraw.arm_attempt", nullptr, {}, 5}};
     const auto countDelta = TraceFormat::Since(after, before);
@@ -369,7 +371,7 @@ void IntervalSummaryFields() {
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":30.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
-        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
+        "\"owned_draw_counts\":{},\"owned_storage_counts\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
     Check(line == expected, "interval summary line changed");
 }
 
