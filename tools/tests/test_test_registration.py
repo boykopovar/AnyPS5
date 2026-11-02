@@ -141,6 +141,18 @@ class RegistrationTests(unittest.TestCase):
                 'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
             self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
 
+    def test_looping_subdirectory_is_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "nested").mkdir()
+            os.symlink("second", build / "first")
+            os.symlink("first", build / "second")
+            (build / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
+            (build / "nested/CTestTestfile.cmake").write_text(
+                'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
+            self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
+            self.assertEqual(check_test_registration.registered(build / "first"), set())
+
     def test_literal_prefixes_cannot_expose_commands_inside_arguments(self):
         prefixes = (r"\#", r"\(", '"prefix" ', '"" ', '"line\nprefix" ', "[[prefix]] ",
                     "[=[prefix]=] ", "[===[line\nprefix]===] ")
