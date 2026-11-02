@@ -858,13 +858,12 @@ public:
     void MarkStencilStale() {
         if (!StencilMirrorable()) return;
         const auto [begin, end] = staleStencilRange(*this);
-        if (!stencilStale) {
-            const auto bytes = static_cast<std::size_t>(end - begin);
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        if (GuestMemory::Watched(begin, bytes) || !GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) {
             stencilStaleSnapshot.clear();
-            if (!GuestMemory::Watched(begin, bytes) && GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) {
-                stencilStaleSnapshot.resize(bytes);
-                GuestMemory::Read(begin, stencilStaleSnapshot);
-            }
+        } else if (!stencilStale || stencilStaleSnapshot.size() != bytes || !GuestMemory::EqualsCommittedUnsynced(begin, stencilStaleSnapshot)) {
+            stencilStaleSnapshot.resize(bytes);
+            GuestMemory::Read(begin, stencilStaleSnapshot);
         }
         stencilStale = true;
         stencilStaleGeneration = GuestMemory::TrackerGeneration();
