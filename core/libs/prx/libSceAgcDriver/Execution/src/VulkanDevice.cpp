@@ -1181,6 +1181,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     APS5_LOG_OUT("VulkanDevice constructor window=%p", static_cast<const void*>(window));
 #ifdef _WIN32
     state->library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+    state->library = SDL_LoadObject("libvulkan.1.dylib");
 #else
     state->library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -1221,9 +1223,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             instanceExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
             state->swapchainColorSpaces = true;
         }
-        create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
-        create.ppEnabledExtensionNames = instanceExtensions.data();
     }
+#ifdef __APPLE__
+    instanceExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    create.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
+    create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
+    create.ppEnabledExtensionNames = instanceExtensions.empty() ? nullptr : instanceExtensions.data();
     const VkResult instanceResult = state->InstanceFunction<PFN_vkCreateInstance>("vkCreateInstance")(&create, nullptr, &state->instance);
     if (instanceResult == VK_ERROR_INCOMPATIBLE_DRIVER) throw VulkanUnavailable("vkCreateInstance: Vulkan result " + std::to_string(instanceResult));
     check(instanceResult, "vkCreateInstance");
@@ -1700,6 +1706,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (state->nonSeamlessCubeMap) deviceExtensions.push_back(VK_EXT_NON_SEAMLESS_CUBE_MAP_EXTENSION_NAME);
     }
     nonSeamlessCubeFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NON_SEAMLESS_CUBE_MAP_FEATURES_EXT};
+    VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
+    const bool portabilitySubset = hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+    if (portabilitySubset) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        deviceExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+    }
     nonSeamlessCubeFeatures.nonSeamlessCubeMap = VK_TRUE;
     VkPhysicalDeviceCoverageReductionModeFeaturesNV coverageReductionFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COVERAGE_REDUCTION_MODE_FEATURES_NV};
     if (hasExtension(VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME) && hasExtension(VK_NV_COVERAGE_REDUCTION_MODE_EXTENSION_NAME)) {
@@ -1988,6 +2001,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         nonSeamlessCubeFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &nonSeamlessCubeFeatures;
     }
+    if (portabilitySubset) {
+        portabilityFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
+        deviceInfo.pNext = &portabilityFeatures;
+    }
     if (!state->mixedAttachmentSamples && (state->mergedCoverageSampleCounts != 0 || state->truncatedCoverageSampleCounts != 0)) {
         coverageReductionFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &coverageReductionFeatures;
@@ -2073,10 +2090,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         byteFeatures.pNext = &subgroupSizeFeatures;
         APS5_LOG_OUT("Wave32 programs run on subgroups of %u: compute %d, mesh %d", 32u, state->computeWave32, state->meshWave32);
     }
-    if (std::getenv("APS5_SPANNED_WAVE") != nullptr) {
-        state->spannedWaves = state->computeFullSubgroups;
-        APS5_LOG_OUT("APS5_SPANNED_WAVE: single-wave wave64 compute spans two full 32-lane subgroups: %d", state->spannedWaves);
-    }
+    state->spannedWaves = state->computeFullSubgroups && std::getenv("APS5_NO_SPANNED_WAVE") == nullptr;
+    APS5_LOG_OUT("single-wave wave64 compute spans two full 32-lane subgroups: %d", state->spannedWaves);
     timelineFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
     timelineFeatures.timelineSemaphore = VK_TRUE;
     if (state->timelineSemaphores) {
@@ -2498,7 +2513,7 @@ void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>&
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    static_cast<void>(Graphics::StorageTexture::FlushAllPendingUntil("idle", stop));
+    static_cast<void>(Graphics::StorageTexture::FlushAllPendingUntil("idle", stop, state->device));
     SubmitRecorded(reapFirst);
 }
 
@@ -2575,7 +2590,7 @@ bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) c
 
 int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst) {
     static const bool storeAtLabel = Graphics::StorageTexture::StoreAtLabelRequested(std::getenv("APS5_STORE_AT_LABEL"));
-    if (storeAtLabel) Graphics::StorageTexture::FlushAllPending("label");
+    if (storeAtLabel) Graphics::StorageTexture::FlushAllPending("label", state->device);
     if (queue == 0) static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("label"));
     Graphics::StorageTexture::StoreReadbackBeforeLabel("readback before label");
     if (!state->recorder || bytes.empty() || bytes.size() > 65536 || address % 4 != 0 || bytes.size() % 4 != 0) return 4;
@@ -3539,7 +3554,7 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const Displ
         }
     }
     static const bool storeAtFlip = Graphics::StorageTexture::StoreAtFlipRequested(std::getenv("APS5_STORE_AT_FLIP"));
-    if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip");
+    if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip", state->device);
     else Graphics::StorageTexture::FlushDumpSelected("flip");
     auto& dumps = Dumps();
     const bool passthrough = state->surfaceColorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
