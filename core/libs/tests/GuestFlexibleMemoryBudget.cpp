@@ -83,6 +83,7 @@ int main(int argc, char** argv) {
     Require(direct == GAME_MEMORY_SIZE - configured);
     std::int64_t physical = -7;
     Require(sceKernelAllocateDirectMemory(static_cast<std::int64_t>(direct), INT64_MAX, PS5_PAGE_SIZE, 0, 0, &physical) == SCE_KERNEL_ERROR_EAGAIN && physical == -7);
+    Require(sceKernelMemoryPoolExpand(static_cast<std::int64_t>(direct), INT64_MAX, 0x200000, 0, &physical) == SCE_KERNEL_ERROR_EAGAIN && physical == -7);
     Require(sceKernelAllocateDirectMemory(static_cast<std::int64_t>(direct) - PS5_PAGE_SIZE, INT64_MAX, PS5_PAGE_SIZE, 0, 0, &physical) == 0 && physical == static_cast<std::int64_t>(direct) - PS5_PAGE_SIZE);
     std::int64_t freeStart = -7;
     std::size_t freeSize = 0;
