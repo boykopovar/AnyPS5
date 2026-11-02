@@ -13,6 +13,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace FreeType;
@@ -63,6 +64,33 @@ GuestBBox Check(std::vector<GuestVector> points, std::vector<unsigned char> tags
     return actual.box;
 }
 
+int Measure(std::vector<GuestVector> points, std::vector<unsigned char> tags, std::vector<std::uint16_t> contours, GuestBBox& box) {
+    GuestOutline guest{static_cast<std::uint16_t>(contours.size()), static_cast<std::uint16_t>(points.size()),
+        points.data(), tags.data(), contours.data(), 0};
+    GuardedBox actual;
+    const int status = FT_Outline_Get_BBox_nid_postfix(&guest, &actual.box);
+    Require(actual.before == 0x123456789ABCDEF0 && actual.after == 0xFEDCBA9876543210);
+    box = actual.box;
+    return status;
+}
+
+GuestBBox Expect(std::vector<GuestVector> points, std::vector<unsigned char> tags, std::vector<std::uint16_t> contours) {
+    GuestBBox box{};
+    Require(Measure(std::move(points), std::move(tags), std::move(contours), box) == 0);
+    return box;
+}
+
+bool Rejected(GuestOutline outline, const std::string& reason) {
+    GuardedBox actual;
+    const auto sentinel = actual.box;
+    try {
+        FT_Outline_Get_BBox_nid_postfix(&outline, &actual.box);
+    } catch (const std::invalid_argument& error) {
+        return std::string(error.what()).starts_with(reason) && Equal(actual.box, sentinel);
+    }
+    return false;
+}
+
 int main() {
     GuardedBox invalid;
     const auto sentinel = invalid.box;
@@ -109,31 +137,75 @@ int main() {
     Require(Equal(Check(many, tags, {65534}), {0, 0, 999, 65534}));
     Require(Equal(Check(many, tags, contours), {0, 0, 999, 65534}));
 
-    std::array<GuestVector, 2> points{{{0, 0}, {1, 1}}};
-    std::array<unsigned char, 2> smallTags{1, 1};
-    std::uint16_t end = 1;
-    GuestOutline missing{1, 2, nullptr, smallTags.data(), &end, 0};
-    invalid.box = sentinel;
-    bool threw = false;
-    try {
-        FT_Outline_Get_BBox_nid_postfix(&missing, &invalid.box);
-    } catch (const std::runtime_error&) {
-        threw = true;
+    std::array<GuestVector, 3> points{{{0, 0}, {100, 200}, {200, 0}}};
+    std::array<unsigned char, 3> curvedTags{1, 0, 1};
+    std::uint16_t end = 2;
+    for (int missing = 0; missing < 3; ++missing) {
+        GuestOutline outline{1, 3, missing == 0 ? nullptr : points.data(), missing == 1 ? nullptr : curvedTags.data(),
+            missing == 2 ? nullptr : &end, 0};
+        Require(Rejected(outline, "FT_Outline_Get_BBox: null "));
     }
-    Require(threw && Equal(invalid.box, sentinel));
-    for (auto badContours : std::vector<std::vector<std::uint16_t>>{{2}, {0}, {1, 1}, {1, 0}, {0, 1, 1}}) {
-        GuestOutline malformed{static_cast<std::uint16_t>(badContours.size()), 2,
-            points.data(), smallTags.data(), badContours.data(), 0};
-        threw = false;
-        try {
-            FT_Outline_Get_BBox_nid_postfix(&malformed, &invalid.box);
-        } catch (const std::runtime_error& error) {
-            threw = std::string(error.what()).starts_with("FT_Outline_Get_BBox: inconsistent contour bounds");
-        }
-        Require(threw && Equal(invalid.box, sentinel));
+    for (std::uint16_t endpoint : {std::uint16_t{3}, std::uint16_t{65535}}) {
+        GuestOutline outline{1, 3, points.data(), curvedTags.data(), &endpoint, 0};
+        Require(Rejected(outline, "FT_Outline_Decompose: contour endpoint at or beyond n_points"));
     }
+    std::array<unsigned char, 3> onTags{1, 1, 1};
+    GuestOutline straight{1, 3, points.data(), onTags.data(), nullptr, 0};
+    Require(FT_Outline_Get_BBox_nid_postfix(&straight, &invalid.box) == 0 && Equal(invalid.box, {0, 0, 200, 200}));
+    for (auto contours : std::vector<std::vector<std::uint16_t>>{{3}, {0}, {1, 1}, {1, 0}, {0, 1, 1}, {65535}})
+        Require(Equal(Check({{0, 0}, {100, 200}, {200, 0}}, {1, 1, 1}, contours), {0, 0, 200, 200}));
+    Require(Equal(Check({{0, 0}, {100, 200}, {200, 0}, {500, -500}}, {1, 0, 1, 1}, {2}), {0, -500, 500, 100}));
+    Check({{0, 0}, {100, 200}, {200, 0}, {500, -500}}, {1, 0, 1, 1}, {2, 1}, 0, true);
+    Check({{0, 0}, {100, 200}, {200, 0}, {500, -500}}, {1, 0, 1, 1}, {2, 2}, 0, true);
+    GuestBBox unchanged{};
+    Require(Measure({{0, 100}, {100, 0}, {200, 0}}, {2, 2, 1}, {2}, unchanged) == FT_Err_Invalid_Outline);
+    Require(Measure({{0, 100}, {100, 0}, {200, 0}, {300, 50}}, {2, 2, 1, 2}, {3}, unchanged) == FT_Err_Invalid_Outline);
+
+    constexpr std::int64_t big = (std::int64_t{1} << 40) + 4097;
+    Require(Equal(Expect({{0, 0}, {big, 2 * big}, {2 * big, 0}}, {1, 0, 1}, {2}), {0, 0, 2 * big, std::int64_t{1} << 41}));
+    Require(Equal(Expect({{0, 0}, {big, -3 * big}, {3 * big, -big}, {4 * big, 0}}, {1, 2, 2, 1}, {3}),
+        {0, -1742130928311, 4 * big, 0}));
+    Require(Equal(Expect({{-big, 7}, {big, 9}}, {1, 1}, {1}), {-big, 7, big, 9}));
+    constexpr auto low = std::numeric_limits<std::int64_t>::min();
+    constexpr auto high = std::numeric_limits<std::int64_t>::max();
+    for (const auto& overflow : std::vector<std::vector<GuestVector>>{{{0, low}, {0, high}, {0, low}},
+             {{0, high}, {0, low}, {0, high}}, {{0, 0}, {0, high}, {0, low}}}) {
+        std::array<GuestVector, 3> values{overflow[0], overflow[1], overflow[2]};
+        GuestOutline outline{1, 3, values.data(), curvedTags.data(), &end, 0};
+        Require(Rejected(outline, "FT_Outline_Get_BBox: signed overflow in the extremum arithmetic"));
+    }
+    std::array<GuestVector, 4> aligned{{{0, 0}, {0, std::int64_t{1} << 33}, {0, std::int64_t{1} << 33}, {0, 0}}};
+    std::array<unsigned char, 4> cubicTags{1, 2, 2, 1};
+    std::uint16_t cubicEnd = 3;
+    GuestOutline zeroLow{1, 4, aligned.data(), cubicTags.data(), &cubicEnd, 0};
+    Require(Rejected(zeroLow, "FT_Outline_Get_BBox: cubic control distances whose low 32 bits are zero"));
+
     if constexpr (sizeof(FT_Pos) >= sizeof(std::int64_t)) {
         Check({{std::int64_t{1} << 40, -(std::int64_t{1} << 40)}, {0, 0}}, {1, 1}, {1});
+        Check({{0, 0}, {big, 2 * big}, {2 * big, 0}}, {1, 0, 1}, {2});
     }
-    std::printf("FreeType curve bounds: 8192 generated curves, extrema, errors and count limits passed\n");
+    std::mt19937_64 wideRandom(0x5EED);
+    std::uint64_t digest = 0xCBF29CE484222325;
+    const auto fold = [&digest](std::int64_t value) { digest = (digest ^ static_cast<std::uint64_t>(value)) * 0x100000001B3; };
+    const auto record = [&fold](std::vector<GuestVector> curve, std::vector<unsigned char> curveTags, std::uint16_t endpoint) {
+        GuestBBox box{};
+        fold(Measure(std::move(curve), std::move(curveTags), {endpoint}, box));
+        fold(box.xMin);
+        fold(box.yMin);
+        fold(box.xMax);
+        fold(box.yMax);
+    };
+    for (unsigned iteration = 0; iteration < 4096; ++iteration) {
+        std::vector<GuestVector> wide;
+        for (unsigned index = 0; index < 4; ++index) {
+            const auto magnitude = std::uint64_t{1} << (20 + wideRandom() % 31);
+            wide.push_back({static_cast<std::int64_t>(wideRandom() % magnitude) - static_cast<std::int64_t>(magnitude / 2),
+                static_cast<std::int64_t>(wideRandom() % magnitude) - static_cast<std::int64_t>(magnitude / 2)});
+        }
+        record(wide, {1, 2, 2, 1}, 3);
+        wide.pop_back();
+        record(wide, {1, 0, 1}, 2);
+    }
+    Require(digest == 0x6C9B1F2FED2DF477);
+    std::printf("FreeType curve bounds: 16384 generated curves, extrema, errors and count limits passed\n");
 }

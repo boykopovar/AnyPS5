@@ -116,10 +116,21 @@ void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
     voice.atrac9.window.reserve(static_cast<std::size_t>(info.frameSamples) * info.channels);
 }
 
-std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block) {
+bool Ngs2Atrac9FrameInfo(const Ngs2WaveformFormat& format, Ngs2Atrac9Frame& frame) {
+    Atrac9CodecInfo info{};
+    if (!MatchingCodecInfo(format, info)) return false;
+    frame = {static_cast<std::uint32_t>(info.frameSamples), static_cast<std::uint32_t>(info.framesInSuperframe), static_cast<std::uint32_t>(info.superframeSize)};
+    return true;
+}
+
+std::size_t Ngs2Atrac9BlockBytes(const Ngs2Atrac9Frame& frame, const Ngs2WaveformBlock& block) {
     const std::uint64_t samples = static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples;
-    const std::uint64_t superframeSamples = static_cast<std::uint64_t>(voice.atrac9.frameSamples) * voice.atrac9.framesInSuperframe;
-    return static_cast<std::size_t>((samples + superframeSamples - 1) / superframeSamples * voice.atrac9.superframeBytes);
+    const std::uint64_t superframeSamples = static_cast<std::uint64_t>(frame.frameSamples) * frame.framesInSuperframe;
+    return static_cast<std::size_t>((samples + superframeSamples - 1) / superframeSamples * frame.superframeBytes);
+}
+
+std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block) {
+    return Ngs2Atrac9BlockBytes(Ngs2Atrac9Frame{voice.atrac9.frameSamples, voice.atrac9.framesInSuperframe, voice.atrac9.superframeBytes}, block);
 }
 
 void Ngs2RestartAtrac9(Ngs2Voice& voice) {
