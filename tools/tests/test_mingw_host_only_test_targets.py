@@ -303,6 +303,18 @@ class HostOnlyTargets(unittest.TestCase):
             ["first_tests", "second_tests"],
         )
 
+    def test_build_wide_inputs_check_all_host_targets(self):
+        first = self.target("first_tests")
+        second = self.target("second_tests", source="core/libs/tests/Second.cpp")
+        build_dir = self.fixture([first, second])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", "core/CMakeLists.txt", ".gitmodules"):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    build_mingw_host_only_tests.host_only_test_targets(source_root, targets, [path]),
+                    ["first_tests", "second_tests"],
+                )
+
     def test_header_listed_as_a_target_source_still_selects_all_host_targets(self):
         first = self.target("first_tests")
         second = self.target("second_tests", source="core/libs/tests/Second.cpp")
@@ -320,6 +332,20 @@ class HostOnlyTargets(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "no CMake File API index"):
                 build_mingw_host_only_tests.read_reply(Path(directory))
+
+    def test_symbolic_link_loop_build_directory_is_reported_cleanly(self):
+        root = Path(self.temporary.name)
+        loop = root / "build"
+        try:
+            loop.symlink_to(root / "other")
+            (root / "other").symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertEqual(build_mingw_host_only_tests.main([str(loop), "--list-only"]), 1)
+        self.assertIn("no CMake File API index", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
 
     def test_wrong_shaped_file_api_documents_are_reported_cleanly(self):
         cases = (

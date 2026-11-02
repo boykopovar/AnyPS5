@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nid_names
@@ -92,12 +93,14 @@ class Module:
     def read_tags(self):
         tags = {}
         offset, size = self.dynamic
-        for position in range(offset, offset + size, 16):
+        if offset + size > len(self.data):
+            raise ModuleError("PT_DYNAMIC extends past the end of the file")
+        for position in range(offset, offset + size - 15, 16):
             tag, value = self.unpack("<qQ", position)
             if tag == DT_NULL:
-                break
+                return tags
             tags.setdefault(tag, value)
-        return tags
+        raise ModuleError("PT_DYNAMIC has no complete DT_NULL terminator")
 
     def require_tag(self, tag, name):
         if tag not in self.tags:
@@ -318,11 +321,17 @@ def resolved_path(path):
             break
         target = Path(link_target(os.readlink(path)))
         path = target if target.is_absolute() else path.parent / target
-    return path.resolve()
+    try:
+        return path.resolve(strict=True)
+    except FileNotFoundError:
+        return path.resolve()
 
 
 def same_file(left, right):
-    return resolved_path(left) == resolved_path(right) or (left.exists() and right.exists() and left.samefile(right))
+    try:
+        return resolved_path(left) == resolved_path(right) or (left.exists() and right.exists() and left.samefile(right))
+    except (OSError, RuntimeError) as error:
+        raise ModuleError(f"cannot resolve annotation path {left} or {right}: {error}") from error
 
 
 def annotate(module_path, prefix, namer):
@@ -356,18 +365,41 @@ def parse_arguments(argv):
                     "through the NID database. Requires GNU binutils objdump (objdump, or gobjdump from Homebrew binutils).")
     parser.add_argument("module", help="relinked guest module, for example libc.prx.guest.prx")
     parser.add_argument("--out", help="output prefix (default: the module path)")
-    parser.add_argument("--db", help="NID database CSV (downloaded to a cache dir by default)")
+    parser.add_argument("--db", help="NID database CSV (JSON reads local files only; disassembly downloads to a cache dir by default)")
     parser.add_argument("--no-names", action="store_true", help="print NIDs without loading the database")
-    return parser.parse_args(argv)
+    parser.add_argument("--symbols-json", action="store_true", help="inspect imports and exports as JSON offline without objdump or output files")
+    args = parser.parse_args(argv)
+    if args.symbols_json and args.out is not None:
+        parser.error("--symbols-json cannot be combined with --out")
+    return args
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = parse_arguments(sys.argv[1:] if argv is None else argv)
-    if gnu_objdump() is None:
+    if not args.symbols_json and gnu_objdump() is None:
         sys.exit("GNU binutils objdump is required but none of %s in PATH is GNU objdump" % ", ".join(OBJDUMP_NAMES))
     try:
-        db = {} if args.no_names else nid_names.load_db(Path(args.db) if args.db else nid_names.DEFAULT_CACHE)
-        print(annotate(args.module, args.out or args.module, Namer(db)))
+        db_path = Path(args.db) if args.db else nid_names.DEFAULT_CACHE
+        if args.no_names:
+            db = {}
+        elif args.symbols_json:
+            db = nid_names.read_db(db_path) if args.db or db_path.exists() else {}
+        else:
+            db = nid_names.load_db(db_path)
+        namer = Namer(db)
+        if args.symbols_json:
+            module = Module(Path(args.module).read_bytes())
+            exports, thread_local = module.exports()
+            def entries(values):
+                return [{"address": address, "symbol": symbol, "name": namer.resolve(symbol)}
+                        for address in sorted(values) for symbol in values[address]]
+            print(json.dumps({"imports": entries({address: [symbol] for address, symbol in module.imports().items()}), "exports": entries(exports),
+                              "tls_exports": entries(thread_local)}, ensure_ascii=False, indent=2))
+        else:
+            print(annotate(args.module, args.out or args.module, namer))
     except (ModuleError, OSError, UnicodeError) as error:
         sys.exit("%s: %s" % (args.module, error))
     return 0
