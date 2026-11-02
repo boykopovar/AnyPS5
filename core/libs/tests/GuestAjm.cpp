@@ -931,6 +931,19 @@ void TestBatchBounds(std::uint32_t context) {
 #endif
 }
 
+void TestBatchJobCountRange(std::uint32_t context) {
+    (void)context;
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    std::vector<std::uint8_t> storage(256);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    const AjmBuffer buffer{storage.data(), 16};
+    const std::size_t wrapped = (std::size_t{1} << 32) + 1;
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, wrapped, &buffer, 1, nullptr, 0) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, wrapped, nullptr, 0) == invalidParameter);
+    Require(info.offset == 0);
+}
+
 void TestBatchWaitRelease(std::uint32_t context) {
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::vector<std::uint8_t> batch(64);
@@ -2606,6 +2619,7 @@ int main(int argc, char** argv) {
     TestGetInfo(context);
     TestGetStatistics(context);
     TestBatchBounds(context);
+    TestBatchJobCountRange(context);
     TestBatchWaitRelease(context);
     TestInstanceHandleLifetime(context);
     TestBatchCancel(context);
