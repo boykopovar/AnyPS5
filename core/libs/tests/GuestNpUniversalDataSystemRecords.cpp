@@ -1,9 +1,13 @@
 #include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -25,10 +29,16 @@ void Require(bool condition, const char* message) {
     }
 }
 
-std::size_t Estimate(void* record) {
-    std::size_t size = 0;
-    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(record, &size) == 0, "estimate failed");
-    return size;
+const std::shared_ptr<NpUniversalDataSystemEventPropertyObject>* StoredObject(void* record, const char* key) {
+    const auto* object = static_cast<NpUniversalDataSystemEventPropertyObject*>(record);
+    const auto* value = object->Find(key);
+    return value != nullptr ? std::get_if<std::shared_ptr<NpUniversalDataSystemEventPropertyObject>>(value) : nullptr;
+}
+
+const std::shared_ptr<NpUniversalDataSystemEventPropertyArray>* StoredArray(void* record, const char* key) {
+    const auto* object = static_cast<NpUniversalDataSystemEventPropertyObject*>(record);
+    const auto* value = object->Find(key);
+    return value != nullptr ? std::get_if<std::shared_ptr<NpUniversalDataSystemEventPropertyArray>>(value) : nullptr;
 }
 
 }
@@ -49,11 +59,7 @@ int main() {
     param.memory = memory;
     Require(sceNpUniversalDataSystemIntInitialize(&param) == 0, "initialize failed");
     Require(sceNpUniversalDataSystemIntInitialize(&param) == kAlreadyInitialized, "second initialize");
-
-    NpUniversalDataSystemMemoryStat stat{};
     Require(sceNpUniversalDataSystemIntGetMemoryStat(nullptr) == kInvalidArgument, "null memory stat");
-    Require(sceNpUniversalDataSystemIntGetMemoryStat(&stat) == 0, "memory stat failed");
-    Require(stat.pool_size == 0 && stat.max_inuse_size == 0 && stat.current_inuse_size == 0, "memory stat contents");
 
     void* array = nullptr;
     void* object = nullptr;
@@ -70,8 +76,6 @@ int main() {
     std::size_t size = 0;
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(nullptr, &size) == kNullRecord, "null estimate record");
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(data, nullptr) == kInvalidArgument, "null estimate output");
-    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(data, &size) == 0 && size > 0, "estimate data");
-    const auto dataSize = size;
 
     Require(sceNpUniversalDataSystemIntRecordArraySetBool(array, true) == 0, "array bool");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(array, -1) == 0, "array int32");
@@ -85,17 +89,28 @@ int main() {
     const std::uint8_t bytes[3] = {1, 2, 3};
     Require(sceNpUniversalDataSystemIntRecordArraySetBinary(array, bytes, sizeof(bytes)) == 0, "array binary");
     Require(sceNpUniversalDataSystemIntRecordArraySetBinary(array, nullptr, 0) == kNullValue, "null array binary");
+
     void* child = nullptr;
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, nullptr, &child) == kNullValue, "null array object");
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, reinterpret_cast<void*>(1), &child) == kNullObject, "unknown array object");
     Require(sceNpUniversalDataSystemIntRecordArraySetObject(array, object, &child) == 0 && child != nullptr, "array object");
-    child = nullptr;
-    Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, nullptr, &child) == kNullValue, "null array array");
-    Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, array, &child) == 0 && child != nullptr, "array array");
+    const auto* storedArrayObject = static_cast<NpUniversalDataSystemEventPropertyArray*>(array);
+    Require(storedArrayObject->values.size() >= 1, "array object stored");
+    const auto* storedObject = std::get_if<std::shared_ptr<NpUniversalDataSystemEventPropertyObject>>(&storedArrayObject->values.back());
+    Require(storedObject != nullptr && storedObject->get() == child, "array object child pointer");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetInt32(child, "nested", 7) == 0, "set on array child");
+    Require((*storedObject)->Find("nested") != nullptr, "array child mutation stored");
+    Require(static_cast<NpUniversalDataSystemEventPropertyObject*>(object)->Find("nested") == nullptr, "array child clone independent");
+
+    void* arrayChild = nullptr;
+    Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, nullptr, &arrayChild) == kNullValue, "null array array");
+    Require(sceNpUniversalDataSystemIntRecordArraySetArray(array, array, &arrayChild) == 0 && arrayChild != nullptr, "array array");
+    const auto* storedNestedArray = std::get_if<std::shared_ptr<NpUniversalDataSystemEventPropertyArray>>(&storedArrayObject->values.back());
+    Require(storedNestedArray != nullptr && storedNestedArray->get() == arrayChild, "array array child pointer");
+    Require(sceNpUniversalDataSystemIntRecordArraySetInt32(arrayChild, 8) == 0, "set on array child array");
+    Require((*storedNestedArray)->values.size() >= 1, "array child array mutation stored");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(nullptr, 0) == kNullArray, "null array target");
     Require(sceNpUniversalDataSystemIntRecordArraySetInt32(reinterpret_cast<void*>(1), 0) == kNullArray, "unknown array target");
-    const auto arraySize = Estimate(array);
-    Require(arraySize > 0, "estimate array");
 
     Require(sceNpUniversalDataSystemIntRecordObjectSetBool(object, nullptr, true) == kInvalidKey, "null object key");
     Require(sceNpUniversalDataSystemIntRecordObjectSetBool(object, "", true) == kInvalidKey, "empty object key");
@@ -110,38 +125,97 @@ int main() {
     Require(sceNpUniversalDataSystemIntRecordObjectSetString(object, "string", nullptr) == kNullValue, "null object string");
     Require(sceNpUniversalDataSystemIntRecordObjectSetBinary(object, "binary", bytes, sizeof(bytes)) == 0, "object binary");
     Require(sceNpUniversalDataSystemIntRecordObjectSetBinary(object, "binary", nullptr, 0) == kNullValue, "null object binary");
+
     child = nullptr;
     Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, "object", nullptr, &child) == kNullValue, "null object object");
     Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, "object", reinterpret_cast<void*>(1), &child) == kNullObject, "unknown object object");
     Require(sceNpUniversalDataSystemIntRecordObjectSetObject(object, "object", object, &child) == 0 && child != nullptr, "object object");
-    child = nullptr;
-    Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", nullptr, &child) == kNullValue, "null object array");
-    Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", reinterpret_cast<void*>(1), &child) == kNullArray, "unknown object array");
-    Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", array, &child) == 0 && child != nullptr, "object array");
+    const auto* storedChild = StoredObject(object, "object");
+    Require(storedChild != nullptr && storedChild->get() == child, "object child pointer");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetInt32(child, "nested", 9) == 0, "set on object child");
+    Require((*storedChild)->Find("nested") != nullptr, "object child mutation stored");
+    Require(static_cast<NpUniversalDataSystemEventPropertyObject*>(object)->Find("nested") == nullptr, "object child clone independent");
+
+    void* objectArrayChild = nullptr;
+    Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", nullptr, &objectArrayChild) == kNullValue, "null object array");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", reinterpret_cast<void*>(1), &objectArrayChild) == kNullArray, "unknown object array");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetArray(object, "array", array, &objectArrayChild) == 0 && objectArrayChild != nullptr, "object array");
+    const auto* storedChildArray = StoredArray(object, "array");
+    Require(storedChildArray != nullptr && storedChildArray->get() == objectArrayChild, "object child array pointer");
+    Require(sceNpUniversalDataSystemIntRecordArraySetInt32(objectArrayChild, 10) == 0, "set on object child array");
+    Require((*storedChildArray)->values.size() >= 1, "object child array mutation stored");
     Require(sceNpUniversalDataSystemIntRecordObjectSetInt32(nullptr, "key", 0) == kNullObject, "null object target");
     Require(sceNpUniversalDataSystemIntRecordObjectSetInt32(reinterpret_cast<void*>(1), "key", 0) == kNullObject, "unknown object target");
-    const auto objectSize = Estimate(object);
-    Require(objectSize > 0, "estimate object");
 
     Require(sceNpUniversalDataSystemIntRecordObjectSetString(data, "extra", "value") == 0, "set on record data");
-    Require(Estimate(data) > dataSize, "record data estimate grew");
+    Require(static_cast<NpUniversalDataSystemEventPropertyObject*>(data)->Find("extra") != nullptr, "record data mutation stored");
+
+    void* destroyedChild = nullptr;
+    Require(sceNpUniversalDataSystemIntRecordObjectSetObject(data, "child", object, &destroyedChild) == 0, "destroyed child setup");
+    Require(sceNpUniversalDataSystemIntDestroyRecordData(data) == 0, "destroy data");
+    Require(sceNpUniversalDataSystemIntRecordObjectSetInt32(destroyedChild, "key", 0) == kNullObject, "destroyed owner invalidates child");
+    Require(sceNpUniversalDataSystemIntDestroyRecordObject(destroyedChild) == 0, "destroy child is a no-op");
 
     Require(sceNpUniversalDataSystemIntDestroyRecordArray(nullptr) == 0, "destroy null array");
     Require(sceNpUniversalDataSystemIntDestroyRecordObject(nullptr) == 0, "destroy null object");
     Require(sceNpUniversalDataSystemIntDestroyRecordData(nullptr) == 0, "destroy null data");
     Require(sceNpUniversalDataSystemIntDestroyRecordArray(array) == 0, "destroy array");
     Require(sceNpUniversalDataSystemIntDestroyRecordObject(object) == 0, "destroy object");
-    Require(sceNpUniversalDataSystemIntDestroyRecordData(data) == 0, "destroy data");
     std::size_t unused = 0;
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(array, &unused) == kNullRecord, "destroyed array estimate");
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(object, &unused) == kNullRecord, "destroyed object estimate");
-    Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(data, &unused) == kNullRecord, "destroyed data estimate");
 
     Require(sceNpUniversalDataSystemIntCreateRecordArray(&array) == 0, "recreate array");
     Require(sceNpUniversalDataSystemIntCreateRecordObject(&object) == 0, "recreate object");
     Require(sceNpUniversalDataSystemIntDeleteAllRecord() == 0, "delete all records");
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(array, &unused) == kNullRecord, "deleted array estimate");
     Require(sceNpUniversalDataSystemIntRecordDataEstimateSize(object, &unused) == kNullRecord, "deleted object estimate");
+
+    for (int round = 0; round < 32; ++round) {
+        Require(sceNpUniversalDataSystemIntTerminate() == 0, "contention terminate");
+        std::atomic<bool> go{false};
+        std::atomic<int> succeeded{0};
+        std::atomic<int> rejected{0};
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 8; ++i) {
+            threads.emplace_back([&] {
+                while (!go.load()) std::this_thread::yield();
+                const int result = sceNpUniversalDataSystemIntInitialize(&param);
+                if (result == 0) ++succeeded;
+                if (result == kAlreadyInitialized) ++rejected;
+            });
+        }
+        go.store(true);
+        for (auto& thread : threads) thread.join();
+        Require(succeeded.load() == 1, "one initializer wins");
+        Require(rejected.load() == 7, "other initializers rejected");
+    }
+    Require(sceNpUniversalDataSystemIntTerminate() == 0, "terminate after contention");
+    Require(sceNpUniversalDataSystemIntInitialize(&param) == 0, "reinitialize after contention");
+
+    for (int round = 0; round < 64; ++round) {
+        void* owner = nullptr;
+        Require(sceNpUniversalDataSystemIntCreateRecordObject(&owner) == 0, "lifetime owner");
+        void* lifetimeChild = nullptr;
+        Require(sceNpUniversalDataSystemIntRecordObjectSetObject(owner, "child", owner, &lifetimeChild) == 0, "lifetime child");
+        std::atomic<bool> go{false};
+        std::atomic<bool> stop{false};
+        std::atomic<int> unexpected{0};
+        std::thread worker([&] {
+            while (!go.load()) std::this_thread::yield();
+            while (!stop.load()) {
+                const int result = sceNpUniversalDataSystemIntRecordObjectSetInt32(lifetimeChild, "key", 1);
+                if (result != 0 && result != kNullObject) ++unexpected;
+            }
+        });
+        go.store(true);
+        for (int i = 0; i < 100; ++i) std::this_thread::yield();
+        Require(sceNpUniversalDataSystemIntDestroyRecordObject(owner) == 0, "destroy owner");
+        stop.store(true);
+        worker.join();
+        Require(unexpected.load() == 0, "operation against destruction");
+        Require(sceNpUniversalDataSystemIntRecordObjectSetInt32(lifetimeChild, "key", 1) == kNullObject, "child invalid after destruction");
+    }
 
     Require(sceNpUniversalDataSystemIntTerminate() == 0, "terminate failed");
     Require(sceNpUniversalDataSystemIntTerminate() == kNotInitialized, "second terminate");

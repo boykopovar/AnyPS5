@@ -50,6 +50,12 @@ public:
         return values.contains(value);
     }
 
+    template <typename F>
+    void ForEach(F&& visit) {
+        std::lock_guard lock(mutex);
+        for (const auto& [pointer, value] : values) visit(pointer);
+    }
+
     void Clear() {
         std::lock_guard lock(mutex);
         values.clear();
