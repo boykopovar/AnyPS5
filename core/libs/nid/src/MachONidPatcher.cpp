@@ -188,7 +188,10 @@ std::optional<TrieLocation> FindTrie(const std::vector<std::uint8_t>& binary, co
     return found;
 }
 
+constexpr std::size_t kMaxExportTrieDepth = 1024;
+
 void ParseTrieNode(const std::vector<std::uint8_t>& data, std::size_t start, std::size_t end, std::size_t node, std::string& prefix, std::set<std::size_t>& visited, std::vector<MachOExport>& out, std::size_t depth) {
+    if (depth > kMaxExportTrieDepth) throw std::runtime_error("export trie nesting too deep");
     if (node >= end - start) throw std::runtime_error("export trie node out of bounds");
     if (!visited.insert(node).second) throw std::runtime_error("export trie has a cycle");
     std::size_t cursor = start + node;
