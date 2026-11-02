@@ -79,5 +79,9 @@ int main() {
     auto* unmapped = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4000));
     Require(sceKernelMsync(unmapped, 0x4000, 0) == SCE_KERNEL_ERROR_ENOMEM);
     Require(sceKernelMsync(unmapped, 0x4000, MS_ASYNC | MS_INVALIDATE) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(sceKernelMlockall(0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMlockall(0x4) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMlockall(-4) == SCE_KERNEL_ERROR_EINVAL);
     return 0;
 }

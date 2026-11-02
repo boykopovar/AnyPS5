@@ -394,7 +394,7 @@ int APS5_VABI sceKernelMapToolMemory(void);
 int APS5_VABI sceKernelMapTraceMemory(void);
 int APS5_VABI sceKernelMapperGetParam(std::uint64_t* param);
 int APS5_VABI sceKernelMemoryPoolMove(void);
-int APS5_VABI sceKernelMlockall(void);
+int APS5_VABI sceKernelMlockall(int flags);
 int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags);
 int APS5_VABI sceKernelNormalizePath(void);
 int APS5_VABI sceKernelNotifyAppEvent(void);
