@@ -2879,6 +2879,11 @@ TableCompiled CompileTable(ShaderRecompiler::RecompileRequest request) {
     return out;
 }
 
+std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureTable(const ShaderRecompiler::RecompileRequest& request) {
+    AgcDriver::ShaderMemory memory({});
+    return memory.Capture(request);
+}
+
 std::array<std::uint32_t, 8> TableSelected(const ShaderRecompiler::ImageTableSnapshot& tables, std::uint32_t table, const char* message) {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     const auto& column = tables.tables.at(table);
@@ -4428,8 +4433,8 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
         require(pastDirect->info.images.size() == (pairs ? 2u : 3u) && selectedTables(*pastDirect) == 0u && directImages(*pastDirect) == (pairs ? 1u : 2u) && pastDirect->info.sampledPairs.size() == (pairs ? 2u * samplers + 1u : 3u) && mergedDirect != pastDirect->info.images.end(), (name + ": selected reads that the direct " + (pairs ? "sampler" : "images") + " push past the limit were not merged into one table").c_str());
         const auto mergedColumn = columnOf(*pastDirect, *mergedDirect);
         require(!mergedColumn.selected && mergedColumn.selection == 0u && !mergedColumn.unkeyed && mergedColumn.keyDomains.size() == reads, (name + ": the table merged beside the direct " + (pairs ? "sampler" : "images") + " is not the union of the keys").c_str());
-        const auto compiledDirect = CompileTable(pastDirectRequest);
-        const auto& directTables = compiledDirect.capture->snapshot.tables;
+        const auto capturedDirect = pairs ? CaptureTable(pastDirectRequest) : CompileTable(pastDirectRequest).capture;
+        const auto& directTables = capturedDirect->snapshot.tables;
         require(directTables.tables.size() == 1u, (name + ": the snapshot beside the direct " + (pairs ? "sampler" : "images") + " does not hold one table").c_str());
         const auto& directSnapshot = directTables.tables[mergedDirect->table];
         for (const auto key : {2u, 2u + reads / 2u, 1u + reads}) {
@@ -4448,8 +4453,8 @@ void verifySelectedRecordsWithinLimits(bool pairs, bool direct) {
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && plan->info.sampledPairs.size() == samplers, (name + ": reads past the limit were not merged into one table").c_str());
     const auto merged = columnOf(*plan, plan->info.images[0]);
     require(!merged.selected && merged.selection == 0u && !merged.unkeyed && merged.keyDomains.size() == limit + 1u, (name + ": the merged table is not the union of the keys").c_str());
-    const auto compiled = CompileTable(request);
-    const auto& tables = compiled.capture->snapshot.tables;
+    const auto captured = pairs ? CaptureTable(request) : CompileTable(request).capture;
+    const auto& tables = captured->snapshot.tables;
     require(tables.tables.size() == 1u, (name + ": the snapshot does not hold one table").c_str());
     const auto& snapshot = tables.tables[0];
     for (const auto key : {2u, 2u + limit / 2u, 2u + limit}) {
