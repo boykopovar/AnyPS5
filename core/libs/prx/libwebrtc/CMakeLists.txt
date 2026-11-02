@@ -30,6 +30,7 @@ target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RateControlPara
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioEncoderRuntimeConfig.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/SmoothingFilterImpl.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/CryptoOptions.cpp)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/I420Buffer.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Opus.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RecursiveCriticalSection.cpp)
 target_link_libraries(libwebrtc PRIVATE opus libkernel)
