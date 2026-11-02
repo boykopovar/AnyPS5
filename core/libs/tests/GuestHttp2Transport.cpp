@@ -723,7 +723,9 @@ void Http1Transport(int ssl) {
         Client client(ssl, 1, 0, version);
         const std::string upload = "upload bytes";
         Require(sceHttp2AddRequestHeader(client.tmpl, "X-Inherited", "retained", 0) == 0, "HTTP1 inherited header");
+        Require(sceHttp2AddRequestHeader(client.tmpl, "Host", "template.example", 0) == 0, "HTTP1 inherited host");
         client.Create(server.Url(), "POST", upload.size());
+        Require(sceHttp2AddRequestHeader(client.request, "host", "request.example", 0) == 0, "HTTP1 request host override");
         SslObservation observed;
         observed.context = ssl;
         observed.request = client.request;
@@ -744,6 +746,7 @@ void Http1Transport(int ssl) {
         Require(server.Headers().find(":method")->second == "POST" && server.Headers().find(":path")->second == "/path?query=yes", "HTTP1 method and target");
         Require(server.Headers().find(":version")->second == (version == 1 ? "HTTP/1.0" : "HTTP/1.1"), "HTTP1 requested version");
         Require(server.Headers().find("x-inherited")->second == "retained", "HTTP1 template header inherited");
+        Require(server.Headers().count("host") == 1 && server.Headers().find("host")->second == "request.example", "HTTP1 exactly one overridden host header");
         Require(observed.calls == (mode == Mode::Http1Plain ? 0 : 1), "HTTP1 TLS callback only for secure connections");
     }
 }

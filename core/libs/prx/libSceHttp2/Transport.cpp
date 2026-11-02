@@ -665,10 +665,12 @@ struct Request::State {
 
     void SendHttp1(const void* data, std::size_t size) {
         std::string header = method + " " + url.path + (version == 1 ? " HTTP/1.0\r\n" : " HTTP/1.1\r\n");
-        header += "Host: " + url.authority + "\r\nConnection: close\r\n";
+        std::string authority = url.authority;
+        for (const auto& [name, value] : settings.headers) if (name == "host") authority = value;
+        header += "Host: " + authority + "\r\nConnection: close\r\n";
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& field) { return field.first == "user-agent"; }))
             header += "User-Agent: " + settings.userAgent + "\r\n";
-        for (const auto& [name, value] : settings.headers) header += name + ": " + value + "\r\n";
+        for (const auto& [name, value] : settings.headers) if (name != "host") header += name + ": " + value + "\r\n";
         const bool chunkUpload = settings.noContentLength && size;
         if (chunkUpload) header += "Transfer-Encoding: chunked\r\n";
         else if (!settings.noContentLength) header += "Content-Length: " + std::to_string(size) + "\r\n";
