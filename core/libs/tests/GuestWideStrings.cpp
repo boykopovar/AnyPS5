@@ -237,6 +237,48 @@ int main() {
     require(wcsspn_nid_postfix(u"aabbc", u"ab") == 4);
     require(wcsspn_nid_postfix(u"abc", u"") == 0);
     require(wcscspn_nid_postfix(u"abcde", u"dx") == 3 && wcscspn_nid_postfix(u"abc", u"") == 3 && wcscspn_nid_postfix(u"", u"a") == 0 && wcscspn_nid_postfix(u"abc", u"a") == 0);
+    {
+        std::uint32_t seed = 2468;
+        const auto next = [&seed](std::uint32_t bound) {
+            seed = seed * 1103515245u + 12345u;
+            return (seed >> 16) % bound;
+        };
+        for (int round = 0; round < 20000; ++round) {
+            const std::uint32_t pages = 1 + next(48);
+            const auto unit = [&] { return static_cast<char16_t>(((next(pages) * 0x0507u) & 0xff00u) | (1 + next(255))); };
+            char16_t set[81] = {};
+            char16_t text[65] = {};
+            const std::size_t setLength = next(80 + 1);
+            const std::size_t textLength = next(64 + 1);
+            for (std::size_t i = 0; i < setLength; ++i) set[i] = unit();
+            for (std::size_t i = 0; i < textLength; ++i) text[i] = next(2) == 0 && setLength != 0 ? set[next(static_cast<std::uint32_t>(setLength))] : unit();
+            const auto member = [&](char16_t value) {
+                for (std::size_t i = 0; i < setLength; ++i) {
+                    if (set[i] == value) return true;
+                }
+                return false;
+            };
+            std::size_t span = 0;
+            while (span < textLength && member(text[span])) ++span;
+            std::size_t complement = 0;
+            while (complement < textLength && !member(text[complement])) ++complement;
+            require(wcsspn_nid_postfix(text, set) == span);
+            require(wcscspn_nid_postfix(text, set) == complement);
+            require(wcspbrk_nid_postfix(text, set) == (complement < textLength ? text + complement : nullptr));
+            char16_t copy[65] = {};
+            std::memcpy(copy, text, sizeof(copy));
+            char16_t* state = nullptr;
+            std::size_t position = 0;
+            for (char16_t* token = wcstok_nid_postfix(copy, set, &state); token != nullptr; token = wcstok_nid_postfix(nullptr, set, &state)) {
+                while (position < textLength && member(text[position])) ++position;
+                require(token == copy + position);
+                while (position < textLength && !member(text[position])) ++position;
+                ++position;
+            }
+            while (position < textLength && member(text[position])) ++position;
+            require(position >= textLength);
+        }
+    }
 
     char16_t tokens[] = u",,one,,two;three,";
     char16_t* last = tokens;
