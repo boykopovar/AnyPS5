@@ -84,6 +84,9 @@ void TestValidation() {
         Require(sceAudioInGetGain(badHandle, &gain) == invalidHandle && gain == 1.0f);
         Require(sceAudioInGetRerouteCount(badHandle) == invalidHandle);
         Require(sceAudioInGetGain(badHandle, nullptr) == invalidPointer);
+        errno = 71;
+        Require(sceAudioInGetGain(badHandle, reinterpret_cast<float*>(0x10)) == invalidPointer);
+        Require(errno == 71);
         Require(sceAudioInClose(badHandle) == invalidHandle);
         Require(sceAudioInInput(badHandle, nullptr) == invalidHandle);
         Require(sceAudioInGetSilentState(badHandle) == invalidHandle);

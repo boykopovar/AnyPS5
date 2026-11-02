@@ -2,6 +2,7 @@
 
 ### Silent stubs
 
+- [sceAudioInGetGain](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - returning `AUDIO_IN_ERROR_INVALID_POINTER` (`0x80260105`) for an unwritable gain pointer is a host-safety fallback with console behavior unmeasured.
 - [sceAudioInInit](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - returns 0 without library-wide setup, as `sceAudioOutInit` does; each `sceAudioInOpen` opens its own SDL capture device
 - [sceAudioInSetCompressorPreGain, sceAudioInSetNoiseGateThreshold](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signatures; the PS5 13.60 module returns 0 without reading any argument, and so do these stubs
 

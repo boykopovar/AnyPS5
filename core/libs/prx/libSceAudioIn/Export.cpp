@@ -10,6 +10,7 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <cerrno>
 #include <mutex>
 #include <stdexcept>
 
@@ -199,7 +200,11 @@ int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
 
 int32_t APS5_VABI sceAudioInGetGain(int32_t handle, float* gain) {
     if (!gain) return AUDIO_IN_ERROR_INVALID_POINTER;
-    *gain = 1.0f;
+    const float localGain = 1.0f;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(gain, &localGain, sizeof(localGain));
+    errno = savedErrno;
+    if (!copied) return AUDIO_IN_ERROR_INVALID_POINTER;
     std::lock_guard lock(g_mutex);
     return find(handle) ? 0 : AUDIO_IN_ERROR_INVALID_HANDLE;
 }
