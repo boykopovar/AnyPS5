@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstring>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 #include "Decoder/Jpeg.hpp"
@@ -126,12 +127,21 @@ void yuvToRgb(std::uint8_t y, std::uint8_t u, std::uint8_t v, std::uint8_t* rgb)
     rgb[2] = clampToByte(y + 1.772f * cb);
 }
 
-std::vector<std::uint8_t> toPackedPixels(const JpegEncEncodeParam& param, std::uint32_t channels) {
+std::optional<std::vector<std::uint8_t>> toPackedPixels(const JpegEncEncodeParam& param, std::uint32_t channels) {
     const auto* image = static_cast<const std::uint8_t*>(param.image);
     const std::size_t width = param.image_width;
+    std::size_t rowBytes = width;
+    if (param.pixel_format == PIXEL_FORMAT_R8G8B8A8 || param.pixel_format == PIXEL_FORMAT_B8G8R8A8) {
+        rowBytes = width * 4;
+    } else if (param.pixel_format == PIXEL_FORMAT_Y8U8Y8V8) {
+        rowBytes = ((width + 1) & ~1u) * 2;
+    }
+    std::vector<std::uint8_t> rowBuffer(rowBytes);
     std::vector<std::uint8_t> pixels(width * param.image_height * channels);
     for (std::size_t y = 0; y < param.image_height; ++y) {
-        const std::uint8_t* row = image + y * param.image_pitch;
+        const std::uint8_t* rowAddr = image + y * param.image_pitch;
+        if (!GuestCopyIn_nid_no_patch(rowBuffer.data(), rowAddr, rowBytes)) return std::nullopt;
+        const std::uint8_t* row = rowBuffer.data();
         std::uint8_t* out = pixels.data() + y * width * channels;
         for (std::size_t x = 0; x < width; ++x) {
             switch (param.pixel_format) {
@@ -185,10 +195,15 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
     if (!handle) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     const auto address = reinterpret_cast<std::uintptr_t>(memory);
     const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
-    auto* encoder = new (reinterpret_cast<void*>(aligned)) Encoder{};
-    encoder->self = encoder;
+    Encoder localEncoder{};
+    localEncoder.self = reinterpret_cast<Encoder*>(aligned);
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &localEncoder, sizeof(localEncoder))) {
+        return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    }
+    auto* encoder = reinterpret_cast<Encoder*>(aligned);
     if (!GuestCopyOut_nid_no_patch(handle, &encoder, sizeof(encoder))) {
-        encoder->self = nullptr;
+        Encoder cleared{};
+        GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &cleared, sizeof(cleared));
         return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     }
     return 0;
@@ -197,7 +212,8 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
 int32_t APS5_VABI sceJpegEncDelete(void* handle) {
     Encoder* encoder = toEncoder(handle);
     if (!encoder) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
-    encoder->self = nullptr;
+    Encoder cleared{};
+    GuestCopyOut_nid_no_patch(encoder, &cleared, sizeof(cleared));
     return 0;
 }
 
@@ -209,13 +225,14 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
     if (localParam.encode_mode == ENCODE_MODE_MJPEG) throw std::runtime_error("sceJpegEncEncode: MJPEG encode mode is not implemented");
 
     const std::uint32_t channels = localParam.pixel_format == PIXEL_FORMAT_Y8 ? 1 : 3;
-    const std::vector<std::uint8_t> pixels = toPackedPixels(localParam, channels);
+    const std::optional<std::vector<std::uint8_t>> pixels = toPackedPixels(localParam, channels);
+    if (!pixels) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     const std::uint32_t restartBlocks = localParam.restart_interval > 0 ? static_cast<std::uint32_t>(localParam.restart_interval) : 0;
     const std::uint32_t restartRows = localParam.restart_interval == RESTART_INTERVAL_PER_ROW ? 1 : 0;
-    const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(pixels, localParam.image_width, localParam.image_height, channels, toQuality(localParam), toSampling(localParam), restartBlocks, restartRows);
+    const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(*pixels, localParam.image_width, localParam.image_height, channels, toQuality(localParam), toSampling(localParam), restartBlocks, restartRows);
     if (jpeg.size() > localParam.jpeg_size) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
 
-    std::memcpy(localParam.jpeg, jpeg.data(), jpeg.size());
+    if (!GuestCopyOut_nid_no_patch(localParam.jpeg, jpeg.data(), jpeg.size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (outputInfo) {
         JpegEncOutputInfo localOutput{};
         localOutput.size = static_cast<std::uint32_t>(jpeg.size());

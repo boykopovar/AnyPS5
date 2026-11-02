@@ -130,6 +130,7 @@ int main() {
     Require(sceJpegEncCreate(&param, unaligned, 0x800, nullptr) == invalidAddr);
     Require(sceJpegEncCreate(reinterpret_cast<const JpegEncCreateParam*>(0x10), unaligned, 0x800, &handle) == invalidAddr);
     Require(sceJpegEncCreate(&param, unaligned, 0x800, reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(sceJpegEncCreate(&param, reinterpret_cast<void*>(0x10), 0x800, &handle) == invalidAddr);
     Require(handle == nullptr);
 
     Require(sceJpegEncCreate(&param, unaligned, 0x800, &handle) == 0);
@@ -166,7 +167,9 @@ int main() {
 
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image = nullptr; }) == invalidAddr);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image = image + 1; }) == invalidAddr);
+    Require(encodeWith([](JpegEncEncodeParam& p) { p.image = reinterpret_cast<void*>(0x10); }) == invalidAddr);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg = nullptr; }) == invalidAddr);
+    Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg = reinterpret_cast<void*>(0x10); }) == invalidAddr);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_size = 0; }) == invalidSize);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.jpeg_size = 0; }) == invalidSize);
     Require(encodeWith([](JpegEncEncodeParam& p) { p.image_width = 0x10000; }) == invalidParam);
