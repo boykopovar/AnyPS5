@@ -28,7 +28,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_camera_settings_tests ${LIBS_INCLUDE_DIR}/tests/GuestCameraSettings.cpp)
     target_include_directories(guest_camera_settings_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_camera_settings_tests PRIVATE libSceCamera libc)
+    target_link_libraries(guest_camera_settings_tests PRIVATE libSceCamera libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_camera_settings_tests)
     add_test(NAME guest_camera_settings COMMAND guest_camera_settings_tests)
     if(WIN32)
