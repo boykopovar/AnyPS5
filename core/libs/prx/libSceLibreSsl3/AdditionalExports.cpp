@@ -669,10 +669,6 @@ int APS5_VABI ASN1_OCTET_STRING_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI tls_config_parse_protocols_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
