@@ -297,29 +297,13 @@ if(BUILD_TESTING)
     add_test(NAME call_site_index COMMAND call_site_index_tests)
     set_tests_properties(call_site_index PROPERTIES TIMEOUT 20)
 
-    add_test_executable(sdk_mman_syscall_tests
-        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/SdkMmanSyscallTests.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/InstructionScanner.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DecodedInstruction.cpp)
-    target_include_directories(sdk_mman_syscall_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include)
+    add_test_executable(sdk_mman_syscall_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/SdkMmanSyscallTests.cpp)
+    target_link_libraries(sdk_mman_syscall_tests PRIVATE relinker_core)
     add_test(NAME sdk_mman_syscall COMMAND sdk_mman_syscall_tests)
     set_tests_properties(sdk_mman_syscall PROPERTIES TIMEOUT 20)
 
-    add_test_executable(code_data_scanning_tests
-        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CodeDataScanningTests.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/InstructionScanner.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DecodedInstruction.cpp)
-    target_include_directories(code_data_scanning_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include)
+    add_test_executable(code_data_scanning_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CodeDataScanningTests.cpp)
+    target_link_libraries(code_data_scanning_tests PRIVATE relinker_core)
     add_test(NAME code_data_scanning COMMAND code_data_scanning_tests)
     set_tests_properties(code_data_scanning PROPERTIES TIMEOUT 20)
 
@@ -735,6 +719,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_intel_trampolines.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_syscall_trap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_trap.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_syscall_route COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_route.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
@@ -936,6 +922,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_sce_code_extent.py $<TARGET_FILE:relinker>)
         add_test(NAME sce_relro COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_sce_relro.py $<TARGET_FILE:relinker>)
+        foreach(system linux windows macos)
+            add_test(NAME sce_referenced_code_${system} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_sce_referenced_code.py $<TARGET_FILE:relinker> ${system})
+        endforeach()
+
         add_test(NAME sce_module_code_extent COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_sce_module_code_extent.py $<TARGET_FILE:relinker>)
         add_test(NAME sce_code_gaps COMMAND ${Python3_EXECUTABLE}

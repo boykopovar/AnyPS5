@@ -245,6 +245,13 @@ void scanning() {
     });
     require(instructions.size() == code.size(), "Progress changed image code analysis");
     require(updates > 10 && previous == 10000, "Missing intermediate image analysis progress");
+    std::vector<Domain::CodeRange> unpublished{{7, 9}};
+    reject([&] {
+        Relinker::CodeInstructionCollector().Collect(image, {header}, [](auto completed, auto total) {
+            if (completed == total) throw Domain::RelinkerException("cancelled");
+        }, nullptr, {}, &unpublished);
+    });
+    require(unpublished == std::vector<Domain::CodeRange>{{7, 9}}, "Cancelled analysis published ranges");
     std::vector<std::uint8_t> wrappingImage(0x1000);
     Io::WriteU64(wrappingImage, 24, 0x2000);
     wrappingImage[0x200] = 0xc3;
@@ -283,7 +290,7 @@ void scanning() {
         Io::WriteU64(wrappingImage, 0x128, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         const auto roots = Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, controlDataHeader});
-        require(roots == std::set<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
+        require(roots == std::vector<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
         Io::WriteU64(wrappingImage, 0x3c0, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         Io::WriteU64(wrappingImage, 0x3c0, 0x2008);
@@ -293,6 +300,36 @@ void scanning() {
     progress.Events.clear();
     reject([&] { scanner->ScanCodeSectionForSyscalls(code, 0, code.size()); });
     require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
+}
+
+void lifecycleRoots() {
+    std::vector<std::uint8_t> image(256);
+    Io::WriteU64(image, 24, 16);
+    image[64] = 0xc3;
+    image[72] = 0xc3;
+    image[80] = 0xc3;
+    Domain::ProgramHeader code{};
+    code.Type = 1;
+    code.Flags = 1;
+    code.Offset = 64;
+    code.FileSize = 17;
+    code.MemorySize = 17;
+    Domain::ProgramHeader dynamic{};
+    dynamic.Type = 2;
+    dynamic.Offset = 128;
+    dynamic.FileSize = 32;
+    dynamic.MemorySize = 32;
+    const std::vector<Domain::ProgramHeader> headers{code, dynamic};
+    const Relinker::CodeInstructionCollector collector;
+    require(collector.Collect(image, headers) == std::vector<Domain::VirtualAddress>{16}, "Absent lifecycle tags introduced a code root");
+    for (const auto tag : {12u, 13u}) {
+        Io::WriteU64(image, 128, tag);
+        for (const auto address : {0u, 8u}) {
+            Io::WriteU64(image, 136, address);
+            require(collector.Collect(image, headers) == std::vector<Domain::VirtualAddress>{address, 16}, "Present lifecycle tag lost its mapped code root");
+            require(collector.CollectRewriteAnchors(image, headers).contains(address), "Present lifecycle tag lost its rewrite anchor");
+        }
+    }
 }
 
 void branchAcrossSignedBoundary() {
@@ -310,8 +347,8 @@ void branchAcrossSignedBoundary() {
     header.MemorySize = header.FileSize;
     Io::WriteU64(image, 24, 0x8000000000000000);
     const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
-    require(instructions.contains(0x8000000000000000), "Lost the entry above the signed boundary");
-    require(instructions.contains(0x7ffffffffffffff0), "Lost the branch target below the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x8000000000000000ull), "Lost the entry above the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
 }
 
 class FailingProgress final : public Domain::IProgress {
@@ -544,6 +581,7 @@ int main() {
         runtimeLifecyclePolicy();
         fixedBase();
         scanning();
+        lifecycleRoots();
         branchAcrossSignedBoundary();
         diagnosticContext();
         cancellation();

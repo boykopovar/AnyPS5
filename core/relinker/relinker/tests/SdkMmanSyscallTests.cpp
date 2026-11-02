@@ -131,11 +131,39 @@ void CheckFixtures() {
     std::cout << "SDK inline syscall checks passed, " << rejectedMutations << " near-match rejections\n";
 }
 
+void CheckNumberedStubBoundaries() {
+    const Bytes stub{0x48, 0xc7, 0xc0, 0xbf, 0, 0, 0, 0x49, 0x89, 0xca, 0x0f, 0x05, 0xc3};
+    for (const auto padding : {std::size_t{0}, std::size_t{1}, std::size_t{16}}) {
+        Bytes code(padding, 0x90);
+        code.insert(code.end(), stub.begin(), stub.end());
+        std::vector<Relinker::RoutedSyscallStub> routed;
+        const auto traps = Relinker::MakeSyscallScanner(testProgress)->ScanCodeSectionForSyscalls(code, 0x4000, code.size(), {}, {}, &routed);
+        Require(traps.empty() && routed.size() == 1 && routed[0].StubOffset == padding && routed[0].StubLength == 13 && routed[0].SyscallNumber == 191, "Numbered SDK route lost its decoded boundary");
+        for (const bool trap : {false, true}) {
+            routed.clear();
+            bool refused = false;
+            try { Relinker::MakeSyscallScanner(testProgress, trap)->ScanCodeSectionForSyscalls(code, 0x4000, code.size() - 1, {}, {}, &routed); }
+            catch (const Domain::RelinkerException&) { refused = true; }
+            Require(refused && routed.empty(), "Numbered SDK route read its return beyond the scan range");
+        }
+    }
+    Bytes immediate{0x48, 0xb8};
+    immediate.insert(immediate.end(), stub.begin(), stub.end());
+    for (const bool trap : {false, true}) {
+        std::vector<Relinker::RoutedSyscallStub> routed;
+        bool refused = false;
+        try { Relinker::MakeSyscallScanner(testProgress, trap)->ScanCodeSectionForSyscalls(immediate, 0x4000, immediate.size(), {}, {}, &routed); }
+        catch (const Domain::RelinkerException& error) { refused = error.FailureOffset == 0x400c; }
+        Require(refused && routed.empty(), "Numbered SDK route started inside an instruction operand");
+    }
+}
+
 }
 
 int main() {
     try {
         CheckFixtures();
+        CheckNumberedStubBoundaries();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

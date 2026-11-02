@@ -3,8 +3,10 @@
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
+#include <relinker/analysis/SyscallScanner.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <algorithm>
+#include <bit>
 #include <iterator>
 #include <sstream>
 
@@ -27,6 +29,30 @@ constexpr std::uint16_t kEtRel = 1;
 constexpr std::uint16_t kEtCore = 4;
 constexpr std::uint16_t kEtSceDynExec = 0xfe10;
 constexpr std::uint16_t kEtSceDynamic = 0xfe18;
+
+const NidReference* FindPathconfImport(const std::vector<NidReference>& nidRefs) {
+    const NidReference* candidate = nullptr;
+    for (const auto& ref : nidRefs) {
+        if ((ref.RelocationTypeValue != R_X86_64_64 && ref.RelocationTypeValue != R_X86_64_GLOB_DAT && ref.RelocationTypeValue != R_X86_64_JUMP_SLOT) || ref.Addend != 0 || (ref.SymbolType != STT_NOTYPE && ref.SymbolType != STT_FUNC)) continue;
+        if (!ref.Library.empty() && !ref.Library.starts_with("libkernel")) {
+            continue;
+        }
+        std::string_view name = ref.Nid;
+        const auto hashPos = name.find('#');
+        if (hashPos != std::string_view::npos) {
+            name = name.substr(0, hashPos);
+        }
+        if (name == "pathconf" || name == "oc98+zOImus" || name == "pathconf_nid_postfix") {
+            if (ref.RelocationTypeValue == R_X86_64_JUMP_SLOT) {
+                return &ref;
+            }
+            if (!candidate) {
+                candidate = &ref;
+            }
+        }
+    }
+    return candidate;
+}
 
 }
 
@@ -441,6 +467,7 @@ RelinkResult RelinkerPipeline::Relink() {
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
+    bool hasCodeTail = false;
     const bool sceImage = std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; });
     const bool hasEhFrame = sceImage || std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
     if (hasEhFrame) {
@@ -451,33 +478,92 @@ RelinkResult RelinkerPipeline::Relink() {
             for (std::size_t index = 0; index < executableSegments.size(); ++index) {
                 auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
                 static_cast<void>(segmentFileOffset);
-                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
+                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize)) {
+                    hasCodeTail = hasCodeTail || *codeEnd - segmentVAddr < segment.size();
                     segment.resize(*codeEnd - segmentVAddr);
+                }
                 segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
             }
     }
 
+    auto scanBytes = raw;
     std::vector<std::vector<std::uint8_t>> scanSegments;
     for (const auto& [segment, segmentVAddr, segmentFileOffset] : executableSegments) {
-        static_cast<void>(segmentFileOffset);
         auto& scanSegment = scanSegments.emplace_back(segment);
         for (const auto& table : FindRelativeJumpTables(segment, segmentVAddr, unwindRanges))
             std::fill(scanSegment.begin() + static_cast<std::ptrdiff_t>(table.Begin - segmentVAddr), scanSegment.begin() + static_cast<std::ptrdiff_t>(table.End - segmentVAddr), std::uint8_t{0x90});
+        std::copy(scanSegment.begin(), scanSegment.end(), scanBytes.begin() + segmentFileOffset);
     }
 
     std::vector<RelinkPatch> syscallPatches;
+    std::vector<RoutedSyscallStub> routedStubs;
     for (std::size_t index = 0; index < executableSegments.size(); ++index) {
-        auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
-        auto& scanSegment = scanSegments[index];
-        for (const auto offset : syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index])) {
+        const auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
+        const auto& scanSegment = scanSegments[index];
+        std::vector<RoutedSyscallStub> segmentRoutedStubs;
+        for (const auto offset : syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index], &segmentRoutedStubs)) {
             if (offset > segment.size() || segment.size() - offset < 2u)
                 throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + offset);
-            segment[offset] = scanSegment[offset] = 0x0F;
-            segment[offset + 1] = scanSegment[offset + 1] = 0x0B;
             syscallPatches.push_back({segmentFileOffset + offset, {0x0F, 0x0B}});
         }
+        for (auto routed : segmentRoutedStubs) {
+            routed.StubOffset += segmentFileOffset;
+            routedStubs.push_back(routed);
+        }
     }
-
+    if (hasCodeTail) {
+        std::set<FileByteOffset> trapOffsets;
+        for (const auto& patch : syscallPatches) trapOffsets.insert(patch.Offset);
+        for (auto& patch : syscallScanner->ScanReferencedTailForSyscalls(raw, programHeaders, scanBytes, {}, &routedStubs))
+            if (trapOffsets.insert(patch.Offset).second) syscallPatches.push_back(std::move(patch));
+    }
+    std::set<FileByteOffset> routedOffsets;
+    std::set<VirtualAddress> routedImportSlots;
+    if (FindPathconfImport(nidRefs)) ValidateSyscallRoutes(raw, programHeaders, routedStubs, progress);
+    for (const auto& routed : routedStubs) {
+        if (!routedOffsets.insert(routed.StubOffset).second) continue;
+        const auto header = std::find_if(programHeaders.begin(), programHeaders.end(), [&](const auto& candidate) {
+            return candidate.Type == PT_LOAD && (candidate.Flags & 1) != 0 && routed.StubOffset >= candidate.Offset && routed.StubOffset - candidate.Offset < candidate.FileSize && routed.StubLength <= candidate.FileSize - (routed.StubOffset - candidate.Offset);
+        });
+        if (header == programHeaders.end() || routed.SyscallNumber != 191 || routed.StubLength != 13)
+            throw RelinkerException("Unsupported syscall route patch", routed.StubOffset);
+        const auto stubVAddr = header->MappedAddress + (routed.StubOffset - header->Offset);
+        if (const auto* pathconfRef = FindPathconfImport(nidRefs)) {
+            routedImportSlots.insert(pathconfRef->RelocationAddress);
+            const auto disp = std::bit_cast<std::int64_t>(pathconfRef->RelocationAddress - (stubVAddr + 6));
+            if (disp < std::numeric_limits<std::int32_t>::min() || disp > std::numeric_limits<std::int32_t>::max())
+                throw RelinkerException("Syscall stub relocation distance exceeds 32-bit displacement", stubVAddr);
+            const auto disp32 = static_cast<std::uint32_t>(static_cast<std::int32_t>(disp));
+            syscallPatches.push_back({routed.StubOffset, {
+                0xFF, 0x25,
+                static_cast<std::uint8_t>(disp32), static_cast<std::uint8_t>(disp32 >> 8),
+                static_cast<std::uint8_t>(disp32 >> 16), static_cast<std::uint8_t>(disp32 >> 24),
+                0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+            }});
+        } else if (syscallScanner->TrapsSdkStubs()) {
+            syscallPatches.push_back({routed.StubOffset + 10, {0x0F, 0x0B}});
+        } else {
+            throw RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import", stubVAddr);
+        }
+    }
+    for (const auto& patch : syscallPatches) {
+        if (!textSection.empty()) {
+            const auto header = std::find_if(programHeaders.begin(), programHeaders.end(), [&](const auto& candidate) {
+                return candidate.Type == PT_LOAD && candidate.MappedAddress == textVAddr && patch.Offset >= candidate.Offset && patch.Offset - candidate.Offset < textSection.size() && patch.Bytes.size() <= textSection.size() - (patch.Offset - candidate.Offset);
+            });
+            if (header != programHeaders.end()) std::copy(patch.Bytes.begin(), patch.Bytes.end(), textSection.begin() + (patch.Offset - header->Offset));
+        }
+        for (std::size_t index = 0; index < executableSegments.size(); ++index) {
+            auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
+            if (patch.Offset < segmentFileOffset || patch.Offset - segmentFileOffset >= segment.size()) continue;
+            const auto offset = patch.Offset - segmentFileOffset;
+            if (patch.Bytes.size() > segment.size() - offset)
+                throw RelinkerException("Syscall patch crosses scan boundary", segmentVAddr + offset);
+            std::copy(patch.Bytes.begin(), patch.Bytes.end(), segment.begin() + offset);
+            std::copy(patch.Bytes.begin(), patch.Bytes.end(), scanSegments[index].begin() + offset);
+            break;
+        }
+    }
 
     std::vector<std::pair<ByteCount, std::string>> exportedSymbols;
     std::vector<VirtualAddress> exportedFunctions;
@@ -545,10 +631,17 @@ RelinkResult RelinkerPipeline::Relink() {
     const auto originalNidRefs = nidRefs;
     { std::ostringstream message; message << "NID input: " << originalNidCount << " references\n"; progress.Message(message.str()); }
 
+    const auto preserveRoutedImports = [&](std::vector<NidReference> filtered, const std::vector<NidReference>& candidates) {
+        for (const auto& candidate : candidates) {
+            if (!routedImportSlots.contains(candidate.RelocationAddress)) continue;
+            if (std::none_of(filtered.begin(), filtered.end(), [&](const auto& reference) { return reference.RelocationTableOffset == candidate.RelocationTableOffset; })) filtered.push_back(candidate);
+        }
+        return filtered;
+    };
     if (unusedFilterLevel == 2) {
         if (executableSegments.size() > 1)
             throw RelinkerException("Strict NID filtering does not support multiple executable segments");
-        nidRefs = unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr);
+        nidRefs = preserveRoutedImports(unusedNidFilter->Filter(nidRefs, raw, textSection, textVAddr), nidRefs);
         if (nidRefs.size() > originalNidCount) throw RelinkerException("Strict NID filter increased the reference count");
         { std::ostringstream message; message << "Strict filtering total: " << originalNidCount << " -> " << nidRefs.size() << "; filtered=" << originalNidCount - nidRefs.size() << "\n"; progress.Message(message.str()); }
     } else if (unusedFilterLevel == 1) {
@@ -567,7 +660,7 @@ RelinkResult RelinkerPipeline::Relink() {
             { std::ostringstream message; message << "CFG/GOT filtering skipped: multiple executable segments are not modeled; "
                       << nonPltCount << " -> " << nonPltCount << "; filtered=0\n"; progress.Message(message.str()); }
         } else {
-            nonPltRefs = unusedNidFilter->Filter(nonPltRefs, raw, textSection, textVAddr, exportedFunctions);
+            nonPltRefs = preserveRoutedImports(unusedNidFilter->Filter(nonPltRefs, raw, textSection, textVAddr, exportedFunctions), nonPltRefs);
             if (nonPltRefs.size() > nonPltCount) throw RelinkerException("Unused NID filter increased the reference count");
             { std::ostringstream message; message << "CFG/GOT filtering: " << nonPltCount << " -> " << nonPltRefs.size() << "; filtered=" << nonPltCount - nonPltRefs.size() << "\n"; progress.Message(message.str()); }
         }
@@ -680,6 +773,14 @@ RelinkResult RelinkerPipeline::Relink() {
         }
     }
 
+    for (const auto& patch : syscallPatches) {
+        if (patch.Bytes != std::vector<std::uint8_t>{0x0f, 0x0b}) continue;
+        for (const auto& header : programHeaders) {
+            if (header.Type != PT_LOAD || (header.Flags & 1) == 0 || patch.Offset < header.Offset || patch.Offset - header.Offset >= header.FileSize) continue;
+            dynSection.SyscallContinuations.push_back(header.MappedAddress + (patch.Offset - header.Offset) + patch.Bytes.size());
+            break;
+        }
+    }
     patches.insert(patches.end(), std::make_move_iterator(syscallPatches.begin()), std::make_move_iterator(syscallPatches.end()));
     progress.Report({Domain::ProgressStage::Imports, {}, 1, 1});
     return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr, std::move(patches)};

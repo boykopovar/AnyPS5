@@ -64,6 +64,7 @@ struct MacOsImageInput {
     std::vector<std::uint32_t> InitArrayRvas;
     std::vector<std::uint32_t> FiniArrayRvas;
     std::vector<std::uint32_t> TlsModuleSlots;
+    std::vector<Domain::VirtualAddress> SyscallContinuations;
     std::vector<MacOsTlsImport> TlsImports;
     std::vector<MacOsTlsExport> TlsExports;
     const std::vector<Codegen::TrampolineSite>* Trampolines = nullptr;

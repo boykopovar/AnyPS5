@@ -320,6 +320,11 @@ void CheckBorrowedReachability() {
 
 void CheckReachedMap() {
     const Pointers pointers;
+    const Bytes zeroTail{0x90, 0, 0};
+    std::vector<std::uint8_t> ordinary(zeroTail.size());
+    std::vector<std::uint8_t> authoritative(zeroTail.size());
+    Require(ExtendControlFlowGraph(zeroTail, TextAddress, TextAddress, {}, pointers, false, ordinary) == std::vector<VirtualAddress>{TextAddress}, "Ordinary traversal followed trailing zero padding");
+    Require(ExtendControlFlowGraph(zeroTail, TextAddress, TextAddress, {}, pointers, false, authoritative, {}, {}, true) == std::vector<VirtualAddress>{TextAddress, TextAddress + 1}, "Authoritative traversal lost previously visited code or trailing zero instructions");
     const Bytes text{0x90, 0x90, 0xc3, 0x90, 0xc3};
     const std::span<const std::uint8_t> code(text);
     std::vector<std::uint8_t> reached(text.size(), 0);

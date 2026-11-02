@@ -238,7 +238,7 @@ def main():
             run(relinker, work, "sce-data-pointer-after-code-" + target, fixture(plt_at=PLT_BEFORE_CODE, data_pointer=True),
                 target=target)
             run(relinker, work, "sce-entry-after-code-" + target, fixture(plt_at=PLT_BEFORE_CODE, gap_entry=True),
-                target=target)
+                unsupported_tls(target), target=target)
             run(relinker, work, "sce-function-before-plt-" + target,
                 fixture(plt_at=PLT_BEFORE_CODE, early_function=True), target=target)
             run(relinker, work, "sce-code-after-plt-" + target, fixture(plt_at=PLT_BEFORE_CODE, function_tls=True),
@@ -259,7 +259,7 @@ def main():
             run(relinker, work, "gap-callback-syscall-" + target,
                 fixture(sce_block=False, gap_callback_syscall_undecodable=True), "Forbidden syscall instruction", target=target)
         run(relinker, work, "sce-tls-rewrite-over-lea-target", entry_overlap_fixture(),
-            "TLS rewrite would overwrite an executable entry point (offset 0x304)")
+            "Code analysis: reference enters an analyzed instruction (offset 0x304)")
     print("SCE code extent tests passed")
 
 

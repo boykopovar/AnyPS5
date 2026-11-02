@@ -76,6 +76,7 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
     input.Headers = &originalHeaders;
     input.Image = &image;
     input.Message = message;
+    input.SyscallContinuations = dynamicSection.SyscallContinuations;
     for (std::size_t offset = 24; offset < dynamicSection.DynSymData.size(); offset += 24) {
         const auto& symbols = dynamicSection.DynSymData;
         const auto section = Io::ReadU16(symbols, offset + 6);
