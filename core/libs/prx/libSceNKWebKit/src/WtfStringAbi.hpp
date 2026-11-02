@@ -57,7 +57,12 @@ struct String {
     String(const String& other) : impl(other.impl) { if (impl) impl->refCount += 2; }
     String(String&& other) noexcept : impl(std::exchange(other.impl, nullptr)) {}
     ~String() { Release(impl); }
+    String& operator=(String other) noexcept { std::swap(impl, other.impl); return *this; }
 };
+
+StringImpl* EmptyStringImpl();
+StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters);
+String SubstringSharingImpl(const String& string, unsigned start, unsigned length);
 
 struct CString {
     CStringBuffer* buffer;
