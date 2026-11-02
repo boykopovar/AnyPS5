@@ -148,7 +148,6 @@ const void* APS5_VABI WKURLRequestCopySettingHTTPBody(const void* requestRef, co
 const void* APS5_VABI WKURLRequestCopyURL(const void* requestRef);
 const void* APS5_VABI WKURLRequestCreateWithWKURL(const void* urlRef);
 std::uint32_t APS5_VABI WKURLRequestGetTypeID();
-void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval);
 std::uint32_t APS5_VABI WKURLResponseGetTypeID();
 std::uint32_t APS5_VABI WKUserContentControllerGetTypeID();
 std::uint32_t APS5_VABI WKUserContentExtensionStoreGetTypeID();

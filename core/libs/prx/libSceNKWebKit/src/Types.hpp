@@ -105,17 +105,12 @@ public:
 class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
 public:
     URLRequest() = default;
-    explicit URLRequest(Retained<URL> url) : url(std::move(url)) {
-        if (this->url) {
-            firstPartyForCookies = Make<URL>(this->url->text);
-        }
-    }
+    explicit URLRequest(Retained<URL> url) : url(std::move(url)) {}
 
     Retained<URL> url;
     Retained<URL> firstPartyForCookies;
     std::string httpMethod = "GET";
     Retained<Data> httpBody;
-    static inline double defaultTimeoutInterval = 60.0;
 };
 
 }  // namespace NKWebKit

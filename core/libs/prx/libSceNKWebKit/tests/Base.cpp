@@ -358,11 +358,7 @@ static void TestURLRequestResponse() {
     WKRelease(reqUrl);
 
     auto* partyUrl = WKURLRequestCopyFirstPartyForCookies(request);
-    Require(partyUrl != nullptr);
-    auto* partyUrlStr = WKURLCopyString(partyUrl);
-    Require(WKStringIsEqualToUTF8CString(partyUrlStr, "https://playstation.com/en-us/"));
-    WKRelease(partyUrlStr);
-    WKRelease(partyUrl);
+    Require(partyUrl == nullptr);
 
     auto* method = WKURLRequestCopyHTTPMethod(request);
     Require(method != nullptr);
@@ -382,8 +378,6 @@ static void TestURLRequestResponse() {
     auto* clearedRequest = WKURLRequestCopySettingHTTPBody(modifiedRequest, nullptr);
     Require(clearedRequest != nullptr);
     WKRelease(clearedRequest);
-
-    WKURLRequestSetDefaultTimeoutInterval(30.0);
 
     WKRelease(modifiedRequest);
     WKRelease(bodyData);

@@ -40,8 +40,4 @@ const void* APS5_VABI WKURLRequestCopySettingHTTPBody(const void* requestRef, co
     return NKWebKit::ToRef(std::move(copy));
 }
 
-void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval) {
-    NKWebKit::URLRequest::defaultTimeoutInterval = timeoutInterval;
-}
-
 }
