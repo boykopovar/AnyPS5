@@ -368,6 +368,51 @@ struct WorkgroupMemory {
     }
 };
 
+struct ScratchPool {
+    VkDevice device = VK_NULL_HANDLE;
+    PFN_vkDestroyDescriptorPool destroyPool = nullptr;
+    std::unique_ptr<Graphics::DeviceBuffer> buffer;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    std::uint64_t slots = 0;
+    std::uint64_t headerBytes = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t lastUse = 0;
+    ~ScratchPool() {
+        buffer.reset();
+        if (pool != VK_NULL_HANDLE) destroyPool(device, pool, nullptr);
+    }
+};
+
+void ZeroScratchPoolHeader(const Graphics::Context& context, const ScratchPool& pool) {
+    Graphics::CommandBatch batch(context);
+    context.Resolved(&Graphics::DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(batch.Handle(), pool.buffer->Handle(), 0, pool.headerBytes, 0u);
+    Graphics::RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    batch.SubmitAndWait();
+}
+
+std::uint64_t MebibytesFromEnvironment(const char* name, std::uint64_t fallback) {
+    std::uint64_t mebibytes = fallback;
+    if (const char* text = std::getenv(name)) {
+        char* end = nullptr;
+        const auto parsed = std::strtoull(text, &end, 10);
+        if (end != text && *end == 0 && parsed != 0) mebibytes = parsed;
+    }
+    return mebibytes << 20u;
+}
+
+std::uint64_t ScratchPoolCapBytes() {
+    static const std::uint64_t bytes = MebibytesFromEnvironment("APS5_SCRATCH_POOL_MIB", 64);
+    return bytes;
+}
+
+constexpr std::uint64_t ScratchPoolBufferLimit = std::uint64_t{1} << 31u;
+
+std::uint64_t ScratchPoolTotalBytes() {
+    static const std::uint64_t bytes = MebibytesFromEnvironment("APS5_SCRATCH_POOL_TOTAL_MIB", 256);
+    return bytes;
+}
+
 struct VulkanDevice::State {
     bool compileOnly = false;
     void* library = nullptr;
@@ -537,6 +582,9 @@ struct VulkanDevice::State {
     std::vector<std::pair<std::array<std::uint32_t, 4>, std::shared_ptr<Graphics::DeviceBuffer>>> patternBuffers;
     VkDescriptorSetLayout workgroupMemoryLayout = VK_NULL_HANDLE;
     std::shared_ptr<WorkgroupMemory> workgroupMemory;
+    std::mutex scratchPoolsMutex;
+    std::map<ShaderRecompiler::PipelineIdentity, std::shared_ptr<ScratchPool>> scratchPools;
+    std::uint64_t scratchPoolUses = 0;
     // Compute pipeline objects by variant (and push-constant use), under their own mutex: the
     // dispatch's find-or-insert and the verify switch's lookups touch the map, recipes hold weak
     // references to its objects.
@@ -699,6 +747,65 @@ struct VulkanDevice::State {
         DeviceFunction<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(device, 1, &write, 0, nullptr);
         workgroupMemory = std::move(memory);
         return workgroupMemory;
+    }
+
+    std::shared_ptr<ScratchPool> ScratchPoolFor(const Graphics::Context& context, const ShaderRecompiler::PipelineIdentity& identity, std::uint32_t slotDwords, std::uint64_t groups) {
+        const auto range = std::min<std::uint64_t>(properties.limits.maxStorageBufferRange, ScratchPoolBufferLimit);
+        const auto slotBytes = (static_cast<std::uint64_t>(slotDwords) + 2u) * 4u;
+        if (slotBytes > range) {
+            throw std::runtime_error("Vulkan dispatch: one scratch pool slot of " + std::to_string(slotBytes) + " bytes is over the scratch pool buffer limit of " + std::to_string(range) + " bytes");
+        }
+        const auto capSlots = std::max<std::uint64_t>(std::min({ScratchPoolCapBytes(), ScratchPoolTotalBytes(), range}) / slotBytes, 1u);
+        const auto wanted = std::clamp<std::uint64_t>(groups, 1u, capSlots);
+        std::lock_guard lock(scratchPoolsMutex);
+        const auto use = ++scratchPoolUses;
+        if (const auto found = scratchPools.find(identity); found != scratchPools.end() && found->second->slots >= wanted) {
+            found->second->lastUse = use;
+            return found->second;
+        }
+        const auto size = wanted * slotBytes;
+        EvictScratchPools(identity, size);
+        auto created = std::make_shared<ScratchPool>();
+        created->device = device;
+        created->destroyPool = DeviceFunction<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool");
+        created->slots = wanted;
+        created->headerBytes = wanted * 2u * 4u;
+        created->bytes = size;
+        created->lastUse = use;
+        created->buffer = std::make_unique<Graphics::DeviceBuffer>(context, static_cast<std::size_t>(size), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
+        VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        poolInfo.maxSets = 1;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        check(DeviceFunction<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(device, &poolInfo, nullptr, &created->pool), "vkCreateDescriptorPool scratch pool");
+        VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        allocation.descriptorPool = created->pool;
+        allocation.descriptorSetCount = 1;
+        allocation.pSetLayouts = &workgroupMemoryLayout;
+        check(DeviceFunction<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(device, &allocation, &created->set), "vkAllocateDescriptorSets scratch pool");
+        const VkDescriptorBufferInfo described{created->buffer->Handle(), 0, size};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = created->set;
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &described;
+        DeviceFunction<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(device, 1, &write, 0, nullptr);
+        ZeroScratchPoolHeader(context, *created);
+        scratchPools[identity] = created;
+        return created;
+    }
+
+    void EvictScratchPools(const ShaderRecompiler::PipelineIdentity& identity, std::uint64_t needed) {
+        scratchPools.erase(identity);
+        std::uint64_t held = 0;
+        for (const auto& [key, pool] : scratchPools) held += pool->bytes;
+        while (!scratchPools.empty() && held + needed > ScratchPoolTotalBytes()) {
+            const auto oldest = std::min_element(scratchPools.begin(), scratchPools.end(), [](const auto& left, const auto& right) { return left.second->lastUse < right.second->lastUse; });
+            held -= oldest->second->bytes;
+            scratchPools.erase(oldest);
+        }
     }
 
     void CreateMarkerBuffer() {
@@ -962,6 +1069,7 @@ struct VulkanDevice::State {
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
             workgroupMemory.reset();
+            scratchPools.clear();
             if (workgroupMemoryLayout != VK_NULL_HANDLE) reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(deviceProc(device, "vkDestroyDescriptorSetLayout"))(device, workgroupMemoryLayout, nullptr);
             descriptorCache.reset();
             vertexInputs.reset();
@@ -4239,6 +4347,13 @@ bool VulkanDevice::GraphicsPipelineLibraries() const {
     return state->graphicsPipelineLibrary;
 }
 
+std::pair<VkBuffer, std::uint64_t> VulkanDevice::scratchPoolHeader(const ShaderRecompiler::RecompileResult& shader) const {
+    std::lock_guard lock(state->scratchPoolsMutex);
+    const auto found = state->scratchPools.find(shader.Identity());
+    if (found == state->scratchPools.end() || found->second == nullptr) return {VK_NULL_HANDLE, 0};
+    return {found->second->buffer->Handle(), found->second->headerBytes};
+}
+
 Graphics::Context VulkanDevice::graphicsContext() const {
     static const bool noCache = std::getenv("APS5_NO_CONTEXT_CACHE") != nullptr;
     if (state->contextReady && !noCache) return state->context;
@@ -5301,6 +5416,11 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
     static_cast<void>(Graphics::StorageTexture::StoreDrawnLinearTouching("dispatch access", touches, resources.HoldsLease()));
+    std::shared_ptr<ScratchPool> pool;
+    if (const auto slotDwords = record.shader->program->scratchPoolSlotDwords; slotDwords != 0) {
+        const std::uint64_t groups = argumentImport != nullptr ? std::numeric_limits<std::uint64_t>::max() : static_cast<std::uint64_t>(record.x) * record.y * record.z;
+        pool = state->ScratchPoolFor(context, record.shader->program->Identity(), slotDwords, groups);
+    }
     bool unordered = false;
     const auto overlapQueue = Graphics::Recorder::TakeDispatchOrder(unordered);
     const auto* groupLimit = state->properties.limits.maxComputeWorkGroupCount;
@@ -5419,6 +5539,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &memory->set, 0, nullptr);
         recorder.Keep(std::move(memory));
     }
+    if (pool != nullptr) {
+        context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::ScratchPoolDescriptorSet, 1, &pool->set, 0, nullptr);
+        recorder.Keep(std::move(pool));
+    }
     if (record.pushStages != 0) {
         context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, record.pushBytes->data());
     }
@@ -5517,10 +5641,11 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->destroyPipeline = state->DeviceFunction<PFN_vkDestroyPipeline>("vkDestroyPipeline");
     objects->module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule");
     objects->resourcesLayout = setLayout;
-    const std::array<VkDescriptorSetLayout, 2> setLayouts{setLayout, shader.workgroupMemoryDwords != 0 ? state->workgroupMemoryLayout : VK_NULL_HANDLE};
+    const bool scratchPool = shader.scratchPoolSlotDwords != 0;
+    const std::array<VkDescriptorSetLayout, 3> setLayouts{setLayout, shader.workgroupMemoryDwords != 0 || scratchPool ? state->workgroupMemoryLayout : VK_NULL_HANDLE, scratchPool ? state->workgroupMemoryLayout : VK_NULL_HANDLE};
     const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes};
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    layoutInfo.setLayoutCount = shader.workgroupMemoryDwords != 0 ? ShaderRecompiler::WorkgroupMemoryDescriptorSet + 1 : 1;
+    layoutInfo.setLayoutCount = scratchPool ? ShaderRecompiler::ScratchPoolDescriptorSet + 1 : shader.workgroupMemoryDwords != 0 ? ShaderRecompiler::WorkgroupMemoryDescriptorSet + 1 : 1;
     layoutInfo.pSetLayouts = setLayouts.data();
     layoutInfo.pushConstantRangeCount = pushStages != 0 ? 1 : 0;
     layoutInfo.pPushConstantRanges = pushStages != 0 ? &push : nullptr;
@@ -5540,7 +5665,8 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
             resourcesLayout.bindings.push_back({layoutKey[index], type, layoutKey[index + 2u], layoutKey[index + 3u], updateAfterBind && type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0u});
         }
         capture.sets.push_back(std::move(resourcesLayout));
-        if (shader.workgroupMemoryDwords != 0) capture.sets.push_back({0, {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0}}});
+        if (shader.workgroupMemoryDwords != 0 || scratchPool) capture.sets.push_back({0, {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0}}});
+        if (scratchPool) capture.sets.push_back({0, {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, 0}}});
         if (pushStages != 0) capture.pushConstants.push_back(push);
         for (const auto& value : shader.specialization) capture.specialization.push_back({value.id, value.value});
         capture.requiredSubgroupSize = subgroupSize;
