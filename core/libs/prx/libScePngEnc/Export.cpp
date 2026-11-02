@@ -97,14 +97,19 @@ int APS5_VABI scePngEncCreate(const PngEncCreateParam* param, void* memoryAddres
     if (memorySize < requiredSize) return PNG_ENC_ERROR_INVALID_SIZE;
     if (!handle) return PNG_ENC_ERROR_INVALID_ADDR;
     const std::uintptr_t aligned = (reinterpret_cast<std::uintptr_t>(memoryAddress) + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
-    auto* ctx = new (reinterpret_cast<void*>(aligned)) PngEncContext{};
-    ctx->self = ctx;
-    ctx->size = sizeof(PngEncCreateParam);
-    ctx->maxImageWidth = (local.max_image_width + 7) & ~std::uint32_t{7};
-    ctx->maxFilterNumber = local.max_filter_number;
-    ctx->scratchSize = requiredSize - 112;
+    PngEncContext localCtx{};
+    localCtx.self = reinterpret_cast<PngEncContext*>(aligned);
+    localCtx.size = sizeof(PngEncCreateParam);
+    localCtx.maxImageWidth = (local.max_image_width + 7) & ~std::uint32_t{7};
+    localCtx.maxFilterNumber = local.max_filter_number;
+    localCtx.scratchSize = requiredSize - 112;
+    if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &localCtx, sizeof(localCtx))) {
+        return PNG_ENC_ERROR_INVALID_ADDR;
+    }
+    auto* ctx = reinterpret_cast<PngEncContext*>(aligned);
     if (!GuestCopyOut_nid_no_patch(handle, &ctx, sizeof(ctx))) {
-        ctx->self = nullptr;
+        PngEncContext cleared{};
+        GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(aligned), &cleared, sizeof(cleared));
         return PNG_ENC_ERROR_INVALID_ADDR;
     }
     return 0;
@@ -113,7 +118,8 @@ int APS5_VABI scePngEncCreate(const PngEncCreateParam* param, void* memoryAddres
 int APS5_VABI scePngEncDelete(void* handle) {
     PngEncContext* ctx = context(handle);
     if (!ctx) return PNG_ENC_ERROR_INVALID_HANDLE;
-    ctx->self = nullptr;
+    PngEncContext cleared{};
+    GuestCopyOut_nid_no_patch(ctx, &cleared, sizeof(cleared));
     return 0;
 }
 
@@ -145,8 +151,12 @@ int APS5_VABI scePngEncEncode(void* handle, const PngEncEncodeParam* param, PngE
     try {
         pixels.resize(static_cast<std::size_t>(width) * height * channels);
         std::uint8_t* destination = pixels.data();
+        const std::size_t rowBytes = static_cast<std::size_t>(width) * 4;
+        std::vector<std::uint8_t> rowBuffer(rowBytes);
         for (std::uint32_t y = 0; y < height; ++y) {
-            const std::uint8_t* source = localParam.image_mem_addr + static_cast<std::size_t>(y) * localParam.image_pitch;
+            const std::uint8_t* sourceRow = localParam.image_mem_addr + static_cast<std::size_t>(y) * localParam.image_pitch;
+            if (!GuestCopyIn_nid_no_patch(rowBuffer.data(), sourceRow, rowBytes)) return PNG_ENC_ERROR_INVALID_ADDR;
+            const std::uint8_t* source = rowBuffer.data();
             for (std::uint32_t x = 0; x < width; ++x, source += 4) {
                 *destination++ = source[bgr ? 2 : 0];
                 *destination++ = source[1];
@@ -165,7 +175,7 @@ int APS5_VABI scePngEncEncode(void* handle, const PngEncEncodeParam* param, PngE
         if (!GuestCopyOut_nid_no_patch(outputInfo, &localOutput, sizeof(localOutput))) return PNG_ENC_ERROR_INVALID_ADDR;
     }
     if (overflow) return PNG_ENC_ERROR_DATA_OVERFLOW;
-    std::copy(png.begin(), png.end(), localParam.png_mem_addr);
+    if (!GuestCopyOut_nid_no_patch(localParam.png_mem_addr, png.data(), png.size())) return PNG_ENC_ERROR_INVALID_ADDR;
     return static_cast<int>(png.size());
 }
 
