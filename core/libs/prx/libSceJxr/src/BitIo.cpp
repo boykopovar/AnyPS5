@@ -3,9 +3,6 @@
 #include <stdexcept>
 #include <string>
 
-// Thin guest adapters over jxrlib's bit I/O in 3rdparty/jxrlib image/sys/strcodec.c (see NativeBitIo.c):
-// they reject the arguments jxrlib only asserts on and pass everything else through unchanged.
-
 extern "C" {
 std::uint32_t JxrPeekBit16_nid_no_patch(void* io, std::uint32_t bits);
 std::uint32_t JxrFlushBit16_nid_no_patch(void* io, std::uint32_t bits);
