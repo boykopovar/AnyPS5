@@ -34,6 +34,9 @@ int main() {
     auto param = ValidParam();
 
     out.fill(kFill);
+    auto* const badPtr = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    Require(sceVrHandQueryMemory(badPtr, out.data()) == kErrInvalidArg && Untouched(out));
+    Require(sceVrHandQueryMemory(param.data(), badPtr) == kErrInvalidArg);
     Require(sceVrHandQueryMemory(nullptr, out.data()) == kErrInvalidArg && Untouched(out));
     Require(sceVrHandQueryMemory(param.data(), nullptr) == kErrInvalidArg);
 
