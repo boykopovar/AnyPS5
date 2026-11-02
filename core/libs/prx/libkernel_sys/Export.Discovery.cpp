@@ -236,8 +236,10 @@ int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(void) {
 
 int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(PthreadAttr* attr) {
     constexpr int GuestEinval = 22;
-    if (!attr || !*attr) return GuestEinval;
-    (*attr)->_createSuspended = true;
+    if (!attr) return GuestEinval;
+    PthreadAttr localAttr{};
+    if (!GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr)) || !localAttr) return GuestEinval;
+    localAttr->_createSuspended = true;
     return 0;
 }
 
