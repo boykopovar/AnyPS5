@@ -18,7 +18,7 @@ CACHE = Path(os.environ.get("HW_ORACLE_CACHE") or Path(os.environ.get("XDG_CACHE
 ROWS_PER_DISPATCH = 1024
 DEFAULT_LDS = 4096
 MAX_LDS = 65536
-RUNTIMES = ("hsa", "hip")
+RUNTIMES = ("hsa", "hip", "vulkan")
 
 
 def runtime():
@@ -26,6 +26,14 @@ def runtime():
     if selected not in RUNTIMES:
         raise ValueError(f"HW_ORACLE_RUNTIME must be one of {', '.join(RUNTIMES)}")
     return selected
+
+
+def vulkan_runner():
+    path = os.environ.get("HW_ORACLE_VULKAN_RUNNER")
+    if not path or not Path(path).is_file():
+        sys.exit("HW_ORACLE_RUNTIME=vulkan needs HW_ORACLE_VULKAN_RUNNER to name the agc_oracle_runner executable "
+                 "(cmake --build build --target agc_oracle_runner)")
+    return path
 
 
 @cache
@@ -97,8 +105,10 @@ def detected_target(binary, visible_devices):
 def target():
     if os.environ.get("HW_ORACLE_TARGET"):
         return os.environ["HW_ORACLE_TARGET"]
-    if runtime() == "hip":
+    if runtime() == "hip" or (runtime() == "vulkan" and os.name == "nt"):
         return hip_runtime().target()
+    if runtime() == "vulkan":
+        sys.exit("HW_ORACLE_TARGET must name the assembly target (for example gfx1036) when HW_ORACLE_RUNTIME=vulkan")
     return detected_target(oracle(), os.environ.get("ROCR_VISIBLE_DEVICES"))
 
 
@@ -118,7 +128,7 @@ def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round3
                        ("@FP16_OVERFLOW@", str(int(fp16_overflow))), ("@LDS@", str(lds)), ("@BODY@", body)):
         text = text.replace(key, value)
     (work / "k.s").write_text(text, encoding="utf-8")
-    if runtime() == "hip":
+    if runtime() == "hip" or (runtime() == "vulkan" and os.name == "nt"):
         (work / "k.co").write_bytes(hip_runtime().assemble(text.encode("utf-8"), target(), wave64))
         return work / "k.co"
     subprocess.run([tool("clang"), "-x", "assembler", "-target", "amdgcn-amd-amdhsa", f"-mcpu={target()}", *(["-mwavefrontsize64"] if wave64 else []), "-c", str(work / "k.s"), "-o", str(work / "k.o")], check=True, stdout=sys.stderr)
@@ -141,6 +151,10 @@ def validated_rows(rows):
 
 def run(body, rows, extra=b"", wave64=False, coarse=False, *, ieee, denorm32, denorm16, dx10_clamp, round32, round16, fp16_overflow, lds=DEFAULT_LDS):
     rows = validated_rows(rows)
+    if runtime() == "vulkan":
+        if coarse:
+            raise ValueError("coarse has no meaning for the vulkan runtime")
+        runner = vulkan_runner()
     wave = 64 if wave64 else 32
     padded = rows + [(0, 0, 0, 0)] * (-len(rows) % wave)
     env = dict(os.environ)
@@ -161,7 +175,7 @@ def run(body, rows, extra=b"", wave64=False, coarse=False, *, ieee, denorm32, de
             else:
                 (work / "in.bin").write_bytes(payload)
                 (work / "out.bin").unlink(missing_ok=True)
-                subprocess.run([oracle(), str(code), str(len(chunk)), str(work / "in.bin"), str(work / "out.bin"), "16"], check=True, env=env, stdout=sys.stderr)
+                subprocess.run([runner if runtime() == "vulkan" else oracle(), str(code), str(len(chunk)), str(work / "in.bin"), str(work / "out.bin"), "16"], check=True, env=env, stdout=sys.stderr)
                 data = (work / "out.bin").read_bytes()
             expected = len(chunk) * 64
             if len(data) != expected:
@@ -225,6 +239,7 @@ def main():
     if args.json:
         report = {
             "schema_version": 1,
+            "runtime": runtime(),
             "assembly_target": target(),
             "wave_size": 64 if args.wave64 else 32,
             "floating_point_modes": modes,
