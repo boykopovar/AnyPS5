@@ -249,6 +249,9 @@ if(BUILD_TESTING)
             add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
         endif()
+        add_test(NAME annotation_symbols_ghidra COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_ghidra.py)
+        set_tests_properties(annotation_symbols_ghidra PROPERTIES TIMEOUT 20)
         if(NOT APPLE)
             add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
@@ -486,6 +489,9 @@ if(BUILD_TESTING)
         add_test(NAME tools_annotation_symbols_json COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_json.py)
         set_tests_properties(tools_annotation_symbols_json PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_annotation_symbols_ghidra COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_ghidra.py)
+        set_tests_properties(tools_annotation_symbols_ghidra PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_body_bom COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_body_bom.py)
         add_test(NAME conventions_blob_reads COMMAND ${Python3_EXECUTABLE}

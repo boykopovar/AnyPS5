@@ -69,7 +69,23 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    through the database of `tools/nid_names.py`, which is downloaded on first use unless `--db` names a CSV or
    `--no-names` prints the NIDs instead. It needs binutils `objdump`.
 
-   A disassembler that loads the program headers (Ghidra, IDA) does the same.
+   To name symbols in Ghidra without disassembling or downloading a database:
+
+   ```sh
+   python3 tools/annotate_module.py module.guest.prx --symbols-ghidra --db aerolib.csv > module.symbols
+   ```
+
+   Save the ASCII output without a BOM. Load the same relinked ELF at its ELF virtual addresses and run
+   [ImportSymbolsScript.py](https://github.com/NationalSecurityAgency/ghidra/blob/ac245cfdbd035c14180bb7a470e39348511b4ba2/Ghidra/Extensions/Jython/ghidra_scripts/ImportSymbolsScript.py)
+   from Ghidra's Jython extension with this map. Function exports inside executable file-backed segments get `f`;
+   aliases at the same address get `l`, keeping one function name. Import slots are `imp_` labels and other exports are labels too. TLS exports and
+   unallocated common symbols are omitted because their values are not addresses. Names use ASCII letters, digits and
+   underscores: other characters become underscores, a leading digit gets an underscore prefix, and names are limited
+   to Ghidra's 2000 characters. Collisions get `_2`, `_3`, and so on within that limit.
+   This mode reads only a local NID database or cache, prints to stdout and cannot be combined with `--symbols-json`
+   or `--out`. Without a local database it uses NIDs; `--no-names` skips the database entirely.
+
+   A disassembler that loads the program headers (Ghidra, IDA) does the same segment loading.
 4. Log strings near the call confirm which import it is: `strings -t x eboot.elf`, then the `lea` that loads that address.
 
 The same steps work on a module: the code of a firmware module or of one in `sce_module/` gives the library's side of
