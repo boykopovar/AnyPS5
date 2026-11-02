@@ -558,9 +558,9 @@ int APS5_VABI UI_method_set_reader_nid_postfix(LibreSslUiMethod* method, UiStrin
 int APS5_VABI UI_method_set_writer_nid_postfix(LibreSslUiMethod* method, UiStringFunction writer);
 int APS5_VABI UI_set_result_nid_postfix(LibreSslUi* ui, LibreSslUiString* string, const char* result);
 int APS5_VABI X509V3_EXT_print_nid_postfix(void);
-int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(void);
-int APS5_VABI X509_EXTENSION_get_data_nid_postfix(void);
-int APS5_VABI X509_EXTENSION_get_object_nid_postfix(void);
+int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension);
+void* APS5_VABI X509_EXTENSION_get_data_nid_postfix(const void* extension);
+void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension);
 int APS5_VABI X509_INFO_free_nid_postfix(void);
 LibreSslX509LookupMethod* APS5_VABI X509_LOOKUP_file_nid_postfix(void);
 int APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(void);
