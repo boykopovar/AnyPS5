@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -80,6 +81,7 @@ private:
     void record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders = {}, const std::function<void()>& accept = {});
     void recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders);
     void emitDelta();
+    static void collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages);
     void emitShaderDelta(std::span<const Shader* const> shaders);
     void writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
     bool triggered();
@@ -107,6 +109,7 @@ private:
     State state = State::Waiting;
     std::unique_ptr<FrameCaptureWriter> writer;
     std::vector<FrameCall> prologue;
+    std::set<std::uint64_t> prologueHostPages;
     std::deque<FrameCall> reservations;
     std::vector<Range> ranges;
     std::map<std::uint64_t, std::uint64_t> shaderMarks;

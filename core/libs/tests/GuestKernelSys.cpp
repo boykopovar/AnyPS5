@@ -1,5 +1,6 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libSceAmpr/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
@@ -333,6 +334,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldload_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldstat_nid_postfix(1, paths.Unreadable()); });
     posixFault([&] { return kldstat_nid_postfix(1, paths.Boundary()); });
     const std::int32_t statVersion = 1056;
@@ -355,14 +357,14 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
 
 void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
     const auto created = (root / "rejected").string();
-    for (const auto& target : {std::string(".."), std::string("../x"), std::string("a/../b"), std::string("a/../../x"), std::string("/abs")})
+    for (const auto& target : {std::string("a/../b"), std::string("a/../../x"), std::string("/abs")})
         Require(SymlinkTargetThrows(target.c_str(), created));
 #ifdef _WIN32
     for (const auto& target : {std::string("C:/"), std::string("\\\\server\\share")})
         Require(SymlinkTargetThrows(target.c_str(), created));
 #endif
     const auto links = [](const std::string& created, const char* target) {
-        char buffer[16];
+        char buffer[64];
         const auto length = std::strlen(target);
         return readlink_nid_postfix(created.c_str(), buffer, sizeof(buffer)) == static_cast<std::int64_t>(length) &&
             std::memcmp(buffer, target, length) == 0;
@@ -376,6 +378,29 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
         const auto ellipsis = (root / "accepted-ellipsis").string();
         Require(symlink_nid_postfix("...", ellipsis.c_str()) == 0 && links(ellipsis, "..."));
         Require(RemoveSymlink(nested) && RemoveSymlink(dots) && RemoveSymlink(ellipsis));
+        const auto climb = root / "climb";
+        Require(std::filesystem::create_directories(climb / "deeper"));
+        const auto readsFile = [](const std::string& link) {
+            const int fd = sceKernelOpen(link.c_str(), SCE_KERNEL_O_RDONLY, 0);
+            char byte = 0;
+            const bool read = fd >= 0 && sceKernelRead(fd, &byte, 1) == 1 && byte == 'x';
+            return fd >= 0 && sceKernelClose(fd) == 0 && read;
+        };
+        const auto up = (climb / "up").string();
+        Require(symlink_nid_postfix("../file.txt", up.c_str()) == 0 && links(up, "../file.txt") && readsFile(up));
+        const auto inner = (climb / "inner").string();
+        Require(symlink_nid_postfix("deeper/../../file.txt", inner.c_str()) == 0 && links(inner, "deeper/../../file.txt") && readsFile(inner));
+        const auto parent = (climb / "parent").string();
+        Require(symlink_nid_postfix("..", parent.c_str()) == 0 && links(parent, "..") && readsFile((climb / "parent" / "file.txt").string()));
+        const auto parentDangling = (climb / "dangling").string();
+        Require(symlink_nid_postfix("../missing/x", parentDangling.c_str()) == 0 && links(parentDangling, "../missing/x"));
+        const auto mount = "/anyps5-symlink-climb-mount";
+        AddPathAlias_nid_no_patch(mount, std::filesystem::absolute(climb).string().c_str());
+        Require(symlink_nid_postfix("deeper/../up", (std::string(mount) + "/kept").c_str()) == 0 && readsFile((climb / "kept").string()));
+        RemovePathAlias_nid_no_patch(mount);
+        Require(RemoveSymlink(up) && RemoveSymlink(inner) && RemoveSymlink(parent) && RemoveSymlink(parentDangling));
+        Require(RemoveSymlink((climb / "kept").string()));
+        Require(std::filesystem::remove(climb / "deeper") && std::filesystem::remove(climb));
     } else {
         Require(link == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink target success cases not tested\n");
@@ -493,7 +518,7 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrSetclock(&attr, Monotonic) == 0);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Monotonic);
     bool getclockThrew = false;
-    try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::runtime_error&) { getclockThrew = true; }
+    try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::invalid_argument&) { getclockThrew = true; }
     Require(getclockThrew);
     Require(scePthreadCondattrDestroy(&attr) == 0 && attr == nullptr);
     clock = -1;
@@ -1021,16 +1046,33 @@ void CheckDescriptorPathconf(F fn, int descriptor) {
 }
 
 template <typename F>
+void CheckPipeBufferPathconf(F fn, int descriptor) {
+    Require(fn(descriptor, 6) == 512);
+    Require(fn(descriptor, 53) == 200112);
+    for (const int name : {0, 1, 4, 5, 7, 8, 12, 18, 54, 55, 61, -1})
+        Require(fn(descriptor, name) == -1 && Error() == 22);
+}
+
+template <typename F>
 void CheckPipePathconf(F fn) {
     int ends[2]{-1, -1};
     Require(pipe_nid_postfix(ends) == 0);
-    for (const int end : ends) {
-        Require(fn(end, 6) == 512);
-        Require(fn(end, 53) == 200112);
-        for (const int name : {0, 1, 4, 5, 7, 8, 12, 18, 54, 55, 61, -1})
-            Require(fn(end, name) == -1 && Error() == 22);
-    }
+    for (const int end : ends) CheckPipeBufferPathconf(fn, end);
     Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
+}
+
+template <typename F>
+void CheckSocketPathconf(F fn) {
+    for (const int type : {1, 2}) {
+        const int descriptor = socket_nid_postfix(2, type, 0);
+        Require(descriptor >= 0);
+        CheckPipeBufferPathconf(fn, descriptor);
+        Require(close_nid_postfix(descriptor) == 0);
+        const int net = sceNetSocket("pathconf", 2, type, 0);
+        Require(net >= 0);
+        CheckPipeBufferPathconf(fn, net);
+        Require(sceNetSocketClose(net) == 0);
+    }
 }
 
 int Kenv(int what, const char* name, const char* value, int len) {
@@ -1186,6 +1228,9 @@ int main() {
     CheckDescriptorPathconf(_fpathconf_nid_postfix, descriptor);
     CheckPipePathconf(fpathconf_nid_postfix);
     CheckPipePathconf(_fpathconf_nid_postfix);
+    Require(sceNetInit_nid_postfix() == 0);
+    CheckSocketPathconf(fpathconf_nid_postfix);
+    CheckSocketPathconf(_fpathconf_nid_postfix);
     const int kqueueDescriptor = kqueue_nid_postfix();
     Require(kqueueDescriptor >= 0);
     CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
@@ -1418,6 +1463,18 @@ int main() {
     Require(kldfind_nid_postfix("") == -1 && Error() == 2);
     Require(kldfind_nid_postfix("kernel") == -1 && Error() == 2);
     Require(kldfind_nid_postfix("missing.ko") == -1 && Error() == 2);
+    Require(kldload_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(kldload_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(kldload_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    const auto kldDirectory = "/" + root.filename().generic_string();
+    const auto kldHeader = (root / "kld-header.ko").string();
+    std::ofstream(kldHeader, std::ios::binary | std::ios::trunc) << "XELF";
+    for (const std::string name : {std::string(), std::string("nomodule"), std::string("missing.ko"), kldDirectory + "/missing.ko",
+                                   kldDirectory + "/file.txt", kldDirectory, kldDirectory + "/file.txt/child", kldDirectory + "/kld-header.ko"}) {
+        *__error_nid_postfix() = 0;
+        Require(kldload_nid_postfix(name.c_str()) == -1 && Error() == 1);
+    }
+    Require(std::filesystem::remove(kldHeader));
     Require(kldnext_nid_postfix(-1) == -1 && Error() == 2);
     Require(kldnext_nid_postfix(0) == 0);
     Require(kldnext_nid_postfix(1) == -1 && Error() == 2);
