@@ -1,6 +1,16 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstdint>
+
+struct FcCharSet;
+
+struct FcMatrix {
+    double xx;
+    double xy;
+    double yx;
+    double yy;
+};
 
 extern "C" {
 
@@ -25,13 +35,13 @@ int APS5_VABI FcPatternFilter();
 int APS5_VABI FcConfigCreate();
 int APS5_VABI FcPatternGetFTFace();
 int APS5_VABI FcPatternEqual();
-int APS5_VABI FcCharSetSubtractCount();
+uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second);
 int APS5_VABI FcPatternAddInteger();
 int APS5_VABI FcLangSetAdd();
 int APS5_VABI FcFontSort();
-int APS5_VABI FcCharSetMerge();
+int APS5_VABI FcCharSetMerge(FcCharSet* target, const FcCharSet* source, int* changed);
 int APS5_VABI FcPatternGetCharSet();
-int APS5_VABI FcCharSetDestroy();
+void APS5_VABI FcCharSetDestroy(FcCharSet* set);
 int APS5_VABI FcPatternDel();
 int APS5_VABI FcConfigDestroy();
 int APS5_VABI FcPatternReference();
@@ -41,13 +51,13 @@ int APS5_VABI FcPatternAddMatrix();
 int APS5_VABI FcPatternAddString();
 int APS5_VABI FcFontSetCreate();
 int APS5_VABI FcLangSetHasLang();
-int APS5_VABI FcCharSetCreate();
+FcCharSet* APS5_VABI FcCharSetCreate();
 int APS5_VABI FcLangSetCreate();
 int APS5_VABI FcFreeTypeCharIndex();
 int APS5_VABI FcFontSetAdd();
 int APS5_VABI FcPatternDestroy();
-int APS5_VABI FcCharSetAddChar();
-int APS5_VABI FcMatrixMultiply();
+int APS5_VABI FcCharSetAddChar(FcCharSet* set, uint32_t character);
+void APS5_VABI FcMatrixMultiply(FcMatrix* result, const FcMatrix* first, const FcMatrix* second);
 int APS5_VABI FcPatternAddCharSet();
 int APS5_VABI FcDefaultSubstitute();
 int APS5_VABI FcObjectSetBuild();
