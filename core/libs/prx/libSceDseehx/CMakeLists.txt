@@ -1,0 +1,15 @@
+add_library(libSceDseehx SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceDseehx PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDseehx)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_dseehx_tests ${LIBS_INCLUDE_DIR}/tests/GuestDseehx.cpp)
+    target_include_directories(guest_dseehx_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_dseehx_tests PRIVATE libSceDseehx libc)
+    configure_windows_unwind(guest_dseehx_tests)
+    add_test(NAME guest_dseehx COMMAND guest_dseehx_tests)
+    if(WIN32)
+        set_tests_properties(guest_dseehx PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDseehx>")
+    endif()
+endif()
