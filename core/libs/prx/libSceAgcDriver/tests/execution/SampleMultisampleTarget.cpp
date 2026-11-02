@@ -1967,7 +1967,7 @@ int main(int argc, char** argv) {
         for (const auto& [mode, tileMode] : {std::pair{TileRenderTarget, AgcDriver::Graphics::TextureTileMode::kR64KBX}, std::pair{TileZ64KBX, AgcDriver::Graphics::TextureTileMode::kZ64KBX}}) {
             Block varying(BlockBytes);
             const auto expected = StoreVaryingUnorm(varying, tileMode);
-            CheckLoaded(LoadSamples(*device, varying, Format8888Unorm, mode), expected, "from varying color memory of a " + std::to_string(mode) + " swizzle surface no draw rendered to");
+            CheckLoaded(LoadSamples(*device, varying, Samples, 0u, Format8888Unorm, mode), expected, "from varying color memory of a " + std::to_string(mode) + " swizzle surface no draw rendered to");
         }
         Block varyingD(BlockBytes);
         StoreWords(varyingD, colorBytes, FillOnes);
