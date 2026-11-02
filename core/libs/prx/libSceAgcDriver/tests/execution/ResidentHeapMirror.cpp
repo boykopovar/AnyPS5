@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -56,6 +57,16 @@ alignas(256) constexpr std::array<std::uint32_t, 10> Code{
     0x3404008e, 0xdc388000, 0x04000002, 0x34060082, 0xbf8c3f70, 0xe0701000, 0x80010403, 0xe0701000, 0x80020303, 0xbf810000,
 };
 
+constexpr std::uint32_t ImageSide = 256;
+constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t TileR64KBX = 0x1b;
+constexpr std::uint32_t Type2D = 9;
+constexpr std::uint32_t Stored = 0x12345678u;
+constexpr std::uint64_t UnreadBlock = 16 * Block;
+
+alignas(256) constexpr std::array<std::uint32_t, 7> StoreCode{
+    0x7e040300, 0x7e060280, 0x7e0202ff, Stored, 0xf0200108, 0x00020102, 0xbf810000,
+};
 alignas(256) constexpr std::array<std::uint32_t, 7> CopyCode{0x34060082, 0xe0301000, 0x80000403, 0xbf8c3f70, 0xe0701000, 0x80010403, 0xbf810000};
 
 class OutputBlock {
@@ -220,6 +231,15 @@ void Copy(AgcDriver::VulkanDevice& device, std::uint64_t source, const OutputBlo
     Run(device, CopyCode, userData);
 }
 
+void StoreImage(AgcDriver::VulkanDevice& device, std::uint64_t address) {
+    std::vector<std::uint32_t> userData(16, 0u);
+    userData[8] = static_cast<std::uint32_t>(address >> 8u);
+    userData[9] = static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((ImageSide - 1u) & 3u) << 30u);
+    userData[10] = ((ImageSide - 1u) >> 2u) | ((ImageSide - 1u) << 14u);
+    userData[11] = 0xfacu | (TileR64KBX << 20u) | (Type2D << 28u);
+    Run(device, StoreCode, userData);
+}
+
 void CheckReads(const OutputBlock& output, const std::string& step, bool late) {
     for (std::uint32_t thread = 0; thread < Threads; ++thread) {
         const auto expected = thread * ThreadStride < Block ? Pattern(thread) : late && thread == LateThread ? Pattern(thread) : 0u;
@@ -265,6 +285,22 @@ void ResidentTests(AgcDriver::VulkanDevice& device) {
     Require(again.rebuilds == steady.rebuilds && again.heapBytes == steady.heapBytes, "resident heap mirror: an unchanged dispatch rebuilt or grew the heap mirrors");
     CheckReads(output, "unchanged dispatch", true);
     CheckStores(written, "unchanged dispatch");
+}
+
+void StorageImageTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    GuestHeap written(true);
+    const OutputBlock output;
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    Dispatch(device, heap, written, output);
+    Require(output.Data()[0] == 0u, "resident heap mirror: the first texel read " + Hex(output.Data()[0]) + " before any image store");
+    StoreImage(device, heap.Address());
+    Dispatch(device, heap, written, output);
+    Require(output.Data()[0] == Stored, "resident heap mirror: an address-based read after an image store inside the mirror read " + Hex(output.Data()[0]));
+    StoreImage(device, heap.Address() + UnreadBlock);
+    std::uint32_t texel = 0;
+    AgcDriver::GuestMemory::Read(heap.Address() + UnreadBlock, std::as_writable_bytes(std::span(&texel, 1)));
+    Require(texel == Stored, "resident heap mirror: a CPU read after an image store inside the mirror read " + Hex(texel));
 }
 
 struct AddressSpaceLimit {
@@ -526,6 +562,7 @@ int main() {
         }
         CopiedTests(*device);
         BudgetEvictionTests(*device, sparse);
+        StorageImageTests(*device);
         for (const bool copied : {false, true}) {
             if (!copied && !sparse) continue;
             for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);
