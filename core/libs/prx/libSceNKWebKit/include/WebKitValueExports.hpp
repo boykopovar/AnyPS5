@@ -120,6 +120,8 @@ const void* APS5_VABI WKRetain(const void* object);
 std::uint32_t APS5_VABI WKSecurityOriginGetTypeID();
 std::uint32_t APS5_VABI WKSerializedScriptValueGetTypeID();
 std::uint32_t APS5_VABI WKSessionStateGetTypeID();
+const void* APS5_VABI WKSessionStateCreateFromData(const void* dataRef);
+const void* APS5_VABI WKSessionStateCopyData(const void* sessionStateRef);
 const void* APS5_VABI WKSizeCreate(NKWebKit::SizeValue size);
 std::uint32_t APS5_VABI WKSizeGetTypeID();
 NKWebKit::SizeValue APS5_VABI WKSizeGetValue(const void* sizeRef);

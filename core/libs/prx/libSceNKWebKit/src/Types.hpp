@@ -101,4 +101,10 @@ public:
     bool valid = false;
 };
 
+class SessionState final : public ObjectOf<ObjectType::SessionState> {
+public:
+    explicit SessionState(std::vector<std::uint8_t> bytes) : data(std::move(bytes)) {}
+    std::vector<std::uint8_t> data;
+};
+
 }  // namespace NKWebKit

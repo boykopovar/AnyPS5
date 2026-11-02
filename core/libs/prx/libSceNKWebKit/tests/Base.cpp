@@ -351,6 +351,45 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestSessionState() {
+    Require(WKSessionStateGetTypeID() == 19);
+
+    const unsigned char bytes[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+    auto* data = WKDataCreate(bytes, sizeof(bytes));
+    Require(data != nullptr);
+
+    auto* state = WKSessionStateCreateFromData(data);
+    Require(state != nullptr);
+    Require(WKGetTypeID(state) == WKSessionStateGetTypeID());
+
+    auto* copiedData = WKSessionStateCopyData(state);
+    Require(copiedData != nullptr);
+    Require(WKDataGetSize(copiedData) == sizeof(bytes));
+    unsigned char readBuf[4];
+    WKDataGetBytes(copiedData, readBuf, sizeof(readBuf));
+    Require(std::memcmp(readBuf, bytes, sizeof(bytes)) == 0);
+
+    WKRelease(copiedData);
+    WKRelease(state);
+    WKRelease(data);
+
+    bool threw = false;
+    try {
+        WKSessionStateCreateFromData(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKSessionStateCopyData(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -373,6 +412,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestSessionState();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;

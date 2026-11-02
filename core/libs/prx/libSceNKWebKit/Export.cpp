@@ -15408,13 +15408,6 @@ int APS5_VABI WKSerializedScriptValueDeserialize() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKSessionStateCopyData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSessionStateCreateFromData() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKTextCheckerSetTestingMode() {
     NotImplemented_nid_no_patch(__func__);
