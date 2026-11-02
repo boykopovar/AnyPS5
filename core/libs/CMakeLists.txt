@@ -27,6 +27,10 @@ if(APPLE)
 else()
     set(ANYPS5_PRX_RPATH "$ORIGIN")
 endif()
+if(ANYPS5_GUEST_LIFTED)
+    get_filename_component(ANYPS5_LIFTED_RUNTIME_DIRECTORY "${ANYPS5_LIFTED_RUNTIME}" DIRECTORY)
+    list(APPEND ANYPS5_PRX_RPATH "${ANYPS5_LIFTED_RUNTIME_DIRECTORY}")
+endif()
 
 add_executable(nid_patcher
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/Sha1.cpp
