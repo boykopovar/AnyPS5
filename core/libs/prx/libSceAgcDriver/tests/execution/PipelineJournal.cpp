@@ -352,7 +352,7 @@ void JournalTests() {
         Require(recorded.size() == std::filesystem::file_size(journalPath) && recorded.size() >= 2u * sizeof(std::uint32_t), "the recorded journal could not be read with its format word");
         std::uint32_t format = 0;
         std::memcpy(&format, recorded.data() + sizeof(std::uint32_t), sizeof(format));
-        Require(format == 14u, "the recorded journal did not use format 14");
+        Require(format == 16u, "the recorded journal did not use format 16");
         const auto restore = [&] {
             std::ofstream output(journalPath, std::ios::binary | std::ios::trunc);
             output.write(recorded.data(), static_cast<std::streamsize>(recorded.size()));
@@ -362,17 +362,17 @@ void JournalTests() {
         try {
             {
                 std::fstream output(journalPath, std::ios::binary | std::ios::in | std::ios::out);
-                const std::uint32_t previousFormat = 13u;
+                const std::uint32_t previousFormat = 15u;
                 output.seekp(sizeof(std::uint32_t));
                 output.write(reinterpret_cast<const char*>(&previousFormat), sizeof(previousFormat));
                 output.flush();
-                Require(output.good(), "the journal format word could not be changed to 13");
+                Require(output.good(), "the journal format word could not be changed to 15");
             }
             const auto device = OpenVulkanTestDevice();
             Require(device != nullptr, "the device for the previous journal format could not be opened");
             device->WaitForPipelineJournalReplay();
             const auto rejected = Snapshot();
-            Require(rejected.journal.loadedRecipes == 0 && rejected.journal.loadedModules == 0 && rejected.journal.replayedGraphics == 0 && rejected.journal.replayedCompute == 0, "a format 13 journal loaded or replayed format 14 records");
+            Require(rejected.journal.loadedRecipes == 0 && rejected.journal.loadedModules == 0 && rejected.journal.replayedGraphics == 0 && rejected.journal.replayedCompute == 0, "a format 15 journal loaded or replayed format 16 records");
         } catch (...) {
             restore();
             throw;
