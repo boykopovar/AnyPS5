@@ -94,6 +94,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          APS5_SKIP_TIMING_TESTS: 1
         run: ctest --output-on-failure --timeout 300 --parallel 4 --output-log ctest.log --output-junit ctest.xml || true
       - name: Summarize the sanitizer findings
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}

@@ -1,5 +1,9 @@
 # libSceVideodec2 technical debt
 
+### Silent stubs
+
+- [sceVideodec2ReleaseComputeQueue](../../../core/libs/prx/libSceVideodec2/Export.cpp) (libSceVideodec2) - ignores its queue handle and returns 0, including for a handle that `sceVideodec2AllocateComputeQueue` never returned. That call only hands out increasing counter values and keeps no queue state, so there is nothing to free. What the console returns for an unknown or already released handle is not measured.
+
 ### Unknown function info
 
 - [libSceVideodec2 additional exports](../../../core/libs/prx/libSceVideodec2/InventoryExports.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.

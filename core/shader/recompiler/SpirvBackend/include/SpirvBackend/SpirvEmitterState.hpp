@@ -175,6 +175,11 @@ struct SpirvEmitterState {
     std::map<std::pair<bool, std::uint32_t>, std::uint32_t> interpolateFunctions;
     std::map<std::pair<bool, std::uint32_t>, std::uint32_t> fastInterpolateFunctions;
     bool integerInterpolation = false;
+    bool integerFloat64 = false;
+    std::uint32_t integerAddF64Function = 0;
+    std::uint32_t integerMulF64Function = 0;
+    std::uint32_t integerF64FromF32Function = 0;
+    std::uint32_t integerF32FromF64Function = 0;
     std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions {};
     std::array<std::array<std::uint32_t, 2>, 2> bdaSpanReadFunctions {};
     std::unordered_map<const IrValue*, std::pair<std::uint32_t, std::uint32_t>> bdaGroupedLoads;
