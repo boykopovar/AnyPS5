@@ -179,6 +179,19 @@ void TestNodeId() {
     for (const XmlNodeId* other : {&otherFlag, &otherFirst, &otherSecond}) {
         Require(!_ZN3sce3Xml3Dom6NodeIdeqES2_(&base, *other) && _ZN3sce3Xml3Dom6NodeIdneES2_(&base, *other), "NodeId comparison uses every field");
     }
+    for (const std::uint8_t padding : {static_cast<std::uint8_t>(0x00), static_cast<std::uint8_t>(0xff)}) {
+        const XmlNodeId null = NodeIdValue(0, 0, 0, padding);
+        Require(_ZN3sce3Xml3Dom6NodeIdntEv(&null), "operator! is true for a null NodeId whatever its padding");
+        Require(_ZN3sce3Xml3Dom6NodeIdeqEi(&null, 0) && !_ZN3sce3Xml3Dom6NodeIdneEi(&null, 0), "a null NodeId compares equal to 0");
+        for (const int value : {1, -1, 0x7fffffff}) {
+            Require(!_ZN3sce3Xml3Dom6NodeIdeqEi(&null, value) && _ZN3sce3Xml3Dom6NodeIdneEi(&null, value), "a NodeId never compares equal to a nonzero int");
+        }
+    }
+    for (const XmlNodeId value : {NodeIdValue(1, 0, 0, 0), NodeIdValue(0, 1, 0, 0), NodeIdValue(0, 0, 1, 0), NodeIdValue(0, 0, 0x80, 0xff)}) {
+        Require(!_ZN3sce3Xml3Dom6NodeIdntEv(&value), "operator! is false once any field is set");
+        Require(!_ZN3sce3Xml3Dom6NodeIdeqEi(&value, 0) && _ZN3sce3Xml3Dom6NodeIdneEi(&value, 0), "a NodeId with any field set compares unequal to 0");
+        Require(!_ZN3sce3Xml3Dom6NodeIdeqEi(&value, 1) && _ZN3sce3Xml3Dom6NodeIdneEi(&value, 1), "a NodeId with any field set compares unequal to a nonzero int");
+    }
     XmlNodeId any = NodeIdValue(0x1234, 0x5678, 1, 0);
     Require(_ZN3sce3Xml3Dom6NodeIdcvPvEv(&any) == nullptr, "NodeId::operator void* is null");
 }

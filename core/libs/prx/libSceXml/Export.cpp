@@ -13,6 +13,10 @@ void AssignNodeId(XmlNodeId* self, const XmlNodeId& value) {
     self->flag = value.flag;
 }
 
+bool NodeIdIsNull(const XmlNodeId* self) {
+    return self->first == nullptr && self->second == nullptr && self->flag == 0;
+}
+
 void CopyNode(XmlNode* self, const XmlNode* other) {
     AssignNodeId(&self->id, other->id);
     self->document = other->document;
@@ -258,20 +262,20 @@ bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdeqES2_(const XmlNodeId* self, XmlNodeId oth
     return other.first == self->first && other.second == self->second && other.flag == self->flag;
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom6NodeIdeqEi() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdeqEi(const XmlNodeId* self, int value) {
+    return value == 0 && NodeIdIsNull(self);
 }
 
 bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdneES2_(const XmlNodeId* self, XmlNodeId other) {
     return other.first != self->first || other.second != self->second || other.flag != self->flag;
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom6NodeIdneEi() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdneEi(const XmlNodeId* self, int value) {
+    return value != 0 || !NodeIdIsNull(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom6NodeIdntEv() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI _ZN3sce3Xml3Dom6NodeIdntEv(const XmlNodeId* self) {
+    return NodeIdIsNull(self);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom8Document10importNodeENS1_6NodeIdES3_PKS2_S3_() {
