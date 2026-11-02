@@ -17,6 +17,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -466,6 +467,9 @@ void CheckNatDiscovery(in_addr address) {
     natInfo.nat_type = 99;
     natInfo.mapped_addr = 0xFFFFFFFFu;
     NetCtlSetStunServers_nid_no_patch(&server1Addr, 1, 40);
+    errno = 71;
+    Require(sceNetCtlGetNatInfo(reinterpret_cast<NetCtlNatInfo*>(0x10)) == SCE_NET_CTL_ERROR_INVALID_ADDR);
+    Require(errno == 71);
     Require(sceNetCtlGetNatInfo(&natInfo) == 0);
     Require(natInfo.size == sizeof(natInfo));
     Require(natInfo.stun_status == 1);

@@ -2,6 +2,8 @@
 
 ### Unknown function info
 
+- [sceNetCtlGetNatInfo](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - returning `SCE_NET_CTL_ERROR_INVALID_ADDR` for an inaccessible non-null `info` pointer via `GuestCopyIn_nid_no_patch` and `GuestCopyOut_nid_no_patch` is a host-safety fallback with console behavior unmeasured.
+
 - [sceNetCtlGetIfStat](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - the signature and 56-byte layout come from PPSA09030's call site and SharpProspero's `SceNetCtlIfStat`; the device kind is always 0, the byte counters are the host's totals over its up non-loopback interfaces (Windows: hardware interfaces only; Linux: every up non-loopback AF_PACKET interface; other hosts throw) (not "since cleared"), and the not-connected result is assumed to match `sceNetCtlGetState`
 - [sceNetCtlScanIpcInt](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - argument registers and IPC transfer directions are recovered for the info, connection, scan, NAT, bandwidth and Wi-Fi queries. The connection configuration is 1464 bytes, scan options 88, BSSID output 96, scan info 112, IPv6 info 256, internal NAT info 196, bandwidth info 32, bandwidth-estimation info 28 and Wi-Fi info 48. Their field semantics still require the receiving service; incomplete declarations preserve this gap. Scan queries transfer a six-byte BSSID and use a 64-bit in/out buffer size.
 

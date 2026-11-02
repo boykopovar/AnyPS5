@@ -25,6 +25,7 @@
 #include <sys/sysctl.h>
 #endif
 #endif
+#include <cerrno>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -1046,6 +1047,20 @@ static int CheckCallbacks(CallbackSlot (&callbacks)[MAX_CALLBACKS], bool include
     return 0;
 }
 
+static bool CopyInNatInfo(NetCtlNatInfo& dst, const NetCtlNatInfo* src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&dst, src, sizeof(dst));
+    errno = savedErrno;
+    return copied;
+}
+
+static bool CopyOutNatInfo(NetCtlNatInfo* dst, const NetCtlNatInfo& src) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(src));
+    errno = savedErrno;
+    return copied;
+}
+
 extern "C" {
 
 int APS5_VABI sceNetCtlCheckCallback(void) {
@@ -1103,7 +1118,9 @@ int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info) {
 int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    if (info->size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
+    NetCtlNatInfo localInfo{};
+    if (!CopyInNatInfo(localInfo, info)) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    if (localInfo.size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
     HostIpv4Interface host;
     if (!FindHostIpv4Interface(host)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
     auto& config = GetStunConfig();
@@ -1114,8 +1131,7 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
         generation = config.configGeneration;
         if (config.hasCachedResult && config.cachedConfigGeneration == generation &&
             config.cachedLocalAddr == host.address.s_addr && now < config.cachedUntil) {
-            *info = config.cachedResult;
-            return 0;
+            return CopyOutNatInfo(info, config.cachedResult) ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
         }
     }
     const NetCtlNatInfo discovered = DiscoverNatInfo(host.address);
@@ -1129,8 +1145,7 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
             config.hasCachedResult = true;
         }
     }
-    *info = discovered;
-    return 0;
+    return CopyOutNatInfo(info, discovered) ? 0 : SCE_NET_CTL_ERROR_INVALID_ADDR;
 }
 
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
