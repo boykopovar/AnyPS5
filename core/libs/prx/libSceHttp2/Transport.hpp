@@ -1,5 +1,7 @@
 #pragma once
 
+#include "prx/libSceHttp2/include/Http2.hpp"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +20,8 @@ inline std::atomic<LookupHook>& LookupHookSlot() {
 }
 
 struct Settings {
+    Http2RedirectCallback redirectCallback = nullptr;
+    void* redirectArgument = nullptr;
     std::string userAgent;
     std::vector<std::pair<std::string, std::string>> headers;
     std::uint64_t contentLength = 0;
@@ -46,7 +50,7 @@ struct Capacity {
 
 class Request {
 public:
-    Request(int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
+    Request(int id, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
     ~Request();
     Request(const Request&) = delete;
     Request& operator=(const Request&) = delete;
@@ -63,7 +67,7 @@ private:
 
 int AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode);
 std::shared_ptr<Capacity> CreateCapacity_nid_no_patch(int maximum);
-std::shared_ptr<Request> CreateRequest_nid_no_patch(int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
+std::shared_ptr<Request> CreateRequest_nid_no_patch(int id, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
 
 }
 
