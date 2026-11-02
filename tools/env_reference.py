@@ -54,7 +54,8 @@ def forms(prefixes=PREFIXES):
 
 
 def line_reads(line, prefixes=PREFIXES):
-    return [(reader, match) for reader, form in forms(tuple(prefixes)) for match in form.finditer(line)]
+    return [(reader, match) for reader, form in forms(tuple(prefixes)) for match in form.finditer(line)
+            if match.start() == 0 or not (line[match.start() - 1].isalnum() or line[match.start() - 1] == "_")]
 
 
 def documented_pattern(prefixes):
