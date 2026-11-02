@@ -713,5 +713,57 @@ class OutputProtectionTests(unittest.TestCase):
             self.assertFalse((root / "report.asm").exists())
 
 
+class PathResolutionTests(unittest.TestCase):
+    def test_resolution_errors_are_controlled_before_writing(self):
+        for failure in (RuntimeError("Symlink loop"), OSError("Too many symbolic links")):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                module = root / "input.prx"
+                original = build_module()
+                module.write_bytes(original)
+                report = root / "report.imports.txt"
+                report.write_bytes(b"previous report")
+                with mock.patch.object(Path, "resolve", side_effect=failure), \
+                     mock.patch.object(annotate_module, "gnu_objdump", return_value="objdump"), \
+                     contextlib.redirect_stderr(io.StringIO()) as errors:
+                    with self.assertRaises(SystemExit) as stopped:
+                        annotate_module.main([str(module), "--out", str(root / "report"), "--no-names"])
+                self.assertIn("cannot resolve annotation path", str(stopped.exception))
+                self.assertNotIn("Traceback", errors.getvalue())
+                self.assertEqual(module.read_bytes(), original)
+                self.assertEqual(report.read_bytes(), b"previous report")
+                self.assertFalse((root / "report.exports.txt").exists())
+                self.assertFalse((root / "report.asm").exists())
+
+    def test_looping_report_cli_preserves_existing_files(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU objdump unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            report = root / "report.imports.txt"
+            report.write_bytes(b"previous report")
+            loop = root / "report.asm"
+            try:
+                loop.symlink_to("loopB")
+                (root / "loopB").symlink_to(loop.name)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows symbolic-link privileges unavailable")
+                raise
+            result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(str(loop), result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(module.read_bytes(), original)
+            self.assertEqual(report.read_bytes(), b"previous report")
+            self.assertFalse((root / "report.exports.txt").exists())
+            self.assertTrue(loop.is_symlink())
+
+
 if __name__ == "__main__":
     unittest.main()

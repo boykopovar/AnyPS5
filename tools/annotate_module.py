@@ -319,11 +319,17 @@ def resolved_path(path):
             break
         target = Path(link_target(os.readlink(path)))
         path = target if target.is_absolute() else path.parent / target
-    return path.resolve()
+    try:
+        return path.resolve(strict=True)
+    except FileNotFoundError:
+        return path.resolve()
 
 
 def same_file(left, right):
-    return resolved_path(left) == resolved_path(right) or (left.exists() and right.exists() and left.samefile(right))
+    try:
+        return resolved_path(left) == resolved_path(right) or (left.exists() and right.exists() and left.samefile(right))
+    except (OSError, RuntimeError) as error:
+        raise ModuleError(f"cannot resolve annotation path {left} or {right}: {error}") from error
 
 
 def annotate(module_path, prefix, namer):
