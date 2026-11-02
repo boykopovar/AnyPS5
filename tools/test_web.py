@@ -28,6 +28,7 @@ def main(argv=None):
         parser.error(f"archive module does not exist: {archive}")
     try:
         subprocess.run(["node", "--test", *(str(ROOT / "demo/web/tests" / name) for name in (
+            "worker-manifest.test.mjs",
             "app.test.mjs", "batch.test.mjs", "failure-report.test.mjs", "output-directory.test.mjs"
         ) + ("directory-writer.test.mjs",))], check=True)
         with tempfile.TemporaryDirectory(prefix="anyps5-web-") as directory:
