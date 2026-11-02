@@ -1,17 +1,17 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
 #include <array>
-#include <chrono>
-#include <cstdint>
-#include <cstdlib>
-#include <iostream>
-#include <thread>
 #ifdef __linux__
 #include <cstddef>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <sys/syscall.h>
+#include <thread>
 #endif
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <iostream>
 
 namespace {
 
@@ -179,6 +179,11 @@ int main() {
         }
     }
 
+#ifdef __linux__
+    if (!CheckLinuxTimerSlackBoundaries()) return 1;
+    if (!CheckLinuxTimerSlackFailures()) return 1;
+#endif
+
     PreciseSleepUs(0);
 
     for (const unsigned long long micros : {50ULL, 1000ULL}) {
@@ -255,8 +260,6 @@ int main() {
 #endif
 
 #ifdef __linux__
-    if (!CheckLinuxTimerSlackBoundaries()) return 1;
-    if (!CheckLinuxTimerSlackFailures()) return 1;
     if (PreciseLinuxLowTimerSlack() && prctl(PR_GET_TIMERSLACK, 0UL, 0UL, 0UL, 0UL) != 1L) {
         std::cerr << "PreciseLinuxLowTimerSlack did not configure 1ns timer slack\n";
         return 1;

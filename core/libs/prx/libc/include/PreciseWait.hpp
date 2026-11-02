@@ -157,6 +157,14 @@ inline unsigned long long PreciseLinuxSpinTailNanos_nid_no_patch() {
 inline bool PreciseLinuxLowTimerSlack() {
     return PreciseLinuxSpinTailNanos_nid_no_patch() == 15000ULL;
 }
+
+[[gnu::noinline]] inline void PreciseSleepLinuxTimer_nid_no_patch(std::uint64_t wakeNanos) {
+    struct timespec req;
+    req.tv_sec = static_cast<time_t>(wakeNanos / 1000000000ULL);
+    req.tv_nsec = static_cast<long>(wakeNanos % 1000000000ULL);
+    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &req, nullptr) == EINTR) {
+    }
+}
 #endif
 
 inline void PreciseSleepFromNanosWithSlack(std::uint64_t startNanos, unsigned long long nanos, bool allowLowSlack) {
@@ -168,12 +176,7 @@ inline void PreciseSleepFromNanosWithSlack(std::uint64_t startNanos, unsigned lo
     if (nanos > 15000ULL) [[unlikely]] {
         const unsigned long long spinTailNanos = allowLowSlack ? PreciseLinuxSpinTailNanos_nid_no_patch() : 100000ULL;
         if (nanos > spinTailNanos) {
-            const std::uint64_t wakeNanos = deadlineNanos - spinTailNanos;
-            struct timespec req;
-            req.tv_sec = static_cast<time_t>(wakeNanos / 1000000000ULL);
-            req.tv_nsec = static_cast<long>(wakeNanos % 1000000000ULL);
-            while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &req, nullptr) == EINTR) {
-            }
+            PreciseSleepLinuxTimer_nid_no_patch(deadlineNanos - spinTailNanos);
         }
     }
 #elif defined(__APPLE__)
