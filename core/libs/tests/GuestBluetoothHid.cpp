@@ -34,6 +34,15 @@ int main() {
     Require(sceBluetoothHidRegisterDevice(1, 2) == notInitialized, "registration before initialization");
     Require(sceBluetoothHidUnregisterDevice(1, 2) == notInitialized, "unregistration before initialization");
     Require(sceBluetoothHidUnregisterCallback() == notInitialized, "callback removal before initialization");
+    Require(sceBluetoothHidGetDeviceName(0, nullptr) == notInitialized, "get device name before initialization");
+    Require(sceBluetoothHidGetInputReport(0, 0) == notInitialized, "get input report before initialization");
+    Require(sceBluetoothHidSetOutputReport(0, 0, nullptr, 0) == notInitialized, "set output report before initialization");
+    Require(sceBluetoothHidDisconnectDevice(0) == notInitialized, "disconnect device before initialization");
+    Require(sceBluetoothHidGetDeviceInfo(0, nullptr) == notInitialized, "get device info before initialization");
+    Require(sceBluetoothHidGetFeatureReport(0, 0) == notInitialized, "get feature report before initialization");
+    Require(sceBluetoothHidGetReportDescriptor(0, nullptr, 0) == notInitialized, "get report descriptor before initialization");
+    Require(sceBluetoothHidInterruptOutput(0, 0, nullptr, 0) == notInitialized, "interrupt output before initialization");
+    Require(sceBluetoothHidSetFeatureReport(0, 0, nullptr, 0) == notInitialized, "set feature report before initialization");
     Require(sceBluetoothHidInit() == 0, "initialization failed");
     Require(sceBluetoothHidInit() == 0, "repeated initialization failed");
     Require(sceBluetoothHidRegisterDevice(1, 2) == noCallback, "registration without callback");
