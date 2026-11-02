@@ -131,11 +131,11 @@ int APS5_VABI sceHttpRequestGetAllHeaders(int requestId, HttpRequestHeader* head
 int APS5_VABI sceHttpSetDefaultAcceptEncodingGZIPEnabled(int httpCtxId, int enable);
 int APS5_VABI sceHttpSetProxy(int id, int, int, const char* hostname, std::uint16_t);
 int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreationCallback callback, void* userArg);
-int APS5_VABI sceHttpSetHttp09Enabled(int id, int enabled);
+int APS5_VABI sceHttpSetHttp09Enabled(int id, int enable);
 int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* sslContextId);
 int APS5_VABI sceHttpGetConnectionStat(std::int32_t connectionId, HttpConnectionStat* stat);
 int APS5_VABI sceHttpAddQuery(int id, const char* query);
-int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int enabled);
+int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int enable);
 int APS5_VABI sceHttpGetAutoRedirect(int id, int* enable);
 int APS5_VABI sceHttpGetNonblock(int id, int* enable);
 int APS5_VABI sceHttpTryGetNonblock(int id, int* enable);

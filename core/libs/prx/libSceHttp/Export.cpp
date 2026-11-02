@@ -819,11 +819,6 @@ int APS5_VABI sceHttpSetSocketCreationCallback(std::int32_t id, HttpSocketCreati
     return 0;
 }
 
-int APS5_VABI sceHttpSetHttp09Enabled(int id, int enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* sslContextId) {
     if (!netPoolId || !sslContextId) APS5_INVALID_ARG_EX;
     std::lock_guard lock(g_stateMutex);
@@ -841,11 +836,6 @@ int APS5_VABI sceHttpGetConnectionStat(std::int32_t connectionId, HttpConnection
 }
 
 int APS5_VABI sceHttpAddQuery(int id, const char* query) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int enabled) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

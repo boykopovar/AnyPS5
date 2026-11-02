@@ -136,6 +136,18 @@ int APS5_VABI sceHttpCacheRedirectedConnectionEnabled(int id, int enable) {
     return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
 }
 
+int APS5_VABI sceHttpSetHttp09Enabled(int id, int enable) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)enable;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
+}
+
+int APS5_VABI sceHttpSetDelayBuildRequestEnabled(int id, int enable) {
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    (void)enable;
+    return FindHttpOptions(id) ? 0 : ERROR_INVALID_ID;
+}
+
 int APS5_VABI sceHttpsEnableOptionPrivate(int id, std::uint32_t sslFlags) {
     if (!HttpInitialised()) return ERROR_BEFORE_INIT;
     if ((sslFlags & ~PrivateSslFlags) != 0) return ERROR_INVALID_VALUE;

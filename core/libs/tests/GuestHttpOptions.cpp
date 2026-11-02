@@ -159,6 +159,7 @@ void CheckTermEndsOptions() {
     Require(sceHttpGetEpoll(connection, &bound, nullptr) == BeforeInit && sceHttpUnsetEpoll(connection) == BeforeInit, "the epoll binding outlived the last sceHttpTerm");
     Require(sceHttpCacheRedirectedConnectionEnabled(connection, 1) == BeforeInit, "sceHttpCacheRedirectedConnectionEnabled works after the last sceHttpTerm");
     Require(sceHttpSetProxy(connection, 1, 0, "proxy.example", 3128) == BeforeInit, "sceHttpSetProxy works after the last sceHttpTerm");
+    Require(sceHttpSetHttp09Enabled(connection, 1) == BeforeInit && sceHttpSetDelayBuildRequestEnabled(connection, 1) == BeforeInit, "the HTTP/0.9 and delayed request build options work after the last sceHttpTerm");
     Require(sceHttpsEnableOptionPrivate(connection, 0x4000u) == BeforeInit && sceHttpsDisableOptionPrivate(connection, 0x4000u) == BeforeInit, "the private SSL options work after the last sceHttpTerm");
     Require(sceHttpGetNonblock(connection, nullptr) == BeforeInit, "a null output is checked before initialisation");
     Require(value == -1 && bound == nullptr, "a refused getter wrote its output");
@@ -203,6 +204,12 @@ void CheckUnobservedOptions(int context) {
     Require(sceHttpRemoveRequestHeader(UnknownId, nullptr) == 0, "offline header removal started validating arguments");
     Require(sceHttpCacheRedirectedConnectionEnabled(pattern, 0) == 0 && sceHttpCacheRedirectedConnectionEnabled(request, 1) == 0, "sceHttpCacheRedirectedConnectionEnabled refused a live object");
     Require(sceHttpCacheRedirectedConnectionEnabled(UnknownId, 1) == InvalidId, "sceHttpCacheRedirectedConnectionEnabled took an unknown id");
+    for (const auto setter : {sceHttpSetHttp09Enabled, sceHttpSetDelayBuildRequestEnabled}) {
+        for (const int id : {pattern, connection, request}) {
+            Require(setter(id, 1) == 0 && setter(id, 0) == 0 && setter(id, -1) == 0 && setter(id, 7) == 0, "an offline option setter refused a live object");
+        }
+        Require(setter(UnknownId, 1) == InvalidId && setter(0, 1) == InvalidId, "an offline option setter took an unknown id");
+    }
     for (const auto option : {sceHttpsEnableOptionPrivate, sceHttpsDisableOptionPrivate}) {
         Require(option(connection, 0x2dffu) == 0 && option(connection, 0) == 0, "a private SSL option within the mask was refused");
         Require(option(connection, 0x0100u) == 0 && option(connection, 0x2000u) == 0, "a private-only SSL flag was refused");
