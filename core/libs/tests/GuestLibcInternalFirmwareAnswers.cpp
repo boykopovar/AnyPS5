@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 
 static void Require(bool value, const char* message) {
@@ -35,6 +36,13 @@ static void TestDaysto() {
     Require(_Daysto_nid_postfix(2023, 11) == 334 + 505, "_Daysto(2023, 11)");
     Require(_Daysto_nid_postfix(2024, 11) == 335 + 505, "_Daysto(2024, 11)");
     Require(Throws(2024, 12) && Throws(2024, -1), "a month outside the tables throws");
+    constexpr int Lowest = std::numeric_limits<int>::min();
+    constexpr int Highest = std::numeric_limits<int>::max();
+    Require(_Daysto_nid_postfix(Lowest, 0) == 536870914 && _Daysto_nid_postfix(Lowest, 11) == 536871249, "the lowest year wraps 4 - year as an unsigned 32-bit value");
+    Require(_Daysto_nid_postfix(Lowest + 1, 0) == 536870913 && _Daysto_nid_postfix(Lowest + 3, 11) == 536871247, "years just above the lowest wrap 4 - year");
+    Require(_Daysto_nid_postfix(Lowest + 4, 0) == 536870913 && _Daysto_nid_postfix(Lowest + 4, 11) == 536871248, "the last wrapping year");
+    Require(_Daysto_nid_postfix(Lowest + 5, 0) == 536870912 && _Daysto_nid_postfix(Lowest + 5, 11) == 536871246, "the first year whose 4 - year fits in int");
+    Require(_Daysto_nid_postfix(Highest, 0) == 536870911 && _Daysto_nid_postfix(Highest, 11) == 536871245, "the highest year");
 }
 
 static void TestXpGetw() {

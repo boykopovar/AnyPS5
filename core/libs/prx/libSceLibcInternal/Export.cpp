@@ -1133,11 +1133,12 @@ int APS5_VABI _Daysto_nid_postfix(int year, int month) {
     static constexpr short DaysBeforeMonth[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
     static constexpr short LeapDaysBeforeMonth[12] = {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335};
     if (month < 0 || month >= 12) throw std::out_of_range("_Daysto: the month index is outside the twelve-entry tables");
-    int leapDays = 0;
-    if (year > 0) leapDays = (year - 1) / 4;
-    else if (year <= -4) leapDays = 1 + (4 - year) / 4;
-    const bool common = (year & 3) != 0 || year == 0;
-    return leapDays + (common ? DaysBeforeMonth[month] : LeapDaysBeforeMonth[month]);
+    const auto bits = static_cast<std::uint32_t>(year);
+    std::uint32_t leapDays = 0;
+    if (year > 0) leapDays = (bits - 1u) >> 2;
+    else if (year <= -4) leapDays = ((4u - bits) >> 2) + 1u;
+    const bool common = (bits & 3u) != 0 || year == 0;
+    return static_cast<int>(leapDays + static_cast<std::uint32_t>(common ? DaysBeforeMonth[month] : LeapDaysBeforeMonth[month]));
 }
 
 int APS5_VABI _Deletegloballocale_nid_postfix() {
