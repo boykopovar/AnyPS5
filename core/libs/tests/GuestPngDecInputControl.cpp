@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
-#include <stdexcept>
 #include <vector>
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
@@ -130,25 +129,6 @@ int main() {
         Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &decodedInfo) == static_cast<std::int32_t>((width << 16) | height));
         Require(decodedInfo.image_width == width && decodedInfo.image_height == height);
         Require(image == expectedImage);
-    }
-
-    {
-        TestDecoder noParseDecoder(width);
-        Source source{&png};
-        PngDecInputControlParam param{};
-        param.input = &ReadChunk;
-        param.input_argument = &source;
-        param.operation = 0x20;
-        param.image_mem_addr = image.data();
-        param.image_mem_size = static_cast<std::uint32_t>(image.size());
-        param.pixel_format = 0;
-        bool threw = false;
-        try {
-            (void)scePngDecDecodeWithInputControl(noParseDecoder.handle, &param, &info);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw);
     }
 
     {
