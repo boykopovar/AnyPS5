@@ -290,6 +290,7 @@ function(add_shader_recompiler target runtimeTarget)
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass
             SetDebugProbeActive
+            SrtEvaluatingBranch
             ShaderCacheDirectory
             ShaderDiskCache::Shutdown
             ShaderStage
