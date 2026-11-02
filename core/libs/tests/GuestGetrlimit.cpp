@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -149,6 +150,10 @@ static void RequireHostLimit(int resource, int hostResource) {
 }
 
 static void LoweredHostLimitIsReported() {
+#ifdef ANYPS5_ENABLE_ASAN
+    std::fputs("skipped: AddressSanitizer keeps about 14 TiB of shadow mapped, so lowering RLIMIT_DATA to 1 TiB makes its next mapping fail\n", stderr);
+    return;
+#else
     rlimit host{};
     Require(getrlimit(RLIMIT_DATA, &host) == 0);
     const rlim_t lowered = rlim_t{1} << 40;
@@ -156,6 +161,7 @@ static void LoweredHostLimitIsReported() {
     host.rlim_cur = lowered;
     Require(setrlimit(RLIMIT_DATA, &host) == 0);
     Require(GuestLimit(GUEST_RLIMIT_DATA).rlim_cur == static_cast<std::int64_t>(lowered));
+#endif
 }
 #endif
 

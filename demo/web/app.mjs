@@ -1,5 +1,6 @@
 import { abortAndDiscardOutput, OutputDirectoryTransaction } from "./output-directory.mjs";
 import { batchMemoryEstimate } from "./batch.mjs";
+import { failureReport } from "./failure-report.mjs";
 
 const $ = id => document.getElementById(id);
 const stages = ["Converting executable", "Converting PRX modules", "Scanning syscalls", "Scanning instructions", "Converting instructions", "Analysing imports", "Building output image", "Writing output"];
@@ -87,6 +88,14 @@ function lock(value) {
 async function fail(message) {
   if (failing) return;
   failing = true;
+  const report = failureReport({
+    message,
+    phase: $("phase").textContent,
+    input: $("current-file").textContent,
+    target: document.querySelector('input[name="target"]:checked').value,
+    release,
+    log: logs
+  });
   worker?.terminate();
   worker = null;
   working = true;
@@ -103,7 +112,16 @@ async function fail(message) {
   const activeSink = sink;
   sink = null;
   for (const failure of await abortAndDiscardOutput(transaction, activeSink)) message += `\n${failure}`;
-  $("error").textContent = message;
+  if (report === message) $("error").textContent = message;
+  else {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Failure details";
+    const text = document.createElement("pre");
+    text.textContent = report;
+    details.append(summary, text);
+    $("error").replaceChildren(document.createTextNode(message), details);
+  }
   $("error").hidden = false;
   $("status").hidden = true;
   $("cancel").hidden = true;
@@ -333,7 +351,7 @@ if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => {
   if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw new Error("Invalid release information");
   release = value;
   update();
-}).catch(error => fail(error.message));
+}).catch(error => fail(error instanceof TypeError ? "Cannot reach the release information: check the connection and reload the page." : error.message));
 
 if (!("webkitdirectory" in $("folder"))) {
   $("choose-folder").disabled = true;

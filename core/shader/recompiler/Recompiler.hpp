@@ -166,6 +166,21 @@ inline constexpr std::uint32_t One = 3u;
 
 }
 
+struct TargetBlend {
+    bool enabled = false;
+    bool snorm = false;
+    std::uint8_t colorSource = 0;
+    std::uint8_t colorDestination = 0;
+    std::uint8_t colorOperation = 0;
+    std::uint8_t alphaSource = 0;
+    std::uint8_t alphaDestination = 0;
+    std::uint8_t alphaOperation = 0;
+    std::uint8_t writeMask = 0;
+    std::array<std::uint32_t, 4> constants{};
+
+    bool operator==(const TargetBlend&) const = default;
+};
+
 struct TargetMerge {
     std::uint8_t target = 0;
     std::uint16_t mask = 0;
@@ -173,6 +188,7 @@ struct TargetMerge {
     std::array<std::uint32_t, 8> descriptor{};
     bool depthStencilWrites = false;
     bool depthStencilTests = false;
+    TargetBlend blend{};
 
     bool operator==(const TargetMerge&) const = default;
 };
@@ -196,6 +212,8 @@ struct ShaderPixelStageInfo {
     bool linearCentroid;
     bool pixelKillEnable;
     bool depthExportEnable;
+    float depthExportMin = 0.0f;
+    float depthExportMax = 1.0f;
     bool sampleMaskExportEnable;
     bool earlyZ;
     bool executeOnNoop;
@@ -218,7 +236,7 @@ struct ShaderPixelStageInfo {
     bool iteratesSamples = false;
     PixelPositionLocation positionLocation = PixelPositionLocation::Center;
     std::array<std::uint8_t, 32> sampleLocations{};
-    TargetMerge targetMerge{};
+    std::vector<TargetMerge> targetMerges{};
     std::array<std::uint32_t, 4> sampleOrder{};
 };
 
@@ -274,6 +292,7 @@ struct GuestContext {
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedCallFallbacks;
     bool convertedSamples = false;
+    bool layerRowSamples = false;
 };
 
 struct MeshTargetLimits {
@@ -311,14 +330,19 @@ struct SpirvTarget {
     std::uint32_t maxWorkgroupSharedMemoryBytes;
     std::optional<MeshTargetLimits> mesh;
     std::optional<TessellationTargetLimits> tessellation;
+    std::array<std::uint64_t, 2> featureDigest{};
+    std::array<std::uintptr_t, 4> featureDigestSpans{};
+    bool featureDigestSealed = false;
     bool nonConstantImageOffsets = false;
     std::uint32_t srgbDecodeFormats = 0;
+    std::uint32_t maxImageArrayLayers = 0;
     bool narrowSubgroupClock = false;
     bool fixedPushSlots = false;
     bool float64DenormPreserve = false;
     bool registrationModules = false;
     std::uint32_t registrationWordLimit = 200000u;
     bool vertexSubgroups = true;
+    bool tessellationEvaluationSubgroups = true;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
     bool robustBufferAccess2 = false;
@@ -331,6 +355,10 @@ struct SpirvTarget {
     bool largePixelFunctionLdsBuffer = false;
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool ldsLockFences = false;
+    bool fragmentBarycentricBuiltins = false;
+    bool meshWindowBuffer = false;
+    bool hostInterpolationFirst = false;
 };
 
 struct BindingLayout {
@@ -395,6 +423,8 @@ inline constexpr std::uint32_t MeshArgumentIndexCountDword = 3;
 inline constexpr std::uint32_t MeshArgumentFirstIndexDword = 4;
 inline constexpr std::uint32_t MeshArgumentBytes = 20;
 inline constexpr std::uint32_t MeshIndexRestartTable = 0x100;
+inline constexpr std::uint32_t MeshLayerStrideShift = 16;
+inline constexpr std::uint32_t MeshLayerStrideLimit = 0xffff;
 inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
 inline constexpr std::uint32_t MeshCapturedCounterDword = MeshArgumentBytes / 4;
@@ -457,7 +487,7 @@ struct RecompileRequest {
 };
 
 inline std::uint32_t TessellationInstancePatches(const RecompileRequest& request) {
-    if (!request.graphics || !request.graphics->tessellation || request.graphics->draw.instanceCount <= 1u || request.graphics->tessellation->breakAtInstance) return 0u;
+    if (!request.graphics || !request.graphics->tessellation || request.graphics->draw.instanceCount <= 1u || request.graphics->tessellation->breakAtInstance || request.graphics->tessellation->inputControlPoints == 0u) return 0u;
     return request.graphics->draw.indexCount / request.graphics->tessellation->inputControlPoints;
 }
 
@@ -735,6 +765,7 @@ struct CompiledShaderArtifact {
     std::uint32_t hostSubgroupSize = 0;
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
+    bool meshWindowBuffer = false;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;
@@ -742,6 +773,7 @@ struct CompiledShaderArtifact {
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
     bool bdaWrites = false;
+    bool layerReplaySafe = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
     std::uint64_t variantId = 0;
 };
@@ -804,7 +836,7 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         };
         mix(specialization.size());
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
-        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
+        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (meshWindowBuffer ? 0x40000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
         for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
         if (identity.Empty()) identity.low = 1;
@@ -847,6 +879,7 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool DebugProbeActive();
 [[nodiscard]] bool RayTracingStrict();
 [[nodiscard]] bool RayTracingMiss();
+[[nodiscard]] bool ExactF32Arithmetic();
 
 struct RectListShaders {
     RecompileResult control;

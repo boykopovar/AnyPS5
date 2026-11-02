@@ -513,9 +513,27 @@ void ReplaceGzipFile() {
     try { AgcDriver::TraceFile::ReplaceGzip(path, "{\"third\":3}\n"); } catch (const std::exception&) { writeFailed = true; }
     const auto keptAfterWrite = ReadGzip(path);
 #endif
+#ifdef __linux__
+    bool fullFailed = false;
+    bool fullLeft = false;
+    if (std::filesystem::exists("/dev/full")) {
+        const auto fullPath = directory / "aps5-bench-full.json.gz";
+        auto fullTemporary = fullPath;
+        fullTemporary += ".tmp";
+        std::filesystem::create_symlink("/dev/full", fullTemporary);
+        try { AgcDriver::TraceFile::ReplaceGzip(fullPath, "{\"full\":1}\n"); } catch (const std::exception&) { fullFailed = true; }
+        std::error_code linkError;
+        fullLeft = std::filesystem::symlink_status(fullTemporary, linkError).type() != std::filesystem::file_type::not_found;
+    } else {
+        fullFailed = true;
+    }
+#endif
     std::filesystem::remove_all(directory);
     Check(failed && blockedKept && !temporaryLeft, "a replace that could not move its file over the destination did not fail cleanly or left its temporary file");
     Check(kept == "{\"second\":2}\n", "a failed replace of another file damaged the benchmark file");
+#ifdef __linux__
+    Check(fullFailed && !fullLeft, "a replace whose write failed left its temporary file behind");
+#endif
 #ifndef _WIN32
     Check(writeFailed && keptAfterWrite == "{\"second\":2}\n", "a failed rewrite damaged the previous benchmark file");
 #endif

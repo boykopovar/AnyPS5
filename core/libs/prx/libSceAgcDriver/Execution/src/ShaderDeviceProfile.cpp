@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "BdaAbi.hpp"
+#include "CacheKey.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 
@@ -71,6 +72,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     checkFeature(spv::CapabilityDrawParameters, drawParameters != nullptr && drawParameters->shaderDrawParameters == VK_TRUE, "shaderDrawParameters");
     checkFeature(spv::CapabilityShaderClockKHR, clock != nullptr && clock->shaderSubgroupClock == VK_TRUE && clock->shaderDeviceClock == VK_TRUE, "shader clock");
     Require(!target.fragmentShaderBarycentricEnabled || barycentricEnabled, "shader device profile exposes disabled barycentrics");
+    Require(!target.fragmentBarycentricBuiltins || barycentricEnabled, "shader device profile exposes disabled barycentric built-ins");
     Require(!target.mesh || meshEnabled, "shader device profile exposes disabled mesh shaders");
     Require(!target.nonConstantImageOffsets || (maintenance8 != nullptr && maintenance8->maintenance8 == VK_TRUE), "shader device profile exposes disabled maintenance8");
     Require(!target.tessellation || core.tessellationShader == VK_TRUE, "shader device profile exposes disabled tessellation");
@@ -82,6 +84,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     Require(std::ranges::find(extensionViews, "SPV_KHR_terminate_invocation") == extensionViews.end() || (terminate != nullptr && terminate->shaderTerminateInvocation == VK_TRUE), "shader device profile advertises a disabled feature: shaderTerminateInvocation");
     this->target.supportedCapabilities = capabilities;
     this->target.supportedExtensions = extensionViews;
+    ShaderRecompiler::RecompileCacheKey::SealFeatureDigest(this->target);
 }
 
 }

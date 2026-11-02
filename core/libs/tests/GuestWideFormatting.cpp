@@ -2,6 +2,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <climits>
+#include <cerrno>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -112,7 +114,12 @@ static void CheckPointer() {
         buffer == std::u16string(u"[      1234][1234      ][00001234][0000001a]"), "vswprintf %p width and precision");
     Require(Format(buffer, 64, u"[%.0p][%p]", address(0), address(0)) == 5 &&
         buffer == std::u16string(u"[][0]"), "vswprintf %p with a zero precision prints nothing");
-    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == -1, "vswprintf %lp is refused");
+    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == 6 && buffer == std::u16string(u"[1234]"), "vswprintf %lp prints the pointer as %p does");
+    Require(Format(buffer, 64, u"[%lp]", address(0)) == 3 && buffer == std::u16string(u"[0]"), "vswprintf %lp of a null pointer");
+    Require(Format(buffer, 64, u"[%5.0p][%05.3p][%.0p]", address(0), address(0x1f), address(0x1f)) == 18 &&
+        buffer == std::u16string(u"[     ][  01f][1f]"), "vswprintf %p width beside a zero precision, 0 beside a precision, and %.0p of a pointer");
+    Require(snwprintf_s_nid_postfix(buffer, 16, u"[%lp]", address(0x1f)) == 4 && buffer == std::u16string(u"[1f]"), "snwprintf_s %lp prints the pointer as %p does");
+    Require(snwprintf_s_nid_postfix(buffer, 16, u"[%lp]", address(0)) == 3 && buffer == std::u16string(u"[0]"), "snwprintf_s %lp of a null pointer");
 }
 
 static void CheckCount() {
@@ -120,7 +127,7 @@ static void CheckCount() {
     int count = -7;
     Require(Format(buffer, 16, u"ab%ncd", &count) == 4 && buffer == std::u16string(u"abcd") && count == 2, "vswprintf %n");
     count = -7;
-    Require(Format(buffer, 16, u"%s%n!", "\xf0\x9f\x98\x80", &count) == 3 && count == 2, "vswprintf %n counts UTF-16 units");
+    Require(Format(buffer, 16, u"%s%n!", "\xed\xa0\xbd\xed\xb8\x80", &count) == 3 && count == 2, "vswprintf %n counts UTF-16 units");
     count = -7;
     Require(Format(buffer, 16, u"%n", &count) == 0 && buffer[0] == 0 && count == 0, "vswprintf %n at start");
     unsigned char bytes[2] = {0xaa, 0xaa};
@@ -133,7 +140,10 @@ static void CheckCount() {
     Require(Format(buffer, 16, u"%2d%ln", 5, &wide) == 2 && wide == 2, "vswprintf %ln");
     count = -7;
     Require(Format(buffer, 16, u"a%5n", &count) < 0 && count == -7, "vswprintf %n with a width");
-    Require(Format(buffer, 16, u"a%Ln", &count) < 0 && count == -7, "vswprintf %Ln");
+    Require(Format(buffer, 16, u"a%Ln", &count) == 1 && count == 1, "vswprintf %Ln writes an int");
+    char16_t lengths[64];
+    Require(Format(lengths, 64, u"%Ld|%Lx|%hf|%zg|%hp|%Lc", 0x41424344, 0x89abcdefu, 1.5, 1.5, reinterpret_cast<void*>(0x1234), 0x44) == 39 &&
+        lengths == std::u16string(u"1094861636|89abcdef|1.500000|1.5|1234|D"), "vswprintf ignores lengths that do not apply");
     const int* const nullCount = nullptr;
     Require(Format(buffer, 16, u"a%n", nullCount) < 0, "vswprintf null %n argument");
 }
@@ -204,8 +214,25 @@ static void CheckSwprintf() {
     Require(buffer == std::u16string(u"42-ab") && buffer[6] == u'x', "swprintf output");
     Require(swprintf_nid_postfix(buffer, 8, u"中%ls%s", u"文", "\xc3\xa9") == 3, "swprintf non-ASCII length");
     Require(buffer == std::u16string(u"中文é"), "swprintf non-ASCII output");
-    Require(swprintf_nid_postfix(buffer, 8, u"%s", "\xf0\x9f\x98\x80") == 2, "swprintf surrogate pair length");
-    Require(buffer == std::u16string(u"\U0001f600"), "swprintf surrogate pair output");
+    Require(swprintf_nid_postfix(buffer, 8, u"%s", "\xed\xa0\xbd\xed\xb8\x80") == 2 && buffer == std::u16string(u"\U0001f600"),
+        "swprintf decodes each 3-byte surrogate");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s]", "\xf0\x9f\x98\x80") == -1 && errno == 86 && buffer == std::u16string(u"["),
+        "swprintf rejects a 4-byte sequence and keeps the output before it");
+    for (const char* invalid : {"\x80", "\xc3", "\xc3x", "\xe2\x82", "\xff", "\xf8\x88\x80\x80\x80", "\xc3\xa9\xc3"}) {
+        errno = 0;
+        Require(swprintf_nid_postfix(buffer, 8, u"x%sy", invalid) == -1 && errno == 86 && buffer == std::u16string(u"x"), "swprintf rejects invalid UTF-8");
+    }
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s]", "\xc0\x80" "A") == 2 && buffer == std::u16string(u"[]"), "an overlong NUL ends the string");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s|%s]", "\xc1\x81", "\xe0\x81\x81") == 5 && buffer == std::u16string(u"[A|A]"), "overlong forms decode");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.1s]", "A\x80") == 3 && buffer == std::u16string(u"[A]"), "the precision stops before an invalid byte");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.2s]", "A\x80") == -1 && errno == 86, "the precision reaches an invalid byte");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.0s]", "AB") == 2 && buffer == std::u16string(u"[]"), "precision zero writes nothing");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%3s|%-3.0s]", "", "AB") == 3 && buffer == std::u16string(u"[|]"), "an empty narrow field is not padded");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%3s]", "A\xc0\x80") == 5 && buffer == std::u16string(u"[  A]"), "a field with characters is padded");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.0s]", "\x80") == -1 && errno == 86, "precision zero still decodes the first character");
     Require(swprintf_nid_postfix(buffer, 8, u"") == 0 && buffer[0] == 0, "swprintf empty format");
     for (auto& unit : buffer) unit = u'x';
     Require(swprintf_nid_postfix(buffer, 3, u"%ls", u"abcd") < 0, "swprintf truncation result");
@@ -219,6 +246,13 @@ static void CheckSwprintf() {
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
     Require(swprintf_nid_postfix(wide, 16, u"%q") < 0 && wide[0] == 0, "swprintf invalid conversion");
+    for (const char16_t* format : {u"%99999999999d", u"%.99999999999d", u"%4294967296s", u"%.4294967296s", u"%2147483648ls", u"%.2147483648ls"}) {
+        wide[0] = u'x';
+        Require(swprintf_nid_postfix(wide, 16, format, 7, u"a") < 0 && wide[0] == 0, "swprintf width or precision beyond int");
+    }
+    wide[0] = u'x';
+    Require(swprintf_nid_postfix(wide, 16, u"%*d", INT_MIN, 7) < 0 && wide[0] == 0, "swprintf INT_MIN width");
+    Require(swprintf_nid_postfix(wide, 16, u"%*d", -5, 7) == 5 && wide == std::u16string(u"7    "), "swprintf negative width");
 }
 
 static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const GuestTm* time) {
@@ -231,7 +265,84 @@ static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const Guest
     return false;
 }
 
+static void CheckWcsftimeCapacities(const char16_t* format, const std::u16string& expected, const GuestTm& time) {
+    for (std::size_t capacity = 0; capacity <= expected.size() + 2; ++capacity) {
+        std::u16string storage(expected.size() + 5, u'\uffff');
+        int& error = *__error_nid_postfix();
+        error = 5;
+        const std::size_t result = wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(storage.data() + 1), capacity, reinterpret_cast<const std::uint16_t*>(format), &time);
+        Require(error == 5 && result < (capacity ? capacity : 1), "wcsftime bounded result and errno");
+        Require(storage[0] == u'\uffff', "wcsftime leading guard");
+        if (capacity > expected.size()) {
+            Require(result == expected.size(), "wcsftime complete result");
+            for (std::size_t index = 0; index < expected.size(); ++index)
+                Require(storage[index + 1] == expected[index], "wcsftime complete output");
+            Require(storage[expected.size() + 1] == 0, "wcsftime terminator");
+        }
+        for (std::size_t index = capacity + 1; index < storage.size(); ++index)
+            Require(storage[index] == u'\uffff', "wcsftime trailing guard");
+    }
+}
+
+static void CheckWcsftimeFirmwarePieces() {
+    GuestTm time{};
+    time.tm_year = 124;
+    time.tm_mon = 1;
+    time.tm_mday = 29;
+    time.tm_wday = 4;
+    time.tm_yday = 59;
+    time.tm_hour = 13;
+    time.tm_min = 5;
+    time.tm_sec = 9;
+    struct Case { const char16_t* format; std::size_t capacity; std::size_t result; std::u16string units; };
+    const Case cases[] = {
+        {u"%Y-%m-%d", 0, 0, u""}, {u"%Y-%m-%d", 1, 0, u"-"},
+        {u"%Y-%m-%d", 2, 0, u"--"}, {u"%Y-%m-%d", 3, 0, u"-02"},
+        {u"%Y-%m-%d", 4, 0, u"2024"}, {u"%Y-%m-%d", 5, 0, u"2024-"},
+        {u"%Y-%m-%d", 6, 0, u"2024--"}, {u"%Y-%m-%d", 7, 0, u"2024-02"},
+        {u"%Y-%m-%d", 8, 0, u"2024-02-"},
+        {u"%Y-%m-%d", 9, 8, std::u16string(u"2024-02-\0", 9)},
+        {u"%Y-%m-%d", 10, 0, u"2024-02-29"},
+        {u"%Y-%m-%d", 11, 10, std::u16string(u"2024-02-29\0", 11)},
+        {u"%F", 9, 0, std::u16string(u"\0" u"024-02-2", 9)},
+        {u"%F|%S|", 5, 4, std::u16string(u"|09|\0", 5)},
+        {u"ab%Ycd", 5, 4, std::u16string(u"abcd\0", 5)},
+        {u"%OYx", 3, 1, std::u16string(u"x\0" u"2", 3)},
+        {u"abc", 2, 0, u"ab"}, {u"", 1, 0, std::u16string(1, 0)},
+        {u"%Q", 1, 0, std::u16string(1, 0)},
+        {u"\U0001f600%Y", 3, 2, std::u16string(u"\U0001f600\0", 3)},
+        {u"%Y\U0001f600", 3, 2, std::u16string(u"\U0001f600\0", 3)}
+    };
+    for (const auto& item : cases) {
+        std::u16string storage(item.capacity + 4, u'\ua5a5');
+        int& error = *__error_nid_postfix();
+        error = 5;
+        const auto result = wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(storage.data() + 1), item.capacity,
+            reinterpret_cast<const std::uint16_t*>(item.format), &time);
+        Require(result == item.result && error == 5, "wcsftime firmware piece result and errno");
+        Require(storage[0] == u'\ua5a5', "wcsftime firmware leading guard");
+        for (std::size_t index = 0; index < item.units.size(); ++index)
+            Require(storage[index + 1] == item.units[index], "wcsftime firmware piece units");
+        for (std::size_t index = item.units.size() + 1; index < storage.size(); ++index)
+            Require(storage[index] == u'\ua5a5', "wcsftime firmware untouched units");
+    }
+    time.tm_mon = 8;
+    time.tm_wday = 5;
+    char16_t buffer[12];
+    for (auto& unit : buffer) unit = u'\ua5a5';
+    int& error = *__error_nid_postfix();
+    error = 5;
+    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 9,
+        reinterpret_cast<const std::uint16_t*>(u"%A %B"), &time) == 7 && error == 5
+        && std::u16string(buffer, 9) == std::u16string(u"Friday \0e", 9) && buffer[9] == u'\ua5a5', "wcsftime firmware trailing partial conversion");
+}
+
 static void CheckWcsftime() {
+    const char* oldZone = getenv_nid_postfix("TZ");
+    const bool hadZone = oldZone != nullptr;
+    const std::string savedZone = hadZone ? oldZone : "";
+    Require(setenv_nid_postfix("TZ", "UTC0", 1) == 0, "wcsftime fixed guest time zone");
+    CheckWcsftimeFirmwarePieces();
     GuestTm time{};
     time.tm_sec = 9;
     time.tm_min = 5;
@@ -251,6 +362,8 @@ static void CheckWcsftime() {
         {u"%a %b %j %p %Z", "%a %b %j %p %Z"},
         {u"%%", "%%"},
         {u"%k|%l|%v|%+", "%k|%l|%v|%+"},
+        {u"%A|%B|%h|%C|%e|%I|%n|%t|%U|%u|%V|%G|%g|%W|%w|%y|%z", "%A|%B|%h|%C|%e|%I|%n|%t|%U|%u|%V|%G|%g|%W|%w|%y|%z"},
+        {u"%s", "%s"},
         {u"\u00e9t\u00e9 %Y", "\xe9t\xe9 %Y"},
     };
     for (const auto& item : cases) {
@@ -261,7 +374,19 @@ static void CheckWcsftime() {
         Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(wide), 128, reinterpret_cast<const std::uint16_t*>(item.wide), &time) == length, "wcsftime length matches strftime");
         for (std::size_t index = 0; index <= length; ++index)
             Require(wide[index] == static_cast<unsigned char>(narrow[index]), "wcsftime output matches strftime");
+        CheckWcsftimeCapacities(item.wide, std::u16string(wide, length), time);
     }
+    CheckWcsftimeCapacities(u"", u"", time);
+    CheckWcsftimeCapacities(u"abc", u"abc", time);
+    CheckWcsftimeCapacities(u"\u4e2d\u20ac\U0001f600%F!", u"\u4e2d\u20ac\U0001f6002024-02-29!", time);
+    const char16_t surrogates[] = {0xd800, u'%', u'Y', 0xdc00, 0};
+    const char16_t surrogateOutput[] = {0xd800, u'2', u'0', u'2', u'4', 0xdc00, 0};
+    CheckWcsftimeCapacities(surrogates, surrogateOutput, time);
+    CheckWcsftimeCapacities(u"%c|%D|%F|%r|%R|%T|%x|%X", u"Thu Feb 29 13:05:09 2024|02/29/24|2024-02-29|01:05:09 PM|13:05|13:05:09|02/29/24|13:05:09", time);
+    CheckWcsftimeCapacities(u"%Ea|%OX|%EEY|%-d|%_m|%0e|%--d|%q|%\u4e2d|%", u"Thu|13:05:09|%EY|%-d|%_m|%0e|%--d|%q|%\u4e2d|%", time);
+    GuestTm early = time;
+    early.tm_year = -1901;
+    CheckWcsftimeCapacities(u"%Y/%C/%y", u"0000/00/99", early);
     char16_t buffer[32];
     Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 32, reinterpret_cast<const std::uint16_t*>(u"%Y-%m-%d %H:%M:%S"), &time) == 19
         && buffer == std::u16string(u"2024-02-29 13:05:09"), "wcsftime date and time");
@@ -273,21 +398,30 @@ static void CheckWcsftime() {
     int& error = *__error_nid_postfix();
     for (auto& unit : buffer) unit = u'x';
     error = 5;
-    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 19, reinterpret_cast<const std::uint16_t*>(u"%Y-%m-%d %H:%M:%S"), &time) == 0 && error == 5 && buffer[0] == u'x',
-        "wcsftime overflow");
-    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 1, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 0 && error == 5 && buffer[0] == u'x', "wcsftime one unit");
+    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 19, reinterpret_cast<const std::uint16_t*>(u"%Y-%m-%d %H:%M:%S"), &time) == 0 && error == 5
+        && std::u16string(buffer, 19) == u"2024-02-29 13:05:09" && buffer[19] == u'x', "wcsftime overflow");
+    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 1, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 0 && error == 5 && buffer[0] == 0, "wcsftime one unit");
+    buffer[0] = u'x';
     Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 0, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 0 && error == 5 && buffer[0] == u'x', "wcsftime zero size");
-    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 32, reinterpret_cast<const std::uint16_t*>(u""), &time) == 0 && error == 5 && buffer[0] == u'x', "wcsftime empty format");
+    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 32, reinterpret_cast<const std::uint16_t*>(u""), &time) == 0 && error == 5 && buffer[0] == 0, "wcsftime empty format");
     Require(wcsftime_nid_postfix(nullptr, 32, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 0 && error == 5, "wcsftime null buffer");
     Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 32, reinterpret_cast<const std::uint16_t*>(u"%Y \u20ac"), &time) == 6 && buffer == std::u16string(u"2024 \u20ac"),
-        "wcsftime passes a character above 0xff through UTF-8");
-    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 7, reinterpret_cast<const std::uint16_t*>(u"%Y \u20ac"), &time) == 6, "wcsftime sizes the narrow buffer for three-byte characters");
+        "wcsftime copies a character above 0xff");
+    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 7, reinterpret_cast<const std::uint16_t*>(u"%Y \u20ac"), &time) == 6, "wcsftime counts wide units");
     for (auto& unit : buffer) unit = u'x';
     error = 5;
-    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), SIZE_MAX, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 0 && error == 22 && buffer[0] == u'x',
-        "wcsftime oversized buffer");
+    const std::size_t oversized = SIZE_MAX / static_cast<std::size_t>(_Getmbcurmax_nid_postfix());
+    for (const std::size_t capacity : {oversized, oversized + 1, SIZE_MAX}) {
+        error = 5;
+        Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), capacity, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 0 && error == 22 && buffer[0] == u'x',
+            "wcsftime oversized buffer");
+    }
+    error = 5;
+    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), oversized - 1, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 4 && error == 5
+        && buffer == std::u16string(u"2024") && buffer[5] == u'x', "wcsftime largest accepted capacity");
     Require(WcsftimeThrows(buffer, nullptr, &time), "wcsftime null format");
     Require(WcsftimeThrows(buffer, u"%Y", nullptr), "wcsftime null time");
+    Require((hadZone ? setenv_nid_postfix("TZ", savedZone.c_str(), 1) : unsetenv_nid_postfix("TZ")) == 0, "wcsftime restore guest time zone");
 }
 
 static void CheckAlternateOctalZero() {
@@ -342,9 +476,9 @@ int main() {
     Check(u"%.2s", "abcd", u"ab");
     Check(u"%4.2s", "\xc3\xa9\xc3\xa8", u"  \u00e9\u00e8");
     Check(u"%-4.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8  ");
-    Check(u"%.2s", "\xf0\x9f\x98\x80x", u"\U0001f600");
-    Check(u"%.1s", "\xf0\x9f\x98\x80x", u"");
-    Check(u"%.3s", "\xf0\x9f\x98\x80x", u"\U0001f600x");
+    Check(u"%.2s", "\xed\xa0\xbd\xed\xb8\x80x", u"\U0001f600");
+    Check(u"%.1s", "\xed\xa0\xbd\xed\xb8\x80x", u"\xd83d");
+    Check(u"%.3s", "\xed\xa0\xbd\xed\xb8\x80x", u"\U0001f600x");
     CheckGroupingFlag();
     CheckUnsignedSignFlags();
 }

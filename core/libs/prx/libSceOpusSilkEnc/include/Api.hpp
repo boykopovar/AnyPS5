@@ -17,6 +17,7 @@ int APS5_VABI sceOpusSilkEncEncodeFloatWithPriority(OpusSilkEncoder* encoder, co
 int APS5_VABI sceOpusSilkEncEncodeFloatWithPriorityAndTimeout(OpusSilkEncoder* encoder, const float* samples, std::int32_t frameSize, std::uint8_t* data, std::int32_t maxDataBytes, std::uint32_t priority, std::uint32_t timeout, std::uint32_t* batchId);
 int APS5_VABI sceOpusSilkEncEncodeWithPriority(OpusSilkEncoder* encoder, const std::int16_t* samples, std::int32_t frameSize, std::uint8_t* data, std::int32_t maxDataBytes, std::uint32_t priority);
 int APS5_VABI sceOpusSilkEncEncodeWithPriorityAndTimeout(OpusSilkEncoder* encoder, const std::int16_t* samples, std::int32_t frameSize, std::uint8_t* data, std::int32_t maxDataBytes, std::uint32_t priority, std::uint32_t timeout, std::uint32_t* batchId);
+int APS5_VABI sceOpusSilkEncGetAjmContext();
 int APS5_VABI sceOpusSilkEncGetSize(std::int32_t channels);
 int APS5_VABI sceOpusSilkEncInitialize(std::uint32_t* contextId);
 int APS5_VABI sceOpusSilkEncTerminate(const std::uint32_t* contextId);

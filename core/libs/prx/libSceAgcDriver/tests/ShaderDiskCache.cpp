@@ -113,6 +113,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
     }
     constexpr auto dispositionInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(21);
     constexpr DWORD deleteFile = 0x00000001, posixSemantics = 0x00000002;
+    bool pendingDeletes = false;
     for (const auto& file : files) {
         const auto handle = CreateFileW(file.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -120,11 +121,26 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
         require(!error, "cannot open " + file.string() + " for deletion: " + error.message());
         struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{handle};
         DWORD flags = deleteFile | posixSemantics;
-        if (!SetFileInformationByHandle(handle, dispositionInfoEx, &flags, sizeof(flags))) error.assign(static_cast<int>(GetLastError()), std::system_category());
+        if (!SetFileInformationByHandle(handle, dispositionInfoEx, &flags, sizeof(flags))) {
+            const DWORD failure = GetLastError();
+            FILE_DISPOSITION_INFO disposition{TRUE};
+            if (failure == ERROR_INVALID_PARAMETER) {
+                SetFileInformationByHandle(handle, FileDispositionInfo, &disposition, sizeof(disposition));
+                pendingDeletes = true;
+            } else {
+                error.assign(static_cast<int>(failure), std::system_category());
+            }
+        }
         require(!error, "cannot delete " + file.string() + ": " + error.message());
     }
-#endif
     std::filesystem::remove_all(directory, error);
+    if (error && pendingDeletes) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX delete (ERROR_INVALID_PARAMETER); entries the cache still maps cannot be deleted there, so the directory was left behind\n", directory.string().c_str());
+        return;
+    }
+#else
+    std::filesystem::remove_all(directory, error);
+#endif
     require(!error, "cannot remove the shader cache test directory: " + error.message());
 }
 
@@ -143,8 +159,10 @@ bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<
 void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShaderArtifact& right, const char* what) {
     const std::string prefix = std::string(what) + ": ";
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
+    require(left.meshWindowBuffer == right.meshWindowBuffer, prefix + "mesh window buffer flags differ");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
+    require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
@@ -158,6 +176,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
     require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
+    require(left.layerReplaySafe == right.layerReplaySafe, prefix + "layer replay proof differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
     require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
@@ -237,6 +256,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
 
 RecompileResult sampleResult() {
     RecompileResult result;
+    result.meshWindowBuffer = true;
     std::vector<std::uint32_t> words(1000);
     for (std::size_t i = 0; i < words.size(); ++i) words[i] = static_cast<std::uint32_t>(i * 2654435761u);
     words[0] = 0x07230203u;
@@ -249,6 +269,7 @@ RecompileResult sampleResult() {
     result.readsDepthRemapPush = true;
     result.bdaAbiVersion = 3;
     result.descriptorFaults = 2;
+    result.windowLaneGuards = 7u;
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
     result.fullSubgroups = true;
@@ -271,6 +292,7 @@ RecompileResult sampleResult() {
     result.stencilReferences = {0u, 17u, 255u};
     result.stencilReplaySafe = true;
     result.bdaWrites = true;
+    result.layerReplaySafe = true;
     result.stencilReferenceDword = 23u;
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
@@ -335,14 +357,19 @@ CompiledVariant sampleVariant() {
     image.flatLineCompatible = false;
     image.flatVolumeLineCompatible = false;
     image.dimensionQueryOnly = false;
+    image.sampledOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
+    image.layerRowsCompatible = false;
+    image.layerRows = true;
+    image.maxArrayLayers = 0x01020304u;
     image.optionalDescriptor = true;
     image.byElements = 4;
     image.byComponents = 1;
     image.emulatedCompare = 0x1a07u;
     image.table = 0;
     image.tableOperation = TableOperation::Unsupported;
+    image.targetMerge = true;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
@@ -425,6 +452,13 @@ void verifyResultRoundTrip() {
     require(ShaderDiskCache::DecodeResult(bytes, decoded), "an encoded result does not decode");
     requireSameResult(result, decoded, "result round trip");
     require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
+    auto memoized = result;
+    memoized.drawKeyMemo.words.store(std::make_shared<const std::vector<std::uint32_t>>(std::vector<std::uint32_t>{1u, 2u, 3u}));
+    std::vector<std::byte> memoizedBytes;
+    ShaderDiskCache::EncodeResult(memoized, memoizedBytes);
+    require(memoizedBytes == bytes, "the draw key memo was stored");
+    RecompileResult memoizedDecoded;
+    require(ShaderDiskCache::DecodeResult(memoizedBytes, memoizedDecoded) && !memoizedDecoded.drawKeyMemo.words.load(), "a decoded result has a draw key memo");
     for (std::size_t size = 0; size < bytes.size(); size += size < 256 ? 1 : 97) {
         RecompileResult partial;
         require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial), "a result truncated to " + std::to_string(size) + " bytes decodes");
@@ -508,6 +542,62 @@ std::vector<std::byte> packBytes(const std::vector<std::pair<std::vector<std::by
         at += entry.size();
     }
     return bytes;
+}
+
+void verifyPrebuiltPackOwnership(const std::filesystem::path& directory) {
+    using namespace ShaderRecompiler::ShaderDiskCache;
+    SampleRequest sample;
+    const auto key = sample.Key();
+    const auto variant = sampleVariant();
+    const auto path = directory / "ownership.pack";
+    require(WriteFileAtomically(path, packBytes({{key, EncodeEntry(key, variant)}})), "cannot write the ownership test pack");
+    CompiledVariant first, second;
+    PackLoadTimings timings;
+    const std::uint32_t* words = nullptr;
+    {
+        CachePack pack(path);
+        require(pack.Valid(), "the ownership test pack is invalid");
+        require(pack.Load(key, first, timings) == LoadStatus::Loaded, "cannot load the first packed variant");
+        require(pack.Load(key, second, timings) == LoadStatus::Loaded, "cannot load the second packed variant");
+        words = first.artifact.spirv.Words().data();
+        require(!first.artifact.spirv.empty() && words == second.artifact.spirv.Words().data(), "packed SPIR-V was copied instead of sharing its mapping");
+    }
+    requireSameVariant(variant, first, "packed variant outlives its pack");
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION region{};
+    require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "packed SPIR-V lost its mapping after pack destruction");
+#endif
+    auto edited = first.artifact.spirv;
+    edited[0] ^= 1u;
+    require(edited.Words().data() != words && edited.Words()[0] != first.artifact.spirv.Words()[0], "editing packed SPIR-V modified the shared mapping");
+    first = {};
+    requireSameVariant(variant, second, "last packed variant retains its mapping");
+    std::vector<std::byte> published;
+    require(ReadWholeFile(path, published) && published == packBytes({{key, EncodeEntry(key, variant)}}), "editing packed SPIR-V modified the cache file");
+    second = {};
+#ifdef _WIN32
+    require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.State == MEM_FREE, "the final packed variant did not release its mapping");
+#endif
+    const auto offset = sizeof(PackHeader) + sizeof(PackRecord);
+    published.insert(published.begin() + offset, std::byte{});
+    PackHeader header;
+    PackRecord record;
+    std::memcpy(&header, published.data(), sizeof(header));
+    std::memcpy(&record, published.data() + sizeof(header), sizeof(record));
+    ++header.fileBytes;
+    ++record.offset;
+    std::memcpy(published.data() + sizeof(header), &record, sizeof(record));
+    header.indexHash = ShaderRecompiler::HashBytes(std::span<const std::byte>(published).subspan(sizeof(header), sizeof(record)));
+    std::memcpy(published.data(), &header, sizeof(header));
+    require(WriteFileAtomically(path, published), "cannot publish an unaligned packed entry");
+    {
+        CachePack pack(path);
+        require(pack.Valid(), "an unaligned packed entry was rejected");
+        require(pack.Load(key, first, timings) == LoadStatus::Loaded && pack.Load(key, second, timings) == LoadStatus::Loaded, "an unaligned packed entry did not load");
+        require(first.artifact.spirv.Words().data() != second.artifact.spirv.Words().data(), "an unaligned packed module did not use aligned owned storage");
+    }
+    requireSameVariant(variant, first, "unaligned packed variant outlives its pack");
+    requireSameVariant(variant, second, "second unaligned packed variant outlives its pack");
 }
 
 void refreshIndexHash(std::vector<std::byte>& pack, std::size_t entries) {
@@ -764,6 +854,8 @@ void verifyKeySensitivity() {
     changes("exact robust loads", [](SampleRequest& sample) { sample.request.target.exactRobustLoads = true; });
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
+    changes("LDS lock fences", [](SampleRequest& sample) { sample.request.target.ldsLockFences = true; });
+    changes("mesh window buffers", [](SampleRequest& sample) { sample.request.target.meshWindowBuffer = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
@@ -897,14 +989,14 @@ int runLargeFileWrite() {
     } cleanup{directory};
     const auto space = std::filesystem::space(directory, error);
     if (error || space.available < size + (std::uintmax_t{1} << 30u)) {
-        std::cout << "skipping: not enough free disk space for a file of more than 2 GiB\n";
+        std::cout << "skipped, the host has not enough free disk space for a file of more than 2 GiB\n";
         return 77;
     }
     std::vector<std::byte> bytes;
     try {
         bytes.resize(size);
     } catch (const std::bad_alloc&) {
-        std::cout << "skipping: cannot allocate a buffer of more than 2 GiB\n";
+        std::cout << "skipped, the host cannot allocate a buffer of more than 2 GiB\n";
         return 77;
     }
     const std::array<std::size_t, 6> samples{0u, (std::size_t{1} << 30u) - 1u, std::size_t{1} << 30u, (std::size_t{2} << 30u) - 1u, std::size_t{2} << 30u, size - 1u};
@@ -998,6 +1090,13 @@ void verifyAtomicReplacement(const std::filesystem::path& directory) {
         std::vector<std::byte> bytes;
         require(ReadWholeFile(path, bytes) && bytes == original, "cache reader failed while the published entry retained its rename handle");
     }
+    if (PosixReplaceUnsupported(root)) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so an entry another reader holds open cannot be replaced there; skipping that case\n", root.string().c_str());
+        require(std::filesystem::remove(path), "cannot remove the cache entry");
+        require(std::filesystem::is_empty(root), "atomic replacement left a temporary file behind");
+        require(std::filesystem::remove(root), "cannot remove the empty replacement directory");
+        return;
+    }
 #endif
     {
         Reader old(path);
@@ -1035,6 +1134,12 @@ void verifyStore() {
 
     std::vector<std::byte> file;
     require(ReadWholeFile(path, file), "cannot read the entry back");
+#ifdef _WIN32
+    if (PosixReplaceUnsupported(path.parent_path())) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so the entry the cache has mapped cannot be replaced there; skipping the damaged-entry checks\n", path.parent_path().string().c_str());
+        return;
+    }
+#endif
     require(WriteFileAtomically(path, std::span(file).first(file.size() / 2)), "cannot truncate the entry");
     require(!ShaderDiskCache::Load(key, loaded), "a truncated entry loads");
     auto corrupt = file;
@@ -1070,6 +1175,12 @@ void verifyPersist() {
     auto detached = persisted->artifact.spirv;
     detached[0] ^= 1u;
     require(detached[0] != persisted->artifact.spirv[0], "changing a copied mapped module changed its owner");
+#ifdef _WIN32
+    if (PosixReplaceUnsupported(path.parent_path())) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so a mapped persisted entry cannot be replaced there; skipping that check\n", path.parent_path().string().c_str());
+        return;
+    }
+#endif
     require(WriteFileAtomically(path, std::vector<std::byte>(64, std::byte{0x5a})), "cannot replace the persisted entry");
     std::error_code error;
     std::filesystem::remove(path, error);
@@ -1307,6 +1418,10 @@ void verifyInvocationIsolation() {
         require(changed.cacheHit && first.variantId == changed.variantId, "buffer metadata changed the compiled variant");
         if ((descriptor[0] & 3u) == (original[0] & 3u) && (descriptor[1] & 0xffff0000u) == (original[1] & 0xffff0000u) && descriptor[3] == original[3] && (descriptor[0] != 0u || (descriptor[1] & 0xffffu) != 0u)) {
             require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
+        }
+        if (descriptor[2] == 0u) {
+            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
+            continue;
         }
         ComputeRequest fresh(false);
         fresh.userData = descriptor;
@@ -1955,7 +2070,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];
         const auto& b = right.descriptorSources[index];
-        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || (a.tableColumn.has_value() && (a.tableColumn->keyDomains != b.tableColumn->keyDomains || a.tableColumn->unkeyed != b.tableColumn->unkeyed || a.tableColumn->maxKey != b.tableColumn->maxKey))) return false;
+        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || a.requiredBlocks != b.requiredBlocks || (a.tableColumn.has_value() && (a.tableColumn->keyDomains != b.tableColumn->keyDomains || a.tableColumn->unkeyed != b.tableColumn->unkeyed || a.tableColumn->maxKey != b.tableColumn->maxKey))) return false;
         for (std::size_t dword = 0; dword < a.dwords.size(); ++dword) {
             if (!sameValue(a.dwords[dword], b.dwords[dword])) return false;
         }
@@ -2504,6 +2619,13 @@ int main(int argc, char** argv) {
             ShaderDiskCache::Shutdown();
             require(ShaderDiskCache::Writers() == 0, "the housekeeping writer did not stop");
             std::cout << "housekeeping version " << directory.filename().string() << '\n';
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--prebuilt-pack-ownership") {
+            const auto directory = std::filesystem::temp_directory_path() / ("aps5-pack-ownership-" + std::to_string(std::random_device{}()));
+            std::filesystem::create_directories(directory);
+            verifyPrebuiltPackOwnership(directory);
+            std::filesystem::remove_all(directory);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--resource-plan-codec") {

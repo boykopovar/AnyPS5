@@ -94,12 +94,17 @@ struct ImageResource {
     bool flatVolumeCompatible = true;
     bool singleMipPlaneBiasCompatible = false;
     bool volumeArraySampleCompatible = false;
+    bool adjustedSample = false;
     bool flatLineCompatible = true;
     bool flatVolumeLineCompatible = true;
     bool dimensionQueryOnly = true;
+    bool sampledOnly = true;
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
     bool remappedDepth1D = false;
+    bool layerRowsCompatible = true;
+    bool layerRows = false;
+    std::uint32_t maxArrayLayers = 0u;
     bool optionalDescriptor = false;
     std::uint32_t byElements = 0;
     std::uint32_t byComponents = 0;
@@ -149,6 +154,10 @@ inline bool FoldsTexelOffsets(const SamplerResource& sampler) {
 
 inline bool SamplesBaseLevelIfUnnormalized(const SamplerResource& sampler) {
     return (sampler.uses & (SamplerUseImplicitLod | SamplerUseGradient)) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient | SamplerUseNonZeroLod | SamplerUseOffset)) == 0u && !sampler.depthCompare;
+}
+
+inline bool MirrorsIfUnnormalized(const SamplerResource& sampler) {
+    return sampler.table == NoTable && !sampler.depthCompare && sampler.uses != 0u && ((sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u || SamplesBaseLevelIfUnnormalized(sampler));
 }
 
 struct SampledResourcePair {

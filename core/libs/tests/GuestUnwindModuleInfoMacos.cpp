@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "tests/GuestUnwindModuleInfoFixture.hpp"
@@ -5,8 +6,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info);
 
 struct GuestImageMeta {
     std::uint64_t version = 2;

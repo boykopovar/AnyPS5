@@ -56,6 +56,7 @@ public:
         append(key, request.context.vertex);
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
+        append(key, request.context.layerRowSamples);
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
@@ -65,6 +66,12 @@ public:
             hash *= 0x100000001b3ull;
         }
         return hash;
+    }
+
+    static void SealFeatureDigest(SpirvTarget& target) {
+        target.featureDigest = digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+        target.featureDigestSpans = featureSpans(target);
+        target.featureDigestSealed = true;
     }
 
     // A 64-bit hash of the code, two dwords per step; collisions are resolved by comparing the code.
@@ -90,6 +97,7 @@ private:
         append(key, request.context.vertex);
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
+        append(key, request.context.layerRowSamples);
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
@@ -210,6 +218,10 @@ private:
         append(key, value.linearCentroid);
         append(key, value.pixelKillEnable);
         append(key, value.depthExportEnable);
+        if (value.depthExportEnable) {
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMin));
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMax));
+        }
         append(key, value.sampleMaskExportEnable);
         append(key, value.earlyZ);
         append(key, value.executeOnNoop);
@@ -226,11 +238,25 @@ private:
         append(key, value.positionLocation);
         append(key, value.sampleLocations);
         append(key, value.targetOutputMode);
-        append(key, value.targetMerge.target);
-        append(key, value.targetMerge.mask);
-        append(key, value.targetMerge.samples);
-        append(key, value.targetMerge.depthStencilWrites);
-        append(key, value.targetMerge.depthStencilTests);
+        append(key, value.targetMerges.size());
+        for (const auto& merge : value.targetMerges) {
+            append(key, merge.target);
+            append(key, merge.mask);
+            append(key, merge.samples);
+            append(key, merge.depthStencilWrites);
+            append(key, merge.depthStencilTests);
+            if (!merge.blend.enabled) continue;
+            const auto& blend = merge.blend;
+            append(key, blend.snorm);
+            append(key, blend.colorSource);
+            append(key, blend.colorDestination);
+            append(key, blend.colorOperation);
+            append(key, blend.alphaSource);
+            append(key, blend.alphaDestination);
+            append(key, blend.alphaOperation);
+            append(key, blend.writeMask);
+            append(key, blend.constants);
+        }
         append(key, value.sampleOrder);
     }
 
@@ -283,7 +309,11 @@ private:
         append(key, value.maxEvaluationOutputComponents);
     }
 
-    static void appendFeatureDigest(std::vector<std::uint64_t>& key, std::span<const std::uint32_t> capabilities, std::span<const std::string_view> extensions) {
+    static std::array<std::uintptr_t, 4> featureSpans(const SpirvTarget& target) {
+        return {reinterpret_cast<std::uintptr_t>(target.supportedCapabilities.data()), target.supportedCapabilities.size(), reinterpret_cast<std::uintptr_t>(target.supportedExtensions.data()), target.supportedExtensions.size()};
+    }
+
+    static std::array<std::uint64_t, 2> digestFeatures(std::span<const std::uint32_t> capabilities, std::span<const std::string_view> extensions) {
         std::uint64_t low = 0xcbf29ce484222325ull;
         std::uint64_t high = 0x6a09e667f3bcc909ull;
         const auto mix = [&](std::uint64_t value) {
@@ -302,8 +332,13 @@ private:
                 mix(chunk);
             }
         }
-        key.push_back(low);
-        key.push_back(high);
+        return {low, high};
+    }
+
+    static void appendFeatureDigest(std::vector<std::uint64_t>& key, const SpirvTarget& target) {
+        const auto digest = target.featureDigestSealed && target.featureDigestSpans == featureSpans(target) ? target.featureDigest : digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+        key.push_back(digest[0]);
+        key.push_back(digest[1]);
     }
 
     static void append(std::vector<std::uint64_t>& key, const SpirvTarget& value) {
@@ -311,7 +346,7 @@ private:
         append(key, value.spirvVersion);
         append(key, value.subgroupSize);
         append(key, value.bdaAbiVersion);
-        appendFeatureDigest(key, value.supportedCapabilities, value.supportedExtensions);
+        appendFeatureDigest(key, value);
         append(key, value.fragmentShaderBarycentricEnabled);
         append(key, value.maxWorkgroupSize);
         append(key, value.maxWorkgroupInvocations);
@@ -320,12 +355,15 @@ private:
         append(key, value.tessellation);
         append(key, value.nonConstantImageOffsets);
         append(key, value.srgbDecodeFormats);
+        append(key, value.maxImageArrayLayers);
         append(key, value.narrowSubgroupClock);
+        append(key, value.fragmentBarycentricBuiltins);
         append(key, value.float64DenormPreserve);
         append(key, value.depthRangeRemap);
         append(key, value.registrationModules);
         append(key, value.registrationWordLimit);
         append(key, value.vertexSubgroups);
+        append(key, value.tessellationEvaluationSubgroups);
         append(key, value.float16DenormPreserve);
         append(key, value.spannedWaves);
         append(key, value.robustBufferAccess2);
@@ -337,6 +375,9 @@ private:
         append(key, value.largePixelFunctionLdsBuffer);
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
+        append(key, value.ldsLockFences);
+        append(key, value.meshWindowBuffer);
+        append(key, value.hostInterpolationFirst);
     }
 };
 
