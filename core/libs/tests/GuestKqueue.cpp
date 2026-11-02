@@ -31,6 +31,8 @@ static constexpr int GuestEperm = 1;
 static constexpr int GuestEnoent = 2;
 static constexpr int GuestEbadf = 9;
 static constexpr int GuestEinval = 22;
+static constexpr int GuestEspipe = 29;
+static constexpr int GuestEopnotsupp = 45;
 static constexpr int GuestEpipe = 32;
 static constexpr int GuestEagain = 35;
 static constexpr int SetStatusFlags = 4;
@@ -187,6 +189,30 @@ static void CreateAndClose() {
     Require(pipe_nid_postfix(pipe) == 0);
     RequireFailure(Poll(pipe[0], &event, 1), GuestEbadf);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
+static void SocketReplacesDescriptor() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd | EvOneshot, 0, 1, &marker)) == 0);
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(dup2_nid_postfix(pair[0], kq) == kq);
+    KernelEvent event{};
+    RequireFailure(Wait(kq, &event, 1), GuestEbadf);
+    Require(close_nid_postfix(kq) == 0);
+    const int watcher = kqueue_nid_postfix();
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(write_nid_postfix(pipe[1], "x", 1) == 1);
+    Require(Apply(watcher, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvAdd)) == 0);
+    Require(Poll(watcher, &event, 1) == 1);
+    Require(dup2_nid_postfix(pair[1], pipe[0]) == pipe[0]);
+    Require(Poll(watcher, &event, 1) == 0);
+    RequireFailure(Apply(watcher, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvDelete)), GuestEnoent);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(watcher) == 0);
 }
 
 static void Timers() {
@@ -1617,6 +1643,21 @@ static void StandardInput() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void KqueueDescriptorOperations() {
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    char byte = 0;
+    RequireFailure(static_cast<int>(read_nid_postfix(kq, &byte, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 1)), GuestEopnotsupp);
+    Require(read_nid_postfix(kq, &byte, 0) == 0);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 0)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(lseek_nid_postfix(kq, 0, 0)), GuestEspipe);
+    RequireFailure(fsync_nid_postfix(kq), GuestEinval);
+    RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
+    RequireFailure(flock_nid_postfix(kq, 1), GuestEopnotsupp);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "cleared-race") {
         ClearedKqueueKeepsConcurrentActivations();
@@ -1625,6 +1666,8 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    SocketReplacesDescriptor();
+    KqueueDescriptorOperations();
     Timers();
     TimerReadd();
     UnsupportedFilters();
