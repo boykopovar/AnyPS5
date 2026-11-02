@@ -175,6 +175,33 @@ int main() {
         Require(Holding(stencilPlane, 0x77u) == StencilBytes, "retiring the surface stored its stale stencil 0x3c over the guest's later write of 0x77");
         Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane the guest overwrote stored the stale stencil");
 
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x3cu)}) == PlaneTexels, "the draw writing stencil 0x3c before a guest write and a second draw did not cover the plane");
+        device->WaitIdle();
+        Fill(stencilPlane, 0x44u);
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x55u)}) == PlaneTexels, "the draw writing stencil 0x55 after the guest write did not cover the plane");
+        device->WaitIdle();
+        AgcDriver::Graphics::RetireDepthSurfaces(device->graphicsContext().device, reinterpret_cast<std::uintptr_t>(depthPlane), DepthBytes);
+        device->WaitIdle();
+        Require(Holding(stencilPlane, 0x55u) == StencilBytes, "retiring the surface kept the guest's 0x44 over the stencil 0x55 a later draw wrote");
+
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x3cu)}) == PlaneTexels, "the draw writing stencil 0x3c before a guest write and a read did not cover the plane");
+        device->WaitIdle();
+        Fill(stencilPlane, 0x77u);
+        Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane the guest overwrote after the last draw stored the stale stencil");
+        device->WaitIdle();
+        Require(Holding(stencilPlane, 0x77u) == StencilBytes, "a read of the stencil plane replaced the guest's write after the last draw");
+
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x3cu)}) == PlaneTexels, "the draw writing stencil 0x3c before a guest write, a second draw and a read did not cover the plane");
+        device->WaitIdle();
+        Fill(stencilPlane, 0x66u);
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x55u)}) == PlaneTexels, "the draw writing stencil 0x55 after the guest write and before a read did not cover the plane");
+        device->WaitIdle();
+        Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane a draw wrote after the guest's write stored nothing");
+        device->WaitIdle();
+        Require(Holding(stencilPlane, 0x55u) == StencilBytes, "a read of the stencil plane kept the guest's 0x66 over the stencil 0x55 a later draw wrote");
+        AgcDriver::Graphics::RetireDepthSurfaces(device->graphicsContext().device, reinterpret_cast<std::uintptr_t>(depthPlane), DepthBytes);
+        device->WaitIdle();
+
         if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(stencilBase, StencilBytes)) {
             std::puts("guest memory is not write-watched here: a guest write into the stencil plane is not exercised");
         } else {
