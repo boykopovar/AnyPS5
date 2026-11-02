@@ -1,8 +1,6 @@
 #ifndef CORE_LIBS_PRX_LIBSCEJXR_SRC_GUESTHEAP_H
 #define CORE_LIBS_PRX_LIBSCEJXR_SRC_GUESTHEAP_H
 
-/* Force-included into the pinned jxrlib JXRGlue.c built for libSceJxr, so its PKAlloc,
-   PKFree, PKAllocAligned and PKFreeAligned allocate from the guest heap. */
 #include <stddef.h>
 #include <stdlib.h>
 

@@ -3,8 +3,6 @@ configure_jxr_native(jxr_lookup_native)
 target_include_directories(jxr_lookup_native PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(jxr_lookup_native PRIVATE jxr)
 add_library(libSceJxr SHARED EXCLUDE_FROM_ALL Export.cpp src/GlueHelpers.cpp src/PixelFormatLookup.cpp src/GuidExports.cpp)
-# Pinned jxrlib JXRGlue.c with its allocator routed to the guest heap, plus the C bridge
-# GlueHelpers.cpp adapts; both sit in one archive ahead of jxr so this copy is the one linked.
 add_library(jxr_glue_guest STATIC ${JXR_SOURCE_DIR}/jxrgluelib/JXRGlue.c src/NativeGlue.c)
 configure_jxr_native(jxr_glue_guest)
 set_source_files_properties(${JXR_SOURCE_DIR}/jxrgluelib/JXRGlue.c TARGET_DIRECTORY jxr_glue_guest

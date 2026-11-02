@@ -6,10 +6,6 @@
 #include <stdexcept>
 #include <string>
 
-// Thin guest adapters over the pinned jxrlib built from 3rdparty/jxrlib (see NativeGlue.c and the
-// jxr_glue_guest target): they check arguments jxrlib would fault on, map its IID values to the
-// module's exported IID objects and route its allocator to the guest heap.
-
 extern "C" {
 const void* JxrHashLookup_nid_no_patch(std::uint8_t hash);
 std::int64_t JxrEncodeIid_nid_no_patch(const char* extension, std::uint32_t* value);
