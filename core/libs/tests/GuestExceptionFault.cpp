@@ -1,5 +1,7 @@
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <atomic>
 #include <climits>
 #include <cstddef>
@@ -22,12 +24,6 @@
 
 extern char** environ;
 #endif
-
-extern "C" {
-int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler);
-int APS5_VABI sceKernelRemoveExceptionHandler(int signum);
-[[noreturn]] void APS5_VABI longjmp_nid_postfix(void* buffer, int value);
-}
 
 struct RegisterState {
     std::uint8_t vectorIn[32];
@@ -256,7 +252,7 @@ static std::uint64_t observedErr = 0;
 static std::atomic<std::thread::id> handlerThread;
 static RegisterState* registerState = nullptr;
 static void* unprotectPage = nullptr;
-alignas(16) static std::uint8_t jumpBuffer[128];
+alignas(16) static std::uint64_t jumpBuffer[16];
 
 static void MakeWritable(void* page) {
 #ifdef _WIN32

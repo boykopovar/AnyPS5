@@ -1359,6 +1359,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_amm_pool PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+
     add_test_executable(guest_exception_fault_tests ${LIBS_INCLUDE_DIR}/tests/GuestExceptionFault.cpp)
     target_include_directories(guest_exception_fault_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_exception_fault_tests PRIVATE libkernel libc)
