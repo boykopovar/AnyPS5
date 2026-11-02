@@ -747,8 +747,18 @@ void RunGuestTextureResourceTests() {
     Require(!ArrayLayersServeView(twoSlices, layered(TextureDimension::k2D, 0, 1)), "a 2D view of a later layer must not be served by the array's first layer");
     Require(ArrayLayersServeView(layered(TextureDimension::k2D, 0), layered(TextureDimension::k2D, 0)), "a 2D texture must view the same 2D surface");
     Require(!ArrayLayersServeView(layered(TextureDimension::k2D, 0), twoSlices), "a 2D surface must not serve a 2D array view");
+    Require(ArrayLayersServeView(layered(TextureDimension::k2D, 0), layered(TextureDimension::k2DArray, 0)), "a 2D surface must serve a one-slice 2D array view");
+    Require(!ArrayLayersServeView(layered(TextureDimension::k2D, 0), layered(TextureDimension::k2DArray, 1, 1)), "a 2D surface must not serve a 2D array view of a later slice");
+    Require(!ArrayLayersServeView(layered(TextureDimension::k2D, 0), layered(TextureDimension::k2DArray, 0, 1)), "a 2D surface must not serve a one-slice 2D array view whose base slice is not 0");
+    Require(!ArrayLayersServeView(layered(TextureDimension::k2D, 0), layered(TextureDimension::k1DArray, 0)), "a 2D surface must not serve a one-slice 1D array view");
     Require(!ArrayLayersServeView(layered(TextureDimension::k3D, 1), layered(TextureDimension::k2D, 0)), "a 3D surface's first slice must not serve a 2D texture");
     Require(!ArrayLayersServeView(layered(TextureDimension::kCube, 5), layered(TextureDimension::k2D, 0)), "a cube's first face must not serve a 2D texture");
+    Require(StorageDimension(layered(TextureDimension::k2DArray, 0)) == TextureDimension::k2D, "a one-slice 2D array must store as its 2D surface");
+    Require(StorageDimension(layered(TextureDimension::k2DArray, 1)) == TextureDimension::k2DArray, "a 2D array of two slices must store as a 2D array");
+    Require(StorageDimension(layered(TextureDimension::k2DArray, 1, 1)) == TextureDimension::k2DArray, "a one-slice view of a later slice must store as a 2D array");
+    Require(StorageDimension(layered(TextureDimension::k2DArray, 0, 1)) == TextureDimension::k2DArray, "a 2D array whose base slice is not 0 must store as a 2D array");
+    Require(StorageDimension(layered(TextureDimension::k1DArray, 0)) == TextureDimension::k1DArray, "a one-slice 1D array must store as a 1D array");
+    Require(StorageDimension(layered(TextureDimension::k2D, 0)) == TextureDimension::k2D, "a 2D surface must store as a 2D surface");
 
     Fields streamed = base;
     streamed.minLodWarn = 0xabc;
