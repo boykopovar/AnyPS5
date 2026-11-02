@@ -12,8 +12,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -93,7 +95,7 @@ const SystemInteger* FindSystemInteger(const int* name) {
 }
 
 bool IsLeafMib(const int* name) {
-    return FindSystemInteger(name) != nullptr || (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5 || name[1] == 7)) || (name[0] == 1 && (name[1] == 21 || name[1] == 37 || name[1] == 50));
+    return FindSystemInteger(name) != nullptr || (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5 || name[1] == 7)) || (name[0] == 1 && (name[1] == 21 || name[1] == 37 || name[1] == 50)) || (name[0] == 2 && name[1] == 2);
 }
 
 KernelTimeval BootTime() {
@@ -105,6 +107,32 @@ KernelTimeval BootTime() {
         return KernelTimeval{nanos / 1000000000LL, nanos % 1000000000LL / 1000LL};
     }();
     return bootTime;
+}
+
+struct GuestLoadAverage {
+    std::uint32_t ldavg[3];
+    std::int64_t fscale;
+};
+static_assert(sizeof(GuestLoadAverage) == 24);
+
+std::uint32_t ScaledLoad(double average, std::int64_t fscale) {
+    const auto scaled = average * static_cast<double>(fscale) + 0.5;
+    if (!(scaled > 0.0)) return 0;
+    if (scaled >= static_cast<double>(std::numeric_limits<std::uint32_t>::max())) return std::numeric_limits<std::uint32_t>::max();
+    return static_cast<std::uint32_t>(scaled);
+}
+
+GuestLoadAverage HostLoadAverage() {
+    GuestLoadAverage load;
+    std::memset(&load, 0, sizeof(load));
+    load.fscale = 1 << 11;
+#ifndef _WIN32
+    double averages[3]{};
+    if (getloadavg(averages, 3) == 3) {
+        for (int index = 0; index < 3; ++index) load.ldavg[index] = ScaledLoad(averages[index], load.fscale);
+    }
+#endif
+    return load;
 }
 
 constexpr std::size_t MaximumSysctlName = 1024;
@@ -177,6 +205,15 @@ struct GuestKinfoProc {
 };
 static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1088);
 
+GuestKinfoProc GuestProcessRecord() {
+    GuestKinfoProc process{};
+    process.structSize = sizeof(process);
+    process.pid = getpid_nid_postfix();
+    process.parentPid = getppid_nid_postfix();
+    std::memcpy(process.command, "eboot.bin", sizeof("eboot.bin"));
+    return process;
+}
+
 std::vector<GuestVmEntry> GuestVmEntries() {
     std::vector<GuestVmEntry> entries;
     std::uintptr_t start = 0;
@@ -197,6 +234,32 @@ std::vector<GuestVmEntry> GuestVmEntries() {
 bool IsUnansweredMib(const int* name, std::uint32_t nameLength) {
     if (nameLength != 2) return false;
     return (name[0] == 1 && (name[1] == 6 || name[1] == 7 || name[1] == 12 || name[1] == 27 || name[1] == 32)) || (name[0] == 6 && (name[1] == 4 || name[1] == 11));
+}
+
+struct SysconfConstant {
+    int name;
+    std::int64_t value;
+};
+
+constexpr SysconfConstant kSysconfConstants[] = {
+    {6, 1}, {7, -1}, {8, 200112}, {9, 99}, {10, 2048}, {11, 99}, {12, 1000}, {13, 0}, {14, 32},
+    {15, 2048}, {16, 255}, {17, 199212}, {18, 200112}, {19, -1}, {20, 1}, {21, -1}, {22, 200112},
+    {23, -1}, {24, -1}, {25, 200112}, {28, 200112}, {29, 200112}, {30, -1}, {31, 200112}, {32, 200112},
+    {33, 200112}, {34, -1}, {35, 200112}, {36, 200112}, {37, 200112}, {38, 200112}, {39, 200112},
+    {40, -1}, {41, 200112}, {42, 16}, {43, 1024}, {44, 0}, {45, 2147483647}, {46, -1}, {48, 62},
+    {49, 30}, {50, 2147483647}, {51, 128}, {52, 32}, {59, -1}, {60, -1}, {61, -1}, {62, -1}, {63, -1},
+    {64, -1}, {65, 200112}, {66, 200112}, {67, -1}, {68, 200112}, {74, 200112}, {75, 64}, {76, 200112},
+    {77, 1}, {78, 1}, {79, 200112}, {80, 200112}, {81, -1}, {82, 200112}, {83, 200112}, {84, 200112},
+    {85, 4}, {86, 256}, {87, 200112}, {88, 200112}, {89, 200112}, {90, -1}, {91, -1}, {93, 16384},
+    {94, -1}, {95, 200112}, {96, 200112}, {97, -1}, {101, 255}, {102, -1}, {103, -1}, {104, -1},
+    {105, 1}, {106, -1}, {107, 64}, {108, -1}, {109, -1}, {110, -1}, {111, -1}, {112, -1}, {113, -1},
+    {114, -1}, {115, -1}, {118, 200112}, {119, 200112}, {120, 32}, {122, 8},
+};
+
+const SysconfConstant* FindSysconfConstant(int name) {
+    const auto* end = std::end(kSysconfConstants);
+    const auto* entry = std::lower_bound(std::begin(kSysconfConstants), end, name, [](const SysconfConstant& constant, int key) { return constant.name < key; });
+    return entry != end && entry->name == name ? entry : nullptr;
 }
 
 bool IsUnansweredName(const char* name) {
@@ -293,9 +356,18 @@ std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
 #endif
             break;
         }
-        default:
-            *__error_nid_postfix() = 22;
+        case 27:
+            *__error_nid_postfix() = 2;
             return -1;
+        default: {
+            const SysconfConstant* constant = FindSysconfConstant(name);
+            if (!constant) {
+                *__error_nid_postfix() = 22;
+                return -1;
+            }
+            *__error_nid_postfix() = saved;
+            return constant->value;
+        }
     }
     if (result <= 0) { *__error_nid_postfix() = 5; return -1; }
     *__error_nid_postfix() = saved;
@@ -350,6 +422,14 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         const std::uint64_t physmem = static_cast<std::uint64_t>(pages) * PS5_PAGE_SIZE;
         return CopyOut(&physmem, sizeof(physmem), oldValue, oldLength);
     }
+    if (nameLength == 2 && name[0] == 2 && name[1] == 2) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        const GuestLoadAverage load = HostLoadAverage();
+        return CopyOut(&load, sizeof(load), oldValue, oldLength);
+    }
     if (nameLength == 2) {
         if (const auto* entry = FindSystemString(name)) {
             if (newValue != nullptr) {
@@ -383,6 +463,18 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         static constexpr char path[] = "/app0/eboot.bin";
         return CopyOut(path, sizeof(path), oldValue, oldLength);
     }
+    if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 8) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        if (nameLength > 4) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+        const GuestKinfoProc process = GuestProcessRecord();
+        return CopyOut(&process, sizeof(process), oldValue, oldLength);
+    }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 1) {
         if (newValue != nullptr) {
             *__error_nid_postfix() = 1;
@@ -396,11 +488,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 3;
             return -1;
         }
-        GuestKinfoProc process{};
-        process.structSize = sizeof(process);
-        process.pid = name[3];
-        process.parentPid = getppid_nid_postfix();
-        std::memcpy(process.command, "eboot.bin", sizeof("eboot.bin"));
+        const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
     }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 35) {
@@ -517,6 +605,10 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         static constexpr int mib[] = {1, 21};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
+    if (std::strcmp(name, "vm.loadavg") == 0) {
+        static constexpr int mib[] = {2, 2};
+        return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
+    }
     if (std::strcmp(name, "kern.arandom") == 0) {
         static constexpr int mib[] = {1, 37};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
@@ -609,9 +701,13 @@ int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* 
     if (version == nullptr) {
         return 0;
     }
-    std::memset(version->versionString, 0, sizeof(version->versionString));
-    std::memcpy(version->versionString, "01.000.000", sizeof("01.000.000"));
-    version->version = 0x01000000;
+    char versionString[sizeof(version->versionString)] = {};
+    std::memcpy(versionString, "01.000.000", sizeof("01.000.000"));
+    constexpr std::uint32_t packedVersion = 0x01000000;
+    if (!GuestCopyOut_nid_no_patch(version->versionString, versionString, sizeof(versionString)) ||
+        !GuestCopyOut_nid_no_patch(&version->version, &packedVersion, sizeof(packedVersion))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -619,8 +715,11 @@ int APS5_VABI sceKernelGetSystemExVersion(char* first, char* second) {
     if (first == nullptr || second == nullptr) {
         return 22;
     }
-    *first = '\0';
-    *second = '\0';
+    constexpr char zero = '\0';
+    if (!GuestCopyOut_nid_no_patch(first, &zero, sizeof(zero)) ||
+        !GuestCopyOut_nid_no_patch(second, &zero, sizeof(zero))) {
+        return 14;
+    }
     return 0;
 }
 
@@ -628,7 +727,10 @@ int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version) {
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    *version = '\0';
+    constexpr char zero = '\0';
+    if (!GuestCopyOut_nid_no_patch(version, &zero, sizeof(zero))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -636,7 +738,10 @@ int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* versio
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    *version = 0;
+    constexpr std::uint32_t zero = 0;
+    if (!GuestCopyOut_nid_no_patch(version, &zero, sizeof(zero))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -700,23 +805,29 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
         {"kern.proc.pathname", {1, 14, 12}, 3},
         {"kern.ps_strings", {1, 32}, 2},
         {"kern.rng_pseudo", {1, 50}, 2},
+        {"vm.loadavg", {2, 2}, 2},
     };
     if (name == nullptr || size == nullptr) throw std::invalid_argument(std::string(__func__) + ": null name or size");
-    const std::size_t nameLength = strnlen(name, MaximumSysctlName);
-    if (nameLength == MaximumSysctlName) {
-        *__error_nid_postfix() = 63;
+    std::string guestName;
+    if (const int error = CopyGuestPath_nid_no_patch(name, guestName)) {
+        *__error_nid_postfix() = error;
         return -1;
     }
+    name = guestName.c_str();
     const std::string trimmed = WithoutTrailingDot(name);
     name = trimmed.c_str();
-    if (nameLength == 0 || std::strcmp(name, "hw.cacheline_size") == 0 || std::strcmp(name, "hw.usermem") == 0 || std::strcmp(name, "machdep.cacheline_size") == 0) {
+    if (trimmed.empty() || std::strcmp(name, "hw.cacheline_size") == 0 || std::strcmp(name, "hw.usermem") == 0 || std::strcmp(name, "machdep.cacheline_size") == 0) {
         *__error_nid_postfix() = 2;
         return -1;
     }
+    std::size_t count = 0;
+    if (!GuestCopyIn_nid_no_patch(&count, size, sizeof(count))) return Fault();
     const auto copyMib = [&](const int* found, std::size_t length) {
-        std::size_t bytes = *size * sizeof(int);
+        std::size_t bytes = count * sizeof(int);
         const int result = CopyOut(found, length * sizeof(int), mib, &bytes);
-        *size = bytes / sizeof(int);
+        if (result != 0 && *__error_nid_postfix() != 12) return result;
+        count = bytes / sizeof(int);
+        if (!GuestCopyOut_nid_no_patch(size, &count, sizeof(count))) return Fault();
         return result;
     };
     if (const int node = TopLevelNode(trimmed); node >= 0) return copyMib(&node, 1);

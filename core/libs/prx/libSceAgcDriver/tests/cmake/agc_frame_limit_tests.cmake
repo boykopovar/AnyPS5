@@ -1,0 +1,10 @@
+add_test_executable(agc_frame_limit_tests EXCLUDE_FROM_ALL tests/FrameLimit.cpp)
+target_include_directories(agc_frame_limit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+set_target_properties(agc_frame_limit_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_host_test_executable(agc_frame_limit_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_frame_limit_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_frame_limit COMMAND agc_frame_limit_tests)
+    set_tests_properties(agc_frame_limit PROPERTIES TIMEOUT 30)
+endif()
