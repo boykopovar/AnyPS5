@@ -11,11 +11,21 @@
 #include <random>
 #include <string>
 #include <string_view>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
 constexpr int GuestEperm = 1;
 constexpr int GuestEsrch = 3;
+constexpr int GuestEfault = 14;
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -47,6 +57,8 @@ void CheckAuthInfo() {
     } info;
     *__error_nid_postfix() = 0;
     Require(get_authinfo_nid_postfix(0, nullptr) == -1 && *__error_nid_postfix() == GuestEperm, "a null result must fail with EPERM");
+    Require(get_authinfo_nid_postfix(0, reinterpret_cast<KernelAuthInfo*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault,
+            "an unwritable store must fail with EFAULT");
     std::memset(&info, 0x5a, sizeof(info));
     *__error_nid_postfix() = 0;
     Require(get_authinfo_nid_postfix(getpid_nid_postfix() + 1, &info.value) == -1 && *__error_nid_postfix() == GuestEsrch,
@@ -100,11 +112,14 @@ int main(int argc, char** argv) {
         file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << "CUSA00000" << std::string("\0\0\0", 3);
     }
 #ifdef _WIN32
-    const std::string command = "\"cd /d \"" + directory.string() + "\" && \"" + argv[0] + "\" ps4-child\"";
+    std::wstring executable(32768, L'\0');
+    executable.resize(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
+    const std::wstring command = L"\"cd /d \"" + directory.wstring() + L"\" && \"" + executable + L"\" ps4-child\"";
+    const int status = _wsystem(command.c_str());
 #else
     const std::string command = "cd \"" + directory.string() + "\" && \"" + argv[0] + "\" ps4-child";
-#endif
     const int status = std::system(command.c_str());
+#endif
     std::filesystem::remove_all(directory);
     Require(status == 0, "the PS4 child process must succeed");
     return 0;

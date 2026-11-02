@@ -62,6 +62,75 @@ def log():
 
 
 class AbSplitTests(unittest.TestCase):
+    def test_noise_uses_only_consecutive_phase_indices(self):
+        for indices, expected in (((0, 1, 2), 30.0), ((0, 3, 4), 20.0),
+                                  ((0, 1, 4), 40.0), ((0, 3, 6), None),
+                                  ((10, 11, 12), 30.0)):
+            with self.subTest(indices=indices):
+                phases = [{"kind": kind, "index": index}
+                          for kind, index in zip(("A", "B", "A"), indices)]
+                result = ab_split.noise([100.0, 140.0, 120.0], phases)
+                if expected is None:
+                    self.assertIsNone(result)
+                else:
+                    self.assertEqual(result, {"mean": expected, "se": None, "sd": None, "n": 1})
+
+    def test_gaps_leave_phase_means_available_without_a_noise_estimate(self):
+        lines = [line.replace("phase B 1 ", "phase B 3 ")
+                 .replace("phase A 2 ", "phase A 6 ")
+                 .replace("phase B 3 begins at present 220", "phase B 7 begins at present 220")
+                 for line in log()]
+        result = ab_split.split(lines)
+        busy = next(row for row in result["metrics"] if row["metric"] == "GPU busy ms/frame")
+        self.assertEqual((busy["a"], busy["b"], busy["change"]), (105.0, 130.0, 25.0))
+        self.assertIsNone(busy["noise"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "gaps.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            for flags in ([], ["--json"]):
+                with self.subTest(flags=flags):
+                    run = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), *flags],
+                                         capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    if flags:
+                        self.assertTrue(all(row["noise"] is None for row in json.loads(run.stdout)["metrics"]))
+                    else:
+                        self.assertNotIn("(n 1)", run.stdout)
+
+    def test_concatenated_runs_cannot_mix_phase_statistics(self):
+        lines = log() + log()
+        with self.assertRaisesRegex(ValueError, "multiple A/B runs"):
+            ab_split.split(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mixed.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), "--json"],
+                                    capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("multiple A/B runs", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_concatenated_runs_without_a_second_header_are_refused(self):
+        lines = log() + [line for line in log() if not line.startswith("[ab] in-run A/B:")]
+        with self.assertRaisesRegex(ValueError, "phase index restarts"):
+            ab_split.split(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "headerless.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), "--json"],
+                                    capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("phase index restarts", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_partial_capture_starting_at_a_later_phase_is_accepted(self):
+        lines = [line for line in log() if not line.startswith("[ab] in-run A/B:")]
+        start = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 begins"))
+        result = ab_split.split(lines[start:])
+        self.assertEqual([phase["index"] for phase in result["phases"]], [1, 2, 3])
+
     def test_settled_phase_requires_matching_kind_and_index(self):
         lines = [
             "[ab] phase A 0 begins at present 100 (t 10.000 s)\n",
@@ -190,6 +259,20 @@ class AbSplitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-finite"):
             ab_split.split(lines)
 
+    def test_invalid_phase_chronology_is_rejected(self):
+        cases = (
+            [
+                "[ab] phase A 0 begins at present 100 (t 10.000 s)",
+                "[ab] phase A 0 settled at present 90 (t 11.000 s)",
+            ],
+            [
+                "[ab] phase A 0 begins at present 100 (t 10.000 s)",
+                "[ab] phase A 0 settled at present 110 (t 9.000 s)",
+            ],
+        )
 
+        for lines in cases:
+            with self.subTest(lines=lines), self.assertRaises(ValueError):
+                ab_split.read_log(lines)
 if __name__ == "__main__":
     unittest.main()

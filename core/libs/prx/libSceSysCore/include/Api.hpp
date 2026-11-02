@@ -82,4 +82,12 @@ int APS5_VABI sceApplictionGetStateForDebugger();
 int APS5_VABI sceSysCoreGetEventCount();
 int APS5_VABI sceSysCoreReceiveEvent();
 
+int APS5_VABI sceApplicationExitSpawn3();
+int APS5_VABI sceApplicationKickCoredump3();
+int APS5_VABI sceApplicationNotifyUnmountForExitSpawn();
+int APS5_VABI sceApplicationSendResultOfDebuggerRestoreRequest();
+int APS5_VABI sceApplicationSendResultOfDebuggerSaveRequest();
+int APS5_VABI sceApplicationSwitchToPprNativeMode();
+int APS5_VABI sceApplicationSwitchToPprNativeMode2();
+
 }

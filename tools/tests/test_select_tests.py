@@ -32,6 +32,19 @@ PROJECT = {
 }
 
 
+def excessively_nested_json(test):
+    depth = sys.getrecursionlimit() + 64
+    while True:
+        text = "[" * depth + "]" * depth
+        try:
+            json.loads(text)
+        except RecursionError:
+            return text
+        depth *= 2
+        if depth > 10_000_000:
+            test.fail("the JSON decoder accepts every probed nesting depth")
+
+
 @unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
 class SelectFixture(unittest.TestCase):
     @classmethod
@@ -134,6 +147,21 @@ class SelectGraphStateTests(SelectFixture):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("invalid test graph", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse((self.build / "select.tests").exists())
+        self.assertFalse((self.build / "select.ninja").exists())
+
+    def test_excessively_nested_graph_is_reported_without_stale_selection(self):
+        self.select("alpha/alpha.h")
+        self.assertTrue((self.build / "select.tests").exists())
+        graph = self.build / "nested.json"
+        graph.write_text(excessively_nested_json(self), encoding="utf-8")
+        changed = self.build / "changed nested.txt"
+        changed.write_text("alpha/alpha.h\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, "-I", str(TOOL), "select", str(self.build), str(graph), str(changed)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertNotIn("invalid test graph", result.stderr)
         self.assertFalse((self.build / "select.tests").exists())
         self.assertFalse((self.build / "select.ninja").exists())
 
@@ -383,10 +411,42 @@ class NonAsciiDirectoryTests(unittest.TestCase):
         self.assertIn("input: alpha/alpha.h", reasons["alpha"])
         self.assertIn("input: alpha/alpha.h", reasons["alpha_data"])
 
+    @unittest.skipUnless(os.name == "nt", "the ANSI code page exists only on Windows")
+    def test_dependency_written_by_an_ansi_compiler_is_decoded(self):
+        path = r"C:\ação\source\alpha\alpha.h"
+        try:
+            ansi = path.encode("mbcs", "strict")
+        except UnicodeEncodeError:
+            self.skipTest("the ANSI code page cannot represent the fixture directory")
+        self.assertEqual(select_tests.dependency_path(ansi, "."), path)
+        self.assertEqual(select_tests.dependency_path(path.encode("utf-8"), "."), path)
+
+    @unittest.skipUnless(os.name == "nt", "the ANSI code page exists only on Windows")
+    def test_ansi_dependency_that_is_also_valid_utf8_is_decoded_as_the_file_on_disk(self):
+        name = "Ã©"
+        try:
+            ansi = name.encode("mbcs", "strict")
+            utf8 = ansi.decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            self.skipTest("the ANSI code page does not make the fixture directory valid UTF-8")
+        with tempfile.TemporaryDirectory() as directory:
+            header = Path(directory, name, "alpha.h")
+            try:
+                recorded = str(header).encode("mbcs", "strict")
+            except UnicodeEncodeError:
+                self.skipTest("the ANSI code page cannot represent the temporary directory")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), str(Path(directory, utf8, "alpha.h")))
+            header.parent.mkdir()
+            header.write_text("", encoding="utf-8")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), str(header))
+            relative = os.path.join("..", name, "alpha.h")
+            self.assertEqual(select_tests.dependency_path(relative.encode("mbcs"), os.path.join(directory, "build")),
+                             relative)
+
 
 class BuildErrorTests(unittest.TestCase):
     def run_tool(self, *args):
-        return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, text=True, timeout=60)
+        return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, encoding="utf-8", timeout=60)
 
     def test_explain_rejects_malformed_saved_graph_without_a_traceback(self):
         graphs = (
@@ -410,6 +470,27 @@ class BuildErrorTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn("invalid test graph", result.stderr)
                     self.assertNotIn("Traceback", result.stderr)
+
+    def test_explain_rejects_excessively_nested_saved_graph_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = Path(directory) / "graph.json"
+            changed = Path(directory) / "changed.txt"
+            graph.write_text(excessively_nested_json(self), encoding="utf-8")
+            changed.write_text("src/unit.cpp\n", encoding="utf-8")
+            result = self.run_tool("explain", graph, changed)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertNotIn("invalid test graph", result.stderr)
+
+    def test_a_recursion_error_outside_the_graph_parser_is_not_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = Path(directory) / "graph.json"
+            changed = Path(directory) / "changed.txt"
+            graph.write_text(json.dumps({"tests": {}, "closures": {}}), encoding="utf-8")
+            changed.write_text("src/unit.cpp" + chr(10), encoding="utf-8")
+            with mock.patch.object(select_tests, "select", side_effect=RecursionError("unrelated")):
+                with self.assertRaises(RecursionError):
+                    select_tests.main(["explain", str(graph), str(changed)])
 
     def test_missing_build_directory_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -676,7 +757,7 @@ class GraphClosureTests(unittest.TestCase):
             changed = root / "changed.txt"
             changed.write_text("src/unit.cpp\n", encoding="utf-8")
             result = subprocess.run([sys.executable, str(Path(select_tests.__file__)), "explain", str(path), str(changed)],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, encoding="utf-8", timeout=10)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("unit", result.stderr)
             self.assertIn("closure", result.stderr)

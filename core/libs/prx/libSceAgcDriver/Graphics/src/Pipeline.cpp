@@ -340,6 +340,8 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, identity.low);
         appendKey(key, identity.high);
         appendKey(key, shader.pushConstantOffset);
+        appendKey(key, state.meshLayerBase);
+        appendKey(key, state.meshLayerCount);
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
             for (const auto& binding : shader.program->bindings) {
@@ -509,7 +511,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             stages[i].module = _modules[i];
             stages[i].pName = "main";
             if (shaders[i].stage == ShaderRecompiler::ShaderStage::Mesh && context.meshWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &meshSubgroup;
-            specializations.emplace_back(shader);
+            specializations.emplace_back(shader, state.meshLayerBase, state.meshLayerCount);
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {
@@ -679,10 +681,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         std::vector<VkPipelineColorBlendAttachmentState> secondChannels(state.blends.begin(), state.blends.end());
         for (const auto& merged : state.colors) {
             if (merged.partialWriteMask != UnclampedBlendMask) continue;
-            for (auto* channels : {&firstChannels, &secondChannels}) {
-                channels->at(merged.exportIndex).blendEnable = VK_FALSE;
-                channels->at(merged.exportIndex).colorWriteMask = 0;
-            }
+            for (auto* channels : {&firstChannels, &secondChannels}) channels->at(merged.exportIndex) = {};
         }
         if (alternateAlpha) {
             const auto keepsStencil = [](const VkStencilOpState& face) { return face.writeMask == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
@@ -1019,6 +1018,8 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         // Where the stage's push constants sit in the block (AssemblePushConstants).
         append(key, shader.pushConstantOffset);
     }
+    append(key, state.meshLayerBase);
+    append(key, state.meshLayerCount);
     append(key, PushConstantStages(shaders));
     append(key, input.bindings.size());
     for (const auto& binding : input.bindings) {

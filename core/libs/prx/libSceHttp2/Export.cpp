@@ -76,11 +76,11 @@ static bool HasSettings(const Http2Handle& handle) {
 }
 
 template<class TUpdate>
-static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false) {
+static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false, bool contextHasSettings = false) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindAnyHandle(id);
     if (!handle) return ERROR_INVALID_ID;
-    if (!HasSettings(*handle)) {
+    if (!HasSettings(*handle) && !(contextHasSettings && handle->kind == Http2Kind::Context)) {
         if (otherKindsAreInvalid) return ERROR_INVALID_ID;
         NotImplemented_nid_no_patch(function);
     }
@@ -254,7 +254,7 @@ int APS5_VABI sceHttp2SetConnectTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SetInflateGZIPEnabled(int id, int enable) {
-    return Update(id, __func__, [&](auto&) { if (enable != 0) NotImplemented_nid_no_patch("sceHttp2SetInflateGZIPEnabled"); });
+    return Update(id, __func__, [&](auto& settings) { settings.inflateGzip = enable != 0; });
 }
 
 int APS5_VABI sceHttp2SetRecvTimeOut(int id, uint32_t usec) {
@@ -301,14 +301,14 @@ int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t ssl_flags) {
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslDisableOption");
         settings.verifyFlags &= ~ssl_flags;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslEnableOption");
         settings.verifyFlags |= ssl_flags;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
@@ -382,8 +382,15 @@ int APS5_VABI sceHttp2SetRequestNoContentLength(int id) {
     return Update(id, __func__, [&](auto& settings) { settings.noContentLength = true; });
 }
 
+extern "C" void Http2SetLookupHook_nid_no_patch(Http2::LookupHook hook) {
+    Http2::LookupHookSlot().store(hook, std::memory_order_release);
+}
+
 int APS5_VABI sceHttp2SetResolveRetry(int id, int32_t retry) {
-    return Update(id, __func__, [&](auto&) { if (retry != 0) NotImplemented_nid_no_patch("sceHttp2SetResolveRetry"); });
+    return Update(id, __func__, [&](auto& settings) {
+        if (retry < 0) NotImplemented_nid_no_patch("sceHttp2SetResolveRetry");
+        settings.resolveRetry = retry;
+    });
 }
 
 int APS5_VABI sceHttp2WebSocketCreateRequest(std::int32_t templateId, const char* url, Http2WebSocketTextCallback textCallback, Http2WebSocketDataCallback dataCallback, Http2WebSocketCloseCallback closeCallback, Http2WebSocketErrorCallback errorCallback, void* receiveBuffer, std::size_t receiveBufferSize, void* userData, const void* option) {
@@ -490,5 +497,11 @@ int APS5_VABI sceHttp2SetPreSendCallback(int id, void* cb_func, void* user_arg) 
         settings.preSendArgument = user_arg;
     }, true);
 }
+
+int APS5_VABI sceHttp2Unknown_001_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+APS5_EXPORT("AS45QoYHjc4", sceHttp2Unknown_001_nid_no_patch);
 
 }

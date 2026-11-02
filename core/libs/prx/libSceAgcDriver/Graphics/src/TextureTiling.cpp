@@ -430,10 +430,8 @@ std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::ui
     for (std::uint32_t level = 0; level < mipCount; ++level) {
         auto levelWidth = std::max(pitch >> level, 1u);
         auto levelHeight = std::max(height >> level, 1u);
-        if (pow2Pad && level != 0) {
-            levelWidth = std::bit_ceil(levelWidth);
-            levelHeight = std::bit_ceil(levelHeight);
-        }
+        if (pow2Pad && level != 0) levelWidth = std::bit_ceil(levelWidth);
+        if (pow2Pad && (level != 0 || mipCount > 1)) levelHeight = std::bit_ceil(levelHeight);
         auto rowElements = (levelWidth + texelWidth - 1u) / texelWidth;
         auto rows = (levelHeight + texelHeight - 1u) / texelHeight;
         bool macro = false;
@@ -557,6 +555,9 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     for (std::uint32_t bit = 0; bit < log2Pipes; ++bit) geometry.equation[pipeInterleaveBits + bit] = pipe[bit];
     for (std::uint32_t bit = 0; bit < bankBits; ++bit) geometry.equation[pipeInterleaveBits + log2Pipes + bit] = bank[bit];
     for (auto bit = pipeInterleaveBits; bit < innerBits; ++bit) geometry.equation[bit + log2Pipes + bankBits] = inner[bit];
+    geometry.layerBankStep = prt ? 0u : mode.banks / 2u - 1u;
+    geometry.bankMask = mode.banks - 1u;
+    geometry.bankShift = pipeInterleaveBits + log2Pipes;
     return geometry;
 }
 

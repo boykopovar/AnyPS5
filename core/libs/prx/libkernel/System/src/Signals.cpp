@@ -334,11 +334,12 @@ int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const Kerne
     }
 }
 
-void FillSiginfo(GuestSiginfo* info, int guest) {
-    *info = {};
-    info->signo = guest;
-    info->code = GuestSiuser;
-    info->pid = getpid_nid_postfix();
+bool FillSiginfo(GuestSiginfo* info, int guest) {
+    GuestSiginfo local{};
+    local.signo = guest;
+    local.code = GuestSiuser;
+    local.pid = getpid_nid_postfix();
+    return GuestCopyOut_nid_no_patch(info, &local, sizeof(local));
 }
 
 void WaitForDeliverableSignal() {
@@ -737,32 +738,65 @@ int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, Gu
 }
 
 int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, const KernelTimespec* timeout) {
-    if (set == nullptr || !SetHasSignal(*set)) { *__error_nid_postfix() = 22; return -1; }
-    if (timeout != nullptr && (timeout->tv_nsec < 0 || timeout->tv_nsec >= 1000000000) && !PendingInSetPresent(*set)) {
-        *__error_nid_postfix() = 22;
-        return -1;
+    if (set == nullptr) { *__error_nid_postfix() = 22; return -1; }
+    GuestSignalSet requestedSet{};
+    if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) { *__error_nid_postfix() = 14; return -1; }
+    if (!SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
+    KernelTimespec requestedTimeout{};
+    if (timeout != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&requestedTimeout, timeout, sizeof(requestedTimeout))) { *__error_nid_postfix() = 14; return -1; }
+        if ((requestedTimeout.tv_nsec < 0 || requestedTimeout.tv_nsec >= 1000000000) && !PendingInSetPresent(requestedSet)) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
     }
     int guest = 0;
-    const int result = WaitForPendingInSet(*set, timeout == nullptr, timeout, &guest);
+    const int result = WaitForPendingInSet(requestedSet, timeout == nullptr, timeout != nullptr ? &requestedTimeout : nullptr, &guest);
     if (result != 0) { *__error_nid_postfix() = result; return -1; }
-    if (info != nullptr) FillSiginfo(static_cast<GuestSiginfo*>(info), guest);
+    if (info != nullptr && !FillSiginfo(static_cast<GuestSiginfo*>(info), guest)) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
     return guest;
 }
 
 int APS5_VABI sigwaitinfo_nid_postfix(const GuestSignalSet* set, void* info) {
-    if (set == nullptr || !SetHasSignal(*set)) { *__error_nid_postfix() = 22; return -1; }
+    if (set == nullptr) { *__error_nid_postfix() = 22; return -1; }
+    GuestSignalSet requestedSet{};
+    if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) { *__error_nid_postfix() = 14; return -1; }
+    if (!SetHasSignal(requestedSet)) { *__error_nid_postfix() = 22; return -1; }
     int guest = 0;
-    if (WaitForPendingInSet(*set, true, nullptr, &guest) != 0) { *__error_nid_postfix() = GuestEagain; return -1; }
-    if (info != nullptr) FillSiginfo(static_cast<GuestSiginfo*>(info), guest);
+    if (WaitForPendingInSet(requestedSet, true, nullptr, &guest) != 0) { *__error_nid_postfix() = GuestEagain; return -1; }
+    if (info != nullptr && !FillSiginfo(static_cast<GuestSiginfo*>(info), guest)) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
     return guest;
 }
 
 int APS5_VABI sigwait_nid_postfix(const GuestSignalSet* set, int* received) {
-    if (set == nullptr || received == nullptr || !SetHasSignal(*set)) return 22;
+    if (set == nullptr || received == nullptr) return 22;
+    GuestSignalSet requestedSet{};
+    const int saved = *__error_nid_postfix();
+    if (!GuestCopyIn_nid_no_patch(&requestedSet, set, sizeof(requestedSet))) {
+        *__error_nid_postfix() = saved;
+        return 14;
+    }
+    if (!SetHasSignal(requestedSet)) {
+        *__error_nid_postfix() = saved;
+        return 22;
+    }
     int guest = 0;
-    const int result = WaitForPendingInSet(*set, true, nullptr, &guest);
-    if (result != 0) return result;
-    *received = guest;
+    const int result = WaitForPendingInSet(requestedSet, true, nullptr, &guest);
+    if (result != 0) {
+        *__error_nid_postfix() = saved;
+        return result;
+    }
+    if (!GuestCopyOut_nid_no_patch(received, &guest, sizeof(guest))) {
+        *__error_nid_postfix() = saved;
+        return 14;
+    }
+    *__error_nid_postfix() = saved;
     return 0;
 }
 
