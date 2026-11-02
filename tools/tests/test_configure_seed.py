@@ -47,7 +47,7 @@ class ConfigureSeedPathTests(unittest.TestCase):
                    "resource.setrlimit(resource.RLIMIT_FSIZE, (64, 64)); "
                    "sys.path.insert(0, sys.argv[1]); import configure_seed; configure_seed.main(sys.argv[2:])")
         result = subprocess.run([sys.executable, "-c", program, str(TOOL.parent), str(self.cache), str(seed)],
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, encoding="utf-8", timeout=5)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
@@ -62,11 +62,11 @@ class ConfigureSeedPathTests(unittest.TestCase):
         seed = self.root / "seed.cmake"
         program = "import os,sys; os.umask(0o027); sys.path.insert(0,sys.argv[1]); import configure_seed; configure_seed.main(sys.argv[2:])"
         arguments = [sys.executable, "-c", program, str(TOOL.parent), str(self.cache), str(seed)]
-        result = subprocess.run(arguments, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(arguments, capture_output=True, encoding="utf-8", timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(seed.stat().st_mode & 0o777, 0o640)
         seed.chmod(0o600)
-        result = subprocess.run(arguments, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(arguments, capture_output=True, encoding="utf-8", timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(seed.stat().st_mode & 0o777, 0o600)
 
@@ -110,7 +110,7 @@ class ConfigureSeedPathTests(unittest.TestCase):
 
     def run_seed(self, seed, *options):
         return subprocess.run([sys.executable, str(TOOL), str(self.cache), str(seed), *options],
-                              capture_output=True, text=True)
+                              capture_output=True, encoding="utf-8")
 
     def assert_rejected(self, seed, *options):
         result = self.run_seed(seed, *options)
@@ -124,7 +124,7 @@ class ConfigureSeedPathTests(unittest.TestCase):
     def test_unreadable_cache_is_reported_without_a_traceback(self):
         missing = self.root / "no cache dir" / "CMakeCache.txt"
         result = subprocess.run([sys.executable, str(TOOL), str(missing), str(self.root / "seed.cmake")],
-                                capture_output=True, text=True)
+                                capture_output=True, encoding="utf-8")
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn(str(missing), result.stderr)
         self.assertNotIn("Traceback", result.stderr)
@@ -283,6 +283,24 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertEqual(configure_seed.checks(seeded)["HAVE FEATURE"][0], "1")
         self.assertNotIn("HAVE:INTERNAL=", seeded.read_text(encoding="utf-8"))
 
+    def test_check_names_with_colons_round_trip_through_cmake(self):
+        source = self.root / "colon-check-source"
+        source.mkdir(exist_ok=True)
+        (source / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.20)\nproject(colon_check C)\ninclude(CheckCSourceCompiles)\n'
+            'check_c_source_compiles("int main(void) { return 0; }" "MINI_COLON:CHECK")\n', encoding="utf-8")
+        fresh = subprocess.run(["cmake", "-S", str(source), "-B", str(self.root / "colon-fresh"), "-G", "Ninja",
+                                f"-DCMAKE_C_COMPILER={self.compiler}"], check=True, capture_output=True, text=True).stdout
+        self.assertIn("Performing Test MINI_COLON:CHECK", fresh)
+        cache = self.root / "colon-fresh" / "CMakeCache.txt"
+        self.assertIn('"MINI_COLON:CHECK":INTERNAL=1', cache.read_text(encoding="utf-8"))
+        seeded = subprocess.run(["cmake", "-C", str(self.seed(cache, "colon.cmake")), "-S", str(source),
+                                 "-B", str(self.root / "colon-seeded"), "-G", "Ninja",
+                                 f"-DCMAKE_C_COMPILER={self.compiler}"], check=True, capture_output=True, text=True).stdout
+        self.assertNotIn("Performing Test MINI_COLON:CHECK", seeded)
+        self.assertEqual(configure_seed.checks(self.root / "colon-seeded" / "CMakeCache.txt"),
+                         configure_seed.checks(cache))
+
     def test_seeded_configure_runs_no_check_and_gets_the_same_results(self):
         self.assertRegex(self.fresh, r"Looking for|Performing Test|Check size of")
         output = self.configure("seeded", "-C", str(self.seed(self.root / "fresh" / "CMakeCache.txt", "seed.cmake")))
@@ -309,6 +327,56 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
 
 
 class ChecksParsingTests(unittest.TestCase):
+    def test_unicode_line_separators_are_preserved_in_cache_fields(self):
+        entries = {
+            f"FEATURE_{index}_{separator}_TAIL": (f"before{separator}after", f"Test help{separator}tail")
+            for index, separator in enumerate(("\u0085", "\u2028", "\u2029"))
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            for newline in ("\n", "\r\n"):
+                for encoding in ("utf-8", "utf-8-sig"):
+                    with self.subTest(newline=newline, encoding=encoding):
+                        text = newline.join(f"//{doc}{newline}{name}:INTERNAL={value}"
+                                            for name, (value, doc) in entries.items())
+                        cache.write_bytes(text.encode(encoding))
+                        self.assertEqual(configure_seed.checks(cache), entries)
+
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required for cache round trips")
+    def test_unicode_cache_fields_survive_real_cmake_seed_round_trip(self):
+        entries = {
+            f"FEATURE_{index}_{separator}_TAIL": (f"before{separator}after", f"Test help{separator}tail")
+            for index, separator in enumerate(("\u0085", "\u2028", "\u2029"))
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            lines = ["cmake_minimum_required(VERSION 3.20)", "project(unicode_cache NONE)"]
+            for index, (name, (value, doc)) in enumerate(entries.items()):
+                lines.extend(("if(NOT REQUIRE_SEED)",
+                              f"set({configure_seed.quote(name)} {configure_seed.quote(value)} CACHE INTERNAL {configure_seed.quote(doc)})",
+                              "endif()",
+                              f"get_property(help CACHE {configure_seed.quote(name)} PROPERTY HELPSTRING)",
+                              f"get_property(value CACHE {configure_seed.quote(name)} PROPERTY VALUE)",
+                              f'file(WRITE "${{CMAKE_BINARY_DIR}}/{index}.help" "${{help}}")',
+                              f'file(WRITE "${{CMAKE_BINARY_DIR}}/{index}.value" "${{value}}")'))
+            (source / "CMakeLists.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            first, second = root / "first", root / "second"
+            configured = subprocess.run(["cmake", "-S", str(source), "-B", str(first), "-G", "Ninja"], capture_output=True)
+            self.assertEqual(configured.returncode, 0, configured.stderr.decode("utf-8", errors="replace"))
+            cache = first / "CMakeCache.txt"
+            self.assertEqual(configure_seed.checks(cache), entries)
+            seed = root / "seed.cmake"
+            subprocess.run([sys.executable, str(TOOL), str(cache), str(seed)], check=True, capture_output=True)
+            subprocess.run(["cmake", "-C", str(seed), "-DREQUIRE_SEED=ON", "-S", str(source), "-B", str(second), "-G", "Ninja"],
+                           check=True, capture_output=True)
+            self.assertEqual(configure_seed.checks(second / "CMakeCache.txt"), entries)
+            for index, (value, doc) in enumerate(entries.values()):
+                for build in (first, second):
+                    self.assertEqual((build / f"{index}.value").read_text(encoding="utf-8"), value)
+                    self.assertEqual((build / f"{index}.help").read_text(encoding="utf-8"), doc)
+
     def test_architecture_dependent_sizes_leave_compile_guards_to_cmake(self):
         entries = {
             "ARCH_SIZE": ("0", "CHECK_TYPE_SIZE: sizeof(architecture_type)"),
@@ -355,7 +423,7 @@ class ChecksParsingTests(unittest.TestCase):
                             ("--include", "ARCH_SIZE"), ("--exclude", "ARCH_SIZE")):
                 with self.subTest(options=options):
                     result = subprocess.run([sys.executable, str(TOOL), str(cache), str(seed), *options],
-                                            capture_output=True, text=True)
+                                            capture_output=True, encoding="utf-8")
                     self.assertEqual(result.returncode, 0, result.stderr)
                     text = seed.read_text(encoding="utf-8")
                     self.assertNotIn("ARCH_SIZE", text)
@@ -411,6 +479,19 @@ class ChecksParsingTests(unittest.TestCase):
             for name, (value, help_text) in checks.items():
                 self.assertEqual((second / f"{name}.help").read_text(encoding="utf-8"), help_text)
                 self.assertEqual((second / f"{name}.value").read_text(encoding="utf-8"), value)
+
+    def test_quoted_check_names_are_parsed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text('//Test MINI_COLON\n"MINI_COLON:CHECK":INTERNAL=1\n'
+                             '//Test MINI_COLON_QUOTE\n"MINI_"X":COLON":INTERNAL=0\n'
+                             '//An ordinary entry\n"ORDINARY:COLON":INTERNAL=1\n'
+                             '"MALFORMED:COLON":INTERNAL=1\n'
+                             '//Test AMBIGUOUS\n"A:B":INTERNAL=abc":INTERNAL=1\n', encoding="utf-8")
+            self.assertEqual(configure_seed.checks(cache), {
+                "MINI_COLON:CHECK": ("1", "Test MINI_COLON"),
+                'MINI_"X":COLON': ("0", "Test MINI_COLON_QUOTE"),
+            })
 
     def test_checks_reads_cache_with_utf8_bom(self):
         with tempfile.TemporaryDirectory() as directory:

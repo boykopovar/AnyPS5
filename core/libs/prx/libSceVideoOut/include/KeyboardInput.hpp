@@ -9,6 +9,7 @@ public:
 
 private:
     bool focused = true;
+    bool suspended = false;
 };
 
 #endif

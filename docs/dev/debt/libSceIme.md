@@ -1,5 +1,15 @@
 # libSceIme technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceIme/Export.cpp) - 2 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `NbbzN9GRg+c` |
+| `Unknown` | `aChMGUoc7QI` |
+
+
 ### Silent stubs
 
 - [sceImeOpen](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) shows no panel: the text is typed on the host keyboard, which [ImeTextInput](../../../core/libs/prx/libSceVideoOut/src/ImeTextInput.cpp) forwards from the game window (SDL text input, Backspace, Delete, Left, Right, Home, End, Enter and Escape), and the controller cannot type. While a panel is open, key presses do not reach the keyboard-to-pad bindings of [PadInput](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp), as the console's panel takes the controller; key releases still do. Minecraft Preview (PPSA19639, #1277) opens it when entering a world. The external keyboard filter is accepted and never called because no keycode events are produced
@@ -16,6 +26,7 @@
 - [sceImeConfigSet and sceImeConfigGet](../../../core/libs/prx/libSceIme/Export.cpp) preserve the native argument slots: an unused first slot, a 64-bit configuration value, a 32-bit key and, for set, a 32-bit value. The service receives a 24-byte request; configuration/key semantics and unused argument types remain unresolved. The getter advertises one output transfer but does not initialize its descriptor in this module. Protected bodies remain unchanged.
 
 - [libSceIme pending exports](../../../core/libs/prx/libSceIme/Export.cpp) - 2 named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIme.c) and were cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [ModalDialog](../../../core/libs/prx/libSceIme/src/ModalDialog.cpp) (libSceIme) - the session that message and error dialogs share is a host design, not a console behaviour: one dialog at a time, owned by the library that opened it, which alone can poll, close or reset it; the IME keyboard or pad capture hides the dialog and takes its input until it ends; an opening is refused while another dialog shows. Closes when: measured on a PS5
 
 ### Functional
 

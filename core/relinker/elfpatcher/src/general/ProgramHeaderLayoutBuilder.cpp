@@ -262,6 +262,8 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     for (auto ph : kept) {
         if (ph.Type == PT_LOAD)
             ph.Flags = _fixLoadFlags(ph.Flags);
+        if (ph.Type == PT_TLS)
+            ph.Alignment = std::max<std::uint64_t>(ph.Alignment, 1);
         layout.push_back(ph);
     }
     const std::uint64_t extraBlockPageEnd = checkedEnd(checkedEnd(extraBlockVaddr, request.ExtraBlockSize), kDefaultLoadAlignment - 1) & ~(kDefaultLoadAlignment - 1);
