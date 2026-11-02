@@ -3,6 +3,7 @@
 
 #include <elfpatcher/windows/WindowsPeFormat.hpp>
 #include <domain/Types.hpp>
+#include <set>
 
 namespace Elfpatcher::Windows {
 
@@ -16,6 +17,8 @@ public:
     std::uint64_t GetImageBase() const;
     void WritePointer(std::uint64_t address, std::uint64_t value);
     void RequireWritable(std::uint64_t address, std::uint64_t size) const;
+    void RecordRelocation(std::uint64_t address);
+    void RequireNoRelocation(std::uint64_t address, std::uint64_t size) const;
     std::vector<PeSection> BuildSections() const;
 
 private:
@@ -28,6 +31,7 @@ private:
 
     std::vector<Domain::ProgramHeader> segments;
     std::vector<Block> blocks;
+    std::set<std::uint64_t> relocationTargets;
     std::uint64_t size;
     std::vector<std::uint32_t> pageFlags;
     std::uint64_t firstAddress;
