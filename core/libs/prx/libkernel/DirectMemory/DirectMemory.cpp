@@ -1523,7 +1523,10 @@ static int ProtectGuestRange(const void* addr, size_t len, int prot, bool requir
         if (cursor < address + len) parts.emplace_back(cursor, address + len);
         for (auto [low, high] : parts) {
             if (!OnGuestThreadStack(low, high - low, prot, &stackStart, &stackEnd)) {
-                if (HostStackPage(low & ~pageMask)) low = (low + pageMask) & ~pageMask;
+                if (HostStackPage(low & ~pageMask)) {
+                    if (requireMappedStart && low == address) return SCE_KERNEL_ERROR_EINVAL;
+                    low = (low + pageMask) & ~pageMask;
+                }
                 if (HostStackPage((high - 1) & ~pageMask)) high = (high - 1) & ~pageMask;
                 if (low >= high) continue;
             }
