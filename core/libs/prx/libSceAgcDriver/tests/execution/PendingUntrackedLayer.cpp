@@ -365,14 +365,19 @@ int main() {
             {"a CPU store between a refresh and the pending mark over a surface whose walk fails", Kind::CpuBeforeMark, true},
         }};
         bool kept = true;
+        bool notRun = false;
         for (const auto& test : cases) {
             auto outcome = Outcome::Missed;
             for (std::uint32_t attempt = 0; attempt < 64u && outcome == Outcome::Missed; ++attempt) outcome = Run(test);
             Require(outcome != Outcome::Missed, "pending untracked layer: the result was never held pending");
-            if (outcome == Outcome::NotRun) return VulkanTestSkipped;
+            if (outcome == Outcome::NotRun) {
+                notRun = true;
+                continue;
+            }
             kept = outcome == Outcome::Kept && kept;
         }
         Require(kept, "pending storage results or a CPU store over a write-watched surface were lost");
+        if (notRun) return VulkanTestSkipped;
         AgcDriverShutdown_nid_postfix();
         std::puts("pending untracked layer tests passed");
         return 0;
