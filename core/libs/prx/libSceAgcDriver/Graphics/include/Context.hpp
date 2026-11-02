@@ -332,6 +332,21 @@ struct Context {
         return type;
     }
 
+    struct HeapReport {
+        VkDeviceSize budget = 0;
+        VkDeviceSize usage = 0;
+        bool Fits(VkDeviceSize bytes) const { return budget == 0 || (usage < budget && bytes <= budget - usage); }
+    };
+
+    HeapReport ReportedHeap(std::uint32_t heap) const {
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return {};
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+        properties.pNext = &reported;
+        memoryProperties2(physical, &properties);
+        return {reported.heapBudget[heap], reported.heapUsage[heap]};
+    }
+
     std::uint32_t DeviceMemoryType(std::uint32_t mask, VkDeviceSize bytes, const char* what) const {
         const auto type = MemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE) return type;

@@ -160,6 +160,15 @@ void SetHeapMirrorBudget(std::uint64_t bytes) {
     testHeapMirrorBudget.store(bytes, std::memory_order_release);
 }
 
+std::uint64_t HeapMirrorSlabBudget() {
+    static const std::uint64_t bytes = [] {
+        const char* value = std::getenv("APS5_HEAP_MIRROR_MIB");
+        return (value ? std::strtoull(value, nullptr, 10) : 24576ull) << 20u;
+    }();
+    const auto test = testHeapMirrorBudget.load(std::memory_order_acquire);
+    return test != 0 ? test : bytes;
+}
+
 namespace {
 struct RefreshBlock;
 static thread_local GuestBufferMemory* buildingBufferMemory = nullptr;
@@ -2702,13 +2711,16 @@ bool mirrorsEnabled() {
     return !disabled;
 }
 
+std::atomic<std::uint64_t> heapMirrorMemoryLimit{std::numeric_limits<std::uint64_t>::max()};
+
 std::uint64_t heapMirrorBudget() {
-    if (const auto test = testHeapMirrorBudget.load(std::memory_order_acquire); test != 0) return test;
+    const auto limit = heapMirrorMemoryLimit.load(std::memory_order_acquire);
+    if (const auto test = testHeapMirrorBudget.load(std::memory_order_acquire); test != 0) return std::min(test, limit);
     static const std::uint64_t bytes = [] {
         const char* value = std::getenv("APS5_HEAP_MIRROR_MIB");
         return (value ? std::strtoull(value, nullptr, 10) : 24576ull) << 20u;
     }();
-    return bytes;
+    return std::min(bytes, limit);
 }
 
 std::string heapMirrorError(std::uint64_t address, std::uint64_t bytes, std::uint64_t held, std::string_view reason) {
@@ -2789,10 +2801,29 @@ void reserveHeapBytes(std::uint64_t address, std::uint64_t bytes, std::uint64_t 
                 state.heapBytes += need;
                 return;
             }
+            if (attempt != 0 && (held == 0 || heapMirrorBudget() < HeapMirrorSlabBudget()) && held + need <= HeapMirrorSlabBudget()) {
+                state.heapBytes += need;
+                return;
+            }
             if (attempt != 0) throw std::runtime_error(heapMirrorError(address, bytes, held, "past the budget"));
         }
         sweepMirrors(need, address);
     }
+}
+
+bool shrinkHeapMirrorBudget(const std::runtime_error& error) {
+    constexpr std::uint64_t step = std::uint64_t{256} << 20u;
+    if (std::string_view(error.what()).find("of a heap mirror slab") == std::string_view::npos) return false;
+    auto& state = Mirrors();
+    std::uint64_t held = 0;
+    {
+        std::lock_guard lock(state.mutex);
+        held = state.heapBytes;
+    }
+    if (held <= step) return false;
+    heapMirrorMemoryLimit.store(held - step, std::memory_order_release);
+    std::fprintf(stderr, "[gpu] device memory refused a heap mirror slab; heap mirror budget lowered to %llu MiB\n", static_cast<unsigned long long>((held - step) >> 20u));
+    return true;
 }
 
 void growResident(ImageMirror& mirror, const GuestRuns& runs) {
@@ -2805,7 +2836,7 @@ void growResident(ImageMirror& mirror, const GuestRuns& runs) {
         {
             std::lock_guard lock(state.mutex);
             if (!mirror.listed) break;
-            if (state.heapBytes + need <= heapMirrorBudget()) {
+            if (state.heapBytes + need <= heapMirrorBudget() || (attempt != 0 && (state.heapBytes <= mirror.accounted || heapMirrorBudget() < HeapMirrorSlabBudget()) && state.heapBytes + need <= HeapMirrorSlabBudget())) {
                 state.heapBytes += need;
                 mirror.accounted += need;
                 counted = true;
@@ -2815,9 +2846,14 @@ void growResident(ImageMirror& mirror, const GuestRuns& runs) {
         }
         sweepMirrors(need, mirror.base);
     }
-    try {
+    for (int attempt = 0;; ++attempt) try {
         mirror.resident->Bind(runs);
+        break;
     } catch (const std::runtime_error& error) {
+        if (attempt < 8 && shrinkHeapMirrorBudget(error)) {
+            sweepMirrors(need, mirror.base);
+            continue;
+        }
         std::uint64_t held = 0;
         {
             std::lock_guard lock(state.mutex);
@@ -3354,9 +3390,14 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         if (context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased) backed = GuestNonzeroBlocks(sparse ? clipPieces(pieces, mirror->base, mirror->base + mirror->bytes) : GuestRuns{{mirror->base, mirror->base + mirror->bytes}});
         auto need = blockBytes(backed);
         reserveHeapBytes(selected.address, selected.bytes, need);
-        try {
+        for (int attempt = 0;; ++attempt) try {
             mirror->resident = ResidentBuffer::Create(context, mirror->base, mirror->bytes, backed);
+            break;
         } catch (const std::runtime_error& error) {
+            if (attempt < 8 && shrinkHeapMirrorBudget(error)) {
+                sweepMirrors(need, selected.address);
+                continue;
+            }
             std::uint64_t held = 0;
             {
                 std::lock_guard lock(state.mutex);
