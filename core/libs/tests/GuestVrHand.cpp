@@ -3,6 +3,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -10,6 +17,39 @@ void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrInvalidArg = static_cast<int>(0x8a870006);
 constexpr std::uint8_t kFill = 0xaa;
+
+struct GuardedRegion {
+    std::size_t pageSize{0};
+    unsigned char* memory{nullptr};
+
+    GuardedRegion() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = static_cast<std::size_t>(info.dwPageSize);
+        memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous;
+        Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long nativePageSize = sysconf(_SC_PAGESIZE);
+        Require(nativePageSize > 0);
+        pageSize = static_cast<std::size_t>(nativePageSize);
+        void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(allocation != MAP_FAILED);
+        memory = static_cast<unsigned char*>(allocation);
+        Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedRegion() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, pageSize * 2);
+#endif
+    }
+};
 
 std::array<std::uint8_t, 0x40> ValidParam() {
     std::array<std::uint8_t, 0x40> param{};
@@ -39,6 +79,24 @@ int main() {
     Require(sceVrHandQueryMemory(param.data(), badPtr) == kErrInvalidArg);
     Require(sceVrHandQueryMemory(nullptr, out.data()) == kErrInvalidArg && Untouched(out));
     Require(sceVrHandQueryMemory(param.data(), nullptr) == kErrInvalidArg);
+
+    GuardedRegion region;
+    auto* const boundaryParam = region.memory + region.pageSize - 0x20;
+    std::memset(boundaryParam, 0, 0x20);
+    boundaryParam[0] = 0x20;
+    out.fill(kFill);
+    Require(sceVrHandQueryMemory(boundaryParam, out.data()) == 0);
+
+    auto* const spanningParam = region.memory + region.pageSize - 0x10;
+    out.fill(kFill);
+    Require(sceVrHandQueryMemory(spanningParam, out.data()) == kErrInvalidArg && Untouched(out));
+
+    auto* const boundaryOut = region.memory + region.pageSize - 28;
+    std::memset(boundaryOut, kFill, 28);
+    Require(sceVrHandQueryMemory(param.data(), boundaryOut) == 0);
+
+    auto* const spanningOut = region.memory + region.pageSize - 8;
+    Require(sceVrHandQueryMemory(param.data(), spanningOut) == kErrInvalidArg);
 
     for (const std::uint32_t size : {0u, 0x1fu, 0x21u, 0x40u, 0x120u, 0x10020u, 0x1000020u}) {
         param = ValidParam();
