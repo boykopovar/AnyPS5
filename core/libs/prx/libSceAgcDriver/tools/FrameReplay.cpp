@@ -247,6 +247,7 @@ void mapHostRanges(const FrameCaptureReader& reader, Skipped& skipped) {
 }
 
 Skipped restoreMemory(const FrameCaptureReader& reader) {
+    if (reader.Version() < 2) throw std::runtime_error("frame replay: calls format 1 does not record whether GPU writes had landed before each memory delta was read; record the capture again");
     std::uintptr_t base = 0;
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
@@ -430,7 +431,10 @@ struct Replay {
             if (found == groups.end()) return;
             for (const auto* chunk : found->second) {
                 if (skipped.Overlaps(*chunk)) continue;
-                restore(reader, *chunk);
+                const auto bytes = reader.Read(*chunk);
+                auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
+                AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
+                std::memcpy(target, bytes.data(), bytes.size());
                 deltaBytes += chunk->bytes;
             }
             return;
