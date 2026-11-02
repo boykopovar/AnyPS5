@@ -77,11 +77,7 @@ int SetKey(TlsConfig* config, const std::uint8_t* key, std::size_t length) {
     if (!config) return -1;
     auto& state = *Storage(config);
     ClearKey(state);
-    if (!key && length != 0) {
-        state.error = "invalid key data";
-        return -1;
-    }
-    if (length == 0) return 0;
+    if (!key || length == 0) return 0;
     auto* copy = static_cast<std::uint8_t*>(std::malloc(length));
     if (!copy) {
         state.error = "out of memory";
