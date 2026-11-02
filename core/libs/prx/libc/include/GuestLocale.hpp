@@ -34,6 +34,30 @@ struct Facet {
     std::uint32_t reserved;
 };
 
+struct TimeInfo {
+    const char* amPm;
+    const char* days;
+    const char* abbreviatedDays;
+    const char* fullDays;
+    const char* months;
+    const char* abbreviatedMonths;
+    const char* fullMonths;
+    const char* formats;
+    const char* dateTimeFormat;
+    const char* dateFormat;
+    const char* timeFormat;
+    const char* timeFormatAmPm;
+    const char* eraFormats;
+    const char* eraDateTimeFormat;
+    const char* eraDateFormat;
+    const char* eraTimeFormat;
+    const char* eraTimeFormatAmPm;
+    const char* era;
+    const char* alternativeDigits;
+    const char* daylightSaving;
+    const char* timeZone;
+};
+
 struct Implementation {
     Facet base;
     Facet** facets;

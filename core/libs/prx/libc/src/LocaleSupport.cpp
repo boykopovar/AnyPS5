@@ -840,6 +840,21 @@ mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
     return &state;
 }
 
+GuestLocale::TimeInfo* APS5_VABI _Getptimes_nid_postfix() {
+    static_assert(sizeof(GuestLocale::TimeInfo) == 0xa8);
+    static constexpr char days[] = ":Sun:Sunday:Mon:Monday:Tue:Tuesday:Wed:Wednesday:Thu:Thursday:Fri:Friday:Sat:Saturday";
+    static constexpr char months[] = ":Jan:January:Feb:February:Mar:March:Apr:April:May:May:Jun:June:Jul:July:Aug:August"
+        ":Sep:September:Oct:October:Nov:November:Dec:December";
+    static constexpr char formats[] = "|%a %b %e %T %Y|%m/%d/%y|%H:%M:%S|%I:%M:%S %p";
+    static constexpr char era[] = "";
+    static constexpr char alternativeDigits[] = "";
+    static constexpr char daylightSaving[] = "";
+    static constexpr char timeZone[] = "";
+    static GuestLocale::TimeInfo times {":AM:PM", days, days, days, months, months, months, formats, formats, formats, formats,
+        formats, formats, formats, formats, formats, formats, era, alternativeDigits, daylightSaving, timeZone};
+    return &times;
+}
+
 std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t c, std::uint64_t desc) {
     constexpr std::uint64_t ToLower = 1;
     constexpr std::uint64_t ToUpper = 2;
