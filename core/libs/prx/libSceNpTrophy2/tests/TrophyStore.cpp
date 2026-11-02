@@ -217,6 +217,8 @@ void testQueries() {
     check(NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, 12), "trophy 12 was not recorded");
     check(!NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, 12), "trophy 12 was recorded twice");
     check(NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, 0), "trophy 0 was not recorded");
+    check(!throws([] { NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, -1); }), "a negative trophy id threw across the C ABI");
+    check(!NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, -1), "a negative trophy id was recorded");
     const auto after = NpTrophy2::CurrentTick();
     NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
     check(NpTrophy2RecordUnlock_nid_no_patch(InitialUser, 0, 5) && seen.unlocks.size() == 2, "the listener did not see each new unlock once");
