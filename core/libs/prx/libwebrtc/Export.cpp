@@ -188,11 +188,6 @@ int APS5_VABI _ZN3rtc14RTCCertificateD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNK6webrtc8RTCError7messageEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
