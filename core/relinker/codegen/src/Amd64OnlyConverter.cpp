@@ -112,6 +112,41 @@ private:
         return hit != _branchTargets.end() && *hit < end;
     }
 
+    [[nodiscard]] bool _int3(const std::size_t index) const {
+        const auto bytes = _bytes(index);
+        return bytes.size() == 1 && bytes[0] == X64OpcodeConstants::OneByteInt3;
+    }
+
+    [[nodiscard]] bool _padding(const std::size_t index) const {
+        const auto info = _info(index);
+        if (info.IsTwoByteOpcode)
+            return info.Opcode == X64OpcodeConstants::TwoByteNopModRm;
+        if (info.Opcode != X64OpcodeConstants::OneByteNop)
+            return _int3(index);
+        const auto prefixes = _bytes(index).first(info.OpcodeOffset);
+        return (info.RexPrefix & X64OpcodeConstants::RexBBit) == 0 && std::find(prefixes.begin(), prefixes.end(), X64OpcodeConstants::PrefixRep) == prefixes.end();
+    }
+
+    [[nodiscard]] bool _mayBeEntered(const std::size_t index) const {
+        for (auto previous = index; previous > 0; --previous) {
+            if (_end(previous - 1) != _address(previous) || _blocksFollowing(previous - 1))
+                return true;
+            if (!_padding(previous - 1))
+                return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool _enteredWithin(const std::size_t first, const std::size_t last) const {
+        if (_entered(_address(first), _end(last)))
+            return true;
+        for (auto index = first + 1; index <= last; ++index) {
+            if (!_int3(index) && _mayBeEntered(index))
+                return true;
+        }
+        return false;
+    }
+
     [[nodiscard]] bool _blocksFollowing(const std::size_t index) const {
         const auto kind = _info(index).FlowKind;
         return kind != ControlFlowKind::Sequential && kind != ControlFlowKind::ConditionalBranch;
@@ -135,7 +170,7 @@ private:
     }
 
     [[nodiscard]] std::optional<Placement> _relocate(const std::size_t index, const std::size_t first, const std::size_t last, const bool allowInPlace = false) const {
-        if (_entered(_address(first), _end(last)))
+        if (_enteredWithin(first, last))
             return std::nullopt;
         StubBodyBuilder body;
         Placement placement;
@@ -162,7 +197,7 @@ private:
         using Amd64OnlySubstitutionTable::kJmpRel32;
         std::size_t head = 0;
         for (auto last = start; last < _matches.size(); ++last) {
-            if (!_movable(last, true) || _entered(_address(start), _end(last)))
+            if (!_movable(last, true) || _enteredWithin(start, last))
                 return std::nullopt;
             if (head == 0 && _end(last) - _address(start) >= kJmpRel32.Size)
                 head = static_cast<std::size_t>(_end(last) - _address(start));

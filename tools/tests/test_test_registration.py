@@ -15,6 +15,17 @@ import check_test_registration
 
 
 class RegistrationTests(unittest.TestCase):
+    def test_truncated_registration_commands_are_rejected(self):
+        for tail in ('set_tests_properties(bounds PROPERTIES DISABLED TRUE',
+                     'set_tests_properties(bounds PROPERTIES DISABLED TRUE # truncated',
+                     'subdirs(nested', 'add_test(other /build/tests/other_tests'):
+            with self.subTest(tail=tail), tempfile.TemporaryDirectory() as directory:
+                build = Path(directory)
+                (build / 'CTestTestfile.cmake').write_text(
+                    'add_test(bounds /build/tests/buffer_bounds_tests)\n' + tail, encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'unterminated'):
+                    check_test_registration.registered(build)
+
     @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the argument oracle")
     def test_quoted_semicolons_match_real_cmake_arguments(self):
         values = ["left" + "\\" * count + ";right" for count in range(9)]
@@ -393,7 +404,7 @@ class RegistrationTests(unittest.TestCase):
 
     def run_tool(self, build):
         return subprocess.run([sys.executable, "-I", str(Path(check_test_registration.__file__)), str(build)],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, encoding="utf-8", timeout=30)
 
     def test_missing_build_directory_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -425,6 +436,30 @@ class ScriptRegistrationTests(unittest.TestCase):
         self.assertEqual(self.unrun({
             "core/relinker/CMakeLists.txt": "if(WIN32)\n    add_test(NAME a COMMAND ${Python3_EXECUTABLE}\n        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_a.py)\nendif()\n",
             "core/relinker/relinker/tests/test_a.py": ""}), [])
+
+    def test_cmake_test_names_do_not_register_scripts(self):
+        for command in ('add_test(NAME test_a.py COMMAND python helper.py)',
+                        'add_test(test_a.py python helper.py)'):
+            with self.subTest(command=command):
+                self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), ["test_a.py"])
+
+    def test_cmake_test_options_do_not_register_scripts(self):
+        for option in ("CONFIGURATIONS", "WORKING_DIRECTORY", "BUILD_DEPENDS"):
+            for command in (f'add_test(NAME a {option} test_a.py COMMAND python helper.py)',
+                            f'add_test(NAME a COMMAND python helper.py {option} test_a.py)'):
+                with self.subTest(command=command):
+                    self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), ["test_a.py"])
+
+    def test_cmake_command_scripts_remain_registered(self):
+        commands = ('add_test(a python test_a.py)',
+                    'add_test(NAME a CONFIGURATIONS Debug COMMAND python test_a.py)',
+                    'add_test(NAME a WORKING_DIRECTORY work COMMAND python test_a.py)',
+                    'add_test(NAME a COMMAND python test_a.py CONFIGURATIONS Debug)',
+                    'add_test(NAME a COMMAND python test_a.py COMMAND_EXPAND_LISTS)',
+                    'add_test(NAME a COMMAND test_a.py WORKING_DIRECTORY work)')
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), [])
 
     def test_script_in_bracket_argument_with_initial_newline_is_registered(self):
         self.assertEqual(self.unrun({
