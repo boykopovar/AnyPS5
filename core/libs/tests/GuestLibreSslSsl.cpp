@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
 
@@ -30,7 +31,9 @@ struct TestSsl {
     unsigned char beforeCtx[16];
     void* ctx;
     std::int64_t verifyResult;
-    unsigned char beforeInternal[56];
+    unsigned char beforeHostname[16];
+    const char* tlsextHostname;
+    unsigned char beforeInternal[32];
     TestSslInternal* internal;
 };
 
@@ -38,6 +41,7 @@ static_assert(sizeof(TestSslInternal) == 432 && offsetof(TestSslInternal, rwstat
 static_assert(offsetof(TestSslInternal, exData) == 272);
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, session) == 128 && offsetof(TestSsl, ctx) == 152);
 static_assert(offsetof(TestSsl, param) == 64);
+static_assert(offsetof(TestSsl, tlsextHostname) == 184);
 static_assert(offsetof(TestSsl, verifyResult) == 160 && offsetof(TestSsl, internal) == 224);
 
 static const LibreSslSsl* Ssl(const TestSsl* ssl) {
@@ -170,6 +174,25 @@ static void TestGetExData() {
     Require(SSL_get_ex_data_nid_postfix(Ssl(&ssl), -1) == nullptr);
 }
 
+static void TestGetServername() {
+    const char* connectionName = "connection.example";
+    const char* sessionName = "session.example";
+    unsigned char session[232] {};
+    std::memcpy(session + 192, &sessionName, sizeof(sessionName));
+    TestSsl ssl {};
+    Require(SSL_get_servername_nid_postfix(Ssl(&ssl), 0) == nullptr);
+    ssl.tlsextHostname = connectionName;
+    Require(SSL_get_servername_nid_postfix(Ssl(&ssl), 0) == connectionName);
+    ssl.session = session;
+    Require(SSL_get_servername_nid_postfix(Ssl(&ssl), 0) == connectionName);
+    ssl.tlsextHostname = nullptr;
+    Require(SSL_get_servername_nid_postfix(Ssl(&ssl), 0) == sessionName);
+    Require(SSL_get_servername_nid_postfix(Ssl(&ssl), 1) == nullptr);
+    Require(SSL_get_servername_nid_postfix(Ssl(&ssl), -1) == nullptr);
+    Require(SSL_get_servername_nid_postfix(nullptr, 1) == nullptr);
+    RequireThrows([] { SSL_get_servername_nid_postfix(nullptr, 0); });
+}
+
 int main() {
     TestGetSslCtx();
     TestGetRbio();
@@ -180,5 +203,6 @@ int main() {
     TestWant();
     TestGet0Param();
     TestGetExData();
+    TestGetServername();
     return 0;
 }
