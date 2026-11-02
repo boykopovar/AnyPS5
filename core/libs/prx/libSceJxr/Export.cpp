@@ -432,10 +432,6 @@ int APS5_VABI dquantBits_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI fillToByte_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI flushBit16_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -500,18 +496,6 @@ int APS5_VABI getDCACPredMode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI getPosRead_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI getSizeRead_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI getSizeWrite_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI getTilePos_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -533,18 +517,6 @@ int APS5_VABI postProcBlock_nid_postfix() {
 }
 
 int APS5_VABI postProcMB_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI putBit16_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI putBit16z_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI putBit32_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
