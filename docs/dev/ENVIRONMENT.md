@@ -22,6 +22,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_AUTORUN_NO_PAUSE` | string | `core/relinker/cli/src/Autorun.cpp` | | exactly `1` skips the exit prompt and stdin read after autorun; unset, empty and other values keep the prompt |
 | `ANYPS5_GUEST_MODULE_ARGS` | string | `core/relinker/elfpatcher/tests/GuestModuleArgsHost.cpp` |  | path of the file the module-argument fixture appends its events to |
 
 ### core/shader
@@ -69,6 +70,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_VERIFY_MASKED_RESULT_MEMO` | presence | `core/shader/recompiler/Recompiler.cpp` |  | also materializes every patched result memo hit, prints the first twenty whose patched result differs and counts them in the result memo report of `APS5_PROFILE_DRAW` |
 | `APS5_VERIFY_SRT_COMPACT` | presence | `core/shader/recompiler/Optimization/src/SrtWalker/SrtDescriptorEvaluation.cpp` |  | walks every SRT descriptor a second time through the IR evaluator and throws when the two walks differ |
 | `APS5_VERIFY_SRT_TAPE` | presence | `core/shader/recompiler/Optimization/src/SrtWalker/SrtTape.cpp` |  | walks a plan's runtime sources a second time through the evaluator, adopts its answers where the two differ and prints the first twenty differences |
+| `APS5_WAIT_PENDING_BRANCHES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/ShaderMemory.cpp` |  | a resource capture that evaluates a scalar branch condition over a word with a pending GPU write waits for the write to prune the branch, instead of leaving the branch unpruned (both successors' resources captured) |
 | `APS5_WAVE_LDS_SUBGROUP` | presence | `core/shader/recompiler/SpirvBackend/src/SpirvEmitter.cpp` |  | restores subgroup-scope LDS barriers for single-wave workgroups instead of workgroup scope |
 
 ### libSceAgc
@@ -585,7 +587,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
-| `ANYPS5_LANGUAGE` | integer | `core/libs/prx/libSceSystemService/SystemService.hpp` | 1 | console language number from 0 to 30 returned by sceSystemServiceParamGetInt, defaulting to English US; any other value throws |
+| `ANYPS5_LANGUAGE` | integer | `core/libs/prx/libSceSystemService/SystemService.hpp` | 1 | console language number from 0 to 30 returned by sceSystemServiceParamGetInt, defaulting to English US; `auto` (any letter case) maps the host's locale to a console language once per process and falls back to English US with one stderr line; any other value throws |
 
 ### libSceUsbStorage
 

@@ -35,10 +35,12 @@ public:
             if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize)
                 throw RelinkerException("Strict filter: EH frame header exceeds segment", position);
             if (count > segment.FileSize / 2) throw RelinkerException("Strict filter: invalid EH frame count", position);
+            std::set<std::pair<VirtualAddress, VirtualAddress>> listed;
             for (std::uint64_t index = 0; index < count; ++index) {
                 const auto begin = encoded(position, tableEncoding, segment.MappedAddress);
                 const auto fde = encoded(position, tableEncoding, segment.MappedAddress);
                 if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize) throw RelinkerException("Strict filter: EH frame table exceeds segment", position);
+                if (!listed.emplace(begin, fde).second) continue;
                 auto region = readFde(begin, fde);
                 if (region.End != region.Begin) result.push_back(std::move(region));
             }
