@@ -73,6 +73,8 @@ void NoteHeapDirect();
 void NoteHeapDirectVerify(const ShaderRecompiler::RecompileResult& direct, const ShaderRecompiler::RecompileResult& expected,
                           const ShaderRecompiler::ResourceCapture* expectedCapture = nullptr);
 std::uint64_t HeapStagesTaken();
+std::uint64_t HeapRingHitsVerified();
+std::uint64_t HeapRingHitsDiffering();
 std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const ShaderRecompiler::RecompileResult& shared,
                                                                            const ShaderRecompiler::HeapStageWords& words);
 void VerifyHeapAccessor(const Graphics::CompiledShader& stage);
