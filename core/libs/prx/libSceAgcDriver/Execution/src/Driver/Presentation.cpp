@@ -74,7 +74,6 @@ void Driver::AttachWindow(const PresentationWindow& window) {
     timing.Mark("vulkan_device_create");
     const auto mapped = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     timing.Mark("guest_mapping_snapshot", mapped.size());
-    // A/B switch: compare eager window-attach imports with the normal first-use import path.
     static const bool eagerHostImport = std::getenv("APS5_NO_EAGER_HOST_IMPORT") == nullptr;
     if (eagerHostImport) {
         const bool imported = device->ImportGuestMemory(GuestAllocations::Mapped(mapped.begin(), mapped.end()), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
