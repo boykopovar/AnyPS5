@@ -236,6 +236,7 @@ int main() {
     constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
     constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
     constexpr int invalidEncode = static_cast<int>(0x805C0014);
+    constexpr int illegalCode = static_cast<int>(0x805C0015);
     constexpr int unassignedCode = static_cast<int>(0x805C0020);
     constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
     constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
@@ -283,6 +284,8 @@ int main() {
     Require(sceCesUtf16leToSbc(&euroLe, 1, &length, cp1252, &sbc) == 0 && sbc == 0x80);
     Require(sceCesUtf32ToSbc(0x0178, cp1252, &sbc) == 0 && sbc == 0x9F);
     Require(sceCesUtf32ToSbc(0x110000, cp1252, &sbc) == invalidEncode);
+    Require(sceCesUtf32ToSbc(0xD800, cp1252, &sbc) == illegalCode);
+    Require(sceCesUtf32ToSbc(0xDFFF, sceCesRefersUcsProfileCp1254(), &sbc) == illegalCode);
     std::uint32_t yBe = 0;
     std::memcpy(&yBe, "\x00\x00\x01\x78", 4);
     Require(sceCesUtf32beToSbc(&yBe, cp1252, &sbc) == 0 && sbc == 0x9F);

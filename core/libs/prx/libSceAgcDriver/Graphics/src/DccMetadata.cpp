@@ -315,13 +315,18 @@ LandedKeys KeysAfterPendingWrites(const Recorder& recorder, std::uint64_t begin,
                 continue;
             }
             covered = true;
+            if (write.value < 0 && write.word >= 0) {
+                const auto first = std::max(from, write.begin);
+                const auto last = std::min(std::min(to, write.end), first + 4u);
+                for (auto byte = first; byte < last; ++byte) see(static_cast<int>((static_cast<std::uint64_t>(write.word) >> (8u * ((byte - write.begin) % 4u))) & 0xffu));
+            }
             if (from < write.begin) rest.emplace_back(from, write.begin);
             if (write.end < to) rest.emplace_back(write.end, to);
         }
         unwritten = std::move(rest);
         if (!covered) continue;
         if (write.value >= 0) see(write.value);
-        else landed.unknown = true;
+        else if (write.word < 0) landed.unknown = true;
     }
     for (const auto& [from, to] : unwritten) {
         if (landed.mixed) break;

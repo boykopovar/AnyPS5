@@ -613,19 +613,37 @@ static void TestAppendBoundaries(const std::vector<float>& reference) {
     }
 }
 
-static void TestAppendWithoutWaveform() {
+static void TestBlockOnEmptyAtrac9Voice() {
     const auto system = CreateSystem();
     const auto voice = EmptySampler(system);
-    bool rejected = false;
-    try {
-        Queue(voice, Superframe, SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND, 500);
-    } catch (const std::invalid_argument&) {
-        rejected = true;
-    }
-    Require(rejected);
     Queue(voice, Superframe, SuperframeBytes, 0, 500);
     Render(system, 512);
     Require(Flags(voice) == 0);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static int AddNoBlocks(uintptr_t voice, std::uint32_t flags) {
+    const Ngs2WaveformBlock unused{};
+    const Ngs2SamplerVoiceWaveformBlocksParam param{{sizeof(Ngs2SamplerVoiceWaveformBlocksParam), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS}, Superframe, flags, 0, &unused};
+    return sceNgs2VoiceControl(voice, &param.header);
+}
+
+static void TestEmptyAddsCloseLikePcm() {
+    constexpr int full = static_cast<int>(0x804A8054u);
+    for (std::uint32_t flags : {0u, 1u, 2u, 3u}) {
+        const auto system = CreateSystem();
+        const auto voice = EmptySampler(system);
+        Require(AddNoBlocks(voice, flags) == SCE_NGS2_OK);
+        Require(AddNoBlocks(voice, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) == ((flags & 1) != 0 ? SCE_NGS2_OK : full));
+        Require(AddNoBlocks(voice, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) == full);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+    const auto system = CreateSystem();
+    uintptr_t voice = 0;
+    Require(sceNgs2RackGetVoiceHandle(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER), 1, &voice) == SCE_NGS2_OK);
+    Require(AddNoBlocks(voice, 0) == SCE_NGS2_OK && AddNoBlocks(voice, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) == full);
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_ATRAC9, 1, 48000, Config, 0, 0}});
+    Require(AddNoBlocks(voice, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) == SCE_NGS2_OK && AddNoBlocks(voice, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) == full);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -743,7 +761,8 @@ int main() {
     TestStreamingReplay();
     TestStarvationAndTruncation(reference);
     TestAppendBoundaries(reference);
-    TestAppendWithoutWaveform();
+    TestBlockOnEmptyAtrac9Voice();
+    TestEmptyAddsCloseLikePcm();
     TestSilenceFlagRejected();
     return 0;
 }

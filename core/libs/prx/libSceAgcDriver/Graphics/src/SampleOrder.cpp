@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -110,7 +111,7 @@ public:
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory sample order copy");
+            Check(MemoryAccounting::Allocate(context, allocation, "sample order copy", &memory), "vkAllocateMemory sample order copy");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory sample order copy");
             depthView = createView(VK_IMAGE_ASPECT_DEPTH_BIT);
             if (stencil) stencilView = createView(VK_IMAGE_ASPECT_STENCIL_BIT);
@@ -149,7 +150,7 @@ private:
         if (stencilView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, stencilView, nullptr);
         if (depthView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, depthView, nullptr);
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-        if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+        if (memory) MemoryAccounting::Free(context, memory);
     }
 };
 
