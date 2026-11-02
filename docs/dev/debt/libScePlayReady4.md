@@ -8,3 +8,23 @@
 
 ### Inventory exports declared elsewhere
  The PS5 3.20 export table for this module also contains 49 names already declared under libScePlayReady, libScePlayReady2 in this tree; the duplicate-export rule keeps each name in a single library, so they are omitted here. They resolve through the sibling declarations.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libScePlayReady4/Export.cpp) - 9 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Eight NIDs also appear in the later labelled `libScePlayReady4L` image; resolution between providers requires separate verification. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `2OZeMccOeho` |
+| `Unknown` | `3fo8fAvHn9A` |
+| `Unknown` | `HNB-eWVwwng` |
+| `Unknown` | `LL9r9r4cCdQ` |
+| `Unknown` | `OqSN3eUfHMY` |
+| `Unknown` | `XawoudE54JE` |
+| `Unknown` | `asAQ9li6+mo` |
+| `Unknown` | `o2H2P7xoLec` |
+| `Unknown` | `sK0jAAnbbiI` |
+
+### Older callable exports
+
+- [Older callable exports](../../../core/libs/prx/libScePlayReady4/Export.cpp) - Thirty-eight additional older callable NIDs have unidentified names and are declared as throwing placeholders. Their prototypes and behavior are unverified. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or functional behavior is claimed. A separately shared initializer NID is excluded because it is already provided by another module and its structure differs across versions.

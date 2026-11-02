@@ -3,6 +3,11 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 
+struct KernelMapperSubmitResult {
+    std::int32_t result;
+    std::uint32_t errorOffset;
+};
+
 struct GuestAiocb {
     int fildes;
     std::int64_t offset;
@@ -112,7 +117,7 @@ int APS5_VABI is_in_sandbox_nid_postfix(void);
 int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len);
 int APS5_VABI kldfind_nid_postfix(const char* file);
 int APS5_VABI kldfirstmod_nid_postfix(int fileid);
-int APS5_VABI kldload_nid_postfix(void);
+int APS5_VABI kldload_nid_postfix(const char* file);
 int APS5_VABI kldnext_nid_postfix(int fileid);
 int APS5_VABI kldstat_nid_postfix(int fileid, void* stat);
 int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data);
@@ -173,7 +178,6 @@ int APS5_VABI sceKernelAddGpuExceptionEvent(void);
 int APS5_VABI sceKernelAddProcessToCanvasMap(void);
 int APS5_VABI sceKernelAddResource(void);
 int APS5_VABI sceKernelAllocateDirectMemory2(void);
-int APS5_VABI sceKernelAllocateDirectMemoryForApp(void);
 int APS5_VABI sceKernelAllocateDirectMemoryForMiniApp(void);
 int APS5_VABI sceKernelAllocateToolMemory(void);
 int APS5_VABI sceKernelAllocateTraceDirectMemory(void);
@@ -184,8 +188,9 @@ int APS5_VABI sceKernelAvailableToolMemorySize(void);
 int APS5_VABI sceKernelBacktraceSelf(void);
 int APS5_VABI sceKernelBeginAppMount(void);
 int APS5_VABI sceKernelBeginAppMount2(void);
-int APS5_VABI sceKernelCallIndirectBuffer(void);
-int APS5_VABI sceKernelCallIndirectBuffer2(void);
+int APS5_VABI sceKernelCallIndirectBuffer(std::uint32_t priority, void* base, std::uint64_t bytes);
+int APS5_VABI sceKernelCallIndirectBuffer2(std::uint32_t priority, void* base, std::uint64_t bytes, KernelMapperSubmitResult* result, std::uint32_t* id);
+int APS5_VABI sceKernelCallIndirectBuffer3(std::uint32_t priority, void* base, std::uint64_t bytes, std::uint32_t* id);
 int APS5_VABI sceKernelClearBootReqNotifyCount(void);
 int APS5_VABI sceKernelClearGameDirectMemory(void);
 int APS5_VABI sceKernelCloseEport(void);
@@ -316,7 +321,7 @@ int APS5_VABI sceKernelGetUtokenUseSoftwagnerForAcmgr(void);
 int APS5_VABI sceKernelGetUtokenUseSoftwagnerForRcmgr(void);
 int APS5_VABI sceKernelGetUtokenWeakenedPortRestrictionForRcmgr(void);
 int APS5_VABI sceKernelGetVrCaptureSize(void);
-int APS5_VABI sceKernelGiveDirectMemoryToMapper(void);
+int APS5_VABI sceKernelGiveDirectMemoryToMapper(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset);
 int APS5_VABI sceKernelHasNeoMode(void);
 int APS5_VABI sceKernelHwGetBdDriveInfo(void);
 int APS5_VABI sceKernelHwHasOpticalOut(void);
@@ -386,7 +391,7 @@ int64_t APS5_VABI sceKernelLwfsWrite(int32_t fd, const void* data, std::size_t s
 int APS5_VABI sceKernelMapSanitizerShadowMemory(void);
 int APS5_VABI sceKernelMapToolMemory(void);
 int APS5_VABI sceKernelMapTraceMemory(void);
-int APS5_VABI sceKernelMapperGetParam(void);
+int APS5_VABI sceKernelMapperGetParam(std::uint64_t* param);
 int APS5_VABI sceKernelMemoryPoolMove(void);
 int APS5_VABI sceKernelMlockall(void);
 int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags);
@@ -402,7 +407,6 @@ int APS5_VABI sceKernelPrepareDirectMemorySwap(void);
 int APS5_VABI sceKernelPrepareToResumeProcess(void);
 int APS5_VABI sceKernelPrepareToSuspendProcess(void);
 int APS5_VABI sceKernelProtectDirectMemory(void);
-int APS5_VABI sceKernelProtectDirectMemoryForPID(void);
 int APS5_VABI sceKernelQueryToolMemory(void);
 int APS5_VABI sceKernelQueryTraceMemory(void);
 int APS5_VABI sceKernelRandomizedPath(void);

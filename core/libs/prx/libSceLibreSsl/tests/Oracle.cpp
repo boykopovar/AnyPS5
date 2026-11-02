@@ -34,6 +34,11 @@ const char* SslAlertDescStringLong(int value);
 const char* OcspCertStatusString(long status);
 const char* OcspCrlReasonString(long reason);
 const char* OcspResponseStatusString(long status);
+int ObjCreate(const char* oid, const char* shortName, const char* longName);
+void ObjCleanup();
+int I2tAsn1Object(char* buffer, int length, const void* object);
+unsigned long ErrGetError();
+void ErrClearError();
 }
 
 namespace {
@@ -193,16 +198,6 @@ struct Digest {
     std::function<int(unsigned char*, void*)> final;
 };
 
-bool SameContext(int kind, const std::vector<unsigned char>& mine, const std::vector<unsigned char>& theirs) {
-    if (kind < 5) return mine == theirs;
-    const auto num = offsetof(Sha512Context, num);
-    const auto data = offsetof(Sha512Context, data);
-    std::uint32_t used = 0;
-    std::memcpy(&used, theirs.data() + num, sizeof used);
-    const std::size_t end = data + std::min<std::size_t>(used, sizeof(Sha512Context::data));
-    return std::memcmp(mine.data(), theirs.data(), end) == 0 && std::memcmp(mine.data() + num, theirs.data() + num, mine.size() - num) == 0;
-}
-
 void CompareDigests() {
     const Digest digests[] = {
         {"MD4", 16, sizeof(Md4Context), [](void* c) { return MD4_Init_nid_postfix(static_cast<Md4Context*>(c)); }, [](void* c, const void* d, std::size_t n) { return MD4_Update_nid_postfix(static_cast<Md4Context*>(c), d, n); }, [](unsigned char* m, void* c) { return MD4_Final_nid_postfix(m, static_cast<Md4Context*>(c)); }},
@@ -223,7 +218,7 @@ void CompareDigests() {
             int mineResult = 0;
             const auto error = Attempt([&] { mineResult = digest.init(mine.data()); });
             int theirResult = LibreSslReference::DigestInit(kind, theirs.data());
-            Record(name + "_Init", error.empty() && mineResult == theirResult && SameContext(kind, mine, theirs), [&] { return (error.empty() ? std::to_string(mineResult) : error) + " vs " + std::to_string(theirResult) + " context " + Hex(mine.data(), 32) + " vs " + Hex(theirs.data(), 32); });
+            Record(name + "_Init", error.empty() && mineResult == theirResult && mine == theirs, [&] { return (error.empty() ? std::to_string(mineResult) : error) + " vs " + std::to_string(theirResult) + " context " + Hex(mine.data(), 32) + " vs " + Hex(theirs.data(), 32); });
             if (!error.empty()) continue;
             const std::size_t length = round < 300 ? static_cast<std::size_t>(round) : generator() % 5000;
             const auto input = Bytes(length);
@@ -234,7 +229,7 @@ void CompareDigests() {
                 mineResult = digest.update(mine.data(), input.data() + done, chunk);
                 theirResult = LibreSslReference::DigestUpdate(kind, theirs.data(), input.data() + done, chunk);
                 done += chunk;
-                if (same && (mineResult != theirResult || !SameContext(kind, mine, theirs))) {
+                if (same && (mineResult != theirResult || mine != theirs)) {
                     same = false;
                     first = "after " + std::to_string(done) + " of " + std::to_string(length) + " bytes";
                 }
@@ -302,6 +297,98 @@ void CompareStrings() {
     CompareStrings("OCSP_response_status_str", Range(-2, 10), [](long v) { return OCSP_response_status_str_nid_postfix(v); }, LibreSslReference::OcspResponseStatusString);
 }
 
+
+std::string Errors(const std::function<unsigned long()>& next) {
+    std::string text;
+    while (const unsigned long code = next()) text += " " + std::to_string(code);
+    return text;
+}
+
+struct Oid {
+    std::string text;
+    std::vector<unsigned char> content;
+};
+
+Oid RandomOid() {
+    static const char* const huge[] = {"18446744073709551535", "18446744073709551616", "1844674407370955161", "99999999999999999999999999", "340282366920938463463374607431768211455"};
+    Oid oid;
+    const unsigned first = static_cast<unsigned>(generator() % 3);
+    oid.text = std::to_string(first);
+    const unsigned arcs = 1 + static_cast<unsigned>(generator() % 5);
+    bool exact = true;
+    for (unsigned index = 0; index < arcs; ++index) {
+        oid.text += generator() % 5 ? '.' : ' ';
+        if (generator() % 12 == 0) {
+            oid.text += huge[generator() % std::size(huge)];
+            exact = false;
+            continue;
+        }
+        std::uint64_t value = index == 0 && first < 2 ? generator() % 40 : generator() % 3 ? generator() % 300 : generator() >> (generator() % 64);
+        if (index == 0) value += first * 40;
+        oid.text += std::to_string(index == 0 ? value - first * 40 : value);
+        std::vector<unsigned char> groups;
+        do {
+            groups.push_back(static_cast<unsigned char>(value & 0x7f));
+            value >>= 7;
+        } while (value);
+        for (std::size_t at = groups.size(); at-- > 1;) oid.content.push_back(groups[at] | 0x80);
+        oid.content.push_back(groups[0]);
+    }
+    if (!exact) oid.content.clear();
+    if (generator() % 4 == 0) {
+        static constexpr char junk[] = {'.', ' ', 'x', '3', '-', '\x80', '0', '4'};
+        const std::size_t at = generator() % (oid.text.size() + 1);
+        if (generator() % 2 && at < oid.text.size()) oid.text[at] = junk[generator() % sizeof junk];
+        else oid.text.insert(at, 1, junk[generator() % sizeof junk]);
+        oid.content.clear();
+    }
+    if (generator() % 30 == 0) oid.text = std::string("012").substr(0, generator() % 3);
+    return oid;
+}
+
+std::string Describe(int result, const std::function<unsigned long()>& errors) {
+    return std::to_string(result) + Errors(errors);
+}
+
+void CompareCreatedObjects() {
+    static const char* const names[] = {"alpha", "beta", "CN", "commonName", "", "x"};
+    std::vector<std::vector<unsigned char>> probes = {{0x55, 0x04, 0x03}, {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b}, {0x2a, 0x03, 0x04}, {0x2b}, {0x88, 0x37, 0x05}};
+    std::string mineLog;
+    std::string theirLog;
+    for (int round = 0; round < 20000; ++round) {
+        if (generator() % 25 == 0) {
+            OBJ_cleanup_nid_postfix();
+            LibreSslReference::ObjCleanup();
+        }
+        const Oid oid = RandomOid();
+        const char* shortName = generator() % 5 ? names[generator() % std::size(names)] : nullptr;
+        const char* longName = generator() % 3 ? names[generator() % std::size(names)] : nullptr;
+        ERR_clear_error_nid_postfix();
+        LibreSslReference::ErrClearError();
+        int mineResult = 0;
+        const auto error = Attempt([&] { mineResult = OBJ_create_nid_postfix(oid.text.c_str(), shortName, longName); });
+        std::string mineText = error.empty() ? Describe(mineResult, ERR_get_error_nid_postfix) : error;
+        std::string theirText = Describe(LibreSslReference::ObjCreate(oid.text.c_str(), shortName, longName), LibreSslReference::ErrGetError);
+        if (!oid.content.empty() && probes.size() < 64) probes.push_back(oid.content);
+        for (int probe = 0; probe < 4; ++probe) {
+            std::vector<unsigned char> data = probes[generator() % probes.size()];
+            LibreSslAsn1Object object{nullptr, nullptr, generator() % 4 ? 0 : static_cast<int>(940 + generator() % 60), static_cast<int>(data.size()), data.data(), 0};
+            const int space = static_cast<int>(generator() % 40);
+            char mine[48];
+            char theirs[48];
+            std::memset(mine, 0x5a, sizeof mine);
+            std::memset(theirs, 0x5a, sizeof theirs);
+            const int mineLength = i2t_ASN1_OBJECT_nid_postfix(mine, space, &object);
+            mineText += " | " + std::to_string(mineLength) + " " + Hex(mine, sizeof mine) + Errors(ERR_get_error_nid_postfix);
+            const int theirLength = LibreSslReference::I2tAsn1Object(theirs, space, &object);
+            theirText += " | " + std::to_string(theirLength) + " " + Hex(theirs, sizeof theirs) + Errors(LibreSslReference::ErrGetError);
+        }
+        Record("OBJ_create", mineText == theirText, [&] { return Quoted(oid.text.c_str()) + " " + Quoted(shortName) + " " + Quoted(longName) + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+    }
+    OBJ_cleanup_nid_postfix();
+    LibreSslReference::ObjCleanup();
+}
+
 }
 
 int main() {
@@ -310,6 +397,7 @@ int main() {
     CompareDigests();
     CompareDesParity();
     CompareStrings();
+    CompareCreatedObjects();
     long cases = 0;
     long differing = 0;
     for (const auto& [function, count] : counts) {

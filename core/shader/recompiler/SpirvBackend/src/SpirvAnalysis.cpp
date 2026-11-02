@@ -334,13 +334,33 @@ std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const
     return addresses;
 }
 
+bool IsSplittableBufferAtomic64(const IrValue* inst) {
+    switch (inst->Opcode()) {
+    case IrOpcode::BufferAtomicOr64:
+    case IrOpcode::BufferAtomicAnd64:
+    case IrOpcode::BufferAtomicXor64:
+        return !inst->HasUses();
+    default:
+        return false;
+    }
+}
+
 SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
+    bool storageWrites = false;
     SpirvRequirements requirements {};
+    std::optional<IrOpcode> splitOpcode;
     for (const IrBlock* block : program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
             const auto addressAccess = AddressOpcodeInfoOf(inst->Opcode()).access;
             if ((BufferAccessOf(inst->Opcode()) == BufferAccess::Atomic || addressAccess == AddressAccess::Atomic) && inst->Type() == IrType::U64) {
                 requirements.bufferInt64Atomics = true;
+                if (!IsSplittableBufferAtomic64(inst)) {
+                    requirements.bufferInt64AtomicsExact = true;
+                } else if (!splitOpcode) {
+                    splitOpcode = inst->Opcode();
+                } else if (*splitOpcode != inst->Opcode()) {
+                    requirements.bufferInt64AtomicsExact = true;
+                }
             }
             if (IsImageAtomic64Opcode(inst->Opcode())) {
                 requirements.imageInt64Atomics = true;
@@ -349,6 +369,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 requirements.float64Interpolation = true;
             } else if (IsFloat64Opcode(inst->Opcode())) {
                 requirements.float64 = true;
+                requirements.float64NeedsDevice = requirements.float64NeedsDevice || !IsIntegerFloat64Opcode(inst->Opcode());
             }
             if (addressAccess != AddressAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
@@ -382,7 +403,13 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     requirements.subgroupLocalInvocationId = requirements.subgroupLocalInvocationId || program.Resources().stage == IrShaderStage::Compute;
                 }
             }
+            const auto bufferAccess = BufferAccessOf(inst->Opcode());
+            const auto imageAccess = ImageOpcodeInfoOf(inst->Opcode()).access;
             const auto sharedAccess = SharedAccessOf(inst->Opcode());
+            storageWrites = storageWrites ||
+                (bufferAccess != BufferAccess::None && bufferAccess != BufferAccess::Read) ||
+                (addressAccess != AddressAccess::None && addressAccess != AddressAccess::Read) ||
+                (imageAccess != ImageAccess::None && imageAccess != ImageAccess::Read) || sharedAccess != SharedAccess::None;
             if (sharedAccess == SharedAccess::Atomic && inst->Type() == IrType::U64) {
                 requirements.sharedInt64Atomics = true;
             }
@@ -483,6 +510,11 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             requirements.functionLdsDwords = static_cast<std::uint32_t>(std::max<std::uint64_t>((needed + 63u) & ~63ull, 64u));
         }
     }
+    const auto& info = program.Info();
+    const auto writtenImage = [](const ImageResource& image) { return image.written || image.atomic || image.atomic64 || image.targetMerge; };
+    requirements.readOnlyStorage = !storageWrites && program.Resources().stage == IrShaderStage::Pixel && !info.bdaWrites && !info.usesFaultBuffer && !info.usesDma &&
+        std::ranges::none_of(info.buffers, [](const BufferResource& buffer) { return buffer.written || buffer.atomic; }) &&
+        std::ranges::none_of(info.images, writtenImage) && std::ranges::none_of(info.runtimeImageModes, [&](const auto& modes) { return std::ranges::any_of(modes, writtenImage); });
     requirements.coherentBufferAlias = requirements.coherentBuffers && !program.Metadata().invalidatesCaches;
     return requirements;
 }
@@ -522,6 +554,10 @@ std::unordered_set<const IrValue*> WaveUniformValues(const IrProgram& program) {
         if (!lanes) uniform.insert(value);
     }
     return uniform;
+}
+
+bool IsIntegerFloat64Opcode(IrOpcode opcode) {
+    return opcode == IrOpcode::FPAdd64 || opcode == IrOpcode::FPMul64 || opcode == IrOpcode::ConvertF32F64 || opcode == IrOpcode::ConvertF64F32;
 }
 
 }
