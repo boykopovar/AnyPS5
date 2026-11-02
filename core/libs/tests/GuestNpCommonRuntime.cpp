@@ -888,6 +888,11 @@ void TestJsonParser() {
     const std::size_t cut = escaped.find("\\n") + 1;
     Require(ParseJson(&strings, escaped, {cut, 2, escaped.size() - cut - 2}) == 0 && joined() == decoded,
         "an escape and a UTF-8 sequence split between calls still decode");
+    const std::string stray = "{\"s\":\"\xE6" "A\"}";
+    const std::string strayDecoded = "5 0 0 s - -1|6 0 0 s 4:\xE6" "A -1";
+    Require(ParseJson(&strings, stray) == 0 && joined() == strayDecoded, "a lead byte that the next byte does not continue is decoded alone");
+    Require(ParseJson(&strings, stray, {7, 2, 1}) == 0 && joined() == strayDecoded,
+        "a lead byte split from the bytes that do not continue it keeps the bytes after it");
 
     const NpJsonRule anyElement[] = {{2, nullptr, 1}, {0, "", 0}};
     const NpJsonRule* deepLevels[] = {anyElement};
