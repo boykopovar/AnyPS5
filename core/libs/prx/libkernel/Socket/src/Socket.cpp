@@ -40,6 +40,7 @@ struct GuestTimeval {
 std::atomic<KernelSocketPoll::Poller> g_socketPoller{nullptr};
 std::atomic<KernelSocketPoll::Closer> g_socketCloser{nullptr};
 std::atomic<KernelSocketPoll::OptionSetter> g_socketOptionSetter{nullptr};
+std::atomic<KernelSocketPoll::OptionGetter> g_socketOptionGetter{nullptr};
 std::atomic<KernelSocketPoll::StatusControl> g_socketStatusControl{nullptr};
 std::atomic<KernelSocketPoll::NativeLookup> g_socketNativeLookup{nullptr};
 
@@ -164,6 +165,15 @@ bool KernelCloseSocket_nid_no_patch(int descriptor, int* error) {
 
 void KernelSetSocketOptionSetter_nid_no_patch(KernelSocketPoll::OptionSetter setter) {
     g_socketOptionSetter.store(setter);
+}
+
+void KernelSetSocketOptionGetter_nid_no_patch(KernelSocketPoll::OptionGetter getter) {
+    g_socketOptionGetter.store(getter);
+}
+
+bool KernelGetSocketOption_nid_no_patch(int descriptor, int level, int option, void* value, std::uint32_t* length, int* error) {
+    const auto getter = g_socketOptionGetter.load();
+    return getter != nullptr && getter(descriptor, level, option, value, length, error);
 }
 
 bool KernelSetSocketOption_nid_no_patch(int descriptor, int level, int option, const void* value, std::uint32_t length, int* error) {

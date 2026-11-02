@@ -427,6 +427,32 @@ inline std::optional<std::uint32_t> HighestDrawIndex(std::span<const std::byte> 
     return indexSize == 2 ? HighestDrawIndexOf<std::uint16_t>(indices, skipRestart) : HighestDrawIndexOf<std::uint32_t>(indices, skipRestart);
 }
 
+inline std::uint32_t CompactListRestart(std::span<std::byte> indices, std::uint32_t indexSize, std::uint32_t primitiveSize) {
+    Require(indexSize == 2 || indexSize == 4, "unsupported index size");
+    Require(primitiveSize != 0, "invalid list primitive size");
+    const auto restartIndex = indexSize == 2 ? 0xffffu : 0xffffffffu;
+    std::size_t written = 0;
+    std::size_t primitiveStart = 0;
+    for (std::size_t offset = 0; offset + indexSize <= indices.size(); offset += indexSize) {
+        std::uint32_t index = 0;
+        if (indexSize == 2) {
+            std::uint16_t value = 0;
+            std::memcpy(&value, indices.data() + offset, sizeof(value));
+            index = value;
+        } else {
+            std::memcpy(&index, indices.data() + offset, sizeof(index));
+        }
+        if (index == restartIndex) {
+            written = primitiveStart;
+            continue;
+        }
+        std::memmove(indices.data() + written * indexSize, indices.data() + offset, indexSize);
+        ++written;
+        if (written - primitiveStart == primitiveSize) primitiveStart = written;
+    }
+    return static_cast<std::uint32_t>(primitiveStart);
+}
+
 inline std::vector<std::uint32_t> MeshRestartTable(std::span<const std::byte> indices, std::uint32_t indexSize) {
     Require(indexSize == 2 || indexSize == 4, "unsupported index size");
     const auto restartIndex = indexSize == 2 ? 0xffffu : 0xffffffffu;
