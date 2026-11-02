@@ -1182,6 +1182,7 @@ void CheckKernelEnvironment() {
     Require(Kenv(dump, nullptr, reinterpret_cast<char*>(0x10), sizeof(buffer)) == 0);
     Require(Kenv(dump, reinterpret_cast<const char*>(0x10), buffer, -1) == 0);
     Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(get, "anyps5.alpha", buffer, -1) == -1 && Error() == 22);
     Require(Kenv(get, longestName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 2);
     Require(Kenv(get, longName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
     Require(Kenv(get, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
