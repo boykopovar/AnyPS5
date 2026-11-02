@@ -12,7 +12,7 @@ import check_conventions
 DEFINITION = "int APS5_VABI sceFooBar(int a, int b) { return a + b; }\n"
 
 
-class WrappedDeclarationTests(unittest.TestCase):
+class WrappedDeclarationFixture(unittest.TestCase):
     def check(self, first_file, first_text, second_text=DEFINITION):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -45,6 +45,8 @@ class WrappedDeclarationTests(unittest.TestCase):
                 cwd=root, capture_output=True, text=True, env=env, timeout=20,
             )
 
+
+class WrappedDeclarationTests(WrappedDeclarationFixture):
     def test_wrapped_declaration_is_not_a_duplicate(self):
         result = self.check("Export.h", "int APS5_VABI sceFooBar(int a,\n    int b);\n")
         self.assertNotIn("duplicate-export", result.stdout, result.stdout + result.stderr)
@@ -66,6 +68,41 @@ class WrappedDeclarationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("[duplicate-export]", result.stdout)
 
+    def test_multiline_raw_literal_is_not_a_duplicate(self):
+        source = 'const char* example = R"example(\n' + DEFINITION + ')example";\n'
+        result = self.check("Export.cpp", source)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("[duplicate-export]", result.stdout)
+
+    def test_block_comment_is_not_a_duplicate(self):
+        result = self.check("Export.cpp", "/*\n" + DEFINITION + "*/\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("[duplicate-export]", result.stdout)
+
+    def test_literal_before_unrelated_export_is_not_a_duplicate(self):
+        source = 'const char* example = "APS5_VABI sceFooBar()"; int APS5_VABI sceOther() { return 1; }\n'
+        result = self.check("Export.cpp", source)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("[duplicate-export]", result.stdout)
+
+    def test_line_comment_before_definition_is_not_a_duplicate(self):
+        result = self.check("Export.cpp", "// " + DEFINITION + "int unrelated() { return 42; }\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("[duplicate-export]", result.stdout)
+
+    def test_definition_after_unicode_raw_literal_is_a_duplicate(self):
+        source = 'const char* text = R"text(first\u2028+middle\u2029+last)text";\n' + DEFINITION
+        result = self.check("Export.cpp", source)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("[duplicate-export]", result.stdout)
+
+    def test_definition_after_commented_example_is_a_duplicate(self):
+        result = self.check("Export.cpp", "/*\n" + DEFINITION + "*/\n" + DEFINITION)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("[duplicate-export]"), 1, result.stdout)
+
+
+class AbiAliasTests(WrappedDeclarationFixture):
     def test_local_abi_alias_cannot_hide_duplicates_in_either_library(self):
         aliased = "#define NATIVE_SYSV APS5_VABI\n" + DEFINITION.replace("APS5_VABI", "NATIVE_SYSV")
         for first, second in ((aliased, DEFINITION), (DEFINITION, aliased), (aliased, aliased)):
@@ -116,39 +153,6 @@ class WrappedDeclarationTests(unittest.TestCase):
                 source = "#define ABI APS5_VABI\nint ABI " + name + "() { return 3; }\n"
                 result = self.check("Export.cpp", source, source if name.startswith("Support") else DEFINITION)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_multiline_raw_literal_is_not_a_duplicate(self):
-        source = 'const char* example = R"example(\n' + DEFINITION + ')example";\n'
-        result = self.check("Export.cpp", source)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("[duplicate-export]", result.stdout)
-
-    def test_block_comment_is_not_a_duplicate(self):
-        result = self.check("Export.cpp", "/*\n" + DEFINITION + "*/\n")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("[duplicate-export]", result.stdout)
-
-    def test_literal_before_unrelated_export_is_not_a_duplicate(self):
-        source = 'const char* example = "APS5_VABI sceFooBar()"; int APS5_VABI sceOther() { return 1; }\n'
-        result = self.check("Export.cpp", source)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("[duplicate-export]", result.stdout)
-
-    def test_line_comment_before_definition_is_not_a_duplicate(self):
-        result = self.check("Export.cpp", "// " + DEFINITION + "int unrelated() { return 42; }\n")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("[duplicate-export]", result.stdout)
-
-    def test_definition_after_unicode_raw_literal_is_a_duplicate(self):
-        source = 'const char* text = R"text(first\u2028+middle\u2029+last)text";\n' + DEFINITION
-        result = self.check("Export.cpp", source)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("[duplicate-export]", result.stdout)
-
-    def test_definition_after_commented_example_is_a_duplicate(self):
-        result = self.check("Export.cpp", "/*\n" + DEFINITION + "*/\n" + DEFINITION)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.count("[duplicate-export]"), 1, result.stdout)
 
 
 if __name__ == "__main__":

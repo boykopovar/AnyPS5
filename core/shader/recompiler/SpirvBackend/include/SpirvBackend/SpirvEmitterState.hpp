@@ -138,6 +138,7 @@ struct SpirvEmitterState {
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
     bool nonConstantImageOffsets = false;
+    bool shaderImageMinLod = false;
     bool tableIndexNonUniform = true;
     std::uint32_t storageBufferVariable = 0;
     std::uint32_t storageBufferU64Variable = 0;
@@ -221,6 +222,14 @@ struct SpirvEmitterState {
     bool pixelFunctionLdsBuffer = false;
     std::uint32_t numWorkgroupsVariable = 0;
     std::array<std::uint32_t, 2> scratchVariable {};
+    std::uint32_t scratchPoolVariable = 0;
+    std::uint32_t scratchPoolSlotVariable = 0;
+    std::uint32_t scratchPoolCandidateVariable = 0;
+    std::uint32_t scratchPoolWonVariable = 0;
+    std::uint32_t scratchPoolSlotCount = 0;
+    std::uint32_t scratchPoolSlot = 0;
+    std::array<std::uint32_t, 2> scratchPoolLaneBase {};
+    std::uint32_t scratchPoolReturns = 0;
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
