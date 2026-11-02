@@ -10,9 +10,13 @@ static_assert(offsetof(VideoRecordingQueryParam, option) == 28);
 
 static_assert(sizeof(VideoRecordingSupportInfo) == 18);
 
-static_assert(sizeof(VideoRecordingParam) == 32);
-static_assert(offsetof(VideoRecordingParam, duration) == 12);
-static_assert(offsetof(VideoRecordingParam, format) == 28);
+static_assert(sizeof(VideoRecordingParam) == 64);
+static_assert(offsetof(VideoRecordingParam, duration) == 8);
+static_assert(offsetof(VideoRecordingParam, mode) == 12);
+static_assert(offsetof(VideoRecordingParam, affinityMask) == 16);
+static_assert(offsetof(VideoRecordingParam, threadPriority) == 24);
+static_assert(offsetof(VideoRecordingParam, option) == 32);
+static_assert(offsetof(VideoRecordingParam, format) == 36);
 static_assert(sizeof(VideoRecordingParam2) == 40);
 static_assert(offsetof(VideoRecordingParam2, threadPriority) == 16);
 static_assert(offsetof(VideoRecordingParam2, duration) == 20);
@@ -20,6 +24,38 @@ static_assert(offsetof(VideoRecordingParam2, format) == 36);
 
 namespace {
 constexpr int SceVideoRecordingStatusNone = 0;
+constexpr int ErrorInvalidArgument = static_cast<int>(0x80a80003);
+constexpr int ErrorNotOpen = static_cast<int>(0x80a80006);
+constexpr int ErrorNoVideoFormat = static_cast<int>(0x80a80008);
+constexpr int MinimumHeapSize = 0x1000;
+constexpr std::uint64_t MinimumParamSize = 0x10;
+constexpr std::uint32_t MaximumDuration = 3600;
+
+bool IsVideoFormat(std::uint32_t format) {
+ switch (format) {
+ case 0x1:
+ case 0x2:
+ case 0x10:
+ case 0x11:
+ case 0x28:
+ case 0x40:
+ case 0x41:
+  return true;
+ default:
+  return false;
+ }
+}
+
+int CheckParam(const VideoRecordingParam* param) {
+ if (param == nullptr || param->size < MinimumParamSize) return ErrorInvalidArgument;
+ if (param->duration == 0 || param->duration > MaximumDuration || param->mode > 1) return ErrorInvalidArgument;
+ const std::uint32_t option = param->size > offsetof(VideoRecordingParam, option) ? param->option : 0;
+ const std::uint32_t format = param->size > offsetof(VideoRecordingParam, format) ? param->format : 0;
+ if (option == 0 && format == 0) return MinimumHeapSize;
+ if (option > 1 || (format != 0 && !IsVideoFormat(format))) return ErrorInvalidArgument;
+ if (format == 0) return ErrorNoVideoFormat;
+ return 0;
+}
 }
 
 extern "C" {
@@ -31,8 +67,7 @@ void APS5_VABI _sceVideoRecordingQueryParam_nid_postfix(VideoRecordingQueryParam
 
 int APS5_VABI sceVideoRecordingClose(int discard) {
  (void)discard;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return ErrorNotOpen;
 }
 
 int APS5_VABI sceVideoRecordingCloseByHandle(VideoRecordingContext* handle, int discard) {
@@ -102,10 +137,10 @@ int APS5_VABI sceVideoRecordingInitialize(void* param) {
 }
 
 int APS5_VABI sceVideoRecordingOpen(const char* path, const VideoRecordingParam* param, void* heap, int heapSize) {
- (void)path;
- (void)param;
- (void)heap;
- (void)heapSize;
+ if (path == nullptr || param == nullptr || heap == nullptr || heapSize < 0) return ErrorInvalidArgument;
+ const int result = CheckParam(param);
+ if (result < 0) return result;
+ if (result == MinimumHeapSize && heapSize < MinimumHeapSize) return ErrorInvalidArgument;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
@@ -126,9 +161,9 @@ std::int64_t APS5_VABI sceVideoRecordingQueryHddSize2(const VideoRecordingParam2
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize(const VideoRecordingParam* param) {
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ const int result = CheckParam(param);
+ if (result == 0) NotImplemented_nid_no_patch("sceVideoRecordingQueryMemSize (heap size for a video format)");
+ return result;
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param) {
@@ -170,13 +205,11 @@ int APS5_VABI sceVideoRecordingSetInfo(std::int32_t info, const void* data, std:
 }
 
 int APS5_VABI sceVideoRecordingStart(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return ErrorNotOpen;
 }
 
 int APS5_VABI sceVideoRecordingStop(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return ErrorNotOpen;
 }
 
 int APS5_VABI sceVideoRecordingTerm(void) {
