@@ -162,6 +162,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.meshWindowBuffer == right.meshWindowBuffer, prefix + "mesh window buffer flags differ");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
+    require(left.deviceImageTables == right.deviceImageTables, prefix + "device image table flag differs");
     require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
@@ -199,6 +200,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
     require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
     require(left.userDataRegisterReads == right.userDataRegisterReads, prefix + "user data register read mask differs");
+    require(left.deviceImageInterfaces == right.deviceImageInterfaces && left.deviceSamplerClasses == right.deviceSamplerClasses, prefix + "device image interfaces differ");
     for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
         const auto& a = left.imageTablePoison[i];
         const auto& b = right.imageTablePoison[i];
@@ -269,6 +271,9 @@ RecompileResult sampleResult() {
     result.readsDepthRemapPush = true;
     result.bdaAbiVersion = 3;
     result.descriptorFaults = 2;
+    result.deviceImageTables = true;
+    result.deviceImageInterfaces = {0x1234567890abcdefull, 0u, 42u};
+    result.deviceSamplerClasses = {3u, 0u};
     result.windowLaneGuards = 7u;
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
@@ -364,6 +369,7 @@ CompiledVariant sampleVariant() {
     image.layerRows = true;
     image.maxArrayLayers = 0x01020304u;
     image.optionalDescriptor = true;
+    image.deviceTable = true;
     image.byElements = 4;
     image.byComponents = 1;
     image.emulatedCompare = 0x1a07u;
@@ -375,6 +381,7 @@ CompiledVariant sampleVariant() {
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
     info.info.usesFaultBuffer = true;
     info.info.sampledPairs = {{0, 0, 0x10}};
+    info.info.deviceImageUses = {{0, 0, 11, 0x18, 13}, {0, NoSampler, 17, 0x34}};
     StageInput input{};
     input.kind = StageInputKind::GlobalInvocationId;
     input.location = 2;
@@ -486,6 +493,7 @@ void verifyEntryRoundTrip() {
     require(ShaderDiskCache::DecodeEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded, "an encoded entry does not decode");
     requireSameVariant(variant, decoded, "entry round trip");
     require(decoded.artifact.variantId == 0, "the artifact stored a per-process id");
+    require(decoded.info.info.deviceImageUses.at(0).samplerDescriptor == 13u && decoded.info.info.deviceImageUses.at(1).samplerDescriptor == NoSampler, "the device image uses lost their raw sampler source or no-sampler sentinel");
 
     for (std::size_t size = 0; size < file.size(); size += size < 512 ? 1 : 131) {
         CompiledVariant partial;
@@ -2235,6 +2243,23 @@ void verifyMalformedPlans() {
     rejects("an image table heap past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 4u; });
     rejects("an image table key past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->keyDomains[1].source = 4u; });
     rejects("an image table selection past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->selection = 4u; });
+    const auto samplerUse = [](IrResourcePlan& plan, std::uint32_t source) {
+        plan.info.samplers = {SamplerResource{}};
+        plan.info.deviceImageUses = {{0u, 0u, 1u, 0x40u, source}};
+    };
+    rejects("a raw sampler source past the sources", [&](IrResourcePlan& plan) { samplerUse(plan, 4u); });
+    rejects("a raw sampler source of eight dwords", [&](IrResourcePlan& plan) { samplerUse(plan, 1u); });
+    rejects("a raw sampler source with missing words", [&](IrResourcePlan& plan) { samplerUse(plan, 2u); });
+    rejects("a raw sampler source with a wide word", [&](IrResourcePlan& plan) {
+        samplerUse(plan, 0u);
+        plan.descriptorSources[0].dwords[3] = plan.descriptorSources[3].dwords[3];
+    });
+    auto samplerPlan = handBuiltPlan();
+    samplerUse(samplerPlan, 0u);
+    samplerPlan.info.deviceImageUses.push_back({0u, NoSampler, 1u, 0x44u});
+    const auto samplerBytes = encodedPlan(samplerPlan);
+    IrResourcePlan samplerDecoded;
+    require(ShaderDiskCache::DecodePlan(samplerBytes, samplerDecoded) && encodedPlan(samplerDecoded) == samplerBytes, "a valid raw sampler source and no-sampler use did not round trip");
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -9,6 +10,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <initializer_list>
@@ -163,6 +165,30 @@ void BufferValueWordsArePatchedInTheirBinding() {
     Require(sharedCount->valueSlots.size() == 1u && sharedCount->valueSlots[0] == std::array<std::uint32_t, 3>{4u, 0u, 0u}, "a V# whose record count builds a second descriptor recorded a record-count patch");
     const auto ownCount = shared(descriptor[2] + 1u);
     Require((ownCount->valueWords >> 6u & 1u) != 0u, "a record count used by one descriptor only was not tagged next to an independent second descriptor");
+
+    const auto tagged = [&](bool forwardedAsPushData, bool shaderDataCopy, bool heapMode) {
+        auto compiled = result(false);
+        if (!shaderDataCopy) {
+            compiled->pushConstants.resize(sizeof(std::uint32_t));
+            std::memcpy(compiled->pushConstants.data(), &descriptor[0], sizeof(std::uint32_t));
+        }
+        if (forwardedAsPushData) compiled->shaderDataUserWords = {4u};
+        const std::vector<std::uint32_t> userWords(program.userData.begin(), program.userData.end());
+        if (shaderDataCopy) compiled->bindings.push_back(ShaderRecompiler::DescriptorBinding{ShaderRecompiler::DescriptorKind::UniformBuffer, ShaderRecompiler::DescriptorRole::ShaderData, 1, 0, 1, heapMode ? std::vector<std::uint32_t>(userWords.size(), 0u) : userWords});
+        const auto variant = Variant(compiled);
+        ShaderRecompiler::HeapStageWords words;
+        words.userData = userWords;
+        words.bindings = {descriptor, {}};
+        Driver::tagUserValueWords(*variant, program, heapMode ? &words : nullptr);
+        return variant->valueWords;
+    };
+    for (const auto forwardedAsPushData : {false, true}) {
+        const auto expected = forwardedAsPushData ? std::uint64_t {(1u << 4u) | (1u << 6u)} : std::uint64_t {0};
+        Require(tagged(forwardedAsPushData, false, false) == expected, std::string("default: a V# base ") + (forwardedAsPushData ? "forwarded as push data from its own user word" : "also present in push data but not forwarded from it") + " was tagged as " + std::to_string(tagged(forwardedAsPushData, false, false)));
+        Require(tagged(forwardedAsPushData, false, true) == tagged(forwardedAsPushData, false, false), std::string("heap and default disagree on a V# base ") + (forwardedAsPushData ? "forwarded as push data" : "that is not forwarded") + " (heap " + std::to_string(tagged(forwardedAsPushData, false, true)) + ", default " + std::to_string(tagged(forwardedAsPushData, false, false)) + ")");
+    }
+    Require(tagged(false, true, false) == 0u, "default: a V# base copied into a shader data binding was tagged");
+    Require(tagged(false, true, true) == ((1u << 4u) | (1u << 6u)), "heap: the user-word copy in shader data hid a V# from tagging (mask " + std::to_string(tagged(false, true, true)) + ")");
 }
 
 alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
@@ -177,6 +203,10 @@ alignas(256) constexpr std::array<std::uint32_t, 16> OwnCountPixelCode{
     0xbe880304u, 0xbe890305u, 0xbe8a0306u, 0xbe8b0307u, 0xf4200300u, 0xfa000000u, 0xf4200344u, 0xfa000004u,
     0xbf8cc07fu, 0x7e00020cu, 0x7e02020du, 0x7e040280u, 0x7e0602f2u, 0xf800180fu, 0x03020100u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 16> ForwardedBasePixelCode{
+    0xbe880304u, 0xbe890305u, 0xbe8a0306u, 0xbe8b0307u, 0xf4200300u, 0xfa000000u, 0xf4200344u, 0xfa000004u,
+    0xbf8cc07fu, 0x7e00020cu, 0x7e02020du, 0x7e040280u, 0x7e062200u, 0xf800180fu, 0x03020100u, 0xbf810000u,
+};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 
 struct Header {
@@ -187,6 +217,7 @@ struct Header {
 alignas(8) Header VertexHeader{};
 alignas(8) Header SharedCountHeader{};
 alignas(8) Header OwnCountHeader{};
+alignas(8) Header ForwardedBaseHeader{};
 
 void Registered(Header& header, const std::uint32_t* code, std::size_t bytes, std::uint8_t type) {
     header.shader.file_header = 0x34333231u;
@@ -266,17 +297,58 @@ void MovedRecordCountsReachEveryDescriptor(bool sharedCount) {
         return std::array<std::uint32_t, 8>{Low(first[i].data()), High(first[i].data()), sharedCount ? records : 12u, 0x20077facu, Low(second[i].data()), High(second[i].data()), sharedCount ? 4u : records, 0x20077facu};
     };
     const auto start = Driver::Get().DrawCacheCounters();
+    const auto heapStart = AgcDriver::DriverDetail::HeapStagesTaken();
+    const auto ringStart = AgcDriver::DriverDetail::HeapRingHitsVerified();
     for (std::size_t i = 0; i < 5; ++i) {
         const auto pixel = DrawWithUserData(pixelCode, userData(i, 4u));
         Require(pixel == std::array<std::uint8_t, 4>{255, 0, 0, 255}, mode + ": a draw whose second descriptor holds one dword drew " + std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) + "," + std::to_string(pixel[3]));
+        first[i] = {0.0f, 0.0f, 1.0f, 0.0f};
+        second[i] = {1.0f, 0.0f, 1.0f, 0.0f};
     }
     const auto taught = Driver::Get().DrawCacheCounters();
     Require(taught.hits > start.hits, mode + ": draws whose descriptors moved to equal contents never reused the cached draw (" + std::to_string(taught.lookups - start.lookups) + " lookups)");
+    if (std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr) {
+        Require(AgcDriver::DriverDetail::HeapStagesTaken() > heapStart, mode + ": the draws never reached the GPU heap");
+        Require(AgcDriver::DriverDetail::HeapRingHitsVerified() > ringStart, mode + ": no relocated ring hit was compared with a fresh capture");
+        Require(AgcDriver::DriverDetail::HeapRingHitsDiffering() == 0, mode + ": a relocated ring hit's rebuilt words differ from a fresh capture");
+    }
     const auto pixel = DrawWithUserData(pixelCode, userData(5, 8u));
     Require(pixel == std::array<std::uint8_t, 4>{255, 255, 0, 255}, mode + ": after the record count grew to two dwords, the second descriptor's second dword drew " + std::to_string(pixel[1]) + " (a reused draw kept the earlier count)");
     if (!sharedCount) {
         const auto after = Driver::Get().DrawCacheCounters();
         Require(after.hits > taught.hits, mode + ": a draw that only moved its own record counts did not reuse the cached draw");
+    }
+}
+
+struct alignas(256) Block {
+    std::array<std::array<float, 4>, 16> entries{};
+};
+
+void ForwardedBaseWordsFollowRelocatedDraws() {
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(ForwardedBaseHeader, ForwardedBasePixelCode.data(), sizeof(ForwardedBasePixelCode), 1);
+    static std::array<Block, 8> blocks{};
+    alignas(16) static std::array<std::array<float, 4>, 8> other{};
+    for (auto& block : blocks) {
+        for (auto& entry : block.entries) entry = {1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    for (auto& entry : other) entry = {0.0f, 1.0f, 0.0f, 0.0f};
+    const auto ringStart = AgcDriver::DriverDetail::HeapRingHitsVerified();
+    const auto start = Driver::Get().DrawCacheCounters();
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        const bool lowByteSet = i % 2 == 1;
+        const auto* first = blocks[i].entries[lowByteSet ? 1 : 0].data();
+        const auto* second = other[i % other.size()].data();
+        const std::array<std::uint32_t, 8> words{Low(first), High(first), 4u, 0x20077facu, Low(second), High(second), 4u, 0x20077facu};
+        const auto pixel = DrawWithUserData(ForwardedBasePixelCode.data(), words);
+        const std::array<std::uint8_t, 4> expected{255, 0, 0, static_cast<std::uint8_t>(lowByteSet ? 255 : 0)};
+        Require(pixel == expected, "draw " + std::to_string(i) + " read a stale forwarded V# base word: drew " + std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) + "," + std::to_string(pixel[3]) + ", expected alpha " + std::to_string(expected[3]));
+    }
+    const auto after = Driver::Get().DrawCacheCounters();
+    Require(after.hits > start.hits, "draws that moved only their first V# never reused the cached draw, so the forwarded base word was never rebuilt for a hit");
+    if (std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr) {
+        Require(AgcDriver::DriverDetail::HeapRingHitsVerified() > ringStart, "no relocated ring hit of the forwarded-base draws was compared with a fresh capture");
+        Require(AgcDriver::DriverDetail::HeapRingHitsDiffering() == 0, "a relocated ring hit of the forwarded-base draws differs from a fresh capture");
     }
 }
 
@@ -301,6 +373,7 @@ int main() {
         }
         MovedRecordCountsReachEveryDescriptor(true);
         MovedRecordCountsReachEveryDescriptor(false);
+        ForwardedBaseWordsFollowRelocatedDraws();
         AgcDriverShutdown_nid_postfix();
         std::cout << "User-data V# values and fetch subroutine pointers relocate\n";
         return 0;

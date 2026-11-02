@@ -12,3 +12,7 @@ configure_windows_unwind(agc_driver_mesh_tests)
 if(BUILD_TESTING)
     agc_add_default_test(agc_driver_mesh_tests)
 endif()
+
+if(BUILD_TESTING)
+    agc_add_gpu_heap_test(agc_driver_mesh)
+endif()

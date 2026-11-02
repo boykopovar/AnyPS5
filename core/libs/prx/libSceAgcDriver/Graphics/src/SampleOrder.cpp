@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -176,8 +177,8 @@ public:
         context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
         const StoragePush push{map, {region.width, region.height}, target.samples};
         context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, storagePipelineLayout, 0, 1, &set, 0, nullptr);
-        context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, storagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+        CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, storagePipelineLayout, 0, 1, &set, SetBindSite::Detiler);
+        CmdPushConstants(context, commands, storagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
         context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, ((region.width + 1u) / 2u + 7u) / 8u, ((region.height + 1u) / 2u + 7u) / 8u, 1);
     }
 
@@ -245,13 +246,13 @@ public:
         const VkRect2D scissor{{0, 0}, region};
         context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &viewport);
         context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &scissor);
-        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, 0, nullptr);
+        CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, SetBindSite::Detiler);
         const auto draw = [&](VkPipeline pipeline, std::uint32_t bit, std::uint32_t writeMask, std::uint32_t reference) {
             context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             context.Resolved(&DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, writeMask);
             context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
             const DepthPush push{map, bit};
-            context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, sampledPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+            CmdPushConstants(context, commands, sampledPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
             context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, 3, 1, 0, 0);
         };
         draw(pass.depth, 0u, 0xffu, 0u);
