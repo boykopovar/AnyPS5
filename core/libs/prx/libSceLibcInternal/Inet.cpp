@@ -44,10 +44,12 @@ int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address) {
             if (IsDigit(c)) {
                 if (base == 8 && (c == '8' || c == '9')) return 0;
                 value = value * base + (c - '0');
+                if (value > 0xffffffffu) return 0;
                 c = static_cast<unsigned char>(*++text);
                 digit = true;
             } else if (base == 16 && IsHexDigit(c)) {
                 value = (value << 4) | static_cast<std::uint64_t>(c + 10 - (c >= 'a' ? 'a' : 'A'));
+                if (value > 0xffffffffu) return 0;
                 c = static_cast<unsigned char>(*++text);
                 digit = true;
             } else {
