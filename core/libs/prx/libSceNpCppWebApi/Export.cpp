@@ -152,6 +152,20 @@ int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivitie
     return 0;
 }
 
+static constexpr std::size_t ReferenceCountOffset = 0;
+static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
+static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
+
+static_assert(sizeof(CommonIterator) == 0x10 && offsetof(CommonIterator, element) == 0x08);
+
+static void* HostVectorBegin(void* out, const void* self, const std::int32_t elementKind, const char* function);
+static void* HostVectorEnd(void* out, const void* self, const std::int32_t elementKind, const std::size_t elementSize, const char* function);
+static void* HostIteratorAdvance(void* self, const std::size_t elementSize);
+static bool HostIteratorNotEqual(const void* self, const void* other);
+static void* CopyMemberIntrusivePtr(void* out, const void* self, const std::size_t memberOffset, const std::size_t referenceCountOffset);
+static void* CopyOnlineId(void* out, const void* self, const std::size_t memberOffset);
+
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE() {
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
@@ -1135,11 +1149,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_12
 }
 
 static_assert(sizeof(IntrusivePtr) == 0x18);
-
-static constexpr std::size_t ReferenceCountOffset = 0;
-static constexpr std::size_t VectorReferenceCountOffset = 0x30;
-static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
-static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
 
 static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::size_t offset) {
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
