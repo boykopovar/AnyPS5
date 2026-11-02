@@ -472,8 +472,12 @@ def main(arguments=None):
         parser.error(f"summary file not found: {options.summary}")
     if options.thread and options.trace.endswith(".jsonl"):
         parser.error("--thread requires an event trace, not interval summaries")
+    if options.stacks and options.trace.endswith(".jsonl"):
+        parser.error("--stacks requires an event trace, not interval summaries")
     if options.trace.endswith(".jsonl"):
         result = digest_intervals(load_intervals(options.trace))
+        if options.summary:
+            parser.error("--summary requires an event trace, not interval summaries")
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))
         return 0
     try:
