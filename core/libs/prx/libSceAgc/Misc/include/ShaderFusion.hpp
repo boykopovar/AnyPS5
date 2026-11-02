@@ -18,7 +18,6 @@ extern "C" int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Sha
 extern "C" {
 
 int APS5_VABI sceAgcFuseShaderHalves_nid_postfix(Shader* fusedResult, const Shader* front, const Shader* back, void* scratchMem);
-int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Shader* vs, const Shader* ps);
 
 }
 
