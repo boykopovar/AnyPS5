@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceRemoteplay/include/InventoryExports.hpp"
 #include "prx/libSceRemoteplay/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -50,7 +51,11 @@ int APS5_VABI sceRemoteplayGetConnectionStatus(int user_id, int* status) {
  std::lock_guard lock(g_stateMutex);
  if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
  if (!status) return REMOTEPLAY_ERROR_INVALID_ARG;
- *status = REMOTEPLAY_CONNECTION_STATUS_DISCONNECT;
+ const int disconnected = REMOTEPLAY_CONNECTION_STATUS_DISCONNECT;
+ const int savedErrno = errno;
+ const bool copied = GuestCopyOut_nid_no_patch(status, &disconnected, sizeof(disconnected));
+ errno = savedErrno;
+ if (!copied) return REMOTEPLAY_ERROR_INVALID_ARG;
  return 0;
 }
 
