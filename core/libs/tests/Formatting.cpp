@@ -5,6 +5,8 @@
 #include "prx/libc/include/ScanQuadLength.hpp"
 #include <algorithm>
 #include <array>
+#include <utility>
+#include <iterator>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -67,6 +69,41 @@ static int APS5_VABI ScanListS(const char* buffer, const char* format, ...) {
     return result;
 }
 
+static void CheckCharacterScanLengths() {
+    const auto check = [](bool condition, const char* message = "Character scan length check failed") {
+        if (!condition) throw std::runtime_error(message);
+    };
+    using Scanner = int (APS5_VABI*)(const char*, const char*, ...);
+    const Scanner scanners[]{sscanf_nid_postfix, ScanList, sscanf_s_nid_postfix, ScanListS};
+    for (std::size_t api = 0; api < std::size(scanners); ++api) {
+        const auto scan = scanners[api];
+        const bool secure = api >= 2;
+#ifdef _WIN32
+        if (!secure) continue;
+#endif
+        for (const char* length : {"hh", "h", "ll", "j", "z", "t", "L"}) {
+            for (const char* conversion : {"s", "c", "[a-z]"}) {
+                const std::string format = std::string("%2") + length + conversion + "%n";
+                std::array<char, 32> output;
+                output.fill('Z');
+                int consumed = -1;
+                const int result = secure ? scan("ab", format.c_str(), output.data(), 32u, &consumed) : scan("ab", format.c_str(), output.data(), &consumed);
+                check(result == 1 && consumed == 2, "Character scan ignored-length consumption");
+                const bool single = conversion[0] == 'c';
+                check(output[0] == 'a' && output[1] == 'b' && (single || output[2] == '\0'), "Character scan ignored length stored wide data");
+                check(std::all_of(output.begin() + (single ? 2 : 3), output.end(), [](char value) { return value == 'Z'; }), "Character scan changed its destination guard");
+            }
+        }
+        for (const auto& example : {std::pair{"%lls", "%5[%lls]%n"}, std::pair{"% ab", "%% %2lls%n"}}) {
+            std::array<char, 32> output{};
+            int consumed = -1;
+            const int result = secure ? scan(example.first, example.second, output.data(), 32u, &consumed) : scan(example.first, example.second, output.data(), &consumed);
+            check(result == 1 && consumed == 4);
+            check(std::strcmp(output.data(), example.first[1] == ' ' ? "ab" : "%lls") == 0, "Character scan normalization changed a literal or scanset");
+        }
+    }
+}
+
 static int APS5_VABI PrintList(const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -78,6 +115,7 @@ static int APS5_VABI PrintList(const char* format, ...) {
 }
 
 static void CheckIgnoredLengths() {
+    CheckCharacterScanLengths();
     char output[96];
     Require(snprintf_nid_postfix(output, sizeof(output), "%Ld|%Lx|%Lu|%Lo", -1985229329, 0x89abcdefu, 0x89abcdefu, 0x89abcdefu) == 43 &&
         std::strcmp(output, "-1985229329|89abcdef|2309737967|21152746757") == 0);
