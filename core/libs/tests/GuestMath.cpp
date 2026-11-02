@@ -488,6 +488,13 @@ static void CheckNanConversions() {
 }
 
 static void CheckFloatUnderflowErrno() {
+    struct WideUnderflow { const char16_t* text; std::uint64_t bits; int error; };
+    for (const WideUnderflow& test : {WideUnderflow{u"1e-310", 0x000012688b70e62bull, ERANGE}, WideUnderflow{u"-4.9406564584124654e-324", 0x8000000000000001ull, ERANGE},
+             WideUnderflow{u"1e-330", 0, ERANGE}, WideUnderflow{u"2.2250738585072014e-308", 0x0010000000000000ull, 0}, WideUnderflow{u"0x1p-1074", 1, 0},
+             WideUnderflow{u"0x1.8p-1075", 1, ERANGE}, WideUnderflow{u"-0x1.000001p-1075", 0x8000000000000001ull, ERANGE}}) {
+        errno = 0;
+        Require(std::bit_cast<std::uint64_t>(wcstod_nid_postfix(test.text, nullptr)) == test.bits && errno == test.error);
+    }
     char* end = nullptr;
     errno = 7;
     Require(strtod_nid_postfix("1e-310", &end) == 1e-310 && errno == ERANGE);
