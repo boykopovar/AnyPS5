@@ -8,8 +8,33 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#ifdef __EMSCRIPTEN__
+#include "prx/libc/include/General.hpp"
+#else
 #include <immintrin.h>
+#endif
 
+#ifdef __EMSCRIPTEN__
+extern "C" {
+
+int APS5_VABI getcontext_nid_postfix(UserUcontext* context) {
+    static_cast<void>(context);
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
+    static_cast<void>(context);
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI swapcontext_nid_postfix(UserUcontext* saved, const UserUcontext* next) {
+    static_cast<void>(saved);
+    static_cast<void>(next);
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+#else
 namespace {
 
 struct RegisterFrame {
@@ -281,3 +306,4 @@ int APS5_VABI Aps5SwapcontextFinish_nid_no_patch(UserUcontext* saved, const User
 }
 
 }
+#endif
