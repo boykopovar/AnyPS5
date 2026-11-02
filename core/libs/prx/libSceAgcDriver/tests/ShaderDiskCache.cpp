@@ -354,6 +354,9 @@ CompiledVariant sampleVariant() {
     image.sampledOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
+    image.layerRowsCompatible = false;
+    image.layerRows = true;
+    image.maxArrayLayers = 0x01020304u;
     image.optionalDescriptor = true;
     image.byElements = 4;
     image.byComponents = 1;

@@ -66,6 +66,11 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+class LayerRowSamplesRequired : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class ResourceMaterializer {
 public:
     static std::uint32_t EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);

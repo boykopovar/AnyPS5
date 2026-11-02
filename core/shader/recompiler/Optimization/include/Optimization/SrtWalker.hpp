@@ -5,6 +5,7 @@
 #include "UserDataUse.hpp"
 
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -66,6 +67,25 @@ inline constexpr std::size_t SrtDescriptorForceSync = std::numeric_limits<std::s
 inline constexpr std::size_t SrtDescriptorEndForceSync = std::numeric_limits<std::size_t>::max() - 1u;
 using SrtDescriptorScope = std::uint64_t (*)(void* userData, std::size_t bytes);
 
+struct SrtImageViewIdentity {
+    std::uint64_t generation = 0;
+    std::uint64_t address = 0;
+    std::uint64_t rangeAddress = 0;
+    std::uint64_t rangeBytes = 0;
+    std::uint64_t allocationAddress = 0;
+    std::uint64_t allocationBytes = 0;
+    std::uint64_t backingSerial = 0;
+    bool hasRange = false;
+    bool readable = false;
+    bool writable = false;
+    bool gpu = false;
+
+    bool operator==(const SrtImageViewIdentity& other) const = default;
+};
+
+using SrtImageViewNormalizer = bool (*)(void* userData, std::uint32_t maxArrayLayers, std::array<std::uint32_t, 8>& descriptor, SrtImageViewIdentity& identity);
+using SrtImageViewGeneration = std::uint64_t (*)(void* userData);
+
 // The guest addresses a walk dereferenced (Detail::Evaluator::EvaluateRawRead): the leaf read of
 // each pure flat slot (IrResourcePlan::pureFlatSlots) as (flat offset, address), set by the
 // flattened loop through `leaf`/`leafSlot` around that slot's evaluation, and every other raw read
@@ -92,6 +112,8 @@ struct SrtRuntime {
     SrtMemorySupplier supplyWords = nullptr;
     SrtUserDataUse* userDataUse = nullptr;
     SrtDescriptorScope descriptorScope = nullptr;
+    SrtImageViewNormalizer normalizeImageView = nullptr;
+    SrtImageViewGeneration imageViewGeneration = nullptr;
 };
 
 struct SrtForceSyncScope {
