@@ -243,6 +243,7 @@ int main() {
     Require(sceMsgDialogGetResult(&result) == 0);
     Require(result.result == 0);
     Require(result.button_id == kButtonIdOk);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(1)) == kErrArgNull);
 
     Require(sceMsgDialogTerminate() == 0);
     Require(sceMsgDialogTerminate() == kErrNotInitialized);
