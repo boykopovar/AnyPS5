@@ -5,6 +5,8 @@
 #include <thread>
 
 extern "C" void KernelTraceWait_nid_postfix(const char*, const void*, std::uint64_t, bool) {}
+extern "C" Pthread APS5_VABI scePthreadSelf() { return nullptr; }
+extern "C" int APS5_VABI scePthreadGetprio(Pthread, int*) { return -1; }
 
 int main() {
     KernelSema sem = nullptr;
