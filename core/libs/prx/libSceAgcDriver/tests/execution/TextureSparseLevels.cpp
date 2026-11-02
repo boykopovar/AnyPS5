@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -24,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -42,6 +44,7 @@ constexpr std::uint32_t Gradients = 4;
 constexpr std::uint32_t Clamps = 4;
 constexpr std::uint32_t MinLodLevel = 2;
 constexpr std::uint32_t FormatBc1Unorm = 169;
+constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t BlockAlignment = 65536;
 constexpr std::size_t PageBytes = 16384;
@@ -78,24 +81,35 @@ std::uint32_t LevelRed(std::uint32_t level) {
     return 3u + level * 4u;
 }
 
-const std::vector<AgcDriver::Graphics::TileMipLayout>& Mips() {
+using MipChain = std::vector<AgcDriver::Graphics::TileMipLayout>;
+
+const MipChain& Mips() {
     static const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, FormatBc1Unorm, Size, Size, Levels);
     return mips;
 }
 
-std::size_t Padding() {
-    const auto unmapped = static_cast<std::size_t>(Mips()[MinLodLevel - 1u].tiledOffset);
+const MipChain& ClearedMips() {
+    static const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, Format8888Unorm, Size, Size, Levels);
+    return mips;
+}
+
+std::size_t Padding(const MipChain& mips) {
+    const auto unmapped = static_cast<std::size_t>(mips[MinLodLevel - 1u].tiledOffset);
     return (PageBytes - unmapped % PageBytes) % PageBytes;
 }
 
-std::size_t BlockBytes() {
-    const auto bytes = Padding() + static_cast<std::size_t>(AgcDriver::Graphics::ComputeSurfaceSize(Mips(), 1));
+std::size_t BlockBytes(const MipChain& mips) {
+    const auto bytes = Padding(mips) + static_cast<std::size_t>(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1));
     return (bytes + BlockAlignment - 1u) / BlockAlignment * BlockAlignment;
+}
+
+std::size_t ResidentBytes(const MipChain& mips) {
+    return Padding(mips) + static_cast<std::size_t>(mips[MinLodLevel - 1u].tiledOffset);
 }
 
 class GuestBlock {
 public:
-    explicit GuestBlock(std::size_t committed) : bytes(BlockBytes()), committed(committed) {
+    GuestBlock(const MipChain& mips, std::size_t committed) : bytes(BlockBytes(mips)), committed(committed), padding(Padding(mips)) {
 #ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, BlockAlignment));
         if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, committed, PAGE_READWRITE, committed);
@@ -145,12 +159,13 @@ public:
     GuestBlock(const GuestBlock&) = delete;
     GuestBlock& operator=(const GuestBlock&) = delete;
 
-    std::uint8_t* Texels() { return block + Padding(); }
+    std::uint8_t* Texels() { return block + padding; }
 
 private:
     std::uint8_t* block = nullptr;
     std::size_t bytes = 0;
     std::size_t committed = 0;
+    std::size_t padding = 0;
 };
 
 void FillInput() {
@@ -186,11 +201,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t minLodLevel) {
+std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t minLodLevel, std::uint32_t format = FormatBc1Unorm) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | ((minLodLevel * 256u) << 8u) | (FormatBc1Unorm << 20u) | (((Size - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | ((minLodLevel * 256u) << 8u) | (format << 20u) | (((Size - 1u) & 3u) << 30u),
         ((Size - 1u) >> 2u) | ((Size - 1u) << 14u),
         0xfacu | ((Levels - 1u) << 16u) | (Type2D << 28u),
         0u,
@@ -254,6 +269,16 @@ Sampled SampleTexture(AgcDriver::VulkanDevice& device, const std::uint8_t* texel
     const auto after = AgcDriver::Graphics::SampledTextureMemory();
     Check(surface + " (MIN_LOD " + std::to_string(minLodLevel) + ")", minLodLevel);
     return {after - before, Buffer};
+}
+
+std::uint64_t ClearedTextureBytes(const AgcDriver::Graphics::Context& context, const std::uint8_t* texels, std::uint32_t minLodLevel) {
+    const auto words = TextureDescriptor(texels, minLodLevel, Format8888Unorm);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    const VkClearColorValue clear{{0.25f, 0.5f, 0.75f, 1.0f}};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto before = AgcDriver::Graphics::SampledTextureMemory();
+    const AgcDriver::Graphics::Texture texture(context, *context.detiler, resource, VkComponentMapping{}, std::span<const std::byte>{}, false, false, &clear);
+    return AgcDriver::Graphics::SampledTextureMemory() - before;
 }
 
 VkSparseImageMemoryRequirements Requirement(VkImageAspectFlags aspect, VkExtent3D granularity, VkSparseImageFormatFlags flags, std::uint32_t tailFirst, VkDeviceSize tailSize, VkDeviceSize tailOffset, VkDeviceSize tailStride) {
@@ -332,11 +357,11 @@ bool SparseBc1(const AgcDriver::Graphics::Context& context) {
 int main() {
     try {
         CheckPlans();
-        const auto resident = Padding() + static_cast<std::size_t>(Mips()[MinLodLevel - 1u].tiledOffset);
-        const auto streamedLevel = Padding() + static_cast<std::size_t>(Mips()[0].tiledOffset);
+        const auto resident = ResidentBytes(Mips());
+        const auto streamedLevel = Padding(Mips()) + static_cast<std::size_t>(Mips()[0].tiledOffset);
         Require(Mips()[MinLodLevel - 1u].tiledOffset > Mips()[MinLodLevel].tiledOffset && Mips()[0].tiledOffset >= Mips()[MinLodLevel - 1u].tiledOffset && MinLodLevel == 2u, "sparse texture levels: the linear mip chain does not keep its top levels last");
-        GuestBlock streamed(resident);
-        GuestBlock whole(BlockBytes());
+        GuestBlock streamed(Mips(), resident);
+        GuestBlock whole(Mips(), BlockBytes(Mips()));
         FillLevels(streamed.Texels(), MinLodLevel);
         FillLevels(whole.Texels(), 0);
         const auto device = OpenVulkanTestDevice();
@@ -351,6 +376,10 @@ int main() {
             return VulkanTestSkipped;
         }
         ReportDeviceRequirements(context);
+        GuestBlock cleared(ClearedMips(), ResidentBytes(ClearedMips()));
+        const auto clearedAboveMinLod = ClearedTextureBytes(context, cleared.Texels(), MinLodLevel);
+        const auto clearedWhole = ClearedTextureBytes(context, cleared.Texels(), 0u);
+        Require(clearedAboveMinLod != 0 && clearedAboveMinLod == clearedWhole, "sparse texture levels: a cleared texture with levels 0 and 1 unmapped holds " + std::to_string(clearedAboveMinLod) + " bytes at MIN_LOD 2 and " + std::to_string(clearedWhole) + " at MIN_LOD 0; the clear covers every level, so it must be made whole");
         const auto first = SampleTexture(*device, streamed.Texels(), MinLodLevel, "levels above the minimum LOD unmapped");
         const auto full = SampleTexture(*device, whole.Texels(), MinLodLevel, "every level mapped");
         Require(first.bytes != 0 && first.bytes < full.bytes, "sparse texture levels: the texture with unmapped levels above its minimum LOD holds " + std::to_string(first.bytes) + " bytes, the one with every level mapped " + std::to_string(full.bytes));
