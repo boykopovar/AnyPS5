@@ -40,6 +40,7 @@ constexpr std::uint64_t BlockBytes = 2 * WindowBytes;
 constexpr std::uint64_t OtherBytes = 64 * 1024;
 constexpr std::uint64_t GuestAlignment = 64 * 1024;
 constexpr std::uint64_t ProbeBytes = 4096;
+constexpr std::uint64_t TestImportBudgetMiB = 1;
 
 std::string Hex(std::uint64_t value) {
     char text[32];
@@ -206,10 +207,38 @@ Outcome SmallMappingsImportOnFirstUse() {
     return Outcome::Passed;
 }
 
+
+Outcome OversizedMappingRespectsImportBudget() {
+    GuestBlock oversized(2 * MiB);
+    auto device = OpenVulkanTestDevice();
+    if (!device) return Outcome::NoDevice;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+    if (context.hostImportAlignment == 0) return Outcome::NoImport;
+
+    GuestAllocations::Mapped ranges;
+    for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+        if (range->address == oversized.Address()) ranges.push_back(range);
+    }
+    Require(ranges.size() == 1, "host import budget: the oversized mapping is not registered");
+
+    Graphics::ClearHostImports(device->Device());
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Require(Graphics::ImportMappedRanges(context, ranges, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "host import budget: device adoption failed");
+    }
+    Require(!Graphics::HostImportCovers(context, oversized.Address(), ProbeBytes), "host import budget: a mapping larger than the configured budget was imported in full");
+    return Outcome::Passed;
+}
+
 }
 
 int main() {
     try {
+#ifdef _WIN32
+        _putenv_s("APS5_HOST_IMPORT_MIB", "1");
+#else
+        setenv("APS5_HOST_IMPORT_MIB", "1", 1);
+#endif
         const auto counting = ClearingDropsImports();
         if (counting == Outcome::NoDevice) return VulkanTestSkipped;
         if (counting == Outcome::NoImport) {
@@ -220,6 +249,8 @@ int main() {
         Require(windows == Outcome::Passed, "host import windows: the device stopped importing guest memory between two scenarios");
         Require(ResidentMappingsImportAfterCollection() == Outcome::Passed, "resident import test failed");
         Require(SmallMappingsImportOnFirstUse() == Outcome::Passed, "mapped import test lost its Vulkan device or host import support");
+        const auto budget = OversizedMappingRespectsImportBudget();
+        Require(budget == Outcome::Passed, "host import budget test lost its Vulkan device or host import support");
         std::puts("host import windows tests passed");
         return 0;
     } catch (const std::exception& error) {
