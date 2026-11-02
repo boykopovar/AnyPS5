@@ -963,6 +963,10 @@ int main(int argc, char** argv) {
     clearerr_nid_postfix(&wideIo);
 
     Require(fgetws_nid_postfix(wideBuf, 16, nullptr) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(u't', nullptr) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(0x100, nullptr) == -1 && *__error_nid_postfix() == 22);
     wideBuf[0] = u'X';
     wideBuf[1] = u'Y';
     std::rewind(wideIo.GetHandle());
