@@ -535,7 +535,7 @@ RelinkResult RelinkerPipeline::Relink() {
             }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC)
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
     }

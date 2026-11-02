@@ -2,6 +2,7 @@
 #include <relinker/analysis/UnusedNidFilter/StrictReachability.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/parsing/ElfReader.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <cstring>
 #include <sstream>
 #include <limits>
@@ -133,7 +134,7 @@ public:
                 const auto info = read<std::uint8_t>(position + 4);
                 const auto type = info & 15;
                 if (type == 10) throw RelinkerException("Strict filter: IFUNC resolver is not modeled", position);
-                if (section == 0 || (info >> 4) == 0 || type != 2) continue;
+                if (section == 0 || section == Elfpatcher::SHN_ABS || (info >> 4) == 0 || type != 2) continue;
                 input.Entries.push_back(read<std::uint64_t>(position + 8));
             }
         }
