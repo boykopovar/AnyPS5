@@ -81,6 +81,7 @@ static void Validation() {
     CHECK(sceUltQueueDataResourcePoolDestroy(nullptr) == Null);
     CHECK(sceUltQueueDestroy(nullptr) == Null);
     CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(3, 9, 2) == 379);
+    CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(0x80000000u, 1, 0) == 0x2080000060ull);
     CHECK(sceUltQueueDataResourcePoolGetWorkAreaSize(0, 0, 0) == 96);
     CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(0, 0) == 64);
     CHECK(sceUltWaitingQueueResourcePoolGetWorkAreaSize(3, 2) == 320);
