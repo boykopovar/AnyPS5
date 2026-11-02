@@ -698,9 +698,8 @@ int APS5_VABI sceNpManagerIntIsTemporarySignout(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntIsUnregisteredClientError(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceNpManagerIntIsUnregisteredClientError(int error) {
+    return static_cast<std::uint32_t>(error) == 0x82e0104d;
 }
 int APS5_VABI sceNpManagerIntLoginAuthenticate(void) {
     NotImplemented_nid_no_patch(__func__);

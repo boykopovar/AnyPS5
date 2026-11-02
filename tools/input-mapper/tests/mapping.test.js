@@ -184,3 +184,22 @@ test('capture rejects missing identifiers, composition and unsafe punctuation', 
         assert.ok(captureKey(event).error);
     }
 });
+
+test('extended keypad editing and memory keys capture and round trip', () => {
+    const keys = {
+        NumpadBackspace: 'Keypad Backspace', NumpadClear: 'Keypad Clear',
+        NumpadClearEntry: 'Keypad ClearEntry', NumpadParenLeft: 'Keypad (', NumpadParenRight: 'Keypad )',
+        NumpadMemoryAdd: 'Keypad MemAdd', NumpadMemoryClear: 'Keypad MemClear',
+        NumpadMemoryRecall: 'Keypad MemRecall', NumpadMemoryStore: 'Keypad MemStore',
+        NumpadMemorySubtract: 'Keypad MemSubtract'
+    };
+    for (const [code, value] of Object.entries(keys)) {
+        const captured = captureKey({code, key: 'ignored'});
+        assert.deepEqual(captured, {value}, code);
+        const source = serialize([binding('Cross', 'KEY', captured.value)]);
+        assert.equal(source, `Cross = KEY:${value}\n`);
+        assert.deepEqual(parseIni(source).entries, [binding('Cross', 'KEY', value)]);
+    }
+    assert.deepEqual(captureKey({code: 'Backspace'}), {value: 'Backspace'});
+    assert.deepEqual(captureKey({code: 'NumLock'}), {value: 'Numlock'});
+});
