@@ -10,6 +10,7 @@ int main() {
     constexpr int invalid = static_cast<int>(0x817C0016);
     unsigned char buffer[80];
     Require(sceRandomGetRandomNumber(nullptr, 16) == invalid);
+    Require(sceRandomGetRandomNumber(reinterpret_cast<void*>(0x10), 16) == invalid);
     Require(sceRandomGetRandomNumber(nullptr, 0) == invalid);
     Require(sceRandomGetRandomNumber(nullptr, 64) == invalid);
     Require(sceRandomGetRandomNumber(nullptr, 65) == invalid);
