@@ -64,24 +64,31 @@ static void CheckNativeDescriptors(std::size_t expected, const char* phase) {
     std::exit(1);
 }
 
-static void WarmTransferWait() {
-    const int socket = socket_nid_postfix(2, 2, 0);
-    Require(socket >= 0, "warmup socket");
-    const std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
-    Require(bind_nid_postfix(socket, address.data(), address.size()) == 0, "bind warmup socket");
-    const std::array<std::int64_t, 2> timeout{0, 10000};
-    Require(setsockopt_nid_postfix(socket, 0xffff, 0x1006, timeout.data(), sizeof(timeout)) == 0, "warmup timeout");
-    char byte = 0;
-    Require(recv_nid_postfix(socket, &byte, 1, 0) == -1 && *__error_nid_postfix() == 35, "warmup transfer wait");
-    Require(close_nid_postfix(socket) == 0, "close warmup socket");
-}
+struct ControllerResource {
+#ifdef _WIN32
+    HANDLE value = nullptr;
+    void Open() {
+        value = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        Require(value != nullptr, "create late controller resource");
+    }
+    ~ControllerResource() { if (value) Require(CloseHandle(value) != 0, "close controller resource"); }
+#else
+    int descriptors[2]{-1, -1};
+    void Open() { Require(::pipe(descriptors) == 0, "create late controller resources"); }
+    ~ControllerResource() {
+        for (int descriptor : descriptors)
+            if (descriptor >= 0) Require(::close(descriptor) == 0, "close controller resource");
+    }
+#endif
+};
 
 struct State {
     int listener = -1;
     int accepted = -1;
     int error = 0;
     int installFault = 0;
-    std::size_t nativeBefore = 0;
+    std::size_t nativeExpected = 0;
+    bool counted = false;
     bool countDisposal = false;
     PthreadKey key = -1;
     bool disabled = false;
@@ -99,6 +106,7 @@ struct State {
     int acceptedDescriptorFlags = -1;
     std::atomic<bool> observed{false};
     std::atomic<bool> ready{false};
+    std::atomic<bool> connectionReady{false};
     std::atomic<bool> release{false};
     std::atomic<bool> returned{false};
     std::atomic<int> cleanups{0};
@@ -107,14 +115,20 @@ struct State {
 
 static void APS5_VABI Cleanup(void* opaque) {
     auto& state = *static_cast<State*>(opaque);
-    if (state.countDisposal) CheckNativeDescriptors(state.nativeBefore, "cleanup");
+    if (state.countDisposal) {
+        Require(state.counted, "missing accepted resource snapshot");
+        CheckNativeDescriptors(state.nativeExpected, "cleanup");
+    }
     Require(state.cleanups.fetch_add(1) == 0 && state.destructors.load() == 0, "cleanup ordering/count");
     if (state.accepted >= 0) Require(close_nid_postfix(state.accepted) == 0, "close accepted socket");
 }
 
 static void APS5_VABI Destroy(void* opaque) {
     auto& state = *static_cast<State*>(opaque);
-    if (state.countDisposal) CheckNativeDescriptors(state.nativeBefore, "TSD");
+    if (state.countDisposal) {
+        Require(state.counted, "missing accepted resource snapshot at TSD");
+        CheckNativeDescriptors(state.nativeExpected, "TSD");
+    }
     Require(state.cleanups.load() == 1 && state.destructors.fetch_add(1) == 0, "TSD ordering/count");
 }
 
@@ -139,6 +153,13 @@ static void LeaveHandoff() {
 
 static void ObserveHandoff() {
     accepting->observed.store(true);
+    if (accepting->countDisposal) {
+        Require(Observe([] { return accepting->connectionReady.load(); }), "controller connection completion");
+        const auto native = NativeDescriptorCount();
+        Require(native != 0, "missing accepted native resource");
+        accepting->nativeExpected = native - 1;
+        accepting->counted = true;
+    }
     if (accepting->installFault) {
         GuestSocketAcceptInstallFaultForTest_nid_no_patch(accepting->installFault);
         return;
@@ -154,15 +175,6 @@ static void* APS5_VABI Acceptor(void* opaque) {
     __pthread_cleanup_push_imp_nid_postfix(Cleanup, &state, &cleanup);
     accepting = &state;
     if (state.handoff) GuestSocketAcceptObserverForTest_nid_no_patch(ObserveHandoff);
-    if (state.countDisposal) {
-        GuestSockets::CurrentWaker();
-        {
-            ThreadCancel::IoRestart warmup(false);
-            ThreadCancel::IoPoint point(warmup);
-        }
-        WarmTransferWait();
-        state.nativeBefore = NativeDescriptorCount();
-    }
     state.ready.store(true);
     if (state.pending) Require(Observe([&] { return state.release.load(); }), "pending release");
     if (!state.jump || setjmp_nid_postfix(state.jumpBuffer.data()) == 0)
@@ -215,6 +227,8 @@ int main(int argc, char** argv) {
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, Acceptor, &state, nullptr) == 0, "create acceptor");
     Require(Observe([&] { return state.ready.load(); }), "acceptor admission");
+    ControllerResource controllerResource;
+    if (state.countDisposal) controllerResource.Open();
     if (!state.pending && !state.disabled && scenario != "nonblocking" && !state.flags) {
         Require(Observe([&] {
             std::lock_guard lock(thread->cancelLock);
@@ -225,6 +239,7 @@ int main(int argc, char** argv) {
     if (cancel) Require(pthread_cancel_nid_postfix(thread) == 0, "cancel");
     state.release.store(true);
     if (scenario == "complete" || state.disabled || state.handoff) Require(connect_nid_postfix(client, address.data(), address.size()) == 0, "complete accept");
+    state.connectionReady.store(true);
     int replacement[2]{-1, -1};
     if (scenario == "reuse") Require(pipe_nid_postfix(replacement) == 0, "replacement pipe");
     if (scenario == "close" || scenario == "reuse") Require(close_nid_postfix(state.listener) == 0, "close waiting listener");
