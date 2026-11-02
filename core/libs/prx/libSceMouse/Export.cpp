@@ -82,19 +82,16 @@ int APS5_VABI sceMouseSetProcessPrivilege() {
     return 0;
 }
 
-int APS5_VABI sceMouseReadAbsolutePosition() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMouseReadAbsolutePosition(std::int32_t handle, MouseAbsoluteData* data, std::int32_t num) {
+    return Mouse::ReadAbsolutePosition(handle, data, num);
 }
 
-int APS5_VABI sceMouseSetAbsoluteHighPrecisionMode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMouseSetAbsoluteHighPrecisionMode(std::int32_t handle, std::int32_t mode) {
+    return Mouse::SetAbsoluteHighPrecisionMode(handle, mode);
 }
 
-int APS5_VABI sceMouseSetAbsoluteVirtualScreenSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMouseSetAbsoluteVirtualScreenSize(std::int32_t handle, std::int32_t size) {
+    return Mouse::SetAbsoluteVirtualScreenSize(handle, size);
 }
 
 }
