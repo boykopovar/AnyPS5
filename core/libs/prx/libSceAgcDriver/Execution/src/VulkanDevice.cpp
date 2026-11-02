@@ -4897,6 +4897,10 @@ VkDevice VulkanDevice::Device() const {
     return state->device;
 }
 
+bool VulkanDevice::DmaBufImportSelected() const {
+    return Graphics::DmaBufImportSelected(graphicsContext());
+}
+
 VulkanDevice::DispatchMoveCount VulkanDevice::DispatchMoveCounts() {
     auto& moves = DispatchMoves();
     DispatchMoveCount count{moves.checked.load(), moves.exact.load(), moves.moved.load(), 0, 0, moves.rebuilt.load(), moves.kept.load(), moves.served.load()};
