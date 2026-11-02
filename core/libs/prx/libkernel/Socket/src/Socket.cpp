@@ -268,8 +268,12 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
                 return -1;
             }
             for (const auto& entry : hosts.entries) {
-                if ((entry.revents & KernelSocketPoll::Unknown) != 0)
-                    throw std::runtime_error("select: descriptor " + std::to_string(entry.descriptor) + " is neither a socket, a pipe, a file, a directory nor a kqueue");
+                if ((entry.revents & KernelSocketPoll::Unknown) == 0) continue;
+                if (!DescriptorIsOpen_nid_no_patch(entry.descriptor)) {
+                    *__error_nid_postfix() = GuestEbadf;
+                    return -1;
+                }
+                throw std::runtime_error("select: descriptor " + std::to_string(entry.descriptor) + " is neither a socket, a pipe, a file, a directory nor a kqueue");
             }
             groups.push_back(std::move(hosts));
         }
