@@ -315,6 +315,9 @@ void TestFloatErrors() {
     Require(_Stodx_nid_postfix("0x10p0", &end, -1, &error) == 1.6 && error == 0 && *__error_nid_postfix() == 0, "_Stodx hexadecimal scaled by negative pten");
     error = 99;
     *__error_nid_postfix() = 0;
+    Require(_Stodx_nid_postfix("0x3", &end, -1, &error) == 0.29999999999999999 && error == 0 && *__error_nid_postfix() == 0, "_Stodx hexadecimal non-power-of-two mantissa with negative scale rounds correctly");
+    error = 99;
+    *__error_nid_postfix() = 0;
     Require(_Stofx_nid_postfix("0x1p0", &end, 3, &error) == 1000.0f && error == 0 && *__error_nid_postfix() == 0, "_Stofx hexadecimal scaled by positive pten");
     error = 99;
     *__error_nid_postfix() = 0;
