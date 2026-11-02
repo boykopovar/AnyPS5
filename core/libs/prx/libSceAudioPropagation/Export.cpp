@@ -2,6 +2,7 @@
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 #include "AudioPropagation.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -83,7 +84,11 @@ Registry& registry() {
     return state;
 }
 
-thread_local std::vector<ReportRegistration*> activeReportCallbacks;
+struct ActiveReportCallbacksTag {};
+
+std::vector<ReportRegistration*>& activeReportCallbacks() {
+    return HostThreadLocal<std::vector<ReportRegistration*>, ActiveReportCallbacksTag>();
+}
 
 struct ActiveReportCall {
     Registry& state;
@@ -91,11 +96,11 @@ struct ActiveReportCall {
 
     ActiveReportCall(Registry& currentState, ReportRegistration& currentRegistration)
         : state(currentState), registration(currentRegistration) {
-        activeReportCallbacks.push_back(&registration);
+        activeReportCallbacks().push_back(&registration);
     }
 
     ~ActiveReportCall() {
-        activeReportCallbacks.pop_back();
+        activeReportCallbacks().pop_back();
         std::lock_guard lock(state.reportMutex);
         --registration.activeCalls;
         state.reportChanged.notify_all();
@@ -633,7 +638,7 @@ int APS5_VABI sceAudioPropagationReportUnregisterHandler(ReportRegistration* reg
             if (&slot == registration && slot.handler) {
                 slot.handler = nullptr;
                 slot.userData = nullptr;
-                const auto activeHere = static_cast<std::size_t>(std::count(activeReportCallbacks.begin(), activeReportCallbacks.end(), &slot));
+                const auto activeHere = static_cast<std::size_t>(std::count(activeReportCallbacks().begin(), activeReportCallbacks().end(), &slot));
                 state.reportChanged.wait(lock, [&] { return slot.activeCalls <= activeHere; });
                 return 0;
             }
