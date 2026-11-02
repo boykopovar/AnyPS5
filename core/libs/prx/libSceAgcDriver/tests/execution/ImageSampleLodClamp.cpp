@@ -67,6 +67,16 @@ alignas(256) constexpr std::array<std::uint32_t, 27> GradientCode{
     0xe070102c, 0x80000f01, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 55> PairedCode{
+    0x34020087u, 0xe0301000u, 0x80000501u, 0xe0301004u, 0x80000601u, 0xe0301008u, 0x80000701u, 0xe030100cu,
+    0x80000801u, 0xe0301010u, 0x80000901u, 0xe0301014u, 0x80000a01u, 0xbf8c3f70u, 0xf0880f08u, 0x00610c05u,
+    0xe0701020u, 0x80000c01u, 0xe0701024u, 0x80000d01u, 0xe0701028u, 0x80000e01u, 0xe070102cu, 0x80000f01u,
+    0xf09c0f08u, 0x00810c09u, 0xe0701030u, 0x80000c01u, 0xe0701034u, 0x80000d01u, 0xe0701038u, 0x80000e01u,
+    0xe070103cu, 0x80000f01u, 0xf0880f08u, 0x00810c05u, 0xe0701040u, 0x80000c01u, 0xe0701044u, 0x80000d01u,
+    0xe0701048u, 0x80000e01u, 0xe070104cu, 0x80000f01u, 0xf09c0f08u, 0x00850c09u, 0xe0701050u, 0x80000c01u,
+    0xe0701054u, 0x80000d01u, 0xe0701058u, 0x80000e01u, 0xe070105cu, 0x80000f01u, 0xbf810000u,
+};
+
 struct Case {
     std::uint32_t minLod;
     std::uint32_t baseLevel;
@@ -131,13 +141,13 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t minLod, std::uint32_t baseLevel) {
+std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t minLod, std::uint32_t baseLevel, std::uint32_t lastLevel = Levels - 1u) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
     return {
         static_cast<std::uint32_t>(address >> 8u),
         static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (minLod << 8u) | (Format8888UNorm << 20u) | (((Size - 1u) & 3u) << 30u),
         ((Size - 1u) >> 2u) | ((Size - 1u) << 14u),
-        0xfacu | (baseLevel << 12u) | ((Levels - 1u) << 16u) | (Type2D << 28u),
+        0xfacu | (baseLevel << 12u) | (lastLevel << 16u) | (Type2D << 28u),
         0u,
         (Levels - 1u) << 4u,
         0u,
@@ -237,6 +247,87 @@ void RunAndCheck(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t>
     Check(item, results);
 }
 
+struct Pairing {
+    std::uint32_t minLod;
+    std::uint32_t baseLevel;
+    std::array<std::uint32_t, 4> held;
+    std::uint32_t secondMinLod = 0;
+    std::uint32_t secondLastLevel = 0;
+};
+
+std::string Describe(const Pairing& item) {
+    return "T# MIN_LOD " + std::to_string(item.minLod) + " over BASE_LEVEL " + std::to_string(item.baseLevel) + " with a second S# of words 1 " + std::to_string(item.held[1]) + " and 2 " + std::to_string(item.held[2]) + ", and a second T# of MIN_LOD " + std::to_string(item.secondMinLod) + " and LAST_LEVEL " + std::to_string(item.secondLastLevel);
+}
+
+void RunPairing(AgcDriver::VulkanDevice& device, const Pairing& item) {
+    FillInput();
+    std::vector<std::uint32_t> userData(28, 0u);
+    const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
+    const auto texture = TextureDescriptor(Texels.data(), item.minLod, item.baseLevel);
+    const auto sampler = SamplerDescriptor(Case{0u, 0u});
+    const auto second = TextureDescriptor(Texels.data(), item.secondMinLod, 0u, item.secondLastLevel);
+    std::copy(buffer.begin(), buffer.end(), userData.begin());
+    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+    std::copy(sampler.begin(), sampler.end(), userData.begin() + 12);
+    std::copy(item.held.begin(), item.held.end(), userData.begin() + 16);
+    std::copy(second.begin(), second.end(), userData.begin() + 20);
+    const std::span<const std::uint32_t> code(PairedCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const auto result = ShaderRecompiler::Recompile(Request(code, device.Target(), userData, memory, false));
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+float Bilinear(std::uint32_t coordinate, std::uint32_t size) {
+    const auto texel = (static_cast<float>(coordinate) + 0.5f) / static_cast<float>(Size) * static_cast<float>(size) - 0.5f;
+    const auto low = std::floor(texel);
+    const auto weight = texel - low;
+    const auto first = Wrap(0u, static_cast<std::int32_t>(low), size);
+    const auto next = Wrap(0u, static_cast<std::int32_t>(low) + 1, size);
+    return (1.0f - weight) * static_cast<float>(first) + weight * static_cast<float>(next);
+}
+
+void CheckPairing(const Pairing& item) {
+    const std::uint32_t last = Levels - 1u - item.baseLevel;
+    const auto view = item.minLod > item.baseLevel * 256u ? static_cast<float>(std::min(item.minLod - item.baseLevel * 256u, last * 256u)) / 256.0f : 0.0f;
+    const auto secondView = item.secondLastLevel == 0u ? 0.0f : static_cast<float>(std::min(item.secondMinLod, item.secondLastLevel * 256u)) / 256.0f;
+    const bool magnifyLinear = ((item.held[2] >> 20u) & 1u) != 0u;
+    const bool mipLinear = ((item.held[2] >> 26u) & 3u) == 2u;
+    constexpr std::array<const char*, 4> names{"image_sample_d through the mipmapped S#", "image_sample_lz through the S# that holds the LOD at 0", "image_sample_d through the S# that holds the LOD at 0", "image_sample_lz of the second T# through the S# that holds the LOD at 0"};
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const auto sample = SampleOf(tid);
+        const auto gradient = static_cast<float>(sample.level) - 0.25f - static_cast<float>(item.baseLevel);
+        const std::array<std::uint32_t, 4> levels{Level(gradient, view, 4095.0f / 256.0f, last, item.baseLevel), Level(view, 0.0f, static_cast<float>(last), last, item.baseLevel), Level(view, 0.0f, static_cast<float>(last), last, item.baseLevel), Level(secondView, 0.0f, static_cast<float>(item.secondLastLevel), item.secondLastLevel, 0u)};
+        for (std::size_t index = 0; index < levels.size(); ++index) {
+            const auto level = levels[index];
+            const auto size = Size >> level;
+            const auto read = [&](std::uint32_t component) { return std::bit_cast<float>(Buffer[tid * Words + ResultWord + index * 4u + component]) * 255.0f; };
+            const auto fail = [&](std::uint32_t component, float expected) { return std::string(names[index]) + " with " + Describe(item) + ": thread " + std::to_string(tid) + " component " + std::to_string(component) + " is " + std::to_string(read(component)) + ", expected " + std::to_string(expected); };
+            if (index != 0u && index != 3u && mipLinear) {
+                const auto blended = static_cast<float>(item.baseLevel) + view;
+                const auto lower = static_cast<std::uint32_t>(std::floor(blended));
+                const auto weight = blended - static_cast<float>(lower);
+                const std::array<float, 3> expected{blended, (1.0f - weight) * static_cast<float>(sample.x >> lower) + weight * static_cast<float>(sample.x >> (lower + 1u)), (1.0f - weight) * static_cast<float>(sample.y >> lower) + weight * static_cast<float>(sample.y >> (lower + 1u))};
+                for (std::uint32_t component = 0; component < expected.size(); ++component) Require(std::abs(read(component) - expected[component]) < 0.05f, fail(component, expected[component]));
+                continue;
+            }
+            const bool filtered = index != 0u && magnifyLinear;
+            const std::array<float, 4> expected{static_cast<float>(level), filtered ? Bilinear(sample.x, size) : static_cast<float>(sample.x >> level), filtered ? Bilinear(sample.y, size) : static_cast<float>(sample.y >> level), 255.0f};
+            for (std::uint32_t component = 0; component < 4u; ++component) Require(std::abs(read(component) - expected[component]) < (filtered ? 0.05f : 0.5f), fail(component, expected[component]));
+        }
+    }
+}
+
+void RequireRejected(AgcDriver::VulkanDevice& device, const Pairing& item, const std::string& reason) {
+    try {
+        RunPairing(device, item);
+    } catch (const std::exception& error) {
+        Require(std::string(error.what()).find(reason) != std::string::npos, Describe(item) + " was rejected with \"" + error.what() + "\", expected \"" + reason + "\"");
+        return;
+    }
+    Require(false, Describe(item) + " ran in the shader-clamp lane, which cannot apply its clamp as the view clamp does");
+}
+
 void RequireRejected(AgcDriver::VulkanDevice& device, const Case& item, const std::string& reason, std::span<const std::uint32_t> code = Code) {
     FillInput();
     try {
@@ -307,12 +398,18 @@ int main(int argc, char** argv) {
         if (!shaderClamp) RunAndCheck(*device, Code, 6u, Case{0u, 0u, 0xfffu, 1u, 256}, false);
         RunAndCheck(*device, Code, 6u, Case{0x100u, 1u, 0xfffu, 1u, -96}, false);
         for (const auto& item : {Case{0x200u, 0u}, Case{0u, 0u}, Case{0x300u, 0u}, Case{0x200u, 1u}, Case{0x100u, 0u}}) RunAndCheck(*device, Code, 6u, item, true);
+        for (const auto& item : {Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}}, Pairing{0x300u, 1u, {0u, 0u, 1u << 26u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, (1u << 20u) | (1u << 22u), 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0x3f00u, 0u}}, Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}, 0x300u, 4u}}) {
+            RunPairing(*device, item);
+            CheckPairing(item);
+        }
         if (shaderClamp) {
             for (const auto& item : {Case{0x1c0u, 0u}, Case{0x2c0u, 1u}}) RunAndCheck(*device, Code, 6u, item, false);
             RunAndCheck(*device, GradientCode, 1u, Case{0x1c0u, 0u}, false);
             for (const auto& item : {Case{0x1c0u, 0u}, Case{0u, 0u}, Case{0x2c0u, 1u}}) RunAndCheck(*device, Code, 6u, item, true);
             RequireRejected(*device, Case{0x200u, 0u, 0x100u}, "above the maximum LOD of 256/256 of S# 0, which is not implemented");
-            RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 0u}, "above the maximum LOD of 0/256 of S# 0 (no mip filter), which is not implemented");
+            RunPairing(*device, Pairing{0x140u, 0u, {0u, 0u, 2u << 26u, 0u}});
+            CheckPairing(Pairing{0x140u, 0u, {0u, 0u, 2u << 26u, 0u}});
+            RequireRejected(*device, Pairing{0x300u, 0u, {0u, 0u, 0u, 0u}, 0x100u, 4u}, "which holds the LOD at 0, also samples image 1 with another minimum LOD, which is not implemented");
             RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, -256}, "to an explicit LOD that S# 0 biases by -256/256, which is not implemented");
             RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, 64}, "to an explicit LOD that S# 0 biases by 64/256, which is not implemented");
             RequireRejected(*device, Case{0x200u, 0u, 0xfffu, 1u, 0, 1u << 20u}, "and S# 0 has different magnification and minification filters");
