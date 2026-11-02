@@ -351,7 +351,16 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
     writer.WriteBool(info.stencilRefExportEnable);
     writer.WriteU8(static_cast<std::uint8_t>(info.rasterPrimitive));
     writer.WriteBool(info.layerExported);
-    writer.WriteU8(info.ditheredAlphaToCoverage ? (info.ditheredAlphaSamples == 2u ? 2u : 1u) : 0u);
+    std::uint8_t dither = info.ditheredAlphaToCoverage ? (info.ditheredAlphaSamples == 2u ? 2u : 1u) : 0u;
+    if (info.singleSampleDither != SingleSampleDither::None) {
+        if (!info.alphaToCoverage || !info.ditheredAlphaToCoverage || info.ditheredAlphaSamples != 1u) throw std::runtime_error("RequestSerializer: invalid single-sample alpha-to-coverage");
+        if (info.singleSampleDither == SingleSampleDither::E701) dither = 3u;
+        else if (info.singleSampleDither == SingleSampleDither::Rounded18701) dither = 4u;
+        else throw std::runtime_error("RequestSerializer: invalid single-sample dither mode");
+    } else if (info.ditheredAlphaToCoverage && info.ditheredAlphaSamples != 2u && info.ditheredAlphaSamples != 8u) {
+        throw std::runtime_error("RequestSerializer: invalid dithered alpha-to-coverage sample count");
+    }
+    writer.WriteU8(dither);
     writer.WriteBool(info.frontFaceAllBits);
     writer.WriteU8(info.quadPixelMask);
     for (const std::uint16_t mask : info.quadSampleMask) writer.WriteU32(mask);
@@ -440,9 +449,10 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     if (version >= 23u) info.layerExported = reader.ReadBool();
     if (version >= 25u) {
         const auto dither = reader.ReadU8();
-        if (dither > (version >= 47u ? 2u : 1u)) throw std::runtime_error("RequestSerializer: invalid alpha-to-coverage dither value");
+        if (dither > (version >= 52u ? 4u : version >= 47u ? 2u : 1u)) throw std::runtime_error("RequestSerializer: invalid alpha-to-coverage dither value");
         info.ditheredAlphaToCoverage = dither != 0u;
-        info.ditheredAlphaSamples = dither == 2u ? 2u : 8u;
+        info.ditheredAlphaSamples = dither >= 3u ? 1u : dither == 2u ? 2u : 8u;
+        info.singleSampleDither = dither == 3u ? SingleSampleDither::E701 : dither == 4u ? SingleSampleDither::Rounded18701 : SingleSampleDither::None;
     }
     if (version >= 27u) info.frontFaceAllBits = reader.ReadBool();
     if (version >= 28u) info.quadPixelMask = reader.ReadU8();
@@ -898,7 +908,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(51u);
+    writer.WriteU32(52u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -949,7 +959,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 51u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 52u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);

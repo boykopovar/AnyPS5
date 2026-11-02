@@ -600,6 +600,8 @@ void StoreCoverage(SpirvEmitterState& state, std::uint32_t mask) {
 }
 
 void StoreDitheredAlphaCoverage(SpirvEmitterState& state, std::uint32_t color) {
+    constexpr std::array<std::uint32_t, 4> singleSampleMasks{{0x00000000u, 0x01000001u, 0x01000101u, 0x01010101u}};
+    constexpr std::array<std::uint32_t, 8> singleSampleRoundedMasks{{0x00000000u, 0x00000001u, 0x00000001u, 0x01000001u, 0x01000001u, 0x01010001u, 0x01010001u, 0x01010101u}};
     constexpr std::array<std::uint32_t, 8> twoSampleMasks{{
     0x00000000u, 0x02000002u, 0x01000201u, 0x01020201u, 0x01020101u, 0x03020103u, 0x03010303u, 0x03030303u,
     }};
@@ -613,7 +615,10 @@ void StoreDitheredAlphaCoverage(SpirvEmitterState& state, std::uint32_t color) {
     0x777d7e77u, 0x777d7ef7u, 0x777d7e7fu, 0xf77d7e7fu, 0xf7777e7fu, 0xf7f77e7fu, 0x7ff77e7fu, 0x7ff7fe7fu,
     0x7ff7fd7fu, 0x7ff7fdffu, 0x7f7ffdffu, 0xff7ffdffu, 0xff7ff7ffu, 0xfffff7ffu, 0xffff7fffu, 0xffffffffu,
     }};
-    const std::span<const std::uint32_t> masks = state.inputInfo.pixel->psDitheredAlphaSamples == 2u ? std::span<const std::uint32_t>(twoSampleMasks) : std::span<const std::uint32_t>(eightSampleMasks);
+    const auto single = state.inputInfo.pixel->psSingleSampleDither;
+    const std::span<const std::uint32_t> masks = single == SingleSampleDither::E701 ? std::span<const std::uint32_t>(singleSampleMasks)
+        : single == SingleSampleDither::Rounded18701 ? std::span<const std::uint32_t>(singleSampleRoundedMasks)
+        : state.inputInfo.pixel->psDitheredAlphaSamples == 2u ? std::span<const std::uint32_t>(twoSampleMasks) : std::span<const std::uint32_t>(eightSampleMasks);
     const auto levels = static_cast<float>(masks.size());
     const auto alpha = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), alpha, color, 3u);

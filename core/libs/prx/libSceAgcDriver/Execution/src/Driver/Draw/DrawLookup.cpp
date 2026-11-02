@@ -105,6 +105,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             mix(static_cast<std::uint64_t>(pixel.rasterPrimitive));
             mix(pixel.ditheredAlphaToCoverage);
             mix(pixel.ditheredAlphaSamples);
+            mix(static_cast<std::uint64_t>(pixel.singleSampleDither));
             mix(pixel.quadPixelMask);
             for (const auto mask : pixel.quadSampleMask) mix(mask);
             mix(pixel.iteratesSamples);
