@@ -73,7 +73,6 @@ int APS5_VABI _ZN7WebCore18TextureMapperLayer18setFixedToViewportEb();
 int APS5_VABI WKBundleBackForwardListGetForwardListCount();
 int APS5_VABI _ZN7WebCore28collectVaryingRequestHeadersEPNS_21NetworkStorageSessionERKNS_15ResourceRequestERKNS_16ResourceResponseE();
 int APS5_VABI _ZN7WebCore19approximateAsRegionERKNS_11RoundedRectEj();
-int APS5_VABI _ZN7WebCore11HistoryItem8formDataEv();
 int APS5_VABI _ZN3WTF9URLParser23maybeCanonicalizeSchemeERKNS_6StringE();
 int APS5_VABI _ZN3WTF21MemoryPressureHandler15setProcessStateENS_18WebsamProcessStateE();
 int APS5_VABI _ZThn16_N9Inspector21InspectorConsoleAgent6enableERN3WTF6StringE();

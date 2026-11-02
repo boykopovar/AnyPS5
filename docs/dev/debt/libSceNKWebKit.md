@@ -19,6 +19,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Out-of-line colors](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColor.cpp) (libSceNKWebKit) - `WebCore::Color` operations on an out-of-line value (extended color spaces in [Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h)) throw; only inline 8-bit sRGBA values are handled.
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
 - [WebCore::ResourceResponseBase](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponse.cpp) (libSceNKWebKit) - the object layout in [ResourceResponseAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponseAbi.hpp) comes from [ResourceResponseBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceResponseBase.h) and is not checked against the PS5 module: `URL` at 0, four `AtomString` and the 64-bit expected length up to offset 80, then a 32-byte `HTTPHeaderMap` (two vectors of inline capacity 0 as in [HTTPHeaderMap.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPHeaderMap.h)). Only these fields are modelled because `std::optional<CertificateInfo>` follows the `Box<NetworkLoadMetrics>` and the size of the PS5 `CertificateInfo` is unknown, so the offsets of `m_httpStatusCode`, `m_isNull`, `m_initLevel`, `m_type`, `m_source` and the flags are not established. The getters (`url`, `mimeType`, `expectedContentLength`, `textEncodingName`, `httpStatusText`, `httpVersion`, `httpHeaderFields`, `isInHTTPFamily`) skip `lazyInit` because the curl [ResourceResponse.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/curl/ResourceResponse.h) has no `platformLazyInit`; the PS5 `ResourceResponse` is not known to match. `isInHTTPFamily` reads the valid bit of `URL::bits` and the scheme text, not the cached `m_protocolIsInHTTPFamily` bit, whose position is unknown. The 30 other exports (`ResourceResponseBase` constructors, `setURL`, `setType`, `setExpectedContentLength`, `setHTTPStatusCode`, `httpStatusCode`, `source`, `isSuccessful`, `isRedirection`, `isHTTP09`, `isAttachment*`, `suggestedFilename`, `sanitize*`, `syntheticRedirectResponse`, `cacheControlContains*`, `hasCacheValidatorFields`, `lazyInit`, `httpHeaderField*`, `addHTTPHeaderField*`, `setHTTPHeaderField*`) still throw `NotImplemented_nid_no_patch`: they write `m_isNull`, read fields after `CertificateInfo`, or need `HTTPHeaderMap`, `CertificateInfo`, `Vector` or `ResourceResponse` layouts.
+- [WebCore::HistoryItem](../../../core/libs/prx/libSceNKWebKit/src/HistoryItemAbi.hpp) (libSceNKWebKit) - layout from [HistoryItem.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/history/HistoryItem.h) (release build, non-Cocoa, non-iOS, `uint8_t` `ShouldOpenExternalURLsPolicy`) and is not checked against the PS5 module. `notifyChanged` is not reproduced. `url`, `originalURL`, `copy`, constructors, destructor and `hasCachedPageExpired` with a cached page call `NotImplemented_nid_no_patch`.
 
 ### Known export names; ABI prototypes unverified
 
@@ -26,13 +27,13 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 ### Older callable exports
 
-- [Older callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 2393 3.20 callable NIDs are declared as throwing placeholders. Their prototypes and behavior are unverified; parameterless `int` declarations are not verified ABI contracts. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or functional behavior is claimed. Exports shared with other older modules require separate provider analysis.
+- [Older callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 2392 3.20 callable NIDs are declared as throwing placeholders. Their prototypes and behavior are unverified; parameterless `int` declarations are not verified ABI contracts. These NIDs do not appear in the later version-labelled module inventory; no cross-version identity or functional behavior is claimed. Exports shared with other older modules require separate provider analysis.
 
 ### Additional callable exports
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7437 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7410 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a8ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -2173,17 +2174,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore11HTMLElement18setContentEditableERKN3WTF6StringE` | `eG8KMjqrESQ` |
 | `_ZN7WebCore11HTMLElement5clickEv` | `JKl4a2-u08Q` |
 | `_ZN7WebCore11HTMLElement6setDirERKN3WTF10AtomStringE` | `qP2DGnK-hWI` |
-| `_ZN7WebCore11HistoryItem11setReferrerERKN3WTF6StringE` | `ISu-gIjBX9Q` |
-| `_ZN7WebCore11HistoryItem12setURLStringERKN3WTF6StringE` | `g8iiJ8JhJmY` |
-| `_ZN7WebCore11HistoryItem15setIsTargetItemEb` | `eOVCR-oZ8MM` |
-| `_ZN7WebCore11HistoryItem17setAlternateTitleERKN3WTF6StringE` | `IEeMuJVSFtI` |
-| `_ZN7WebCore11HistoryItem17setScrollPositionERKNS_8IntPointE` | `dzlfWs2+nVo` |
-| `_ZN7WebCore11HistoryItem18setFormContentTypeERKN3WTF6StringE` | `9uu1wS0n4Jw` |
-| `_ZN7WebCore11HistoryItem18setPageScaleFactorEf` | `a2xaqg4pYVg` |
-| `_ZN7WebCore11HistoryItem20setOriginalURLStringERKN3WTF6StringE` | `snRhWp5iOYc` |
-| `_ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb` | `jgSVnCNr55o` |
-| `_ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE` | `OzLx1hQ0HLg` |
-| `_ZN7WebCore11HistoryItem8setTitleERKN3WTF6StringE` | `68hfPMwG3UQ` |
 | `_ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_` | `5AfAYG74PQE` |
 | `_ZN7WebCore11HistoryItemC1ERKN3WTF6StringES4_S4_` | `QBp4IOFhbaA` |
 | `_ZN7WebCore11HistoryItemC1Ev` | `G9Hp-BbB1Cs` |
@@ -6202,25 +6192,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore11HTMLElement3dirEv` | `r5uv3mpXnXg` |
 | `_ZNK7WebCore11HTMLElement5titleEv` | `6ocqaJ6b3sM` |
 | `_ZNK7WebCore11HTMLElement9translateEv` | `6pOSfbf0n2s` |
-| `_ZNK7WebCore11HistoryItem11hasChildrenEv` | `KGhYQqdb2l4` |
 | `_ZNK7WebCore11HistoryItem11originalURLEv` | `Eb7c1T8MuSo` |
-| `_ZNK7WebCore11HistoryItem12isTargetItemEv` | `CDxz+odUzjk` |
-| `_ZNK7WebCore11HistoryItem13documentStateEv` | `-Yk4NyVHTMs` |
-| `_ZNK7WebCore11HistoryItem14alternateTitleEv` | `Q5NwWWuerbQ` |
-| `_ZNK7WebCore11HistoryItem14scrollPositionEv` | `elW8cmDqX+w` |
-| `_ZNK7WebCore11HistoryItem15formContentTypeEv` | `63SzfoRv414` |
-| `_ZNK7WebCore11HistoryItem15pageScaleFactorEv` | `apWO3tteYGs` |
-| `_ZNK7WebCore11HistoryItem17originalURLStringEv` | `h6XL2wyRFpM` |
-| `_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv` | `KAcWEAGdd+c` |
-| `_ZNK7WebCore11HistoryItem27shouldRestoreScrollPositionEv` | `WEaj30cTtgk` |
-| `_ZNK7WebCore11HistoryItem28shouldOpenExternalURLsPolicyEv` | `6f0LylaXd7o` |
 | `_ZNK7WebCore11HistoryItem3urlEv` | `MlqeBoQNTJE` |
 | `_ZNK7WebCore11HistoryItem4copyEv` | `keZTgaBCdFs` |
-| `_ZNK7WebCore11HistoryItem5titleEv` | `pJOHRRnVOv8` |
-| `_ZNK7WebCore11HistoryItem6targetEv` | `QmHTw0yTTwE` |
-| `_ZNK7WebCore11HistoryItem8childrenEv` | `FNq4SsbRtKg` |
-| `_ZNK7WebCore11HistoryItem8referrerEv` | `Z9m12hOCc+0` |
-| `_ZNK7WebCore11HistoryItem9urlStringEv` | `e9kq80v5TTI` |
 | `_ZNK7WebCore11JSDOMMatrix7wrappedEv` | `g-qkr5NChcY` |
 | `_ZNK7WebCore11MediaPlayer11currentTimeEv` | `Um8wfeu9KeI` |
 | `_ZNK7WebCore11MediaPlayer11initialTimeEv` | `vPN5TrcOIY4` |
