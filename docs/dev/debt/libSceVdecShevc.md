@@ -3,7 +3,7 @@
 ### Unknown function info
 
 - [sceSdecCreateSwHevc, sceSdecDestroySwHevc, sceSdecExecuteSwHevc, sceSdecGetFrameSwHevc, sceSdecQueryMemorySwHevc and sceSdecResetSwHevc](../../../core/libs/prx/libSceVdecShevc/Export.cpp) (libSceVdecShevc) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceVdecShevc.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
-- [sceSdecGetVersionSwHevc](../../../core/libs/prx/libSceVdecShevc/Export.cpp) (libSceVdecShevc) - the prototype and behaviour follow firmware 13.42's libSceVdecShevc.sprx, read from disassembly and run under an emulator, not measured on a console: it takes a `uint32_t*`, writes 0x13590001 there unless the pointer is null, and returns nothing; an unwritable version pointer is ignored defensively, as console behavior on unmapped or read-only memory is not measured. The .native variant writes the same value and is not implemented here
+- [sceSdecGetVersionSwHevc](../../../core/libs/prx/libSceVdecShevc/Export.cpp) (libSceVdecShevc) - the prototype and behaviour follow firmware 13.42's libSceVdecShevc.sprx, read from disassembly: it takes a `uint32_t*`, writes 0x13590001 there unless the pointer is null, and returns nothing. The .native variant writes the same value and is not implemented here. Firmware 13.42 checks only for null and stores directly, so the console faults on an unwritable non-null pointer; AnyPS5 skips the store and returns normally instead.
 
 ### Additional callable exports
 
