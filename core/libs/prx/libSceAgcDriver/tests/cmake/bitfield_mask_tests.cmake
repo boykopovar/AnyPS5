@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(bitfield_mask_tests ${LIBS_INCLUDE_DIR}/tests/BitfieldMask.cpp)
+    target_link_libraries(bitfield_mask_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(bitfield_mask_tests)
+    add_test(NAME bitfield_mask COMMAND bitfield_mask_tests)
+    if(WIN32)
+        set_tests_properties(bitfield_mask PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
