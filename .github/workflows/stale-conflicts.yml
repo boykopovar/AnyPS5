@@ -22,7 +22,7 @@ jobs:
             while read -r number; do
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$number/labels/stale" --silent
             done
-      - uses: actions/stale@v11
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93
         with:
           only-pr-labels: needs rebase
           days-before-issue-stale: -1

@@ -60,7 +60,7 @@ jobs:
       full: ${{ steps.gate.outputs.full }}
       relinker-hosts: ${{ steps.gate.outputs.relinker-hosts }}
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         id: gate
         env:
           PR_NUMBER: ${{ inputs.pr }}
@@ -295,7 +295,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
@@ -317,7 +317,7 @@ jobs:
           done
       - if: runner.os == 'Windows'
         id: toolchain
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: C:\winlibs
           key: ${{ env.WINLIBS_ZIP }}
@@ -339,7 +339,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
@@ -373,7 +373,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
@@ -407,7 +407,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
@@ -443,7 +443,7 @@ jobs:
       MESA_SHADER_CACHE_DIR: /var/cache/anyps5/mesa
       MESA_SHADER_CACHE_MAX_SIZE: 4G
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
@@ -524,7 +524,7 @@ jobs:
       - name: Check that every test executable is registered with ctest
         run: python3 tools/check_test_registration.py build
       - if: ${{ inputs.select }}
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ needs.eligibility.outputs.sha }}
@@ -552,7 +552,7 @@ jobs:
         run: python3 tools/select_tests.py dump build test-graph.json
       - if: ${{ !cancelled() && github.event_name == 'push' && hashFiles('test-graph.json') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ github.sha }}
@@ -579,7 +579,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
@@ -605,7 +605,7 @@ jobs:
           echo "key=$(git ls-files -s | awk '$1 == "160000" { print $2, $4 }' | cat - .gitmodules | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
           echo "ffmpeg=$(git rev-parse HEAD:3rdparty/ffmpeg-core)" >> "$GITHUB_OUTPUT"
       - id: submodule-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/submodule-gitdirs.tar
           key: submodule-gitdirs-${{ runner.os }}-${{ steps.submodules.outputs.key }}
@@ -616,7 +616,7 @@ jobs:
       - if: steps.submodule-cache.outputs.cache-hit != 'true'
         run: tar --force-local -cf "$RUNNER_TEMP/submodule-gitdirs.tar" .git/modules
       - if: steps.submodule-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         continue-on-error: true
         with:
           path: ${{ runner.temp }}/submodule-gitdirs.tar
@@ -629,7 +629,7 @@ jobs:
           done
           echo "::error::No CA bundle found in Git for Windows"; exit 1
       - id: toolchain
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: C:\winlibs
           key: ${{ env.WINLIBS_ZIP }}
@@ -638,19 +638,19 @@ jobs:
           curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
-      - uses: hendrikmuhs/ccache-action@v1.2.24
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d
         with:
           key: ${{ github.event_name == 'workflow_dispatch' && 'dispatch-windows' || 'windows' }}
           restore-keys: ${{ github.event_name == 'workflow_dispatch' && 'windows' || '' }}
           save: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
           evict-old-files: job
       - id: ffmpeg-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/externals
           key: ffmpeg-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
       - id: seed-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: configure-seed.cmake
           key: configure-seed-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'core/libs/CMakeLists.txt', 'tools/configure_seed.py', '.github/workflows/build.yml') }}
@@ -663,13 +663,13 @@ jobs:
         shell: cmd
         run: python tools/configure_seed.py build/CMakeCache.txt configure-seed.cmake
       - if: steps.seed-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         continue-on-error: true
         with:
           path: configure-seed.cmake
           key: ${{ steps.seed-cache.outputs.cache-primary-key }}
       - if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         continue-on-error: true
         with:
           path: build/externals
@@ -678,7 +678,7 @@ jobs:
         shell: cmd
         run: python tools/check_test_registration.py build
       - if: ${{ inputs.select }}
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ needs.eligibility.outputs.sha }}
@@ -724,7 +724,7 @@ jobs:
         run: python tools/select_tests.py dump build test-graph.json
       - if: ${{ !cancelled() && github.event_name == 'push' && hashFiles('test-graph.json') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ github.sha }}
