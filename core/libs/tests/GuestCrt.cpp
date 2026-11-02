@@ -201,14 +201,17 @@ int main() {
 
     char line[] = "a,b,,c";
     char* context = nullptr;
-    Require(std::strcmp(sceAmprStrtokS(line, ",", &context), "a") == 0);
-    Require(std::strcmp(sceAmprStrtokS(nullptr, ",", &context), "b") == 0);
-    Require(std::strcmp(sceAmprStrtokS(nullptr, ",", &context), "c") == 0);
-    Require(sceAmprStrtokS(nullptr, ",", &context) == nullptr);
-    Require(sceAmprStrtokS(line, nullptr, &context) == nullptr);
+    std::size_t remaining = sizeof(line);
+    Require(std::strcmp(sceAmprStrtokS(line, &remaining, ",", &context), "a") == 0 && remaining == 5);
+    Require(std::strcmp(sceAmprStrtokS(nullptr, &remaining, ",", &context), "b") == 0 && remaining == 3);
+    Require(std::strcmp(sceAmprStrtokS(nullptr, &remaining, ",", &context), "c") == 0 && remaining == 1);
+    Require(sceAmprStrtokS(nullptr, &remaining, ",", &context) == nullptr);
+    g_handlerCalls = 0;
+    Require(sceAmprStrtokS(line, &remaining, nullptr, &context) == nullptr && g_handlerCalls == 1);
     char again[] = "x y";
     char* again_context = nullptr;
-    Require(std::strcmp(strtok_s_nid_postfix(again, " ", &again_context), "x") == 0);
+    std::size_t again_remaining = sizeof(again);
+    Require(std::strcmp(strtok_s_nid_postfix(again, &again_remaining, " ", &again_context), "x") == 0 && again_remaining == 2);
 
     std::uint16_t wide[8] = {};
     Require(sceAmprMbstowcs(wide, "ABC", 8) == 3);
