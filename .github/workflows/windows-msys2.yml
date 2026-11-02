@@ -26,7 +26,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -36,7 +36,7 @@ jobs:
           echo "key=$(git ls-files -s | awk '$1 == "160000" { print $2, $4 }' | cat - .gitmodules | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
           echo "ffmpeg=$(git rev-parse HEAD:3rdparty/ffmpeg-core)" >> "$GITHUB_OUTPUT"
       - id: submodule-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/submodule-gitdirs.tar
           key: submodule-gitdirs-${{ runner.os }}-${{ steps.submodules.outputs.key }}
@@ -47,7 +47,7 @@ jobs:
       - if: steps.submodule-cache.outputs.cache-hit != 'true'
         run: tar --force-local -cf "$RUNNER_TEMP/submodule-gitdirs.tar" .git/modules
       - if: steps.submodule-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         continue-on-error: true
         with:
           path: ${{ runner.temp }}/submodule-gitdirs.tar
@@ -60,7 +60,7 @@ jobs:
           done
           echo "::error::No CA bundle found in Git for Windows"; exit 1
       - id: msys2
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
         with:
           msystem: UCRT64
           update: true
@@ -72,20 +72,20 @@ jobs:
         env:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: Add-Content -LiteralPath $env:GITHUB_PATH -Value "$env:MSYS2_LOCATION\ucrt64\bin"
-      - uses: hendrikmuhs/ccache-action@v1.2.24
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d
         with:
           key: windows-msys2
           save: ${{ github.ref == 'refs/heads/main' }}
           evict-old-files: job
       - id: ffmpeg-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/externals
           key: ffmpeg-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
       - shell: cmd
         run: cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown"
       - if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         continue-on-error: true
         with:
           path: build/externals
@@ -107,7 +107,7 @@ jobs:
           [ -f build/ctest.log ] || exit 0
           awk '/Test +#[0-9]+: / && $NF == "sec" { for (i = 1; i <= NF; i++) if ($i ~ /^#[0-9]+:$/) name = $(i + 1); t = $(NF - 1) + 0; if (t > max[name]) max[name] = t }
             END { for (name in max) if (max[name] > 30) printf "::warning title=Slow test::%s took %.1f s on %s; tests must finish in 30 s (CONTRIBUTING.md)\n", name, max[name], ENVIRON["RUNNER_OS"] }' build/ctest.log
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: ${{ !cancelled() }}
         with:
           name: windows-msys2-tests

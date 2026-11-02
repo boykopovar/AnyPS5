@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,10 @@ from check_conventions import Check
 
 CHECKER = Path(__file__).resolve().parents[1] / "check_conventions.py"
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github/workflows"
+ACTION_KEY = r"(?:uses|'uses'|\"uses\")"
+ACTION_VALUE = r"(['\"]?)([^\s,'\"}\]]+)\1"
+BLOCK_ACTION = re.compile(rf"^\s*(?:-\s*)?{ACTION_KEY}\s*:\s*{ACTION_VALUE}")
+FLOW_ACTION = re.compile(rf"(?:^\s*-\s*\{{|[,{{])\s*{ACTION_KEY}\s*:\s*{ACTION_VALUE}")
 
 GATE = """  eligibility:
     runs-on: ubuntu-latest
@@ -23,6 +28,20 @@ GATE = """  eligibility:
 
 def workflow(trigger, job):
     return f"name: Test\n\non:\n{trigger}\njobs:\n{GATE}{job}"
+
+
+def mutable_actions(workflow):
+    mutable = []
+    for line in workflow.splitlines():
+        for pattern in (BLOCK_ACTION, FLOW_ACTION):
+            for match in pattern.finditer(line):
+                action = match.group(2)
+                if action.startswith("./") or action.startswith("docker://"):
+                    continue
+                revision = action.rsplit("@", 1)[-1]
+                if not re.fullmatch(r"[0-9a-f]{40}", revision):
+                    mutable.append(action)
+    return mutable
 
 
 def wide(text):
@@ -213,6 +232,30 @@ class CiGateTests(unittest.TestCase):
         self.assertIn("build.yml", files)
         result = run_checker(files)
         self.assertNotIn("ci-gate", result.stdout, result.stdout + result.stderr)
+
+    def test_repository_actions_use_immutable_revisions(self):
+        mutable = []
+        for path in WORKFLOWS.glob("*.y*ml"):
+            mutable.extend(f"{path.name}: {action}" for action in mutable_actions(path.read_text(encoding="utf-8")))
+        self.assertEqual(mutable, [])
+
+    def test_mutable_action_block_quoted_and_flow_forms_fail(self):
+        workflow = """steps:
+  - uses: actions/checkout@v7
+  - 'uses': actions/cache@v6
+  - {uses: actions/setup-node@v7}
+  - {name: Checkout, "uses": actions/checkout@main}
+"""
+        self.assertEqual(mutable_actions(workflow), ["actions/checkout@v7", "actions/cache@v6",
+                                                     "actions/setup-node@v7", "actions/checkout@main"])
+
+    def test_immutable_local_and_docker_actions_pass(self):
+        workflow = """steps:
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+  - 'uses': ./actions/build
+  - {uses: docker://alpine:3.23}
+"""
+        self.assertEqual(mutable_actions(workflow), [])
 
 
 if __name__ == "__main__":
