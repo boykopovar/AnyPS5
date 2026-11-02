@@ -6,6 +6,7 @@
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
@@ -68,15 +69,18 @@ int APS5_VABI uuidgen_nid_postfix(GuestUuid* store, int count) {
         uuidLastSequence = sequence;
         uuidLastTime = (time + static_cast<std::uint64_t>(count) - 1) & UuidTimeMask;
     }
-    if (store == nullptr) return Fail(GuestEfault);
+    std::vector<GuestUuid> generated(static_cast<std::size_t>(count));
     const auto variantSequence = static_cast<std::uint16_t>(sequence | 0x8000);
     for (int index = 0; index < count; ++index, ++time) {
-        store[index].timeLow = static_cast<std::uint32_t>(time);
-        store[index].timeMid = static_cast<std::uint16_t>(time >> 32);
-        store[index].timeHiAndVersion = static_cast<std::uint16_t>(((time >> 48) & 0x0fff) | 0x1000);
-        store[index].clockSeqHiAndReserved = static_cast<std::uint8_t>(variantSequence >> 8);
-        store[index].clockSeqLow = static_cast<std::uint8_t>(variantSequence);
-        std::memcpy(store[index].node, node.data(), node.size());
+        generated[index].timeLow = static_cast<std::uint32_t>(time);
+        generated[index].timeMid = static_cast<std::uint16_t>(time >> 32);
+        generated[index].timeHiAndVersion = static_cast<std::uint16_t>(((time >> 48) & 0x0fff) | 0x1000);
+        generated[index].clockSeqHiAndReserved = static_cast<std::uint8_t>(variantSequence >> 8);
+        generated[index].clockSeqLow = static_cast<std::uint8_t>(variantSequence);
+        std::memcpy(generated[index].node, node.data(), node.size());
+    }
+    if (!GuestCopyOut_nid_no_patch(store, generated.data(), sizeof(GuestUuid) * static_cast<std::size_t>(count))) {
+        return Fail(GuestEfault);
     }
     return 0;
 }
