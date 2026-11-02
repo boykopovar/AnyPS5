@@ -6,9 +6,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -424,6 +431,34 @@ void TestSystemLifecycle() {
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
+void TestSystemPathMemory() {
+    Require(sceHttpCacheSystemInit(reinterpret_cast<const char*>(0x10)) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll(reinterpret_cast<const char*>(0x10)) == InvalidValue);
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+    DWORD previous = 0;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+    Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    std::memset(memory, 'a', page);
+    const char* unterminated = memory + page - 8;
+    Require(sceHttpCacheSystemInit(unterminated) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll(unterminated) == InvalidValue);
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(memory, 2 * page) == 0);
+#endif
+}
+
 void TestPublicResponses() {
     Exchange exchange{sceHttpCacheInit(0)};
     Require(exchange.Retrieve("http://public/a") == 0 && exchange.result == 0);
@@ -459,6 +494,7 @@ int main() {
     TestLifetimeOrder();
     TestRevalidation();
     TestSystemLifecycle();
+    TestSystemPathMemory();
     TestPublicResponses();
     return 0;
 }
