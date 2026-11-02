@@ -1019,8 +1019,11 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     const auto offset = Unary(state, spv::OpUConvert, u64, byte);
     const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
     if (!context.Memory(instruction).gpuDescriptor) {
-        const auto misalignment = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::BufferBase + context.Memory(instruction).resource * PipelineSpecialization::BufferWords + 3u, 0u);
-        return readBuffer(context, instruction, byte, 32u, inBounds, Select(state, TypeBool(state), equal(state, misalignment, ConstantU32(state, 0u)), noCarry, inBounds));
+        const auto first = PipelineSpecialization::BufferBase + context.Memory(instruction).resource * PipelineSpecialization::BufferWords;
+        const auto misalignment = state.module.SpecializationConstant(TypeU32(state), first + 3u, 0u);
+        const auto tail = state.module.SpecializationConstant(TypeU32(state), first + 2u, 0u);
+        const auto whole = both(state, equal(state, misalignment, ConstantU32(state, 0u)), equal(state, tail, ConstantU32(state, 0u)));
+        return readBuffer(context, instruction, byte, 32u, inBounds, Select(state, TypeBool(state), whole, noCarry, inBounds));
     }
     return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
 }

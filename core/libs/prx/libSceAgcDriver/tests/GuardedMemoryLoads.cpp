@@ -215,6 +215,7 @@ private:
             const auto spec = specializations.at(id);
             if (spec == PipelineSpecialization::BufferBase) return 0;
             if (spec == PipelineSpecialization::BufferBase + 1) return 0x30001000;
+            if (spec == PipelineSpecialization::BufferBase + 2) return 0;
             if (spec == PipelineSpecialization::BufferBase + 3) return misalignment;
             if (spec == PipelineSpecialization::PushDataOffset) return 0;
             throw std::runtime_error("unexpected specialization in access fixture");
