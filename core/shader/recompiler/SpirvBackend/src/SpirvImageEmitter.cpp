@@ -204,6 +204,31 @@ std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access
     return result;
 }
 
+std::uint32_t LayerRowsCoord(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t coord) {
+    auto& state = ctx.state;
+    const auto f32 = TypeF32(state);
+    const auto u32 = TypeU32(state);
+    const auto extract = [&](std::uint32_t type, std::uint32_t composite, std::uint32_t index) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, type, value, composite, index);
+        return value;
+    };
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, ImageViewSizeType(state, RdnaImageDimension::Dim2D), size, LoadSampledImageDescriptor(state, access.mem.resource), ConstantU32(state, 0u));
+    const auto rows = extract(u32, size, 1u);
+    const auto lastLayer = Binary(state, spv::OpISub, u32, Binary(state, spv::OpShiftRightLogical, u32, rows, ConstantU32(state, 1u)), ConstantU32(state, 1u));
+    const auto rounded = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, f32, rounded, GlslStd450(state), GLSLstd450RoundEven, extract(f32, coord, 1u));
+    const auto clamped = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, f32, clamped, GlslStd450(state), GLSLstd450NClamp, rounded, ConstantF32(state, 0u), Unary(state, spv::OpConvertUToF, f32, lastLayer));
+    const auto center = Binary(state, spv::OpFAdd, f32, Binary(state, spv::OpFMul, f32, clamped, ConstantF32(state, std::bit_cast<std::uint32_t>(2.0f))), ConstantF32(state, std::bit_cast<std::uint32_t>(1.0f)));
+    const auto v = Binary(state, spv::OpFDiv, f32, center, Unary(state, spv::OpConvertUToF, f32, rows));
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), result, extract(f32, coord, 0u), v);
+    return result;
+}
+
 std::uint32_t CoordU32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto components = RdnaImageDimensionInfoFor(access.image.dimension).coordinateComponents;
     const auto encoded = std::min(components, AddressDimension(access).coordinateComponents);
@@ -523,6 +548,35 @@ std::uint32_t FoldedOffsetCoord(SpirvValueEmitContext& ctx, const ImageEmitAcces
     return sum;
 }
 
+bool MirrorsSampleIfUnnormalized(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
+    const auto dimension = access.image.dimension;
+    return !setup.dref && !access.image.cube && (dimension == RdnaImageDimension::Dim1D || dimension == RdnaImageDimension::Dim2D) && MirrorsIfUnnormalized(ctx.state.program.Info().samplers.at(access.mem.sampler));
+}
+
+std::uint32_t MirroredUnnormalizedCoord(SpirvValueEmitContext& ctx, const SampleSetup& setup, std::uint32_t coord, std::uint32_t axes) {
+    auto& state = ctx.state;
+    const auto f32 = TypeF32(state);
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto components = setup.dimensionInfo.spatialComponents;
+    std::array<std::uint32_t, 2> values{};
+    for (std::uint32_t index = 0; index < components; ++index) {
+        auto x = coord;
+        if (components != 1u) {
+            x = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, f32, x, coord, index);
+        }
+        const auto mirrors = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, axes, ConstantU32(state, 1u << index)), ConstantU32(state, 0u));
+        const auto negative = Binary(state, spv::OpFOrdLessThan, boolean, x, ConstantF32(state, 0u));
+        const auto below = Unary(state, spv::OpBitcast, f32, Binary(state, spv::OpISub, u32, Unary(state, spv::OpBitcast, u32, Unary(state, spv::OpFNegate, f32, x)), ConstantU32(state, 1u)));
+        values[index] = Select(state, f32, Binary(state, spv::OpLogicalAnd, boolean, mirrors, negative), below, x);
+    }
+    if (components == 1u) return values[0];
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), result, values[0], values[1]);
+    return result;
+}
+
 std::uint32_t HorizontalOffsets(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const auto components = RdnaImageDimensionInfoFor(access.image.dimension).spatialComponents;
@@ -558,9 +612,6 @@ SpirvBufferFormatInfo ImageConversionFormat(const ImageResource& image) {
 }
 
 void RequireConvertedUnormAccess(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SpirvBufferFormatInfo& info) {
-    if (access.mem.dataBits == 16u && info.byteSize != 2u) {
-        ctx.Fail(access.inst, info.type == SpirvFormatComponentType::Float ? "reads or writes a converted float image with 16-bit data, which is not implemented" : "reads or writes a converted unorm image with 16-bit data, which is not implemented");
-    }
     for (std::uint32_t component = 0; component < 4u; component++) {
         const auto selector = (access.image.shaderSwizzle >> (component * 3u)) & 7u;
         if (selector >= 4u && selector - 4u >= info.componentCount && info.byteSize != 2u) {
@@ -640,6 +691,19 @@ std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), result, selected[0], selected[1], selected[2], selected[3]);
     return result;
+}
+
+std::uint32_t LoadedTexelResult(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel, IrTextureNumericClass numericClass) {
+    auto& state = ctx.state;
+    const auto unpacked = UnpackImageTexel(ctx, access, texel);
+    if (access.mem.dataBits != 16u || access.image.srgbDecode || access.image.conversionFormat == FmaskExpansion) {
+        return ResultVector(ctx, access, unpacked, numericClass, false, false);
+    }
+    const auto info = ImageConversionFormat(access.image);
+    if (info.format == IrBufferFormat::Invalid || (info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float)) {
+        return ResultVector(ctx, access, unpacked, numericClass, false, false);
+    }
+    return ResultVector(ctx, access, Unary(state, spv::OpBitcast, TypeF32Vector(state, 4), unpacked), IrTextureNumericClass::Float, false, false);
 }
 
 SpirvBufferFormatInfo PackedTexelFormat(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -1027,7 +1091,7 @@ void EmitByReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
                 words[0] = Binary(state, spv::OpBitwiseOr, TypeU32(state), words[0], Select(state, TypeU32(state), inside, shifted, ConstantU32(state, 0)));
                 continue;
             }
-            const auto texel = ResultVector(ctx, texelAccess, UnpackImageTexel(ctx, texelAccess, color), access.image.numericClass, false, false);
+            const auto texel = LoadedTexelResult(ctx, texelAccess, color, access.image.numericClass);
             for (std::uint32_t component = 0; component < components; ++component) {
                 const auto value = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, texel, component);
@@ -1071,7 +1135,7 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         if (access.mem.imagePacked) {
             return PackedImageTexel(ctx, access, color);
         }
-        return ResultVector(ctx, access, UnpackImageTexel(ctx, access, color), numericClass, false, false);
+        return LoadedTexelResult(ctx, access, color, numericClass);
     }));
 }
 
@@ -1233,7 +1297,11 @@ SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& a
     if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Float) {
         ctx.Fail(access.inst, "samples or gathers a converted float image, which needs filtering in the shader and is not implemented");
     }
-    const auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents);
+    auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents);
+    if (access.image.layerRows) {
+        if (dref || access.inst.Opcode() != IrOpcode::ImageSampleRaw || (access.mem.imageSampleFlags != RdnaImageSampleFlagLevelZero && access.mem.imageSampleFlags != RdnaImageSampleFlagLod)) ctx.Fail(access.inst, "reads a 1D array laid out as rows of a 2D image other than by image_sample_lz or image_sample_l");
+        coord = LayerRowsCoord(ctx, access, coord);
+    }
     return {dimensionInfo, layout, access.image.numericClass, dref, coord};
 }
 
@@ -1647,7 +1715,7 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         operands.insert(operands.end() - ((operandMask & spv::ImageOperandsMinLodMask) != 0u ? 1 : 0), offset);
 
     }
-    const auto emitSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
+    const auto emitDirectSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
         const auto sampled = MakeSampledImage(state, mem.resource, mem.sampler);
         const auto sample = state.module.AllocateId();
         std::vector<std::uint32_t> words = {sampleOpcode, resultType, sample, sampled, coord};
@@ -1660,6 +1728,17 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         }
         state.module.AddFunction(words);
         return sample;
+    };
+    const bool mirrors = MirrorsSampleIfUnnormalized(ctx, access, setup);
+    const auto emitSample = [&](std::uint32_t coord, std::uint32_t mask, const std::vector<std::uint32_t>& arguments, std::uint32_t sampleOpcode) {
+        if (!mirrors) return emitDirectSample(coord, mask, arguments, sampleOpcode);
+        const auto axes = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MirrorUnnormalizedBase + mem.sampler, 0u);
+        const auto mirrored = Binary(state, spv::OpINotEqual, TypeBool(state), axes, ConstantU32(state, 0u));
+        return EmitValueIfElse(state, mirrored, resultType, [&] {
+            return emitDirectSample(MirroredUnnormalizedCoord(ctx, setup, coord, axes), mask, arguments, sampleOpcode);
+        }, [&] {
+            return emitDirectSample(coord, mask, arguments, sampleOpcode);
+        });
     };
     std::uint32_t sample = 0;
     const bool alreadyBaseLevel = !hasOffset && opcode == spv::OpImageSampleExplicitLod && operandMask == spv::ImageOperandsLodMask && !HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.clamp == NoImageComponent;
