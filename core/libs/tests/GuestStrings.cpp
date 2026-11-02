@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <stdexcept>
 #include <string>
 
 static void Require(bool condition) {
@@ -475,6 +476,21 @@ int main() {
     Require(inetAton("1.2.3.4 trailing", "1.2.3.4"));
     Require(inetAton("1.2.3.4\n", "1.2.3.4"));
     Require(__inet_aton_nid_postfix("1.2.3.4", nullptr) == 1);
+    bool atonNullThrew = false;
+    try {
+        unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
+        __inet_aton_nid_postfix(nullptr, address);
+    } catch (const std::invalid_argument&) {
+        atonNullThrew = true;
+    }
+    Require(atonNullThrew);
+    bool addrNullThrew = false;
+    try {
+        __inet_addr_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        addrNullThrew = true;
+    }
+    Require(addrNullThrew);
     for (const char* invalid : {"", " 1.2.3.4", "1.2.3.4.5", "256.1.1.1", "1.2.3.256", "1.2.65536", "08", "1..2", "a.b.c.d",
              "1.2.3.4x", "0x", "1.2.3.", "-1"}) {
         unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
