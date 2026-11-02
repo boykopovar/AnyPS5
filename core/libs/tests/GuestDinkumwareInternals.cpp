@@ -308,6 +308,24 @@ void TestFloatErrors() {
     Require(_Stof_nid_postfix("1.5", &end, 1) == 15.0f, "_Stof");
     Require(_Stold_nid_postfix("1.5", &end, -1) == 0.15L, "_Stold");
     error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stodx_nid_postfix("0x1p0", &end, 2, &error) == 100.0 && error == 0 && *__error_nid_postfix() == 0, "_Stodx hexadecimal scaled by positive pten");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stodx_nid_postfix("0x10p0", &end, -1, &error) == 1.6 && error == 0 && *__error_nid_postfix() == 0, "_Stodx hexadecimal scaled by negative pten");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stofx_nid_postfix("0x1p0", &end, 3, &error) == 1000.0f && error == 0 && *__error_nid_postfix() == 0, "_Stofx hexadecimal scaled by positive pten");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(std::isinf(_Stodx_nid_postfix("0x1p1023", &end, 1, &error)) && error == 1 && *__error_nid_postfix() == RangeError, "_Stodx hexadecimal overflow with pten");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stodx_nid_postfix("0x1p-1074", &end, -1, &error) == 0.0 && error == 1 && *__error_nid_postfix() == RangeError, "_Stodx hexadecimal underflow with pten");
+    error = 99;
+    *__error_nid_postfix() = 7;
+    Require(_Stodx_nid_postfix("0x1p0", &end, 2, &error) == 100.0 && error == 0 && *__error_nid_postfix() == 7, "_Stodx hexadecimal scaled kept preset errno");
+    error = 99;
     Require(std::isnan(_Stodx_nid_postfix("nan", &end, 2, &error)) && error == 0 && end[0] == '\0', "_Stodx NaN");
 }
 
