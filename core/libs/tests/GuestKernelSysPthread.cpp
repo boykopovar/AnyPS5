@@ -55,7 +55,22 @@ static void TestMutexAttributeGeneration() {
     Require(scePthreadMutexattrGetgen(&attr, &generation) == 0 && generation == 0);
     Require(scePthreadMutexattrSetgen(&attr, 2) == SCE_KERNEL_ERROR_EOPNOTSUPP);
     Require(scePthreadMutexattrGetgen(nullptr, &generation) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&attr, reinterpret_cast<int*>(0x10)) == 14);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(reinterpret_cast<const PthreadMutexattr*>(0x10), &generation) == 22);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(reinterpret_cast<PthreadMutexattr*>(0x10), 0) == 22);
+    Require(scePthreadMutexattrGetgen(&attr, reinterpret_cast<int*>(0x10)) == static_cast<int>(0x80020000u | 14u));
+    Require(scePthreadMutexattrGetgen(reinterpret_cast<const PthreadMutexattr*>(0x10), &generation) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetgen(reinterpret_cast<PthreadMutexattr*>(0x10), 0) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+}
+
+static void TestThreadAttrCreateSuspend() {
+    Require(pthread_attr_setcreatesuspend_np_nid_postfix(nullptr) == 22);
+    Require(pthread_attr_setcreatesuspend_np_nid_postfix(reinterpret_cast<PthreadAttr*>(0x10)) == 22);
+    PthreadAttr attr{};
+    Require(scePthreadAttrInit(&attr) == 0);
+    Require(pthread_attr_setcreatesuspend_np_nid_postfix(&attr) == 0);
+    Require(scePthreadAttrDestroy(&attr) == 0);
 }
 
 static void TestConcurrency() {
@@ -77,6 +92,7 @@ static void TestAtfork() {
 int main() {
     TestScope();
     TestMutexAttributeGeneration();
+    TestThreadAttrCreateSuspend();
     TestConcurrency();
     TestAtfork();
     return 0;
