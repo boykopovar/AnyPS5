@@ -17,9 +17,9 @@
 #include <system_error>
 #include <vector>
 #include <sys/stat.h>
+#include <cerrno>
 #include <ctime>
 #ifndef _WIN32
-#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -36,6 +36,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 
@@ -221,6 +222,8 @@ std::int64_t CopyLinkTarget(const std::string& target, char* buffer, std::size_t
 bool HasNonDirectoryPrefix(const std::filesystem::path& native) {
     std::error_code error;
     for (auto prefix = native.parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
+        const auto link = LinkPrefixState_nid_no_patch(prefix);
+        if (link != LinkPrefix_nid_no_patch::Resolves) return link == LinkPrefix_nid_no_patch::BlockedByFile;
         const auto status = std::filesystem::status(prefix, error);
         if (std::filesystem::exists(status)) return !std::filesystem::is_directory(status);
     }
@@ -278,6 +281,33 @@ bool HasLongComponent(std::string_view path) {
         start = end + 1;
     }
     return false;
+}
+
+bool HostFollowsGuestTarget(const char* created, const char* target, const std::filesystem::path& native) {
+    auto directory = native.parent_path();
+    for (const auto& part : std::filesystem::path(target)) {
+        if (part.empty() || part == ".") continue;
+        if (part != "..") {
+            directory /= part;
+            continue;
+        }
+        std::error_code error;
+        if (!std::filesystem::is_directory(directory, error) || IsSymbolicLink(directory)) return false;
+        directory = directory.parent_path();
+    }
+    const std::string_view link(created);
+    const auto separator = link.find_last_of("/\\");
+    std::string guest = separator == std::string_view::npos ? std::string(".") : std::string(link.substr(0, separator == 0 ? 1 : separator));
+    guest += '/';
+    guest += target;
+    std::filesystem::path resolved;
+    if (ResolvePathError_nid_no_patch(guest.c_str(), resolved)) return false;
+    const auto trimmed = [](std::filesystem::path path) {
+        path = path.lexically_normal();
+        if (!path.has_filename() && path.has_relative_path()) path = path.parent_path();
+        return path;
+    };
+    return trimmed(resolved) == trimmed(directory);
 }
 
 bool IsDotOrDotDot(std::string_view path) {
@@ -353,6 +383,14 @@ int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
     static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
     if (!GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
+}
+
+int APS5_VABI is_in_sandbox_nid_postfix(void) {
+    return 1;
+}
+
+int APS5_VABI sceKernelIsInSandbox(void) {
+    return is_in_sandbox_nid_postfix();
 }
 
 int APS5_VABI fork_nid_postfix(void) {
@@ -592,6 +630,9 @@ std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
     bool withoutVnode = false;
 #ifdef _WIN32
     if (GuestFstat(fd, &withoutVnode) != 0) return Fail(GuestEbadf);
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    withoutVnode = withoutVnode || KernelLookupSocketNative_nid_no_patch(fd, &owner, &native);
 #else
     struct stat status{};
     if (::fstat(fd, &status) != 0) return Fail(GuestEbadf);
@@ -771,6 +812,12 @@ int APS5_VABI kldfind_nid_postfix(const char* file) {
     return static_cast<int>(Fail(GuestEnoent));
 }
 
+int APS5_VABI kldload_nid_postfix(const char* file) {
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(file, copy)) return static_cast<int>(Fail(error));
+    return static_cast<int>(Fail(GuestEperm));
+}
+
 int APS5_VABI kldfirstmod_nid_postfix(int fileid) {
     return static_cast<int>(Fail(GuestEnoent));
 }
@@ -833,12 +880,6 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
         NotImplemented_nid_no_patch("symlink: absolute targets");
         return -1;
     }
-    for (const auto& part : contents) {
-        if (part == "..") {
-            NotImplemented_nid_no_patch("symlink: parent-directory targets");
-            return -1;
-        }
-    }
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
     std::error_code error;
@@ -848,6 +889,11 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
     if (std::filesystem::exists(std::filesystem::symlink_status(native, error))) return static_cast<int>(Fail(GuestEexist));
 #endif
     if (!std::filesystem::is_directory(native.parent_path(), error)) return static_cast<int>(Fail(HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestEnoent));
+    if (std::any_of(contents.begin(), contents.end(), [](const std::filesystem::path& part) { return part == ".."; }) &&
+        !HostFollowsGuestTarget(created, target, native)) {
+        NotImplemented_nid_no_patch("symlink: a parent-directory target the host would not follow to the guest path it names");
+        return -1;
+    }
     const bool directory = std::filesystem::is_directory(native.parent_path() / contents, error);
 #ifdef _WIN32
     DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
@@ -1155,7 +1201,7 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
 
 int APS5_VABI scePthreadCondattrGetclock(const PthreadCondattr* attr, KernelClockid* clockId) {
     if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    if (!clockId) throw std::runtime_error("scePthreadCondattrGetclock: null clock id");
+    if (!clockId) throw std::invalid_argument("scePthreadCondattrGetclock: null clock id");
     *clockId = (*attr)->_clockid;
     return 0;
 }
@@ -1239,7 +1285,16 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
     if (static_cast<std::uint32_t>(bit) > 0x7F) return static_cast<int>(0x80020016);
-    *enabled = static_cast<std::int32_t>((workaround->ids[bit >> 6] >> (bit & 0x3F)) & 1);
+    KernelTitleWorkaround localWorkaround{};
+    const int saved = errno;
+    if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {
+        errno = saved;
+        return static_cast<int>(0x8002000E);
+    }
+    const std::int32_t value = static_cast<std::int32_t>((localWorkaround.ids[bit >> 6] >> (bit & 0x3F)) & 1);
+    const bool copied = GuestCopyOut_nid_no_patch(enabled, &value, sizeof(value));
+    errno = saved;
+    if (!copied) return static_cast<int>(0x8002000E);
     return 0;
 }
 

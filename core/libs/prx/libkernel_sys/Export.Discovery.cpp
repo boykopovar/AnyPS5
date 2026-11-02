@@ -139,16 +139,6 @@ int APS5_VABI ipmimgr_call_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI is_in_sandbox_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldload_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI kmq_notify_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -418,11 +408,6 @@ int APS5_VABI sceKernelAddResource(void) {
 }
 
 int APS5_VABI sceKernelAllocateDirectMemory2(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelAllocateDirectMemoryForApp(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1343,11 +1328,6 @@ int APS5_VABI sceKernelIsGenuineN(void) {
     return 1;
 }
 
-int APS5_VABI sceKernelIsInSandbox(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelIsM2DeviceAttached(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1503,11 +1483,6 @@ int APS5_VABI sceKernelPrepareToSuspendProcess(void) {
 }
 
 int APS5_VABI sceKernelProtectDirectMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelProtectDirectMemoryForPID(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2098,18 +2073,16 @@ int APS5_VABI scePthreadTimedjoin(void) {
     return 0;
 }
 
-int APS5_VABI sched_setscheduler_nid_postfix(int pid, int policy, const KernelSchedParam* param) {
+int APS5_VABI sched_setscheduler_nid_postfix(int pid, int, const KernelSchedParam* param) {
+    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (param == nullptr) return fail(14);
-    if (pid != 0 && pid == getpid_nid_postfix()) NotImplemented_nid_no_patch("sched_setscheduler: the first thread of the process, which its own pid selects, is not tracked");
-    if (pid != 0) return fail(3);
-    if (policy != 1 && policy != 2 && policy != 3) return fail(22);
-    if (scePthreadSetschedparam(scePthreadSelf(), policy, param) != 0)
-        NotImplemented_nid_no_patch("sched_setscheduler: a policy and priority scePthreadSetschedparam does not accept, where FreeBSD answers EPERM or EINVAL and the console's answer is unverified");
-    return 0;
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return fail(GuestEfault);
+    if (pid != 0 && pid != getpid_nid_postfix()) return fail(GuestEsrch);
+    return fail(GuestEperm);
 }
 
 int APS5_VABI set_phys_fmem_limit_nid_postfix(void) {
