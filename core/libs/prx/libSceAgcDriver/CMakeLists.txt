@@ -1,3 +1,24 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_preparation_inputs_tests
+            tests/PreparationInputs.cpp
+            Execution/src/Driver/Shaders/ShaderDiagnostics.cpp
+            ${CMAKE_SOURCE_DIR}/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp)
+    target_include_directories(agc_preparation_inputs_tests PRIVATE
+            ${LIBS_INCLUDE_DIR}
+            $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
+            ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    target_link_libraries(agc_preparation_inputs_tests PRIVATE libc)
+    configure_windows_unwind(agc_preparation_inputs_tests)
+    foreach(mode enabled disabled selected failure concurrent write-failure capture-write-failure)
+        add_test(NAME agc_preparation_inputs_${mode} COMMAND agc_preparation_inputs_tests ${mode})
+        set_tests_properties(agc_preparation_inputs_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(agc_preparation_inputs_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()
+
 function(ensure_agc_glslang)
     if(TARGET glslang AND TARGET SPIRV AND TARGET glslang-standalone)
         return()
@@ -30,6 +51,16 @@ function(ensure_agc_glslang)
 endfunction()
 
 ensure_agc_glslang()
+
+if(BUILD_TESTING AND WIN32)
+    add_test_executable(agc_process_sampler_stack_tests tests/ProcessSamplerStack.cpp Execution/src/WorkerSampler.cpp)
+    target_include_directories(agc_process_sampler_stack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_process_sampler_stack_tests PRIVATE libc)
+    configure_windows_unwind(agc_process_sampler_stack_tests)
+    add_test(NAME agc_process_sampler_stack COMMAND agc_process_sampler_stack_tests)
+    set_tests_properties(agc_process_sampler_stack PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
 
 set(agcTextureDetileShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TextureDetile.comp)
 set(agcTextureDetileGeneratedRoot ${CMAKE_CURRENT_BINARY_DIR}/generated)
