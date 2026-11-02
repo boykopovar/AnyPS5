@@ -285,10 +285,10 @@ class ReleaseMetadataTests(unittest.TestCase):
 
     def test_selected_asset_metadata_is_checked_before_any_download(self):
         def asset(platform):
-            return {"name": f"prx-{platform}-v1.zip", "size": 10, "browser_download_url": "https://example.invalid/asset", "digest": None}
+            return {"name": f"prx-{platform}-v1.zip", "size": 10, "browser_download_url": "https://example.invalid/asset", "digest": "sha256:" + "0" * 64}
         changes = [("size", x) for x in (True, 0, -1, 1.5, "10", 512*1024*1024+1)]
         changes += [("browser_download_url", x) for x in (None, "", 1)]
-        changes += [("digest", x) for x in (False, 1, [])]
+        changes += [("digest", x) for x in (None, "", "sha256:" + "A" * 64, "md5:" + "0" * 32, False, 1, [])]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             existing = root / "release.json"
@@ -340,7 +340,7 @@ class ReleaseMetadataTests(unittest.TestCase):
         release = {"tag_name": "v1", "html_url": "https://example.invalid/v1", "assets": [
             {"name": "web-v1.zip", "size": len(data), "browser_download_url": "https://example.invalid/web",
              "digest": "sha256:" + hashlib.sha256(data).hexdigest()},
-            *({"name": f"prx-{platform}-v1.zip", "size": 10, "browser_download_url": "https://example.invalid/prx", "digest": None}
+            *({"name": f"prx-{platform}-v1.zip", "size": 10, "browser_download_url": "https://example.invalid/prx", "digest": "sha256:" + "0" * 64}
               for platform in ("windows", "linux"))]}
         responses = [io.BytesIO(json.dumps(release).encode()), io.BytesIO(data)]
         with tempfile.TemporaryDirectory() as directory:

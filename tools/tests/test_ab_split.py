@@ -186,6 +186,17 @@ class AbSplitTests(unittest.TestCase):
         self.assertEqual(row["classes"], {"staging-in": 8.0, "present-blit": 4.0})
         self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
 
+    def test_draw_variants_are_not_summed_into_program_keys(self):
+        row = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0).replace("0x2000 x4 5ms", "0x2000 x4 5ms draw 0x3000 x3 30ms"))
+        self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
+        row = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0).replace("0x2000 x4 5ms", "draw 0x2000 x3 30ms 0x2000 x4 5ms"))
+        self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
+
+    def test_program_metrics_leave_out_draw_variant_time(self):
+        lines = [line.replace("0x2000 x4 5ms", "0x2000 x4 5ms draw 0x1000 x9 90ms") for line in log()]
+        result = ab_split.split(lines, ["0x1000"])
+        self.assertAlmostEqual(result["phases"][0]["metrics"]["0x1000 ms/present"], 1.0)
+
     def test_dropped_presents_count_as_frames(self):
         row = ab_split.parse_report("present", present(90.0, 10.0, presents=30, dropped=10))
         self.assertEqual(row, {"frames": 40, "busy": 90.0, "gaps": 10.0})
@@ -229,10 +240,10 @@ class AbSplitTests(unittest.TestCase):
                            ("syncwait", f"[syncwait] (x): a 1/{huge}ms")):
             with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "non-finite"):
                 ab_split.parse_report(kind, line)
-        phase = lambda k, i: f"[ab] phase {k} {i} settled at present 1 (t 1 s)"
+        phase = lambda k, i: f"[ab] phase {k} {i} settled at present {i * 10 + 1} (t {i * 10 + 1} s)"
         lines = []
         for k, i, busy in (("A", 0, "1"), ("B", 1, "9" * 308), ("A", 2, "1"), ("B", 3, "1")):
-            lines += [f"[ab] phase {k} {i} begins at present 0 (t 0 s)", phase(k, i),
+            lines += [f"[ab] phase {k} {i} begins at present {i * 10} (t {i * 10} s)", phase(k, i),
                       "[present] warmup", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
         with self.assertRaises(ValueError):
             ab_split.split(lines)
@@ -254,12 +265,21 @@ class AbSplitTests(unittest.TestCase):
     def test_overflowing_change_percentage_fails(self):
         lines = []
         for k, i, busy in (("A", 0, "0." + "0" * 300 + "1"), ("B", 1, "1" + "0" * 300)):
-            lines += [f"[ab] phase {k} {i} begins at present 0 (t 0 s)", f"[ab] phase {k} {i} settled at present 1 (t 1 s)",
+            lines += [f"[ab] phase {k} {i} begins at present {i * 10} (t {i * 10} s)", f"[ab] phase {k} {i} settled at present {i * 10 + 1} (t {i * 10 + 1} s)",
                       "[present] warmup", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
         with self.assertRaisesRegex(ValueError, "non-finite"):
             ab_split.split(lines)
 
     def test_invalid_phase_chronology_is_rejected(self):
+        begin = "[ab] phase A 0 begins at present 100 (t 10 s)"
+        settle = "[ab] phase A 0 settled at present 110 (t 12 s)"
+        for next_marker in ("[ab] phase B 1 begins at present 105 (t 40 s)",
+                            "[ab] phase B 1 begins at present 120 (t 11 s)",
+                            "[ab] phase A 0 settled at present 120 (t 20 s)"):
+            with self.subTest(marker=next_marker), self.assertRaises(ValueError):
+                ab_split.read_log([begin, settle, next_marker])
+        with self.assertRaises(ValueError):
+            ab_split.read_log([begin, "[ab] phase B 1 begins at present 90 (t 20 s)"])
         cases = (
             [
                 "[ab] phase A 0 begins at present 100 (t 10.000 s)",
