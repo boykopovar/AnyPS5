@@ -15,6 +15,7 @@ bool LoadedFromMemory(const IrValue& handle);
 bool IsDescriptorHandle(IrOpcode opcode);
 bool IsRuntimeSelect(IrOpcode opcode);
 bool IsRuntimeUniformOp(IrOpcode opcode);
+bool HoldsControlValue(IrValue* value, std::uint32_t depth);
 
 bool ActiveMaskImplies(const IrValue* mask, const IrValue* condition);
 

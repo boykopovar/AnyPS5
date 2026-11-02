@@ -234,6 +234,17 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto selectedNoLanes = Run(device, NoLaneWebCode, UndefinedFormat, SecondSelector);
     Require(Clean(selectedNoLanes.log) && selectedNoLanes.word == Untouched, "descriptor web faults: an undefined arm faulted or wrote with no lane enabled:\n" + selectedNoLanes.log);
 
+    auto wholeQuad = WebCode;
+    wholeQuad[17] = 0xbe8e0a7eu;
+    const auto wholeQuadValid = Run(device, wholeQuad, Format8888UNorm, ValidSelector);
+    Require(Clean(wholeQuadValid.log) && Reads(wholeQuadValid.word, FirstTexel), "descriptor web faults: an unselected whole-quad mask changed the valid arm's read:\n" + wholeQuadValid.log);
+    const auto wholeQuadFolded = Run(device, wholeQuad, Format8888UNorm, FoldedSelector);
+    Require(Faulted(wholeQuadFolded.log, SamplePc), "descriptor web faults: a selected whole-quad mask did not fault at the read:\n" + wholeQuadFolded.log);
+    auto wholeQuadNoLanes = NoLaneWebCode;
+    wholeQuadNoLanes[17] = 0xbe8e0a7eu;
+    const auto wholeQuadDisabled = Run(device, wholeQuadNoLanes, Format8888UNorm, FoldedSelector);
+    Require(Clean(wholeQuadDisabled.log) && wholeQuadDisabled.word == Untouched, "descriptor web faults: a whole-quad mask faulted or wrote with no lane enabled:\n" + wholeQuadDisabled.log);
+
     constexpr std::uint32_t TableSamplePc = 0xb0u;
     const auto tableValid = Run(device, TableWebCode, Format8888UNorm, ValidSelector, true);
     Require(tableValid.imageTable && !tableValid.addressTable, "descriptor web faults: the mixed shader does not bind an image table without a BDA address table");
