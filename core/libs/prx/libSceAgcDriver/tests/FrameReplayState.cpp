@@ -2,6 +2,7 @@
 #include "../tools/FrameReplay.cpp"
 #undef main
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <barrier>
@@ -341,6 +342,82 @@ void testLateClear(const std::filesystem::path& directory) {
     if (last != std::byte{0}) throw std::runtime_error("the last memory delta holding the neighbour of the registered shader (group " + std::to_string(lastGroup) + " of " + std::to_string(holding) + " holding it) has byte " + std::to_string(static_cast<int>(last)) + ", not the 0 the CPU stored after the registration");
 }
 
+std::byte lastDeltaByte(const FrameCaptureReader& reader, const std::byte* at) {
+    std::uint64_t lastGroup = 0;
+    std::byte last{0};
+    bool held = false;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Delta || chunk.address > address(at) || address(at) >= chunk.address + chunk.bytes) continue;
+        held = true;
+        if (chunk.group < lastGroup) continue;
+        lastGroup = chunk.group;
+        last = reader.Read(chunk)[address(at) - chunk.address];
+    }
+    check(held, "the written byte is in no memory delta");
+    return last;
+}
+
+void testStoreBetweenWalks(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    auto* page = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    std::fill_n(page, 16, std::byte{0x31});
+    recorder->Suspend([] {});
+    AgcDriver::GuestMemory::StoreOwnBytes(address(page), 16, [&] {
+        std::fill_n(page, 16, std::byte{0x42});
+        page[Page - 1] = std::byte{0x6b};
+    });
+    recorder->Suspend([] {});
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    const auto held = lastDeltaByte(reader, page + Page - 1);
+    if (held != std::byte{0x6b}) throw std::runtime_error("the last memory delta holding the page has byte " + std::to_string(static_cast<int>(held)) + ", not the 107 the CPU stored between the walks of a driver store");
+}
+
+#ifdef _WIN32
+bool consumeWrites(std::uintptr_t begin, std::size_t bytes, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+    std::vector<void*> pages(256);
+    auto count = pages.size();
+    if (!GuestArena::GuestArenaCollectWrites_nid_postfix(begin, bytes, pages.data(), &count, true)) return false;
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto page = reinterpret_cast<std::uintptr_t>(pages[index]);
+        written(context, page, page + 4096);
+    }
+    return true;
+}
+
+void testFreshNote(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    auto* block = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    recorder->Suspend([] {});
+    struct FreshHookReset {
+        ~FreshHookReset() { AgcDriver::GuestMemory::SetFreshCollectHook(nullptr); }
+    } reset;
+    AgcDriver::GuestMemory::SetFreshCollectHook(&consumeWrites);
+    *(block + Page) = std::byte{0x6b};
+    AgcDriver::GuestMemory::MarkWritten(address(block + 3 * Page), 16);
+    AgcDriver::GuestMemory::SetFreshCollectHook(nullptr);
+    recorder->Suspend([] {});
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    const auto held = lastDeltaByte(reader, block + Page);
+    if (held != std::byte{0x6b}) throw std::runtime_error("the last memory delta holding the page has byte " + std::to_string(static_cast<int>(held)) + ", not the 107 the CPU stored before a fresh collect noted the page");
+}
+#endif
+
 void testEopTokens() {
     Frames frames;
     auto output = std::make_shared<ReplayOutput>(frames);
@@ -494,6 +571,10 @@ int main(int argc, char** argv) {
         else if (mode == "pending_result") testPendingResultRead(directory);
         else if (mode == "partly_covered") testPartlyCoveredBlock(directory);
         else if (mode == "late_clear") testLateClear(directory);
+        else if (mode == "store_between_walks") testStoreBetweenWalks(directory);
+#ifdef _WIN32
+        else if (mode == "fresh_note") testFreshNote(directory);
+#endif
         else if (mode == "tokens") testEopTokens();
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
