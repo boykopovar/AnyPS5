@@ -745,15 +745,6 @@ void RunTextureTilingTests() {
         window.baseArray = 1000;
         FlattenLargeOneDimensionalArray(window);
         Require(window.baseAddress == array.baseAddress + 1000ull * layerBytes && window.height == 4120 && window.depthOrLastArray == 0 && window.baseArray == 0 && window.dimension == TextureDimension::k2D, "a windowed 1D array past maxImageArrayLayers flattens from its first viewed layer");
-        auto mip = array;
-        mip.mipCount = 2;
-        reject([&] { FlattenLargeOneDimensionalArray(mip); }, "mip levels");
-        auto tiled = array;
-        tiled.tileMode = TextureTileMode::kZ64KBX;
-        reject([&] { FlattenLargeOneDimensionalArray(tiled); }, "tiled storage");
-        auto dcc = array;
-        dcc.dccAddress = 0x20000000ull;
-        reject([&] { FlattenLargeOneDimensionalArray(dcc); }, "DCC metadata");
     }
 
 }

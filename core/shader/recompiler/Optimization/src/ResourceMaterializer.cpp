@@ -51,7 +51,10 @@ struct DecodedImage {
     IrTextureNumericClass numericClass = IrTextureNumericClass::Unsupported;
     RdnaImageDimension dimension = RdnaImageDimension::Unknown;
     std::uint32_t mipCount = 1;
+    std::uint32_t surfaceMipCount = 1;
     std::uint32_t arrayLayers = 1;
+    bool linear = false;
+    bool hasDcc = false;
     IrBufferFormat conversionFormat = IrBufferFormat::Invalid;
     std::uint32_t shaderSwizzle = ShaderImageIdentitySwizzle;
     bool cube = false;
@@ -231,6 +234,15 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const auto lastArray = descriptor.dwords[4] & 0x1fffu;
     const auto firstArray = (descriptor.dwords[4] >> 16u) & 0x1fffu;
     decoded.arrayLayers = lastArray >= firstArray ? lastArray - firstArray + 1u : 0u;
+    decoded.surfaceMipCount = ((descriptor.dwords[5] >> 4u) & 0xfu) + 1u;
+    if (GcnGuestShaders()) {
+        const auto tiling = GcnImageTilingIndex(descriptor.dwords[7]);
+        decoded.linear = tiling == 8u || tiling == 31u;
+    } else {
+        decoded.linear = ((descriptor.dwords[3] >> 20u) & 0x1fu) == 0u;
+        const auto metaAddress = ((static_cast<std::uint64_t>(descriptor.dwords[6]) >> 24u) & 0xffu) | (static_cast<std::uint64_t>(descriptor.dwords[7]) << 8u);
+        decoded.hasDcc = (descriptor.dwords[6] & (1u << 21u)) != 0u && metaAddress != 0u;
+    }
     if (GcnGuestShaders() && imageCoordinates(decoded.dimension) != imageCoordinates(base.dimension)) {
         throw std::runtime_error("GCN image instruction on a descriptor of type " + std::to_string(static_cast<std::uint32_t>(rawImageType(descriptor))) + " needs a different address count than its inferred dimension; not implemented");
     }
@@ -2044,6 +2056,12 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
         if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format11_11_10Float || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
+        if (image.flattenAllowed && mode.dimension == RdnaImageDimension::Dim1DArray) {
+            auto flattened = mode;
+            flattened.dimension = RdnaImageDimension::Dim2D;
+            flattened.flattened1DArray = true;
+            modes.push_back(flattened);
+        }
         const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
         const bool volumePlaneBias = image.dimension == RdnaImageDimension::Dim2D && image.singleMipPlaneBiasCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
@@ -2254,8 +2272,10 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
     const auto inspected = inspectImageDescriptor(descriptor, image, image.srgbDecodeFormats);
     if (inspected.reason.has_value()) return reject(*inspected.reason, inspected.detail);
     const auto& decoded = inspected.decoded;
-    static_cast<void>(maxImageArrayLayers);
-    const auto dimensionMatches = [&](const ImageResource& mode) { return mode.dimension == decoded.dimension || (mode.flattened1DArray && mode.dimension == RdnaImageDimension::Dim2D && decoded.dimension == RdnaImageDimension::Dim1DArray); };
+    const bool flattenRequired = image.flattenAllowed && decoded.dimension == RdnaImageDimension::Dim1DArray && maxImageArrayLayers != 0u && decoded.arrayLayers > maxImageArrayLayers;
+    const bool flattenSupported = flattenRequired && decoded.surfaceMipCount == 1u && decoded.linear && !decoded.hasDcc;
+    const auto modeEligible = [&](const ImageResource& mode) { return mode.flattened1DArray ? flattenSupported : !flattenRequired; };
+    const auto dimensionMatches = [&](const ImageResource& mode) { return mode.flattened1DArray ? flattenSupported && mode.dimension == RdnaImageDimension::Dim2D : mode.dimension == decoded.dimension; };
     const auto format = rawImageFormat(descriptor);
     const bool emulated = image.depthCompare && format != IrBufferFormat::Format32Float && format != IrBufferFormat::Format16UNorm && !IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3]);
     if (!emulated && (image.emulatedCompare & EmulatedCompare::NativeOffsetUnsupported) != 0u) return reject(PoisonReason::UnsupportedOperation, "native comparison with a nonconstant texel offset requires VK_KHR_maintenance8 and shaderImageGatherExtended");
@@ -2273,7 +2293,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
     if (decoded.mipCount > (image.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u)) return reject(PoisonReason::InvalidFormat, "runtime storage image mip capacity exceeded");
     if ((descriptorImageSwizzle(descriptor) & 06666u) == 0u && !decoded.fmask && !decoded.depthBits && decoded.conversionFormat == IrBufferFormat::Invalid && !decoded.srgbDecode) {
         for (std::uint32_t index = 0u; index < modes.size(); ++index) {
-            if (modes[index].constantSwizzle && modes[index].numericClass == decoded.numericClass) {
+            if (modeEligible(modes[index]) && modes[index].constantSwizzle && modes[index].numericClass == decoded.numericClass) {
                 result.mode = index;
                 return result;
             }
@@ -2284,6 +2304,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
     }
     for (std::uint32_t index = 0u; index < modes.size(); ++index) {
         const auto& mode = modes[index];
+        if (!modeEligible(mode)) continue;
         if (mode.constantSwizzle) continue;
         if (((mode.emulatedCompare & EmulatedCompare::Enabled) != 0u) != emulated) continue;
         if (mode.numericClass == decoded.numericClass && dimensionMatches(mode) && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode) {
@@ -2306,7 +2327,7 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         : decoded.srgbDecode ? PoisonReason::SrgbUnsupported
         : decoded.conversionFormat != IrBufferFormat::Invalid ? PoisonReason::Conversion
         : decoded.dimension == RdnaImageDimension::Dim2DMsaa || decoded.dimension == RdnaImageDimension::Dim2DMsaaArray ? PoisonReason::Multisampled
-        : std::none_of(modes.begin(), modes.end(), [&](const ImageResource& mode) { return dimensionMatches(mode) && mode.cube == decoded.cube; }) ? PoisonReason::Dimension
+        : std::none_of(modes.begin(), modes.end(), [&](const ImageResource& mode) { return modeEligible(mode) && dimensionMatches(mode) && mode.cube == decoded.cube; }) ? PoisonReason::Dimension
         : PoisonReason::NumericClass;
     return reject(reason, message + words);
 }
@@ -2373,11 +2394,8 @@ void ResourceMaterializer::PrepareImageModes(ShaderInfo& info) {
     for (const auto& pair : info.sampledPairs) if (pair.image < sampled.size()) sampled[pair.image] = true;
     for (std::size_t index = 0; index < info.images.size(); ++index) {
         auto& image = info.images[index];
-        image.flattenAllowed = !sampled[index];
-        if (image.flattenAllowed && image.dimension == RdnaImageDimension::Dim1DArray) {
-            image.dimension = RdnaImageDimension::Dim2D;
-            image.flattened1DArray = true;
-        }
+        image.flattened1DArray = false;
+        image.flattenAllowed = !sampled[index] && image.dimension == RdnaImageDimension::Dim1DArray;
     }
     info.runtimeImageModes.clear();
     info.runtimeImageModes.reserve(info.images.size());
