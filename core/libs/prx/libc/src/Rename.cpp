@@ -12,6 +12,21 @@
 #include <windows.h>
 #endif
 
+#ifdef _WIN32
+static bool IsWindowsLink(const std::filesystem::path& path) {
+    WIN32_FIND_DATAW data{};
+    const HANDLE search = FindFirstFileW(path.c_str(), &data);
+    if (search == INVALID_HANDLE_VALUE) return false;
+    FindClose(search);
+    return (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 &&
+        (data.dwReserved0 == IO_REPARSE_TAG_SYMLINK || data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT);
+}
+#else
+static bool IsWindowsLink(const std::filesystem::path&) {
+    return false;
+}
+#endif
+
 std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, [[maybe_unused]] bool replacesExisting) {
     namespace fs = std::filesystem;
     std::error_code error;
@@ -93,8 +108,8 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     const auto destinationStatus = LinkStatus(destination, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     const bool destinationExists = destinationStatus.type() != fs::file_type::not_found;
-    const bool sourceIsDirectory = fs::is_directory(sourceStatus);
-    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus);
+    const bool sourceIsDirectory = fs::is_directory(sourceStatus) && !IsWindowsLink(source);
+    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(destination);
     bool sameFile = false;
     if (destinationExists) {
         error.clear();
