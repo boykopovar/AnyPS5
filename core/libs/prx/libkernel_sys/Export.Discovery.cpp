@@ -1432,12 +1432,14 @@ int APS5_VABI sceKernelMapTraceMemory(void) {
 }
 
 int APS5_VABI sceKernelMapperGetParam(std::uint64_t* param) {
-    if (!param || *param > MapperParamBytes) return SCE_KERNEL_ERROR_EINVAL;
-    const auto bytes = *param;
+    if (!param) return SCE_KERNEL_ERROR_EINVAL;
+    std::uint64_t bytes = 0;
+    if (!GuestCopyIn_nid_no_patch(&bytes, param, sizeof(bytes))) return SCE_KERNEL_ERROR_EFAULT;
+    if (bytes > MapperParamBytes) return SCE_KERNEL_ERROR_EINVAL;
     if (bytes > MapperKnownBytes) NotImplemented_nid_no_patch(__func__);
     std::uint64_t values[5]{MapperParamBytes};
     AmmVirtualAddressRanges_nid_no_patch(&values[1], &values[2], &values[3], &values[4]);
-    std::memcpy(param, values, static_cast<std::size_t>(bytes));
+    if (!GuestCopyOut_nid_no_patch(param, values, static_cast<std::size_t>(bytes))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
