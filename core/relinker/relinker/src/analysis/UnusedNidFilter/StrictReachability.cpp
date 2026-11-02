@@ -166,7 +166,7 @@ private:
                     region.Edges.insert(target);
                 }
                 if (info.HasRipRelativeDisp) {
-                    std::int32_t displacement;
+                    std::int32_t displacement = 0;
                     std::memcpy(&displacement, input.Text.data() + offset + info.RipRelativeDispOffset, sizeof(displacement));
                     auto target = next + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
                     if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
@@ -221,6 +221,9 @@ StrictReachabilityResult AnalyzeStrictReachability(const StrictReachabilityInput
 
 std::vector<VirtualAddress> ReadRelativeTableTargets(const std::vector<StrictDataRegion>& data, VirtualAddress base, VirtualAddress textVaddr, std::size_t textSize) {
     std::vector<VirtualAddress> targets;
+    if (textSize == 0 || textSize > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
+        throw RelinkerException("Strict filter: invalid text range");
+    }
     for (const auto& region : data) {
         if (base < region.Address || base - region.Address >= region.Bytes.size()) continue;
         for (auto offset = static_cast<std::size_t>(base - region.Address); offset + 4 <= region.Bytes.size(); offset += 4) {

@@ -9,6 +9,72 @@ struct Asn1String {
     std::int64_t flags;
 };
 
+struct LibreSslGeneralName {
+    std::int32_t type;
+    void* value;
+};
+
+struct LibreSslX509VerifyParamId {
+    void* hosts;
+    std::uint32_t hostFlags;
+    char* peerName;
+    char* email;
+    std::uint64_t emailLength;
+    unsigned char* ip;
+    std::uint64_t ipLength;
+};
+
+struct LibreSslX509VerifyParam {
+    char* name;
+    std::int64_t checkTime;
+    std::uint64_t inheritanceFlags;
+    std::uint64_t flags;
+    std::int32_t purpose;
+    std::int32_t trust;
+    std::int32_t depth;
+    void* policies;
+    LibreSslX509VerifyParamId* id;
+};
+
+struct LibreSslX509Store {
+    std::int32_t cache;
+    void* objects;
+    void* lookupMethods;
+    LibreSslX509VerifyParam* param;
+    void* callbacks[11];
+    void* exData;
+    std::int32_t references;
+};
+
+struct LibreSslX509LookupMethod {
+    const char* name;
+    void* newItem;
+    void* free;
+    void* init;
+    void* shutdown;
+    void* ctrl;
+    void* getBySubject;
+    void* getByIssuerSerial;
+    void* getByFingerprint;
+    void* getByAlias;
+};
+
+struct LibreSslX509Lookup {
+    std::int32_t init;
+    std::int32_t skip;
+    LibreSslX509LookupMethod* method;
+    char* methodData;
+    LibreSslX509Store* storeContext;
+};
+
+struct LibreSslExData {
+    void* stack;
+};
+
+using LibreSslExNew = int (APS5_VABI*)(void* parent, void* pointer, LibreSslExData* data, int index, std::int64_t argl, void* argp);
+using LibreSslExFree = void (APS5_VABI*)(void* parent, void* pointer, LibreSslExData* data, int index, std::int64_t argl, void* argp);
+using LibreSslExDup = int (APS5_VABI*)(LibreSslExData* to, LibreSslExData* from, void* fromData, int index, std::int64_t argl, void* argp);
+
 inline constexpr int MaxRounds = 14;
 
 struct AesKey {
@@ -90,6 +156,34 @@ struct LibreSslUiMethod {
     UiPromptFunction constructPrompt;
 };
 
+struct LibreSslUi {
+    const LibreSslUiMethod* method;
+    void* strings;
+    void* userData;
+    LibreSslExData exData;
+    std::int32_t flags;
+};
+
+struct LibreSslUiString {
+    std::int32_t type;
+    const char* outputString;
+    std::int32_t inputFlags;
+    char* resultBuffer;
+    union {
+        struct {
+            std::int32_t resultMinimum;
+            std::int32_t resultMaximum;
+            const char* testBuffer;
+        } stringData;
+        struct {
+            const char* actionDescription;
+            const char* okCharacters;
+            const char* cancelCharacters;
+        } booleanData;
+    } data;
+    std::int32_t flags;
+};
+
 struct LibreSslRsaMethod {
     const char* name;
     void* operations[8];
@@ -121,6 +215,97 @@ struct LibreSslRsa {
     void* methodModQ;
     void* blinding;
     void* mtBlinding;
+};
+
+struct LibreSslX509 {
+    void* certificateInfo;
+    void* signatureAlgorithm;
+    void* signature;
+    std::int32_t valid;
+    std::int32_t references;
+};
+
+struct LibreSslX509StoreContext {
+    void* store;
+    int currentMethod;
+    void* cert;
+    void* untrusted;
+    void* crls;
+    void* param;
+    void* otherContext;
+    void* callbacks[12];
+    int valid;
+    int lastUntrusted;
+    void* chain;
+    void* tree;
+    int explicitPolicy;
+    int errorDepth;
+    int error;
+    void* currentCert;
+    void* currentIssuer;
+    void* currentCrl;
+    int currentCrlScore;
+    unsigned int currentReasons;
+    LibreSslX509StoreContext* parent;
+    void* exData;
+};
+
+struct EvpMdContext;
+
+struct EvpMd {
+    std::int32_t type;
+    std::int32_t pkeyType;
+    std::int32_t mdSize;
+    std::uint64_t flags;
+    int (APS5_VABI* init)(EvpMdContext* context);
+    int (APS5_VABI* update)(EvpMdContext* context, const void* data, std::size_t length);
+    int (APS5_VABI* finalize)(EvpMdContext* context, unsigned char* digest);
+    int (APS5_VABI* copy)(EvpMdContext* to, const EvpMdContext* from);
+    int (APS5_VABI* cleanup)(EvpMdContext* context);
+    void* sign;
+    void* verify;
+    std::int32_t requiredPkeyType[5];
+    std::int32_t blockSize;
+    std::int32_t contextSize;
+    int (APS5_VABI* control)(EvpMdContext* context, int command, int argument, void* pointer);
+};
+
+struct EvpMdContext {
+    const EvpMd* digest;
+    void* engine;
+    std::uint64_t flags;
+    void* mdData;
+    void* pkeyContext;
+    int (APS5_VABI* update)(EvpMdContext* context, const void* data, std::size_t length);
+};
+
+inline constexpr std::size_t HmacMaxBlock = 128;
+
+struct HmacContext {
+    const EvpMd* md;
+    EvpMdContext mdContext;
+    EvpMdContext innerContext;
+    EvpMdContext outerContext;
+    std::uint32_t keyLength;
+    unsigned char key[HmacMaxBlock];
+};
+
+struct LibreSslEvpCipherCtx {
+    const void* cipher;
+    void* engine;
+    int encrypt;
+    int bufLen;
+    unsigned char oiv[16];
+    unsigned char iv[16];
+    unsigned char buf[32];
+    int num;
+    void* appData;
+    int keyLen;
+    std::uint64_t flags;
+    void* cipherData;
+    int finalUsed;
+    int blockMask;
+    unsigned char final[32];
 };
 
 extern "C" {
@@ -169,7 +354,7 @@ int APS5_VABI CONF_modules_free_nid_postfix(void);
 int APS5_VABI CONF_modules_load_file_nid_postfix(void);
 int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback);
 void APS5_VABI CRYPTO_THREADID_set_numeric_nid_postfix(CryptoThreadId* id, std::uint64_t value);
-int APS5_VABI CRYPTO_cleanup_all_ex_data_nid_postfix(void);
+void APS5_VABI CRYPTO_cleanup_all_ex_data_nid_postfix(void);
 int APS5_VABI CRYPTO_num_locks_nid_postfix(void);
 void APS5_VABI CRYPTO_set_add_lock_callback_nid_postfix(void* callback);
 void APS5_VABI CRYPTO_set_locking_callback_nid_postfix(void* callback);
@@ -215,18 +400,18 @@ int APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void);
 int APS5_VABI ENGINE_load_private_key_nid_postfix(void);
 int APS5_VABI ENGINE_set_default_nid_postfix(void);
 void APS5_VABI ERR_clear_error_nid_postfix(void);
-int APS5_VABI ERR_error_string_nid_postfix(void);
-int APS5_VABI ERR_error_string_n_nid_postfix(void);
-int APS5_VABI ERR_free_strings_nid_postfix(void);
+char* APS5_VABI ERR_error_string_nid_postfix(std::uint64_t error, char* buffer);
+void APS5_VABI ERR_error_string_n_nid_postfix(std::uint64_t error, char* buffer, std::size_t length);
+void APS5_VABI ERR_free_strings_nid_postfix();
 std::uint64_t APS5_VABI ERR_get_error_nid_postfix(void);
 std::uint64_t APS5_VABI ERR_peek_error_nid_postfix(void);
 void APS5_VABI ERR_remove_thread_state_nid_postfix(const void* threadId);
 int APS5_VABI EVP_CIPHER_CTX_cleanup_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(void);
-int APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(void);
-int APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
-int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(void);
+void APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(LibreSslEvpCipherCtx* ctx);
+LibreSslEvpCipherCtx* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
+int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(LibreSslEvpCipherCtx* ctx, int pad);
 int APS5_VABI EVP_CIPHER_block_size_nid_postfix(void);
 int APS5_VABI EVP_CipherFinal_ex_nid_postfix(void);
 int APS5_VABI EVP_CipherInit_ex_nid_postfix(void);
@@ -234,20 +419,20 @@ int APS5_VABI EVP_CipherUpdate_nid_postfix(void);
 int APS5_VABI EVP_DecryptFinal_ex_nid_postfix(void);
 int APS5_VABI EVP_DecryptInit_ex_nid_postfix(void);
 int APS5_VABI EVP_DecryptUpdate_nid_postfix(void);
-int APS5_VABI EVP_Digest_nid_postfix(void);
-int APS5_VABI EVP_DigestFinal_ex_nid_postfix(void);
-int APS5_VABI EVP_DigestInit_ex_nid_postfix(void);
-int APS5_VABI EVP_DigestUpdate_nid_postfix(void);
+int APS5_VABI EVP_Digest_nid_postfix(const void* data, std::size_t length, unsigned char* digest, std::uint32_t* size, const EvpMd* type, void* engine);
+int APS5_VABI EVP_DigestFinal_ex_nid_postfix(EvpMdContext* context, unsigned char* digest, std::uint32_t* size);
+int APS5_VABI EVP_DigestInit_ex_nid_postfix(EvpMdContext* context, const EvpMd* type, void* engine);
+int APS5_VABI EVP_DigestUpdate_nid_postfix(EvpMdContext* context, const void* data, std::size_t length);
 int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(void);
 int APS5_VABI EVP_DigestVerifyInit_nid_postfix(void);
 int APS5_VABI EVP_EncryptFinal_ex_nid_postfix(void);
 int APS5_VABI EVP_EncryptInit_ex_nid_postfix(void);
 int APS5_VABI EVP_EncryptUpdate_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_cleanup_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_create_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_destroy_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_init_nid_postfix(void);
-int APS5_VABI EVP_MD_size_nid_postfix(void);
+int APS5_VABI EVP_MD_CTX_cleanup_nid_postfix(EvpMdContext* context);
+EvpMdContext* APS5_VABI EVP_MD_CTX_create_nid_postfix(void);
+void APS5_VABI EVP_MD_CTX_destroy_nid_postfix(EvpMdContext* context);
+void APS5_VABI EVP_MD_CTX_init_nid_postfix(EvpMdContext* context);
+int APS5_VABI EVP_MD_size_nid_postfix(const EvpMd* md);
 int APS5_VABI EVP_PKEY_copy_parameters_nid_postfix(void);
 int APS5_VABI EVP_PKEY_free_nid_postfix(void);
 int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void);
@@ -269,21 +454,21 @@ int APS5_VABI EVP_aes_256_cfb8_nid_postfix(void);
 int APS5_VABI EVP_aes_256_ctr_nid_postfix(void);
 int APS5_VABI EVP_aes_256_gcm_nid_postfix(void);
 int APS5_VABI EVP_cleanup_nid_postfix(void);
-int APS5_VABI EVP_md5_nid_postfix(void);
-int APS5_VABI EVP_sha256_nid_postfix(void);
-int APS5_VABI EVP_sha384_nid_postfix(void);
-int APS5_VABI EVP_sha512_nid_postfix(void);
-int APS5_VABI GENERAL_NAMES_free_nid_postfix(void);
-int APS5_VABI GENERAL_NAME_free_nid_postfix(void);
-int APS5_VABI HMAC_nid_postfix(void);
-int APS5_VABI HMAC_CTX_cleanup_nid_postfix(void);
-int APS5_VABI HMAC_CTX_init_nid_postfix(void);
-int APS5_VABI HMAC_Final_nid_postfix(void);
-int APS5_VABI HMAC_Init_nid_postfix(void);
-int APS5_VABI HMAC_Init_ex_nid_postfix(void);
-int APS5_VABI HMAC_Update_nid_postfix(void);
-int APS5_VABI OBJ_cleanup_nid_postfix(void);
-int APS5_VABI OBJ_create_nid_postfix(void);
+const EvpMd* APS5_VABI EVP_md5_nid_postfix(void);
+const EvpMd* APS5_VABI EVP_sha256_nid_postfix(void);
+const EvpMd* APS5_VABI EVP_sha384_nid_postfix(void);
+const EvpMd* APS5_VABI EVP_sha512_nid_postfix(void);
+void APS5_VABI GENERAL_NAMES_free_nid_postfix(LibreSslStack* names);
+void APS5_VABI GENERAL_NAME_free_nid_postfix(LibreSslGeneralName* name);
+unsigned char* APS5_VABI HMAC_nid_postfix(const EvpMd* md, const void* key, int keyLength, const unsigned char* data, std::size_t length, unsigned char* digest, std::uint32_t* digestLength);
+void APS5_VABI HMAC_CTX_cleanup_nid_postfix(HmacContext* context);
+void APS5_VABI HMAC_CTX_init_nid_postfix(HmacContext* context);
+int APS5_VABI HMAC_Final_nid_postfix(HmacContext* context, unsigned char* digest, std::uint32_t* length);
+int APS5_VABI HMAC_Init_nid_postfix(HmacContext* context, const void* key, int length, const EvpMd* md);
+int APS5_VABI HMAC_Init_ex_nid_postfix(HmacContext* context, const void* key, int length, const EvpMd* md, void* engine);
+int APS5_VABI HMAC_Update_nid_postfix(HmacContext* context, const unsigned char* data, std::size_t length);
+void APS5_VABI OBJ_cleanup_nid_postfix(void);
+int APS5_VABI OBJ_create_nid_postfix(const char* oid, const char* shortName, const char* longName);
 int APS5_VABI OBJ_nid2sn_nid_postfix(void);
 int APS5_VABI OBJ_obj2nid_nid_postfix(void);
 int APS5_VABI OBJ_sn2nid_nid_postfix(void);
@@ -309,7 +494,7 @@ int APS5_VABI PEM_read_bio_PrivateKey_nid_postfix(void);
 int APS5_VABI PEM_read_bio_X509_nid_postfix(void);
 int APS5_VABI PEM_read_bio_X509_AUX_nid_postfix(void);
 int APS5_VABI PEM_write_bio_X509_nid_postfix(void);
-int APS5_VABI PKCS12_PBE_add_nid_postfix(void);
+void APS5_VABI PKCS12_PBE_add_nid_postfix(void);
 int APS5_VABI PKCS12_free_nid_postfix(void);
 int APS5_VABI PKCS12_parse_nid_postfix(void);
 int APS5_VABI RSA_flags_nid_postfix(const LibreSslRsa* rsa);
@@ -335,7 +520,7 @@ int APS5_VABI SSL_CTX_ctrl_nid_postfix(void);
 int APS5_VABI SSL_CTX_free_nid_postfix(void);
 int APS5_VABI SSL_CTX_get_cert_store_nid_postfix(void);
 int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void);
-int APS5_VABI SSL_CTX_get_ex_new_index_nid_postfix(void);
+int APS5_VABI SSL_CTX_get_ex_new_index_nid_postfix(std::int64_t argl, void* argp, LibreSslExNew newFunction, LibreSslExDup dupFunction, LibreSslExFree freeFunction);
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(void);
 int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(void);
 int APS5_VABI SSL_CTX_load_verify_mem_nid_postfix(void);
@@ -380,7 +565,7 @@ int APS5_VABI SSL_get_current_cipher_nid_postfix(void);
 int APS5_VABI SSL_get_error_nid_postfix(void);
 int APS5_VABI SSL_get_ex_data_nid_postfix(void);
 int APS5_VABI SSL_get_ex_data_X509_STORE_CTX_idx_nid_postfix(void);
-int APS5_VABI SSL_get_ex_new_index_nid_postfix(void);
+int APS5_VABI SSL_get_ex_new_index_nid_postfix(std::int64_t argl, void* argp, LibreSslExNew newFunction, LibreSslExDup dupFunction, LibreSslExFree freeFunction);
 int APS5_VABI SSL_get_fd_nid_postfix(void);
 int APS5_VABI SSL_get_peer_cert_chain_nid_postfix(void);
 int APS5_VABI SSL_get_peer_certificate_nid_postfix(void);
@@ -392,7 +577,7 @@ int APS5_VABI SSL_get_shutdown_nid_postfix(void);
 int APS5_VABI SSL_get_verify_result_nid_postfix(void);
 int APS5_VABI SSL_get_wbio_nid_postfix(void);
 int APS5_VABI SSL_library_init_nid_postfix(void);
-int APS5_VABI SSL_load_error_strings_nid_postfix(void);
+void APS5_VABI SSL_load_error_strings_nid_postfix(void);
 int APS5_VABI SSL_new_nid_postfix(void);
 int APS5_VABI SSL_peek_nid_postfix(void);
 int APS5_VABI SSL_pending_nid_postfix(void);
@@ -429,35 +614,35 @@ int APS5_VABI UI_method_set_closer_nid_postfix(LibreSslUiMethod* method, UiSessi
 int APS5_VABI UI_method_set_opener_nid_postfix(LibreSslUiMethod* method, UiSessionFunction opener);
 int APS5_VABI UI_method_set_reader_nid_postfix(LibreSslUiMethod* method, UiStringFunction reader);
 int APS5_VABI UI_method_set_writer_nid_postfix(LibreSslUiMethod* method, UiStringFunction writer);
-int APS5_VABI UI_set_result_nid_postfix(void);
+int APS5_VABI UI_set_result_nid_postfix(LibreSslUi* ui, LibreSslUiString* string, const char* result);
 int APS5_VABI X509V3_EXT_print_nid_postfix(void);
-int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(void);
-int APS5_VABI X509_EXTENSION_get_data_nid_postfix(void);
-int APS5_VABI X509_EXTENSION_get_object_nid_postfix(void);
+int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension);
+void* APS5_VABI X509_EXTENSION_get_data_nid_postfix(const void* extension);
+void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension);
 int APS5_VABI X509_INFO_free_nid_postfix(void);
-int APS5_VABI X509_LOOKUP_file_nid_postfix(void);
+LibreSslX509LookupMethod* APS5_VABI X509_LOOKUP_file_nid_postfix(void);
 int APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(void);
 int APS5_VABI X509_NAME_get_entry_nid_postfix(void);
 int APS5_VABI X509_NAME_get_index_by_NID_nid_postfix(void);
 int APS5_VABI X509_NAME_get_text_by_NID_nid_postfix(void);
 int APS5_VABI X509_NAME_oneline_nid_postfix(void);
 int APS5_VABI X509_NAME_print_ex_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get1_chain_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_ex_data_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_set_error_nid_postfix(void);
+LibreSslStack* APS5_VABI X509_STORE_CTX_get1_chain_nid_postfix(LibreSslX509StoreContext* context);
+void* APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(LibreSslX509StoreContext* context);
+void* APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(LibreSslX509StoreContext* context);
+int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(LibreSslX509StoreContext* context);
+int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(LibreSslX509StoreContext* context);
+void* APS5_VABI X509_STORE_CTX_get_ex_data_nid_postfix(LibreSslX509StoreContext* context, int index);
+void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(LibreSslX509StoreContext* context, int error);
 int APS5_VABI X509_STORE_add_cert_nid_postfix(void);
 int APS5_VABI X509_STORE_add_crl_nid_postfix(void);
-int APS5_VABI X509_STORE_add_lookup_nid_postfix(void);
-int APS5_VABI X509_STORE_free_nid_postfix(void);
-int APS5_VABI X509_STORE_new_nid_postfix(void);
-int APS5_VABI X509_STORE_set_flags_nid_postfix(void);
-int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(void);
-int APS5_VABI X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(void);
-int APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(void);
+LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Store* store, LibreSslX509LookupMethod* method);
+void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store);
+LibreSslX509Store* APS5_VABI X509_STORE_new_nid_postfix(void);
+int APS5_VABI X509_STORE_set_flags_nid_postfix(LibreSslX509Store* store, std::uint64_t flags);
+int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* param, const char* name, std::size_t length);
+int APS5_VABI X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(LibreSslX509VerifyParam* param, const char* text);
+void APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(LibreSslX509VerifyParam* param, std::uint32_t flags);
 int APS5_VABI X509_check_issued_nid_postfix(void);
 int APS5_VABI X509_free_nid_postfix(void);
 int APS5_VABI X509_get_ext_d2i_nid_postfix(void);

@@ -6,10 +6,13 @@ import unittest
 from pathlib import Path
 
 CHECKER = Path(__file__).resolve().parents[1] / "check_conventions.py"
+sys.path.insert(0, str(CHECKER.parent))
+import check_conventions
+
 DEFINITION = "int APS5_VABI sceFooBar(int a, int b) { return a + b; }\n"
 
 
-class WrappedDeclarationTests(unittest.TestCase):
+class WrappedDeclarationFixture(unittest.TestCase):
     def check(self, first_file, first_text, second_text=DEFINITION):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -42,6 +45,8 @@ class WrappedDeclarationTests(unittest.TestCase):
                 cwd=root, capture_output=True, text=True, env=env, timeout=20,
             )
 
+
+class WrappedDeclarationTests(WrappedDeclarationFixture):
     def test_wrapped_declaration_is_not_a_duplicate(self):
         result = self.check("Export.h", "int APS5_VABI sceFooBar(int a,\n    int b);\n")
         self.assertNotIn("duplicate-export", result.stdout, result.stdout + result.stderr)
@@ -95,6 +100,59 @@ class WrappedDeclarationTests(unittest.TestCase):
         result = self.check("Export.cpp", "/*\n" + DEFINITION + "*/\n" + DEFINITION)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(result.stdout.count("[duplicate-export]"), 1, result.stdout)
+
+
+class AbiAliasTests(WrappedDeclarationFixture):
+    def test_local_abi_alias_cannot_hide_duplicates_in_either_library(self):
+        aliased = "#define NATIVE_SYSV APS5_VABI\n" + DEFINITION.replace("APS5_VABI", "NATIVE_SYSV")
+        for first, second in ((aliased, DEFINITION), (DEFINITION, aliased), (aliased, aliased)):
+            with self.subTest(first=first, second=second):
+                result = self.check("Export.cpp", first, second)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("[duplicate-export]", result.stdout)
+                self.assertIn("sceFooBar is also in libSceA", result.stdout)
+
+    def test_chained_alias_uses_the_current_macro_definition(self):
+        source = "#define ENTRY ABI\n#define ABI APS5_VABI\n" + DEFINITION.replace("APS5_VABI", "ENTRY")
+        for prefix in ("", "\ufeff"):
+            with self.subTest(prefix=prefix):
+                result = self.check("Export.cpp", prefix + source)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("[duplicate-export]", result.stdout)
+
+    def test_alias_undefinition_redefinition_and_cycles_do_not_create_exports(self):
+        cases = ("#define ABI APS5_VABI\n#undef ABI\n",
+                 "#define ABI APS5_VABI\n#define ABI unrelated\n",
+                 "#define ABI APS5_VABI\n#define ABI() APS5_VABI\n",
+                 "#define ABI OTHER\n#define OTHER ABI\n",
+                 "/*\n#define ABI APS5_VABI\n*/\n",
+                 'const char* example = R"(\n#define ABI APS5_VABI\n)";\n')
+        for prefix in cases:
+            with self.subTest(prefix=prefix):
+                source = check_conventions.expand_abi_aliases(check_conventions.cpp_text(prefix + DEFINITION.replace("APS5_VABI", "ABI")))
+                self.assertNotRegex(source, r"\bAPS5_VABI\s+sceFooBar\s*\(")
+
+    def test_cpp_text_does_not_expand_abi_aliases(self):
+        source = "#define ABI APS5_VABI\nint ABI sceFooBar() { return 1; }\n"
+        self.assertIn("int ABI sceFooBar", check_conventions.cpp_text(source))
+
+    def test_aliased_import_declaration_is_not_a_duplicate(self):
+        source = "#define ABI APS5_VABI\nint ABI sceFooBar(int a, int b);\n"
+        result = self.check("Export.h", source)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_local_abi_alias_cannot_hide_an_undocumented_silent_stub(self):
+        source = "#define ABI APS5_VABI\nint ABI sceUndocumented() { return 0; }\n"
+        result = self.check("Export.cpp", DEFINITION, source)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("[silent-stub]", result.stdout)
+
+    def test_unique_aliased_definition_and_unpatched_helpers_remain_valid(self):
+        for name in ("sceDistinct", "Support_nid_no_patch", "Support_nid_no_patch_cut"):
+            with self.subTest(name=name):
+                source = "#define ABI APS5_VABI\nint ABI " + name + "() { return 3; }\n"
+                result = self.check("Export.cpp", source, source if name.startswith("Support") else DEFINITION)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

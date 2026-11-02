@@ -1,16 +1,23 @@
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <csignal>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #if !defined(__APPLE__)
 #error These tests cover the macOS guest arena reservation
@@ -134,17 +141,116 @@ void CheckCommitAndProtect() {
     GuestArenaRelease_nid_postfix(pointer, bytes);
 }
 
+struct WatchedMapping {
+    WatchedMapping() {
+        Require(GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix(), "write watch is unavailable");
+        pointer = static_cast<std::uint8_t*>(GuestArenaAllocate_nid_postfix(bytes, page));
+        GuestArenaCommit_nid_postfix(pointer, bytes, ProtectionReadWrite, page);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pointer, bytes);
+    }
+    ~WatchedMapping() {
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pointer, bytes);
+        GuestArenaReset_nid_postfix(pointer, bytes);
+        GuestArenaRelease_nid_postfix(pointer, bytes);
+    }
+    std::set<std::uintptr_t> Collect() {
+        std::set<std::uintptr_t> pages;
+        Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(pointer), bytes,
+            [](void* context, std::uintptr_t begin, std::uintptr_t end) {
+                auto& output = *static_cast<std::set<std::uintptr_t>*>(context);
+                for (auto address = begin; address < end; address += ::getpagesize()) output.insert(address);
+            }, &pages), "cannot collect watched arena pages");
+        return pages;
+    }
+    const std::size_t page = static_cast<std::size_t>(::getpagesize());
+    const std::size_t bytes = 3 * page;
+    std::uint8_t* pointer = nullptr;
+};
+
+void CheckWatchedProtection() {
+    WatchedMapping mapping;
+    const auto middle = reinterpret_cast<std::uintptr_t>(mapping.pointer + mapping.page);
+    const std::set<std::uintptr_t> changed{middle};
+    Require(mapping.Collect().size() == 3 && mapping.Collect().empty(), "cannot arm arena pages");
+    GuestArenaSetProtection_nid_postfix(middle, mapping.page, ProtectionReadWrite);
+    mapping.pointer[mapping.page] = 42;
+    Require(mapping.Collect() == changed, "arena protection change lost a write");
+    Require(mapping.Collect().empty(), "arena write was reported twice");
+    for (const auto protection : {ProtectionReadOnly, ProtectionNoAccess}) {
+        GuestArenaSetProtection_nid_postfix(middle, mapping.page, protection);
+        std::uintptr_t end = 0;
+        const auto recorded = GuestWriteWatch::GuestWriteWatchProtection_nid_postfix(middle, middle + mapping.page, &end);
+        Require(recorded == (protection == ProtectionReadOnly ? PROT_READ : PROT_NONE) && end == middle + mapping.page,
+            "arena protection change left stale watch permissions");
+        Require(mapping.Collect() == changed && mapping.Collect().empty(), "protection change touched the wrong pages");
+        GuestArenaSetProtection_nid_postfix(middle, mapping.page, ProtectionReadWrite);
+        mapping.pointer[mapping.page] = 43;
+        Require(mapping.Collect() == changed && mapping.Collect().empty(), "restored write was not tracked");
+    }
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapping.pointer, mapping.bytes);
+    Require(mapping.pointer[mapping.page] == 43, "arena protection change lost stored data");
+}
+
+void CheckWatchedProtectionFaults() {
+    for (const auto protection : {ProtectionReadOnly, ProtectionNoAccess}) {
+        for (const bool armed : {false, true}) {
+            for (const bool hostWrite : {false, true}) {
+                const auto child = ::fork();
+                Require(child >= 0, "cannot fork arena protection test");
+                if (child == 0) {
+                    ::alarm(2);
+                    try {
+                        WatchedMapping mapping;
+                        if (armed) mapping.Collect();
+                        if (hostWrite) GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(mapping.pointer, mapping.bytes);
+                        GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapping.pointer), mapping.bytes, protection);
+                        *static_cast<volatile std::uint8_t*>(mapping.pointer) = 42;
+                    } catch (...) {
+                        ::_exit(2);
+                    }
+                    ::_exit(0);
+                }
+                int status = 0;
+                Require(::waitpid(child, &status, 0) == child, "cannot wait for arena protection test");
+                Require(WIFSIGNALED(status) && (WTERMSIG(status) == SIGBUS || WTERMSIG(status) == SIGSEGV),
+                    "write watch bypassed arena protection or retried the fault");
+            }
+        }
+    }
+}
+
+void CheckFailedWatchedProtection() {
+    WatchedMapping mapping;
+    mapping.Collect();
+    const auto address = reinterpret_cast<std::uintptr_t>(mapping.pointer);
+    bool rejected = false;
+    try {
+        GuestArenaSetProtection_nid_postfix(address + 1, mapping.page, ProtectionNoAccess);
+    } catch (const std::system_error& error) {
+        rejected = error.code() == std::errc::invalid_argument;
+    }
+    Require(rejected, "unaligned protection change was not rejected with EINVAL");
+    std::uintptr_t end = 0;
+    Require(GuestWriteWatch::GuestWriteWatchProtection_nid_postfix(address, address + mapping.page, &end) == (PROT_READ | PROT_WRITE),
+        "failed protection change modified watch permissions");
+    mapping.pointer[0] = 42;
+    Require(mapping.Collect() == std::set<std::uintptr_t>{address}, "failed protection change lost write tracking");
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected available, unmappable, host, gap or commit");
+        Require(argc == 2, "expected a guest arena test mode");
         const std::string_view mode(argv[1]);
         if (mode == "available") CheckAvailable();
         else if (mode == "unmappable") CheckSkipsUnmappable();
         else if (mode == "host") CheckHostRegionsKept();
         else if (mode == "gap") CheckGapBesideHostRegion();
         else if (mode == "commit") CheckCommitAndProtect();
+        else if (mode == "watch-protection") CheckWatchedProtection();
+        else if (mode == "watch-faults") CheckWatchedProtectionFaults();
+        else if (mode == "watch-failure") CheckFailedWatchedProtection();
         else throw std::runtime_error("unknown guest arena test");
         std::printf("guest arena %s passed\n", argv[1]);
         return 0;

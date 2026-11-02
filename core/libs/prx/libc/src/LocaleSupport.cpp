@@ -100,15 +100,6 @@ void ValidateCharacterRange(const char* first, const char* last, const char* fun
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
 }
 
-void* AllocateStringStorage(std::size_t bytes) {
-    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
-    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
-    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
-    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
-    reinterpret_cast<void**>(aligned)[-1] = raw;
-    return reinterpret_cast<void*>(aligned);
-}
-
 void APS5_VABI DestroyCollate(GuestLocale::Facet*) {}
 
 void APS5_VABI DeleteCollate(GuestLocale::Facet* self) {
@@ -148,7 +139,7 @@ GuestLocale::String* APS5_VABI CollateTransform(GuestLocale::String* result, con
     std::size_t capacity = GuestStringInlineCapacity;
     if (length > GuestStringInlineCapacity) {
         capacity = length | GuestStringCapacityMask;
-        data = static_cast<char*>(AllocateStringStorage(capacity + 1));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, first, length);
     data[length] = 0;
@@ -203,7 +194,7 @@ GuestLocale::String* APS5_VABI WideCollateTransform(GuestLocale::String* result,
     std::size_t capacity = GuestWideInlineCapacity;
     if (length > GuestWideInlineCapacity) {
         capacity = length | GuestWideInlineCapacity;
-        data = static_cast<char*>(AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
     }
     if (length != 0) std::memcpy(data, characters, bytes);
     data[bytes] = 0;
@@ -224,6 +215,69 @@ std::int64_t APS5_VABI WideCollateHash(const GuestLocale::CollateFacet*, const c
 }
 
 const GuestLocale::CollateVtable g_wideCollateVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideCollateCompare, WideCollateTransform, WideCollateHash};
+
+GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
+    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
+    const std::size_t length = std::strlen(source);
+    char* data = result->buffer;
+    std::size_t capacity = GuestStringInlineCapacity;
+    if (length > GuestStringInlineCapacity) {
+        capacity = length | GuestStringCapacityMask;
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
+    }
+    if (length != 0) std::memcpy(data, source, length);
+    data[length] = 0;
+    if (data != result->buffer) result->pointer = data;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+const char g_wideNumpunctGrouping[] = "";
+const std::uint16_t g_wideNumpunctFalseName[] = {'f', 'a', 'l', 's', 'e', 0};
+const std::uint16_t g_wideNumpunctTrueName[] = {'t', 'r', 'u', 'e', 0};
+
+GuestLocale::String* APS5_VABI AssignWideCString(GuestLocale::String* result, const std::uint16_t* source) {
+    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
+    std::size_t length = 0;
+    while (source[length] != 0) ++length;
+    const auto bytes = length * GuestWideCharacterSize;
+    char* data = result->buffer;
+    std::size_t capacity = GuestWideInlineCapacity;
+    if (length > GuestWideInlineCapacity) {
+        capacity = length | GuestWideInlineCapacity;
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
+    }
+    if (bytes != 0) std::memcpy(data, source, bytes);
+    data[bytes] = 0;
+    data[bytes + 1] = 0;
+    if (data != result->buffer) result->pointer = data;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+std::uint16_t APS5_VABI WideNumpunctDecimalPoint(const GuestLocale::WideNumpunctFacet* self) {
+    return self->decimalPoint;
+}
+
+std::uint16_t APS5_VABI WideNumpunctThousandsSep(const GuestLocale::WideNumpunctFacet* self) {
+    return self->thousandsSep;
+}
+
+GuestLocale::String* APS5_VABI WideNumpunctGrouping(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignCString(result, self->grouping);
+}
+
+GuestLocale::String* APS5_VABI WideNumpunctFalsename(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignWideCString(result, self->falsename);
+}
+
+GuestLocale::String* APS5_VABI WideNumpunctTruename(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignWideCString(result, self->truename);
+}
+
+const GuestLocale::WideNumpunctVtable g_wideNumpunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideNumpunctDecimalPoint, WideNumpunctThousandsSep, WideNumpunctGrouping, WideNumpunctFalsename, WideNumpunctTruename};
 
 bool APS5_VABI CodecvtAlwaysNoconv(const GuestLocale::Facet*) {
     return true;
@@ -249,23 +303,6 @@ std::size_t APS5_VABI CodecvtLength(GuestLocale::Facet*, std::uint64_t*, const c
 }
 
 const GuestLocale::CodecvtVtable g_codecvtVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CodecvtAlwaysNoconv, CodecvtConstantOne, CodecvtConstantOne, CodecvtNoConversion, CodecvtNoConversion, CodecvtUnshift, CodecvtLength};
-
-GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
-    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
-    const std::size_t length = std::strlen(source);
-    char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
-        data = static_cast<char*>(AllocateStringStorage(capacity + 1));
-    }
-    if (length != 0) std::memcpy(data, source, length);
-    data[length] = 0;
-    if (data != result->buffer) result->pointer = data;
-    result->size = length;
-    result->capacity = capacity;
-    return result;
-}
 
 char APS5_VABI NumpunctDecimalPoint(const GuestLocale::NumpunctFacet* self) {
     return self->decimalPoint;
@@ -570,6 +607,25 @@ int ConvertCharacter(int value, bool upper) {
 
 }
 
+void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
+    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
+    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
+    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
+    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
+    reinterpret_cast<void**>(aligned)[-1] = raw;
+    return reinterpret_cast<void*>(aligned);
+}
+
+void GuestLocale::ReleaseStringStorage(String& string) {
+    if (string.capacity > GuestStringInlineCapacity) {
+        void* storage = string.pointer;
+        if (string.capacity + 1 >= GuestStringLargeAllocation) storage = static_cast<void**>(storage)[-1];
+        _ZdlPv_nid_postfix(storage);
+    }
+    string = {};
+    string.capacity = GuestStringInlineCapacity;
+}
+
 extern "C" {
 
 int APS5_VABI isupper_nid_postfix(int c) { return ClassifyCharacter(c, 0x02); }
@@ -586,11 +642,20 @@ int APS5_VABI ispunct_nid_postfix(int c) { return ClassifyCharacter(c, 0x08); }
 int APS5_VABI isxdigit_nid_postfix(int c) { return ClassifyCharacter(c, 0x01); }
 int APS5_VABI isascii_nid_postfix(int c) { return (c & ~0x7F) == 0; }
 int APS5_VABI toascii_nid_postfix(int c) { return c & 0x7F; }
+int APS5_VABI digittoint_nid_postfix(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return 0;
+}
+int APS5_VABI isnumber_nid_postfix(int c) { return isdigit_nid_postfix(c); }
+int APS5_VABI ishexnumber_nid_postfix(int c) { return isxdigit_nid_postfix(c); }
 int APS5_VABI toupper_nid_postfix(int c) { return ConvertCharacter(c, true); }
 int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
 
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14] {};
 std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIcE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
@@ -615,6 +680,7 @@ std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_
 std::uint64_t _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14] {};
 std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
@@ -739,6 +805,15 @@ std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_po
     return 4;
 }
 
+std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
+    if (facet != nullptr && *facet == nullptr) {
+        auto* punct = static_cast<GuestLocale::WideNumpunctFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::WideNumpunctFacet)));
+        *punct = {{&g_wideNumpunctVtable.facet, 0, 0}, g_wideNumpunctGrouping, '.', ',', g_wideNumpunctFalseName, g_wideNumpunctTrueName};
+        *facet = &punct->base;
+    }
+    return 4;
+}
+
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
     if (facet != nullptr && *facet == nullptr) {
         auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
@@ -765,6 +840,19 @@ void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(GuestLocale::LocinfoStorage* sel
 
 void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self) {
     if (self == nullptr) throw std::invalid_argument("_Locinfo destructor: null object");
+}
+
+void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(GuestLocale::SceV2Locinfo* self, const char* localeName) {
+    if (self == nullptr) throw std::invalid_argument("_Locinfo: null object");
+    self->name = setlocale_nid_postfix(0x3f, nullptr);
+    if (localeName == nullptr || (*localeName != 0 && std::strcmp(localeName, "C") != 0))
+        _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix("bad locale name");
+    self->classicName = self->name;
+}
+
+void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(GuestLocale::SceV2Locinfo* self) {
+    if (self == nullptr) throw std::invalid_argument("_Locinfo destructor: null object");
+    if (self->name != nullptr) setlocale_nid_postfix(0x3f, self->name);
 }
 
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, mbstate_t* st) {
@@ -806,6 +894,21 @@ mbstate_t* APS5_VABI _Getpmbstate_nid_postfix() {
 mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
     thread_local mbstate_t state {};
     return &state;
+}
+
+GuestLocale::TimeInfo* APS5_VABI _Getptimes_nid_postfix() {
+    static_assert(sizeof(GuestLocale::TimeInfo) == 0xa8);
+    static constexpr char days[] = ":Sun:Sunday:Mon:Monday:Tue:Tuesday:Wed:Wednesday:Thu:Thursday:Fri:Friday:Sat:Saturday";
+    static constexpr char months[] = ":Jan:January:Feb:February:Mar:March:Apr:April:May:May:Jun:June:Jul:July:Aug:August"
+        ":Sep:September:Oct:October:Nov:November:Dec:December";
+    static constexpr char formats[] = "|%a %b %e %T %Y|%m/%d/%y|%H:%M:%S|%I:%M:%S %p";
+    static constexpr char era[] = "";
+    static constexpr char alternativeDigits[] = "";
+    static constexpr char daylightSaving[] = "";
+    static constexpr char timeZone[] = "";
+    static GuestLocale::TimeInfo times {":AM:PM", days, days, days, months, months, months, formats, formats, formats, formats,
+        formats, formats, formats, formats, formats, formats, era, alternativeDigits, daylightSaving, timeZone};
+    return &times;
 }
 
 std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t c, std::uint64_t desc) {
