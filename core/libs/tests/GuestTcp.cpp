@@ -37,31 +37,47 @@ static void StreamReceiveReportsNoSender() {
     for (const int descriptor : {client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
 
+static bool HeldByAnotherInet6Socket(const std::array<std::uint8_t, 28>& any6) {
+    const int probe = socket_nid_postfix(28, 1, 0);
+    Require(probe >= 0);
+    const bool held = bind_nid_postfix(probe, any6.data(), any6.size()) != 0 && *__error_nid_postfix() == 48;
+    Require(close_nid_postfix(probe) == 0);
+    return held;
+}
+
 static void ListenersShareAPortAcrossFamilies() {
-    const int inet = socket_nid_postfix(2, 1, 0);
-    Require(inet >= 0);
-    std::array<std::uint8_t, 16> any{16, 2};
-    Require(bind_nid_postfix(inet, any.data(), any.size()) == 0 && listen_nid_postfix(inet, 4) == 0);
-    std::uint32_t size = any.size();
-    Require(getsockname_nid_postfix(inet, any.data(), &size) == 0 && size == any.size());
-    const int inet6 = socket_nid_postfix(28, 1, 0);
-    if (inet6 < 0) {
-        Require(*__error_nid_postfix() == 47);
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        const int inet = socket_nid_postfix(2, 1, 0);
+        Require(inet >= 0);
+        std::array<std::uint8_t, 16> any{16, 2};
+        Require(bind_nid_postfix(inet, any.data(), any.size()) == 0 && listen_nid_postfix(inet, 4) == 0);
+        std::uint32_t size = any.size();
+        Require(getsockname_nid_postfix(inet, any.data(), &size) == 0 && size == any.size());
+        const int inet6 = socket_nid_postfix(28, 1, 0);
+        if (inet6 < 0) {
+            Require(*__error_nid_postfix() == 47);
+            Require(close_nid_postfix(inet) == 0);
+            return;
+        }
+        std::array<std::uint8_t, 28> any6{28, 28, any[2], any[3]};
+        if (bind_nid_postfix(inet6, any6.data(), any6.size()) == 0) {
+            Require(listen_nid_postfix(inet6, 4) == 0);
+            Require(close_nid_postfix(inet6) == 0);
+            Require(close_nid_postfix(inet) == 0);
+            return;
+        }
+        const int error = *__error_nid_postfix();
+        Require(close_nid_postfix(inet6) == 0);
         Require(close_nid_postfix(inet) == 0);
-        return;
-    }
-    std::array<std::uint8_t, 28> any6{28, 28, any[2], any[3]};
-    if (bind_nid_postfix(inet6, any6.data(), any6.size()) != 0) {
-        if (*__error_nid_postfix() != 49) {
+        if (error == 49) return;
+        if (error != 48 || !HeldByAnotherInet6Socket(any6)) {
             std::fprintf(stderr, "bind of [::]:%d failed with errno %d while an IPv4 listener holds 0.0.0.0:%d\n",
-                (any[2] << 8) | any[3], *__error_nid_postfix(), (any[2] << 8) | any[3]);
+                (any[2] << 8) | any[3], error, (any[2] << 8) | any[3]);
             std::abort();
         }
-    } else {
-        Require(listen_nid_postfix(inet6, 4) == 0);
     }
-    Require(close_nid_postfix(inet6) == 0);
-    Require(close_nid_postfix(inet) == 0);
+    std::fprintf(stderr, "another IPv6 socket held each of 64 ports an IPv4 listener took\n");
+    std::abort();
 }
 
 constexpr int GetFlags = 3;

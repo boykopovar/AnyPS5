@@ -203,6 +203,7 @@ void testRegisterFile() {
 
 void testContextAndBases() {
     AgcDriver::QueueState state;
+    check(state.context.at(0x1b6) == 0, "the starting context changed SPI_PS_IN_CONTROL");
     check(state.context.contains(0x280) && state.context.at(0x280) == 0x00080008u && state.context.contains(0x281) && state.context.at(0x281) == 0xffff0000u, "initial point context differs from the SDK defaults");
     execute(state, makePacket(0x69, {0x280, 0x00180018u, 0x00400008u}));
     check(state.context.at(0x280) == 0x00180018u && state.context.at(0x281) == 0x00400008u, "explicit point size and limits were not stored");
@@ -210,10 +211,11 @@ void testContextAndBases() {
     execute(state, makePacket(0x12, {0}));
     for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore depth and stencil defaults");
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "CLEAR_STATE did not restore point size and limits");
+    check(state.context.at(0x1b6) == 2u, "CLEAR_STATE did not leave SPI_PS_IN_CONTROL at its clear-state NUM_INTERP of 2");
     execute(state, makePacket(0x69, {0x10, 17}));
     execute(state, makePacket(0x76, {0x20c, 2}));
     execute(state, makePacket(0x10, {3, 0}, 0x68));
-    check(state.context == AgcDriver::InitialContextRegisters() && state.shader.at(0x20c) == 2, "push-clear reset wrong state");
+    check(state.context == AgcDriver::ClearStateContextRegisters() && state.context.at(0x1b6) == 2u && state.shader.at(0x20c) == 2, "push-clear reset wrong state");
     expectFailure([&] { execute(state, makePacket(0x10, {1, 0}, 0x68)); }, "already pushed");
     execute(state, makePacket(0x69, {0x10, 19}));
     execute(state, makePacket(0x69, {0x280, 0x00100010u, 0x00800010u}));
@@ -635,7 +637,10 @@ void testCopies() {
     std::size_t flexibleBefore = 0;
     check(sceKernelAvailableFlexibleMemorySize(&flexibleBefore) == 0, "cannot query flexible memory");
     const auto toGds = makePacket(0x50, {0x60100000 | cachePolicies, low(source.data()), high(source.data()), 0x100, 0, 16});
-    check(!AgcDriver::Pm4::ResolveStore(toGds, state, 64).has_value(), "DMA_DATA to GDS resolved as a memory store");
+    const auto gdsStore = AgcDriver::Pm4::ResolveStore(toGds, state, 64);
+    check(gdsStore.has_value() && gdsStore->address == AgcDriver::Pm4::GdsAddress() + 0x100 && gdsStore->Bytes().size() == 16 && std::memcmp(gdsStore->Bytes().data(), source.data(), 16) == 0, "DMA_DATA to GDS did not resolve as a store at its GDS offset");
+    const auto gdsFill = AgcDriver::Pm4::ResolveStore(makePacket(0x50, {0x40100000, 0x5eed1234, 0, 0x200, 0, 8}), state, 64);
+    check(gdsFill.has_value() && gdsFill->address == AgcDriver::Pm4::GdsAddress() + 0x200 && gdsFill->Bytes().size() == 8 && gdsFill->Bytes()[0] == std::byte{0x34} && gdsFill->Bytes()[7] == std::byte{0x5e}, "an immediate DMA_DATA fill of GDS did not resolve as a store at its GDS offset");
     execute(state, toGds);
     std::size_t flexibleAfter = 0;
     check(sceKernelAvailableFlexibleMemorySize(&flexibleAfter) == 0 && flexibleAfter == flexibleBefore, "the GDS was charged to the flexible memory budget");

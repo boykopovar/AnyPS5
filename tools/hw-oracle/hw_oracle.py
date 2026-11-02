@@ -201,11 +201,11 @@ def main():
         parser.error(f"lds must be an integer from 0 to {MAX_LDS}")
     try:
         rows = validated_rows(tuple(parse_word(v) for v in line.split())
-                              for line in args.rows.read_text(encoding="utf-8").splitlines() if line.strip())
+                              for line in args.rows.read_text(encoding="utf-8-sig").splitlines() if line.strip())
         if not rows:
             parser.error("rows file must contain at least one input row")
         extra = args.extra.read_bytes() if args.extra else b""
-        body = args.body.read_text(encoding="utf-8")
+        body = args.body.read_text(encoding="utf-8-sig")
     except (OSError, ValueError) as error:
         parser.error(str(error))
     modes = {name: getattr(args, name) for name in ("ieee", "denorm32", "denorm16", "dx10_clamp", "round32", "round16", "fp16_overflow")}

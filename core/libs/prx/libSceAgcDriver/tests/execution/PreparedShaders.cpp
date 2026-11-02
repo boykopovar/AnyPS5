@@ -14,6 +14,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -202,6 +203,50 @@ void Run(AgcDriver::VulkanDevice& device) {
     request.layout.pushConstantSizeBytes = 128;
     code[0] = 0xffffffffu;
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request)); }, "does not refer to registered code");
+}
+
+void DumpSelection(AgcDriver::VulkanDevice& device) {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 1> code{0xffffffffu};
+    const std::vector<std::byte> header(2048, std::byte{0x5a});
+    RecompileRequest request{{ShaderStage::Compute, 0x12345cafeull, code, 0x20000, header},
+        {32, 0, {}, ShaderComputeStageInfo{{1, 1, 1}, 0, {}, false, 1, {}}, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
+    const char* previous = std::getenv("APS5_DUMP_SHADERS");
+    const std::string saved = previous != nullptr ? previous : "";
+    const auto setCapture = [](const char* value) {
+#ifdef _WIN32
+        Require(_putenv_s("APS5_DUMP_SHADERS", value) == 0, "cannot set shader capture");
+#else
+        Require(setenv("APS5_DUMP_SHADERS", value, 1) == 0, "cannot set shader capture");
+#endif
+    };
+    const auto written = [](const std::string& name) {
+        const bool exists = std::ifstream(name, std::ios::binary).is_open();
+        std::remove(name.c_str());
+        return exists;
+    };
+    const std::string excludedPath = "shader_12345cafe_excluded.req";
+    const std::string listedPath = "shader_12345cafe_listed.req";
+    const std::string otherPath = "shader_feedface_unlisted.req";
+    std::remove(excludedPath.c_str());
+    std::remove(listedPath.c_str());
+    std::remove(otherPath.c_str());
+    setCapture("feedface");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_excluded").empty(), "a program outside the APS5_DUMP_SHADERS list was named as dumped");
+    Require(!written(excludedPath), "a program outside the APS5_DUMP_SHADERS list was dumped");
+    setCapture("feedface,0x12345CAFE");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_excluded") == excludedPath, "a program dropped by an earlier list was not dumped once listed");
+    Require(written(excludedPath), "a listed program's request was not written after an earlier list dropped it");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_listed") == listedPath, "a listed program was not dumped");
+    Require(written(listedPath), "a listed program's request was not written");
+    setCapture("12345cafe,not-an-address");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(0xfeedfaceull, request, "_unlisted") == otherPath, "a value that is not an address list did not dump every program");
+    Require(written(otherPath), "a value that is not an address list did not write the request");
+#ifdef _WIN32
+    Require(_putenv_s("APS5_DUMP_SHADERS", saved.c_str()) == 0, "cannot restore shader capture");
+#else
+    Require((previous != nullptr ? setenv("APS5_DUMP_SHADERS", saved.c_str(), 1) : unsetenv("APS5_DUMP_SHADERS")) == 0, "cannot restore shader capture");
+#endif
 }
 
 void FailureCapture(AgcDriver::VulkanDevice& device) {
@@ -456,6 +501,39 @@ void PendingRegistrationPreparation(AgcDriver::VulkanDevice& device) {
     ShaderRecompiler::RecompileRequest request{{ShaderRecompiler::ShaderStage::Compute, address, snapshot.code, 0, {}}, {32, 0, users, compute, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request)); }, "injected registration preparation failure");
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request)); }, "injected registration preparation failure");
+}
+
+void PendingPreparationOutsideTransactionLock() {
+    alignas(256) static const std::array<std::uint32_t, 1> code{0xbf810000u};
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    AgcDriver::DriverDetail::ShaderSnapshot pending{address, 0, 0, {code.begin(), code.end()}, {}};
+    pending.header.resize(sizeof(Shader));
+    AgcDriver::DriverDetail::ShaderSnapshot ready{address, 0, 0, {code.begin(), code.end()}, {}};
+    ready.header.resize(sizeof(Shader));
+    pending.prepared->pending = true;
+    std::atomic<bool> reading{false};
+    auto waiter = std::async(std::launch::async, [&] {
+        AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
+        reading.store(true, std::memory_order_release);
+        static_cast<void>(transaction.Read(pending));
+        transaction.Commit();
+    });
+    while (!reading.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    auto other = std::async(std::launch::async, [&] {
+        AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
+        static_cast<void>(transaction.Read(ready));
+        transaction.Commit();
+    });
+    const bool independent = other.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    {
+        std::lock_guard lock(pending.prepared->mutex);
+        pending.prepared->pending = false;
+    }
+    pending.prepared->settled.notify_all();
+    waiter.get();
+    other.get();
+    Require(independent, "a transaction on a prepared shader waited for another transaction's pending registration preparation");
 }
 
 void UnsupportedTypeRegistration() {
@@ -723,7 +801,9 @@ void RegisteredVertexWorkgroup(const ShaderRecompiler::SpirvTarget& target, bool
 
 void LazyRegistration() {
     using namespace NarrowConstantStoreFixture;
-    Require(std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr, "lazy preparation is not enabled");
+    const char* registrationBudget = std::getenv("APS5_REGISTRATION_PREPARE_COMMIT_GB");
+    const bool budgetOnly = std::getenv("APS5_LAZY_SHADER_PREPARE") == nullptr;
+    Require(!budgetOnly || (registrationBudget != nullptr && std::string_view(registrationBudget) == "0"), "lazy preparation is not enabled");
     struct Header {
         Shader shader{};
         std::array<ShaderRegister, 7> registers{};
@@ -741,15 +821,17 @@ void LazyRegistration() {
     header.specials.dispatch_modifier = 0x8000;
     header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, Threads}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 4}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
-    ++header.registers[0].value;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "entry point is outside shader code");
-    --header.registers[0].value;
-    header.registers[2].value = 0;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "must be nonzero");
-    header.registers[2].value = Threads;
-    header.shader.num_sh_registers = 255;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "truncated shader metadata");
-    header.shader.num_sh_registers = header.registers.size();
+    if (!budgetOnly) {
+        ++header.registers[0].value;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "entry point is outside shader code");
+        --header.registers[0].value;
+        header.registers[2].value = 0;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "must be nonzero");
+        header.registers[2].value = Threads;
+        header.shader.num_sh_registers = 255;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "truncated shader metadata");
+        header.shader.num_sh_registers = header.registers.size();
+    }
     const auto registered = [&] {
         const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
         Require(registry != nullptr, "lazy registration published no shader registry");
@@ -883,7 +965,7 @@ public:
     StderrCapture() {
         AgcDriver::FlushAsyncLog_nid_no_patch();
         std::fflush(stderr);
-        file = std::tmpfile();
+        file = TemporaryFile::Open();
         Require(file != nullptr, "cannot open a temporary file for stderr");
 #ifdef _WIN32
         saved = _dup(_fileno(stderr));
@@ -1615,7 +1697,9 @@ int main(int argc, char** argv) {
         Run(*device);
         RegisteredVertexWorkgroup(device->Target());
         FailureCapture(*device);
+        DumpSelection(*device);
         PendingRegistrationPreparation(*device);
+        PendingPreparationOutsideTransactionLock();
         AwaitedRegistrationPreparation();
         Require(argc != 2 || std::string_view(argv[1]) != "--fail-before-registration", "injected failure before registration");
         PrepareMultisampledStorage(*device);

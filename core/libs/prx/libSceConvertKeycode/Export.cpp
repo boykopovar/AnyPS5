@@ -2409,36 +2409,64 @@ bool Ps4Client() {
         return false;
     }
 }
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
+    return sdkVersion;
+}
+
+bool Ps4ClientOnce() {
+    static const bool ps4Client = Ps4Client();
+    return ps4Client;
+}
+
+bool KeyboardTypeAvailable(std::uint32_t type, std::uint32_t sdkVersion, bool ps4Client) {
+    if (type >= 31 && ps4Client && sdkVersion < 0x05000000u) return false;
+    if (type >= 38 && sdkVersion < (ps4Client ? 0x10000000u : 0x06000000u)) return false;
+    if (type == 39 && (ps4Client || sdkVersion < 0x08000000u)) return false;
+    return true;
+}
 }  // namespace
 
 extern "C" {
 
 int APS5_VABI sceConvertKeycodeGetImeKeyboardType(int32_t userId, uint32_t* type) {
     const bool ps4Client = Ps4Client();
-    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::uint32_t sdkVersion;
-    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
-    return ImeKeyboardType::Resolve(userId, type, sdkVersion, ps4Client, sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType);
+    return ImeKeyboardType::Resolve(userId, type, CompiledSdkVersion(), ps4Client, sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType);
 }
 int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t keycode, std::uint32_t keyboardType, std::uint16_t* virtualKeycode) {
     if (virtualKeycode == nullptr) return kErrInvalidAddress;
     if (keyboardType == 0 || keyboardType > VirtualKeys.size()) return kErrInvalidKeyboardType;
-    if (keyboardType >= 31) throw std::runtime_error("sceConvertKeycodeGetVirtualKeycode: guest sdk version is unavailable");
+    const std::uint32_t sdkVersion = CompiledSdkVersion();
+    const bool ps4Client = Ps4ClientOnce();
+    if (!KeyboardTypeAvailable(keyboardType, sdkVersion, ps4Client)) return kErrInvalidKeyboardType;
     auto value = keycode < BaseVirtualKeys.size() ? VirtualKeys[keyboardType - 1][keycode] : 255;
-    if ((keyboardType == 2 || keyboardType == 3 || keyboardType == 12) && (value == 89 || value == 90)) throw std::runtime_error("sceConvertKeycodeGetVirtualKeycode: guest sdk version is unavailable");
+    if ((keyboardType == 2 || keyboardType == 3 || keyboardType == 12) && sdkVersion < (ps4Client ? 0x09000000u : 0x04000000u)) {
+        if (value == 89) value = 90;
+        else if (value == 90) value = 89;
+    }
     *virtualKeycode = static_cast<std::uint16_t>(value);
     return 0;
 }
 
 int APS5_VABI sceConvertKeycodeGetCharacterFromKeyboardData(const KeyboardData* keyData, std::int32_t index, std::uint32_t state, std::uint32_t keyboardType, char16_t* character) {
-    NotImplemented_nid_no_patch(__func__);
+    if (keyData == nullptr || character == nullptr) return kErrInvalidAddress;
+    if (keyboardType == 0 || keyboardType > 39) return kErrInvalidKeyboardType;
+    if (!KeyboardTypeAvailable(keyboardType, CompiledSdkVersion(), Ps4ClientOnce())) return kErrInvalidKeyboardType;
+    if (index < 0 || index >= keyData->length || index >= static_cast<std::int32_t>(KEYBOARD_MAX_KEYCODES)) {
+        throw std::runtime_error("sceConvertKeycodeGetCharacterFromKeyboardData: result for an index outside the key data is unknown");
+    }
+    const std::uint16_t keycode = keyData->key_code[index];
+    *character = ConvertCharacter(keycode, state, keyboardType);
     return 0;
 }
 
 int APS5_VABI sceConvertKeycodeGetCharacter(std::uint16_t keycode, std::uint32_t state, std::uint32_t type, char16_t* character) {
     if (character == nullptr) return kErrInvalidAddress;
     if (type == 0 || type > 39) return kErrInvalidKeyboardType;
-    if (type >= 31) throw std::runtime_error("sceConvertKeycodeGetCharacter: guest sdk version is unavailable");
+    if (!KeyboardTypeAvailable(type, CompiledSdkVersion(), Ps4ClientOnce())) return kErrInvalidKeyboardType;
     *character = ConvertCharacter(keycode, state, type);
     return 0;
 }

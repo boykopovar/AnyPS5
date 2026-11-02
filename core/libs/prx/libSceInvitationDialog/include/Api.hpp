@@ -54,5 +54,8 @@ int APS5_VABI sceInvitationDialogOpen(const InvitationDialogParam* param);
 int APS5_VABI sceInvitationDialogTerminate(void);
 int APS5_VABI sceInvitationDialogUpdateStatus(void);
 int APS5_VABI sceInvitationDialogClose(void);
+int APS5_VABI sceInvitationDialogGetStatus_nid_postfix(void);
+int APS5_VABI sceInvitationDialogOpenA_nid_postfix(void);
+int APS5_VABI sceInvitationDialogGetResultA_nid_postfix(void);
 
 }

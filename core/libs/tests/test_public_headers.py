@@ -16,6 +16,9 @@ SPEC = importlib.util.spec_from_file_location("nid_names", ROOT / "tools/nid_nam
 NIDS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(NIDS)
 DECLARATION = re.compile(r"(?:\bAPS5_VABI\s+|^[ \t]*[A-Za-z_][\w:*&<> \t]*?[ \t]+)(\w+)\s*\([^;{}]*\)\s*(?:noexcept\s*)?;", re.M)
+DATA_DECLARATION = re.compile(
+    r"^[ \t]*extern\s+(?:const\s+)?[A-Za-z_][\w:<>]*(?:\s+(?:const|volatile))?\s+\**\s*(\w+)\s*(?:\[[^;\]\n]*\])?\s*;", re.M
+)
 INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
 TYPE_TOKEN = re.compile(r"\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*([;{])|\busing\s+(\w+)\s*=|[{}]")
 
@@ -121,7 +124,7 @@ def audit():
             for name in definitions | aliases:
                 if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")):
                     continue
-                exports.setdefault(name, []).append((source, included))
+                exports.setdefault(name, []).append((source, included, name in definitions))
     declarations = {name: [] for name in exports}
     for source in sorted((ROOT / "core").rglob("*")):
         if source.suffix not in {".cpp", ".h", ".hpp"}:
@@ -134,18 +137,24 @@ def audit():
             prefix = match.group()[:match.start(1) - match.start()]
             if re.search(r"\b(?:return|co_return|throw|else|case)\b|&&|\|\|", prefix):
                 continue
-            declarations[match.group(1)].append((resolved, text.count("\n", 0, match.start()) + 1))
+            declarations[match.group(1)].append((resolved, text.count("\n", 0, match.start()) + 1, "function"))
+        for match in DATA_DECLARATION.finditer(text):
+            if match.group(1) in declarations:
+                declarations[match.group(1)].append((resolved, text.count("\n", 0, match.start()) + 1, "data"))
     errors = []
     headers = set(umbrellas)
     for name, definitions in exports.items():
         found = declarations[name]
         if len(found) != 1 or found[0][0].suffix not in {".h", ".hpp"}:
-            locations = ", ".join(f"{path.relative_to(ROOT)}:{line}" for path, line in found)
+            locations = ", ".join(f"{path.relative_to(ROOT)}:{line}" for path, line, _ in found)
             errors.append(f"{name}: expected exactly one header declaration; found {len(found)}: {locations}")
             continue
-        header = found[0][0]
+        header, _, kind = found[0]
+        if kind != "function" and any(is_function for _, _, is_function in definitions):
+            errors.append(f"{name}: function definition requires a function declaration")
+            continue
         headers.add(header)
-        for source, included in definitions:
+        for source, included, _ in definitions:
             if header not in included:
                 errors.append(f"{name}: {header.relative_to(ROOT)} is not included by {source.parent} library umbrella")
     if errors:

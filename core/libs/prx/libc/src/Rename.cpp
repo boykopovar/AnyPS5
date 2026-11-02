@@ -12,6 +12,21 @@
 #include <windows.h>
 #endif
 
+#ifdef _WIN32
+static bool IsWindowsLink(const std::filesystem::path& path) {
+    WIN32_FIND_DATAW data{};
+    const HANDLE search = FindFirstFileW(path.c_str(), &data);
+    if (search == INVALID_HANDLE_VALUE) return false;
+    FindClose(search);
+    return (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 &&
+        (data.dwReserved0 == IO_REPARSE_TAG_SYMLINK || data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT);
+}
+#else
+static bool IsWindowsLink(const std::filesystem::path&) {
+    return false;
+}
+#endif
+
 std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, [[maybe_unused]] bool replacesExisting) {
     namespace fs = std::filesystem;
     std::error_code error;
@@ -52,6 +67,24 @@ static bool BelowSymbolicLinkLoop(const std::filesystem::path& directory) {
 }
 #endif
 
+static std::filesystem::file_status LinkStatus(const std::filesystem::path& path, std::error_code& error) {
+    const auto status = std::filesystem::symlink_status(path, error);
+#ifdef _WIN32
+    if (status.type() == std::filesystem::file_type::not_found) {
+        WIN32_FIND_DATAW entry{};
+        const HANDLE find = FindFirstFileW(path.c_str(), &entry);
+        if (find != INVALID_HANDLE_VALUE) {
+            FindClose(find);
+            if ((entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && entry.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
+                error.clear();
+                return std::filesystem::file_status(std::filesystem::file_type::symlink);
+            }
+        }
+    }
+#endif
+    return status;
+}
+
 static int RenamePath_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination) {
     constexpr int GuestEnoent = 2;
     constexpr int GuestEnotdir = 20;
@@ -60,7 +93,7 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     constexpr int GuestEnotempty = 66;
     namespace fs = std::filesystem;
     std::error_code error;
-    const auto sourceStatus = fs::symlink_status(source, error);
+    const auto sourceStatus = LinkStatus(source, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     if (sourceStatus.type() == fs::file_type::not_found) return GuestEnoent;
 
@@ -72,11 +105,11 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     if (!fs::is_directory(parentStatus)) return GuestEnotdir;
 
     error.clear();
-    const auto destinationStatus = fs::symlink_status(destination, error);
+    const auto destinationStatus = LinkStatus(destination, error);
     if (error && error != std::errc::no_such_file_or_directory) return FilesystemError(error);
     const bool destinationExists = destinationStatus.type() != fs::file_type::not_found;
-    const bool sourceIsDirectory = fs::is_directory(sourceStatus);
-    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus);
+    const bool sourceIsDirectory = fs::is_directory(sourceStatus) && !IsWindowsLink(source);
+    const bool destinationIsDirectory = destinationExists && fs::is_directory(destinationStatus) && !IsWindowsLink(destination);
     bool sameFile = false;
     if (destinationExists) {
         error.clear();
@@ -110,7 +143,7 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
 
 static int SourceLookupError_nid_no_patch(const std::filesystem::path& source) {
     std::error_code status;
-    const auto sourceStatus = std::filesystem::symlink_status(source, status);
+    const auto sourceStatus = LinkStatus(source, status);
     if (HasNonDirectoryPrefix_nid_no_patch(source)) return 20;
     if (status && status != std::errc::no_such_file_or_directory) return FilesystemError(status);
     return sourceStatus.type() == std::filesystem::file_type::not_found ? 2 : 0;
