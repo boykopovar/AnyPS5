@@ -54,7 +54,8 @@ def forms(prefixes=PREFIXES):
 
 
 def line_reads(line, prefixes=PREFIXES):
-    return [(reader, match) for reader, form in forms(tuple(prefixes)) for match in form.finditer(line)]
+    return [(reader, match) for reader, form in forms(tuple(prefixes)) for match in form.finditer(line)
+            if match.start() == 0 or not (line[match.start() - 1].isalnum() or line[match.start() - 1] == "_")]
 
 
 def documented_pattern(prefixes):
@@ -122,6 +123,11 @@ def source_files(root):
         if path.suffix not in EXTENSIONS or any(part in SKIP for part in path.relative_to(root).parts):
             continue
         yield path
+
+
+def cpp_reads(text):
+    return CPP_TOKEN.sub(lambda match: re.sub(r"[^\r\n]", " ", match.group())
+                         if match.lastgroup in ("comment", "raw", "char") else match.group(), text)
 
 
 class _NamedRead:
@@ -228,6 +234,8 @@ def reads(roots, prefixes=PREFIXES):
         for path in source_files(root):
             try:
                 text = path.read_text(encoding="utf-8")
+                if path.suffix != ".py":
+                    text = cpp_reads(text)
             except (OSError, UnicodeDecodeError) as error:
                 raise ValueError(f"cannot read {path.as_posix()}: {error}") from error
             sources.append((path, text))

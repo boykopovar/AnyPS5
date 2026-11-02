@@ -38,6 +38,15 @@ static std::uint64_t v = MyEnvironmentNumber("APS5_NOT_A_NUMBER_READ");
 
 
 class EnvReferenceTests(unittest.TestCase):
+    def test_reader_identifiers_require_a_token_boundary(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto a = custom_getenv("APS5_FAKE");\n'
+                          'auto b = reEnvInt("APS5_FAKE2", 1);\n'
+                          'auto c = std::getenv("APS5_REAL");\n'
+                          'auto d = os.getenv("APS5_PYTHON");\n', encoding="utf-8")
+        self.assertEqual(set(env_reference.reads([root / "core"])), {"APS5_REAL", "APS5_PYTHON"})
+
     def fixture(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -539,6 +548,25 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+    def test_cpp_comments_raw_literals_and_characters_do_not_create_reads(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        text = ('// getenv("APS5_COMMENT")\n'
+                '/* getenv("APS5_BLOCK")\ncontinued */\n'
+                'auto example = u8R"tag(getenv("APS5_RAW")\n)tag";\n'
+                'auto real = getenv /* comment */ ("APS5_REAL");\n'
+                'auto quote = \'"\'; auto other = getenv("ANYPS5_OTHER");\n'
+                'auto escaped = "getenv(\\"APS5_STRING\\")";\n')
+        source.write_text(text, encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(set(found), {"APS5_REAL", "ANYPS5_OTHER"})
+        self.assertEqual(found["APS5_REAL"][0][1], 6)
+        self.assertEqual(found["ANYPS5_OTHER"][0][1], 7)
+        python = root / "core" / "settings.py"
+        python.write_text('getenv("APS5_PYTHON")\n', encoding="utf-8")
+        self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
 
 if __name__ == "__main__":
