@@ -13254,6 +13254,54 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
         if (order == Order::Superseded) Require(on.superseded == 2, name + ": B's results did not drop A's two units under B (dropped " + std::to_string(on.superseded) + ")");
         if (order == Order::ReadFirst) Require(on.superseded <= 1, name + ": a unit stored by the read was dropped again");
     }
+    static_assert(2 * keyCount <= bytes - surfaceA, "B's and C's DCC keys both follow A inside the block");
+    const auto resourceC = surface(128, 128, 71, address + surfaceA + keyCount);
+    const auto chained = [&](bool on) {
+        const std::string where = what + ", A handed to B and then to C as each left the cache" + (on ? ", on" : ", off");
+        StorageTexture::SetClearHandOver(on);
+        recorder.Sync();
+        std::memset(memory, 0x55, surfaceA);
+        std::memset(memory + surfaceA, 0x00, 2 * keyCount);
+        const auto handOvers = StorageTexture::CreationHandOvers();
+        std::shared_ptr<StorageTexture> imageC;
+        std::weak_ptr<StorageTexture> weakA;
+        {
+            auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
+            draw(imageA, {{1.0f, 0.0f, 0.0f, 1.0f}});
+            weakA = imageA;
+            bool flushed = false;
+            imageA->Detach();
+            auto toB = StorageTexture::PrepareCreation(context, resourceB, surfaceB, std::move(imageA), flushed);
+            auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+            imageB->AdoptHandOver(std::move(toB));
+            imageB->Detach();
+            auto toC = StorageTexture::PrepareCreation(context, resourceC, surfaceB, std::move(imageB), flushed);
+            imageC = StorageTexture::Create(context, detiler, resourceC, 0);
+            imageC->AdoptHandOver(std::move(toC));
+        }
+        if (on && watched) Require(StorageTexture::CreationHandOvers() == handOvers + 2, where + ": A's results were not handed over at both creations");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        if (on && watched) Require(!weakA.expired(), where + ": A was released with its results pending once the recorder dropped its keeps");
+        imageC->Refresh();
+        if (on && watched) Require(!weakA.expired(), where + ": C's refresh released A with its results pending");
+        draw(imageC, {{0.0f, 1.0f, 0.0f, 1.0f}});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        if (on && watched) Require(!weakA.expired(), where + ": C's results released A with its units outside C still pending");
+        auto stored = readMemory(address, surfaceA);
+        Require(filled(std::span(stored).first(2 * 65536), green), where + ": C's results did not reach a CPU read");
+        Require(filled(std::span(stored).subspan(2 * 65536), red), where + ": A's results outside C did not reach a CPU read");
+        imageC.reset();
+        recorder.Sync();
+        return stored;
+    };
+    const auto chainedOff = chained(false);
+    Require(chained(true) == chainedOff, what + ", A handed to B and then to C: the hand-over left other guest bytes than the old order");
     std::cout << what << ": ok\n";
     return true;
 }

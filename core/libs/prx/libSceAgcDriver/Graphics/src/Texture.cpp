@@ -6328,7 +6328,11 @@ void StorageTexture::AdoptHandOver(CreationHandOver handOver) {
         if (same != handedOver.end()) same->second = source->writes;
         else handedOver.emplace_back(source, source->writes);
     }
-    if (handOver.detached != nullptr) adoptedSources.push_back(std::move(handOver.detached));
+    if (handOver.detached != nullptr) {
+        auto inherited = std::exchange(handOver.detached->adoptedSources, {});
+        adoptedSources.push_back(std::move(handOver.detached));
+        for (auto& source : inherited) adoptedSources.push_back(std::move(source));
+    }
     creationHandOvers.fetch_add(1, std::memory_order_relaxed);
 }
 
