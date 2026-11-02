@@ -89,6 +89,7 @@ int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* p
 
     const auto* setup = static_cast<const std::uint8_t*>(param->setupPacket);
     const auto part1 = static_cast<std::uint16_t>(setup[WVORBIS_SETUP_PART1_LENGTH_OFFSET] | setup[WVORBIS_SETUP_PART1_LENGTH_OFFSET + 1] << 8);
+    if (part1 > param->setupPacketSize) return AJM_WVORBIS_ERROR_INVALID_SETUP;
     auto* out = static_cast<std::uint8_t*>(param->output);
     out = PutLittle(out, 0, 2);
     out = PutLittle(out, VORBIS_IDENTIFICATION_SIZE, 2);
