@@ -229,8 +229,8 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
 
 int CopyToBuffer(char* dst, std::size_t size, const char* src, std::size_t length) {
     if (size < length + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-    std::strncpy(dst, src, size - 1);
-    dst[size - 1] = '\0';
+    std::memcpy(dst, src, length);
+    std::memset(dst + length, 0, size - length);
     return 0;
 }
 
@@ -336,6 +336,27 @@ bool IsValidSequence(const char* text, std::size_t length) {
 
 bool IsAllowedTextByte(unsigned char c) {
     return (c >= 0x20 && c != 0x7F) || c == '\t' || c == '\n' || c == '\r';
+}
+
+struct XmlEntity {
+    char character;
+    const char* text;
+};
+
+constexpr XmlEntity XML_ENTITIES[] = {{'"', "&quot;"}, {'&', "&amp;"}, {'\'', "&apos;"}, {'<', "&lt;"}, {'>', "&gt;"}};
+
+const char* XmlEntityOf(char c) {
+    for (const XmlEntity& entity : XML_ENTITIES) {
+        if (entity.character == c) return entity.text;
+    }
+    return nullptr;
+}
+
+const XmlEntity* XmlEntityAt(const char* text) {
+    for (const XmlEntity& entity : XML_ENTITIES) {
+        if (std::strncmp(text, entity.text, std::strlen(entity.text)) == 0) return &entity;
+    }
+    return nullptr;
 }
 
 bool IsUrlSafe(unsigned char c) {
@@ -625,6 +646,66 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
     if (dstLength != nullptr) *dstLength = decoded;
     if (consumed != nullptr) *consumed = used;
     return status;
+}
+
+int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required) {
+    if (src == nullptr || srcLength == 0 || (dst == nullptr && required == nullptr)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const char* const end = src + srcLength;
+    std::size_t length = 0;
+    do {
+        const auto lead = static_cast<unsigned char>(*src);
+        const char* piece = src;
+        std::size_t pieceLength = 1;
+        std::size_t consumed = 1;
+        if (lead < 0x80) {
+            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            if (const char* entity = XmlEntityOf(*src)) {
+                piece = entity;
+                pieceLength = std::strlen(entity);
+            }
+        } else {
+            consumed = pieceLength = Utf8SequenceLength(lead);
+            if (pieceLength == 0 || !IsValidSequence(src, pieceLength)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+        }
+        if (dst != nullptr) {
+            if (length + pieceLength > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+            std::memcpy(dst + length, piece, pieceLength);
+        }
+        length += pieceLength;
+        src += consumed;
+    } while (src < end);
+    if (dst != nullptr) {
+        if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        dst[length] = '\0';
+    }
+    if (required != nullptr) *required = length + 1;
+    return 0;
+}
+
+int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required) {
+    if (src == nullptr || srcLength == 0 || (dst == nullptr && required == nullptr)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const char* const end = src + srcLength;
+    std::size_t length = 0;
+    do {
+        if (dst != nullptr && length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        char character = *src;
+        std::size_t consumed = 1;
+        if (character == '&') {
+            if (const XmlEntity* entity = XmlEntityAt(src)) {
+                character = entity->character;
+                consumed = std::strlen(entity->text);
+            }
+        }
+        if (dst != nullptr) dst[length] = character;
+        ++length;
+        src += consumed;
+    } while (src < end);
+    if (dst != nullptr) {
+        if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        dst[length] = '\0';
+    }
+    if (required != nullptr) *required = length + 1;
+    return 0;
 }
 
 int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const char** character) {
