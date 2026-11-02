@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -217,11 +218,17 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
-    parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="emit registration audit results as JSON")
+    output.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
     parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
     args = parser.parse_args(argv)
     if args.scripts:
         scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
+        if args.json:
+            print(json.dumps({"mode": "scripts", "tests": scripts, "unregistered": unrun,
+                              "registered": sorted(set(scripts) - set(unrun))}, sort_keys=True))
+            return int(bool(unrun))
         for name in unrun:
             print(f"error: {name} is a test script that no add_test or workflow runs")
         if unrun:
@@ -239,6 +246,13 @@ def main(argv=None):
             print(f"{'run' if name in run else 'NOT RUN'}  {name}")
         return 0
     unrun = sorted(set(every) - run)
+    if args.json:
+        stale = sorted(KNOWN_UNRUN & run)
+        fresh = sorted(set(unrun) - KNOWN_UNRUN)
+        print(json.dumps({"mode": "executables", "tests": every, "registered": sorted(set(every) & run),
+                          "unregistered": unrun, "known_unrun": sorted(set(unrun) & KNOWN_UNRUN),
+                          "stale_exceptions": stale, "new_unregistered": fresh}, sort_keys=True))
+        return int(not every or bool(stale or fresh))
     if not every:
         print(f"no test executables found under {args.build}; is it configured with -DBUILD_TESTING=ON?")
         return 1

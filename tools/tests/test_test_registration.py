@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import contextlib
 import io
@@ -12,6 +13,78 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_test_registration
+
+
+class RegistrationJsonTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    def test_real_cmake_executable_report(self):
+        import json
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tests").mkdir()
+            (root / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(fixture CXX)\nenable_testing()\nadd_subdirectory(tests)\n')
+            (root / "tests/CMakeLists.txt").write_text('add_executable(covered main.cpp)\nadd_executable(lost main.cpp)\nadd_test(NAME covered COMMAND covered)\n')
+            (root / "tests/main.cpp").write_text('int main() { return 0; }\n')
+            build = root / "build"
+            subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja"], check=True, capture_output=True)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(check_test_registration.main([str(build), "--json"]), 1)
+            data = json.loads(output.getvalue())
+            self.assertEqual(data["registered"], ["covered"])
+            self.assertEqual(data["new_unregistered"], ["lost"])
+            with patch.object(check_test_registration, "KNOWN_UNRUN", {"lost"}), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(check_test_registration.main([str(build), "--json"]), 0)
+
+    def test_real_git_script_report(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            (root / "tools").mkdir()
+            (root / "tools/test_a.py").write_text('pass\n')
+            (root / "tools/test_b.py").write_text('pass\n')
+            (root / "CMakeLists.txt").write_text('add_test(NAME a COMMAND python tools/test_a.py)\n')
+            output = io.StringIO()
+            with patch.object(check_test_registration, "__file__", str(root / "tools/tool.py")), contextlib.redirect_stdout(output):
+                self.assertEqual(check_test_registration.main(["--scripts", "--json"]), 1)
+            data = json.loads(output.getvalue())
+            self.assertEqual(data["registered"], ["tools/test_a.py"])
+            self.assertEqual(data, {"mode": "scripts", "tests": ["tools/test_a.py", "tools/test_b.py"],
+                                    "registered": ["tools/test_a.py"], "unregistered": ["tools/test_b.py"]})
+
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required")
+    def test_real_cmake_report_matches_every_text_mode_decision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tests").mkdir()
+            (root / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(fixture CXX)\nenable_testing()\nadd_subdirectory(tests)\n')
+            (root / "tests/CMakeLists.txt").write_text(
+                "".join(f"add_executable({name} main.cpp)\n" for name in ("covered", "lost", "kept", "fixed"))
+                + "add_test(NAME covered COMMAND covered)\nadd_test(NAME fixed COMMAND fixed)\n"
+                + "add_test(NAME external COMMAND ${CMAKE_COMMAND} -E true)\n")
+            (root / "tests/main.cpp").write_text('int main() { return 0; }\n')
+            build = root / "build"
+            subprocess.run(["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja"], check=True, capture_output=True)
+            cases = ((set(), 1, [], ["kept", "lost"]), ({"kept", "lost"}, 0, [], []), ({"kept", "lost", "fixed"}, 1, ["fixed"], []))
+            for known, code, stale, fresh in cases:
+                with self.subTest(known=sorted(known)), patch.object(check_test_registration, "KNOWN_UNRUN", known):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(check_test_registration.main([str(build)]), code)
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(check_test_registration.main([str(build), "--json"]), code)
+                    self.assertEqual(json.loads(output.getvalue()), {
+                        "mode": "executables", "tests": ["covered", "fixed", "kept", "lost"],
+                        "registered": ["covered", "fixed"], "unregistered": ["kept", "lost"],
+                        "known_unrun": sorted({"kept", "lost"} & known), "stale_exceptions": stale, "new_unregistered": fresh})
+            (root / "tests/CMakeLists.txt").write_text("")
+            subprocess.run(["cmake", "-S", str(root), "-B", str(build)], check=True, capture_output=True)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(check_test_registration.main([str(build), "--json"]), 1)
+            self.assertEqual(json.loads(output.getvalue())["tests"], [])
 
 
 class RegistrationTests(unittest.TestCase):
@@ -613,6 +686,9 @@ class CheckRegistrationCliTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+
 
 
 if __name__ == "__main__":
