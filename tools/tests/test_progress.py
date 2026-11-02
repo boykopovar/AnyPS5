@@ -876,5 +876,66 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class ProgressConstantReturnTests(unittest.TestCase):
+    def scan(self, source):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(source, encoding="utf-8")
+            return progress.scan_library(library)
+
+    def test_parameter_returns_are_not_behaviourally_empty(self):
+        for name in ("value", "size", "resultCode", "_value", "VALUE", "Failure"):
+            with self.subTest(name=name):
+                group = self.scan(f"int APS5_VABI Echo(int {name}) {{ return {name}; }}\n")
+                self.assertEqual(group["done_names"], ["Echo"])
+                self.assertEqual(group["todo_names"], [])
+                self.assertEqual(group["inert_names"], [])
+
+    def test_constant_returns_remain_behaviourally_empty(self):
+        for value in ("0", "-1", "+2", "0x8A810001u", "true", "false", "nullptr",
+                      "SCE_KERNEL_ERROR_EOPNOTSUPP", "Failure", "CryptoNumLocks", "kErrUnexpectedFatal",
+                      '"constant text"'):
+            with self.subTest(value=value):
+                group = self.scan(
+                    "constexpr int Failure = -1;\n"
+                    "constexpr int CryptoNumLocks = 41;\n"
+                    "constexpr int kErrUnexpectedFatal = -2;\n"
+                    f"auto APS5_VABI Constant() {{ return {value}; }}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_constants_in_parameter_types_and_defaults_still_return_constants(self):
+        for declaration in ("int value = Failure", "int = Failure", "Array<Failure, 2> value",
+                            "int value[Failure]", "int (*callback)(int)"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(
+                    "constexpr int Failure = -1;\n"
+                    f"int APS5_VABI Constant({declaration}) {{ return Failure; }}\n")
+                self.assertEqual(group["inert_names"], ["Constant"])
+
+    def test_pointer_and_function_pointer_parameters_are_not_constants(self):
+        for declaration in ("const void* value", "int (*value)(int)", "Array<int, 2>& value"):
+            with self.subTest(declaration=declaration):
+                group = self.scan(f"auto APS5_VABI Echo({declaration}) {{ return value; }}\n")
+                self.assertEqual(group["inert_names"], [])
+
+    def test_empty_wrappers_remain_behaviourally_empty(self):
+        group = self.scan(
+            "static int Empty(int value) { (void)value; return 0; }\n"
+            "int APS5_VABI Wrapped(int value) { return Empty(value); }\n")
+        self.assertEqual(group["inert_names"], ["Wrapped"])
+        group = self.scan(
+            "static int Identity(int value) { return value; }\n"
+            "int APS5_VABI Wrapped(int value) { return Identity(value); }\n")
+        self.assertEqual(group["inert_names"], [])
+
+    def test_multiple_statements_do_not_hide_work(self):
+        group = self.scan(
+            "int APS5_VABI Discarded(int value) { (void)value; return 0; }\n"
+            "int APS5_VABI Updated(int value) { ++value; return 0; }\n")
+        self.assertEqual(group["done_names"], ["Discarded", "Updated"])
+        self.assertEqual(group["inert_names"], ["Discarded"])
+
+
 if __name__ == "__main__":
     unittest.main()
