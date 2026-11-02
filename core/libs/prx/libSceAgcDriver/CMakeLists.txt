@@ -31,6 +31,16 @@ endfunction()
 
 ensure_agc_glslang()
 
+if(BUILD_TESTING AND WIN32)
+    add_test_executable(agc_process_sampler_stack_tests tests/ProcessSamplerStack.cpp Execution/src/WorkerSampler.cpp)
+    target_include_directories(agc_process_sampler_stack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_process_sampler_stack_tests PRIVATE libc)
+    configure_windows_unwind(agc_process_sampler_stack_tests)
+    add_test(NAME agc_process_sampler_stack COMMAND agc_process_sampler_stack_tests)
+    set_tests_properties(agc_process_sampler_stack PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
+
 set(agcTextureDetileShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TextureDetile.comp)
 set(agcTextureDetileGeneratedRoot ${CMAKE_CURRENT_BINARY_DIR}/generated)
 set(agcTextureDetileGeneratedDir ${agcTextureDetileGeneratedRoot}/prx/libSceAgcDriver/Graphics/shaders)
