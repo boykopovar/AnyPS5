@@ -138,6 +138,9 @@ def compare(baseline, candidate):
     after_phases = candidate["top_phases_ms_per_frame"]
     phases = {name: delta(before_phases.get(name), after_phases.get(name))
               for name in sorted(before_phases.keys() | after_phases.keys())}
+    before_workers, after_workers = baseline["worker_busy_pct"], candidate["worker_busy_pct"]
+    workers = {name: delta(before_workers.get(name), after_workers.get(name))
+               for name in sorted(before_workers.keys() | after_workers.keys())}
     contexts = []
     for summary in (baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
@@ -152,7 +155,9 @@ def compare(baseline, candidate):
                    if contexts[0].get(key) != contexts[1].get(key)}
     notes = ["Compare captures from the same machine, title, content version and scene; matching recorded metadata cannot verify the physical machine or scene.",
              "Changes are candidate minus baseline. A negative frame-time change means a shorter frame interval.",
-             "A missing top phase is unreported, not zero; its change is unavailable."]
+             "A missing top phase is unreported, not zero; its change is unavailable.",
+             "Worker busy changes are percentage points; change (%) is relative to the baseline. "
+             "Workers are matched by their recorded names; a missing worker is unreported, not idle."]
     if differences:
         notes.append("Recorded configuration differs; these measurements do not isolate the code change.")
     for label, summary in (("baseline", baseline), ("candidate", candidate)):
@@ -171,7 +176,7 @@ def compare(baseline, candidate):
         if missing:
             notes.append(f"{label}: missing configuration: {', '.join(missing)}.")
     return {"baseline": baseline, "candidate": candidate, "configuration_differences": differences,
-            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "notes": notes}
+            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "worker_busy_pct": workers, "notes": notes}
 
 
 def cell(value):
@@ -191,8 +196,10 @@ def markdown(report):
         lines.extend(["", "## Configuration differences", "", "| Setting | Baseline | Candidate |", "| --- | --- | --- |"])
         for key, values in report["configuration_differences"].items():
             lines.append(f"| {cell(key)} | {cell(values['baseline'])} | {cell(values['candidate'])} |")
-    for title, key in (("Frame and GPU times (ms)", "metrics_ms"), ("Top phases (ms per frame)", "top_phases_ms_per_frame")):
-        lines.extend(["", f"## {title}", "", "| Metric | Baseline | Candidate | Change | Change (%) |",
+    for title, key, change in (("Frame and GPU times (ms)", "metrics_ms", "Change"),
+                               ("Top phases (ms per frame)", "top_phases_ms_per_frame", "Change"),
+                               ("Worker busy time (%)", "worker_busy_pct", "Change (pp)")):
+        lines.extend(["", f"## {title}", "", f"| Metric | Baseline | Candidate | {change} | Change (%) |",
                       "| --- | ---: | ---: | ---: | ---: |"])
         for name, values in report[key].items():
             columns = ["n/a" if values[field] is None else format(values[field], "+.3f" if field.startswith("change") else ".3f")
