@@ -300,6 +300,18 @@ static void TestURL() {
     Require(WKStringIsEqualToUTF8CString(sDot, "https://example.org/a/b"));
     WKRelease(sDot);
     WKRelease(rDot);
+
+    auto* rDoubleSlash = WKURLCreateWithBaseURL(baseOrg, "/a//b");
+    auto* sDoubleSlash = WKURLCopyString(rDoubleSlash);
+    Require(WKStringIsEqualToUTF8CString(sDoubleSlash, "https://example.org/a//b"));
+    WKRelease(sDoubleSlash);
+    WKRelease(rDoubleSlash);
+
+    auto* rRelDoubleSlash = WKURLCreateWithBaseURL(baseOrg, "sub//item");
+    auto* sRelDoubleSlash = WKURLCopyString(rRelDoubleSlash);
+    Require(WKStringIsEqualToUTF8CString(sRelDoubleSlash, "https://example.org/dir/sub//item"));
+    WKRelease(sRelDoubleSlash);
+    WKRelease(rRelDoubleSlash);
     WKRelease(baseOrg);
 
     auto* baseFrag = WKURLCreateWithUTF8CString("https://example.org/a?q#old");

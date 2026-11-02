@@ -146,33 +146,52 @@ std::string_view ExtractLastPathComponent(std::string_view path) {
 }
 
 std::string RemoveDotSegments(std::string_view path) {
-    if (path.empty()) return {};
-    const bool hasLeadingSlash = path.starts_with('/');
-    const bool hasTrailingSlash = path.ends_with('/') || path.ends_with("/.") || path.ends_with("/..");
-    std::vector<std::string> segments;
-    std::size_t pos = 0;
-    while (pos < path.size()) {
-        const auto nextSlash = path.find('/', pos);
-        std::string segment(path.substr(pos, nextSlash == std::string::npos ? std::string::npos : nextSlash - pos));
-        if (segment == "." || segment.empty()) {
-        } else if (segment == "..") {
-            if (!segments.empty() && segments.back() != "..") {
-                segments.pop_back();
-            }
+    std::string ib(path);
+    std::string ob;
+    while (!ib.empty()) {
+        if (ib.starts_with("../")) {
+            ib.erase(0, 3);
+        } else if (ib.starts_with("./")) {
+            ib.erase(0, 2);
+        } else if (ib.starts_with("/./")) {
+            ib.erase(0, 2);
+        } else if (ib == "/.") {
+            ib = "/";
+        } else if (ib.starts_with("/../")) {
+            ib.erase(0, 3);
+            const auto lastSlash = ob.rfind('/');
+            if (lastSlash != std::string::npos) ob.erase(lastSlash);
+            else ob.clear();
+        } else if (ib == "/..") {
+            ib = "/";
+            const auto lastSlash = ob.rfind('/');
+            if (lastSlash != std::string::npos) ob.erase(lastSlash);
+            else ob.clear();
+        } else if (ib == "." || ib == "..") {
+            ib.clear();
         } else {
-            segments.push_back(segment);
+            if (ib.front() == '/') {
+                const auto nextSlash = ib.find('/', 1);
+                if (nextSlash != std::string::npos) {
+                    ob.append(ib, 0, nextSlash);
+                    ib.erase(0, nextSlash);
+                } else {
+                    ob += ib;
+                    ib.clear();
+                }
+            } else {
+                const auto nextSlash = ib.find('/');
+                if (nextSlash != std::string::npos) {
+                    ob.append(ib, 0, nextSlash);
+                    ib.erase(0, nextSlash);
+                } else {
+                    ob += ib;
+                    ib.clear();
+                }
+            }
         }
-        if (nextSlash == std::string::npos) break;
-        pos = nextSlash + 1;
     }
-    std::string result;
-    if (hasLeadingSlash) result += "/";
-    for (std::size_t i = 0; i < segments.size(); ++i) {
-        if (i > 0) result += "/";
-        result += segments[i];
-    }
-    if (hasTrailingSlash && !result.ends_with('/')) result += "/";
-    return result;
+    return ob;
 }
 
 std::string ResolveURL(std::string_view baseRaw, std::string_view relRaw) {
