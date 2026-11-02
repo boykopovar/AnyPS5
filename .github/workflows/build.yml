@@ -707,7 +707,7 @@ jobs:
       - name: Build and run changed guest core/libs tests
         if: github.event_name == 'pull_request'
         shell: cmd
-        run: python tools/build_changed_guest_tests.py build changed.txt
+        run: python tools/build_changed_guest_tests.py build changed.txt --output-log ctest.log
       - id: libs
         if: github.event_name != 'pull_request'
         shell: cmd
