@@ -153,6 +153,13 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         Io::AppendU32(lifecycle.Data, guest.HasInit ? image.GetRva(guest.Init) : 0);
         Io::AppendU32(lifecycle.Data, CheckedRva(guest.InitArray.size()));
         for (const auto slot : guest.InitArray) Io::AppendU32(lifecycle.Data, image.GetRva(slot, 8));
+        if (runtime.DeferredDependencies.size() > Relinker::GuestMaximumDeferredDependencies)
+            throw Domain::RelinkerException("Too many deferred guest dependencies: " + std::to_string(runtime.DeferredDependencies.size()));
+        if (!runtime.DeferredDependencies.empty()) {
+            Io::AppendU32(lifecycle.Data, Relinker::GuestDeferredDependenciesMagic);
+            Io::AppendU32(lifecycle.Data, CheckedRva(runtime.DeferredDependencies.size()));
+            for (const auto& name : runtime.DeferredDependencies) Io::AppendString(lifecycle.Data, name);
+        }
         if (!exports.emplace(Relinker::GuestInitializeExport, nextRva).second) throw Domain::RelinkerException("Duplicate guest export: " + std::string(Relinker::GuestInitializeExport));
         nextRva = AlignRva(nextRva + lifecycle.Data.size());
         sections.push_back(std::move(lifecycle));

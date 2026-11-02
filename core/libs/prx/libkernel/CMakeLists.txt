@@ -340,6 +340,20 @@ if(BUILD_TESTING)
         target_link_libraries(guest_deferred_module_tests PRIVATE libkernel libc)
         configure_windows_unwind(guest_deferred_module_tests)
         add_dependencies(guest_deferred_module_tests guest_deferred_module_fixture)
+        add_library(guest_deferred_dependent_fixture SHARED
+            ${LIBS_INCLUDE_DIR}/tests/GuestDeferredModuleFixture.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestDeferredDependentFixture.S)
+        target_include_directories(guest_deferred_dependent_fixture PRIVATE ${LIBS_INCLUDE_DIR})
+        target_compile_definitions(guest_deferred_dependent_fixture PRIVATE GUEST_DEFERRED_DEPENDENT_FIXTURE=1)
+        target_link_options(guest_deferred_dependent_fixture PRIVATE -Wl,--image-base,0x39000000 -Wl,--disable-dynamicbase)
+        configure_windows_unwind(guest_deferred_dependent_fixture)
+        set_target_properties(guest_deferred_dependent_fixture PROPERTIES PREFIX "" SUFFIX ".guest.prx")
+        add_dependencies(guest_deferred_module_tests guest_deferred_dependent_fixture)
+        foreach(mode IN ITEMS dependency dependency-nested)
+            add_test(NAME guest_deferred_module_${mode} COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_dependent_fixture> ${mode} $<TARGET_FILE:guest_deferred_module_fixture>)
+            set_tests_properties(guest_deferred_module_${mode} PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endforeach()
         foreach(mode IN ITEMS reload pinned parallel reentrant)
             add_test(NAME guest_deferred_module_${mode} COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_module_fixture> ${mode})
             set_tests_properties(guest_deferred_module_${mode} PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION

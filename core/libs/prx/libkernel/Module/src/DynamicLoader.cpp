@@ -258,14 +258,58 @@ static void InitializeLinuxGuestModule(void* native) {
 }
 #endif
 #ifdef _WIN32
+static std::mutex initializedLock;
+static std::condition_variable initializedChanged;
+
+static void InitializeDeferredModule(HMODULE native);
+
+static std::vector<std::string> DeferredDependencyNames(const std::uint32_t* table) {
+    constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
+    constexpr std::uint32_t dependenciesMagic = 0x44504541;
+    constexpr std::uint32_t maximumDependencies = 4096;
+    std::vector<std::string> names;
+    const auto count = table[1];
+    if (count == initializing) return names;
+    const auto* list = table + 2 + count;
+    if (list[0] != dependenciesMagic || list[1] == 0 || list[1] > maximumDependencies) return names;
+    const auto* name = reinterpret_cast<const char*>(list + 2);
+    for (std::uint32_t index = 0; index < list[1]; ++index) {
+        names.emplace_back(name);
+        name += names.back().size() + 1;
+    }
+    return names;
+}
+
 static void InitializeDeferredModule(HMODULE native) {
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
     using Initializer = void (APS5_VABI *)(int, char**, char**);
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
-    static std::mutex initializedLock;
-    static std::condition_variable initializedChanged;
+    thread_local std::vector<HMODULE> resolving;
+    if (std::find(resolving.begin(), resolving.end(), native) != resolving.end()) return;
     auto* table = reinterpret_cast<std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
     if (!table) return;
+    std::vector<std::string> dependencies;
+    {
+        std::lock_guard lock(initializedLock);
+        dependencies = DeferredDependencyNames(table);
+    }
+    if (!dependencies.empty()) {
+        auto* pendingArgs = const_cast<PendingModuleArgs*>(static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch()));
+        const auto initiating = *pendingArgs;
+        resolving.push_back(native);
+        try {
+            for (const auto& name : dependencies) {
+                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && dependency != native) InitializeDeferredModule(dependency);
+                *pendingArgs = initiating;
+            }
+        } catch (...) {
+            *pendingArgs = initiating;
+            resolving.pop_back();
+            throw;
+        }
+        resolving.pop_back();
+        __aps5_set_module_init_result_nid_no_patch(0);
+    }
     const auto owner = GetCurrentThreadId();
     std::unique_lock lock(initializedLock);
     while (table[1] == initializing) {

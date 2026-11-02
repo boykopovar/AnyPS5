@@ -451,6 +451,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         runtime.Path = relativeDirectory + "/" + image.OutputName;
         runtime.Names = {Io::Utf8Path(image.SourcePath.filename()), image.Soname};
         runtime.DeferInitialization = deferred(index);
+        if (runtime.DeferInitialization) for (const auto dependency : dependencies[index]) if (deferred(dependency)) runtime.DeferredDependencies.push_back(images[dependency].OutputName);
         std::vector<std::uint8_t> output;
         const auto message = [&](std::string_view text) { progress.Message(text); };
         if (windows) output = Elfpatcher::GuestModuleWriter().WriteWindows(image, runtime, message);
