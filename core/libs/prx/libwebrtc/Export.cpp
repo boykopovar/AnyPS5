@@ -4,6 +4,12 @@
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -401,8 +407,11 @@ int APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC
 }
 
 int APS5_VABI _ZN3rtc15CurrentThreadIdEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+#if defined(_WIN32)
+    return static_cast<int>(GetCurrentThreadId());
+#else
+    return static_cast<int>(syscall(SYS_gettid));
+#endif
 }
 
 int APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(void) {
