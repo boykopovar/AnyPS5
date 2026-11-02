@@ -3,7 +3,34 @@ target_include_directories(libSceLibcInternal PRIVATE ${LIBS_INCLUDE_DIR})
 set_source_files_properties(UserContext.cpp PROPERTIES COMPILE_OPTIONS -fno-omit-frame-pointer)
 target_link_libraries(libSceLibcInternal PRIVATE ${CMAKE_DL_LIBS})
 target_sources(libSceLibcInternal PRIVATE Directory.cpp)
+target_sources(libSceLibcInternal PRIVATE InventoryExports.cpp)
 target_sources(libSceLibcInternal PRIVATE InitOnce.cpp)
+target_sources(libSceLibcInternal PRIVATE Mutex.cpp)
+target_sources(libSceLibcInternal PRIVATE AlignedNew.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libc_internal_aligned_new_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcInternalAlignedNew.cpp)
+    target_include_directories(guest_libc_internal_aligned_new_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_internal_aligned_new_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_libc_internal_aligned_new_tests)
+    add_test(NAME guest_libc_internal_aligned_new COMMAND guest_libc_internal_aligned_new_tests)
+    set_tests_properties(guest_libc_internal_aligned_new PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_internal_aligned_new PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()
+if(BUILD_TESTING)
+    add_test_executable(guest_libc_internal_mtx_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcInternalMtx.cpp)
+    target_include_directories(guest_libc_internal_mtx_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_internal_mtx_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_libc_internal_mtx_tests)
+    add_test(NAME guest_libc_internal_mtx COMMAND guest_libc_internal_mtx_tests)
+    set_tests_properties(guest_libc_internal_mtx PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_internal_mtx PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()
 if(BUILD_TESTING)
     add_test_executable(guest_init_once_tests ${LIBS_INCLUDE_DIR}/tests/GuestInitOnce.cpp)
     target_include_directories(guest_init_once_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -20,6 +47,7 @@ target_sources(libSceLibcInternal PRIVATE Err.cpp)
 configure_windows_unwind(libSceLibcInternal)
 target_sources(libSceLibcInternal PRIVATE FilesystemStatistics.cpp PathStatistics.cpp)
 target_sources(libSceLibcInternal PRIVATE Inet.cpp)
+target_sources(libSceLibcInternal PRIVATE InventoryExports6.cpp)
 target_sources(libSceLibcInternal PRIVATE Filesystem.cpp)
 
 if(BUILD_TESTING)
@@ -193,4 +221,41 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libc_filesystem PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
+endif()
+
+target_sources(libSceLibcInternal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Sigvec.cpp)
+
+if(BUILD_TESTING AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    add_test_executable(guest_sigvec_modules_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestSigvecModules.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
+    target_include_directories(guest_sigvec_modules_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
+    target_link_libraries(guest_sigvec_modules_tests PRIVATE ${CMAKE_DL_LIBS})
+    set_source_files_properties(${LIBS_INCLUDE_DIR}/tests/GuestSigvecModules.cpp PROPERTIES COMPILE_OPTIONS "-fno-exceptions;-fno-asynchronous-unwind-tables")
+    if(MINGW)
+        target_compile_options(guest_sigvec_modules_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(guest_sigvec_modules_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_library(sigvec_modules_exceptions SHARED ${LIBS_INCLUDE_DIR}/tests/SigvecModulesExceptions.cpp)
+    target_include_directories(sigvec_modules_exceptions PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(sigvec_modules_exceptions PRIVATE libc)
+    set_target_properties(sigvec_modules_exceptions PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    configure_windows_unwind(sigvec_modules_exceptions)
+    add_dependencies(guest_sigvec_modules_tests libc libkernel libSceLibcInternal nid_patcher sigvec_modules_exceptions)
+    set(sigvecAllocatorArgument)
+    if(TARGET mimalloc)
+        set(sigvecAllocatorArgument -DALLOCATOR_DIRECTORY=$<TARGET_FILE_DIR:mimalloc>)
+    endif()
+    add_test(NAME guest_sigvec_modules COMMAND ${CMAKE_COMMAND}
+        -DEXCEPTION_PROBE=$<TARGET_FILE:sigvec_modules_exceptions>
+        -DPATCHER=$<TARGET_FILE:nid_patcher>
+        -DLIBC=$<TARGET_FILE:libc>
+        -DKERNEL=$<TARGET_FILE:libkernel>
+        -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
+        ${sigvecAllocatorArgument}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sigvec-modules
+        -P ${LIBS_INCLUDE_DIR}/tests/SigvecModules.cmake
+        -- "$<TARGET_FILE:guest_sigvec_modules_tests>")
+    set_tests_properties(guest_sigvec_modules PROPERTIES TIMEOUT 20)
 endif()

@@ -80,19 +80,32 @@ def read_log(lines):
     for line in lines:
         text = line.rstrip("\r\n")
         if text.startswith("[ab] in-run A/B:"):
+            if config is not None or phases:
+                raise ValueError("multiple A/B runs in one log; split the captures before comparing phases")
             config = text
             continue
         match = PHASE.match(text)
         if match:
             kind, index, event, present, seconds = match.group(1), int(match.group(2)), match.group(3), int(match.group(4)), finite(float(match.group(5)))
+            point = (present, seconds)
+
             if event == "begins":
+                if phases and index <= phases[-1]["index"]:
+                    raise ValueError("phase index restarts in one log (multiple A/B runs); split the captures before comparing phases")
+
                 if current is not None:
-                    current["end"] = (present, seconds)
-                current = {"kind": kind, "index": index, "begin": (present, seconds), "settled": None, "end": None,
+                    current["end"] = point
+
+                current = {"kind": kind, "index": index, "begin": point, "settled": None, "end": None,
                            "reports": {name: [] for name, _ in KINDS}}
                 phases.append(current)
+
             elif current is not None and current["index"] == index and current["kind"] == kind:
-                current["settled"] = (present, seconds)
+                previous_point = current["begin"]
+                if point[0] < previous_point[0] or point[1] < previous_point[1]:
+                    raise ValueError("phase settled before it began")
+                current["settled"] = point
+
             continue
         for name, prefix in KINDS:
             if text.startswith(prefix):
@@ -142,7 +155,8 @@ def noise(values, phases):
         if phase["kind"] != "B" or values[index] is None:
             continue
         neighbours = [values[other] for other in (index - 1, index + 1)
-                      if 0 <= other < len(phases) and phases[other]["kind"] == "A" and values[other] is not None]
+                      if 0 <= other < len(phases) and phases[other]["kind"] == "A"
+                      and abs(phases[other]["index"] - phase["index"]) == 1 and values[other] is not None]
         if neighbours:
             differences.append(values[index] - finite_sum(neighbours) / len(neighbours))
     if not differences:

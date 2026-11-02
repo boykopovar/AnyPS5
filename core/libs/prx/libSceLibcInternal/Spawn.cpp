@@ -378,7 +378,7 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     CloseRedirectedStreams(streams);
     CloseHandle(process.hThread);
     RegisterChildProcess_nid_no_patch(process.dwProcessId, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(process.hProcess)));
-    *processId = static_cast<std::int32_t>(process.dwProcessId);
+    if (processId != nullptr) *processId = static_cast<std::int32_t>(process.dwProcessId);
     return 0;
 }
 #else
@@ -444,7 +444,7 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
 #endif
         pid_t childPid = -1;
         result = posix_spawn(&childPid, target.c_str(), usedActions, usedAttributes, arguments, hostEnvironment);
-        if (result == 0) *processId = static_cast<std::int32_t>(childPid);
+        if (result == 0 && processId != nullptr) *processId = static_cast<std::int32_t>(childPid);
     }
     if (usedActions != nullptr) posix_spawn_file_actions_destroy(usedActions);
     if (usedAttributes != nullptr) posix_spawnattr_destroy(usedAttributes);
