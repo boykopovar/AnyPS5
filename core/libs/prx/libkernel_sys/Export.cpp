@@ -36,6 +36,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 
@@ -591,6 +592,9 @@ std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
     bool withoutVnode = false;
 #ifdef _WIN32
     if (GuestFstat(fd, &withoutVnode) != 0) return Fail(GuestEbadf);
+    std::shared_ptr<void> owner;
+    std::uintptr_t native = 0;
+    withoutVnode = withoutVnode || KernelLookupSocketNative_nid_no_patch(fd, &owner, &native);
 #else
     struct stat status{};
     if (::fstat(fd, &status) != 0) return Fail(GuestEbadf);
@@ -1154,7 +1158,7 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
 
 int APS5_VABI scePthreadCondattrGetclock(const PthreadCondattr* attr, KernelClockid* clockId) {
     if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    if (!clockId) throw std::runtime_error("scePthreadCondattrGetclock: null clock id");
+    if (!clockId) throw std::invalid_argument("scePthreadCondattrGetclock: null clock id");
     *clockId = (*attr)->_clockid;
     return 0;
 }
