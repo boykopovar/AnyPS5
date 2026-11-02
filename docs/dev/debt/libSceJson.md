@@ -27,3 +27,7 @@
 - [_ZNK3sce4Json5Value8getValueERKSbIcSt11char_traitsIcENS0_8StlAllocIcEEE](../../../core/libs/prx/libSceJson/Export.cpp) (libSceJson) - NID `1sKGLPtkdow` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
 - [_ZNK3sce4Json5Value8toStringERSbIcSt11char_traitsIcENS0_8StlAllocIcEEE](../../../core/libs/prx/libSceJson/Export.cpp) (libSceJson) - NID `RQpBshscViM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
 - [_ZNK3sce4Json5ValueixERKSbIcSt11char_traitsIcENS0_8StlAllocIcEEE](../../../core/libs/prx/libSceJson/Export.cpp) (libSceJson) - NID `F-bQmUqmTpI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
+### Known export names; ABI prototypes unverified
+
+- The other 5 pending exports in [Export.cpp](../../../core/libs/prx/libSceJson/Export.cpp) are present in the [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs) inventory. Their prototypes and behavior are unverified. They use the no-parameter import-resolution convention and throw through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim.
