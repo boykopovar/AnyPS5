@@ -84,11 +84,21 @@ int main() {
     Require(result == 0 ? (probe >= 0 && probe <= 130) : (result == SCE_KERNEL_ERROR_EINVAL && probe == -12345));
     *__error_nid_postfix() = 0;
     Require(sceKernelGetSocSensorTemperature(64, nullptr) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelGetSocSensorTemperature(64, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
     int channel64 = -12345;
     Require(sceKernelGetSocSensorTemperature(64, &channel64) == 0 && channel64 == -49);
     int cpuProbe = -12345;
     const int cpuResult = sceKernelGetCpuTemperature(&cpuProbe);
     Require(cpuResult == 0 ? (cpuProbe >= 0 && cpuProbe <= 130) : (cpuResult == SCE_KERNEL_ERROR_EINVAL && cpuProbe == -12345));
+    if (result == 0) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelGetSocSensorTemperature(0, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
+    }
+    if (cpuResult == 0) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelGetCpuTemperature(reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
+    }
 
     Require(sceKernelGetSocPowerConsumption(nullptr) == SCE_KERNEL_ERROR_EFAULT);
     std::uint32_t consumption[32];

@@ -15,6 +15,17 @@ import check_test_registration
 
 
 class RegistrationTests(unittest.TestCase):
+    def test_truncated_registration_commands_are_rejected(self):
+        for tail in ('set_tests_properties(bounds PROPERTIES DISABLED TRUE',
+                     'set_tests_properties(bounds PROPERTIES DISABLED TRUE # truncated',
+                     'subdirs(nested', 'add_test(other /build/tests/other_tests'):
+            with self.subTest(tail=tail), tempfile.TemporaryDirectory() as directory:
+                build = Path(directory)
+                (build / 'CTestTestfile.cmake').write_text(
+                    'add_test(bounds /build/tests/buffer_bounds_tests)\n' + tail, encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'unterminated'):
+                    check_test_registration.registered(build)
+
     @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the argument oracle")
     def test_quoted_semicolons_match_real_cmake_arguments(self):
         values = ["left" + "\\" * count + ";right" for count in range(9)]
@@ -129,6 +140,18 @@ class RegistrationTests(unittest.TestCase):
             (build / "nested/CTestTestfile.cmake").write_text(
                 'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
             self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
+
+    def test_looping_subdirectory_is_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "nested").mkdir()
+            os.symlink("second", build / "first")
+            os.symlink("first", build / "second")
+            (build / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
+            (build / "nested/CTestTestfile.cmake").write_text(
+                'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
+            self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
+            self.assertEqual(check_test_registration.registered(build / "first"), set())
 
     def test_literal_prefixes_cannot_expose_commands_inside_arguments(self):
         prefixes = (r"\#", r"\(", '"prefix" ', '"" ', '"line\nprefix" ', "[[prefix]] ",
@@ -393,7 +416,7 @@ class RegistrationTests(unittest.TestCase):
 
     def run_tool(self, build):
         return subprocess.run([sys.executable, "-I", str(Path(check_test_registration.__file__)), str(build)],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, encoding="utf-8", timeout=30)
 
     def test_missing_build_directory_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:

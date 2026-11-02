@@ -56,6 +56,7 @@ public:
         append(key, request.context.vertex);
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
+        append(key, request.context.layerRowSamples);
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
@@ -90,6 +91,7 @@ private:
         append(key, request.context.vertex);
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
+        append(key, request.context.layerRowSamples);
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
@@ -338,6 +340,7 @@ private:
         append(key, value.tessellation);
         append(key, value.nonConstantImageOffsets);
         append(key, value.srgbDecodeFormats);
+        append(key, value.maxImageArrayLayers);
         append(key, value.narrowSubgroupClock);
         append(key, value.fragmentBarycentricBuiltins);
         append(key, value.float64DenormPreserve);
@@ -345,6 +348,7 @@ private:
         append(key, value.registrationModules);
         append(key, value.registrationWordLimit);
         append(key, value.vertexSubgroups);
+        append(key, value.tessellationEvaluationSubgroups);
         append(key, value.float16DenormPreserve);
         append(key, value.spannedWaves);
         append(key, value.robustBufferAccess2);
@@ -358,6 +362,7 @@ private:
         append(key, value.deviceScopeLdsMemoryBarriers);
         append(key, value.ldsLockFences);
         append(key, value.meshWindowBuffer);
+        append(key, value.hostInterpolationFirst);
     }
 };
 
