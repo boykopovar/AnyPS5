@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -26,6 +27,14 @@
 #include <optional>
 #include <span>
 #include <string>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -157,6 +166,31 @@ void RequirePattern(const std::byte* plane, const Layout& layout, const std::str
     }
 }
 
+void RequireDrawAgainstPlane(std::span<const std::byte> pixels, const std::byte* plane, const Layout& layout, const std::string& what) {
+    bool differs = false;
+    for (std::uint32_t y = 0; y < layout.extent.height; ++y) {
+        for (std::uint32_t x = 0; x < layout.extent.width; ++x) {
+            const auto held = TexelAt(plane, layout, x, y);
+            differs = differs || (held > 0.5f) != (Expected(layout.extent, x, y) > 0.5f);
+            const bool passed = std::to_integer<std::uint8_t>(pixels[(static_cast<std::size_t>(y) * layout.extent.width + x) * 4u]) == 255u;
+            if (passed != (held > 0.5f)) Require(false, what + ": a draw at depth 0.5 under LESS " + (passed ? "passed" : "failed") + " at " + std::to_string(x) + "," + std::to_string(y) + " against " + std::to_string(held) + ", the plane's bytes in that tiling");
+        }
+    }
+    Require(differs, what + ": the plane's bytes do not differ from the pattern, so the draw cannot show a reload");
+}
+
+std::array<std::uint32_t, 8> SampledWords(std::uintptr_t address, VkExtent2D extent) {
+    const auto base = static_cast<std::uint64_t>(address) >> 8u;
+    const auto widthMinus1 = extent.width - 1u;
+    const auto heightMinus1 = extent.height - 1u;
+    std::array<std::uint32_t, 8> words{};
+    words[0] = static_cast<std::uint32_t>(base);
+    words[1] = static_cast<std::uint32_t>((base >> 32u) & 0xffu) | (Format32Float << 20u) | ((widthMinus1 & 0x3u) << 30u);
+    words[2] = ((widthMinus1 >> 2u) & 0xfffu) | ((heightMinus1 & 0x3fffu) << 14u);
+    words[3] = 4u | (5u << 3u) | (6u << 6u) | (7u << 9u) | (0x18u << 20u) | (9u << 28u);
+    return words;
+}
+
 void TileModeSwitch(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, TextureTileMode first, TextureTileMode second) {
     constexpr VkExtent2D extent{512, 256};
     const auto firstLayout = Describe(first, extent);
@@ -190,13 +224,24 @@ void TileModeSwitch(AgcDriver::VulkanDevice& device, const DepthFastClearHarness
     DrawPattern(device, shaders, firstDepth, extent, pixels);
     Draw(device, shaders, secondDepth, {}, extent, pixels);
     RequirePattern(plane, firstLayout, what + ": the plane drawn in the first tiling, after the second was bound");
-    for (std::uint32_t y = 0; y < extent.height; ++y) {
-        for (std::uint32_t x = 0; x < extent.width; ++x) {
-            const auto held = TexelAt(plane, secondLayout, x, y);
-            const bool passed = std::to_integer<std::uint8_t>(pixels[(static_cast<std::size_t>(y) * extent.width + x) * 4u]) == 255u;
-            if (passed != (held > 0.5f)) Require(false, what + ": a draw at depth 0.5 under LESS " + (passed ? "passed" : "failed") + " at " + std::to_string(x) + "," + std::to_string(y) + " against " + std::to_string(held) + ", the plane's bytes in the second tiling");
-        }
-    }
+    RequireDrawAgainstPlane(pixels, plane, secondLayout, what + ": in the second tiling");
+
+    DrawPattern(device, shaders, firstDepth, extent, pixels);
+    DrawPattern(device, shaders, secondDepth, extent, pixels);
+    Draw(device, shaders, firstDepth, {}, extent, pixels);
+    RequirePattern(plane, secondLayout, what + ": the plane drawn in the second tiling, after the first was bound again");
+    RequireDrawAgainstPlane(pixels, plane, firstLayout, what + ": back in the first tiling on a new surface");
+
+    DrawPattern(device, shaders, firstDepth, extent, pixels);
+    const auto words = SampledWords(address, extent);
+    const auto sampled = AgcDriver::Graphics::DepthSurfaceTexture(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), words, AgcDriver::Graphics::DecodeTextureResource(words), VkComponentMapping{});
+    Require(sampled != nullptr, what + ": the depth surface was not sampled");
+    DrawPattern(device, shaders, secondDepth, extent, pixels);
+    const auto serial = AgcDriver::Graphics::DepthSurfacesSerial();
+    Draw(device, shaders, firstDepth, {}, extent, pixels);
+    Require(AgcDriver::Graphics::DepthSurfacesSerial() == serial, what + ": the sampled surface of the first tiling was not reused");
+    RequirePattern(plane, secondLayout, what + ": the plane drawn in the second tiling, after the reused surface was bound");
+    RequireDrawAgainstPlane(pixels, plane, firstLayout, what + ": back in the first tiling on the reused surface");
 }
 
 }
