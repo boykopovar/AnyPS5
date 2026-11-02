@@ -71,6 +71,11 @@ struct ViewLevelsPastChain {
     bool base = false;
 };
 
+class LayerRowSamplesRequired : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 class ResourceMaterializer {
 public:
     static ViewLevelsPastChain LevelsPastChain(const DescriptorValue& descriptor);

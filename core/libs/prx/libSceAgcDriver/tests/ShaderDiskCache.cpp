@@ -159,8 +159,10 @@ bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<
 void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShaderArtifact& right, const char* what) {
     const std::string prefix = std::string(what) + ": ";
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
+    require(left.meshWindowBuffer == right.meshWindowBuffer, prefix + "mesh window buffer flags differ");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
+    require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
@@ -174,6 +176,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
     require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
+    require(left.layerReplaySafe == right.layerReplaySafe, prefix + "layer replay proof differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
     require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
@@ -253,6 +256,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
 
 RecompileResult sampleResult() {
     RecompileResult result;
+    result.meshWindowBuffer = true;
     std::vector<std::uint32_t> words(1000);
     for (std::size_t i = 0; i < words.size(); ++i) words[i] = static_cast<std::uint32_t>(i * 2654435761u);
     words[0] = 0x07230203u;
@@ -265,6 +269,7 @@ RecompileResult sampleResult() {
     result.readsDepthRemapPush = true;
     result.bdaAbiVersion = 3;
     result.descriptorFaults = 2;
+    result.windowLaneGuards = 7u;
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
     result.fullSubgroups = true;
@@ -287,6 +292,7 @@ RecompileResult sampleResult() {
     result.stencilReferences = {0u, 17u, 255u};
     result.stencilReplaySafe = true;
     result.bdaWrites = true;
+    result.layerReplaySafe = true;
     result.stencilReferenceDword = 23u;
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
@@ -354,6 +360,9 @@ CompiledVariant sampleVariant() {
     image.sampledOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
+    image.layerRowsCompatible = false;
+    image.layerRows = true;
+    image.maxArrayLayers = 0x01020304u;
     image.optionalDescriptor = true;
     image.byElements = 4;
     image.byComponents = 1;
@@ -444,6 +453,13 @@ void verifyResultRoundTrip() {
     require(ShaderDiskCache::DecodeResult(bytes, decoded), "an encoded result does not decode");
     requireSameResult(result, decoded, "result round trip");
     require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
+    auto memoized = result;
+    memoized.drawKeyMemo.words.store(std::make_shared<const std::vector<std::uint32_t>>(std::vector<std::uint32_t>{1u, 2u, 3u}));
+    std::vector<std::byte> memoizedBytes;
+    ShaderDiskCache::EncodeResult(memoized, memoizedBytes);
+    require(memoizedBytes == bytes, "the draw key memo was stored");
+    RecompileResult memoizedDecoded;
+    require(ShaderDiskCache::DecodeResult(memoizedBytes, memoizedDecoded) && !memoizedDecoded.drawKeyMemo.words.load(), "a decoded result has a draw key memo");
     for (std::size_t size = 0; size < bytes.size(); size += size < 256 ? 1 : 97) {
         RecompileResult partial;
         require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial), "a result truncated to " + std::to_string(size) + " bytes decodes");
@@ -492,9 +508,11 @@ void verifyEntryRoundTrip() {
     auto previousVersion = file;
     previousVersion[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodeEntry(previousVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with the previous format version loads");
-    auto mainImageLayout = file;
-    mainImageLayout[4] = std::byte{49};
-    require(ShaderDiskCache::DecodeEntry(mainImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with main's image record layout loads");
+    for (const auto version : {51u, 52u, 53u}) {
+        auto otherImageLayout = file;
+        otherImageLayout[4] = static_cast<std::byte>(version);
+        require(ShaderDiskCache::DecodeEntry(otherImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with another image record layout loads");
+    }
     auto priorStencilVersion = file;
     priorStencilVersion[4] = std::byte{32};
     require(ShaderDiskCache::DecodeEntry(priorStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an artifact with the prior stencil format loads");
@@ -843,6 +861,7 @@ void verifyKeySensitivity() {
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("LDS lock fences", [](SampleRequest& sample) { sample.request.target.ldsLockFences = true; });
+    changes("mesh window buffers", [](SampleRequest& sample) { sample.request.target.meshWindowBuffer = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
@@ -2057,7 +2076,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];
         const auto& b = right.descriptorSources[index];
-        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || (a.tableColumn.has_value() && (a.tableColumn->keyDomains != b.tableColumn->keyDomains || a.tableColumn->unkeyed != b.tableColumn->unkeyed || a.tableColumn->maxKey != b.tableColumn->maxKey))) return false;
+        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || a.requiredBlocks != b.requiredBlocks || (a.tableColumn.has_value() && (a.tableColumn->keyDomains != b.tableColumn->keyDomains || a.tableColumn->unkeyed != b.tableColumn->unkeyed || a.tableColumn->maxKey != b.tableColumn->maxKey))) return false;
         for (std::size_t dword = 0; dword < a.dwords.size(); ++dword) {
             if (!sameValue(a.dwords[dword], b.dwords[dword])) return false;
         }
@@ -2171,9 +2190,11 @@ void verifyPlanEntryDamage(const std::vector<std::byte>& key, const IrResourcePl
     auto previousFormat = file;
     previousFormat[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodePlanEntry(previousFormat, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of the previous format loads");
-    auto mainImageLayout = file;
-    mainImageLayout[4] = std::byte{49};
-    require(ShaderDiskCache::DecodePlanEntry(mainImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with main's image record layout loads");
+    for (const auto version : {51u, 52u, 53u}) {
+        auto otherImageLayout = file;
+        otherImageLayout[4] = static_cast<std::byte>(version);
+        require(ShaderDiskCache::DecodePlanEntry(otherImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with another image record layout loads");
+    }
     auto otherSource = file;
     otherSource[8] ^= std::byte{1};
     require(ShaderDiskCache::DecodePlanEntry(otherSource, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of another source version loads");
