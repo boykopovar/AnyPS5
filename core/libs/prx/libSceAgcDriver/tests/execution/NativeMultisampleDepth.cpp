@@ -479,14 +479,17 @@ std::vector<std::uint32_t> FetchShader(std::uint32_t width, std::uint32_t height
 
 class Fetch {
 public:
-    Fetch(const Context& context, const Texture& texture, Buffer& output, std::span<const std::uint32_t> code, bool firstLayer = false) : context(context) {
+    Fetch(const Context& context, const Texture& texture, Buffer& output, std::span<const std::uint32_t> code, bool firstLayer = false) : Fetch(context, std::array{VkDescriptorImageInfo{VK_NULL_HANDLE, firstLayer ? texture.FirstLayerView() : texture.View(), texture.Layout()}}, output, code) {}
+    Fetch(const Context& context, std::span<const VkDescriptorImageInfo> images, Buffer& output, std::span<const std::uint32_t> code) : context(context) {
         try {
-            const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{{0u, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1u, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}, {1u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}}};
+            const auto imageBinding = [](std::size_t index) { return index == 0u ? 0u : static_cast<std::uint32_t>(index) + 1u; };
+            std::vector<VkDescriptorSetLayoutBinding> bindings{{1u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+            for (std::size_t index = 0u; index < images.size(); ++index) bindings.push_back({imageBinding(index), VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1u, VK_SHADER_STAGE_COMPUTE_BIT, nullptr});
             VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            info.bindingCount = 2u;
+            info.bindingCount = static_cast<std::uint32_t>(bindings.size());
             info.pBindings = bindings.data();
             Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &info, nullptr, &setLayout), "fetch descriptor layout");
-            const std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1u}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u}}};
+            const std::array<VkDescriptorPoolSize, 2> sizes{{{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, static_cast<std::uint32_t>(images.size())}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u}}};
             VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             poolInfo.maxSets = 1u;
             poolInfo.poolSizeCount = 2u;
@@ -494,10 +497,10 @@ public:
             Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &poolInfo, nullptr, &pool), "fetch descriptor pool");
             const VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, pool, 1u, &setLayout};
             Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocate, &set), "fetch descriptor set");
-            const VkDescriptorImageInfo image{VK_NULL_HANDLE, firstLayer ? texture.FirstLayerView() : texture.View(), texture.Layout()};
             const VkDescriptorBufferInfo buffer{output.Handle(), 0u, output.Bytes().size()};
-            const std::array<VkWriteDescriptorSet, 2> writes{{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 0u, 0u, 1u, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &image, nullptr, nullptr}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 1u, 0u, 1u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffer, nullptr}}};
-            context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 2u, writes.data(), 0u, nullptr);
+            std::vector<VkWriteDescriptorSet> writes{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 1u, 0u, 1u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &buffer, nullptr}};
+            for (std::size_t index = 0u; index < images.size(); ++index) writes.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, imageBinding(index), 0u, 1u, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &images[index], nullptr, nullptr});
+            context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0u, nullptr);
             VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
             layoutInfo.setLayoutCount = 1u;
             layoutInfo.pSetLayouts = &setLayout;
@@ -534,6 +537,67 @@ private:
     VkShaderModule module = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
 };
+
+std::vector<std::uint32_t> DepthStencilFetchShader(std::uint32_t width, std::uint32_t height, std::uint32_t fragments) {
+    ShaderRecompiler::SpirvModule module;
+    module.EmitCapability(spv::CapabilityShader);
+    module.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+    const auto u32 = module.Type(spv::OpTypeInt, 32u, 0u);
+    const auto i32 = module.Type(spv::OpTypeInt, 32u, 1u);
+    const auto f32 = module.Type(spv::OpTypeFloat, 32u);
+    const auto u4 = module.Type(spv::OpTypeVector, u32, 4u);
+    const auto f4 = module.Type(spv::OpTypeVector, f32, 4u);
+    const auto v3 = module.Type(spv::OpTypeVector, u32, 3u);
+    const auto v2 = module.Type(spv::OpTypeVector, i32, 2u);
+    const auto voidType = module.Type(spv::OpTypeVoid);
+    const auto constant = [&](std::uint32_t value) { return module.Constant(spv::OpConstant, u32, value); };
+    const auto array = module.Type(spv::OpTypeRuntimeArray, u4);
+    module.AddAnnotation(spv::OpDecorate, array, spv::DecorationArrayStride, 16u);
+    const auto block = module.Type(spv::OpTypeStruct, array);
+    module.AddAnnotation(spv::OpDecorate, block, spv::DecorationBlock);
+    module.AddAnnotation(spv::OpMemberDecorate, block, 0u, spv::DecorationOffset, 0u);
+    const auto buffer = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassStorageBuffer, block), spv::StorageClassStorageBuffer);
+    module.AddAnnotation(spv::OpDecorate, buffer, spv::DecorationDescriptorSet, 0u);
+    module.AddAnnotation(spv::OpDecorate, buffer, spv::DecorationBinding, 1u);
+    const auto depthType = module.Type(spv::OpTypeImage, f32, spv::Dim2D, 0u, 0u, 1u, 1u, spv::ImageFormatUnknown);
+    const auto stencilType = module.Type(spv::OpTypeImage, u32, spv::Dim2D, 0u, 0u, 1u, 1u, spv::ImageFormatUnknown);
+    const auto depth = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, depthType), spv::StorageClassUniformConstant);
+    module.AddAnnotation(spv::OpDecorate, depth, spv::DecorationDescriptorSet, 0u);
+    module.AddAnnotation(spv::OpDecorate, depth, spv::DecorationBinding, 0u);
+    const auto stencil = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassUniformConstant, stencilType), spv::StorageClassUniformConstant);
+    module.AddAnnotation(spv::OpDecorate, stencil, spv::DecorationDescriptorSet, 0u);
+    module.AddAnnotation(spv::OpDecorate, stencil, spv::DecorationBinding, 2u);
+    const auto group = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassInput, v3), spv::StorageClassInput);
+    module.AddAnnotation(spv::OpDecorate, group, spv::DecorationBuiltIn, spv::BuiltInWorkgroupId);
+    const auto main = module.AllocateId();
+    module.AddFunction(spv::OpFunction, voidType, main, spv::FunctionControlMaskNone, module.Type(spv::OpTypeFunction, voidType));
+    module.AddFunction(spv::OpLabel, module.AllocateId());
+    const auto loaded = module.AllocateId();
+    module.AddFunction(spv::OpLoad, v3, loaded, group);
+    const auto index = module.AllocateId();
+    module.AddFunction(spv::OpCompositeExtract, u32, index, loaded, 0u);
+    const auto operation = [&](spv::Op op, std::uint32_t type, auto... operands) {
+        const auto result = module.AllocateId();
+        module.AddFunction(op, type, result, operands...);
+        return result;
+    };
+    const auto pixel = operation(spv::OpUDiv, u32, index, constant(fragments));
+    const auto sample = operation(spv::OpUMod, u32, index, constant(fragments));
+    const auto x = operation(spv::OpBitcast, i32, operation(spv::OpUMod, u32, pixel, constant(width)));
+    const auto y = operation(spv::OpBitcast, i32, operation(spv::OpUMod, u32, operation(spv::OpUDiv, u32, pixel, constant(width)), constant(height)));
+    const auto coordinate = operation(spv::OpCompositeConstruct, v2, x, y);
+    const auto depthValue = operation(spv::OpImageFetch, f4, operation(spv::OpLoad, depthType, depth), coordinate, spv::ImageOperandsSampleMask, sample);
+    const auto stencilValue = operation(spv::OpImageFetch, u4, operation(spv::OpLoad, stencilType, stencil), coordinate, spv::ImageOperandsSampleMask, sample);
+    const auto depthBits = operation(spv::OpBitcast, u32, operation(spv::OpCompositeExtract, f32, depthValue, 0u));
+    const auto value = operation(spv::OpCompositeConstruct, u4, depthBits, operation(spv::OpCompositeExtract, u32, stencilValue, 0u), operation(spv::OpCompositeExtract, u32, stencilValue, 1u), operation(spv::OpCompositeExtract, u32, stencilValue, 3u));
+    const auto pointer = operation(spv::OpAccessChain, module.Type(spv::OpTypePointer, spv::StorageClassStorageBuffer, u4), buffer, constant(0u), operation(spv::OpIAdd, u32, index, constant(1u)));
+    module.AddFunction(spv::OpStore, pointer, value);
+    module.AddFunction(spv::OpReturn);
+    module.AddFunction(spv::OpFunctionEnd);
+    module.EmitEntryPoint(spv::ExecutionModelGLCompute, main, "main", {group});
+    module.AddExecutionMode(main, spv::ExecutionModeLocalSize, 1u, 1u, 1u);
+    return module.Finalize();
+}
 
 std::vector<std::uint32_t> DepthVertexShader() {
     ShaderRecompiler::SpirvModule module;
@@ -645,7 +709,7 @@ struct StencilUse {
 
 class DepthRaster {
 public:
-    DepthRaster(const Context& context, const DepthTarget& target, VkImageView view, std::optional<StencilUse> stencil = std::nullopt, bool perSampleStencil = false) : context(context), extent(target.extent), samples(target.samples) {
+    DepthRaster(const Context& context, const DepthTarget& target, VkImageView view, std::optional<StencilUse> stencil = std::nullopt, bool perPixel = false, bool perSampleStencil = false) : context(context), extent(target.extent), samples(target.samples) {
         try {
             const auto stencilLoad = target.stencilAddress != 0u ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
             const auto stencilStore = target.stencilAddress != 0u ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -706,7 +770,12 @@ public:
                 depth.front = depth.back = {VK_STENCIL_OP_KEEP, stencil->pass, VK_STENCIL_OP_KEEP, stencil->compare, 0xffu, 0xffu, stencil->reference};
             }
             VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+            constexpr std::array<VkDynamicState, 2> dynamicStates{VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_REFERENCE};
+            VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+            dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
+            dynamic.pDynamicStates = dynamicStates.data();
             VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            if (perPixel) info.pDynamicState = &dynamic;
             info.stageCount = 2u;
             info.pStages = stages.data();
             info.pVertexInputState = &input;
@@ -740,6 +809,31 @@ public:
             context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[sample]);
             context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
             context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
+        }
+        context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    }
+    template<typename Reference>
+    void RunPerPixel(VkCommandBuffer commands, float offset, Reference reference) const {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        begin.renderPass = pass;
+        begin.framebuffer = framebuffer;
+        begin.renderArea = {{0, 0}, extent};
+        context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        for (std::uint32_t sample = 0u; sample < samples; ++sample) {
+            const auto value = offset + static_cast<float>(sample + 1u) / 16.0f;
+            context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[sample]);
+            context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
+            for (std::uint32_t row = extent.height; row-- > 0u;) {
+                for (std::uint32_t column = extent.width; column-- > 0u;) {
+                    const auto x = column, y = row;
+                    const VkRect2D scissor{{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)}, {1u, 1u}};
+                    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0u, 1u, &scissor);
+                    context.Function<PFN_vkCmdSetStencilReference>("vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, reference(x, y, sample));
+                    context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
+                }
+            }
         }
         context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
@@ -871,7 +965,7 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
     }
     if (write == PublicationWrite::DrawPending) QueueTargetByteWrite(context, recorder, target.address + depthBytes - 1u, std::byte{0x7e});
     NoteDepthSurfaceWrite(context, target);
-    raster = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x20u}, true);
+    raster = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x20u}, false, true);
     raster->Run(recorder.Commands(), 0.25f);
     const bool stencilFill = clear >= PublicationClear::Stencil;
     const bool redraw = clear == PublicationClear::Redraw || clear == PublicationClear::Different || clear >= PublicationClear::StencilRedraw;
@@ -2341,6 +2435,94 @@ void CheckAliasedStencil(Context context, std::uint32_t fragments, AliasCase whi
     std::printf("Native depth over a stencil plane aliased by an R8 colour target samples=%u case=%u: %s, refilled from its fill, refused once the colour target drew\n", fragments, static_cast<std::uint32_t>(which), which == AliasCase::Cleared ? "imported from the colour target's clear" : "imported unproven and proven by a whole-plane fill the colour target absorbed");
 }
 
+void CheckStencilView(Context context, std::uint32_t fragments) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments));
+    TargetMemory memory(bytes), stencil(stencilBytes), metadata(65536u);
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::memset(metadata.Data(), 0, metadataBytes);
+    std::memset(stencil.Data(), 0, stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0u, metadata.Address(), false, fragments};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = 0x8c00u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    const auto depthWords = DepthSampleWords(target);
+    const auto stencilWords = StencilSampleWords(target);
+    auto depth = CachedSampledTexture(context, depthWords);
+    auto stencilTexture = CachedSampledTexture(context, stencilWords);
+    Require(depth != nullptr && stencilTexture != nullptr && stencilTexture != depth && CachedSampledTexture(context, stencilWords) == stencilTexture, "the stencil plane of a native D32S8 target was not given its own reused sampled view");
+    Require(DepthSurfaceHolds(context, DecodeTextureResource(stencilWords), stencilTexture.get()), "the native stencil view is not held by its attachment");
+    recorder.Sync();
+    const auto count = extent.width * extent.height * fragments;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const std::array images{VkDescriptorImageInfo{VK_NULL_HANDLE, depth->View(), depth->Layout()}, VkDescriptorImageInfo{VK_NULL_HANDLE, stencilTexture->View(), stencilTexture->Layout()}};
+    const Fetch fetch(context, images, output, DepthStencilFetchShader(extent.width, extent.height, fragments));
+    const DepthRaster raster(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0u}, true);
+    const auto check = [&](std::optional<float> drawn, auto reference) {
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<std::uint32_t, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            const auto sample = index % fragments, pixel = index / fragments;
+            const auto expected = drawn ? *drawn + static_cast<float>(sample + 1u) / 16.0f : target.clearDepth;
+            const auto stencilExpected = drawn ? reference(pixel % extent.width, pixel / extent.width, sample) : target.clearStencil;
+            Require(result == std::array<std::uint32_t, 4>{std::bit_cast<std::uint32_t>(expected), stencilExpected, 0u, 1u}, "a native D32S8 sample read through the depth and stencil views in one dispatch lost its depth, its stencil or the stencil view's component mapping");
+        }
+        Require(std::all_of(output.Bytes().begin(), output.Bytes().begin() + 16u, [](auto byte) { return byte == std::byte{0xa5}; }), "the depth and stencil fetch changed its output guard");
+    };
+    check(std::nullopt, [](std::uint32_t, std::uint32_t, std::uint32_t) { return 0u; });
+    for (const auto round : {0u, 1u}) {
+        const auto reference = [&](std::uint32_t x, std::uint32_t y, std::uint32_t sample) { return 0x10u + round * 0x78u + (y * extent.width + x) * fragments + sample; };
+        const auto offset = static_cast<float>(round) / 8.0f;
+        {
+            CommandBatch rasterBatch(context);
+            raster.RunPerPixel(rasterBatch.Handle(), offset, reference);
+            rasterBatch.SubmitAndWait();
+        }
+        Require(CachedSampledTexture(context, stencilWords) == stencilTexture && CachedSampledTexture(context, depthWords) == depth, "a raster write replaced the native depth or stencil view");
+        recorder.Sync();
+        check(offset, reference);
+    }
+    auto resource = DecodeTextureResource(stencilWords);
+    for (const auto& [field, expected] : std::array{
+             std::pair{0u, "native multisample depth sampled identity or format mismatch"},
+             std::pair{1u, "native multisample depth sampled identity or format mismatch"},
+             std::pair{2u, "native multisample depth sampled identity or format mismatch"},
+             std::pair{3u, "native multisample depth sampled array, mip or layout is not implemented"},
+             std::pair{4u, "native multisample depth sampled metadata or XOR mismatch"},
+             std::pair{5u, "native multisample depth sampled metadata or XOR mismatch"}}) {
+        auto changed = resource;
+        switch (field) {
+            case 0u: changed.format = 1u; break;
+            case 1u: changed.samples = fragments == 2u ? 4u : 2u; break;
+            case 2u: ++changed.width; break;
+            case 3u: changed.tileMode = TextureTileMode::kR64KBX; break;
+            case 4u: changed.pipeBankXor ^= 0x100u; break;
+            case 5u: changed.dccAddress = target.htileAddress; break;
+        }
+        TargetRefuses([&] { DepthSurfaceTexture(context, stencilWords, changed, VkComponentMapping{}); }, expected);
+    }
+    Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0}; }), "sampling the native stencil view read or wrote the guest stencil plane");
+    stencilTexture.reset();
+    depth.reset();
+    std::printf("Native D32S8 stencil view samples=%u: per-pixel, per-sample stencil and depth read in one dispatch through an R8_UINT and a D32 2D MSAA T#, twice after raster writes; other stencil descriptors refused\n", fragments);
+}
+
 void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
@@ -3096,6 +3278,18 @@ int main(int argc, char** argv) {
                 }
             }
             std::printf("Native depth with an aliased stencil plane cases checked=%u unavailable=%u\n", checked, unavailable);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--stencil-view") {
+            const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) && (context.limits.framebufferStencilSampleCounts & samples) != 0u && (context.limits.sampledImageStencilSampleCounts & samples) != 0u; };
+            Require(supported(4u), "the native stencil view regression requires sampled D32S8 depth and stencil with four samples");
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { ++unavailable; continue; }
+                CheckStencilView(context, samples);
+                ++checked;
+            }
+            std::printf("Native D32S8 stencil view cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--expand-gate") {

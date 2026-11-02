@@ -76,11 +76,11 @@ static bool HasSettings(const Http2Handle& handle) {
 }
 
 template<class TUpdate>
-static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false) {
+static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false, bool contextHasSettings = false) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindAnyHandle(id);
     if (!handle) return ERROR_INVALID_ID;
-    if (!HasSettings(*handle)) {
+    if (!HasSettings(*handle) && !(contextHasSettings && handle->kind == Http2Kind::Context)) {
         if (otherKindsAreInvalid) return ERROR_INVALID_ID;
         NotImplemented_nid_no_patch(function);
     }
@@ -301,14 +301,14 @@ int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t ssl_flags) {
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslDisableOption");
         settings.verifyFlags &= ~ssl_flags;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslEnableOption");
         settings.verifyFlags |= ssl_flags;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
