@@ -14,8 +14,6 @@ if(BUILD_TESTING)
         set_tests_properties(guest_rtc guest_rtc_ps5_title PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRtc>")
     endif()
-endif()
-if(BUILD_TESTING)
     add_test_executable(guest_rtc_parse_extents_tests ${LIBS_INCLUDE_DIR}/tests/GuestRtcParseExtents.cpp)
     target_include_directories(guest_rtc_parse_extents_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_rtc_parse_extents_tests PRIVATE libSceRtc libc)
