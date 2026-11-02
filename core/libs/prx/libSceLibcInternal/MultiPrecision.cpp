@@ -1,3 +1,6 @@
+/* Derived from Microsoft STL stl/src/multprec.cpp (219514876ea86491de191ceaa88632616bbc0f19) */
+/* Copyright (c) Microsoft Corporation.
+ * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception */
 #include "prx/libSceLibcInternal/include/MultiPrecision.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include <algorithm>
