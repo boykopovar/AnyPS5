@@ -12,6 +12,7 @@ from test_macos_output import MachO
 from test_macos_executable_exports import executable as exported_executable, exports
 from test_macos_tls_exports import guest as tls_export
 from test_tls_function_coverage import TLS_LOAD, add_alias, make_image, pe_bytes_at
+from test_windows_tls_protected_entries import make_image as entry_image
 
 
 RUNNER = Path(__file__).with_name("windows_image_runner.py")
@@ -219,6 +220,14 @@ def module_cases(relinker, work, baseline):
 
 
 def rejected_cases(relinker, work):
+    for name, prefix, diagnostic in (("tls", 0x64, "Code analysis: overlapping instruction boundaries"),
+                                      ("gs", 0x65, "GS trap would overwrite an executable entry point")):
+        image = entry_image("symbol")
+        image[0x210:0x21a] = bytes([prefix]) + bytes.fromhex("48 8b 04 25 00 00 00 00 c3")
+        run, artifact = convert(relinker, work, f"protected-{name}-entry", "macos", image)
+        assert run.returncode == 2 and diagnostic in run.stderr, (name, run.returncode, run.stdout, run.stderr)
+        assert "(offset 0x214)" in run.stderr, (name, run.stderr)
+        assert not artifact.exists(), artifact
     cases = []
     for name, value, info, size in (("unmapped-function", 0x3000, 0x12, 1),
                                     ("data-function", 0x2000, 0x12, 1),
