@@ -2290,10 +2290,16 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             throw std::runtime_error(text);
         }
         std::erase_if(state.gateRefusals, [&](const auto& refusal) { return refusal.first.first < base + bytes && base < refusal.first.first + refusal.first.second; });
+        bool boundsRefused = false;
         try {
-            entry.alias = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
+            entry.alias = entry.ranges.size() == 1
+                ? GuestArena::GuestArenaMapAliasForImport_nid_no_patch(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes), &boundsRefused)
+                : GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
         } catch (const std::runtime_error&) {
-            if (entry.ranges.size() == 1) return failedImport();
+            if (entry.ranges.size() == 1) {
+                if (!boundsRefused) throw;
+                return failedImport();
+            }
             return joined ? failedImport() : failedBlockImport();
         }
         if (entry.alias == nullptr) return nullptr;

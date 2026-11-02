@@ -58,6 +58,7 @@ void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, 
 void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection);
 void GuestArenaMapFile_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection, std::uint32_t viewProtection, std::size_t sectionBytes);
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes);
+void* GuestArenaMapAliasForImport_nid_no_patch(std::uintptr_t address, std::size_t bytes, bool* boundsRefused);
 void GuestArenaUnmapAlias_nid_postfix(void* alias);
 bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uintptr_t* start, std::uintptr_t* end);
 void GuestArenaCompareWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes);

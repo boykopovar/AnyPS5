@@ -400,8 +400,9 @@ public:
         if (page < run->second.end) run->second.imported = true;
     }
 
-    void* MapAlias(std::uintptr_t address, std::size_t bytes) {
+    void* MapAlias(std::uintptr_t address, std::size_t bytes, bool* boundsRefused = nullptr) {
         std::lock_guard lock(mutex);
+        if (boundsRefused != nullptr) *boundsRefused = false;
         const auto refuse = [&](const char* reason) {
             char text[192];
             std::snprintf(text, sizeof(text), "read-write alias of shared guest memory 0x%llx+0x%llx: %s", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), reason);
@@ -412,7 +413,10 @@ public:
             const auto found = views.find(address + done);
             if (found == views.end() || !found->second.resident) continue;
             const auto run = std::prev(residentRuns.upper_bound(address + done));
-            if (run->first < address || run->second.end > address + bytes) throw refuse("a resident run of direct memory extends outside the range");
+            if (run->first < address || run->second.end > address + bytes) {
+                if (boundsRefused != nullptr) *boundsRefused = true;
+                throw refuse("a resident run of direct memory extends outside the range");
+            }
             for (auto page = views.find(run->first); page != views.end() && page->first < run->second.end; ++page) {
                 if (page->second.hostWrites != 0) return nullptr;
             }

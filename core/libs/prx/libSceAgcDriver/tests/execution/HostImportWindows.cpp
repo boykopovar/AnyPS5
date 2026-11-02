@@ -22,6 +22,7 @@
 #include <mutex>
 #include <string>
 #include <span>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -210,6 +211,56 @@ Outcome SmallMappingsImportOnFirstUse() {
     return Outcome::Passed;
 }
 
+void AliasFailurePropagates(AgcDriver::VulkanDevice& device) {
+#ifdef _WIN32
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    struct Cleanup {
+        VkDevice device;
+        HANDLE section = nullptr;
+        void* data = nullptr;
+        bool registered = false;
+        ~Cleanup() {
+            Graphics::ClearHostImports(device);
+            if (registered) GuestAllocations::Mutation().Remove(data);
+            if (data != nullptr) UnmapViewOfFile(data);
+            if (section != nullptr) CloseHandle(section);
+        }
+    } cleanup{device.Device()};
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    Graphics::ClearHostImports(device.Device());
+    cleanup.section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, GuestAlignment, nullptr);
+    Require(cleanup.section != nullptr, "cannot create the alias failure backing");
+    cleanup.data = MapViewOfFile(cleanup.section, FILE_MAP_WRITE, 0, 0, GuestAlignment);
+    Require(cleanup.data != nullptr, "cannot map the alias failure backing");
+    const auto address = reinterpret_cast<std::uintptr_t>(cleanup.data);
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+    Require(!GuestArena::GuestArenaResidentSpan_nid_postfix(address, GuestAlignment, &begin, &end), "alias failure fixture overlaps a resident run");
+    bool aliasThrew = false;
+    try {
+        auto* alias = GuestArena::GuestArenaMapAlias_nid_postfix(address, GuestAlignment);
+        GuestArena::GuestArenaUnmapAlias_nid_postfix(alias);
+    } catch (const std::runtime_error& error) {
+        std::printf("non-bounds alias failure: %s\n", error.what());
+        aliasThrew = true;
+    }
+    Require(aliasThrew, "alias failure fixture did not throw");
+    GuestAllocations::Mutation().Add(cleanup.data, GuestAlignment, true, true, true);
+    cleanup.registered = true;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        bool threw = false;
+        try {
+            Graphics::HostImportFor(context, address, ProbeBytes);
+        } catch (const std::runtime_error& error) {
+            std::printf("single-range alias failure propagated: %s\n", error.what());
+            threw = true;
+        }
+        Require(threw, "single-range non-bounds alias failure was swallowed as a fallback");
+        Require(Graphics::ExistingHostImportFor(context, address, ProbeBytes) == nullptr && Graphics::HostImportLiveBytes() == 0, "alias failure left a live import");
+    }
+#endif
+}
+
 void PartialResidentAliasDispatch(AgcDriver::VulkanDevice& device, bool left) {
 #ifdef _WIN32
     constexpr std::size_t page = GuestAlignment;
@@ -294,6 +345,17 @@ void PartialResidentAliasDispatch(AgcDriver::VulkanDevice& device, bool left) {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--alias-failure") {
+            auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            if (AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).hostImportAlignment == 0) {
+                std::puts("skipped, the device does not import guest memory");
+                return VulkanTestSkipped;
+            }
+            AliasFailurePropagates(*device);
+            std::puts("single-range alias failure propagation tests passed");
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--partial-resident-alias") {
             auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
