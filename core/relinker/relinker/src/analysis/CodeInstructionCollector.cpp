@@ -11,6 +11,7 @@
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <bit>
+#include <cstring>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -40,6 +41,85 @@ public:
         return result;
     }
 };
+
+constexpr std::uint16_t CalleeSavedRegisters = 0xf038;
+constexpr std::size_t PointerFlowInstructions = 64;
+constexpr std::size_t PointerWalkInstructions = 4096;
+
+std::uint16_t registerBit(unsigned number) {
+    return static_cast<std::uint16_t>(1u << number);
+}
+
+unsigned modRmRegister(const Codegen::DecodedInstructionInfo& info) {
+    return info.ModRmRegField | ((info.RexPrefix & 4u) << 1);
+}
+
+unsigned modRmBase(const Codegen::DecodedInstructionInfo& info) {
+    return (info.ModRmByte & 7u) | ((info.RexPrefix & 1u) << 3);
+}
+
+std::uint16_t writtenRegisters(const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
+    constexpr std::uint16_t rax = 1, rcx = 2, rdx = 4, rbx = 8, rsp = 16, rbp = 32, rsi = 64, rdi = 128, r11 = 0x800;
+    const auto op = info.Opcode;
+    const auto digit = info.ModRmRegField;
+    const std::uint16_t reg = info.HasModRm ? registerBit(modRmRegister(info)) : 0;
+    const std::uint16_t rm = info.HasModRm && (info.ModRmByte >> 6) == 3 ? registerBit(modRmBase(info)) : 0;
+    const auto embedded = registerBit((op & 7u) | ((info.RexPrefix & 1u) << 3));
+    if (info.IsTwoByteOpcode) {
+        if (op >= 0xc8 && op <= 0xcf) return embedded;
+        if (op >= 0x90 && op <= 0x9f) return rm;
+        switch (op) {
+            case 0x02: case 0x03: case 0x2c: case 0x2d: case 0x50: case 0xaf: case 0xb6: case 0xb7: case 0xb8: case 0xbc: case 0xbd: case 0xbe: case 0xbf: case 0xc5: case 0xd7: return reg;
+            case 0x05: case 0x07: return rax | rcx | r11;
+            case 0x31: return rax | rdx;
+            case 0x7e: case 0xa4: case 0xa5: case 0xab: case 0xac: case 0xad: case 0xb3: case 0xba: case 0xbb: return rm;
+            case 0xa2: return rax | rbx | rcx | rdx;
+            case 0xb0: case 0xb1: case 0xc0: case 0xc1: return rax | reg | rm;
+            default: return 0;
+        }
+    }
+    if (op == 0 && code[info.OpcodeOffset] != 0) return 0;
+    if (op < 0x40 && (op & 7) < 4) return (op >> 3) == 7 ? 0 : (op & 2) != 0 ? reg : rm;
+    if (op < 0x40 && (op & 7) < 6) return (op >> 3) == 7 ? 0 : rax;
+    if (op >= 0x50 && op <= 0x57) return rsp;
+    if (op >= 0x58 && op <= 0x5f) return rsp | embedded;
+    if (op >= 0x90 && op <= 0x97) return op == 0x90 && (info.RexPrefix & 1) == 0 ? 0 : rax | embedded;
+    if (op >= 0xa4 && op <= 0xa7) return rcx | rsi | rdi;
+    if (op >= 0xb0 && op <= 0xbf) return embedded;
+    switch (op) {
+        case 0x63: case 0x69: case 0x6b: case 0x8a: case 0x8b: case 0x8d: return reg;
+        case 0x68: case 0x6a: case 0x9c: case 0x9d: return rsp;
+        case 0x80: case 0x81: case 0x83: return digit == 7 ? 0 : rm;
+        case 0x86: case 0x87: return reg | rm;
+        case 0x88: case 0x89: case 0xc0: case 0xc1: case 0xc6: case 0xc7: case 0xd0: case 0xd1: case 0xd2: case 0xd3: case 0xfe: return rm;
+        case 0x8f: return rm | rsp;
+        case 0x98: case 0xa0: case 0xa1: case 0xd7: return rax;
+        case 0x99: return rdx;
+        case 0xaa: case 0xab: case 0xae: case 0xaf: return rcx | rdi;
+        case 0xac: case 0xad: return rax | rcx | rsi;
+        case 0xc8: case 0xc9: return rsp | rbp;
+        case 0xf6: case 0xf7: return digit < 2 ? 0 : digit < 4 ? rm : rax | rdx;
+        case 0xff: return digit < 2 ? rm : digit == 6 ? rsp : 0;
+        default: return 0;
+    }
+}
+
+std::vector<std::uint8_t> memoryOperand(const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
+    std::vector<std::uint8_t> operand{static_cast<std::uint8_t>(info.ModRmByte & 0xc7), static_cast<std::uint8_t>(info.RexPrefix & 3)};
+    operand.insert(operand.end(), code + info.ModRmOffset + 1, code + info.Length);
+    return operand;
+}
+
+std::uint16_t addressRegisters(const std::vector<std::uint8_t>& operand) {
+    const auto mod = operand[0] >> 6;
+    const auto rm = operand[0] & 7u;
+    const auto rex = operand[1];
+    if (rm != 4) return mod == 0 && rm == 5 ? 0 : registerBit(rm | ((rex & 1u) << 3));
+    const auto sib = operand[2];
+    const auto index = ((sib >> 3) & 7u) | ((rex & 2u) << 2);
+    const std::uint16_t indexBit = index == 4 ? 0 : registerBit(index);
+    return mod == 0 && (sib & 7) == 5 ? indexBit : static_cast<std::uint16_t>(indexBit | registerBit((sib & 7u) | ((rex & 1u) << 3)));
+}
 
 }
 
@@ -198,20 +278,174 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         }
         return run;
     };
+    CodePointers pointers;
+    struct PointerWalk {
+        bool Clean = true;
+        bool AbsoluteFsAccess = false;
+        bool SegmentAccess = false;
+    };
+    const auto walkPointerTarget = [&](std::uint64_t start) {
+        const Codegen::X64InstructionDecoder probe;
+        PointerWalk walk;
+        std::map<std::uint64_t, std::uint64_t> decoded;
+        std::vector<std::uint64_t> pending{start};
+        const auto followSlot = [&](std::uint64_t next, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
+            std::int32_t displacement = 0;
+            std::memcpy(&displacement, code + info.RipRelativeDispOffset, sizeof(displacement));
+            const auto target = pointers.TargetOfSlot(next + static_cast<std::int64_t>(displacement));
+            if (target && info.SegmentPrefix == 0) pending.push_back(*target);
+        };
+        while (walk.Clean && !pending.empty()) {
+            auto address = pending.back();
+            pending.pop_back();
+            for (bool following = true; following && walk.Clean && !insideSceFunction(address) && !decoded.contains(address);) {
+                const auto code = codeAt(address);
+                const auto after = sceFunctionAfter(address);
+                const auto available = after == sceFunctions.end() ? code.size() : std::min<std::uint64_t>(code.size(), after->Begin - address);
+                Codegen::DecodedInstructionInfo info;
+                try {
+                    if (available == 0 || decoded.size() == PointerWalkInstructions) {
+                        walk.Clean = false;
+                        break;
+                    }
+                    info = probe.DecodeInstruction(code.data(), available);
+                } catch (const Codegen::CodegenException&) {
+                    walk.Clean = false;
+                    break;
+                }
+                const auto next = address + info.Length;
+                const auto nextDecoded = decoded.lower_bound(address);
+                if (info.Length == 0 || info.Length > available || info.TruncatesBranchTarget || (nextDecoded != decoded.end() && nextDecoded->first < next) || (nextDecoded != decoded.begin() && std::prev(nextDecoded)->second > address)) {
+                    walk.Clean = false;
+                    break;
+                }
+                decoded.emplace(address, next);
+                if (absoluteFsAccess(code.data(), info)) walk.AbsoluteFsAccess = true;
+                else if (info.SegmentPrefix != 0 && info.HasMemoryOperand) walk.SegmentAccess = true;
+                else if (info.SegmentPrefix != 0) walk.Clean = false;
+                switch (info.FlowKind) {
+                    case Codegen::ControlFlowKind::Return:
+                    case Codegen::ControlFlowKind::IndirectJump:
+                    case Codegen::ControlFlowKind::Trap:
+                        following = false;
+                        break;
+                    case Codegen::ControlFlowKind::UnconditionalJump:
+                        following = false;
+                        if (info.HasRipRelativeDisp) followSlot(next, code.data(), info);
+                        else if (info.HasBranchTarget) pending.push_back(next + static_cast<std::uint64_t>(info.BranchDisp));
+                        break;
+                    case Codegen::ControlFlowKind::Call:
+                        if (info.HasRipRelativeDisp) followSlot(next, code.data(), info);
+                        else if (info.HasBranchTarget) pending.push_back(next + static_cast<std::uint64_t>(info.BranchDisp));
+                        break;
+                    case Codegen::ControlFlowKind::ConditionalBranch:
+                        if (info.HasBranchTarget) pending.push_back(next + static_cast<std::uint64_t>(info.BranchDisp));
+                        break;
+                    case Codegen::ControlFlowKind::Sequential:
+                    case Codegen::ControlFlowKind::IndirectCall:
+                        break;
+                }
+                address = next;
+            }
+        }
+        return walk;
+    };
     std::set<std::uint64_t> dataTargets;
+    std::set<std::uint64_t> uncertainTargets;
     const auto addPointerRoot = [&](std::uint64_t address) {
         if (sceFunctions.empty() || !isCode(address) || insideSceFunction(address)) {
             addRoot(address);
+            return;
+        }
+        if (!sceBase) {
+            if (roots.contains(address) || dataTargets.contains(address)) return;
+            const auto walk = walkPointerTarget(address);
+            if (walk.Clean && (walk.AbsoluteFsAccess || !walk.SegmentAccess || (address % 16 == 0 && nearSceFunctionEnd(address)))) {
+                addRoot(address);
+                return;
+            }
+            if (!walk.Clean && decodeGapRun(address).AbsoluteFsAccess) {
+                addRoot(address);
+                return;
+            }
+            if (walk.Clean) uncertainTargets.insert(address);
+            dataTargets.insert(address);
             return;
         }
         const auto run = decodeGapRun(address);
         if (run.AbsoluteFsAccess || (address % 16 == 0 && nearSceFunctionEnd(address) && run.Transfer)) addRoot(address);
         else dataTargets.insert(address);
     };
+    const auto reachesIndirectTransfer = [&](std::uint64_t address, unsigned holder) {
+        const Codegen::X64InstructionDecoder probe;
+        auto registers = registerBit(holder);
+        std::vector<std::vector<std::uint8_t>> slots;
+        for (std::size_t count = 0; count < PointerFlowInstructions && (registers != 0 || !slots.empty()); ++count) {
+            const auto code = codeAt(address);
+            if (code.empty()) return false;
+            Codegen::DecodedInstructionInfo info;
+            try {
+                info = probe.DecodeInstruction(code.data(), code.size());
+            } catch (const Codegen::CodegenException&) {
+                return false;
+            }
+            if (info.Length == 0 || info.Length > code.size()) return false;
+            const bool registerForm = info.HasModRm && (info.ModRmByte >> 6) == 3;
+            const auto holds = [&](const std::vector<std::uint8_t>& operand) { return std::find(slots.begin(), slots.end(), operand) != slots.end(); };
+            switch (info.FlowKind) {
+                case Codegen::ControlFlowKind::Return:
+                case Codegen::ControlFlowKind::Trap:
+                    return false;
+                case Codegen::ControlFlowKind::UnconditionalJump:
+                    if (!info.HasBranchTarget || info.HasRipRelativeDisp || info.TruncatesBranchTarget) return false;
+                    address += info.Length + static_cast<std::uint64_t>(info.BranchDisp);
+                    continue;
+                case Codegen::ControlFlowKind::IndirectCall:
+                case Codegen::ControlFlowKind::IndirectJump:
+                    if ((info.ModRmRegField == 2 || info.ModRmRegField == 4) && (registerForm ? (registers & registerBit(modRmBase(info))) != 0 : holds(memoryOperand(code.data(), info)))) return true;
+                    if (info.FlowKind == Codegen::ControlFlowKind::IndirectJump) return false;
+                    registers &= CalleeSavedRegisters;
+                    break;
+                case Codegen::ControlFlowKind::Call:
+                    registers &= CalleeSavedRegisters;
+                    break;
+                case Codegen::ControlFlowKind::ConditionalBranch:
+                    break;
+                case Codegen::ControlFlowKind::Sequential: {
+                    std::uint16_t loaded = 0;
+                    if (!info.IsTwoByteOpcode && (info.Opcode == 0x89 || info.Opcode == 0x8b) && (info.RexPrefix & 8) != 0 && info.SegmentPrefix == 0 && !info.AddressSize32 && !info.HasRipRelativeDisp) {
+                        const auto operand = memoryOperand(code.data(), info);
+                        const auto source = registerBit(modRmRegister(info));
+                        if (info.Opcode == 0x8b) {
+                            if (registerForm ? (registers & registerBit(modRmBase(info))) != 0 : holds(operand)) loaded = source;
+                        } else if (registerForm) {
+                            if ((registers & source) != 0) loaded = registerBit(modRmBase(info));
+                        } else if ((registers & source) != 0) {
+                            if (!holds(operand)) slots.push_back(operand);
+                        } else {
+                            std::erase(slots, operand);
+                        }
+                    }
+                    const auto written = writtenRegisters(code.data(), info);
+                    registers = static_cast<std::uint16_t>((registers & ~written) | loaded);
+                    std::erase_if(slots, [&](const std::vector<std::uint8_t>& slot) { return (addressRegisters(slot) & written) != 0; });
+                    break;
+                }
+            }
+            address += info.Length;
+        }
+        return false;
+    };
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
-        if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
+        if (!info.HasRipRelativeDisp || !(info.RexPrefix & 8)) return;
+        const auto opcode = code[info.OpcodeOffset];
+        if (opcode != 0x8d && (opcode != 0x8b || sceBase || info.SegmentPrefix != 0)) return;
         const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
-        addPointerRoot(address + info.Length + static_cast<std::int64_t>(displacement));
+        const auto operand = address + info.Length + static_cast<std::int64_t>(displacement);
+        if (opcode == 0x8d) addPointerRoot(operand);
+        if (sceBase) return;
+        const auto target = opcode == 0x8b ? pointers.TargetOfSlot(operand) : std::optional<Domain::VirtualAddress>(operand);
+        if (target && dataTargets.contains(*target) && !roots.contains(*target) && reachesIndirectTransfer(address + info.Length, modRmRegister(info))) addRoot(*target);
     };
     const auto addFunction = [&](std::uint64_t begin, std::uint64_t size, bool symbolAlias) {
         if (size == 0) return;
@@ -308,7 +542,6 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             }
         }
     }
-    CodePointers pointers;
     std::set<std::uint64_t> importSlots;
     std::set<std::uint64_t> relativeSlots;
     const auto relocationRange = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag) -> std::pair<std::uint64_t, std::uint64_t> {
@@ -611,6 +844,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     report(10000);
     std::erase_if(dataTargets, [&](std::uint64_t address) { return roots.contains(address) || inTable(address); });
+    for (const auto address : dataTargets)
+        if (uncertainTargets.contains(address)) throw Domain::RelinkerException("Code analysis: a pointer target outside the unwind functions decodes as code with an fs or gs access and nothing proves it is code or data", address);
     if (!dataTargets.empty() && message) {
         std::ostringstream text;
         text << "Took " << std::dec << dataTargets.size() << " pointer target(s) outside the unwind functions as data, the first at 0x" << std::hex << *dataTargets.begin() << '\n';

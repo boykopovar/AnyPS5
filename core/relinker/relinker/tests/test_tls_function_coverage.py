@@ -529,10 +529,67 @@ def add_alias(image, size, begin=0x1200):
     return image
 
 
+POINTER_TARGET = 0x1301
+POINTER_TARGET_CODE = bytes.fromhex("64 48 8b 00 90 90 c3")
+POINTER_TARGET_DATA = bytes.fromhex("64 20 00")
+POINTER_SLOT = 0x300
+TLS_OFFSET_IN_RAX = bytes.fromhex("48 c7 c0 f0 ff ff ff")
+LOAD_TLS_VALUE = TLS_LOAD + bytes.fromhex("8b 40 f0")
+
+
+def rip_relative(encoding, address, target):
+    return encoding + struct.pack("<i", target - (address + len(encoding) + 4))
+
+
+def pointer_target_image(body, target_bytes, target=POINTER_TARGET, relocated=None):
+    image = make_image("register", "unwind", body=body)
+    image[target:target + len(target_bytes)] = target_bytes
+    if relocated is not None:
+        struct.pack_into("<QQq", image, 0x700, POINTER_SLOT, 8, relocated)
+    return image
+
+
+def called_pointer_target_bodies():
+    target = POINTER_TARGET
+    lea_r11 = rip_relative(bytes.fromhex("4c 8d 1d"), 0x1247, target)
+    lea_rcx = rip_relative(bytes.fromhex("48 8d 0d"), 0x1247, target)
+    call_r11 = bytes.fromhex("41 ff d3")
+    ret = bytes.fromhex("c3")
+    yield "called-register", TLS_OFFSET_IN_RAX + lea_r11 + call_r11 + ret, None
+    yield "jumped-register", TLS_OFFSET_IN_RAX + lea_r11 + bytes.fromhex("41 ff e3"), None
+    yield "called-copy", TLS_OFFSET_IN_RAX + lea_r11 + bytes.fromhex("4c 89 d9 ff d1") + ret, None
+    yield "called-stack-slot", TLS_OFFSET_IN_RAX + lea_rcx + bytes.fromhex("48 89 4c 24 f8 ff 54 24 f8") + ret, None
+    yield "jumped-stack-slot", TLS_OFFSET_IN_RAX + lea_rcx + bytes.fromhex("48 89 4c 24 f8 ff 64 24 f8"), None
+    yield "called-slot-reload", TLS_OFFSET_IN_RAX + lea_rcx + bytes.fromhex("48 89 4c 24 f8 48 8b 54 24 f8 ff d2") + ret, None
+    yield "called-after-forward-jump", TLS_OFFSET_IN_RAX + lea_r11 + bytes.fromhex("eb 02 90 90") + call_r11 + ret, None
+    yield "called-after-branch", TLS_OFFSET_IN_RAX + lea_r11 + bytes.fromhex("48 85 c0 74 00") + call_r11 + ret, None
+    yield "called-through-callee-saved", (bytes.fromhex("53") + rip_relative(bytes.fromhex("48 8d 1d"), 0x1241, target)
+                                          + bytes.fromhex("e8 0b 00 00 00") + TLS_OFFSET_IN_RAX + bytes.fromhex("ff d3 5b c3 c3")), None
+    load_slot = rip_relative(bytes.fromhex("4c 8b 1d"), 0x1247, POINTER_SLOT)
+    yield "called-from-relocated-slot", TLS_OFFSET_IN_RAX + load_slot + call_r11 + ret, target
+
+
+def data_pointer_target_bodies():
+    target = POINTER_TARGET
+    lea_r11 = rip_relative(bytes.fromhex("4c 8d 1d"), 0x124f, target)
+    lea_rcx = rip_relative(bytes.fromhex("48 8d 0d"), 0x124f, target)
+    ret = bytes.fromhex("c3")
+    yield "dereferenced", LOAD_TLS_VALUE + lea_r11 + bytes.fromhex("41 8b 0b") + ret, None
+    yield "overwritten-register", (LOAD_TLS_VALUE + lea_r11 + rip_relative(bytes.fromhex("4c 8d 1d"), 0x1256, 0x1261)
+                                   + bytes.fromhex("41 ff d3 c3 c3")), None
+    yield "clobbered-by-call", (LOAD_TLS_VALUE + lea_rcx + bytes.fromhex("e8 03 00 00 00 ff d1 c3")
+                                + rip_relative(bytes.fromhex("48 8d 0d"), 0x125e, 0x1266) + bytes.fromhex("c3 c3")), None
+    yield "overwritten-stack-slot", (LOAD_TLS_VALUE + lea_rcx + bytes.fromhex("48 89 4c 24 f8")
+                                     + rip_relative(bytes.fromhex("48 8d 0d"), 0x125b, 0x126c)
+                                     + bytes.fromhex("48 89 4c 24 f8 ff 54 24 f8 c3 c3")), None
+    yield "loaded-from-relocated-slot", (LOAD_TLS_VALUE + rip_relative(bytes.fromhex("4c 8b 1d"), 0x124f, POINTER_SLOT)
+                                         + ret), target
+
+
 def main():
     groups = ("metadata", "padding", "register_loads", "displacement_bounds", "alu_execution",
               "register_address_loads", "moved_branch", "rejected", "gs_traps", "gs_traps_implicit",
-              "gs_non_memory", "pointer_target_data")
+              "gs_non_memory", "pointer_target_data", "pointer_target_code")
     groups += tuple(f"displacement_r{register}" for register in range(16) if register != 4)
     groups += tuple(f"alu_{name}" for name in ALU_READ)
     parser = argparse.ArgumentParser(description="Run Windows guest TLS function coverage fixtures")
@@ -571,6 +628,7 @@ def main():
                 entry = 0x10000 + struct.unpack_from("<Q", image, 24)[0]
                 executed = subprocess.run([sys.executable, str(RUNNER), str(output), hex(entry)], capture_output=True, timeout=30)
                 assert executed.returncode == 42, (name, executed.returncode, executed.stderr)
+            return result
 
         if args.group in ("all", "metadata"):
             for metadata in ("unwind", "symbol"):
@@ -803,6 +861,54 @@ def main():
             image = make_image("register", "unwind", body=load + lea + bytes.fromhex("c3"))
             image[data:data + 3] = bytes.fromhex("64 20 00")
             convert("pointer-target-data", image)
+            assert pe_bytes_at((work / "pointer-target-data.exe").read_bytes(), 0x10000 + data, 3) == bytes.fromhex("64 20 00")
+            target_lea = rip_relative(bytes.fromhex("4c 8d 1d"), 0x124f, POINTER_TARGET)
+            without_transfer = bytes.fromhex("64 48 8b 00")
+            convert("pointer-target-tls-bytes-without-transfer",
+                    pointer_target_image(LOAD_TLS_VALUE + target_lea + bytes.fromhex("c3"), without_transfer))
+            assert pe_bytes_at((work / "pointer-target-tls-bytes-without-transfer.exe").read_bytes(),
+                               0x10000 + POINTER_TARGET, len(without_transfer)) == without_transfer
+            for name, body, relocated in data_pointer_target_bodies():
+                convert("pointer-target-" + name, pointer_target_image(body, POINTER_TARGET_DATA, relocated=relocated))
+                assert pe_bytes_at((work / f"pointer-target-{name}.exe").read_bytes(),
+                                   0x10000 + POINTER_TARGET, len(POINTER_TARGET_DATA)) == POINTER_TARGET_DATA, name
+            taken_body = LOAD_TLS_VALUE + target_lea + bytes.fromhex("c3")
+            constant = bytes.fromhex("31 c0 c3")
+            result = convert("pointer-target-clean-constant", pointer_target_image(taken_body, constant))
+            assert "Took 1 pointer target" not in result.stdout, result.stdout
+            assert pe_bytes_at((work / "pointer-target-clean-constant.exe").read_bytes(), 0x10000 + POINTER_TARGET, len(constant)) == constant
+            for name, constant in (("unterminated", bytes.fromhex("64 20 00")), ("overlapping", bytes.fromhex("74 01 b8 c3 00 00 00 c3"))):
+                result = convert(f"pointer-target-{name}-constant", pointer_target_image(taken_body, constant))
+                assert "Took 1 pointer target" in result.stdout, (name, result.stdout)
+                assert pe_bytes_at((work / f"pointer-target-{name}-constant.exe").read_bytes(), 0x10000 + POINTER_TARGET, len(constant)) == constant, name
+            uncertain = "Code analysis: a pointer target outside the unwind functions decodes as code with an fs or gs access"
+            uncertain_bytes = bytes.fromhex("64 48 8b 00 c3")
+            convert("pointer-target-uncertain-gs", pointer_target_image(taken_body, bytes.fromhex("65 48 8b 00 c3")),
+                    uncertain, error_offset=POINTER_TARGET)
+            convert("pointer-target-uncertain-after-return", pointer_target_image(taken_body, bytes.fromhex("85 ff 74 01 c3 64 48 8b 00 c3")),
+                    uncertain, error_offset=POINTER_TARGET)
+            convert("pointer-target-uncertain-lea",
+                    pointer_target_image(LOAD_TLS_VALUE + target_lea + bytes.fromhex("c3"), uncertain_bytes),
+                    uncertain, error_offset=POINTER_TARGET)
+            convert("pointer-target-uncertain-relocation",
+                    pointer_target_image(LOAD_TLS_VALUE + bytes.fromhex("c3"), uncertain_bytes, relocated=POINTER_TARGET),
+                    uncertain, error_offset=POINTER_TARGET)
+            malformed = make_image("register", "unwind")
+            malformed[0x980] = 2
+            convert("pointer-target-malformed-unwind-table", malformed, "Strict filter: unsupported EH frame header")
+
+        if args.group in ("all", "pointer_target_code"):
+            for name, body, relocated in called_pointer_target_bodies():
+                convert("pointer-target-" + name, pointer_target_image(body, POINTER_TARGET_CODE, relocated=relocated),
+                        tls_address=POINTER_TARGET)
+            absolute_after_return = bytes.fromhex("85 ff 75 01 c3") + TLS_LOAD + bytes.fromhex("8b 40 f0 c3")
+            taken_body = LOAD_TLS_VALUE + rip_relative(bytes.fromhex("4c 8d 1d"), 0x124f, POINTER_TARGET) + bytes.fromhex("c3")
+            convert("pointer-target-absolute-tls-after-return", pointer_target_image(taken_body, absolute_after_return))
+            patched = pe_bytes_at((work / "pointer-target-absolute-tls-after-return.exe").read_bytes(), 0x10000 + POINTER_TARGET + 5, 1)
+            assert patched[0] == 0xe9, patched.hex()
+            reported = TLS_OFFSET_IN_RAX + rip_relative(bytes.fromhex("4c 8d 1d"), 0x1247, POINTER_TARGET) + bytes.fromhex("41 ff d3 c3")
+            convert("pointer-target-called-before-return", pointer_target_image(reported, bytes.fromhex("64 48 8b 00 c3")),
+                    "Short guest TLS instruction is followed by an instruction that cannot move", error_offset=POINTER_TARGET + 4)
 
         def check_gs_traps(cases):
             for name, instruction, trapped in cases:
