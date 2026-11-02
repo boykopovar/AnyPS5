@@ -17,6 +17,7 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "AudioOut2Internal.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "AudioOutShutdown.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -263,6 +264,7 @@ static void DeviceCallback(void* userdata, Uint8* stream, int length) {
     std::copy_n(context.output.begin(), count, out);
     context.output.erase(context.output.begin(), context.output.begin() + static_cast<std::ptrdiff_t>(count));
     std::fill(out + count, out + samples, 0.0f);
+    context.hostGain.Apply(out, samples / AUDIO_OUT2_OUTPUT_CHANNELS, AUDIO_OUT2_OUTPUT_CHANNELS, HostVolumeGain_nid_no_patch());
     if (count < samples && !context.priming) {
         context.priming = true;
         context.primes++;

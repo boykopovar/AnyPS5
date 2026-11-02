@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdio>
@@ -62,6 +63,17 @@ void CheckUnmountedCalls() {
     Check(sceSaveDataSetParam(nullptr, 1, buf, sizeof(buf)) == SaveDataErrorParameter, "setParam null point is PARAMETER");
     Check(sceSaveDataSetParam(&point, 1, nullptr, sizeof(buf)) == SaveDataErrorParameter, "setParam null buf is PARAMETER");
     Check(sceSaveDataSetParam(&point, 1, buf, sizeof(buf)) == SaveDataErrorNotMounted, "setParam unmounted point is NOT_MOUNTED");
+    SaveDataMountPoint unterminatedPoint{};
+    std::memset(unterminatedPoint.data, 'a', sizeof(unterminatedPoint.data));
+    Check(sceSaveDataUmount2(0, &unterminatedPoint) == SaveDataErrorParameter, "umount2 unterminated point is PARAMETER");
+    Check(sceSaveDataLoadIcon(&unterminatedPoint, &icon) == SaveDataErrorParameter, "loadIcon unterminated point is PARAMETER");
+    Check(sceSaveDataSaveIcon(&unterminatedPoint, &icon) == SaveDataErrorParameter, "saveIcon unterminated point is PARAMETER");
+    Check(sceSaveDataSaveIconByPath(&unterminatedPoint, "test.png") == SaveDataErrorParameter, "saveIconByPath unterminated point is PARAMETER");
+    Check(sceSaveDataGetMountInfo(&unterminatedPoint, &info) == SaveDataErrorParameter, "getMountInfo unterminated point is PARAMETER");
+    Check(sceSaveDataGetParam(&unterminatedPoint, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam unterminated point is PARAMETER");
+    Check(sceSaveDataSetParam(&unterminatedPoint, 1, buf, sizeof(buf)) == SaveDataErrorParameter, "setParam unterminated point is PARAMETER");
+    unterminatedPoint.data[sizeof(unterminatedPoint.data) - 1] = '\0';
+    Check(sceSaveDataUmount2(0, &unterminatedPoint) == SaveDataErrorNotMounted, "umount2 terminated unmounted point is NOT_MOUNTED");
     Check(sceSaveDataBackup(nullptr) == SaveDataErrorParameter, "backup null backup is PARAMETER");
     SaveDataBackup nullDirBackup{};
     Check(sceSaveDataBackup(&nullDirBackup) == SaveDataErrorParameter, "backup null dir_name is PARAMETER");
@@ -130,6 +142,15 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataSetParam(point, 1, newTitle, sizeof(newTitle)) == 0, "setParam on mounted save succeeds");
     Check(sceSaveDataGetParam(point, 1, readTitle, sizeof(readTitle), &gotSize) == 0, "getParam reads back set title");
     Check(std::strcmp(readTitle, newTitle) == 0, "readTitle matches newTitle");
+    SaveDataMountPoint unterminatedMounted{};
+    std::memset(unterminatedMounted.data, 'a', sizeof(unterminatedMounted.data));
+    Check(sceSaveDataUmount2(0, &unterminatedMounted) == SaveDataErrorParameter, "umount2 unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataLoadIcon(&unterminatedMounted, &icon) == SaveDataErrorParameter, "loadIcon unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataSaveIcon(&unterminatedMounted, &icon) == SaveDataErrorParameter, "saveIcon unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataSaveIconByPath(&unterminatedMounted, "icon.png") == SaveDataErrorParameter, "saveIconByPath unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataGetMountInfo(&unterminatedMounted, &info) == SaveDataErrorParameter, "getMountInfo unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataGetParam(&unterminatedMounted, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataSetParam(&unterminatedMounted, 1, newTitle, sizeof(newTitle)) == SaveDataErrorParameter, "setParam unterminated point is PARAMETER on mounted save");
 }
 
 void MountAndCheck(const char* name, std::uint32_t mode, std::uint32_t expectedStatus, const std::string& what) {
@@ -316,6 +337,64 @@ void CheckMountCapacityAndLifecycle() {
     for (const auto& mount : mounted) Check(sceSaveDataUmount2(0, &mount.mount_point) == 0, "capacity unmount succeeds");
 }
 
+void CheckHostMountFailures() {
+    const auto previous = std::filesystem::current_path();
+    const auto root = previous / "mount-host-failures";
+    std::filesystem::create_directories(root / "previous-alias");
+    std::filesystem::current_path(root);
+    const auto writeFixture = [](const char* path, const char* text) {
+        auto* file = std::fopen(path, "wb");
+        Check(file != nullptr, std::string("open fixture ") + path);
+        if (file == nullptr) return;
+        const bool written = std::fputs(text, file) >= 0;
+        const bool closed = std::fclose(file) == 0;
+        Check(written && closed, std::string("write fixture ") + path);
+    };
+    const auto checkFailure = [&](const char* name, std::uint32_t mode, std::uint64_t blocks, const std::string& label) {
+        SceSaveDataDirName directory{};
+        std::snprintf(directory.data, sizeof(directory.data), "%s", name);
+        SaveDataMount3 request{};
+        request.dir_name = &directory;
+        request.mount_mode = mode;
+        request.blocks = blocks;
+        SaveDataMountResult result;
+        std::memset(&result, 0xCD, sizeof(result));
+        const auto before = result;
+        const auto alias = std::filesystem::absolute("previous-alias").string();
+        AddPathAlias_nid_no_patch("/savedata0", alias.c_str());
+        const auto resolvedBefore = ResolvePath_nid_no_patch("/savedata0/probe");
+        try {
+            Check(sceSaveDataMount3(&request, &result) == static_cast<int>(0x809F000B), label + " returns INTERNAL");
+        } catch (const std::exception& error) {
+            Check(false, label + " throws: " + error.what());
+        }
+        Check(std::memcmp(&result, &before, sizeof(result)) == 0, label + " preserves the mount result");
+        Check(ResolvePath_nid_no_patch("/savedata0/probe") == resolvedBefore, label + " preserves the path alias");
+        SaveDataMountPoint point{};
+        std::memcpy(point.data, "/savedata0", sizeof("/savedata0"));
+        SaveDataMountInfo info{};
+        const auto mounted = sceSaveDataGetMountInfo(&point, &info);
+        Check(mounted == SaveDataErrorNotMounted, label + " consumes no mount slot");
+        if (mounted == 0) sceSaveDataUmount2(0, &point);
+        RemovePathAlias_nid_no_patch("/savedata0");
+    };
+    writeFixture("_sd", "not a directory");
+    for (const auto mode : {MountReadWrite | MountCreate, MountReadWrite | MountCreate2}) {
+        checkFailure("blocked", mode, 96, "save-root file with mode " + std::to_string(mode));
+        Check(std::filesystem::is_regular_file("_sd"), "a failed mount preserves the blocking file");
+    }
+    Check(std::filesystem::remove("_sd"), "remove the blocked save-root fixture");
+    std::filesystem::create_directories("_sd/metadata.blocks");
+    writeFixture("_sd/metadata.blocks/keep", "preserve this directory");
+    checkFailure("metadata", MountReadWrite | MountCreate2, 96, "size metadata path is a directory");
+    Check(!std::filesystem::exists("_sd/metadata"), "failed size persistence removes the newly created empty save");
+    Check(std::filesystem::is_regular_file("_sd/metadata.blocks/keep"), "failed size persistence preserves the blocking directory");
+    std::filesystem::remove_all("_sd/metadata.blocks");
+    MountAndCheck("metadata", MountReadWrite | MountCreate2, 1u, "mount after repairing host storage");
+    std::filesystem::current_path(previous);
+    std::filesystem::remove_all(root);
+}
+
 }
 
 int main() {
@@ -328,6 +407,7 @@ int main() {
     CheckUnmountedCalls();
     Check(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000), "null param rejected in memory sync");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
+    CheckHostMountFailures();
     CheckMountCapacityAndLifecycle();
     MountAndCheck("fresh", MountReadWrite | MountCreate2, 1u, "CREATE2 of a missing save");
     MountAndCheck("fresh", MountReadWrite | MountCreate2, 0u, "CREATE2 of an existing save");

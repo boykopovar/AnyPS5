@@ -4,11 +4,16 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+int g_markerCallbacks = 0;
+
+void APS5_VABI CountMarkerCallback() {
+    ++g_markerCallbacks;
+}
 
 }
 
@@ -80,12 +85,43 @@ int main() {
     Require(sceRazorCpuUnTagBuffer(3, buffer) == 0);
     Require(sceRazorCpuIsCapturing() == 0);
 
-    bool threw = false;
-    try {
-        sceRazorCpuGetDataTagStorageSize(16);
+    Require(sceRazorCpuGetDataTagStorageSize(0) == 0);
+    Require(sceRazorCpuGetDataTagStorageSize(16) == 0);
+    Require(sceRazorCpuGetDataTagStorageSize(0xffffffffu) == 0);
 
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    const auto callback = reinterpret_cast<void*>(&CountMarkerCallback);
+    sceRazorCpuSetPushMarkerCallback(callback);
+    sceRazorCpuSetPushMarkerStaticCallback(callback);
+    sceRazorCpuSetPopMarkerCallback(callback);
+    Require(sceRazorCpuPushMarker("callback", 0x80ffffffu, 0) == 0);
+    Require(sceRazorCpuPushMarkerStatic("callback", 0x80ffffffu, 0) == 0);
+    Require(sceRazorCpuPopMarker() == 0);
+    Require(sceRazorCpuPopMarker() == 0);
+    Require(g_markerCallbacks == 0);
+    sceRazorCpuSetPushMarkerCallback(nullptr);
+    sceRazorCpuSetPushMarkerStaticCallback(nullptr);
+    sceRazorCpuSetPopMarkerCallback(nullptr);
+
+    std::uint8_t context[16]{};
+    Require(sceRazorCpuInitializeGpuMarkerContext(nullptr) == 22);
+    Require(sceRazorCpuInitializeGpuMarkerContext(context) == 22);
+    context[0] = 2;
+    Require(sceRazorCpuInitializeGpuMarkerContext(context) == 22);
+    context[0] = 1;
+    context[1] = 1;
+    Require(sceRazorCpuInitializeGpuMarkerContext(context) == 0);
+    Require(context[0] == 1 && context[1] == 1);
+    for (std::size_t index = 2; index < sizeof(context); ++index) Require(context[index] == 0);
+    Require(sceRazorCpuGpuMarkerSync() == 0);
+    Require(sceRazorCpuPushMarker("gpu", 0x80ffffffu, 0) == 0);
+    Require(sceRazorCpuPopMarker() == 0);
+
+    Require(sceRazorCpuFiberLogNameChange() == 0);
+    Require(sceRazorCpuFiberSwitch() == 0);
+    Require(sceRazorCpuWorkloadSubmit() == 0);
+    Require(sceRazorCpuWorkloadRunBegin() == 0);
+    Require(sceRazorCpuWorkloadRunEnd() == 0);
+    Require(sceRazorCpuStartCaptureInternal() == static_cast<int>(0x80580000));
+    Require(sceRazorCpuStopCaptureInternal() == static_cast<int>(0x80580000));
+    Require(sceRazorCpuIsCapturing() == 0);
 }
