@@ -1040,8 +1040,11 @@ void HashPages(std::uint64_t first, std::span<const std::pair<std::uint64_t, std
 struct WindowCopy {
     std::uint64_t first;
     std::span<const std::uint64_t> hashes;
+    std::span<const std::byte> image;
+    StampKind held = StampKind::ImportWindow;
 
     bool Holds(std::uintptr_t page) const {
+        if (held == StampKind::Driver) return !image.empty() && CompareMapped(page, image.subspan(page - first, WritePageBytes)) == Compare::Equal;
         return HashPage(reinterpret_cast<const std::byte*>(page)) == hashes[(page - first) / WritePageBytes];
     }
 };
@@ -1201,6 +1204,7 @@ struct WriteTracker {
     };
     std::unordered_map<std::uint64_t, CpuPages> cpuPages;
     std::unordered_map<std::uint64_t, CpuPages> walkPages;
+    std::unordered_map<std::uint64_t, CpuPages> windowPages;
     std::map<std::uint64_t, std::uint32_t> refused;
 
     void noteCpuStore(std::uint64_t begin, std::uint64_t end, std::uint32_t stampGeneration) {
@@ -1625,7 +1629,11 @@ void stampWindowRuns(StampRuns& runs) {
     std::size_t index = 0;
     for (const auto& [begin, end] : runs.windowRuns) {
         noteWrittenRun(runs, static_cast<std::uintptr_t>(begin), static_cast<std::uintptr_t>(end), generation);
-        for (auto page = begin; page < end; page += WritePageBytes) tracker.stamp(tracker.blockOf(page), generation, held[index++] != 0 ? StampKind::ImportWindow : runs.kind);
+        for (auto page = begin; page < end; page += WritePageBytes) {
+            const bool kept = held[index++] != 0;
+            if (!kept) tracker.notePages(tracker.windowPages, page, page + WritePageBytes, generation);
+            tracker.stamp(tracker.blockOf(page), generation, kept ? runs.window->held : runs.kind);
+        }
     }
 }
 
@@ -1826,20 +1834,24 @@ std::uint64_t CollectWrittenBlocks(std::uint64_t address, std::size_t bytes, std
         const bool cpu = tracker.cpuStampOf(block) > since;
         if (!cpu && tracker.stampOf(block) <= since) continue;
         const auto [begin, stop] = clip(block);
-        const auto pages = tracker.cpuPages.find(block);
+        const auto blockStart = tracker.blockBegin(block);
+        const auto noted = tracker.cpuPages.find(block);
+        const auto window = tracker.windowPages.find(block);
+        std::array<bool, WritePagesPerBlock> listed{};
         bool any = false;
-        if (pages != tracker.cpuPages.end()) {
-            const auto blockStart = tracker.blockBegin(block);
-            for (std::size_t page = 0; page < WritePagesPerBlock; ++page) {
-                if (pages->second.pages[page] <= since) continue;
-                const auto pageBegin = std::max<std::uint64_t>(begin, blockStart + page * WritePageBytes);
-                const auto pageEnd = std::min<std::uint64_t>(stop, blockStart + (page + 1) * WritePageBytes);
-                if (pageBegin >= pageEnd) continue;
-                append(pageBegin, pageEnd);
-                any = true;
-            }
+        for (std::size_t page = 0; page < WritePagesPerBlock; ++page) {
+            if (std::max<std::uint64_t>(begin, blockStart + page * WritePageBytes) >= std::min<std::uint64_t>(stop, blockStart + (page + 1) * WritePageBytes)) continue;
+            const bool stored = noted != tracker.cpuPages.end() && noted->second.pages[page] > since;
+            any = any || stored;
+            listed[page] = stored || (window != tracker.windowPages.end() && window->second.pages[page] > since);
         }
-        if (!any && cpu) append(begin, stop);
+        if (cpu && !any) {
+            append(begin, stop);
+            continue;
+        }
+        for (std::size_t page = 0; page < WritePagesPerBlock; ++page) {
+            if (listed[page]) append(std::max<std::uint64_t>(begin, blockStart + page * WritePageBytes), std::min<std::uint64_t>(stop, blockStart + (page + 1) * WritePageBytes));
+        }
     }
     return tracker.generation.load(std::memory_order_relaxed);
 }
@@ -2162,7 +2174,7 @@ void SetOwnStoreCompare(bool compare) {
     ownStoreCompare.store(compare, std::memory_order_release);
 }
 
-std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, const std::function<std::pair<std::uint64_t, std::uint64_t>()>& store) {
+std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, bool imaged, const std::function<std::pair<std::uint64_t, std::uint64_t>(std::span<std::byte>)>& store) {
     if (bytes == 0) return 0;
     const auto pinned = pinStoreRanges(address, bytes);
     BreakProofs();
@@ -2183,25 +2195,38 @@ std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, const std::func
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
-    if (!tracker.watched || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return stampStored(tracker, store());
+    if (!tracker.watched || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return stampStored(tracker, store({}));
     constexpr std::uint64_t page = 4096;
     const auto first = address & ~(page - 1);
     const auto stop = (address + bytes + page - 1) & ~(page - 1);
-    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return stampStored(tracker, store());
-    const auto stored = store();
-    walkWrites(tracker, first, stop, StampKind::Driver);
+    const bool compare = ownStoreCompare.load(std::memory_order_acquire);
+    std::vector<std::byte> image;
+    std::optional<WindowCopy> window;
+    if (compare) {
+        if (imaged) {
+            image.resize(static_cast<std::size_t>(stop - first));
+            static_cast<void>(CopyMapped(first, image));
+        }
+        window = WindowCopy{first, {}, image, StampKind::Driver};
+    }
+    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return stampStored(tracker, store({}));
+    const auto stored = store(image.empty() ? std::span<std::byte>{} : std::span<std::byte>(image).subspan(static_cast<std::size_t>(address - first), bytes));
+    walkWrites(tracker, first, stop, StampKind::Driver, false, window ? &*window : nullptr);
     return stampStored(tracker, stored);
 }
 
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store) {
-    return storeOwn(address, bytes, [&] {
+    return storeOwn(address, bytes, false, [&](std::span<std::byte>) {
         store();
         return std::pair<std::uint64_t, std::uint64_t>{address, address + bytes};
     });
 }
 
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void(std::span<std::byte>)>& store) {
-    return StoreOwnBytes(address, bytes, [&] { store({}); });
+    return storeOwn(address, bytes, true, [&](std::span<std::byte> image) {
+        store(image);
+        return std::pair<std::uint64_t, std::uint64_t>{address, address + bytes};
+    });
 }
 
 static void copyOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
@@ -3050,7 +3075,7 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
     auto* destination = reinterpret_cast<std::byte*>(address);
     const auto size = current.size();
     // Stamped like a GPU write: a collect memoized for this packet would not see the page fault.
-    storeOwn(address, size, [&] {
+    storeOwn(address, size, true, [&](std::span<std::byte> image) {
         CheckRange(destination, size, 1, true);
         std::size_t firstChanged = size;
         std::size_t lastChanged = 0;
@@ -3081,6 +3106,9 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
             destination[at] = current[at];
             firstChanged = std::min(firstChanged, at);
             lastChanged = std::max(lastChanged, at + 1);
+        }
+        for (std::size_t index = 0; index < image.size(); ++index) {
+            image[index] = current[index] != original[index] ? current[index] : image[index];
         }
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     });

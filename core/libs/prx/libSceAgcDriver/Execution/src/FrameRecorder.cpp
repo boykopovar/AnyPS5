@@ -521,6 +521,7 @@ bool FrameRecorder::abandonIfDiskLow() {
 }
 
 void FrameRecorder::stop(const char* reason) {
+    GuestMemory::SetOwnStoreCompare(false);
     warnings.push_back(reason);
     std::fprintf(stderr, "[frame-capture] %s\n", reason);
     try {
@@ -544,6 +545,7 @@ void FrameRecorder::start() {
         return;
     }
     if (!GuestMemory::WriteWatched()) throw std::runtime_error("frame capture: the guest write watch is unavailable, so CPU stores during the frames cannot be recorded");
+    GuestMemory::SetOwnStoreCompare(true);
     startedAt = std::chrono::steady_clock::now();
     startBoundary = boundaries;
     allocationsGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
@@ -600,6 +602,7 @@ void FrameRecorder::start() {
 
 void FrameRecorder::finish() {
     emitDelta();
+    GuestMemory::SetOwnStoreCompare(false);
     if (!writer) return;
     auto end = make(FrameCallKind::End);
     end.ordinal = ++ordinal;
