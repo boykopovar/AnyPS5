@@ -338,7 +338,7 @@ void Registration(AgcDriver::VulkanDevice& device) {
     Require(invocation.Materialize(*capture)->spirv.data() == result->spirv.data(), "prepared handle did not retain its artifact");
     auto changed = makeSnapshot();
     changed->headerAddress = replacement->headerAddress;
-    changed->code[0] ^= 1;
+    changed->code.Mutable()[0] ^= 1;
     PublishRegisteredShader(registry, changed);
     Require(registry->at(0x10000).back() == changed && registry->at(0x10000).size() == 1 && old.expired(), "changed shader code retained obsolete headers");
     auto metadata = makeSnapshot();
