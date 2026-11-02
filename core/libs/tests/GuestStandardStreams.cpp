@@ -485,17 +485,6 @@ static void CheckGetdelimAndGetline() {
     fclose_nid_postfix(midReadStream);
     std::filesystem::remove(readErrFile);
 
-    void* const testHeapApi[10] = {
-        reinterpret_cast<void*>(&StreamTestAllocate),
-        reinterpret_cast<void*>(&StreamTestFree),
-        reinterpret_cast<void*>(&StreamTestCalloc),
-        reinterpret_cast<void*>(&StreamTestReallocate),
-        reinterpret_cast<void*>(&StreamTestAlign),
-        reinterpret_cast<void*>(&StreamTestRealign),
-        reinterpret_cast<void*>(&StreamTestPosixAlign),
-        nullptr, nullptr, nullptr
-    };
-    ApplicationHeapRegister_nid_no_patch(testHeapApi);
     FileStream allocStream(TemporaryFile::Open());
     Require(fwrite_nid_postfix("alloc test line\n", 1, 16, &allocStream) == 16);
     rewind_nid_postfix(&allocStream);
@@ -1031,6 +1020,17 @@ static void CheckStandardStreamDeleteSharing() {
 #endif
 
 int main(int argc, char** argv) {
+    void* const testHeapApi[10] = {
+        reinterpret_cast<void*>(&StreamTestAllocate),
+        reinterpret_cast<void*>(&StreamTestFree),
+        reinterpret_cast<void*>(&StreamTestCalloc),
+        reinterpret_cast<void*>(&StreamTestReallocate),
+        reinterpret_cast<void*>(&StreamTestAlign),
+        reinterpret_cast<void*>(&StreamTestRealign),
+        reinterpret_cast<void*>(&StreamTestPosixAlign),
+        nullptr, nullptr, nullptr
+    };
+    ApplicationHeapRegister_nid_no_patch(testHeapApi);
     if (argc > 1 && std::string_view(argv[1]) == "--update-stdout") return CheckUpdateStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--closed-stdout") return CheckClosedStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--exclusive-stdout") return CheckExclusiveStandardOutput();
