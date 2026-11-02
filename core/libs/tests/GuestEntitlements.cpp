@@ -51,7 +51,7 @@ static std::string CaptureStderr(void (*body)()) {
 static void QueryUnlistedTwiceAndListedOnce() {
     NpEntitlementAccessAddcontEntitlementInfo info{};
     NpUnifiedEntitlementLabel unlisted{};
-    std::memcpy(unlisted.data, "UNLISTEDADDON", 13);
+    std::memcpy(unlisted.data, "LOGGEDADDON", 11);
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &unlisted, &info) == static_cast<int>(0x80558007));
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &unlisted, &info) == static_cast<int>(0x80558007));
     NpUnifiedEntitlementLabel listed{};
@@ -77,7 +77,7 @@ static void QueryPastTheLimit() {
         std::snprintf(text, sizeof(text), "CAPADDON%02d", i);
         QueryUnlisted(text, std::strlen(text));
     }
-    QueryUnlisted("UNLISTEDADDON", 13);
+    QueryUnlisted("LOGGEDADDON", 11);
 }
 
 static std::size_t Occurrences(const std::string& text, std::string_view needle) {
@@ -140,6 +140,18 @@ int main(int argc, char** argv) {
     NpEntitlementAccessAddcontEntitlementInfo info{};
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &label, &info) == 0);
     Require(std::strcmp(info.entitlement_label.data, "SECONDADDON") == 0 && info.package_type == 3 && info.download_status == 4);
+    const auto log = CaptureStderr(QueryUnlistedTwiceAndListedOnce);
+    Require(Occurrences(log, "[entitlements] the title asked for the add-on LOGGEDADDON, which ") == 1);
+    Require(log.find(file.filename().string() + " does not list, so it is reported as not installed\n") != std::string::npos);
+    Require(Occurrences(log, "[entitlements]") == 1);
+    const auto escaped = CaptureStderr(QueryUnprintable);
+    Require(escaped.find("the add-on BAD\\x0aNAME\\x1b[1m, which ") != std::string::npos);
+    Require(escaped.find("the add-on SLASH\\x5cADDON, which ") != std::string::npos);
+    Require(Occurrences(escaped, "\n") == 2 && escaped.find('\x1b') == std::string::npos);
+    const auto capped = CaptureStderr(QueryPastTheLimit);
+    Require(Occurrences(capped, "the add-on CAPADDON") == 61);
+    Require(Occurrences(capped, "[entitlements] the title asked for more than 64 add-ons that ") == 1);
+    Require(Occurrences(capped, "[entitlements]") == 62);
     for (std::int32_t userId : {1, 0x10000000, std::numeric_limits<std::int32_t>::min()}) {
         NpEntitlementAccessAddcontEntitlementInfo individual{};
         Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(userId, 0, &label, &individual) == 0);
@@ -176,18 +188,6 @@ int main(int argc, char** argv) {
         Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
         Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
     }
-    const auto log = CaptureStderr(QueryUnlistedTwiceAndListedOnce);
-    Require(Occurrences(log, "[entitlements] the title asked for the add-on UNLISTEDADDON, which ") == 1);
-    Require(log.find(file.filename().string() + " does not list, so it is reported as not installed\n") != std::string::npos);
-    Require(Occurrences(log, "[entitlements]") == 1);
-    const auto escaped = CaptureStderr(QueryUnprintable);
-    Require(escaped.find("the add-on BAD\\x0aNAME\\x1b[1m, which ") != std::string::npos);
-    Require(escaped.find("the add-on SLASH\\x5cADDON, which ") != std::string::npos);
-    Require(Occurrences(escaped, "\n") == 2 && escaped.find('\x1b') == std::string::npos);
-    const auto capped = CaptureStderr(QueryPastTheLimit);
-    Require(Occurrences(capped, "the add-on CAPADDON") == 61);
-    Require(Occurrences(capped, "[entitlements] the title asked for more than 64 add-ons that ") == 1);
-    Require(Occurrences(capped, "[entitlements]") == 62);
     std::filesystem::remove_all(root);
     std::puts("Guest entitlements passed");
     return 0;
