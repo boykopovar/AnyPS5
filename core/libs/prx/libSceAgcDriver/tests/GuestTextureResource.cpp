@@ -816,7 +816,9 @@ void RunGuestTextureResourceTests() {
     ShaderRecompiler::SetGcnGuestShaders(true);
     const auto gcnResult = DecodeTextureResource(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnTexture)));
     const bool gcnNull = IsNullTextureResource(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnNullBase)));
+    const auto gcnAllocation = TextureResourceAllocationAddress(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnTexture)));
     ShaderRecompiler::SetGcnGuestShaders(false);
     Require(gcnResult.baseAddress == 0x100000u, "a PS4 T# took MTYPE_L2 above its 38-bit base as address bits");
     Require(gcnNull, "a PS4 T# with a zero base and MTYPE_L2 set was not classified as null");
+    Require(gcnAllocation && *gcnAllocation == gcnResult.baseAddress, "a PS4 T# with MTYPE_L2 set looked up its allocation at an address other than its 38-bit base");
 }

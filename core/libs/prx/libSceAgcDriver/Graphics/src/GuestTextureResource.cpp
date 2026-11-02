@@ -70,8 +70,8 @@ TextureTileMode resolveDescriptorTileMode(std::span<const std::uint32_t> words, 
 
 std::uint64_t descriptorBaseAddress(std::span<const std::uint32_t> words) {
     Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
-    const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
-    return base40 << 8u;
+    const auto base = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & (ShaderRecompiler::GcnGuestShaders() ? 0x3fffffffffull : 0xffffffffffull);
+    return base << 8u;
 }
 
 std::uint64_t normalizedDescriptorBaseAddress(std::uint64_t baseAddress, TextureTileMode tileMode, std::uint32_t* pipeBankXor) {
