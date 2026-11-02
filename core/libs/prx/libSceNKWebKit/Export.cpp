@@ -18392,26 +18392,6 @@ int APS5_VABI _ZN3WTF10ParkingLot11forEachImplERKNS_12ScopedLambdaIFvRNS_6Thread
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF10ParkingLot11unparkCountEPKvj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12UnparkResultEEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10ParkingLot9unparkAllEPKv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10ParkingLot9unparkOneEPKv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19797,18 +19777,6 @@ int APS5_VABI _ZN3WTF40clearDefaultPortForProtocolMapForTestingEv() {
 }
 
 int APS5_VABI _ZN3WTF40registerDefaultPortForProtocolForTestingEtRKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF4Lock10unlockSlowEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF4Lock13safepointSlowEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF4Lock8lockSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
