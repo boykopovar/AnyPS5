@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -18,7 +19,12 @@
 #include <unistd.h>
 #endif
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Check(bool value, int line) {
+    if (value) return;
+    std::fprintf(stderr, "UDP check failed at line %d, guest errno %d\n", line, *__error_nid_postfix());
+    std::abort();
+}
+#define Require(value) Check((value), __LINE__)
 
 static void CheckUnreachablePortIgnored() {
     const int closing = socket_nid_postfix(2, 2, 0);
