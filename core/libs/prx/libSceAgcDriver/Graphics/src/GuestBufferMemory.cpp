@@ -192,6 +192,24 @@ AddressSpaceCache& Spaces() {
     return cache;
 }
 
+std::atomic<RetainedAddressSpace*> retainedSpaces{nullptr};
+
+void pushRetained(RetainedAddressSpace* node) noexcept {
+    node->next = retainedSpaces.load(std::memory_order_acquire);
+    while (!retainedSpaces.compare_exchange_weak(node->next, node, std::memory_order_acq_rel, std::memory_order_acquire)) {}
+}
+
+template <typename Done>
+void pruneRetained(Done done) {
+    auto* node = retainedSpaces.exchange(nullptr, std::memory_order_acq_rel);
+    while (node != nullptr) {
+        auto* const next = node->next;
+        if (done(*node)) delete node;
+        else pushRetained(node);
+        node = next;
+    }
+}
+
 bool addressSpaceCacheEnabled() {
     static const bool disabled = std::getenv("APS5_NO_ADDRESS_SPACE_CACHE") != nullptr;
     return !disabled;
@@ -3687,6 +3705,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
             drained = true;
         }
         if (recorder != nullptr) recorder->FlushDeferredReleases();
+        if (recorder != nullptr) GuestBufferMemory::ReleaseRetainedSpaces(recorder->Id(), recorder->CompletedThrough());
         const auto end = static_cast<std::uint64_t>(address) + bytes;
         auto& imports = Imports();
         if (releaseParkedImports(imports, address, end)) retiredImport = true;
@@ -3734,6 +3753,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
             std::this_thread::yield();
         }
         if (recorder != nullptr) recorder->FlushDeferredReleases();
+        if (recorder != nullptr) GuestBufferMemory::ReleaseRetainedSpaces(recorder->Id(), recorder->CompletedThrough());
 
         const auto end = static_cast<std::uint64_t>(address) + bytes;
         auto& imports = Imports();
@@ -4725,6 +4745,7 @@ void GuestBufferMemory::AcquireRegistered() {
         }
         if (hit) {
             spaces.hits.fetch_add(1, std::memory_order_relaxed);
+            ensureRetention();
             space = std::move(current);
             lap(timing.leaseUs, at);
             for (const auto& range : space->copied) addCopiedRange(range);
@@ -4965,6 +4986,7 @@ void GuestBufferMemory::AcquireRegistered() {
                     }
                     if (Recorder::ValidReadList(*reads)) built->directReads = std::move(reads);
                 }
+                ensureRetention();
                 space = std::move(built);
                 spaces.droppedByWaiter.store(false, std::memory_order_relaxed);
                 if (evictedRanges.empty()) spaces.current.store(space);
@@ -5232,14 +5254,17 @@ bool GuestBufferMemory::SpaceHeld() const {
     return space != nullptr;
 }
 
-void GuestBufferMemory::HoldSpaceThrough(std::uint64_t serial) {
+void GuestBufferMemory::HoldSpaceThrough(std::uint64_t recorder, std::uint64_t serial) {
     GuestMemory::AssertGpuLockHeld("GuestBufferMemory::HoldSpaceThrough");
-    if (space != nullptr) spaceHeldThrough = serial;
+    if (space == nullptr) return;
+    spaceHeldBy = recorder;
+    spaceHeldThrough = serial;
 }
 
-bool GuestBufferMemory::ReleaseCompletedSpace(std::uint64_t completedThrough) {
+bool GuestBufferMemory::ReleaseCompletedSpace(std::uint64_t recorder, std::uint64_t completedThrough) {
     GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseCompletedSpace");
-    if (space == nullptr || spaceHeldThrough == 0 || spaceHeldThrough > completedThrough) return false;
+    if (space == nullptr || spaceHeldThrough == 0) return false;
+    if (spaceHeldBy == recorder ? spaceHeldThrough > completedThrough : Recorder::Alive(spaceHeldBy)) return false;
     static_cast<void>(ReleaseSpace());
     return true;
 }
@@ -5248,8 +5273,32 @@ std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
     GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseSpace");
     if (space == nullptr) return {};
     spaceHeldThrough = 0;
+    spaceHeldBy = 0;
     releasedSpace = space;
     return std::move(space);
+}
+
+void GuestBufferMemory::ensureRetention() {
+    if (retention == nullptr) retention = std::make_unique<RetainedAddressSpace>();
+}
+
+void GuestBufferMemory::ReleaseRetainedSpaces(std::uint64_t recorder, std::uint64_t completedThrough) {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseRetainedSpaces");
+    if (retainedSpaces.load(std::memory_order_acquire) == nullptr) return;
+    pruneRetained([&](const RetainedAddressSpace& node) { return node.recorder == recorder ? node.serial <= completedThrough : !Recorder::Alive(node.recorder); });
+}
+
+void ClearRetainedSpaces(VkDevice device) {
+    pruneRetained([device](const RetainedAddressSpace& node) { return node.device == device; });
+}
+
+std::size_t RetainedSpaceCount() {
+    std::size_t count = 0;
+    pruneRetained([&count](const RetainedAddressSpace&) {
+        ++count;
+        return false;
+    });
+    return count;
 }
 
 namespace {
@@ -5291,6 +5340,7 @@ void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space)
 bool GuestBufferMemory::RetakeSpace() {
     GuestMemory::AssertGpuLockHeld("GuestBufferMemory::RetakeSpace");
     if (space != nullptr) return true;
+    ensureRetention();
     auto kept = releasedSpace.lock();
     if (kept == nullptr) return false;
     auto& spaces = Spaces();
@@ -5648,6 +5698,13 @@ void ShutdownGuestBufferWorkers() {
 }
 
 GuestBufferMemory::~GuestBufferMemory() {
+    if (space != nullptr && spaceHeldThrough != 0 && retention != nullptr) {
+        retention->device = space->device;
+        retention->recorder = spaceHeldBy;
+        retention->serial = spaceHeldThrough;
+        retention->space = std::move(space);
+        pushRetained(retention.release());
+    }
     releaseHeapReferences();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;

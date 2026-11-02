@@ -1985,7 +1985,10 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             bool spaceHeld = !cached->SpaceReuse();
             bool inUse = false;
             if (!spaceHeld) {
-                if (auto* active = Recorder::Active(); active != nullptr) static_cast<void>(cached->ReleaseCompletedSpace(active->CompletedThrough()));
+                if (auto* active = Recorder::Active(); active != nullptr) {
+                    GuestBufferMemory::ReleaseRetainedSpaces(active->Id(), active->CompletedThrough());
+                    static_cast<void>(cached->ReleaseCompletedSpace(active->Id(), active->CompletedThrough()));
+                }
                 if (cached->SpaceHeld()) {
                     inUse = true;
                     reuse = AddressDrawReuse::InUse;
@@ -3945,7 +3948,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             const auto& resources = prepared.resolved.resources;
             if (resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
             if (prepared.spaceKeep != nullptr) *prepared.spaceKeep = resources->ReleaseSpace();
-            else if (prepared.recorder != nullptr) resources->HoldSpaceThrough(prepared.recorder->OpenSerial());
+            else if (prepared.recorder != nullptr) resources->HoldSpaceThrough(prepared.recorder->Id(), prepared.recorder->OpenSerial());
             else static_cast<void>(resources->ReleaseSpace());
         }
     } heldSpace{prepared};
