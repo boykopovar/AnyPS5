@@ -439,7 +439,8 @@ bool AppleCompact(_Unwind_Context& context, Frame& frame, Lookup& query) {
     frame.compactEncoding = entry.encoding;
     frame.functionStart = base + entry.functionOffset;
     frame.functionEnd = base + entry.functionEndOffset;
-    frame.personality = entry.hasPersonality ? static_cast<Word>(static_cast<std::intptr_t>(base) + entry.personalityDelta) : 0;
+    frame.personality = 0;
+    if (entry.hasPersonality) std::memcpy(&frame.personality, reinterpret_cast<const void*>(static_cast<std::intptr_t>(base) + entry.personalityDelta), sizeof(frame.personality));
     frame.lsda = entry.hasLsda ? base + entry.lsdaOffset : 0;
     frame.returnRegister = 16;
     context.region = frame.functionStart;

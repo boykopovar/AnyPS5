@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/CompactUnwind.hpp"
 
 #include <cstdio>
@@ -160,11 +161,22 @@ void CheckPersonality() {
         Require(LibcUnwind::MatchCompactPersonality(name) == CompactPersonality::Unknown, name);
 }
 
+void CheckNativeCatch() {
+    bool caught = false;
+    try {
+        _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(nullptr);
+    } catch (...) {
+        caught = true;
+    }
+    Require(caught, "a native catch did not take an exception the guest runtime threw");
+}
+
 }
 
 int main() {
     CheckIndex(SampleUnwind());
     CheckRules();
     CheckPersonality();
+    CheckNativeCatch();
     return 0;
 }
