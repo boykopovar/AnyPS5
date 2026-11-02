@@ -32,6 +32,7 @@ constexpr std::size_t VORBIS_IDENTIFICATION_SIZE = 30;
 constexpr std::size_t VORBIS_COMMENT_SIZE = 16;
 constexpr std::size_t WVORBIS_SETUP_MIN_SIZE = 9;
 constexpr std::size_t WVORBIS_SETUP_PART1_LENGTH_OFFSET = 7;
+constexpr std::size_t WVORBIS_LENGTH_FIELD_MAX = 0xFFFF;
 constexpr std::int32_t VORBIS_BLOCK_SIZE_MIN = 64;
 constexpr std::int32_t VORBIS_BLOCK_SIZE_MAX = 8192;
 constexpr std::uint8_t VORBIS_MAGIC[] {'v', 'o', 'r', 'b', 'i', 's'};
@@ -81,7 +82,7 @@ int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* p
     if (param->longBlockExponent < param->shortBlockExponent || WVorbisBlockSize(param->longBlockExponent) > VORBIS_BLOCK_SIZE_MAX)
         return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
     if (param->setupPacket == nullptr) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
-    if (param->setupPacketSize < WVORBIS_SETUP_MIN_SIZE) return AJM_WVORBIS_ERROR_INVALID_SETUP;
+    if (param->setupPacketSize < WVORBIS_SETUP_MIN_SIZE || param->setupPacketSize > WVORBIS_LENGTH_FIELD_MAX) return AJM_WVORBIS_ERROR_INVALID_SETUP;
     if (param->output == nullptr) return AJM_WVORBIS_ERROR_INVALID_PARAMETER;
     constexpr std::size_t headers = WVORBIS_LENGTH_TABLE_SIZE + VORBIS_IDENTIFICATION_SIZE + VORBIS_COMMENT_SIZE;
     if (param->outputCapacity < headers || param->setupPacketSize > param->outputCapacity - headers) return AJM_WVORBIS_ERROR_OUTPUT_TOO_SMALL;
