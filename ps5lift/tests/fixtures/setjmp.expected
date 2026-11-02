@@ -1,0 +1,16 @@
+basic 42
+basic saved 1
+basic unwound 0
+zero 1
+repeated result 5
+repeated count 6
+two inner 7
+two outer 9
+two order 1221
+level resumed 203
+level returned 2002
+level visits 6
+pointer 11
+stack kept 11
+stack switched 13
+stack saved 1
