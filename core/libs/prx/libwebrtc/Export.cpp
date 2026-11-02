@@ -102,20 +102,11 @@ int APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3rtc13SocketAddress6ipaddrEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3rtc13SocketAddressC1ERKNS_9IPAddressEi_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI _ZNK3rtc13SocketAddress4portEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI _ZN6webrtc34CreateModularPeerConnectionFactoryENS_33PeerConnectionFactoryDependenciesE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -357,11 +348,6 @@ int APS5_VABI _ZN3rtc13SocketAddressC1ERKS0__nid_postfix(void) {
 APS5_EXPORT("ftP-2ZTa94E", libwebrtcUnknown08);
 int APS5_VABI libwebrtcUnknown08(void) {
     NotImplemented_nid_no_patch("ftP-2ZTa94E");
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc13SocketAddress5IsNilEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -680,19 +666,9 @@ int APS5_VABI _ZN3rtc10LogMessageD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3rtc13SocketAddress10IsCompleteEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("z-b1v5cik7s", libwebrtcUnknown19);
 int APS5_VABI libwebrtcUnknown19(void) {
     NotImplemented_nid_no_patch("z-b1v5cik7s");
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc13SocketAddress7IsAnyIPEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
