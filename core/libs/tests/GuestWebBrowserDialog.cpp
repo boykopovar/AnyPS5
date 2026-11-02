@@ -1,4 +1,6 @@
 #include "prx/libSceWebBrowserDialog/include/Api.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <cstdint>
@@ -17,6 +19,43 @@ constexpr int COMMON_DIALOG_ERROR_PARAMETER = static_cast<int>(0x80B8000Au);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 
 void Require(bool value) { if (!value) std::abort(); }
+
+
+bool GenericNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::GenericFeature).message;
+}
+
+void RequireNotices(const void* param) {
+    WebBrowserDialogAllowList allowList{};
+    allowList.size = sizeof(allowList);
+    allowList.addresses[0] = "test.invalid";
+    ModalDialogSetPresenter_nid_postfix(true);
+    Require(sceWebBrowserDialogInitialize() == 0);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceWebBrowserDialogOpen(param) == 0);
+    Require(!GenericNoticeShown() && !ModalDialogCapturesInput_nid_postfix());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(!GenericNoticeShown());
+    Require(sceWebBrowserDialogOpen(param) == 0);
+    Require(GenericNoticeShown());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == 0);
+    Require(GenericNoticeShown());
+
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceWebBrowserDialogTerminate() == 0);
+}
 
 }
 
@@ -149,5 +188,6 @@ int main() {
     Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_NONE);
+    RequireNotices(param);
     return 0;
 }

@@ -81,6 +81,8 @@ public:
     std::string DeviceName() const;
     std::string DriverInfo() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;
+    bool BdaAtomicsUsable() const;
+    bool RasterOrderGroupUsable() const;
     bool CalibrateClock(double& gpuNs, std::chrono::steady_clock::time_point& cpu) const;
     ShaderRecompiler::SpirvTarget Target() const;
     Graphics::SampleOrder HostSampleOrder(const Graphics::State& graphics) const;
@@ -108,7 +110,7 @@ public:
     // mutex through the flush hook, so a thread submitting on another queue's behalf (a WAIT_REG_MEM
     // poller, a compute worker's between-packet flush) passes false: it must only submit, never wait.
     void SubmitRecorded(bool reapFirst = true);
-    void StoreIdleResults(bool reapFirst = true);
+    void StoreIdleResults(bool reapFirst = true, const std::function<bool()>& stop = [] { return false; });
     // Unlocked drain: SubmitAndEpoch (under the mutex) returns the serial covering every recorded
     // batch (0: nothing in flight); WaitRecorded(serial) waits for it WITHOUT the mutex (the caller
     // holds a shared_ptr to this device); ReapRecorded(serial) (under the mutex) runs the completions
@@ -287,6 +289,7 @@ public:
         double gpuBusyMs, gpuGapMs, lastSubmitAfterFlipMs, blitSubmitAfterFlipMs, keyWriterWaitMs;
     };
     static PresentStatistics PresentCounts();
+    static std::uint64_t FillCompletionSyncCount();
     struct PresyncStatistics {
         std::uint64_t checked, presyncs, keyChecks, keyWaits;
     };

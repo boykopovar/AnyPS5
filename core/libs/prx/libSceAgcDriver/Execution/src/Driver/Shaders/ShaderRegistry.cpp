@@ -89,7 +89,6 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
         auto& pipeline = DrawPipeline::Queue0();
         if (pipeline.Busy() && pipeline.Overlaps(first, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
     };
-    GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     static std::mutex cacheMutex;
     static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
     static std::size_t cacheBytes = 0;
@@ -110,6 +109,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
             return cached;
         }
     }
+    GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     constexpr std::size_t limit = 1024 * 1024;
     const auto ranges = GuestMemory::CommittedRanges(address, limit);
     std::uint64_t end = address;
@@ -563,6 +563,10 @@ ShaderPreparationTransaction::~ShaderPreparationTransaction() {
 
 PreparedShaderState& ShaderPreparationTransaction::Edit(const ShaderSnapshot& snapshot) {
     require(!committed, "shader preparation transaction is already committed");
+    if (!root->lock.owns_lock()) {
+        std::unique_lock prepared(snapshot.prepared->mutex);
+        AwaitRegisteredPreparation(*snapshot.prepared, prepared);
+    }
     root->Hold();
     auto& changes = root->changes;
     const auto found = changes.find(snapshot.prepared.get());
@@ -577,6 +581,10 @@ PreparedShaderState& ShaderPreparationTransaction::Edit(const ShaderSnapshot& sn
 
 const PreparedShaderState& ShaderPreparationTransaction::Read(const ShaderSnapshot& snapshot) const {
     require(!committed, "shader preparation transaction is already committed");
+    if (!root->lock.owns_lock()) {
+        std::unique_lock prepared(snapshot.prepared->mutex);
+        AwaitRegisteredPreparation(*snapshot.prepared, prepared);
+    }
     root->Hold();
     auto& changes = root->changes;
     const auto found = changes.find(snapshot.prepared.get());
@@ -961,7 +969,15 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
     return PreparedRectangle(front, vertexId, fragmentId);
 }
 
+struct UserDataCallSites {
+    ShaderRecompiler::RdnaProgram program;
+    std::vector<ShaderRecompiler::UserDataCall> calls;
+    std::vector<ShaderRecompiler::TableCall> tableCalls;
+};
+
 namespace {
+
+constexpr std::size_t UserDataLinksPerProgram = 8u;
 
 std::vector<std::uint32_t> LinkGraphicsUserDataTail(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot) {
     using Stage = ShaderRecompiler::ShaderStage;
@@ -979,13 +995,13 @@ std::string hexText(std::uint64_t value) {
     return text;
 }
 
-std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister) {
+std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister, bool allowGetpc = false) {
     constexpr std::uint64_t page = 4096u;
     constexpr std::size_t limitWords = 1024u * 1024u / 4u;
     if (address % 4u != 0u) throw std::runtime_error("its callee address " + hexText(address) + " is not dword aligned");
     std::vector<std::uint32_t> words;
     const auto finish = [&] {
-        const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister);
+        const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister, allowGetpc);
         if (length) words.resize(*length);
         return length.has_value();
     };
@@ -1036,24 +1052,72 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     }
     if (targets.size() > limitCallees) throw std::runtime_error("its call table holds " + std::to_string(targets.size()) + " distinct targets; at most " + std::to_string(limitCallees) + " are linked");
     std::vector<ShaderRecompiler::TableCallee> callees;
-    for (const auto target : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister)});
+    for (const auto target : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister, true)});
     return callees;
 }
 
-ShaderRecompiler::LinkedCalls LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request) {
+std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot, std::size_t codeOffset) {
     const bool gcnVertex = ShaderRecompiler::GcnGuestShaders() && request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
-    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return {};
+    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return nullptr;
     const auto code = request.shader.code;
-    if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return {};
-    const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+    if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return nullptr;
     const ShaderRecompiler::SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
-    const auto calls = ShaderRecompiler::FindUserDataCalls(program, swappc);
-    const auto tableCalls = ShaderRecompiler::FindTableCalls(program, swappc);
-    if (calls.empty() && tableCalls.empty()) return {};
+    const auto addressOf = [&](const ShaderRecompiler::UserDataCall& call) {
+        const auto slot = call.userDataRegister - swappc.userDataBaseRegister;
+        return static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
+    };
+    const auto sameProgram = [&](const PreparedShaderState::UserDataLink& link) {
+        return link.codeOffset == codeOffset && link.userDataBaseRegister == swappc.userDataBaseRegister && link.userDataCount == swappc.userDataCount && link.waveSize == swappc.waveSize;
+    };
+    std::vector<std::uint32_t> current;
+    const auto unchanged = [&](const PreparedShaderState::UserDataLink& link) {
+        for (std::size_t index = 0; index < link.callees.size(); ++index) {
+            const auto address = addressOf(link.sites->calls[index]);
+            const auto& words = link.code[index];
+            if (address != link.callees[index] || !GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), words.size() * 4u)) return false;
+            current.resize(words.size());
+            GuestMemory::Read(address, std::as_writable_bytes(std::span(current)));
+            if (current != words) return false;
+        }
+        return true;
+    };
+    auto& prepared = *snapshot.prepared;
+    std::vector<PreparedShaderState::UserDataLink> candidates;
+    {
+        std::lock_guard lock(prepared.mutex);
+        std::copy_if(prepared.userDataLinks.begin(), prepared.userDataLinks.end(), std::back_inserter(candidates), sameProgram);
+    }
+    std::shared_ptr<const UserDataCallSites> sites;
+    for (auto candidate = candidates.rbegin(); candidate != candidates.rend(); ++candidate) {
+        sites = candidate->sites;
+        if (candidate->linked != nullptr && unchanged(*candidate)) return candidate->linked;
+    }
+    if (sites == nullptr) {
+        auto found = std::make_shared<UserDataCallSites>();
+        found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+        found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
+        found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+        sites = std::move(found);
+    }
+    const auto& program = sites->program;
+    const auto& calls = sites->calls;
+    const auto& tableCalls = sites->tableCalls;
+    PreparedShaderState::UserDataLink link{codeOffset, swappc.userDataBaseRegister, swappc.userDataCount, swappc.waveSize, sites, {}, {}, nullptr};
+    const auto remember = [&] {
+        std::lock_guard lock(prepared.mutex);
+        auto& links = prepared.userDataLinks;
+        if (link.linked == nullptr && std::any_of(links.begin(), links.end(), sameProgram)) return;
+        if (std::count_if(links.begin(), links.end(), sameProgram) >= static_cast<std::ptrdiff_t>(UserDataLinksPerProgram)) links.erase(std::find_if(links.begin(), links.end(), sameProgram));
+        links.push_back(link);
+    };
+    if (calls.empty() && tableCalls.empty()) {
+        link.linked = std::make_shared<const ShaderRecompiler::LinkedCalls>();
+        remember();
+        return link.linked;
+    }
     std::vector<std::vector<std::uint32_t>> callees;
     for (const auto& call : calls) {
-        const auto slot = call.userDataRegister - swappc.userDataBaseRegister;
-        const auto address = static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
+        const auto address = addressOf(call);
         try {
             callees.push_back(ReadUserDataCallee(address, call.linkRegister));
         } catch (const std::exception& error) {
@@ -1069,7 +1133,16 @@ ShaderRecompiler::LinkedCalls LinkUserDataCallees(const ShaderRecompiler::Recomp
             throw std::runtime_error("AGC driver: compute shader " + hexText(request.shader.codeAddress) + " calls a target loaded from a table at program counter " + hexText(call.programCounter) + ", but " + error.what());
         }
     }
-    return ShaderRecompiler::LinkCalls(program, calls, callees, tableCalls, tableCallees);
+    auto linked = std::make_shared<const ShaderRecompiler::LinkedCalls>(ShaderRecompiler::LinkCalls(program, calls, callees, tableCalls, tableCallees));
+    if (!tableCalls.empty()) {
+        remember();
+        return linked;
+    }
+    for (const auto& call : calls) link.callees.push_back(addressOf(call));
+    link.code = std::move(callees);
+    link.linked = linked;
+    remember();
+    return linked;
 }
 
 }
@@ -1078,8 +1151,10 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
-    auto linked = LinkUserDataCallees(request);
-    if (linked.code.empty()) linked.code = LinkGraphicsUserDataTail(request, snapshot);
+    const auto shared = LinkUserDataCallees(request, snapshot, codeOffset);
+    ShaderRecompiler::LinkedCalls tail;
+    if (shared == nullptr || shared->code.empty()) tail.code = LinkGraphicsUserDataTail(request, snapshot);
+    const auto& linked = shared != nullptr && tail.code.empty() ? *shared : tail;
     auto source = request;
     if (!linked.code.empty()) {
         source.shader.code = linked.code;
@@ -1221,6 +1296,7 @@ struct RegisteredPreparation {
     std::optional<ShaderRecompiler::RecompileRequest> request;
     std::vector<std::uint64_t> abiKey;
     std::shared_ptr<VulkanDevice> prebuildDevice;
+    std::uint64_t program = 0;
 };
 
 bool RegistrationPrepareWithinMemoryBudget();
@@ -1267,6 +1343,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     auto plan = std::make_unique<RegisteredPreparation>();
     plan->codeOffset = codeOffset;
+    plan->program = address;
     ShaderRecompiler::RdnaProgram decoded;
     plan->registration = registration;
     try {
@@ -1351,7 +1428,7 @@ bool LibraryPrebuildDisabled() {
     return disabled;
 }
 
-void PrebuildStageLibrary(const std::shared_ptr<VulkanDevice>& device, const Graphics::ShaderStages& stages, ShaderRecompiler::ShaderStage stage, std::shared_ptr<const ShaderRecompiler::RecompileResult> result, std::uint32_t pushOffset) {
+void PrebuildStageLibrary(const std::shared_ptr<VulkanDevice>& device, const Graphics::ShaderStages& stages, ShaderRecompiler::ShaderStage stage, std::shared_ptr<const ShaderRecompiler::RecompileResult> result, std::uint32_t pushOffset, std::uint64_t program) {
     if (LibraryPrebuildDisabled() || result == nullptr || (stage != ShaderRecompiler::ShaderStage::Vertex && stage != ShaderRecompiler::ShaderStage::Fragment)) return;
     SubmitLibraryPrebuild([device, stages, stage, result = std::move(result), pushOffset] {
         const std::array<Graphics::CompiledShader, 1> shaders{{{stage, result.get(), pushOffset}}};
@@ -1360,7 +1437,7 @@ void PrebuildStageLibrary(const std::shared_ptr<VulkanDevice>& device, const Gra
         } catch (const std::exception& error) {
             APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
         }
-    });
+    }, program);
 }
 
 std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& plan) {
@@ -1374,7 +1451,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
     append();
     if (plan.prebuildDevice != nullptr && request.target.registrationModules && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && !LibraryPrebuildDisabled()) {
         try {
-            PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, request.context.waveSize, {}, {}}, request.shader.stage, ShaderRecompiler::RegistrationResult(request, *entries.front().handle), request.layout.pushConstantOffsetBytes);
+            PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, request.context.waveSize, {}, {}}, request.shader.stage, ShaderRecompiler::RegistrationResult(request, *entries.front().handle), request.layout.pushConstantOffsetBytes, plan.program);
         } catch (const std::exception& error) {
             APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
         }
@@ -1566,13 +1643,14 @@ private:
 
 public:
 
-    void Submit(std::function<void()> task, const PreparedShaders* prepared = nullptr, bool budgeted = false) {
+    void Submit(std::function<void()> task, const PreparedShaders* prepared = nullptr, bool budgeted = false, std::uint64_t program = 0) {
         {
             std::unique_lock lock(mutex);
             if (threads != 0 && !closed) {
                 const auto sequence = ++submitted;
-                if (prepared != nullptr && prepared->demanded.load()) tasks.push_front({std::move(task), prepared, sequence, budgeted});
-                else tasks.push_back({std::move(task), prepared, sequence, budgeted});
+                if (prepared != nullptr && prepared->demanded.load()) tasks.push_front({std::move(task), prepared, sequence, budgeted, program});
+                else tasks.push_back({std::move(task), prepared, sequence, budgeted, program});
+                if (program != 0) waitingPrograms.fetch_add(1, std::memory_order_relaxed);
                 unfinished.insert(sequence);
                 lock.unlock();
                 ready.notify_one();
@@ -1590,6 +1668,16 @@ public:
         std::rotate(tasks.begin(), found, std::next(found));
     }
 
+    void Prioritize(std::span<const std::uint64_t> programs) {
+        const auto bound = [&](const Task& task) { return task.program != 0 && std::ranges::binary_search(programs, task.program); };
+        std::lock_guard lock(mutex);
+        if (std::ranges::any_of(tasks, bound)) std::stable_partition(tasks.begin(), tasks.end(), bound);
+    }
+
+    bool ProgramsWaiting() const {
+        return waitingPrograms.load(std::memory_order_relaxed) != 0;
+    }
+
     void AwaitSubmitted() {
         std::unique_lock lock(mutex);
         const auto ticket = submitted;
@@ -1604,6 +1692,7 @@ public:
             closed = true;
             if (dropQueued) {
                 dropped.swap(tasks);
+                waitingPrograms.store(0, std::memory_order_relaxed);
                 for (const auto& task : dropped) unfinished.erase(task.sequence);
                 idle.notify_all();
             }
@@ -1688,6 +1777,7 @@ private:
                 }
                 task = std::move(*next);
                 pool.tasks.erase(next);
+                if (task.program != 0) pool.waitingPrograms.fetch_sub(1, std::memory_order_relaxed);
                 ++pool.running;
                 if (task.budgeted) ++pool.budgetedRunning;
             }
@@ -1717,12 +1807,14 @@ private:
         const PreparedShaders* prepared = nullptr;
         std::uint64_t sequence = 0;
         bool budgeted = false;
+        std::uint64_t program = 0;
     };
 
     std::mutex mutex;
     std::condition_variable ready;
     std::condition_variable idle;
     std::deque<Task> tasks;
+    std::atomic<std::size_t> waitingPrograms{0};
     std::vector<Worker> workers;
     unsigned threads = 0;
     inline static std::atomic<unsigned> liveWorkers{0};
@@ -1807,8 +1899,17 @@ void AwaitRegistrationPreparation() {
     if (auto* pool = RegistrationPreparePool::Existing()) pool->AwaitSubmitted();
 }
 
-void SubmitLibraryPrebuild(std::function<void()> task) {
-    RegistrationPreparePool::Prebuild().Submit(std::move(task));
+void SubmitLibraryPrebuild(std::function<void()> task, std::uint64_t program) {
+    RegistrationPreparePool::Prebuild().Submit(std::move(task), nullptr, false, program);
+}
+
+bool LibraryPrebuildsWaiting() {
+    auto* pool = RegistrationPreparePool::ExistingPrebuild();
+    return pool != nullptr && pool->ProgramsWaiting();
+}
+
+void PrioritizeLibraryPrebuilds(std::span<const std::uint64_t> programs) {
+    if (auto* pool = RegistrationPreparePool::ExistingPrebuild(); pool != nullptr && !programs.empty()) pool->Prioritize(programs);
 }
 
 void SubmitComputePrebuild(std::function<void()> task) {
@@ -2013,6 +2114,11 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
         return;
     }
     auto prepared = PrepareGraphicsStages(decoded, localDevice->Target(), true);
+    if (decoded.state.stages.path == Graphics::ShaderPath::Vertex) {
+        for (const auto& stage : prepared) {
+            if (stage.registration != nullptr) PrebuildStageLibrary(localDevice, decoded.state.stages, stage.stage, stage.registration, stage.pushOffset, stage.snapshot->codeAddress + stage.entry.codeOffset * sizeof(std::uint32_t));
+        }
+    }
     for (auto& stage : prepared) {
         if (stage.entry.handle == nullptr) continue;
         const auto& entries = transaction.Read(*stage.snapshot).entries;
@@ -2022,11 +2128,6 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     for (const auto& stage : prepared) {
         if (stage.snapshot->type == 1) continue;
         ResolvePreparedGraphics(*stage.snapshot, {}, primitiveType == state.userConfig.end() ? 0u : primitiveType->second, localDevice->Target(), true);
-    }
-    if (decoded.state.stages.path == Graphics::ShaderPath::Vertex) {
-        for (const auto& stage : prepared) {
-            if (stage.registration != nullptr) PrebuildStageLibrary(localDevice, decoded.state.stages, stage.stage, stage.registration, stage.pushOffset);
-        }
     }
     PreparedShaderState::GraphicsAbi abi{key, registry, {}};
     for (const auto& stage : prepared) abi.stages.push_back(stage.snapshot);

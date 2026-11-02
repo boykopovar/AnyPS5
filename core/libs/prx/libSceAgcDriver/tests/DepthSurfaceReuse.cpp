@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -448,6 +449,120 @@ void TestRetiredSurfaceRelease(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+std::atomic<std::uint64_t> untrackedHtileBegin{0};
+std::atomic<std::uint64_t> untrackedHtileEnd{0};
+std::atomic<int> untrackedHtileReads{0};
+
+void CountUntrackedHtileReads(std::uint64_t address, std::size_t bytes) {
+    if (address < untrackedHtileEnd.load() && address + bytes > untrackedHtileBegin.load()) untrackedHtileReads.fetch_add(1);
+}
+
+void TestUntrackedHtileScan(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0xffffffffu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    Require(!AgcDriver::GuestMemory::Watched(htile, bytes), "the HTILE must lie outside the write watch");
+    DepthTarget target{0xb4000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.htileAddress = htile;
+    untrackedHtileBegin = htile;
+    untrackedHtileEnd = htile + bytes;
+    const auto view = [&] {
+        untrackedHtileReads = 0;
+        DepthSurfaceView(context, target);
+        return untrackedHtileReads.load();
+    };
+    AgcDriver::GuestMemory::SetFlushHook(&CountUntrackedHtileReads);
+    try {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(view() >= 2, "the first check of an HTILE outside the write watch must read it");
+        const auto image = lastImage;
+        Require(view() == 1, "an HTILE outside the write watch that held no clear must flush pending GPU results before its stamp and not be read again before the stamp moves");
+        std::fill(words.begin(), words.end(), 0u);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        clearedImages.clear();
+        Require(view() >= 2, "an HTILE outside the write watch must be read again in a new collect epoch");
+        Require(std::ranges::find(clearedImages, image) != clearedImages.end(), "a clear the CPU wrote into an HTILE outside the write watch must be found in the next collect epoch");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
+}
+
+void TestUntrackedHtileStencilScan(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0x0000000fu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    Require(!AgcDriver::GuestMemory::Watched(htile, bytes), "the HTILE must lie outside the write watch");
+    DepthTarget target{0xb8000000, 0xb8800000, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+    target.htileAddress = htile;
+    untrackedHtileBegin = htile;
+    untrackedHtileEnd = htile + bytes;
+    const auto view = [&] {
+        untrackedHtileReads = 0;
+        DepthSurfaceView(context, target);
+        return untrackedHtileReads.load();
+    };
+    AgcDriver::GuestMemory::SetFlushHook(&CountUntrackedHtileReads);
+    try {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(view() >= 2, "the first check of an HTILE outside the write watch must read it");
+        const auto image = lastImage;
+        clearedImages.clear();
+        Require(view() == 1, "an HTILE outside the write watch that held no clear without stencil must not be read again for the same lookup");
+        Require(std::ranges::find(clearedImages, image) == clearedImages.end(), "HTILE words 0x0000000f without stencil in the HTILE must not clear the surface");
+        target.htileStencil = true;
+        clearedImages.clear();
+        Require(view() >= 2, "an HTILE outside the write watch scanned without stencil must be read again for a lookup with stencil in the same collect epoch");
+        Require(std::ranges::find(clearedImages, image) != clearedImages.end(), "HTILE words 0x0000000f with stencil in the HTILE must clear the stencil after a scan without stencil in the same collect epoch");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
+}
+
+void TestUntrackedHtileDriverStore(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0xffffffffu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    Require(!AgcDriver::GuestMemory::Watched(htile, bytes), "the HTILE must lie outside the write watch");
+    DepthTarget target{0xbc000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.htileAddress = htile;
+    untrackedHtileBegin = htile;
+    untrackedHtileEnd = htile + bytes;
+    const auto view = [&] {
+        untrackedHtileReads = 0;
+        DepthSurfaceView(context, target);
+        return untrackedHtileReads.load();
+    };
+    AgcDriver::GuestMemory::SetFlushHook(&CountUntrackedHtileReads);
+    try {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(view() >= 2, "the first check of an HTILE outside the write watch must read it");
+        const auto image = lastImage;
+        Require(view() == 1, "an HTILE outside the write watch that held no clear must not be read again before its stamp moves");
+        std::fill(words.begin(), words.end(), 0u);
+        AgcDriver::GuestMemory::MarkWritten(htile, bytes);
+        clearedImages.clear();
+        Require(view() >= 2, "an HTILE outside the write watch must be read again after a driver store in the same collect epoch");
+        Require(std::ranges::find(clearedImages, image) != clearedImages.end(), "a clear stored by the driver into an HTILE outside the write watch must be found in the same collect epoch");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
+}
+
 void TestUnmappedStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
     constexpr VkExtent2D extent{256, 256};
@@ -521,6 +636,9 @@ void RunDepthSurfaceReuseTests() {
     TestMultisampleDepthOwnership(context);
     TestMultisampleStencilAliases(context);
     TestStencilUnormView(context);
+    TestUntrackedHtileScan(context);
+    TestUntrackedHtileStencilScan(context);
+    TestUntrackedHtileDriverStore(context);
     TestUnmappedStalePlaneFlush(context);
     TestReadOnlyStalePlaneFlush(context);
     constexpr std::uint64_t depth32 = 0x40000000;

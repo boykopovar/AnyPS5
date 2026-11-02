@@ -198,6 +198,21 @@ static void closeDevice(Port& port) {
     port.spec = {};
 }
 
+static void reopenStoppedDevice(Port& port) {
+    if (port.device == 0 || SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED) return;
+    closeDevice(port);
+    if (port.type == PORT_TYPE_VIBRATION) {
+        try {
+            openVibrationDevice(port);
+        } catch (const std::runtime_error&) {
+            port.device = 0;
+            port.spec = {};
+        }
+    } else {
+        openDevice(port);
+    }
+}
+
 static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
 
 static const void* prepareBuffer(const Port& port, const void* data, std::vector<std::uint8_t>& buf) {
@@ -496,6 +511,7 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) try {
         return -2144993277;
     }
 
+    reopenStoppedDevice(*port);
     if (port->device == 0) {
         outputVirtualPort(*port, ptr, lock);
     } else {
@@ -533,6 +549,7 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     Port& first = *getPort(param[0].handle);
     for (std::uint32_t i = 0; i < num; i++) {
         Port& port = *getPort(param[i].handle);
+        reopenStoppedDevice(port);
         if (port.device == 0) {
             outputVirtualPort(port, param[i].ptr, lock);
         } else {

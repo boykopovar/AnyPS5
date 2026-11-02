@@ -1,0 +1,31 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceUsbStorageUnknown_267oD_minus_IF_plus_8k_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_96s31EeG0LM_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_AIyv_minus_u_minus_8w0s_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_FhdRv3K4EMQ_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_H6axEciG5Gw_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_IgVY6sHaVuE_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_O6_plus_fXKZS62g_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_OhsV6P0FD5A_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_PsB2k0hnCRo_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_W_plus_CjjL0iEmU_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_W5e8Vxa9OCI_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_W6xoHROgu6w_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_XMDFDnkOilA_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_d5QHvMfsCx0_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_dVQFgpSzA2I_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_jjKZ79juYfE_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_jl_plus__plus_fwrnXXI_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_jpS2TJZhsRU_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_jqw6RT84rQI_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_kzxjYuKrhv0_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_rZgSodboauI_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_uXZqnG02MiM_nid_no_patch();
+int APS5_VABI libSceUsbStorageUnknown_yct_minus_absP9LM_nid_no_patch();
+
+}
