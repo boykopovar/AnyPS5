@@ -284,15 +284,20 @@ int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(void) {
 }
 
 int APS5_VABI pthread_mutexattr_getgen_np_nid_postfix(const PthreadMutexattr* attr, int* generation) {
-    if (!attr || !*attr || !generation) return PosixThread::GUEST_EINVAL;
-    *generation = (*attr)->generation & 1;
+    if (!attr || !generation) return PosixThread::GUEST_EINVAL;
+    PthreadMutexattr localAttr{};
+    if (!GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr)) || !localAttr) return PosixThread::GUEST_EINVAL;
+    const int val = localAttr->generation & 1;
+    if (!GuestCopyOut_nid_no_patch(generation, &val, sizeof(val))) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
 int APS5_VABI pthread_mutexattr_setgen_np_nid_postfix(PthreadMutexattr* attr, int generation) {
-    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
+    if (!attr) return PosixThread::GUEST_EINVAL;
+    PthreadMutexattr localAttr{};
+    if (!GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr)) || !localAttr) return PosixThread::GUEST_EINVAL;
     if (generation != 0 && generation != 1) return PosixThread::GUEST_ENOTSUP;
-    (*attr)->generation = generation;
+    localAttr->generation = generation;
     return 0;
 }
 
