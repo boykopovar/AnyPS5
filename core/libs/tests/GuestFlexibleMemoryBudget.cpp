@@ -79,6 +79,15 @@ int main(int argc, char** argv) {
     }
     const std::size_t expected = (mode == "declared" ? 800u : mode == "limited" ? 16u : 448u) * 1024u * 1024u;
     Require(sceKernelConfiguredFlexibleMemorySize(&configured) == 0 && configured == expected);
+    const std::size_t direct = sceKernelGetDirectMemorySize();
+    Require(direct == GAME_MEMORY_SIZE - configured);
+    std::int64_t physical = -7;
+    Require(sceKernelAllocateDirectMemory(static_cast<std::int64_t>(direct), INT64_MAX, PS5_PAGE_SIZE, 0, 0, &physical) == SCE_KERNEL_ERROR_EAGAIN && physical == -7);
+    Require(sceKernelAllocateDirectMemory(static_cast<std::int64_t>(direct) - PS5_PAGE_SIZE, INT64_MAX, PS5_PAGE_SIZE, 0, 0, &physical) == 0 && physical == static_cast<std::int64_t>(direct) - PS5_PAGE_SIZE);
+    std::int64_t freeStart = -7;
+    std::size_t freeSize = 0;
+    Require(sceKernelAvailableDirectMemorySize(0, INT64_MAX, 0, &freeStart, &freeSize) == 0 && static_cast<std::size_t>(freeStart) + freeSize == direct - PS5_PAGE_SIZE);
+    Require(sceKernelReleaseDirectMemory(physical, PS5_PAGE_SIZE) == 0);
     std::size_t before = 0;
     Require(sceKernelAvailableFlexibleMemorySize(&before) == 0);
     Require(before + GuestImageSegmentBytes_nid_no_patch() == configured);

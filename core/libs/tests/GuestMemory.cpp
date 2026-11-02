@@ -3838,7 +3838,7 @@ static void CheckVirtualQueryPartialMunmap() {
 
 static void CheckAvailableDirectMemoryIsLargestFreeBlock() {
     constexpr std::int64_t window = 0x4000000;
-    const std::int64_t top = static_cast<std::int64_t>(DIRECT_MEMORY_SIZE) - window;
+    const std::int64_t top = static_cast<std::int64_t>(sceKernelGetDirectMemorySize()) - window;
     std::int64_t first = -1;
     std::int64_t gap = -1;
     std::int64_t last = -1;
@@ -3866,7 +3866,7 @@ static void CheckAvailableDirectMemoryIsLargestFreeBlock() {
     Require(untouched(run, run, 0, SCE_KERNEL_ERROR_ENOMEM));
     Require(untouched(0, -1, 0, SCE_KERNEL_ERROR_ENOMEM));
     Require(untouched(run + 0x1000, run + 0x3000, 0, SCE_KERNEL_ERROR_ENOMEM));
-    Require(untouched(static_cast<std::int64_t>(DIRECT_MEMORY_SIZE), std::numeric_limits<std::int64_t>::max(), 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), std::numeric_limits<std::int64_t>::max(), 0, SCE_KERNEL_ERROR_ENOMEM));
     Require(untouched(std::numeric_limits<std::int64_t>::max() - 0x3ffe, std::numeric_limits<std::int64_t>::max(), 0, SCE_KERNEL_ERROR_ENOMEM));
     Require(untouched(std::numeric_limits<std::int64_t>::max(), run + 0x100000, 0, SCE_KERNEL_ERROR_ENOMEM));
     Require(untouched(run, std::numeric_limits<std::int64_t>::max(), std::size_t{1} << 62, SCE_KERNEL_ERROR_ENOMEM));
