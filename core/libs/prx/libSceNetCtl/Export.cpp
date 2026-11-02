@@ -844,15 +844,15 @@ extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::
     return true;
 }
 
-static void WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
-    std::memcpy(info->opaque, &value, sizeof(value));
+static bool WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
+    return GuestCopyOut_nid_no_patch(info->opaque, &value, sizeof(value));
 }
 
-static void WriteInfoAddress(NetCtlInfo* info, in_addr address) {
+static bool WriteInfoAddress(NetCtlInfo* info, in_addr address) {
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(&address.s_addr);
     char text[NET_CTL_IPV4_ADDR_STR_LEN] = {};
     std::snprintf(text, sizeof(text), "%u.%u.%u.%u", static_cast<unsigned>(bytes[0]), static_cast<unsigned>(bytes[1]), static_cast<unsigned>(bytes[2]), static_cast<unsigned>(bytes[3]));
-    std::memcpy(info->opaque, text, sizeof(text));
+    return GuestCopyOut_nid_no_patch(info->opaque, text, sizeof(text));
 }
 
 static constexpr std::size_t NET_CTL_IPV6_ADDR_STR_LEN = 46;
@@ -1051,30 +1051,36 @@ int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info) {
     if (code < NET_CTL_INFO_DEVICE || code > NET_CTL_INFO_HTTP_PROXY_PORT) return SCE_NET_CTL_ERROR_INVALID_CODE;
     HostIpv4Interface host;
     if (!FindHostIpv4Interface(host)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
+    bool copied = false;
     switch (code) {
-        case NET_CTL_INFO_DEVICE: WriteInfoWord(info, NET_CTL_DEVICE_WIRED); break;
-        case NET_CTL_INFO_ETHER_ADDR: std::memcpy(info->opaque, NET_CTL_ETHER_ADDR, sizeof(NET_CTL_ETHER_ADDR)); break;
-        case NET_CTL_INFO_MTU: WriteInfoWord(info, host.mtu); break;
-        case NET_CTL_INFO_LINK: WriteInfoWord(info, NET_CTL_LINK_CONNECTED); break;
-        case NET_CTL_INFO_IP_CONFIG: WriteInfoWord(info, NET_CTL_IP_DHCP); break;
-        case NET_CTL_INFO_IP_ADDRESS: WriteInfoAddress(info, host.address); break;
-        case NET_CTL_INFO_NETMASK: WriteInfoAddress(info, host.netmask); break;
-        case NET_CTL_INFO_DEFAULT_ROUTE: WriteInfoAddress(info, host.gateway); break;
-        case NET_CTL_INFO_PRIMARY_DNS: WriteInfoAddress(info, host.dns.size() > 0 ? host.dns[0] : in_addr{}); break;
-        case NET_CTL_INFO_SECONDARY_DNS: WriteInfoAddress(info, host.dns.size() > 1 ? host.dns[1] : in_addr{}); break;
-        case NET_CTL_INFO_HTTP_PROXY_CONFIG: WriteInfoWord(info, NET_CTL_HTTP_PROXY_OFF); break;
+        case NET_CTL_INFO_DEVICE: copied = WriteInfoWord(info, NET_CTL_DEVICE_WIRED); break;
+        case NET_CTL_INFO_ETHER_ADDR: copied = GuestCopyOut_nid_no_patch(info->opaque, NET_CTL_ETHER_ADDR, sizeof(NET_CTL_ETHER_ADDR)); break;
+        case NET_CTL_INFO_MTU: copied = WriteInfoWord(info, host.mtu); break;
+        case NET_CTL_INFO_LINK: copied = WriteInfoWord(info, NET_CTL_LINK_CONNECTED); break;
+        case NET_CTL_INFO_IP_CONFIG: copied = WriteInfoWord(info, NET_CTL_IP_DHCP); break;
+        case NET_CTL_INFO_IP_ADDRESS: copied = WriteInfoAddress(info, host.address); break;
+        case NET_CTL_INFO_NETMASK: copied = WriteInfoAddress(info, host.netmask); break;
+        case NET_CTL_INFO_DEFAULT_ROUTE: copied = WriteInfoAddress(info, host.gateway); break;
+        case NET_CTL_INFO_PRIMARY_DNS: copied = WriteInfoAddress(info, host.dns.size() > 0 ? host.dns[0] : in_addr{}); break;
+        case NET_CTL_INFO_SECONDARY_DNS: copied = WriteInfoAddress(info, host.dns.size() > 1 ? host.dns[1] : in_addr{}); break;
+        case NET_CTL_INFO_HTTP_PROXY_CONFIG: copied = WriteInfoWord(info, NET_CTL_HTTP_PROXY_OFF); break;
         case NET_CTL_INFO_BSSID:
         case NET_CTL_INFO_SSID:
         case NET_CTL_INFO_DHCP_HOSTNAME:
         case NET_CTL_INFO_PPPOE_AUTH_NAME:
-        case NET_CTL_INFO_HTTP_PROXY_SERVER: std::memset(info->opaque, 0, sizeof(info->opaque)); break;
+        case NET_CTL_INFO_HTTP_PROXY_SERVER: {
+            const NetCtlInfo zero{};
+            copied = GuestCopyOut_nid_no_patch(info->opaque, zero.opaque, sizeof(info->opaque));
+            break;
+        }
         case NET_CTL_INFO_WIFI_SECURITY:
         case NET_CTL_INFO_RSSI_DBM:
         case NET_CTL_INFO_RSSI_PERCENTAGE:
         case NET_CTL_INFO_CHANNEL:
-        case NET_CTL_INFO_HTTP_PROXY_PORT: WriteInfoWord(info, 0); break;
+        case NET_CTL_INFO_HTTP_PROXY_PORT: copied = WriteInfoWord(info, 0); break;
         default: throw std::runtime_error("sceNetCtlGetInfo: info code " + std::to_string(code) + " is not implemented");
     }
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
