@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "Recompiler.hpp"
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,6 +18,7 @@ public:
     explicit BdaResources(const Context& context);
     BdaResources(const Context& context, const GuestBufferMemory& memory);
     VkDescriptorBufferInfo Table() const;
+    bool TableGuardCurrent(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
     struct ImageTableFaults {
@@ -60,6 +62,7 @@ private:
     std::shared_ptr<Buffer> table;
     std::unique_ptr<Buffer> fault;
     std::size_t tableBytes = 0;
+    std::uint64_t tableGuardSerial = 0;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<SrtGuardFaults> srtGuards;

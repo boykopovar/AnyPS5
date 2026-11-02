@@ -152,6 +152,14 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include)
     add_test(NAME request_serializer COMMAND request_serializer_tests)
     set_tests_properties(request_serializer PROPERTIES TIMEOUT 20)
+    add_test_executable(heap_template_budget_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/HeapTemplateBudgetTests.cpp)
+    target_include_directories(heap_template_budget_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/libs
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include)
+    add_test(NAME heap_template_budget COMMAND heap_template_budget_tests)
+    set_tests_properties(heap_template_budget PROPERTIES TIMEOUT 20)
     find_package(Python3 QUIET COMPONENTS Interpreter)
     add_test_executable(shader_ir_use_rewrite_tests
         core/shader/recompiler/IntermediateRepresentation/tests/UseRewrite.cpp
