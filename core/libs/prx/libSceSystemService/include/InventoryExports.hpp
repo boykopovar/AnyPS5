@@ -1,0 +1,40 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceSystemServiceUnknown_16waHD4tFBo_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_1m_minus_E1Xh8COo_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_7eu2qjQGigw_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_90unWbnI0qE_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_E_minus_bXVJqwGZw_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_G3oPdw3lkps_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_KgiwSrROsIQ_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_LxGOxroprpg_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_NXFtO8BfVeo_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_Oxh0CSsTZ78_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_OyTwhCKWXi4_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_U0HutHWnMBM_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_VDs9VSjSJh0_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_ZWNP_plus__minus_dWr8E_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_axzblV8OvWU_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_bJyWctnSXyU_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_bUNkT3XDg0Y_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_c5_plus_4Scso9EU_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_fBGD_minus_HNimSk_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_fPAZ5DBsDxo_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_ifJiF5witJ4_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_kDGjRMtUDxo_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_lgpIdZ8T0xg_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_pj1SzIAxPlk_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_qdTPJWjquDc_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_rIqPq0oWlrg_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_sgYo_minus_zXHQRE_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_tPMOYbbviYs_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_uElcdmhh_minus_c8_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_xn_minus_HgPW29x4_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_y16IXiJfafA_nid_no_patch();
+int APS5_VABI libSceSystemServiceUnknown_yOiZq_plus_9_minus_ZMQ_nid_no_patch();
+
+}
