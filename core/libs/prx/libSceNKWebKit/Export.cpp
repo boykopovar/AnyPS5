@@ -69,27 +69,7 @@ int APS5_VABI WKURLResponseGetExpectedContentLength() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKSecurityOriginCopyProtocol() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSecurityOriginCopyHost() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSecurityOriginGetPort() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSecurityOriginCopyToString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKSecurityOriginCopyDatabaseIdentifier() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKSecurityOriginCreate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
