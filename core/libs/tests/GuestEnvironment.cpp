@@ -60,4 +60,20 @@ int main() {
     for (int index = 0; index < 64; ++index)
         Require(setenv_nid_postfix(("ANYPS5_GUEST_ENV_GROW_4C27_" + std::to_string(index)).c_str(), "x", 1) == 0);
     Require(getenv_nid_postfix("Q7B") == kept && std::strcmp(kept, "b") == 0);
+    Require(setenv_nid_postfix("Q7C", "abc", 1) == 0);
+    char* const first = getenv_nid_postfix("Q7C");
+    Require(setenv_nid_postfix("Q7C", "xy", 1) == 0);
+    Require(getenv_nid_postfix("Q7C") == first && std::strcmp(first, "xy") == 0);
+    Require(setenv_nid_postfix("Q7C", "longer value", 1) == 0);
+    char* const second = getenv_nid_postfix("Q7C");
+    Require(second != first && std::strcmp(second, "longer value") == 0 && std::strcmp(first, "xy") == 0);
+    Require(unsetenv_nid_postfix("Q7C") == 0);
+    Require(getenv_nid_postfix("Q7C") == nullptr && std::strcmp(second, "longer value") == 0);
+    Require(setenv_nid_postfix("Q7C", "again", 0) == 0);
+    Require(getenv_nid_postfix("Q7C") == second && std::strcmp(second, "again") == 0);
+    char lent[] = "Q7C=lent";
+    Require(putenv_nid_postfix(lent) == 0);
+    Require(getenv_nid_postfix("Q7C") == lent + 4 && std::strcmp(second, "again") == 0);
+    Require(setenv_nid_postfix("Q7C", "own", 1) == 0);
+    Require(std::strcmp(getenv_nid_postfix("Q7C"), "own") == 0 && std::strcmp(lent, "Q7C=lent") == 0 && std::strcmp(second, "again") == 0);
 }

@@ -14,6 +14,8 @@ UNBLOCKS = re.compile(r'Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ x
 TITLE_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{4}\d{5}(?!\d)")
 NONE = re.compile(r"[-*_ \t\r\n]*none\b", re.I)
 PERF = re.compile(r"perf(\(|!?:)")
+PERF_SCOPE = re.compile(r"perf\(([^)]*)\)")
+UNCAPTURED_SCOPES = {"build", "ci", "tools"}
 FENCE = re.compile(r"(?:```|~~~)[^\r\n]*\r?\n(.*?)(?:```|~~~)", re.S)
 MARKER = "<!-- pr-labels-perf -->"
 UNBLOCKS_LABEL = "unblocks title"
@@ -47,6 +49,11 @@ def is_perf(title):
     return bool(PERF.match(title or ""))
 
 
+def needs_capture(title):
+    scope = PERF_SCOPE.match(title or "")
+    return is_perf(title) and not (scope and scope.group(1).strip().lower() in UNCAPTURED_SCOPES)
+
+
 def has_numbers(body):
     body = strip_comments(body)
     candidates = [line.strip() for line in body.splitlines()] + [block.strip() for block in FENCE.findall(body)]
@@ -69,7 +76,7 @@ def labels_for(pr):
         wanted.add(UNBLOCKS_LABEL)
     if is_perf(pr["title"]):
         wanted.add(PERF_LABEL)
-        if not has_numbers(pr["body"]):
+        if needs_capture(pr["title"]) and not has_numbers(pr["body"]):
             wanted.add(MISSING_LABEL)
     current = set(pr["labels"])
     return wanted - current, (MANAGED & current) - wanted
@@ -79,6 +86,7 @@ def decode_pages(out):
     decoder = json.JSONDecoder()
     offset = 0
     items = []
+    pages = 0
     while offset < len(out):
         while offset < len(out) and out[offset].isspace():
             offset += 1
@@ -87,11 +95,25 @@ def decode_pages(out):
         page, offset = decoder.raw_decode(out, offset)
         if not isinstance(page, list):
             raise ValueError("gh api --paginate returned a non-array page")
+        pages += 1
         items.extend(page)
+    if not pages:
+        raise ValueError("gh api --paginate returned no JSON pages")
     return items
 
 
 def pull(data):
+    if not isinstance(data, dict):
+        raise ValueError("pull request must be an object")
+    if type(data.get("number")) is not int or data["number"] <= 0:
+        raise ValueError("pull request number must be a positive integer")
+    if not isinstance(data.get("title"), str) or data.get("state") not in ("open", "closed"):
+        raise ValueError("pull request needs a string title and an open or closed state")
+    if "body" not in data or (data["body"] is not None and not isinstance(data["body"], str)):
+        raise ValueError("pull request body must be a string or null")
+    labels = data.get("labels")
+    if not isinstance(labels, list) or any(not isinstance(label, dict) or not isinstance(label.get("name"), str) for label in labels):
+        raise ValueError("pull request labels must be objects with string names")
     return {"number": data["number"], "title": data["title"], "body": data["body"] or "",
             "labels": [label["name"] for label in data["labels"]], "state": data["state"]}
 
@@ -140,6 +162,8 @@ def main(argv=None):
             prs = [pull(data) for data in decode_pages(gh("api", "--paginate", f"repos/{repo}/pulls?state=open&base=main&per_page=100"))]
     except subprocess.CalledProcessError as error:
         parser.error((error.stderr or str(error)).strip())
+    except (ValueError, RecursionError) as error:
+        parser.error(f"cannot read pull requests: {error}")
     failed = []
     for pr in prs:
         try:

@@ -27,6 +27,10 @@ def previous_sequence(path):
         line = line[:-2] + b"\n"
     tokens = line.split()
     timeline = tokens[:1] == [b"APS5_PAD_TIMELINE"]
+    if not timeline and len(tokens) in (4, 8):
+        touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
+        if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 942, 127, 1))):
+            return 0
     if timeline:
         tokens = tokens[1:]
     if len(line.rstrip(b"\n")) > 127 or len(tokens) not in ((3,) if timeline else (3, 7)):
@@ -69,6 +73,8 @@ def main():
     parser.add_argument("--hold-ms", type=int, default=300)
     parser.add_argument("--left-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--right-stick", type=int, nargs=2, metavar=("X", "Y"))
+    parser.add_argument("--touch", type=int, nargs=4, metavar=("X", "Y", "ID", "ACTIVE"),
+                        help="touch contact: X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
     args = parser.parse_args()
     try:
         mask = button_mask(args.button)
@@ -80,6 +86,11 @@ def main():
         parser.error(f"directory does not exist: {args.path.parent}")
     if not 1 <= args.hold_ms <= 5000:
         parser.error("--hold-ms must be between 1 and 5000")
+    touch = ""
+    if args.touch is not None:
+        if any(not 0 <= value <= limit for value, limit in zip(args.touch, (1919, 942, 127, 1))):
+            parser.error("--touch requires X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1")
+        touch = " touch(" + ",".join(str(value) for value in args.touch) + ")"
     sticks = ""
     if args.left_stick is not None or args.right_stick is not None:
         axes = (args.left_stick or [128, 128]) + (args.right_stick or [128, 128])
@@ -104,7 +115,7 @@ def main():
                 if os.geteuid() == 0:
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
-            output.write(f"{sequence} {mask} {args.hold_ms}{sticks}\n")
+            output.write(f"{sequence} {mask} {args.hold_ms}{sticks}{touch}\n")
         os.replace(temporary, args.path)
     finally:
         if temporary is not None:

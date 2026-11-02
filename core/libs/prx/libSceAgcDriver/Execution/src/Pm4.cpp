@@ -650,10 +650,10 @@ std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, co
             return StoreWrite{destination, {}, copyDataSource(packet, queue, bytes)};
         }
         case 0x50: {
-            if (packet.size() < 7 || dmaDestination(packet) == DmaSelectGds) return std::nullopt;
+            if (packet.size() < 7) return std::nullopt;
             if (dmaDestination(packet) == DmaDestinationNowhere) return StoreWrite{address(packet[2], packet[3]), {}, {}};
             const std::size_t bytes = DmaBytes(packet);
-            const auto destination = address(packet[4], packet[5]);
+            const auto destination = dmaDestination(packet) == DmaSelectGds ? GdsAddress() + packet[4] : address(packet[4], packet[5]);
             if (!fits(destination, bytes)) return std::nullopt;
             return StoreWrite{destination, {}, dmaSourceBytes(packet)};
         }
@@ -1034,13 +1034,12 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                         case 0: queue.ClearContext(); break;
                         case 1: case 3:
                             require(!queue.savedContext.has_value(), "context state is already pushed");
-                            queue.savedContext = queue.context;
+                            queue.PushContext();
                             if (packet[1] == 3) queue.ClearContext();
                             break;
                         case 2:
                             require(queue.savedContext.has_value(), "context state has not been pushed");
-                            queue.context = std::move(*queue.savedContext);
-                            queue.savedContext.reset();
+                            queue.PopContext();
                             break;
                     }
                     APS5_LOG_OUT_DEBUG("CONTEXT_STATE done operation=%u targetMaskAfter=0x%x shaderMaskAfter=0x%x", packet[1], queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);
