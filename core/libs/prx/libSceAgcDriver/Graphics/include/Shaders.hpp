@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SHADERS_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "Recompiler.hpp"
 #include <algorithm>
 #include <array>
@@ -44,6 +45,7 @@ struct CompiledShader {
     ShaderRecompiler::ShaderStage stage;
     const ShaderRecompiler::RecompileResult* program;
     std::uint32_t pushConstantOffset;
+    const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews = nullptr;
     const ShaderRecompiler::HeapStageWords* heap = nullptr;
 };
 

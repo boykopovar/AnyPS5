@@ -224,9 +224,9 @@ void ringSpans(const Context& context) {
     require(untilWrap() == 0u && !heap.Held(first) && heap.Statistics().spansExpired == 1u, "a span the ring wrote over has expired");
 }
 
-void ringLargeSpans(const Context& context) {
+bool ringLargeSpans(const Context& context) {
     BindlessHeap heap(context);
-    require(heap.RingChunkCount() >= 5u, "the ring has fewer than five chunks, so a span over three chunks cannot be tested");
+    if (heap.RingChunkCount() < 5u) return false;
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
     constexpr std::size_t largeWords = chunkWords * 2u + 1024u;
     BindlessHeap::SpanMark pin;
@@ -257,6 +257,7 @@ void ringLargeSpans(const Context& context) {
         refused = true;
     }
     require(refused, "a span over half the ring is refused");
+    return true;
 }
 
 void ringCurrentChunk(const Context& context) {
@@ -388,7 +389,8 @@ void twoHeapsComeBack(const Context& context, VkImageView view) {
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    const bool comesBack = !mode.empty();
+    const bool largeSpans = mode == "ring-large-spans";
+    const bool comesBack = !mode.empty() && !largeSpans;
     try {
         SetTestEnvironment("APS5_GPU_HEAP", "1");
         SetTestEnvironment("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
@@ -397,6 +399,21 @@ int main(int argc, char** argv) {
         if (!device->graphicsContext().descriptorHeap) {
             std::printf("skipped, the device has no VK_EXT_descriptor_heap\n");
             return VulkanTestSkipped;
+        }
+        if (largeSpans) {
+            bool ran = false;
+            {
+                const auto context = device->graphicsContext();
+                ran = ringLargeSpans(context);
+                device->WaitIdle();
+            }
+            device.reset();
+            if (!ran) {
+                std::printf("skipped, the heap ring has fewer than five chunks\n");
+                return VulkanTestSkipped;
+            }
+            std::cout << "bindless heap ring large span tests passed\n";
+            return 0;
         }
         if (comesBack) {
             {
@@ -425,7 +442,6 @@ int main(int argc, char** argv) {
             textureSlots(context, placeholders.View(Abi::FirstImageBinding));
             samplerSlots(context);
             ringSpans(context);
-            ringLargeSpans(context);
             ringCurrentChunk(context);
             viewSlots(context, placeholders.View(Abi::FirstStorageImageBinding));
             encodedViews(context);

@@ -333,14 +333,13 @@ void RebaseProgramHeaders(std::vector<std::uint8_t>& buf, const std::uint64_t ta
         if (type == PT_NULL || type == PT_GNU_STACK)
             continue;
         const auto address = Rebased(base, Io::ReadU64(buf, header + kPhdrVaddrOffset), "Program header address");
-        const auto physical = Rebased(base, Io::ReadU64(buf, header + kPhdrPaddrOffset), "Program header physical address");
         if (type == PT_LOAD) {
             RequireBaseAlignment(base, Io::ReadU64(buf, header + kPhdrAlignOffset));
             if (Io::ReadU64(buf, header + kPhdrMemSizeOffset) > kLinuxUserAddressEnd - address)
                 throw Domain::RelinkerException("PT_LOAD at " + Hex(address) + " ends outside the Linux user address space");
         }
         Io::WriteU64(buf, header + kPhdrVaddrOffset, address);
-        Io::WriteU64(buf, header + kPhdrPaddrOffset, physical);
+        Io::WriteU64(buf, header + kPhdrPaddrOffset, address);
     }
 }
 

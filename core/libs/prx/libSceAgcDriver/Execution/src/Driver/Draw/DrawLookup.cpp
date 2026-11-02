@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <bit>
 
@@ -144,6 +145,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     bool anyLayout = false;
                     for (std::size_t rank = 0; rank < variants.size(); ++rank) {
                         const auto& variant = variants[rank];
+                        if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                         if (variant->pushOffset != cursor || (heapRefused && variant->compiled->gpuResolvedImages) || (heapMode && variant->compiled->gpuResolvedImages != *heapMode)) continue;
                         if (programs[i].binary.stage == ShaderRecompiler::ShaderStage::Mesh && !std::equal(variant->meshIndexDescriptor.begin(), variant->meshIndexDescriptor.end(), programs[i].userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord)) {
                             if (!anyLayout) outcome = EntryOutcome::Differing;
@@ -253,6 +255,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 const auto& was = dataEntry->decode->programs[i].userData;
                 auto& candidates = dataCandidates[i];
                 for (const auto& variant : dataEntry->stages[i]) {
+                    if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                     if (heapRefused && variant->compiled->gpuResolvedImages) continue;
                     bool usedEqual = true;
                     for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
