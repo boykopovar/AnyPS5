@@ -27,16 +27,26 @@ void CheckUnsupported() {
     for (const std::uint32_t flags : {0u, 1u, 0x80000000u}) {
         std::memset(storage, 0x5a, sizeof(storage));
         auto* connection = reinterpret_cast<NetResolverConnection*>(storage);
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnectCreate("resolver", 1, connection, flags), kResolverEnosupport));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnectCreate(nullptr, 2, nullptr, flags), kResolverEnosupport));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnectCreate("", 3, nullptr, flags), kResolverEnosupport));
         Require(StorageUntouched(storage, sizeof(storage)));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnect(connection, "example.org", 53, &option), kResolverEnosupport));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnect(nullptr, nullptr, 0, nullptr), kResolverEnosupport));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnect(connection, "", 65535, &option), kResolverEnosupport));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnectAbort(connection, flags), kResolverEnosupport));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnectAbort(nullptr, 0), kResolverEnosupport));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnectDestroy(connection), kResolverEnosupport));
+        *sceNetErrnoLoc() = 0;
         Require(Failed(sceNetResolverConnectDestroy(nullptr), kResolverEnosupport));
         Require(StorageUntouched(storage, sizeof(storage)));
         Require(std::memcmp(&option, &before, sizeof(option)) == 0);
