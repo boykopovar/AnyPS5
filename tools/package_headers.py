@@ -1,6 +1,7 @@
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import stat
 import tarfile
 import tempfile
@@ -94,14 +95,58 @@ def package(root, output, version):
             if attributes & (stat.FILE_ATTRIBUTE_DIRECTORY | stat.FILE_ATTRIBUTE_READONLY):
                 raise RuntimeError(f"Release destination is a directory or read-only: {path}")
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".headers-", dir=output) as temporary:
-        staging = Path(temporary)
+    staging = Path(tempfile.mkdtemp(prefix=".headers-", dir=output))
+    preserve_staging = False
+    try:
         with zipfile.ZipFile(staging / names[0], "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
             for source, destination in entries:
                 archive.write(source, destination)
         with tarfile.open(staging / names[1], "w:gz", dereference=True) as archive:
             for source, destination in entries:
                 archive.add(source, destination)
-        for name in names:
-            (staging / name).replace(output / name)
+        previous = staging / "previous"
+        previous.mkdir()
+        backed_up = []
+        replaced = []
+        try:
+            for name in names:
+                destination = output / name
+                if destination.exists() or destination.is_symlink():
+                    destination.replace(previous / name)
+                    backed_up.append(name)
+            for name in names:
+                (staging / name).replace(output / name)
+                replaced.append(name)
+        except OSError as promotion_error:
+            restore_error = None
+            unrestored = []
+            leftovers = []
+            for name in reversed(replaced):
+                try:
+                    (output / name).unlink(missing_ok=True)
+                except OSError as error:
+                    restore_error = restore_error or error
+                    leftovers.append(name)
+            for name in reversed(backed_up):
+                try:
+                    (previous / name).replace(output / name)
+                    if name in leftovers:
+                        leftovers.remove(name)
+                except OSError as error:
+                    restore_error = restore_error or error
+                    unrestored.append(name)
+            if restore_error is not None:
+                message = f"Could not restore public header release archives after {promotion_error}"
+                if unrestored:
+                    preserve_staging = True
+                    message += f"; unrestored backups {', '.join(unrestored)} retained at {previous}"
+                if leftovers:
+                    preserve_staging = True
+                    paths = ", ".join(str(output / name) for name in leftovers)
+                    message += f"; promoted archives could not be removed and remain at {paths}; remaining staged archives retained at {staging}"
+                raise RuntimeError(message) from restore_error
+            raise
+    finally:
+        if not preserve_staging:
+            shutil.rmtree(staging)
     print(f"Packaged {len(headers)} public headers and recursive dependencies")
