@@ -312,6 +312,20 @@ void testWithoutOutput() {
     check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a reset decoder kept its inputs");
 }
 
+void testRejectedUnitDoesNotBlockQueue() {
+    Session session;
+    const auto units = accessUnits(false);
+    const std::array<std::uint8_t, 4> rejected{0x12, 0x34, 0x56, 0x78};
+    const SceVideodec2::InputData bad{sizeof(SceVideodec2::InputData), rejected.data(), rejected.size(), 1, 0, 0};
+    check(throws([&] { sceVdecswSetDecodeInput(session.decoder, &bad); }), "a unit that is neither Annex-B nor length-prefixed was accepted");
+    InputResult result{sizeof(InputResult)};
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == rejected.data() && result.outputFrameCount == 0, "a rejected unit stayed queued");
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a rejected unit left the queue blocked");
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+    check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input after a rejected unit was refused");
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == units[0].data(), "a valid unit after a rejected one was not decoded");
+}
+
 void testSyncWrappers() {
     Session session;
     InputResult idle{sizeof(InputResult)};
@@ -529,6 +543,7 @@ int main() {
         testHevcCrop();
         testHevcMain10();
         testWithoutOutput();
+        testRejectedUnitDoesNotBlockQueue();
         testSyncWrappers();
         testVp9PictureInfo();
         testVp9PictureInfoOfAvcPicture();
