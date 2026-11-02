@@ -2420,7 +2420,7 @@ int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
     }
     // Keep guest identity stable without exposing the host adapter address.
     const std::uint8_t mac[6] = {0x02, 0x50, 0x53, 0x35, 0x00, 0x01};
-    std::memcpy(addr->data, mac, 6);
+    if (!GuestCopyOut_nid_no_patch(addr, mac, sizeof(mac))) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -2584,7 +2584,7 @@ int APS5_VABI sceNetResolverGetError(int rid, int* status) {
     std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
     if (resolver == g_resolvers.end()) return fail(NET_EBADF);
-    *status = resolver->second.error;
+    if (!GuestCopyOut_nid_no_patch(status, &resolver->second.error, sizeof(*status))) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -2918,7 +2918,9 @@ int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
     if (command != nonblockingRequest && command != readableRequest) return fail(NET_ENOTTY);
     if (!argument) return fail(NET_EFAULT);
     if (command == nonblockingRequest) {
-        const int enabled = *static_cast<const int*>(argument) != 0;
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return fail(NET_EFAULT);
+        const int enabled = enable != 0;
         return sceNetSetsockopt(socketId, NET_SOL_SOCKET, NET_SO_NBIO, &enabled, sizeof(enabled));
     }
 #ifdef _WIN32
@@ -2934,7 +2936,8 @@ int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
     int available = 0;
     if (::ioctl(native->value, FIONREAD, &available) != 0) return fail(native_error());
 #endif
-    *static_cast<int*>(argument) = static_cast<int>(available);
+    const int readable = static_cast<int>(available);
+    if (!GuestCopyOut_nid_no_patch(argument, &readable, sizeof(readable))) return fail(NET_EFAULT);
     return 0;
 }
 
