@@ -239,6 +239,7 @@ bool hasPriorityRange(int policy) {
 }
 
 constexpr int guestNoProcess = 3;
+constexpr int guestAccess = 13;
 constexpr int guestFault = 14;
 constexpr int guestInvalid = 22;
 constexpr int guestRlimitCpu = 0;
@@ -1229,6 +1230,10 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
                                                   : who == 0 || who == getpid_nid_postfix();
     if (!found) {
         *__error_nid_postfix() = guestNoProcess;
+        return -1;
+    }
+    if (niceval < 0) {
+        *__error_nid_postfix() = guestAccess;
         return -1;
     }
     if (which != guestPriorityProcess) {

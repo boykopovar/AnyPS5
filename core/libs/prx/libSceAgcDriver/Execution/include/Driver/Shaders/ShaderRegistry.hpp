@@ -25,6 +25,7 @@ struct Shader;
 
 namespace ShaderRecompiler {
 class ShaderPreparationContext;
+struct LinkedCalls;
 }
 
 namespace AgcDriver {
@@ -35,6 +36,7 @@ namespace AgcDriver::DriverDetail {
 
 struct ShaderSnapshot;
 
+struct UserDataCallSites;
 class ShaderRegistry {
     using Chunk = std::map<std::uint64_t, std::vector<std::shared_ptr<const ShaderSnapshot>>>;
     using Chunks = std::vector<std::shared_ptr<Chunk>>;
@@ -145,7 +147,18 @@ struct PreparedShaderState {
         std::weak_ptr<const ShaderRegistry> registry;
         std::vector<std::weak_ptr<const ShaderSnapshot>> stages;
     };
+    struct UserDataLink {
+        std::size_t codeOffset = 0;
+        std::uint32_t userDataBaseRegister = 0;
+        std::uint32_t userDataCount = 0;
+        std::uint32_t waveSize = 0;
+        std::shared_ptr<const UserDataCallSites> sites;
+        std::vector<std::uint64_t> callees;
+        std::vector<std::vector<std::uint32_t>> code;
+        std::shared_ptr<const ShaderRecompiler::LinkedCalls> linked;
+    };
     std::vector<Entry> entries;
+    std::vector<UserDataLink> userDataLinks;
     std::vector<std::vector<std::uint64_t>> registeredAbis;
     std::vector<GraphicsAbi> graphicsAbis;
     std::vector<Rectangle> rectangles;
