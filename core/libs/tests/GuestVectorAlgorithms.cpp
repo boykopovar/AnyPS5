@@ -80,6 +80,42 @@ static void CheckSizedHelpers() {
     Require(__std_max_element_8_nid_postfix(wides, wides + 4, false) == wides);
     Require(__std_max_element_8_nid_postfix(wides, wides + 4, true) == wides + 2);
     Require(__std_max_element_8_nid_postfix(wides, wides, false) == wides);
+
+    const std::int32_t edges[] = {INT32_MIN, INT32_MIN + 1, -0x10001, -0x10000, -1, 0, 1, 0xffff, 0x10000, INT32_MAX - 1, INT32_MAX};
+    for (const auto& left : edges) {
+        Require(__std_max_4i_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::int32_t pair[] = {left, right};
+            Require(__std_max_4i_nid_postfix(pair, pair + 2) == std::max(left, right));
+        }
+    }
+    std::uint32_t state = 0x6f928da3;
+    for (const std::size_t count : {1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::int32_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            std::memcpy(&value, &state, sizeof(value));
+        }
+        const auto expected = *std::max_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 32; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::int32_t) + 64, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::int32_t));
+            const auto original = storage;
+            Require(__std_max_4i_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::int32_t)) == expected);
+            Require(storage == original);
+        }
+        std::fill(values.begin(), values.end(), INT32_MIN);
+        Require(__std_max_4i_nid_postfix(values.data(), values.data() + count) == INT32_MIN);
+        for (std::size_t position = 0; position < count; ++position) {
+            values[position] = -0x10005;
+            Require(__std_max_4i_nid_postfix(values.data(), values.data() + count) == -0x10005);
+            values[position] = INT32_MIN;
+        }
+    }
+    const std::int32_t repeated[] = {-9, -9, -9, -9};
+    Require(__std_max_4i_nid_postfix(repeated, repeated + 4) == -9);
 }
 
 static void CheckSignedMin64Value() {

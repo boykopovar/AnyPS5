@@ -1,5 +1,6 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "Recompiler.hpp"
 #include <algorithm>
 #include <array>
 #include <stdexcept>
@@ -342,6 +343,7 @@ IrU32 TranslationContext::quietNan32(IrU32 bits) {
 }
 
 IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct) {
+    if (!ExactF32Arithmetic()) return result;
     const auto isNan = [&](IrValue& bits) -> IrValue& { return ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)); };
     IrValue* bits = &ir.BitCastU32(*result);
     bits = &ir.Select(isNan(*bits), ir.Constant(0xffc00000u), *bits);
@@ -567,11 +569,11 @@ void TranslationContext::writeRawU32(const RdnaOperand& operand, IrU32 value) {
         case RdnaOperandKind::M0: ir.SetM0(value.Value()); break;
         case RdnaOperandKind::ExecLo:
             ir.SetExecLo(value.Value());
-            ir.SetExec(execLanes({value, IrU32(ir.GetExecHi())}).Value());
+            ir.SetExec(threadBit({value, IrU32(ir.GetExecHi())}).Value());
             break;
         case RdnaOperandKind::ExecHi:
             ir.SetExecHi(value.Value());
-            ir.SetExec(execLanes({IrU32(ir.GetExecLo()), value}).Value());
+            ir.SetExec(threadBit({IrU32(ir.GetExecLo()), value}).Value());
             break;
         case RdnaOperandKind::Scc:
             ir.SetScc(ir.INotEqual(value.Value(), ir.Constant(0u)));

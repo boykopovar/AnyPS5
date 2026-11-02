@@ -1,11 +1,16 @@
 #pragma once
 
+#include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
 #include "prx/libSceLibcInternal/include/Statvfs.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
 
+void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path);
+int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle);
+GuestDirectoryEntry* APS5_VABI readdir_nid_disambig1_nid_postfix(void* handle);
+int APS5_VABI readdir_r_nid_disambig1_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result);
 int APS5_VABI fnmatch_nid_postfix(const char* pattern, const char* string, int flags);
 char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle);
 void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size);
@@ -31,6 +36,7 @@ int APS5_VABI msetname();
 int APS5_VABI pthread_setschedparam_np();
 int APS5_VABI setenv_np();
 int APS5_VABI scePosixForWebKit_sysinfo();
+int APS5_VABI mkostemp_nid_postfix();
 int APS5_VABI mkstemp_nid_postfix(char* pattern);
 int APS5_VABI isatty_nid_postfix(int descriptor);
 GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name);

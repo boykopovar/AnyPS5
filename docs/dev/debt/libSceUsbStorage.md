@@ -2,6 +2,8 @@
 
 ### Unknown function info
 
+- [Additional libSceUsbStorageForShellUI bindings](../../../core/libs/prx/libSceUsbStorage/Export.cpp) - `sceUsbStorageClearFakeMapLockForDebug` (`+qWixV5x-qc`) and `sceUsbStorageCheckSystemDefaultMountPoint` (`mKr8vDF+NUA`) have unknown signatures and behavior. The [13.60 logical-library inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceusbstorageforshellui-826a4d467f.jsonl) confirms these name/NID pairs. Parameterless `int` declarations are import placeholders, not verified ABI prototypes; every call throws through `NotImplemented_nid_no_patch`.
+
 - [sceUsbStorageRegisterCallback, sceUsbStorageUnregisterCallback](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - the answers for a registration before `sceUsbStorageInit`, a second registration of the same callback for the same event type and the unregistration of a callback that is not registered are unknown, so the first two throw and the third keeps the marker. Whether the console raises mount events for devices attached before the registration is unknown; none are raised. A registration keeps its user data and receives [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Platform/UsbStorage.cs#L186-L199)'s 16-byte event (1 for a mount and 2 for an unmount, the device id, the device flags) for its event type only, on a service thread that rescans the host once a second instead of the automounter's IPC thread; an unregistered callback is not called again. Closes when: measured on a PS5
 - [sceUsbStorageRegisterCallbackForMapAvailable, sceUsbStorageUnregisterCallbackForMapAvailable, sceUsbStorageRegisterCallbackForMapUnavailable, sceUsbStorageUnregisterCallbackForMapUnavailable](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - what a successful registration stores and when the callbacks fire is unverified: [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L128-L174) logs all four as `(STUBBED)` and returns 0 without storing anything, the success-without-a-reference pattern #6288 was closed for. The argument validation is implemented (0x80f40002 for a null callback or a null directory); past it they keep the marker until a reference or a measurement says what success does.
 - [sceUsbStorageRequestUnmap, sceUsbStorageGetdentsClose](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - what the console answers for a mount point that is not mapped and a getdents descriptor that is not open is unknown: shadPS4's [unmap](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L281-L288) only logs without keeping state and its [close](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L378-L383) succeeds only because `erase` ignores a missing key. Both keep the marker on that path, after their argument validation; unmapping a mount point a map request returned, as [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Platform/UsbStorage.cs#L386-L398) does, and closing an open scan succeed.
@@ -20,3 +22,33 @@
 - [the getdents scan](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - `sceUsbStorageGetdentsOpen` lists the root of the device into descriptors numbered from 1 with a 0x8000-byte buffer size, skipping names that start with a dot, and `sceUsbStorageGetdentsRead` writes shadPS4's [packed dirent](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L290-L376) (u32 file number from 1, u16 record length rounded to 8, type 4 for a directory and 8 otherwise, u8 name length, NUL-terminated name) until the buffer is full and zero bytes at the end. A name longer than 255 bytes, a host listing error and a buffer too small for the next record throw where shadPS4 truncates, ignores or answers zero bytes. None of this is measured on a console. Closes when: measured on a PS5
 - [the argument validation](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - the null-pointer, null-callback, event-type and null-directory refusals with 0x80f40002, the answers 0x80f40004 for a device that is not attached, and the getdents read of a descriptor that is not open answering 0x80f40005 with zero bytes, follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L176-L383); the validation runs before the markers the exports keep above. None of this is measured on a console.
 - [the prototypes of sceUsbStorageRequestMap and sceUsbStorageGetDeviceList](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - the signatures follow the ABI restored on `main` (the firmware-database sweep of 2026-10-21), which matches [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L176-L383): `RequestMap`'s six parameters, the typed `UsbStorageCallback` of the register/unregister family, `IsExist`'s three-argument bool form and `GetDeviceList`'s `std::int32_t*` count (the count also follows [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Platform/UsbStorage.cs#L233-L235), whose earlier eight-parameter `RequestMap` reading carried the trailing reserved pair the restored ABI drops).
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceUsbStorage/Export.cpp) - 23 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `267oD-IF+8k` |
+| `Unknown` | `96s31EeG0LM` |
+| `Unknown` | `AIyv-u-8w0s` |
+| `Unknown` | `FhdRv3K4EMQ` |
+| `Unknown` | `H6axEciG5Gw` |
+| `Unknown` | `IgVY6sHaVuE` |
+| `Unknown` | `O6+fXKZS62g` |
+| `Unknown` | `OhsV6P0FD5A` |
+| `Unknown` | `PsB2k0hnCRo` |
+| `Unknown` | `W+CjjL0iEmU` |
+| `Unknown` | `W5e8Vxa9OCI` |
+| `Unknown` | `W6xoHROgu6w` |
+| `Unknown` | `XMDFDnkOilA` |
+| `Unknown` | `d5QHvMfsCx0` |
+| `Unknown` | `dVQFgpSzA2I` |
+| `Unknown` | `jjKZ79juYfE` |
+| `Unknown` | `jl++fwrnXXI` |
+| `Unknown` | `jpS2TJZhsRU` |
+| `Unknown` | `jqw6RT84rQI` |
+| `Unknown` | `kzxjYuKrhv0` |
+| `Unknown` | `rZgSodboauI` |
+| `Unknown` | `uXZqnG02MiM` |
+| `Unknown` | `yct-absP9LM` |

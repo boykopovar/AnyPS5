@@ -269,7 +269,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             return entryIr.ISub(lhs, minimum(lhs, rhs));
         };
         IrValue& local = builtin(StageInputKind::LocalInvocationIndex);
-        IrValue& firstPrimitive = entryIr.IMul(builtin(StageInputKind::WorkgroupId, 0u), u32(mesh.primitivesPerGroup));
+        IrValue& indexWord = draw(3u);
+        IrValue& group = entryIr.IAdd(builtin(StageInputKind::WorkgroupId, 0u), entryIr.IMul(builtin(StageInputKind::WorkgroupId, 2u), entryIr.ShiftRightLogical(indexWord, u32(MeshLayerStrideShift))));
+        IrValue& firstPrimitive = entryIr.IMul(group, u32(mesh.primitivesPerGroup));
         IrValue& step = u32(stepCount);
         IrValue& firstVertex = entryIr.IMul(firstPrimitive, step);
         IrValue& indirect = entryIr.INotEqual(entryIr.BitwiseOr(draw(MeshArgumentAddressDword), draw(MeshArgumentAddressDword + 1u)), u32(0u));
@@ -285,7 +287,6 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& waveInfo = entryIr.BitwiseOr(entryIr.ShiftLeftLogical(wave, u32(24u)), u32((totalThreads / options.waveSize) << 28u));
         entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.BitwiseOr(waveInfo, entryIr.BitwiseOr(entryIr.ShiftLeftLogical(primitiveCount, u32(8u)), vertexCount)));
         const bool strip = mesh.inputPrimitive == kTriStripPrimitiveType;
-        IrValue& indexWord = draw(3u);
         IrValue& stripPosition = entryIr.IAdd(entryIr.IAdd(firstPrimitive, local), firstIndex);
         IrValue& restartTable = entryIr.INotEqual(entryIr.BitwiseAnd(indexWord, u32(MeshIndexRestartTable)), u32(0u));
         IrValue& stripStart = strip ? entryIr.Emit(IrOpcode::MeshRestartStart, IrOpcodeType(IrOpcode::MeshRestartStart), {&entryIr.IAdd(stripPosition, u32(2u)), &restartTable}) : u32(0u);
@@ -513,7 +514,6 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     program.SetWaveSize(options.waveSize);
     std::uint32_t windowBase = NumVectorRegs;
     bool indexedWrites = false;
-    bool wholeQuad = false;
     for (const auto& cfgBlock : cfg.blocks) {
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
@@ -531,10 +531,6 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 case RdnaOpcode::VSwaprelB32:
                     windowBase = std::min({windowBase, instruction.source0.reg, instruction.destination.reg});
                     indexedWrites = true;
-                    break;
-                case RdnaOpcode::SWqmB32:
-                case RdnaOpcode::SWqmB64:
-                    wholeQuad = wholeQuad || instruction.destination.kind == RdnaOperandKind::ExecLo || instruction.destination.kind == RdnaOperandKind::ExecHi;
                     break;
                 default:
                     break;
@@ -624,7 +620,6 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
         context.SetNativeFloat16(options.nativeFloat16);
-        context.SetWholeQuad(wholeQuad);
         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
         context.SetFloat32FlushDeclared(options.float32FlushDeclared);
