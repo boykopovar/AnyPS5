@@ -877,6 +877,12 @@ unsigned HostStart(const URL& url) {
     return url.passwordEnd == url.userStart ? url.passwordEnd : url.passwordEnd + 1;
 }
 
+unsigned CredentialsEnd(const URL& url, StringView view) {
+    unsigned end = url.passwordEnd;
+    if (end != url.hostEnd && end < view.length && Unit(view, end) == '@') ++end;
+    return end;
+}
+
 unsigned PathStart(const URL& url) {
     unsigned start = url.hostEnd + ((url.bits >> 3) & 7);
     auto view = View(url.impl);
@@ -953,6 +959,46 @@ StringView APS5_VABI _ZNK3WTF3URL4pathEv(const URL* self) {
     if (!(url.bits & 1)) return {nullptr, 0, true};
     unsigned start = PathStart(url);
     return Slice(View(url.impl), start, url.pathEnd - start);
+}
+
+StringView APS5_VABI _ZNK3WTF3URL17lastPathComponentEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (url.pathEnd <= PathStart(url)) return {nullptr, 0, true};
+    auto view = View(url.impl);
+    if (url.pathEnd > view.length) throw std::out_of_range("invalid WTF URL path boundary");
+    unsigned end = url.pathEnd - 1;
+    if (Unit(view, end) == '/') --end;
+    std::size_t start = NotFound;
+    for (std::size_t i = std::min<std::size_t>(end, view.length - 1) + 1; i--;) {
+        if (Unit(view, static_cast<unsigned>(i)) == '/') {
+            start = i;
+            break;
+        }
+    }
+    if (start < PathStart(url)) return {nullptr, 0, true};
+    ++start;
+    return Slice(view, static_cast<unsigned>(start), end - static_cast<unsigned>(start) + 1);
+}
+
+String APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv(const URL* self) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    if (!(url.bits & 1)) return String(Retain(url.impl));
+    if (url.userStart > url.passwordEnd || url.queryEnd > view.length) throw std::out_of_range("invalid WTF URL credential boundary");
+    unsigned end = CredentialsEnd(url, view);
+    if (url.userStart == end && url.queryEnd == view.length) return String(Retain(url.impl));
+    if (end > url.queryEnd) throw std::out_of_range("invalid WTF URL query boundary");
+    unsigned length = url.userStart + (url.queryEnd - end);
+    void* output;
+    auto* impl = NewImpl(length, view.is8Bit, output);
+    String result(impl);
+    if (!length) return result;
+    unsigned width = view.is8Bit ? 1 : 2;
+    auto* source = static_cast<const unsigned char*>(view.data);
+    auto* target = static_cast<unsigned char*>(output);
+    std::memcpy(target, source, std::size_t(url.userStart) * width);
+    std::memcpy(target + std::size_t(url.userStart) * width, source + std::size_t(end) * width, std::size_t(url.queryEnd - end) * width);
+    return result;
 }
 
 StringView APS5_VABI _ZNK3WTF3URL11encodedUserEv(const URL* self) {
