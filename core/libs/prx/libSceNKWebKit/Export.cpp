@@ -15142,21 +15142,6 @@ int APS5_VABI WKPageWillHandleHorizontalScrollEvents() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPopupMenuItemCopyText() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPopupMenuItemIsEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPopupMenuItemIsItem() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPopupMenuItemIsSeparator() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled() {
     NotImplemented_nid_no_patch(__func__);

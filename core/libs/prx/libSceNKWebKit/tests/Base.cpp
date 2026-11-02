@@ -429,6 +429,48 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestPopupMenuItem() {
+    Require(WKPopupMenuItemGetTypeID() == 131);
+    auto item = NKWebKit::Make<NKWebKit::PopupMenuItem>();
+    const void* ref = item.Get();
+
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+    Require(WKPopupMenuItemCopyText(ref) == nullptr);
+
+    item->text = NKWebKit::String::FromUtf8("Option 1");
+    auto* text = WKPopupMenuItemCopyText(ref);
+    Require(text != nullptr);
+    Require(WKStringIsEqualToUTF8CString(text, "Option 1"));
+    WKRelease(text);
+
+    item->enabled = false;
+    Require(!WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->enabled = true;
+    item->isItem = false;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(!WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->isItem = true;
+    item->isSeparator = true;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(WKPopupMenuItemIsSeparator(ref));
+
+    bool threw = false;
+    try {
+        WKPopupMenuItemIsEnabled(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -452,6 +494,51 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    led = true;
+    item->isItem = false;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(!WKPopupMenuItemIsItem(ref));
+    Require(!WKPopupMenuItemIsSeparator(ref));
+
+    item->isItem = true;
+    item->isSeparator = true;
+    Require(WKPopupMenuItemIsEnabled(ref));
+    Require(WKPopupMenuItemIsItem(ref));
+    Require(WKPopupMenuItemIsSeparator(ref));
+
+    bool threw = false;
+    try {
+        WKPopupMenuItemIsEnabled(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestCertificateInfo() {
+    Require(WKCertificateInfoGetTypeID() == 0);
+    Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
+    Require(WKCertificateInfoGetVerificationError(nullptr) == 0);
+    Require(WKCertificateInfoCopyVerificationErrorDescription(nullptr) == nullptr);
+    Require(WKCertificateInfoGetCertificateChainSize(nullptr) == 0);
+    Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
+}
+
+int main() {
+    TestTypeIDs();
+    TestSecurityOrigin();
+    TestRetainRelease();
+    TestStrings();
+    TestURL();
+    TestArray();
+    TestDictionary();
+    TestData();
+    TestNumbers();
+    TestGeometry();
+    TestUserContentURLPattern();
+    TestURLRequestResponse();
+    TestError();
+    TestPopupMenuItem();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
