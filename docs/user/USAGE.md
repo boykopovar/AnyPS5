@@ -566,7 +566,7 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 - If the file can no longer be written, for example because the disk is full, the executable prints one line saying so and goes on with the terminal output only.
 - While the variable is set the executable runs two extra threads and holds the standard streams in two pipes. A child process the title starts keeps its output in the same pipes, so output it writes after the title exits is lost, and on Linux and macOS the `SIGPIPE` of that write ends it unless it ignores the signal. When the title replaces itself with another executable through `sceSystemServiceLoadExec`, the real streams are handed over first.
 - With no console, for example a Windows executable started without one, only the file receives the log.
-- On Windows the redirection of the standard handles and the crash report path were written from the code and compiled for MinGW, but not run: an unexpected behaviour there is worth a bug report that says so.
+- On Windows the file was checked with a console, with the output redirected to a file or read through a pipe, and with no console. The crash report path has not been run there: an unexpected behaviour there is worth a bug report that says so.
 
 ### Controller status panel
 
