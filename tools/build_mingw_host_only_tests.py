@@ -75,19 +75,34 @@ def links_guest_libc(target):
     return is_libc_link(target["name"], target)
 
 
+def is_core_libs_test_source(source_path, core_libs):
+    try:
+        relative = source_path.resolve().relative_to(core_libs)
+    except ValueError:
+        return False
+    return "tests" in relative.parent.parts
+
+
 def is_product_library(target, source_root):
     if target.get("type") not in {"STATIC_LIBRARY", "SHARED_LIBRARY", "MODULE_LIBRARY"}:
         return False
     source_dir = (source_root / target["paths"]["source"]).resolve()
+    core_libs = (source_root / "core" / "libs").resolve()
     try:
-        source_dir.relative_to(source_root / "core" / "libs")
+        source_dir.relative_to(core_libs)
     except ValueError:
         return False
-    try:
-        source_dir.relative_to(source_root / "core" / "libs" / "tests")
-    except ValueError:
-        return True
-    return False
+    sources = target.get("sources", [])
+    if not isinstance(sources, list) or any(not isinstance(source, dict) for source in sources):
+        raise ValueError("invalid library sources: expected a list of objects")
+    original_sources = [source_root / source["path"] for source in sources if not source.get("isGenerated")]
+    if not original_sources:
+        try:
+            source_dir.relative_to(core_libs / "tests")
+        except ValueError:
+            return True
+        return False
+    return not all(is_core_libs_test_source(source, core_libs) for source in original_sources)
 
 
 def link_command_mentions_target(command, target):
@@ -114,12 +129,24 @@ def link_command_mentions_target(command, target):
 
 
 def links_product_library(target, targets, source_root):
-    command = link_command(target)
-    if not command:
-        return False
-    for linked_target in targets.values():
-        if is_product_library(linked_target, source_root) and link_command_mentions_target(command, linked_target):
-            return True
+    if links_guest_libc(target):
+        return True
+    pending = [target]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        command = link_command(current)
+        if not command:
+            continue
+        for candidate_id, candidate in targets.items():
+            if candidate_id in seen or candidate.get("type") not in {"STATIC_LIBRARY", "SHARED_LIBRARY", "MODULE_LIBRARY"}:
+                continue
+            if not link_command_mentions_target(command, candidate):
+                continue
+            if is_product_library(candidate, source_root) or links_guest_libc(candidate):
+                return True
+            seen.add(candidate_id)
+            pending.append(candidate)
     return False
 
 
