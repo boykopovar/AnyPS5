@@ -4,10 +4,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
-#include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
-#include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
 
@@ -72,15 +70,6 @@ void Driver::AttachWindow(const PresentationWindow& window) {
     timing.Mark("device_replacement");
     device = std::make_shared<VulkanDevice>(&window);
     timing.Mark("vulkan_device_create");
-    const auto mapped = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    timing.Mark("guest_mapping_snapshot", mapped.size());
-    static const bool eagerHostImport = std::getenv("APS5_NO_EAGER_HOST_IMPORT") == nullptr;
-    if (eagerHostImport) {
-        const bool imported = device->ImportGuestMemory(GuestAllocations::Mapped(mapped.begin(), mapped.end()), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
-        timing.Mark(imported ? "existing_mappings_imported" : "existing_mappings_deferred", mapped.size());
-    } else {
-        timing.Mark("existing_mappings_skipped", mapped.size());
-    }
 }
 
 void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context) {
