@@ -342,7 +342,7 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     const auto logic = [](std::uint32_t op) { return op == 10 || op == 11 || op == 12 || op == 15; };
     const auto convert = [&](std::uint32_t op, bool testFailed) {
         if (face.writeMask == 0) return VK_STENCIL_OP_KEEP;
-        char detail[112];
+        char detail[128];
         if (opValExport && ((op == 4 && !opValReference) || (op >= 5 && op != 7))) {
             std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operation %u with a pixel shader that exports the stencil operation value is unsupported", op);
             throw std::runtime_error(detail);
