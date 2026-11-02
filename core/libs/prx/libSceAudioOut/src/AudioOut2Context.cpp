@@ -335,6 +335,7 @@ int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) try {
 
 int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx) {
     if (!params || !ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    if (params->num_grains > MAX_GRAIN) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     const float padSpeakerFallbackGain = AudioPadSpeakerFallbackGain();
     auto* context = new AudioOut2Context();
     context->padSpeakerFallbackGain = padSpeakerFallbackGain;
