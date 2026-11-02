@@ -198,16 +198,6 @@ struct Digest {
     std::function<int(unsigned char*, void*)> final;
 };
 
-bool SameContext(int kind, const std::vector<unsigned char>& mine, const std::vector<unsigned char>& theirs) {
-    if (kind < 5) return mine == theirs;
-    const auto num = offsetof(Sha512Context, num);
-    const auto data = offsetof(Sha512Context, data);
-    std::uint32_t used = 0;
-    std::memcpy(&used, theirs.data() + num, sizeof used);
-    const std::size_t end = data + std::min<std::size_t>(used, sizeof(Sha512Context::data));
-    return std::memcmp(mine.data(), theirs.data(), end) == 0 && std::memcmp(mine.data() + num, theirs.data() + num, mine.size() - num) == 0;
-}
-
 void CompareDigests() {
     const Digest digests[] = {
         {"MD4", 16, sizeof(Md4Context), [](void* c) { return MD4_Init_nid_postfix(static_cast<Md4Context*>(c)); }, [](void* c, const void* d, std::size_t n) { return MD4_Update_nid_postfix(static_cast<Md4Context*>(c), d, n); }, [](unsigned char* m, void* c) { return MD4_Final_nid_postfix(m, static_cast<Md4Context*>(c)); }},
@@ -228,7 +218,7 @@ void CompareDigests() {
             int mineResult = 0;
             const auto error = Attempt([&] { mineResult = digest.init(mine.data()); });
             int theirResult = LibreSslReference::DigestInit(kind, theirs.data());
-            Record(name + "_Init", error.empty() && mineResult == theirResult && SameContext(kind, mine, theirs), [&] { return (error.empty() ? std::to_string(mineResult) : error) + " vs " + std::to_string(theirResult) + " context " + Hex(mine.data(), 32) + " vs " + Hex(theirs.data(), 32); });
+            Record(name + "_Init", error.empty() && mineResult == theirResult && mine == theirs, [&] { return (error.empty() ? std::to_string(mineResult) : error) + " vs " + std::to_string(theirResult) + " context " + Hex(mine.data(), 32) + " vs " + Hex(theirs.data(), 32); });
             if (!error.empty()) continue;
             const std::size_t length = round < 300 ? static_cast<std::size_t>(round) : generator() % 5000;
             const auto input = Bytes(length);
@@ -239,7 +229,7 @@ void CompareDigests() {
                 mineResult = digest.update(mine.data(), input.data() + done, chunk);
                 theirResult = LibreSslReference::DigestUpdate(kind, theirs.data(), input.data() + done, chunk);
                 done += chunk;
-                if (same && (mineResult != theirResult || !SameContext(kind, mine, theirs))) {
+                if (same && (mineResult != theirResult || mine != theirs)) {
                     same = false;
                     first = "after " + std::to_string(done) + " of " + std::to_string(length) + " bytes";
                 }

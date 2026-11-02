@@ -255,6 +255,21 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
             self.assertEqual(archive.extractfile("libs/implib/libc.dll.a").read(), b"import archive")
 
+    def test_webrtc_library_archives_include_vad_notices(self):
+        (self.source / "core/libs/prx/libwebrtc").mkdir()
+        (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")
+        (self.library.parent / "libwebrtc.prx").write_bytes(b"WebRTC library bytes")
+        source = self.source / "3rdparty/libfvad"
+        source.mkdir(parents=True)
+        (source / "LICENSE").write_bytes(b"VAD license\n")
+        (source / "PATENTS").write_bytes(b"VAD patent grant\n")
+        package_release.package("linux", self.build, self.output, "v1")
+        for archive_name, content in {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n"}.items():
+            with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+                self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
+            with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+                self.assertEqual(archive.extractfile("libs/licenses/" + archive_name).read(), content)
+
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
         (self.unpatched.parent / "libSceOpusDec.prx").write_bytes(b"unpatched library")

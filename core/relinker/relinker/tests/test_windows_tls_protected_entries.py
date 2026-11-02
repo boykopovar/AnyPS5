@@ -34,6 +34,10 @@ def make_image(root=None):
     elif root == "initializer":
         struct.pack_into("<Q", image, 0x308, 0x214)
         extra_tags.extend(((25, 0x308), (27, 8)))
+    elif root == "relr":
+        struct.pack_into("<Q", image, 0x308, 0x214)
+        struct.pack_into("<Q", image, 0x780, 0x308)
+        extra_tags.extend(((36, 0x780), (35, 8), (37, 8)))
 
     for index, (slot, kind, symbol, addend) in enumerate(relocations):
         struct.pack_into("<QQq", image, 0x700 + index * 24, slot, (symbol << 32) | kind, addend)
@@ -72,7 +76,7 @@ def main():
                                      str(source), str(output)], capture_output=True, text=True, timeout=30)
             return result, output
 
-        for name in ("relative", "symbol", "lea", "initializer"):
+        for name in ("relative", "symbol", "lea", "initializer", "relr"):
             result, output = convert(name)
             assert result.returncode == 2, (name, result.returncode, result.stderr)
             assert "TLS rewrite would overwrite an executable entry point" in result.stderr, (name, result.stderr)

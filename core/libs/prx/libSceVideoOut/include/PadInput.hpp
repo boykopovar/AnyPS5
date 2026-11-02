@@ -6,6 +6,7 @@
 #include "prx/libScePad/include/KeyboardMouse.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
+#include "prx/libScePad/include/PadIdentify.hpp"
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
 #include "prx/libSceVideoOut/include/Port0Presence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PadStatus.hpp"
@@ -41,6 +42,7 @@ private:
         LightBarPacer lightBar;
         TriggerEffectCache triggerEffect;
         std::uint32_t heldThroughCapture = 0;
+        Pad::IdentifyScheduler identify;
         AgcDriver::PadKind kind = AgcDriver::PadKind::Unknown;
         std::string name;
     };
@@ -62,6 +64,7 @@ private:
     void applyPort0(bool connected);
 
     Pad::KeyboardMouse keyboardMouse;
+    Pad::IdentifyMode identifyMode = Pad::IdentifyMode::Off;
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};
     VideoOutTelemetry::PadChangeFilter telemetryFilter;
     AgcDriver::PadStatusProvider statusProvider;
