@@ -206,6 +206,19 @@ void RunEdges() {
 
     RunZeroBits(ring);
 
+    for (const std::uint32_t used : {0u, 1u, 8u, 15u}) {
+        auto odd = Attach(ring, 129, used, 0);
+        odd.mask = WriteMask;
+        const auto before = odd;
+        const std::vector<std::uint8_t> snapshot(ring.base, ring.base + RingAlignment);
+        RequireInvalidArgument([&] { putBit16z_nid_postfix(&odd, 0, 0); }, "odd-position unmasked store");
+        RequireInvalidArgument([&] { putBit16_nid_postfix(&odd, 1, 1); }, "odd-position masked store");
+        RequireInvalidArgument([&] { putBit32_nid_postfix(&odd, 0xffffffffu, 32); }, "odd-position 32-bit store");
+        RequireInvalidArgument([&] { fillToByte_nid_postfix(&odd); }, "odd-position byte fill");
+        Require(std::memcmp(&odd, &before, sizeof(odd)) == 0, "rejected odd-position stores keep the state");
+        Require(std::memcmp(ring.base, snapshot.data(), RingAlignment) == 0, "rejected odd-position stores keep the buffer");
+    }
+
     RequireInvalidArgument([] { getBit16_nid_postfix(nullptr, 1); }, "null read state");
     RequireInvalidArgument([] { putBit16_nid_postfix(nullptr, 1, 1); }, "null write state");
     RequireInvalidArgument([] { getSizeRead_nid_postfix(nullptr); }, "null size state");

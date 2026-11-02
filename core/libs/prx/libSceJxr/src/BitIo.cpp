@@ -47,6 +47,8 @@ void* Write(Jxr::BitIo* io, std::uint32_t bits, std::uint32_t limit, const char*
     Stream(io, function);
     Require(bits <= limit, function, "bit count over the jxrlib limit");
     Require(io->bitsUsed < 16, function, "write position outside the 16-bit word");
+    Require(reinterpret_cast<std::uintptr_t>(io->current) % alignof(std::uint16_t) == 0, function,
+            "unaligned write position");
     return io;
 }
 
