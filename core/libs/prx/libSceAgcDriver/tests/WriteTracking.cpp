@@ -45,6 +45,7 @@ constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
 constexpr wchar_t ImportAliasSharedMode[] = L"--import-alias-shared";
 constexpr wchar_t SharedGenerationsMode[] = L"--compared-shared-generations";
 constexpr wchar_t CpuWritePinMode[] = L"--cpu-write-pin";
+constexpr wchar_t FreshViewMode[] = L"--fresh-view";
 #endif
 
 void Require(bool condition, const std::string& message) {
@@ -516,6 +517,18 @@ void CheckOwnStore() {
     Require(!UnchangedSince(base, 64, beforeCpu), "a CPU write after the driver store is not seen");
 }
 
+void CheckGpuWriteNotListed() {
+    void* memory = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, Block);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    const auto since = CollectWrittenBlocks(base, Block, std::numeric_limits<std::uint64_t>::max(), written);
+    Require(since != 0 && written.empty(), "the block of the GPU write was not collected");
+    Require(MarkWritten(base + 0x100, 4) > since, "the GPU write was not stamped");
+    CollectWrittenBlocks(base, Block, since, written);
+    Require(written.empty(), "a block only a GPU write stamped was listed as written by the CPU");
+}
+
 void CheckUnwatch() {
     void* memory = AllocateWatched(3 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -716,6 +729,25 @@ void CheckDeferredSharedImports() {
     CloseHandle(section);
 }
 
+
+void CheckFreshViewPagesListed() {
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Block, nullptr);
+    Require(section != nullptr, "cannot create the fresh view backing");
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    Require(memory != nullptr, "cannot allocate the fresh view address");
+    GuestArena::GuestArenaMap_nid_postfix(memory, Block, section, 0, PAGE_READWRITE);
+    const auto base = reinterpret_cast<std::uintptr_t>(memory);
+    Require(ImportWatched(base, Block, [] { return true; }), "the fresh view import failed");
+    const auto before = CollectWritesUncached(base, 4096);
+    Require(before != 0, "the first page of the fresh view was not collected");
+    Require(MarkWritten(base, 4) != 0, "the GPU write next to the fresh pages was not stamped");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    CollectWrittenBlocks(base, Block, before, written);
+    Require(written.size() == 1 && written.front() == std::pair<std::uint64_t, std::uint64_t>{base + 4096, base + Block}, "pages only a fresh collect took were not listed");
+    GuestArena::GuestArenaReset_nid_postfix(memory, Block);
+    GuestArena::GuestArenaRelease_nid_postfix(memory, Block);
+    CloseHandle(section);
+}
 
 void CheckPrivateMappingReuse() {
     void* memory = AllocateWatched(3 * Block);
@@ -1732,6 +1764,9 @@ void CheckImportWindowOtherThread() {
     Require(ChangedBlocks(base, 2 * Block, generations, changed, cpu), "the other-thread import window block is not tracked");
     Require(changed[0] == BlockUnchanged && cpu[0] == 1, "a same-value store from another thread within an import window lost its possible CPU touch");
     Require(changed[1] == BlockWritten && WrittenSince(base + Block, Block, synced) && cpu[1] == 1, "a store of new bytes from another thread within an import window was missed");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    CollectWrittenBlocks(base, Block, synced, written);
+    Require(written.size() == 1 && written.front() == std::pair<std::uint64_t, std::uint64_t>{base, base + 4096}, "a page only an import window stamped as a possible CPU touch was not listed");
 }
 
 void CheckImportWindowZeroPages() {
@@ -2317,6 +2352,10 @@ int main() {
             CheckCpuWritePin();
             return 0;
         }
+        if (std::wstring_view(GetCommandLineW()).ends_with(FreshViewMode)) {
+            CheckFreshViewPagesListed();
+            return 0;
+        }
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
@@ -2325,6 +2364,7 @@ int main() {
         CheckSharedBlockProofs();
         CheckRepeatedPossibleStores();
         CheckOwnStore();
+        CheckGpuWriteNotListed();
         CheckUnwatch();
         CheckNewestStamp();
         CheckPartlyWatchedStore();
