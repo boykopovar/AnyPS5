@@ -7,6 +7,7 @@
 #include "../include/WindowsThreadLocal.hpp"
 #include "../include/Cancel.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -60,6 +61,7 @@ static constexpr std::size_t DEFAULT_STACK_SIZE = 1u << 20;
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
 static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
+static constexpr std::uint16_t GUEST_THREAD_FPU_CONTROL = 0x037f;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -764,6 +766,9 @@ static void finishThread(PthreadPrivate* self, void* retval) {
         self->_finished.store(true, std::memory_order_release);
     }
     self->_join_cv.NotifyAll();
+#ifdef _WIN32
+    TimedWait::ReapDeliveryDrain();
+#endif
 }
 
 bool ThreadCancel::Requested() {
@@ -827,6 +832,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     BindHostCpuClock(self);
     TimedWait::BindThreadWaitState(&self->waitCount);
     CurrentGuestState().current = self;
+    asm volatile("fldcw %0" : : "m"(GUEST_THREAD_FPU_CONTROL));
     RegisterStack(self);
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
