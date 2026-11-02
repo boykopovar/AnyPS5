@@ -550,7 +550,7 @@ int APS5_VABI sceUltConditionVariableWait(void* condition) {
 }
 
 std::uint64_t APS5_VABI sceUltWaitingQueueResourcePoolGetWorkAreaSize(std::uint32_t numThreads, std::uint32_t numSyncObjects) {
-    return 32ull * (numSyncObjects + 2u * numThreads + 2u);
+    return 32ull * (std::uint64_t{numSyncObjects} + 2ull * numThreads + 2ull);
 }
 
 int APS5_VABI sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name, std::uint32_t numThreads, std::uint32_t numSyncObjects, void* workArea, const void* optParam, std::uint32_t buildVersion) {
