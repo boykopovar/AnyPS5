@@ -306,6 +306,21 @@ static void TestUserContentURLPattern() {
     Require(WKUserContentURLPatternMatchesURL(pat, urlPort));
     WKRelease(urlPort);
 
+    auto* urlAuth = WKURLCreateWithUTF8CString("http://user:pass@example.com/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlAuth));
+    WKRelease(urlAuth);
+
+    auto* urlAuthPort = WKURLCreateWithUTF8CString("http://user:pass@example.com:8080/foo/bar");
+    Require(WKUserContentURLPatternMatchesURL(pat, urlAuthPort));
+    WKRelease(urlAuthPort);
+
+    auto* ipv6Pat = WKUserContentURLPatternCreate(WKStringCreateWithUTF8CString("http://[2001:db8::1]/api/*"));
+    Require(WKUserContentURLPatternIsValid(ipv6Pat));
+    auto* ipv6Url = WKURLCreateWithUTF8CString("http://user:secret@[2001:db8::1]:9000/api/v1");
+    Require(WKUserContentURLPatternMatchesURL(ipv6Pat, ipv6Url));
+    WKRelease(ipv6Url);
+    WKRelease(ipv6Pat);
+
     auto* urlDiffScheme = WKURLCreateWithUTF8CString("https://example.com/foo/bar");
     Require(!WKUserContentURLPatternMatchesURL(pat, urlDiffScheme));
     WKRelease(urlDiffScheme);

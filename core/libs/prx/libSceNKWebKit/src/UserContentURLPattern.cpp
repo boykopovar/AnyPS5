@@ -79,18 +79,26 @@ bool MatchesURL(const NKWebKit::UserContentURLPattern* pattern, const NKWebKit::
     const bool fileScheme = EqualLettersIgnoringASCIICase(pattern->scheme, u"file");
     const auto hostStart = schemeEnd + 3;
     const auto pathStart = urlString.find(u'/', hostStart);
-    std::u16string_view urlHost;
+    std::u16string_view authority;
     std::u16string_view urlPath;
     if (pathStart == std::u16string_view::npos) {
-        urlHost = urlString.substr(hostStart);
+        authority = urlString.substr(hostStart);
         urlPath = u"/";
     } else {
-        urlHost = urlString.substr(hostStart, pathStart - hostStart);
+        authority = urlString.substr(hostStart, pathStart - hostStart);
         const auto queryOrFragment = urlString.find_first_of(u"?#", pathStart);
         urlPath = (queryOrFragment == std::u16string_view::npos) ? urlString.substr(pathStart) : urlString.substr(pathStart, queryOrFragment - pathStart);
     }
-    const auto portStart = urlHost.find(u':');
-    if (portStart != std::u16string_view::npos) urlHost = urlHost.substr(0, portStart);
+    const auto atPos = authority.rfind(u'@');
+    const auto hostAndPort = (atPos == std::u16string_view::npos) ? authority : authority.substr(atPos + 1);
+    std::u16string_view urlHost;
+    if (hostAndPort.starts_with(u'[')) {
+        const auto closeBracket = hostAndPort.find(u']');
+        urlHost = (closeBracket != std::u16string_view::npos) ? hostAndPort.substr(0, closeBracket + 1) : hostAndPort;
+    } else {
+        const auto portStart = hostAndPort.find(u':');
+        urlHost = (portStart == std::u16string_view::npos) ? hostAndPort : hostAndPort.substr(0, portStart);
+    }
     if (!fileScheme) {
         if (pattern->host.empty()) {
             if (!pattern->matchSubdomains) return false;
