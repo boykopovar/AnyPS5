@@ -216,5 +216,18 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(self.run_gate([], None, files=("README.md",), manual=True)["outputs"]["relinker"], False)
 
 
+class ConcurrencyGroupTests(unittest.TestCase):
+    def workflow_line(self, prefix):
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        return next(line.strip() for line in lines if line.strip().startswith(prefix))
+
+    def test_each_push_to_main_has_its_own_concurrency_group(self):
+        group = self.workflow_line("group: build-${{ github.event_name }}-")
+        self.assertIn("(github.event_name == 'push' && github.sha)", group)
+
+    def test_pushes_are_never_cancelled_by_a_later_push(self):
+        self.assertEqual(self.workflow_line("cancel-in-progress:"), "cancel-in-progress: ${{ github.event_name != 'push' }}")
+
+
 if __name__ == "__main__":
     unittest.main()
