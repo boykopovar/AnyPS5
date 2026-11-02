@@ -59,6 +59,11 @@ void CheckAudioAfterOpen() {
     Require(sceCameraAudioClose() == 0, "camera audio close must answer 0");
 }
 
+void CheckInternalCalls() {
+    Require(sceCameraDeviceOpen() == 0, "the device open call must answer 0");
+    Require(sceCameraSetAttributeInternal() == 0, "the internal attribute call must answer 0");
+}
+
 CameraConfig SizedConfig() {
     CameraConfig config;
     std::memset(&config, 0x5a, sizeof(config));
@@ -238,7 +243,9 @@ void CheckDevice() {
 
 int main() {
     CheckBeforeOpen();
+    CheckInternalCalls();
     Require(sceCameraOpen(0xFF, 0, 0, nullptr) == 1, "the camera must open");
+    CheckInternalCalls();
     CheckGetters();
     CheckAttribute();
     CheckSetters();
