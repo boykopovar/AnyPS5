@@ -99,6 +99,12 @@ if(BUILD_TESTING)
         set_property(TEST agc_depth_copy_kept_bytes APPEND PROPERTY ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_vertex_range_bindings COMMAND agc_driver_graphics_tests --vertex-range-bindings)
+    set_tests_properties(agc_driver_vertex_range_bindings PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_vertex_range_bindings PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set_tests_properties(agc_sparse_buffer_holes PROPERTIES TIMEOUT 30)
     add_test(NAME agc_pipeline_journal COMMAND agc_driver_graphics_tests --pipeline-journal)
     add_test(NAME agc_pipeline_journal_long_paths COMMAND agc_driver_graphics_tests --pipeline-journal-long-paths)

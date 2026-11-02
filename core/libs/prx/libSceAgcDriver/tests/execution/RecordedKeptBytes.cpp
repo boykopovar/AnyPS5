@@ -224,7 +224,7 @@ void Draw(AgcDriver::VulkanDevice& device, GuestBuffer& pixels, GuestBuffer& ver
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
-    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(BufferBytes / 16u), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
 }
 
