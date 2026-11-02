@@ -207,6 +207,14 @@ void VersionToString() {
     u_versionToString_nid_postfix(version.data(), nullptr);
 }
 
+void GetVersion() {
+    Version version{9, 9, 9, 9};
+    u_getVersion_nid_postfix(version.data());
+    Require(version == Version{78, 1, 0, 0}, "library version is 78.1.0.0");
+    Require(ToString(version) == "78.1", "library version string");
+    u_getVersion_nid_postfix(nullptr);
+}
+
 void RoundTrip() {
     const auto written = [](std::uint32_t part) { return part < 100 || part % 100 >= 10; };
     for (std::uint32_t part = 0; part < 256; ++part) {
@@ -226,6 +234,7 @@ int main() {
     VersionFromString();
     VersionFromUString();
     VersionToString();
+    GetVersion();
     RoundTrip();
     return 0;
 }

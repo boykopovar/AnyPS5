@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -19,7 +20,7 @@ BROAD_CHANGES = {
 
 def reaches_libs(changed):
     return any(
-        path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/"))
+        path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/") + host_only.BUILD_WIDE_PREFIXES)
         for path in changed
     )
 
@@ -44,8 +45,8 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     if changed_paths is None:
         return selected
     changed = {Path(path).as_posix() for path in changed_paths if path}
-    broad_change = any(path in BROAD_CHANGES or path.startswith("core/libs/") and (
-        path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
+    broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
+        path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
     ) for path in changed)
     if broad_change:
         return selected
@@ -107,7 +108,7 @@ def ctest_resolutions(build_dir, targets_by_name):
     return resolutions
 
 
-def run(build_dir, selected, targets_by_name):
+def run(build_dir, selected, targets_by_name, output_log=None):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     if selected:
         for batch in chunks(selected):
@@ -118,9 +119,10 @@ def run(build_dir, selected, targets_by_name):
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
         with tempfile.TemporaryDirectory(prefix="anyps5-guest-ctest-") as directory:
             selection = Path(directory) / "selected-tests.txt"
-            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()), encoding="ascii")
+            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()) + "\n", encoding="ascii")
             subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
-                            "--parallel", "4", "--no-tests=error", "-I", str(selection)], check=True)
+                            "--parallel", "4", "--no-tests=error", "-I", str(selection),
+                            *(["--output-log", str(output_log)] if output_log else [])], check=True)
     else:
         print("No guest core/libs test sources changed; the libs build still ran")
 
@@ -129,6 +131,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="build and run changed core/libs tests that link guest libc")
     parser.add_argument("build_dir", type=Path)
     parser.add_argument("changed_paths", nargs="?", type=Path)
+    parser.add_argument("--output-log", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.changed_paths is not None:
@@ -136,7 +139,7 @@ def main(argv=None):
             if not reaches_libs(listed):
                 print("No changed guest core/libs tests require a run")
                 return 0
-        source_root, targets = host_only.read_reply(args.build_dir.resolve())
+        source_root, targets = host_only.read_reply(Path(os.path.realpath(args.build_dir)))
         changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
         selected = guest_test_targets(source_root, targets, changed_paths)
         if not selected:
@@ -149,7 +152,7 @@ def main(argv=None):
         for name in selected:
             targets_by_name.update(target_artifact_names(by_name[name]))
             targets_by_name[name.casefold()] = name
-        run(args.build_dir, selected, targets_by_name)
+        run(args.build_dir, selected, targets_by_name, args.output_log)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1
