@@ -101,4 +101,13 @@ public:
     bool valid = false;
 };
 
+class RenderObject final : public ObjectOf<ObjectType::RenderObject> {
+public:
+    Retained<String> elementID;
+    Retained<String> elementTagName;
+    Retained<String> name;
+    Retained<String> textSnippet;
+    std::uint32_t textLength = 0;
+};
+
 }  // namespace NKWebKit

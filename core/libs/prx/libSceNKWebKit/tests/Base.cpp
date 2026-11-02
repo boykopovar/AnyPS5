@@ -351,6 +351,52 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestRenderObject() {
+    auto object = NKWebKit::Make<NKWebKit::RenderObject>();
+    const void* ref = object.Get();
+
+    Require(WKRenderObjectCopyElementID(ref) == nullptr);
+    Require(WKRenderObjectCopyElementTagName(ref) == nullptr);
+    Require(WKRenderObjectCopyName(ref) == nullptr);
+    Require(WKRenderObjectCopyTextSnippet(ref) == nullptr);
+    Require(WKRenderObjectGetTextLength(ref) == 0);
+
+    object->elementID = NKWebKit::String::FromUtf8("paragraph-1");
+    auto* id = WKRenderObjectCopyElementID(ref);
+    Require(id != nullptr);
+    Require(WKStringIsEqualToUTF8CString(id, "paragraph-1"));
+    WKRelease(id);
+
+    object->elementTagName = NKWebKit::String::FromUtf8("p");
+    auto* tag = WKRenderObjectCopyElementTagName(ref);
+    Require(tag != nullptr);
+    Require(WKStringIsEqualToUTF8CString(tag, "p"));
+    WKRelease(tag);
+
+    object->name = NKWebKit::String::FromUtf8("RenderText");
+    auto* name = WKRenderObjectCopyName(ref);
+    Require(name != nullptr);
+    Require(WKStringIsEqualToUTF8CString(name, "RenderText"));
+    WKRelease(name);
+
+    object->textSnippet = NKWebKit::String::FromUtf8("Hello world");
+    auto* snip = WKRenderObjectCopyTextSnippet(ref);
+    Require(snip != nullptr);
+    Require(WKStringIsEqualToUTF8CString(snip, "Hello world"));
+    WKRelease(snip);
+
+    object->textLength = 11;
+    Require(WKRenderObjectGetTextLength(ref) == 11);
+
+    bool threw = false;
+    try {
+        WKRenderObjectGetTextLength(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -373,6 +419,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestRenderObject();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
