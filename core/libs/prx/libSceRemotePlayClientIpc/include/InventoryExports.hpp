@@ -1,0 +1,26 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI sceRemotePlayClientIpcGetClientStatus();
+int APS5_VABI sceRemotePlayClientIpcInitialize();
+int APS5_VABI sceRemotePlayClientIpcSetClientStatus();
+int APS5_VABI sceRemotePlayClientIpcTerminateStreaming();
+int APS5_VABI sceRemotePlayClientIpcTerminate();
+int APS5_VABI sceRemotePlayClientIpcWaitConnectionAsync();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_0Ezd4jv7F_minus_4_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_2dzIQ1US7Ag_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_4_plus_sKR9yWkWY_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_EVbYn8UOvMs_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_JGKtr0_plus_B87A_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_JVKO2gPlWPw_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_M16_minus_T2ERA8c_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_PnLBwmAGb_minus_g_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_RiyUwZBmS_minus_k_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_a3LqZtr60o4_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_gO3jwkOQ834_nid_no_patch();
+int APS5_VABI libSceRemotePlayClientIpcUnknown_gqmq4cTnR0M_nid_no_patch();
+
+}

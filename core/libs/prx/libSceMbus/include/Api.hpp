@@ -68,6 +68,8 @@ struct MbusPriorityInfo;
 
 extern "C" {
 
+int APS5_VABI sceMbusDebugGetStringToShow();
+
 std::int32_t APS5_VABI sceDeviceServiceInitialize(std::int32_t mode, const DeviceServiceInitParam* param);
 std::int32_t APS5_VABI sceDeviceServiceTerminate();
 std::int32_t APS5_VABI sceDeviceServiceGetEventState(std::int32_t clear);

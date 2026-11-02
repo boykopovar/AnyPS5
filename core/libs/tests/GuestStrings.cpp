@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <stdexcept>
 #include <string>
 
 static void Require(bool condition) {
@@ -74,7 +75,7 @@ static void CheckStandardStrings() {
     const unsigned char same[6] = {1, 2, 3, 4, 5, 6};
     Require(bcmp_nid_postfix(bytes, same, 6) == 0 && bcmp_nid_postfix(bytes, "zz", 0) == 0);
     bytes[5] = 9;
-    Require(bcmp_nid_postfix(bytes, same, 6) != 0 && bcmp_nid_postfix(bytes, same, 5) == 0);
+    Require(bcmp_nid_postfix(bytes, same, 6) == 1 && bcmp_nid_postfix(same, bytes, 6) == 1 && bcmp_nid_postfix(bytes, same, 5) == 0);
     bzero_nid_postfix(bytes + 1, 4);
     Require(bytes[0] == 1 && bytes[1] == 0 && bytes[4] == 0 && bytes[5] == 9);
 }
@@ -319,6 +320,16 @@ static void CheckStrtonum() {
     Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34);
 }
 
+static void CheckStrnlenSBounds() {
+    const char bounded[] = {'a', 'b', 'c'};
+    Require(strnlen_s_nid_postfix("abc", 0) == 0);
+    Require(strnlen_s_nid_postfix("", 4) == 0);
+    Require(strnlen_s_nid_postfix(bounded, sizeof(bounded)) == 3);
+    Require(strnlen_s_nid_postfix("abc", 2) == 2);
+    Require(strnlen_s_nid_postfix("ab\0cd", 5) == 2);
+    Require(strnlen_s_nid_postfix(nullptr, 0) == 0);
+}
+
 static void CheckCharacterConversionInSearches() {
     const char bytes[] = "a\xe9" "b\xe9" "c";
     Require(strchr_nid_postfix(bytes, 0xe9) == bytes + 1);
@@ -339,6 +350,7 @@ int main() {
     CheckBcopy();
     if (!CheckDirnameLengths()) return 1;
     CheckCharacterConversionInSearches();
+    CheckStrnlenSBounds();
     CheckBoundsCheckedFunctions();
     CheckCaseInsensitiveComparison();
     CheckSscanfS();
@@ -429,6 +441,31 @@ int main() {
     end = stpcpy_nid_postfix(end, "cd");
     Require(end == chained + 4 && std::strcmp(chained, "abcd") == 0);
     Require(stpcpy_nid_postfix(end, "") == end && chained[5] == 'z');
+    char shortBuffer[8];
+    std::memset(shortBuffer, 'z', sizeof(shortBuffer));
+    char* shortEnd = stpncpy_nid_postfix(shortBuffer, "ab", 5);
+    Require(shortEnd == shortBuffer + 2);
+    Require(shortBuffer[0] == 'a' && shortBuffer[1] == 'b');
+    Require(shortBuffer[2] == '\0' && shortBuffer[3] == '\0' && shortBuffer[4] == '\0');
+    Require(shortBuffer[5] == 'z' && shortBuffer[6] == 'z' && shortBuffer[7] == 'z');
+    char equalBuffer[8];
+    std::memset(equalBuffer, 'z', sizeof(equalBuffer));
+    char* equalEnd = stpncpy_nid_postfix(equalBuffer, "abcde", 5);
+    Require(equalEnd == equalBuffer + 5);
+    Require(std::memcmp(equalBuffer, "abcde", 5) == 0);
+    Require(equalBuffer[5] == 'z' && equalBuffer[6] == 'z' && equalBuffer[7] == 'z');
+    char longerBuffer[8];
+    std::memset(longerBuffer, 'z', sizeof(longerBuffer));
+    char* longerEnd = stpncpy_nid_postfix(longerBuffer, "abcdefgh", 3);
+    Require(longerEnd == longerBuffer + 3);
+    Require(std::memcmp(longerBuffer, "abc", 3) == 0);
+    Require(longerBuffer[3] == 'z' && longerBuffer[4] == 'z' && longerBuffer[5] == 'z' && longerBuffer[6] == 'z' && longerBuffer[7] == 'z');
+    char zeroBuffer[8];
+    std::memset(zeroBuffer, 'z', sizeof(zeroBuffer));
+    const char originalZero[8] = {'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z'};
+    char* zeroEnd = stpncpy_nid_postfix(zeroBuffer, "test", 0);
+    Require(zeroEnd == zeroBuffer);
+    Require(std::memcmp(zeroBuffer, originalZero, sizeof(zeroBuffer)) == 0);
     Require(strncat_nid_postfix(buffer, "xyz", 2) == buffer);
     Require(std::strcmp(buffer, "xy") == 0);
     char transformed[8] = "zzzzzzz";
@@ -464,6 +501,21 @@ int main() {
     Require(inetAton("1.2.3.4 trailing", "1.2.3.4"));
     Require(inetAton("1.2.3.4\n", "1.2.3.4"));
     Require(__inet_aton_nid_postfix("1.2.3.4", nullptr) == 1);
+    bool atonNullThrew = false;
+    try {
+        unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
+        __inet_aton_nid_postfix(nullptr, address);
+    } catch (const std::invalid_argument&) {
+        atonNullThrew = true;
+    }
+    Require(atonNullThrew);
+    bool addrNullThrew = false;
+    try {
+        __inet_addr_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        addrNullThrew = true;
+    }
+    Require(addrNullThrew);
     for (const char* invalid : {"", " 1.2.3.4", "1.2.3.4.5", "256.1.1.1", "1.2.3.256", "1.2.65536", "08", "1..2", "a.b.c.d",
              "1.2.3.4x", "0x", "1.2.3.", "-1"}) {
         unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
@@ -568,6 +620,21 @@ int main() {
     const unsigned char highB[] = {0x00, 0x7f};
     Require(timingsafe_memcmp_nid_postfix(highA, highB, 2) > 0);
     Require(timingsafe_memcmp_nid_postfix(highB, highA, 2) < 0);
+    const char safeD[] = "xbcdef";
+    const char safeMid[] = "abxdef";
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeC, 6) == 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeB, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeB, safeA, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeD, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeD, safeA, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeMid, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeMid, safeA, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeB, 5) == 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeB, 0) == 0);
+    Require(timingsafe_bcmp_nid_postfix(highA, highB, 2) != 0);
+    Require(timingsafe_bcmp_nid_postfix(highB, highA, 2) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeB, 6) == 1);
+    Require(timingsafe_bcmp_nid_postfix(highA, highB, 2) == 1);
     CheckSecureCopySizeLimits();
     CheckSecureStringSizeLimits();
     return CheckMemcpyOverlap() ? 0 : 1;

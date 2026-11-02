@@ -3,6 +3,7 @@
 
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
+#include "prx/libSceNgs2/include/Api.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -11,7 +12,6 @@
 #include <vector>
 
 extern "C" {
-int APS5_VABI sceNgs2ParseWaveformData(const void*, size_t, Ngs2WaveformInfo*);
 int APS5_VABI sceNgs2ParseWaveformFile(const char*, uint32_t, Ngs2WaveformInfo*);
 int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat*, uint32_t, uint32_t, Ngs2WaveformBlock*);
 int APS5_VABI sceNgs2GetWaveformFrameInfo(const Ngs2WaveformFormat*, uint32_t*, uint32_t*, uint32_t*, uint32_t*);
@@ -80,7 +80,7 @@ inline bool FrameInfoThrows(const Ngs2WaveformFormat& format) {
 #if defined(NGS2_TEST_GRAIN)
 inline constexpr std::uint32_t Grain = NGS2_TEST_GRAIN;
 #else
-inline constexpr std::uint32_t Grain = 8;
+inline constexpr std::uint32_t Grain = 64;
 #endif
 
 template <typename TSignal>

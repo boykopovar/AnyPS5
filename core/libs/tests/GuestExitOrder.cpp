@@ -14,7 +14,7 @@ void Record(char value) {
     static_cast<void>(!write(events[1], &value, 1));
 }
 
-void APS5_VABI GuestHandler(void*) { Record('G'); }
+void APS5_VABI RecordGuestExit(void*) { Record('G'); }
 
 void HostHandler() { Record('H'); }
 
@@ -46,11 +46,11 @@ bool ExitOrder(Setup setup, const char* expected) {
 }
 
 int main() {
-    if (!ExitOrder([] { __cxa_atexit_nid_postfix(GuestHandler, nullptr, nullptr); std::atexit(HostHandler); }, "GH")) {
+    if (!ExitOrder([] { __cxa_atexit_nid_postfix(RecordGuestExit, nullptr, nullptr); std::atexit(HostHandler); }, "GH")) {
         std::fputs("guest exit handlers must run before the host exit handlers\n", stderr);
         return 1;
     }
-    if (!ExitOrder([] { __cxa_atexit_nid_postfix(GuestHandler, nullptr, nullptr); atexit_nid_postfix(AtexitHandler); }, "AG")) {
+    if (!ExitOrder([] { __cxa_atexit_nid_postfix(RecordGuestExit, nullptr, nullptr); atexit_nid_postfix(AtexitHandler); }, "AG")) {
         std::fputs("atexit and __cxa_atexit handlers must run in reverse order of registration\n", stderr);
         return 1;
     }
