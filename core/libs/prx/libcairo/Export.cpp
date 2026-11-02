@@ -52,10 +52,6 @@ int APS5_VABI cairo_set_antialias() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_matrix_translate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_rotate() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -92,19 +88,7 @@ int APS5_VABI cairo_pattern_reference() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_matrix_scale() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_matrix_invert() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_scaled_font_get_font_options() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_matrix_init_translate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -157,10 +141,6 @@ int APS5_VABI cairo_copy_path() {
 }
 
 int APS5_VABI cairo_rectangle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_matrix_multiply() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -232,10 +212,6 @@ int APS5_VABI cairo_destroy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_matrix_init() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_clip_extents() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -244,19 +220,11 @@ int APS5_VABI cairo_set_scaled_font() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_matrix_transform_point() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_region_create() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI cairo_fill() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_matrix_transform_distance() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -357,10 +325,6 @@ int APS5_VABI cairo_region_union_rectangle() {
 }
 
 int APS5_VABI cairo_region_reference() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_matrix_init_identity() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -533,10 +497,6 @@ int APS5_VABI cairo_scale() {
 }
 
 int APS5_VABI cairo_get_operator() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_matrix_rotate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
