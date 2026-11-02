@@ -144,6 +144,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystem.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedFilesystemCalls.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Rename.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Syslog.cpp
@@ -298,6 +299,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_sce_v2_filesystem PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_sce_v2_filesystem PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(guest_sce_v2_filesystem_calls_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2FilesystemCalls.cpp)
+    target_include_directories(guest_sce_v2_filesystem_calls_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_filesystem_calls_tests PRIVATE libc libkernel zarchive)
+    configure_windows_unwind(guest_sce_v2_filesystem_calls_tests)
+    add_test(NAME guest_sce_v2_filesystem_calls COMMAND guest_sce_v2_filesystem_calls_tests)
+    set_tests_properties(guest_sce_v2_filesystem_calls PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_filesystem_calls PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
