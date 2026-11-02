@@ -1443,6 +1443,47 @@ static void CheckExpm1ScalingRounding() {
 }
 
 
+
+static void CheckLog2EdgeFlags() {
+    for (const double input : {-1.0, -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::quiet_NaN()}) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(log2_nid_postfix(input)) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+    for (const double input : {0.0, -0.0}) {
+        errno = 1234;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(log2_nid_postfix(input) == -std::numeric_limits<double>::infinity() && errno == 1234 && std::fetestexcept(FE_DIVBYZERO) == 0);
+    }
+}
+static void CheckLog2ConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0xfff0000000000000ull, 0}, {0x8000000000000000ull, 0xfff0000000000000ull, 0},
+        {0x0000000000000001ull, 0xc090c80000000000ull, 0}, {0x8000000000000001ull, 0xfff8000000000000ull, EDOM},
+        {0x000fffffffffffffull, 0xc08ff00000000000ull, 0}, {0x0010000000000000ull, 0xc08ff00000000000ull, 0},
+        {0x3ff0000000000000ull, 0x0000000000000000ull, 0}, {0x3fefffffffffffffull, 0xbca71547652b82feull, 0},
+        {0x3ff0000000000001ull, 0x3cb71547652b82fdull, 0}, {0x3ff00000fffffffeull, 0x3eb71546ac5324fbull, 0},
+        {0x3ff6a09e00000000ull, 0x3fdffffe5dc146d0ull, 0}, {0x4024000000000000ull, 0x400a934f0979a371ull, 0},
+        {0x4020000000000000ull, 0x4008000000000000ull, 0}, {0x3fd0000000000000ull, 0xc000000000000000ull, 0},
+        {0x7fefffffffffffffull, 0x4090000000000000ull, 0}, {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0xbff0000000000000ull, 0xfff8000000000000ull, EDOM}, {0xfff0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0}, {0xfff8000000000002ull, 0xfff8000000000002ull, EDOM},
+        {0x3f3738a98e70dc5cull, 0xc026ecdca3e646fcull, 0}, {0x3ff6e68ed8bdd52full, 0x3fe08dd74b2b1990ull, 0},
+        {0x3f2b147b0942849aull, 0xc0287b4fe8effe10ull, 0}, {0x3fe318aee27b543aull, 0xbfe7d5278168f30eull, 0},
+        {0x3fbdbeed4cb253bcull, 0xc008d7d45ccba59eull, 0}, {0x3fece143fc9534f6ull, 0xbfc2f1cb5ae7bbf1ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(log2_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -2284,6 +2325,68 @@ static void CheckIntegerAbsAndDivision() {
     Require(large.quot == -0x12345678ll && large.rem == 0x9abll);
 }
 
+static void CheckFrexpEnvironment() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t fraction;
+        int exponent;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0},
+        {0x8000000000000000ull, 0x8000000000000000ull, 0},
+        {0x0000000000000001ull, 0x3fe0000000000000ull, -1073},
+        {0x8000000000000001ull, 0xbfe0000000000000ull, -1073},
+        {0x000fffffffffffffull, 0x3feffffffffffffeull, -1022},
+        {0x800fffffffffffffull, 0xbfeffffffffffffeull, -1022},
+        {0x0010000000000000ull, 0x3fe0000000000000ull, -1021},
+        {0x8010000000000000ull, 0xbfe0000000000000ull, -1021},
+        {0x3fe0000000000000ull, 0x3fe0000000000000ull, 0},
+        {0x3ff0000000000000ull, 0x3fe0000000000000ull, 1},
+        {0xbff0000000000000ull, 0xbfe0000000000000ull, 1},
+        {0x4028000000000000ull, 0x3fe8000000000000ull, 4},
+        {0x7fefffffffffffffull, 0x3fefffffffffffffull, 1024},
+        {0xffefffffffffffffull, 0xbfefffffffffffffull, 1024},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0xfff0000000000000ull, 0xfff0000000000000ull, 0},
+        {0x7ff0000000000001ull, 0x7ff0000000000001ull, 0},
+        {0xfff0000000000001ull, 0xfff0000000000001ull, 0},
+        {0x7ff8000000001234ull, 0x7ff8000000001234ull, 0},
+        {0xfff8000000001234ull, 0xfff8000000001234ull, 0},
+    };
+    std::fenv_t saved;
+    Require(std::fegetenv(&saved) == 0);
+    const unsigned savedCsr = _mm_getcsr();
+    constexpr int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    const int savedError = *__error_nid_postfix();
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (const unsigned sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0);
+                    Require(std::fesetround(rounding[mode]) == 0);
+                    *__error_nid_postfix() = 97;
+                    _mm_setcsr(control | sticky);
+                    int exponent = 77;
+                    const auto fraction = std::bit_cast<std::uint64_t>(frexp_nid_postfix(std::bit_cast<double>(item.input), &exponent));
+                    const unsigned after = _mm_getcsr();
+                    const bool subnormal = (item.input & 0x7fffffffffffffffull) != 0 && (item.input & 0x7fffffffffffffffull) < 0x0010000000000000ull;
+                    const bool flushed = subnormal && (denorm & 1u) != 0;
+                    const unsigned flags = sticky | (subnormal && !flushed ? 2u : 0u);
+                    const auto expectedFraction = flushed ? (item.input & 0x8000000000000000ull) | 0x3fe0000000000000ull : item.fraction;
+                    const int expectedExponent = flushed ? -1076 : item.exponent;
+                    if (fraction != expectedFraction || exponent != expectedExponent || after != (control | flags) || *__error_nid_postfix() != 97) {
+                        std::fprintf(stderr, "frexp input=%016llx mode=%u denorm=%u sticky=%u fraction=%016llx exponent=%d csr=%x\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(fraction), exponent, after);
+                        std::abort();
+                    }
+                }
+            }
+        }
+    }
+    Require(std::fesetenv(&saved) == 0);
+    _mm_setcsr(savedCsr);
+    *__error_nid_postfix() = savedError;
+}
+
 static void CheckScaling() {
     Require(scalbnl_nid_postfix(3.0L, 4) == 48.0L && scalbnl_nid_postfix(1.0L, -16445) == 0x1p-16445L);
     Require(scalbnl_nid_postfix(1.0L, 16384) == std::numeric_limits<long double>::infinity());
@@ -2885,6 +2988,9 @@ int main() {
     CheckAcoshLargeArguments();
     CheckAcoshDomainErrno();
     CheckAcoshNaNInputs();
+    CheckLog10EdgeFlags();
+    CheckLog2ConsoleBits();
+    CheckLog2EdgeFlags();
     CheckAsinl();
     CheckTanhfConsoleBits();
     CheckExpm1fConsoleBits();
@@ -3029,6 +3135,7 @@ int main() {
     CheckFmodfErrno();
     CheckDoubleClassification();
     CheckIntegerAbsAndDivision();
+    CheckFrexpEnvironment();
     CheckScaling();
     CheckLongDoubleFunctions();
     CheckLongDoubleHyperbolic();
