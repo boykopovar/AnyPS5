@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -9,9 +11,11 @@
 #include <cstring>
 #include "../src/WtfStringAbi.hpp"
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <source_location>
+#include <thread>
 
 namespace {
 
@@ -633,6 +637,346 @@ void TestUTFConversions() {
     Throws([&] { FromUTF8(U8(""), std::size_t(0x80000000)); });
 }
 
+struct ExternalFreeState {
+    unsigned calls = 0;
+    unsigned deletes = 0;
+    unsigned destroys = 0;
+    NKWebKit::WtfAbi::ExternalStringImpl* string = nullptr;
+    void* data = nullptr;
+    unsigned size = 0;
+    bool atomRemoved = false;
+};
+
+struct ExternalFreeVTable {
+    void (APS5_VABI *destroy)(void*);
+    void (APS5_VABI *deleteWrapper)(void*);
+    void (APS5_VABI *call)(void*, NKWebKit::WtfAbi::ExternalStringImpl*, void*, unsigned);
+};
+
+struct ExternalCallable {
+    const ExternalFreeVTable* vtable;
+    ExternalFreeState* state;
+};
+
+void APS5_VABI ExternalDestroy_nid_no_patch(void* self) {
+    ++static_cast<ExternalCallable*>(self)->state->destroys;
+}
+
+void APS5_VABI ExternalDelete_nid_no_patch(void* self) {
+    auto* wrapper = static_cast<ExternalCallable*>(self);
+    Check(wrapper->state->calls == 1);
+    ++wrapper->state->deletes;
+    delete wrapper;
+}
+
+void APS5_VABI ExternalCall_nid_no_patch(void* self, NKWebKit::WtfAbi::ExternalStringImpl* string, void* data, unsigned size) {
+    auto& state = *static_cast<ExternalCallable*>(self)->state;
+    Check(string->free.callable == self && !state.deletes);
+    ++state.calls;
+    state.string = string;
+    state.data = data;
+    state.size = size;
+    if (string->string.hashAndFlags & 16)
+        state.atomRemoved = !_ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE(string->string).impl;
+}
+
+NKWebKit::WtfAbi::ExternalStringFreeFunction ExternalFunction(ExternalFreeState& state) {
+    static const ExternalFreeVTable vtable{ExternalDestroy_nid_no_patch, ExternalDelete_nid_no_patch, ExternalCall_nid_no_patch};
+    return {new ExternalCallable{&vtable, &state}};
+}
+
+void TestExternalStrings() {
+    const auto Create8 = &_ZN3WTF18ExternalStringImpl6createEPKhjONS_8FunctionIFvPS0_PvjEEE;
+    const auto Create16 = &_ZN3WTF18ExternalStringImpl6createEPKDsjONS_8FunctionIFvPS0_PvjEEE;
+    const unsigned char bytes[] = "external buffer with shared storage";
+    const char16_t wide[] = u"external wide buffer";
+    ExternalFreeState direct;
+    {
+        auto free = ExternalFunction(direct);
+        auto string = Create8(bytes, sizeof(bytes) - 1, std::move(free));
+        Check(!free.callable && string.impl->data == bytes && string.impl->hashAndFlags == 7);
+        auto* expected = reinterpret_cast<NKWebKit::WtfAbi::ExternalStringImpl*>(string.impl);
+        _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(string.impl, nullptr));
+        Check(direct.string == expected && direct.data == bytes && direct.size == 24 + sizeof(bytes) - 1);
+        Check(direct.calls == 1 && direct.deletes == 1 && !direct.destroys);
+    }
+    ExternalFreeState wideState;
+    {
+        auto free = ExternalFunction(wideState);
+        auto string = Create16(wide, std::size(wide) - 1, std::move(free));
+        Check(!free.callable && string.impl->data == wide && string.impl->hashAndFlags == 3);
+    }
+    Check(wideState.calls == 1 && wideState.deletes == 1 && !wideState.destroys);
+    Check(wideState.data == wide && wideState.size == 24 + sizeof(wide) - sizeof(char16_t));
+    ExternalFreeState shared;
+    {
+        auto string = Create8(bytes, sizeof(bytes) - 1, ExternalFunction(shared));
+        auto part = SharedSubstring(&string, 1, 20);
+        Check(string.impl->refCount == 4 && part.impl->data == bytes + 1);
+        auto atom = _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj(string.impl, 2, 18);
+        Check(string.impl->refCount == 6 && atom.impl->data == bytes + 2);
+        NKWebKit::WtfAbi::Release(std::exchange(string.impl, nullptr));
+        Check(!shared.calls);
+        Text(part, "xternal buffer with ");
+        Text(atom, "ternal buffer with");
+    }
+    Check(shared.calls == 1 && shared.deletes == 1);
+    ExternalFreeState atomState;
+    {
+        auto string = Create8(bytes, sizeof(bytes) - 1, ExternalFunction(atomState));
+        auto atom = _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(*string.impl);
+        Check(atom.impl == string.impl && string.impl->refCount == 4);
+        NKWebKit::WtfAbi::Release(std::exchange(string.impl, nullptr));
+        Check(!atomState.calls);
+        Check(_ZN3WTF14AtomStringImpl6lookUpEPKhj(bytes, sizeof(bytes) - 1).impl == atom.impl);
+    }
+    Check(atomState.calls == 1 && atomState.deletes == 1 && atomState.atomRemoved);
+    ExternalFreeState symbolState;
+    {
+        auto string = Create16(wide, std::size(wide) - 1, ExternalFunction(symbolState));
+        auto symbol = _ZN3WTF10SymbolImpl6createERNS_10StringImplE(*string.impl);
+        auto atom = _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(*symbol.impl);
+        Check(string.impl->refCount == 6 && atom.impl != symbol.impl);
+        NKWebKit::WtfAbi::Release(std::exchange(string.impl, nullptr));
+        NKWebKit::WtfAbi::Release(std::exchange(symbol.impl, nullptr));
+        Check(!symbolState.calls);
+        Text(atom, "external wide buffer");
+    }
+    Check(symbolState.calls == 1 && symbolState.deletes == 1);
+}
+
+void TestSymbols() {
+    using NKWebKit::WtfAbi::SymbolImpl;
+    const auto Create = &_ZN3WTF10SymbolImpl6createERNS_10StringImplE;
+    const auto Private = &_ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE;
+    const auto Hash = &_ZN3WTF10SymbolImpl17nextHashForSymbolEv;
+    const auto Add = &_ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE;
+    const auto Lookup = &_ZN3WTF14AtomStringImpl6lookUpEPKhj;
+    auto firstHash = Hash();
+    Check((firstHash & 0x800000FFU) == 0x80000000U && Hash() == firstHash + 256);
+    auto base = Create8(U8("symbol string with shared storage"), 33);
+    {
+        auto symbol = Create(*base.impl);
+        auto* layout = reinterpret_cast<SymbolImpl*>(symbol.impl);
+        Check(layout->owner == base.impl && base.impl->refCount == 4);
+        Check(symbol.impl->data == base.impl->data && symbol.impl->hashAndFlags == 38);
+        Check(layout->flags == 0 && layout->hashForSymbol == firstHash + 512);
+        Check(!Lookup(U8("symbol string with shared storage"), 33).impl);
+        auto atom = Add(*symbol.impl);
+        Check(atom.impl != symbol.impl && (atom.impl->hashAndFlags & 48) == 16);
+        Check(*reinterpret_cast<StringImpl**>(reinterpret_cast<unsigned char*>(atom.impl) + 24) == base.impl);
+        Check(base.impl->refCount == 6 && symbol.impl->refCount == 2);
+        _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(symbol.impl, nullptr));
+        Check(base.impl->refCount == 4 && Lookup(U8("symbol string with shared storage"), 33).impl == atom.impl);
+    }
+    Check(base.impl->refCount == 2 && !Lookup(U8("symbol string with shared storage"), 33).impl);
+    {
+        auto part = SharedSubstring(&base, 1, 20);
+        auto symbol = Private(*part.impl);
+        auto* layout = reinterpret_cast<SymbolImpl*>(symbol.impl);
+        Check(layout->owner == base.impl && layout->flags == 4);
+        Check(base.impl->refCount == 6 && part.impl->refCount == 2);
+        Check(symbol.impl->data == part.impl->data && symbol.impl->length == 20);
+        auto nested = Create(*symbol.impl);
+        Check(reinterpret_cast<SymbolImpl*>(nested.impl)->owner == base.impl);
+        Check(symbol.impl->refCount == 2 && base.impl->refCount == 8);
+        auto atom = _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj(nested.impl, 1, 18);
+        Check(atom.impl->length == 18 && (atom.impl->hashAndFlags & 48) == 16);
+        Check(*reinterpret_cast<StringImpl**>(reinterpret_cast<unsigned char*>(atom.impl) + 24) == base.impl);
+    }
+    Check(base.impl->refCount == 2);
+    {
+        auto wide = Create16(u"wide symbol storage", 19);
+        auto symbol = Create(*wide.impl);
+        Check(symbol.impl->hashAndFlags == 34 && wide.impl->refCount == 4);
+        auto atom = Add(*symbol.impl);
+        Check(!(atom.impl->hashAndFlags & 36) && (atom.impl->hashAndFlags & 16));
+        Text(atom, "wide symbol storage");
+    }
+    {
+        auto shortText = Create8(U8("sym"), 3);
+        auto symbol = Create(*shortText.impl);
+        auto other = Private(*shortText.impl);
+        Check(reinterpret_cast<SymbolImpl*>(symbol.impl)->hashForSymbol != reinterpret_cast<SymbolImpl*>(other.impl)->hashForSymbol);
+        auto atom = Add(*symbol.impl);
+        Check(atom.impl != symbol.impl && atom.impl->data != shortText.impl->data);
+        Check(Add(*other.impl).impl == atom.impl);
+        Text(atom, "sym");
+    }
+    {
+        auto nullSymbol = _ZN3WTF10SymbolImpl16createNullSymbolEv();
+        auto* layout = reinterpret_cast<SymbolImpl*>(nullSymbol.impl);
+        Check(layout->flags == 1 && layout->owner && (layout->owner->refCount & 1));
+        Check(nullSymbol.impl->length == 0 && nullSymbol.impl->data == layout->owner->data);
+        Check(Add(*nullSymbol.impl).impl == layout->owner);
+    }
+    std::array<unsigned, 128> hashes{};
+    std::thread a([&] { for (unsigned i = 0; i < 64; ++i) hashes[i] = Hash(); });
+    std::thread b([&] { for (unsigned i = 64; i < 128; ++i) hashes[i] = Hash(); });
+    a.join();
+    b.join();
+    std::sort(hashes.begin(), hashes.end());
+    for (unsigned i = 1; i < hashes.size(); ++i) Check(hashes[i] == hashes[i - 1] + 256);
+}
+
+void TestAtoms() {
+    const auto Add8 = &_ZN3WTF14AtomStringImpl3addEPKhj;
+    const auto Add16 = &_ZN3WTF14AtomStringImpl3addEPKDsj;
+    const auto Lookup8 = &_ZN3WTF14AtomStringImpl6lookUpEPKhj;
+    const auto Lookup16 = &_ZN3WTF14AtomStringImpl6lookUpEPKDsj;
+    const auto AddImpl = &_ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE;
+    const auto LookupImpl = &_ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE;
+    const auto AddPart = &_ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj;
+    const auto Literal = &_ZN3WTF14AtomStringImpl10addLiteralEPKcj;
+    const auto Static = &_ZN3WTF14AtomStringImpl3addEPKNS_10StringImpl16StaticStringImplE;
+    const auto Utf8 = &_ZN3WTF10AtomString16fromUTF8InternalEPKcS2_;
+    const auto UpperAtom = &_ZNK3WTF10AtomString23convertToASCIIUppercaseEv;
+    Check(!Lookup8(U8("atom"), 4).impl);
+    {
+        auto first = Add8(U8("atom"), 4);
+        auto second = Add16(u"atom", 4);
+        Check(first.impl == second.impl && (first.impl->hashAndFlags & 16));
+        Check(first.impl->hashAndFlags >> 8 == _ZNK3WTF10StringImpl14concurrentHashEv(first.impl));
+        Check(Lookup8(U8("atom"), 4).impl == first.impl);
+        Check(Lookup16(u"atom", 4).impl == first.impl);
+        auto ordinary = Create8(U8("atom"), 4);
+        Check(LookupImpl(*ordinary.impl).impl == first.impl);
+        Check(AddImpl(*ordinary.impl).impl == first.impl && !(ordinary.impl->hashAndFlags & 16));
+        std::thread other([&] {
+            Check(!Lookup8(U8("atom"), 4).impl);
+            auto own = Add8(U8("atom"), 4);
+            Check(own.impl != first.impl);
+        });
+        other.join();
+    }
+    Check(!Lookup8(U8("atom"), 4).impl);
+    {
+        auto direct = Add8(U8("direct"), 6);
+        _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(direct.impl, nullptr));
+        Check(!Lookup8(U8("direct"), 6).impl);
+    }
+    {
+        auto ordinary = Create16(u"adopt", 5);
+        auto adopted = AddImpl(*ordinary.impl);
+        Check(adopted.impl == ordinary.impl && ordinary.impl->refCount == 4);
+        Check(!(adopted.impl->hashAndFlags & 4));
+    }
+    Check(!Lookup8(U8("adopt"), 5).impl);
+    Check(!Add8(nullptr, 5).impl && !Add16(nullptr, 0).impl);
+    auto empty = Add8(U8(""), 0);
+    Check(empty.impl == Add16(u"", 0).impl && (empty.impl->refCount & 1));
+    Check(!Lookup8(U8(""), 0).impl && LookupImpl(*empty.impl).impl == empty.impl);
+    {
+        const unsigned char latin[] = {0xE9};
+        auto wide = Add16(u"\u00e9", 1);
+        Check((wide.impl->hashAndFlags & 4) && Add8(latin, 1).impl == wide.impl);
+        auto unicode = Add16(u"\u0100", 1);
+        Check(!(unicode.impl->hashAndFlags & 4));
+        const unsigned char embedded[] = {'a', 0, 'b'};
+        Check(Add8(embedded, 3).impl == Add16(u"a\0b", 3).impl);
+    }
+    static const unsigned char literal[] = "static atom";
+    StringImpl staticImpl{1, 11, literal, 4};
+    {
+        auto atom = Static(&staticImpl);
+        Check(atom.impl != &staticImpl && atom.impl->data == literal);
+        Check(staticImpl.refCount == 1 && staticImpl.hashAndFlags == 4);
+        Check(Literal(reinterpret_cast<const char*>(literal), 11).impl == atom.impl);
+    }
+    Check(!Lookup8(literal, 11).impl && !std::memcmp(literal, "static atom", 11));
+    static const char16_t wideLiteral[] = u"wide static";
+    StringImpl wideStatic{1, 11, wideLiteral, 0};
+    {
+        auto atom = Static(&wideStatic);
+        Check(atom.impl->data == wideLiteral && !(atom.impl->hashAndFlags & 4));
+        Check(Add16(wideLiteral, 11).impl == atom.impl);
+    }
+    {
+        auto atom = Literal("literal atom", 12);
+        Check(!std::memcmp(atom.impl->data, "literal atom", 12));
+    }
+    {
+        auto base = Create8(U8("abcdefghijklmnopqrstuvwx"), 24);
+        auto part = AddPart(base.impl, 1, 20);
+        Check((part.impl->hashAndFlags & 3) == 2 && base.impl->refCount == 4);
+        Text(part, "bcdefghijklmnopqrstu");
+        Check(Add8(U8("bcdefghijklmnopqrstu"), 20).impl == part.impl);
+        Check(AddPart(base.impl, 99, 1).impl == empty.impl);
+        Check(!AddPart(nullptr, 0, 1).impl);
+    }
+    Text(_ZN3WTF10AtomString6numberEi(std::numeric_limits<int>::min()), "-2147483648");
+    Text(_ZN3WTF10AtomString6numberEj(std::numeric_limits<unsigned>::max()), "4294967295");
+    Text(_ZN3WTF10AtomString6numberEm(std::numeric_limits<std::uint64_t>::max()), "18446744073709551615");
+    Text(_ZN3WTF10AtomString6numberEy(std::uint64_t(0)), "0");
+    {
+        auto number = Add8(U8("42"), 2);
+        Check(_ZN3WTF10AtomString6numberEi(42).impl == number.impl);
+    }
+    {
+        auto ascii = Utf8("utf8", nullptr);
+        Check(ascii.impl == Add8(U8("utf8"), 4).impl);
+        auto latin = Utf8("\xc3\xa9", nullptr);
+        Check(!(latin.impl->hashAndFlags & 4) && Add16(u"\u00e9", 1).impl == latin.impl);
+        auto emoji = Utf8("\xf0\x9f\x98\x80", nullptr);
+        Check(emoji.impl == Add16(u"\U0001f600", 2).impl);
+        const char bounded[] = {'x', 0, 'y'};
+        Check(Utf8(bounded, bounded + 3).impl == Add16(u"x\0y", 3).impl);
+        Check(!Utf8("\xc0\x80", nullptr).impl);
+        Check(!Utf8("\xed\xa0\x80", nullptr).impl);
+        Check(!Utf8("\xe2\x82", nullptr).impl);
+    }
+    {
+        auto lower = Add8(U8("case"), 4);
+        auto upper = UpperAtom(&lower);
+        Text(upper, "CASE");
+        Check(upper.impl == Add16(u"CASE", 4).impl && UpperAtom(&upper).impl == upper.impl);
+        String null;
+        Check(!UpperAtom(&null).impl);
+    }
+    StringImpl* survivor = nullptr;
+    std::thread departing([&] {
+        auto atom = Add8(U8("survivor"), 8);
+        survivor = std::exchange(atom.impl, nullptr);
+    });
+    departing.join();
+    Check(survivor && !(survivor->hashAndFlags & 16));
+    Release(survivor);
+}
+
+void TestDestroy() {
+    auto narrow = Create8(U8("destroy narrow"), 14);
+    _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(narrow.impl, nullptr));
+    auto wide = Create16(u"destroy wide", 12);
+    _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(wide.impl, nullptr));
+
+    for (const bool guest : {false, true}) {
+        auto* bytes = static_cast<unsigned char*>(_ZN3WTF10fastMallocEm(3));
+        std::memcpy(bytes, "own", 3);
+        String owned(new (_ZN3WTF10fastMallocEm(sizeof(StringImpl))) StringImpl{2, 3, bytes, 5});
+        Text(owned, "own");
+        if (guest) _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(owned.impl, nullptr));
+    }
+
+    static const unsigned char literal[] = "literal";
+    auto* borrowed = new (_ZN3WTF10fastMallocEm(sizeof(StringImpl))) StringImpl{2, 7, literal, 4};
+    _ZN3WTF10StringImpl7destroyEPS0_(borrowed);
+    Check(!std::memcmp(literal, "literal", 7));
+
+    auto owner = Create8(U8("abcdefghijklmnopqrstuvwx"), 24);
+    auto substring = SharedSubstring(&owner, 1, 20);
+    Check((substring.impl->hashAndFlags & 3) == 2 && owner.impl->refCount == 4);
+    _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(substring.impl, nullptr));
+    Check(owner.impl->refCount == 2);
+    Text(owner, "abcdefghijklmnopqrstuvwx");
+
+    auto wideOwner = Create16(u"abcdefghijklmnopqrstuvwx", 24);
+    auto wideSubstring = SharedSubstring(&wideOwner, 1, 20);
+    Check((wideSubstring.impl->hashAndFlags & 3) == 2 && wideOwner.impl->refCount == 4);
+    _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(wideSubstring.impl, nullptr));
+    Check(wideOwner.impl->refCount == 2);
+    Text(wideOwner, "abcdefghijklmnopqrstuvwx");
+}
+
 void TestSubstrings() {
     auto original = Create8(U8("abcdefghijklmnopqrstuvwx"), 24);
     { auto same = Substring(original.impl, 0, 99); Check(same.impl == original.impl); }
@@ -772,6 +1116,10 @@ void Run() {
     TestASCIIAndViews();
     TestUTFConversions();
     TestSubstrings();
+    TestDestroy();
+    TestExternalStrings();
+    TestSymbols();
+    TestAtoms();
     TestCStrings();
     TestPrimitiveState();
     TestIntegersAndConstructors();
