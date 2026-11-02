@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include <string_view>
 #include <barrier>
 #include <new>
 
@@ -322,7 +323,11 @@ void testBlockingSubmission(const std::filesystem::path& directory) {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
-void testShaderCode(const std::filesystem::path& directory, bool host) {
+void testShaderCode(const std::filesystem::path& directory, bool host, std::string_view mode = {}) {
+    const bool prologue = mode.starts_with("shader_prologue_");
+    const bool readOnly = mode.ends_with("readonly");
+    const bool hostHeader = readOnly || mode.ends_with("header");
+    std::byte* hostMemory = nullptr;
     auto* bytes = allocate(1u << 20);
     auto* shader = reinterpret_cast<Shader*>(bytes);
     auto* code = bytes + (1u << 19) + 256;
@@ -336,8 +341,12 @@ void testShaderCode(const std::filesystem::path& directory, bool host) {
         auto* memory = mapped != MAP_FAILED ? static_cast<std::byte*>(mapped) : nullptr;
 #endif
         check(memory != nullptr, "host shader allocation failed");
-        GuestAllocations::Mutation mutation;
-        mutation.Add(memory, CodeBytes + 4096, true, true, true);
+        if (!prologue) {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(memory, CodeBytes + 4096, true, true, true);
+        }
+        hostMemory = memory;
+        if (hostHeader) shader = reinterpret_cast<Shader*>(memory);
         code = memory + 256;
     }
 #endif
@@ -349,20 +358,36 @@ void testShaderCode(const std::filesystem::path& directory, bool host) {
     shader->code = code;
     auto* recorder = AgcDriver::FrameRecorder::Active();
     check(recorder != nullptr, "frame recorder is disabled");
-    recorder->FrameBoundary();
+    if (!prologue) recorder->FrameBoundary();
     std::vector<std::byte> expected(CodeBytes);
     for (std::size_t i = 0; i < expected.size(); ++i) expected[i] = static_cast<std::byte>(i * 31 + 17);
     std::memcpy(code, expected.data(), expected.size());
+    std::vector<std::byte> expectedHeader(sizeof(Shader));
+    std::memcpy(expectedHeader.data(), shader, expectedHeader.size());
+    if (readOnly) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        check(VirtualProtect(hostMemory, CodeBytes + 4096, PAGE_READONLY, &previous) != 0, "cannot protect host shader pages");
+#elif defined(__linux__)
+        check(mprotect(hostMemory, CodeBytes + 4096, PROT_READ) == 0, "cannot protect host shader pages");
+#endif
+    }
     recorder->RegisterShader(shader);
     recorder->FrameBoundary();
+    if (prologue) recorder->FrameBoundary();
     const FrameCaptureReader reader(directory);
     std::vector<std::byte> captured(CodeBytes);
-    const auto apply = [&](const FrameMemoryChunk& chunk) {
-        const auto begin = std::max(address(code), chunk.address);
-        const auto end = std::min(address(code) + CodeBytes, chunk.address + chunk.bytes);
+    std::vector<std::byte> capturedHeader(sizeof(Shader));
+    const auto applyBytes = [&](const FrameMemoryChunk& chunk, std::uint64_t target, std::span<std::byte> bytes) {
+        const auto begin = std::max(target, chunk.address);
+        const auto end = std::min(target + bytes.size(), chunk.address + chunk.bytes);
         if (begin >= end) return;
         const auto data = reader.Read(chunk);
-        std::memcpy(captured.data() + begin - address(code), data.data() + begin - chunk.address, end - begin);
+        std::memcpy(bytes.data() + begin - target, data.data() + begin - chunk.address, end - begin);
+    };
+    const auto apply = [&](const FrameMemoryChunk& chunk) {
+        applyBytes(chunk, address(code), captured);
+        if (hostHeader) applyBytes(chunk, address(shader), capturedHeader);
     };
     for (const auto& chunk : reader.Chunks()) if (chunk.kind == FrameMemoryKind::Snapshot) apply(chunk);
     bool registered = false;
@@ -375,6 +400,14 @@ void testShaderCode(const std::filesystem::path& directory, bool host) {
         for (const auto& chunk : reader.Chunks()) {
             if (chunk.kind == FrameMemoryKind::Delta && chunk.group == call.values.at(0)) apply(chunk);
         }
+    }
+    if (hostHeader && captured == expected) check(capturedHeader == expectedHeader, "the host shader header was not captured before registration");
+    if (readOnly && captured == expected) {
+        const bool protectedHeader = std::ranges::any_of(reader.Chunks(), [&](const auto& chunk) {
+            return chunk.kind == FrameMemoryKind::Range && chunk.address <= address(shader) &&
+                address(shader) - chunk.address < chunk.bytes && (chunk.access & AgcDriver::FrameRangeAccess::Writable) == 0;
+        });
+        check(protectedHeader, "the read-only host shader was recorded with write access");
     }
     check(registered && captured == expected, "the complete separate shader code was not captured before registration");
     CapturedMemory memory(reader);
@@ -487,6 +520,7 @@ int main(int argc, char** argv) {
         }
         if (mode == "order") testMemoryOrder(directory);
         else if (mode == "zero") testReusedMemory(directory);
+        else if (mode.starts_with("shader_prologue_")) testShaderCode(directory, true, mode);
         else if (mode == "shared_page") testSharedPage(directory);
         else if (mode == "host_neighbors") testHostNeighbors(directory);
         else if (mode == "unwatched") testUnwatched();
