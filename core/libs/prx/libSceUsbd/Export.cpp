@@ -644,6 +644,7 @@ std::int32_t APS5_VABI sceUsbdSubmitTransfer(UsbdTransfer* transfer) {
         std::lock_guard lock(state.mutex);
         if (transfer->numIsoPackets > IsoCapacity(state, transfer)) return SCE_USBD_ERROR_INVALID_ARG;
     }
+    if (transfer->length < 0 || (transfer->length > 0 && transfer->buffer == nullptr)) return SCE_USBD_ERROR_INVALID_ARG;
     auto* handle = KnownHandle(transfer->deviceHandle, __func__);
     if ((transfer->flags & ~SUPPORTED_TRANSFER_FLAGS) != 0) throw std::runtime_error(std::string(__func__) + ": transfer flags " + std::to_string(transfer->flags) + " are not supported");
     if (transfer->numIsoPackets < 0) return SCE_USBD_ERROR_INVALID_ARG;
