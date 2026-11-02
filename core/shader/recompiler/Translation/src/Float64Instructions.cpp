@@ -10,7 +10,7 @@ IrU64 TranslationContext::readF64(const RdnaOperand& operand) {
 }
 
 bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode opcode) {
-    const bool arithmetic = opcode == IrOpcode::FPAdd64 || opcode == IrOpcode::FPMul64;
+    const bool arithmetic = opcode == IrOpcode::FPAdd64 || opcode == IrOpcode::FPMul64 || opcode == IrOpcode::FPFma64;
     const std::size_t count = IrOpcodeOperandCount(opcode);
     std::array<IrValue*, 3> args{};
     for (std::uint32_t index = 0u; index < count; ++index) {
@@ -27,7 +27,7 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     }
     const IrType type = IrOpcodeType(opcode);
     IrValue* result = count == 1u ? &ir.Emit(opcode, type, {args[0]}) : count == 2u ? &ir.Emit(opcode, type, {args[0], args[1]}) : &ir.Emit(opcode, type, {args[0], args[1], args[2]});
-    if (arithmetic) result = &flushTinyF64Result(opcode, *args[0], *args[1], *result);
+    if (arithmetic) result = &flushTinyF64Result(opcode, *args[0], *args[1], args[2], *result);
     if (type == IrType::U64) {
         writeF64Result(inst.destination, *result);
         return true;
@@ -39,13 +39,16 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     return true;
 }
 
-IrValue& TranslationContext::flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue& result) {
+IrValue& TranslationContext::flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result) {
     if (!floatMode.has_value() || (floatMode->floatMode & 0x80u) != 0u) return result;
     const bool product = opcode == IrOpcode::FPMul64;
-    IrValue& tested = product ? ir.Emit(IrOpcode::FPMul64, IrType::U64, {&ir.Emit(IrOpcode::FPMul64, IrType::U64, {&lhs, &ir.ConstantU64(0x43f0000000000000ull)}), &rhs}) : result;
+    const bool fused = opcode == IrOpcode::FPFma64;
+    IrValue& tested = fused
+        ? ir.Emit(IrOpcode::FPFmaScale64, IrType::U64, {&lhs, &rhs, addend, &ir.Constant(64u)})
+        : product ? ir.Emit(IrOpcode::FPMul64, IrType::U64, {&ir.Emit(IrOpcode::FPMul64, IrType::U64, {&lhs, &ir.ConstantU64(0x43f0000000000000ull)}), &rhs}) : result;
     IrValue& magnitude = ir.Emit(IrOpcode::BitwiseAnd64, IrType::U64, {&tested, &ir.ConstantU64(0x7fffffffffffffffull)});
     IrValue& below = ir.Emit(IrOpcode::ISub64, IrType::U64, {&magnitude, &ir.ConstantU64(1u)});
-    IrValue& tiny = ir.Emit(IrOpcode::ULessThan64, IrType::U1, {&below, &ir.ConstantU64(product ? 0x040fffffffffffffull : 0x000fffffffffffffull)});
+    IrValue& tiny = ir.Emit(IrOpcode::ULessThan64, IrType::U1, {&below, &ir.ConstantU64(product || fused ? 0x040fffffffffffffull : 0x000fffffffffffffull)});
     IrValue& sign = ir.BitwiseAnd(ir.CompositeExtract(result, 1u), ir.Constant(0x80000000u));
     return ir.ConstructU64(ir.Select(tiny, ir.Constant(0u), ir.CompositeExtract(result, 0u)), ir.Select(tiny, sign, ir.CompositeExtract(result, 1u)));
 }
@@ -80,12 +83,33 @@ bool TranslationContext::minMaxF64(const RdnaInstruction& inst, IrOpcode opcode)
 }
 
 bool TranslationContext::float64Unary(const RdnaInstruction& inst, IrOpcode opcode) {
-    const bool flushesInput = opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
+    const bool ldexp = opcode == IrOpcode::FPLdexp64;
+    const bool flushesInput = ldexp || opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
     const auto bits = flushesInput ? flushF64Bits(readF64Bits(sourceAt(inst, 0u)), 0x40u) : readF64Bits(sourceAt(inst, 0u));
     IrValue& argument = ir.ConstructU64(bits[0].Value(), bits[1].Value());
-    IrValue& result = opcode == IrOpcode::FPLdexp64 ? ir.Emit(opcode, IrType::U64, {&argument, &readU32(sourceAt(inst, 1u)).Value()}) : ir.Emit(opcode, IrType::U64, {&argument});
+    IrValue* exponent = ldexp ? &readU32(sourceAt(inst, 1u)).Value() : nullptr;
+    IrValue& result = ldexp ? ir.Emit(opcode, IrType::U64, {&argument, exponent}) : ir.Emit(opcode, IrType::U64, {&argument});
     std::array<IrU32, 2> words{IrU32(ir.CompositeExtract(result, 0u)), IrU32(ir.CompositeExtract(result, 1u))};
     if (opcode == IrOpcode::FPFract64) words = flushF64Bits(words, 0x80u);
+    if (ldexp && floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {
+        IrValue& field = ir.ShiftRightLogical(bits[1].Value(), ir.Constant(20u));
+        IrValue& biased = ir.BitwiseAnd(field, ir.Constant(0x7ffu));
+        IrValue& mantissaHigh = ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x000fffffu));
+        IrValue& finite = ir.ULessThan(biased, ir.Constant(0x7ffu));
+        IrValue& nonzero = ir.INotEqual(ir.BitwiseOr(biased, ir.BitwiseOr(mantissaHigh, bits[0].Value())), ir.Constant(0u));
+        IrValue& denormal = ir.IEqual(biased, ir.Constant(0u));
+        IrValue& highMsb = ir.Emit(IrOpcode::FindUMsb32, IrType::U32, {&mantissaHigh});
+        IrValue& lowMsb = ir.Emit(IrOpcode::FindUMsb32, IrType::U32, {&bits[0].Value()});
+        IrValue& msb = ir.Select(ir.INotEqual(mantissaHigh, ir.Constant(0u)), ir.IAdd(highMsb, ir.Constant(32u)), lowMsb);
+        IrValue& trueExponent = ir.Select(denormal, ir.ISub(msb, ir.Constant(1074u)), ir.ISub(biased, ir.Constant(1023u)));
+        IrValue& clampLow = ir.Select(ir.Emit(IrOpcode::SLessThan32, IrType::U1, {exponent, &ir.Constant(static_cast<std::uint32_t>(-2200))}), ir.Constant(static_cast<std::uint32_t>(-2200)), *exponent);
+        IrValue& clamped = ir.Select(ir.Emit(IrOpcode::SGreaterThan32, IrType::U1, {&clampLow, &ir.Constant(2200u)}), ir.Constant(2200u), clampLow);
+        IrValue& sum = ir.IAdd(trueExponent, clamped);
+        IrValue& belowMin = ir.Emit(IrOpcode::SLessThan32, IrType::U1, {&sum, &ir.Constant(static_cast<std::uint32_t>(-1022))});
+        IrValue& tiny = ir.LogicalAnd(finite, ir.LogicalAnd(nonzero, belowMin));
+        IrValue& sign = ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x80000000u));
+        words = {IrU32(ir.Select(tiny, ir.Constant(0u), words[0].Value())), IrU32(ir.Select(tiny, sign, words[1].Value()))};
+    }
     const IrU32 magnitude(ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x7fffffffu)));
     const IrU1 nan(ir.LogicalOr(ir.UGreaterThan(magnitude.Value(), ir.Constant(0x7ff00000u)),
         ir.LogicalAnd(ir.IEqual(magnitude.Value(), ir.Constant(0x7ff00000u)), ir.INotEqual(bits[0].Value(), ir.Constant(0u)))));
@@ -119,9 +143,9 @@ void TranslationContext::writeF64Result(const RdnaOperand& operand, IrValue& val
 }
 
 bool TranslationContext::vDivScaleF64(const RdnaInstruction& inst) {
-    const auto value = readF64Bits(sourceAt(inst, 0u));
-    const auto denominator = readF64Bits(sourceAt(inst, 1u));
-    const auto numerator = readF64Bits(sourceAt(inst, 2u));
+    const auto value = flushF64Bits(readF64Bits(sourceAt(inst, 0u)), 0x40u);
+    const auto denominator = flushF64Bits(readF64Bits(sourceAt(inst, 1u)), 0x40u);
+    const auto numerator = flushF64Bits(readF64Bits(sourceAt(inst, 2u)), 0x40u);
     const auto exponent = [&](IrU32 high) {
         return IrU32(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&high.Value(), &ir.Constant(20u), &ir.Constant(11u)}));
     };
@@ -160,6 +184,7 @@ bool TranslationContext::vDivScaleF64(const RdnaInstruction& inst) {
     result[1] = IrU32(ir.Select(rescale.Value(), result[1].Value(), value[1].Value()));
     result[0] = IrU32(ir.Select(zero.Value(), ir.Constant(0u), result[0].Value()));
     result[1] = IrU32(ir.Select(zero.Value(), ir.Constant(0xfff80000u), result[1].Value()));
+    result = flushF64Bits(result, 0x80u);
     writeF64Result(inst.destination, ir.ConstructU64(result[0].Value(), result[1].Value()));
     writeMask(inst.destination2, IrU1(ir.LogicalOr(nearMax.Value(), ir.LogicalAnd(notDenormal.Value(), nearMin.Value()))));
     return true;
@@ -173,8 +198,20 @@ bool TranslationContext::vDivFmasF64(const RdnaInstruction& inst) {
     IrValue& addendExponent = ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&addend[1].Value(), &ir.Constant(20u), &ir.Constant(11u)});
     const IrU1 up(ir.Emit(IrOpcode::UGreaterThanEqual32, IrType::U1, {&addendExponent, &ir.Constant(1024u)}));
     IrValue& power = ir.Select(scale.Value(), ir.Select(up.Value(), ir.Constant(128u), ir.Constant(static_cast<std::uint32_t>(-128))), ir.Constant(0u));
-    IrValue& result = ir.Emit(IrOpcode::FPFmaScale64, IrType::U64,
-        {&readF64(sourceAt(inst, 0u)).Value(), &readF64(sourceAt(inst, 1u)).Value(), &ir.ConstructU64(addend[0].Value(), addend[1].Value()), &power});
+    IrValue& a = readF64(sourceAt(inst, 0u)).Value();
+    IrValue& b = readF64(sourceAt(inst, 1u)).Value();
+    IrValue& c = ir.ConstructU64(addend[0].Value(), addend[1].Value());
+    IrValue& result = ir.Emit(IrOpcode::FPFmaScale64, IrType::U64, {&a, &b, &c, &power});
+    if (floatMode.has_value() && (floatMode->floatMode & 0x80u) == 0u) {
+        IrValue& probe = ir.Emit(IrOpcode::FPFmaScale64, IrType::U64, {&a, &b, &c, &ir.IAdd(power, ir.Constant(64u))});
+        IrValue& magnitude = ir.Emit(IrOpcode::BitwiseAnd64, IrType::U64, {&probe, &ir.ConstantU64(0x7fffffffffffffffull)});
+        IrValue& below = ir.Emit(IrOpcode::ISub64, IrType::U64, {&magnitude, &ir.ConstantU64(1u)});
+        const IrU1 tiny(ir.Emit(IrOpcode::ULessThan64, IrType::U1, {&below, &ir.ConstantU64(0x040fffffffffffffull)}));
+        IrValue& high = ir.CompositeExtract(result, 1u);
+        IrValue& sign = ir.BitwiseAnd(high, ir.Constant(0x80000000u));
+        writeF64Result(inst.destination, ir.ConstructU64(ir.Select(tiny.Value(), ir.Constant(0u), ir.CompositeExtract(result, 0u)), ir.Select(tiny.Value(), sign, high)));
+        return true;
+    }
     writeF64Result(inst.destination, result);
     return true;
 }

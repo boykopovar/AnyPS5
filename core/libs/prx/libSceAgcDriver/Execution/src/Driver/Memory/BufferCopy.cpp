@@ -128,8 +128,7 @@ void Driver::noteCopyWriter(std::uint64_t program, std::uint64_t begin, std::uin
         knownValueEntries.fetch_add(1, std::memory_order_relaxed);
     }
     std::lock_guard lock(writtenBuffersMutex);
-    writtenBuffers.push_back({program, begin, end, ++writtenBufferSerial, queue, false, std::move(known), generation});
-    while (writtenBuffers.size() > WrittenBufferRing) writtenBuffers.pop_front();
+    writtenBuffers.Push({program, begin, end, ++writtenBufferSerial, queue, false, std::move(known), generation});
 }
 
 bool Driver::copyKnownValues() {

@@ -5,6 +5,7 @@
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
 
 using ErrExit = void (APS5_VABI*)(int);
 
@@ -101,5 +102,24 @@ int APS5_VABI _ZNSt10filesystem10_Close_dirEPv_nid_postfix(void* handle);
 int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsigned long flags, int* pending, void** context);
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
+int APS5_VABI _Mtxinit_nid_postfix(PthreadMutex* mutex, const char* name);
+int APS5_VABI _Mtxlock_nid_postfix(PthreadMutex* mutex);
+int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
+int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
+void* APS5_VABI sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void* tag) noexcept;
+void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment);
+
+int APS5_VABI sceLibcMspaceSetMallocCallback();
+int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();
+int APS5_VABI sceLibcHeapSetAddressRangeCallback();
+int APS5_VABI sceLibcPafMspaceTrim();
+int APS5_VABI sceLibcHeapMutexCalloc();
+int APS5_VABI sceLibcInternalSetMallocCallback();
+int APS5_VABI sceLibcHeapSetTraceMarker();
+int APS5_VABI sceLibcPafMspaceCheckMemoryBounds();
+int APS5_VABI sceLibcHeapUnsetTraceMarker();
+int APS5_VABI sceLibcHeapGetAddressRanges();
+int APS5_VABI sceLibcHeapMutexFree();
+
 
 }
