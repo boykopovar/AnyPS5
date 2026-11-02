@@ -276,6 +276,12 @@ static std::string ReadWhole(const std::string& path) {
     return std::string(buffer.data(), size);
 }
 
+#if defined(__clang__) && !defined(_WIN32)
+#define __builtin_sysv_va_list va_list
+#define __builtin_sysv_va_start va_start
+#define __builtin_sysv_va_end va_end
+#endif
+
 static int APS5_VABI ScanSafeList(FileStream* stream, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);

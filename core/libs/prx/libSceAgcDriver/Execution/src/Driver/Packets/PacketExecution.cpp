@@ -293,7 +293,7 @@ void Driver::execute(const Submission& submission) {
                 cursor = nextCursor;
                 continue;
             }
-            if (!DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) && Pm4::WaitSatisfiedUnchecked(packet)) {
+            if (!DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) && Pm4::WaitSatisfiedUnchecked(packet) && !OwnStoreRejects(packet, awaited, awaitedBytes, submission.queue)) {
                 bumpEpoch(&EpochBumps::waits);
                 ++waitOutcomes().atEntry;
                 gateOpened() = true;

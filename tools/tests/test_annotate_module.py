@@ -247,6 +247,24 @@ class AnnotateModuleTests(unittest.TestCase):
         self.run_tool(build_module(), "--no-names")
         self.assertIn("; -> " + nid(IMPORT_NAME), self.read(".asm"))
 
+    def test_a_temporary_directory_outside_the_ansi_code_page_is_disassembled(self):
+        temporary = self.root / "тест 界 \U0001f3ae"
+        temporary.mkdir()
+        with mock.patch.object(tempfile, "tempdir", str(temporary)):
+            summary = self.annotate(build_module())
+        self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+        self.assertTrue(instruction(self.read(".asm").splitlines(), "call").endswith("; -> " + IMPORT_NAME))
+        self.assertEqual([], list(temporary.iterdir()))
+
+    def test_objdump_found_through_a_relative_path_entry_is_disassembled(self):
+        found = Path(annotate_module.gnu_objdump()).absolute()
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(found.parent.parent)
+        with mock.patch.dict(os.environ, {"PATH": found.parent.name}):
+            self.assertFalse(Path(annotate_module.gnu_objdump()).is_absolute())
+            summary = self.annotate(build_module())
+        self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+
     def test_mismatching_database_name_is_not_used(self):
         wrong = self.root / "wrong.csv"
         wrong.write_text("%s sceKernelOther\n" % nid(IMPORT_NAME), encoding="utf-8")
@@ -334,6 +352,40 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertIn("1 exports, 1 tls", summary)
         self.assertIn("tls+%#x %s %s\n" % (EXPORT_ADDRESS, symbol_name(TLS_NAME), TLS_NAME), self.read(".exports.txt"))
         self.assertNotIn("export " + TLS_NAME, self.read(".asm"))
+
+    def test_private_symbols_are_not_reported_as_exports(self):
+        for binding in (0, 1, 2, 10):
+            for visibility in (0, 1, 2, 3):
+                for kind in (2, 6):
+                    with self.subTest(binding=binding, visibility=visibility, kind=kind):
+                        symbols = [(EXPORT_NAME, 1, binding << 4 | kind, EXPORT_ADDRESS)]
+                        module = bytearray(build_module(symbols=symbols, relocations=()))
+                        module[0x2040 + 24 + 5] = visibility
+                        summary = self.annotate(bytes(module))
+                        visible = binding != 0 and visibility in (0, 3)
+                        expected = []
+                        if visible:
+                            prefix = "tls+" if kind == 6 else ""
+                            expected.append("%s%#x %s %s" % (prefix, EXPORT_ADDRESS, symbol_name(EXPORT_NAME), EXPORT_NAME))
+                        self.assertEqual(self.read(".exports.txt").splitlines(), expected)
+                        self.assertIn("%d exports, %d tls" % (visible and kind == 2, visible and kind == 6), summary)
+                        self.assertEqual("; ===== export " + EXPORT_NAME in self.read(".asm"), visible and kind == 2)
+
+    def test_private_alias_does_not_hide_a_public_export(self):
+        for hash_kind in ("sysv", "gnu"):
+            for visibility in (1, 2):
+                with self.subTest(hash_kind=hash_kind, visibility=visibility):
+                    symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+                    tags = DEFAULT_TAGS if hash_kind == "sysv" else (GNU_HASH,) + DEFAULT_TAGS[1:]
+                    module = bytearray(build_module(symbols=symbols, tags=tags, kind=hash_kind))
+                    module[0x2040 + 3 * 24 + 5] = visibility
+                    summary = self.annotate(bytes(module))
+                    self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+                    self.assertEqual(self.read(".exports.txt").splitlines(),
+                                     ["%#x %s %s" % (EXPORT_ADDRESS, symbol_name(EXPORT_NAME), EXPORT_NAME)])
+                    self.assertIn("; ===== export " + EXPORT_NAME, self.read(".asm"))
+                    self.assertNotIn("; ===== export " + SECOND_IMPORT_NAME, self.read(".asm"))
+                    self.assertIn("; -> " + IMPORT_NAME, self.read(".asm"))
 
     def test_export_at_address_zero_is_kept(self):
         symbols = [(IMPORT_NAME, 0, 0x12, 0), (EXPORT_NAME, 1, 0x12, 0)]
