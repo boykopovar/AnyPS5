@@ -6,15 +6,19 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
 #include <cerrno>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <poll.h>
 #include <unistd.h>
 #endif
@@ -33,11 +37,13 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <random>
 #include <vector>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -128,6 +134,7 @@ constexpr int NET_ENOTINIT = 200;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
 constexpr int NET_CONFIG_ERROR_NULL_FLAGS = static_cast<int>(0x8041130Eu);
+constexpr int NET_CONFIG_ERROR_NO_ROUTE = static_cast<int>(0x8041130Cu);
 constexpr int NET_RESOLVER_ABORT_FLAG_NTOA_PRESERVATION = 0x1;
 constexpr int NET_RESOLVER_ABORT_FLAG_ATON_PRESERVATION = 0x2;
 constexpr std::uint32_t NET_IFF_UP = 0x1;
@@ -135,6 +142,8 @@ constexpr std::uint32_t NET_IFF_LOOPBACK = 0x8;
 constexpr std::uint32_t NET_IFF_RUNNING = 0x40;
 constexpr std::uint32_t NET_IFF_MULTICAST = 0x8000;
 constexpr std::uint32_t NET_IF_LO0 = 0;
+constexpr std::array<const char*, 10> NET_INTERFACE_NAMES = {
+    "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
 
 constexpr int NET_AF_INET = 2;
 constexpr int NET_AF_INET6 = 28;
@@ -376,6 +385,7 @@ int* errno_slot() {
 
 extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers, std::size_t capacity);
 extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu);
+extern "C" bool NetCtlHostIpv4Gateway_nid_no_patch(std::uint32_t* gateway);
 
 std::mutex g_dnsLock;
 bool g_dnsOverridden = false;
@@ -394,6 +404,56 @@ void set_errno(int err) {
 int fail(int err) {
     set_errno(err);
     return NET_ERROR_BASE | err;
+}
+
+std::optional<std::uint32_t> HostInterfaceByRole(bool loopback) {
+#ifdef _WIN32
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = 0;
+    if (GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return std::nullopt;
+    std::vector<std::uint8_t> storage(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
+    if (GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, adapters, &size) != NO_ERROR) return std::nullopt;
+    std::optional<std::uint32_t> primary;
+    for (auto* adapter = adapters; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->IfIndex == 0) continue;
+        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            if (loopback) return static_cast<std::uint32_t>(adapter->IfIndex);
+            continue;
+        }
+        if (!primary && adapter->OperStatus == IfOperStatusUp && adapter->FirstUnicastAddress != nullptr)
+            primary = static_cast<std::uint32_t>(adapter->IfIndex);
+    }
+    return loopback ? std::nullopt : primary;
+#else
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return std::nullopt;
+    std::uint32_t loop = 0;
+    std::optional<std::uint32_t> primary;
+    for (auto* item = list; item != nullptr; item = item->ifa_next) {
+        if (item->ifa_name == nullptr || !(item->ifa_flags & IFF_UP)) continue;
+        const unsigned int index = if_nametoindex(item->ifa_name);
+        if (index == 0) continue;
+        if ((item->ifa_flags & IFF_LOOPBACK) != 0) {
+            if (loop == 0) loop = index;
+            continue;
+        }
+        if (!primary && item->ifa_addr != nullptr &&
+            (item->ifa_addr->sa_family == AF_INET || item->ifa_addr->sa_family == AF_INET6))
+            primary = static_cast<std::uint32_t>(index);
+    }
+    freeifaddrs(list);
+    if (loopback) return loop == 0 ? std::nullopt : std::optional<std::uint32_t>(loop);
+    return primary;
+#endif
+}
+
+std::optional<std::uint32_t> HostInterfaceIndex(std::uint32_t interfaceId) {
+    if (interfaceId >= NET_INTERFACE_NAMES.size()) return std::nullopt;
+    if (interfaceId == 0) return HostInterfaceByRole(true);
+    if (interfaceId == 1) return HostInterfaceByRole(false);
+    const unsigned int index = if_nametoindex(NET_INTERFACE_NAMES[interfaceId]);
+    return index == 0 ? std::nullopt : std::optional<std::uint32_t>(index);
 }
 
 void* APS5_VABI RunNetThread(void* param) {
@@ -733,6 +793,20 @@ bool parse_ipv4_parts(const char* text, std::uint32_t& address) {
     return true;
 }
 
+std::optional<std::uint32_t> InterfaceIdOfName(std::string_view name) {
+    for (std::uint32_t interfaceId = 0; interfaceId < NET_INTERFACE_NAMES.size(); ++interfaceId) {
+        if (name == NET_INTERFACE_NAMES[interfaceId]) return interfaceId;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
+    for (std::uint32_t interfaceId = 0; interfaceId < NET_INTERFACE_NAMES.size(); ++interfaceId) {
+        if (HostInterfaceIndex(interfaceId) == index) return interfaceId;
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup lookup) noexcept {
@@ -742,6 +816,12 @@ void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup look
 extern "C" {
 
 extern const std::uint32_t sce_net_in6addr_any[4] = {};
+
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_loopback_nid_postfix[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_nodelocal_allnodes_nid_postfix[16] = {0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_linklocal_allrouters_nid_postfix[16] = {0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2};
+extern const std::uint32_t sce_net_dummy_nid_postfix = 0;
+
 alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_linklocal_allnodes[16] = {0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
 
 int* APS5_VABI sceNetErrnoLoc(void) {
@@ -1335,9 +1415,12 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
         }, true, static_cast<int>(len));
 #endif
     } else {
+        std::array<std::uint8_t, sizeof(sockaddr_storage)> address{};
+        const auto address_length = std::min<std::uint32_t>(tolen, address.size());
+        if (address_length && !GuestSocketReadGuest_nid_no_patch(address.data(), to, address_length)) return fail(NET_EFAULT);
         sockaddr_storage destination{};
         NativeLength destination_length = 0;
-        if (!guest_to_native_address(to, tolen, destination, destination_length)) return fail(NET_EINVAL);
+        if (!guest_to_native_address(address.data(), address_length, destination, destination_length)) return fail(NET_EINVAL);
         if (destination.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
@@ -1359,9 +1442,18 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
 }
 
 int64_t APS5_VABI sceNetSendmsg(int s, const NetMsghdr* msg, int flags) {
-    const auto total = message_length(msg);
+    if (!msg) return fail(NET_EFAULT);
+    NetMsghdr message{};
+    if (!GuestSocketReadGuest_nid_no_patch(&message, msg, sizeof(message))) return fail(NET_EFAULT);
+    std::vector<NetIovec> vectors;
+    if (message.iov && message.iov_length > 0 && message.iov_length <= NET_UIO_MAXIOV) {
+        vectors.resize(static_cast<std::size_t>(message.iov_length));
+        if (!GuestSocketReadGuest_nid_no_patch(vectors.data(), message.iov, vectors.size() * sizeof(NetIovec))) return fail(NET_EFAULT);
+        message.iov = vectors.data();
+    }
+    const auto total = message_length(&message);
     if (total < 0) return total;
-    if (msg->control && msg->control_length) throw std::runtime_error("sceNetSendmsg: control data is not supported");
+    if (message.control && message.control_length) throw std::runtime_error("sceNetSendmsg: control data is not supported");
     std::vector<char> buffer;
     try {
         buffer.resize(static_cast<std::size_t>(total));
@@ -1369,11 +1461,11 @@ int64_t APS5_VABI sceNetSendmsg(int s, const NetMsghdr* msg, int flags) {
         return fail(55);
     }
     std::size_t offset = 0;
-    for (int i = 0; i < msg->iov_length; ++i) {
-        if (msg->iov[i].length) std::memcpy(buffer.data() + offset, msg->iov[i].base, msg->iov[i].length);
-        offset += msg->iov[i].length;
+    for (const auto& entry : vectors) {
+        if (entry.length && !GuestSocketReadGuest_nid_no_patch(buffer.data() + offset, entry.base, entry.length)) return fail(NET_EFAULT);
+        offset += entry.length;
     }
-    return sceNetSendto(s, buffer.data(), buffer.size(), flags, msg->name, msg->name ? msg->name_length : 0u);
+    return sceNetSendto(s, buffer.data(), buffer.size(), flags, message.name, message.name ? message.name_length : 0u);
 }
 
 int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
@@ -1818,6 +1910,13 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     record.local_port = local.sin_port;
     record.remote_port = remote.sin_port;
     record.flags = NET_SOCKINFO_F_SELF | (socket.native->nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
+#ifdef _WIN32
+    u_long pending = 0;
+    if (::ioctlsocket(socket.native->value, FIONREAD, &pending) == 0) record.recv_queue_length = static_cast<std::int32_t>(pending);
+#else
+    int pending = 0;
+    if (::ioctl(socket.native->value, FIONREAD, &pending) == 0) record.recv_queue_length = pending;
+#endif
     return 0;
 }
 
@@ -2321,7 +2420,7 @@ int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
     }
     // Keep guest identity stable without exposing the host adapter address.
     const std::uint8_t mac[6] = {0x02, 0x50, 0x53, 0x35, 0x00, 0x01};
-    std::memcpy(addr->data, mac, 6);
+    if (!GuestCopyOut_nid_no_patch(addr, mac, sizeof(mac))) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -2389,7 +2488,9 @@ int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std
 }
 
 int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
-    if (timeout < 0 || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0) return fail(NET_EINVAL);
+    constexpr int minimumTimeout = 1000000;
+    if (timeout < 0 || (timeout != 0 && timeout < minimumTimeout) || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0)
+        return fail(NET_EINVAL);
     if (!hostname || !addr) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
     if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;
@@ -2483,7 +2584,7 @@ int APS5_VABI sceNetResolverGetError(int rid, int* status) {
     std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
     if (resolver == g_resolvers.end()) return fail(NET_EBADF);
-    *status = resolver->second.error;
+    if (!GuestCopyOut_nid_no_patch(status, &resolver->second.error, sizeof(*status))) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -2726,13 +2827,11 @@ int APS5_VABI sceNetGetIfListOnce(std::int32_t interfaceId, NetInterfaceStatisti
 }
 
 const char* APS5_VABI sceNetGetIfName(std::uint32_t index) {
-    static constexpr std::array<const char*, 10> names = {
-        "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
-    if (index >= names.size()) {
+    if (index >= NET_INTERFACE_NAMES.size()) {
         set_errno(NET_EINVAL);
         return "";
     }
-    return names[index];
+    return NET_INTERFACE_NAMES[index];
 }
 
 int APS5_VABI sceNetGetIfnameNumList(std::uint32_t* interfaceIds, std::int32_t capacity, std::uint32_t flags) {
@@ -2761,8 +2860,7 @@ int APS5_VABI sceNetGetRouteInfo(std::int32_t family, NetRouteInfo* routes, std:
 }
 
 int APS5_VABI sceNetGetsockoptEx(int socketId, int level, int option, void* value, std::uint32_t* valueSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetGetsockopt(socketId, level, option, value, valueSize);
 }
 
 void APS5_VABI sceNetGetSystemTime(std::uint64_t* output) {
@@ -2820,7 +2918,9 @@ int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
     if (command != nonblockingRequest && command != readableRequest) return fail(NET_ENOTTY);
     if (!argument) return fail(NET_EFAULT);
     if (command == nonblockingRequest) {
-        const int enabled = *static_cast<const int*>(argument) != 0;
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return fail(NET_EFAULT);
+        const int enabled = enable != 0;
         return sceNetSetsockopt(socketId, NET_SOL_SOCKET, NET_SO_NBIO, &enabled, sizeof(enabled));
     }
 #ifdef _WIN32
@@ -2836,7 +2936,8 @@ int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
     int available = 0;
     if (::ioctl(native->value, FIONREAD, &available) != 0) return fail(native_error());
 #endif
-    *static_cast<int*>(argument) = static_cast<int>(available);
+    const int readable = static_cast<int>(available);
+    if (!GuestCopyOut_nid_no_patch(argument, &readable, sizeof(readable))) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -2866,13 +2967,11 @@ int APS5_VABI sceNetSetDnsInfoToKernel(const NetDnsInfo* info, std::uint32_t fla
 }
 
 int APS5_VABI sceNetSetsockoptEx(int socketId, int level, int option, const void* value, std::uint32_t valueSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSetsockopt(socketId, level, option, value, valueSize);
 }
 
 int APS5_VABI sceNetSocketInternal(const char* name, int domain, int type, int protocol) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSocket(name, domain, type, protocol);
 }
 
 int APS5_VABI sceNetSyncCreate(NetSyncObject* sync, std::uint32_t signals, const char* name) {
@@ -2901,8 +3000,8 @@ int APS5_VABI sceNetSyncWait(NetSyncObject* sync, std::uint32_t* timeout) {
 }
 
 int APS5_VABI sceNetSysctl(const int* name, std::uint32_t nameLength, void* oldValue, std::size_t* oldSize, const void* newValue, std::size_t newSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (sysctl_nid_postfix(name, nameLength, oldValue, oldSize, newValue, newSize) == 0) return 0;
+    return fail(*__error_nid_postfix());
 }
 
 int APS5_VABI sceNetThreadCreate(Pthread* thread, const NetThreadParameter* parameter, const char* name) {
@@ -2960,13 +3059,51 @@ int APS5_VABI sceNetShowNetstatExForBuffer(char* buffer, std::int32_t bufferSize
 }
 
 const char* APS5_VABI sceNetInetNtopWithScopeId(std::int32_t family, const void* address, char* text, std::uint32_t size, std::uint32_t scopeId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (address == nullptr || text == nullptr) {
+        set_errno(NET_ENOSPC);
+        return nullptr;
+    }
+    if (family != NET_AF_INET6) {
+        set_errno(NET_EAFNOSUPPORT);
+        return nullptr;
+    }
+    std::array<char, 64> unscoped{};
+    if (sceNetInetNtop(family, address, unscoped.data(), static_cast<std::uint32_t>(unscoped.size())) == nullptr) return nullptr;
+    std::string scoped(unscoped.data());
+    if (scopeId != 0) {
+        const auto interfaceId = InterfaceIdOfHostIndex(scopeId);
+        if (!interfaceId) throw std::runtime_error("sceNetInetNtopWithScopeId: scope " + std::to_string(scopeId) + " matches no interface, and the module's answer for it is not known");
+        scoped += '%';
+        scoped += NET_INTERFACE_NAMES[*interfaceId];
+    }
+    if (scoped.size() >= size) {
+        set_errno(NET_ENOSPC);
+        return nullptr;
+    }
+    std::memcpy(text, scoped.c_str(), scoped.size() + 1);
+    return text;
 }
 
 int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, void* address, std::uint32_t* scopeId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (family != NET_AF_INET6) return fail(NET_EAFNOSUPPORT);
+    if (text == nullptr) return fail(NET_EINVAL);
+    const char* percent = scopeId != nullptr ? std::strchr(text, '%') : nullptr;
+    std::uint32_t zone = 0;
+    if (percent != nullptr) {
+        const auto interfaceId = InterfaceIdOfName(percent + 1);
+        if (!interfaceId) return 0;
+        const auto index = HostInterfaceIndex(*interfaceId);
+        if (!index) return 0;
+        zone = *index;
+    }
+    const std::string unscoped = percent != nullptr ? std::string(text, percent) : std::string(text);
+    std::array<unsigned char, 16> parsed{};
+    const int converted = sceNetInetPton(family, unscoped.c_str(), parsed.data());
+    if (converted != 1) return converted;
+    if (address == nullptr) throw std::invalid_argument("sceNetInetPtonWithScopeId: null address");
+    std::memcpy(address, parsed.data(), parsed.size());
+    if (scopeId != nullptr) *scopeId = zone;
+    return 1;
 }
 
 int APS5_VABI sceNetGetDns6Info(NetDns6Info* info, std::uint32_t flags) {
@@ -3132,8 +3269,12 @@ int APS5_VABI sceNetConfigDelRoute(const std::uint32_t* destination, const std::
 }
 
 int APS5_VABI sceNetConfigGetDefaultRoute(std::uint32_t* gateway) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    std::uint32_t found = 0;
+    if (!NetCtlHostIpv4Gateway_nid_no_patch(&found)) return NET_CONFIG_ERROR_NO_ROUTE;
+    if (gateway == nullptr) throw std::invalid_argument("sceNetConfigGetDefaultRoute: null gateway");
+    *gateway = found;
+    return 1;
 }
 
 int APS5_VABI sceNetDhcpGetAutoipInfo(std::int32_t interfaceId, NetAutoIpInfo* parameter) {

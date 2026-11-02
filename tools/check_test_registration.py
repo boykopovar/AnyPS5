@@ -72,7 +72,7 @@ def commands(content):
             if content[position] == "#":
                 position = content.find("\n", position)
                 if position < 0:
-                    break
+                    position = len(content)
                 continue
             token = ARGUMENT.match(content, position)
             if token is None:
@@ -87,14 +87,19 @@ def commands(content):
                 argument = argument[width:-width].removeprefix("\n")
             arguments.append(argument)
             position = token.end()
+        else:
+            raise ValueError(f"unterminated {command.group(1)} command at position {command.start()}")
 
 
 def registered(build):
     names = set()
-    pending = [Path(build).resolve()]
+    pending = [Path(build)]
     visited = set()
     while pending:
-        directory = pending.pop().resolve()
+        try:
+            directory = pending.pop().resolve()
+        except RuntimeError:
+            continue
         file = directory / "CTestTestfile.cmake"
         if directory in visited or not file.is_file():
             continue

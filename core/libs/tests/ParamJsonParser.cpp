@@ -152,6 +152,7 @@ static void CheckLanguages(const std::filesystem::path& path) {
 static void CheckOutputPermission(const std::filesystem::path& path) {
     const std::string prefix = R"({"titleId":"PPSA99007","localizedParameters":{"en-US":{"titleName":"Example"}})";
     Require(ParseText(path, prefix + "}").attribute3 == 0, "Absent output permission is not zero");
+    Require(!ParseText(path, prefix + ",\"attribute\":8388608}").paramSfoAttribute, "param.json gave a param.sfo attribute");
     for (const auto& [text, expected] : {std::pair{"0", 0u}, {"524352", 0x80040u}, {"4294967295", 0xFFFFFFFFu}}) {
         Require(ParseText(path, prefix + ",\"attribute3\":" + text + "}").attribute3 == expected, "Incorrect output permission");
     }

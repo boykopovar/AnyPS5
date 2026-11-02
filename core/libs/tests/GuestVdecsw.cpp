@@ -102,6 +102,12 @@ void checkGenericPictureInfo(const OutputInfo& output, const TInfo& typed) {
     shorter.thisSize = sizeof(OutputInfo) - 8;
     auto actual = typed;
     check(sceVdecswGetPictureInfo(&shorter, &actual, nullptr) == 0 && std::memcmp(&actual, &typed, sizeof(actual)) == 0, "generic picture info rejected the shorter output descriptor");
+    auto doubled = output;
+    doubled.pictureCount = 2;
+    auto doubledFirst = typed;
+    const auto doubledBefore = doubledFirst;
+    auto doubledSecond = typed;
+    check(throws([&] { sceVdecswGetPictureInfo(&doubled, &doubledFirst, &doubledSecond); }) && std::memcmp(&doubledFirst, &doubledBefore, sizeof(doubledFirst)) == 0 && std::memcmp(&doubledSecond, &doubledBefore, sizeof(doubledSecond)) == 0, "generic picture info accepted two pictures");
 }
 
 void testGenericPictureInfoValidation() {

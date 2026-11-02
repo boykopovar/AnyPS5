@@ -89,7 +89,7 @@ int CompareObject(const LibreSslAsn1Object* key, const LibreSslAsn1Object* entry
 }
 
 const char* Name(int nid, bool longName) {
-    if (nid < 0 || nid >= LibreSslObjectCount) return nullptr;
+    if (nid < 0 || nid >= LibreSslObjectCount) return LibreSslAddedObjectName_nid_no_patch(nid, longName);
     const auto& object = LibreSslObjects_nid_no_patch[nid];
     if (nid != 0 && object.nid == 0) {
         LibreSslPutError_nid_no_patch(ObjectLibrary, AnyFunction, UnknownNid);
@@ -203,6 +203,7 @@ extern "C" {
 int LibreSslObjectNid_nid_no_patch(const LibreSslAsn1Object* object) {
     if (!object) return 0;
     if (object->nid != 0) return object->nid;
+    if (const int added = LibreSslAddedObjectNid_nid_no_patch(object)) return added;
     int low = 0;
     int high = LibreSslObjectOrderCount;
     while (low < high) {
