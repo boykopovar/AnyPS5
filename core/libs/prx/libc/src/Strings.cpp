@@ -829,7 +829,7 @@ char16_t* APS5_VABI wmemset_nid_postfix(char16_t* s, char16_t c, size_t n) {
 }
 
 double APS5_VABI wcstod_nid_postfix(const char16_t* str, char16_t** endptr) {
-    return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<double>(text, end, std::strtod); });
+    return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return strtod_nid_postfix(text, end); });
 }
 
 float APS5_VABI wcstof_nid_postfix(const char16_t* str, char16_t** endptr) {
