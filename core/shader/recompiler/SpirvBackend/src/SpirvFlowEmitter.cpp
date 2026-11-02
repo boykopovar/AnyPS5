@@ -289,6 +289,10 @@ void Invoke(TReturn (*emit)(TContext&, TArguments...), SpirvValueEmitContext& ct
     }(std::index_sequence_for<TArguments...>{});
 }
 
+void InvokeSharedAtomic(std::uint32_t (*emit)(SpirvValueEmitContext&, const IrValue&), SpirvValueEmitContext& ctx, const IrValue& inst) {
+    ctx.Define(inst, EmitLaneOrderedSharedAtomic(ctx, inst, emit));
+}
+
 void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
     switch (inst.Opcode()) {
         case IrOpcode::Identity: return Invoke(EmitIdentity, ctx, inst);
@@ -626,44 +630,44 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::WriteSharedU32x2: return Invoke(EmitWriteSharedU32x2, ctx, inst);
         case IrOpcode::WriteSharedU32x3: return Invoke(EmitWriteSharedU32x3, ctx, inst);
         case IrOpcode::WriteSharedU32x4: return Invoke(EmitWriteSharedU32x4, ctx, inst);
-        case IrOpcode::SharedAtomicFMin32: return Invoke(EmitSharedAtomicFMin32, ctx, inst);
-        case IrOpcode::SharedAtomicFMax32: return Invoke(EmitSharedAtomicFMax32, ctx, inst);
-        case IrOpcode::SharedAtomicSwap32: return Invoke(EmitSharedAtomicSwap32, ctx, inst);
-        case IrOpcode::SharedAtomicIAdd32: return Invoke(EmitSharedAtomicIAdd32, ctx, inst);
-        case IrOpcode::SharedAtomicISub32: return Invoke(EmitSharedAtomicISub32, ctx, inst);
-        case IrOpcode::SharedAtomicInc32: return Invoke(EmitSharedAtomicInc32, ctx, inst);
-        case IrOpcode::SharedAtomicDec32: return Invoke(EmitSharedAtomicDec32, ctx, inst);
-        case IrOpcode::SharedAtomicSMin32: return Invoke(EmitSharedAtomicSMin32, ctx, inst);
-        case IrOpcode::SharedAtomicUMin32: return Invoke(EmitSharedAtomicUMin32, ctx, inst);
-        case IrOpcode::SharedAtomicSMax32: return Invoke(EmitSharedAtomicSMax32, ctx, inst);
-        case IrOpcode::SharedAtomicUMax32: return Invoke(EmitSharedAtomicUMax32, ctx, inst);
-        case IrOpcode::SharedAtomicAnd32: return Invoke(EmitSharedAtomicAnd32, ctx, inst);
-        case IrOpcode::SharedAtomicOr32: return Invoke(EmitSharedAtomicOr32, ctx, inst);
-        case IrOpcode::SharedAtomicXor32: return Invoke(EmitSharedAtomicXor32, ctx, inst);
-        case IrOpcode::SharedAtomicRsub32: return Invoke(EmitSharedAtomicRsub32, ctx, inst);
-        case IrOpcode::SharedAtomicFAdd32: return Invoke(EmitSharedAtomicFAdd32, ctx, inst);
-        case IrOpcode::SharedAtomicCmpst32: return Invoke(EmitSharedAtomicCmpst32, ctx, inst);
-        case IrOpcode::SharedAtomicCmpstF32: return Invoke(EmitSharedAtomicCmpstF32, ctx, inst);
-        case IrOpcode::SharedAtomicMskor32: return Invoke(EmitSharedAtomicMskor32, ctx, inst);
-        case IrOpcode::SharedAtomicWrap32: return Invoke(EmitSharedAtomicWrap32, ctx, inst);
-        case IrOpcode::SharedAtomicSwap64: return Invoke(EmitSharedAtomicSwap64, ctx, inst);
-        case IrOpcode::SharedAtomicIAdd64: return Invoke(EmitSharedAtomicIAdd64, ctx, inst);
-        case IrOpcode::SharedAtomicISub64: return Invoke(EmitSharedAtomicISub64, ctx, inst);
-        case IrOpcode::SharedAtomicRsub64: return Invoke(EmitSharedAtomicRsub64, ctx, inst);
-        case IrOpcode::SharedAtomicInc64: return Invoke(EmitSharedAtomicInc64, ctx, inst);
-        case IrOpcode::SharedAtomicDec64: return Invoke(EmitSharedAtomicDec64, ctx, inst);
-        case IrOpcode::SharedAtomicSMin64: return Invoke(EmitSharedAtomicSMin64, ctx, inst);
-        case IrOpcode::SharedAtomicUMin64: return Invoke(EmitSharedAtomicUMin64, ctx, inst);
-        case IrOpcode::SharedAtomicSMax64: return Invoke(EmitSharedAtomicSMax64, ctx, inst);
-        case IrOpcode::SharedAtomicUMax64: return Invoke(EmitSharedAtomicUMax64, ctx, inst);
-        case IrOpcode::SharedAtomicAnd64: return Invoke(EmitSharedAtomicAnd64, ctx, inst);
-        case IrOpcode::SharedAtomicOr64: return Invoke(EmitSharedAtomicOr64, ctx, inst);
-        case IrOpcode::SharedAtomicXor64: return Invoke(EmitSharedAtomicXor64, ctx, inst);
-        case IrOpcode::SharedAtomicFMin64: return Invoke(EmitSharedAtomicFMin64, ctx, inst);
-        case IrOpcode::SharedAtomicFMax64: return Invoke(EmitSharedAtomicFMax64, ctx, inst);
-        case IrOpcode::SharedAtomicCmpst64: return Invoke(EmitSharedAtomicCmpst64, ctx, inst);
-        case IrOpcode::SharedAtomicCmpstF64: return Invoke(EmitSharedAtomicCmpstF64, ctx, inst);
-        case IrOpcode::SharedAtomicMskor64: return Invoke(EmitSharedAtomicMskor64, ctx, inst);
+        case IrOpcode::SharedAtomicFMin32: return InvokeSharedAtomic(EmitSharedAtomicFMin32, ctx, inst);
+        case IrOpcode::SharedAtomicFMax32: return InvokeSharedAtomic(EmitSharedAtomicFMax32, ctx, inst);
+        case IrOpcode::SharedAtomicSwap32: return InvokeSharedAtomic(EmitSharedAtomicSwap32, ctx, inst);
+        case IrOpcode::SharedAtomicIAdd32: return InvokeSharedAtomic(EmitSharedAtomicIAdd32, ctx, inst);
+        case IrOpcode::SharedAtomicISub32: return InvokeSharedAtomic(EmitSharedAtomicISub32, ctx, inst);
+        case IrOpcode::SharedAtomicInc32: return InvokeSharedAtomic(EmitSharedAtomicInc32, ctx, inst);
+        case IrOpcode::SharedAtomicDec32: return InvokeSharedAtomic(EmitSharedAtomicDec32, ctx, inst);
+        case IrOpcode::SharedAtomicSMin32: return InvokeSharedAtomic(EmitSharedAtomicSMin32, ctx, inst);
+        case IrOpcode::SharedAtomicUMin32: return InvokeSharedAtomic(EmitSharedAtomicUMin32, ctx, inst);
+        case IrOpcode::SharedAtomicSMax32: return InvokeSharedAtomic(EmitSharedAtomicSMax32, ctx, inst);
+        case IrOpcode::SharedAtomicUMax32: return InvokeSharedAtomic(EmitSharedAtomicUMax32, ctx, inst);
+        case IrOpcode::SharedAtomicAnd32: return InvokeSharedAtomic(EmitSharedAtomicAnd32, ctx, inst);
+        case IrOpcode::SharedAtomicOr32: return InvokeSharedAtomic(EmitSharedAtomicOr32, ctx, inst);
+        case IrOpcode::SharedAtomicXor32: return InvokeSharedAtomic(EmitSharedAtomicXor32, ctx, inst);
+        case IrOpcode::SharedAtomicRsub32: return InvokeSharedAtomic(EmitSharedAtomicRsub32, ctx, inst);
+        case IrOpcode::SharedAtomicFAdd32: return InvokeSharedAtomic(EmitSharedAtomicFAdd32, ctx, inst);
+        case IrOpcode::SharedAtomicCmpst32: return InvokeSharedAtomic(EmitSharedAtomicCmpst32, ctx, inst);
+        case IrOpcode::SharedAtomicCmpstF32: return InvokeSharedAtomic(EmitSharedAtomicCmpstF32, ctx, inst);
+        case IrOpcode::SharedAtomicMskor32: return InvokeSharedAtomic(EmitSharedAtomicMskor32, ctx, inst);
+        case IrOpcode::SharedAtomicWrap32: return InvokeSharedAtomic(EmitSharedAtomicWrap32, ctx, inst);
+        case IrOpcode::SharedAtomicSwap64: return InvokeSharedAtomic(EmitSharedAtomicSwap64, ctx, inst);
+        case IrOpcode::SharedAtomicIAdd64: return InvokeSharedAtomic(EmitSharedAtomicIAdd64, ctx, inst);
+        case IrOpcode::SharedAtomicISub64: return InvokeSharedAtomic(EmitSharedAtomicISub64, ctx, inst);
+        case IrOpcode::SharedAtomicRsub64: return InvokeSharedAtomic(EmitSharedAtomicRsub64, ctx, inst);
+        case IrOpcode::SharedAtomicInc64: return InvokeSharedAtomic(EmitSharedAtomicInc64, ctx, inst);
+        case IrOpcode::SharedAtomicDec64: return InvokeSharedAtomic(EmitSharedAtomicDec64, ctx, inst);
+        case IrOpcode::SharedAtomicSMin64: return InvokeSharedAtomic(EmitSharedAtomicSMin64, ctx, inst);
+        case IrOpcode::SharedAtomicUMin64: return InvokeSharedAtomic(EmitSharedAtomicUMin64, ctx, inst);
+        case IrOpcode::SharedAtomicSMax64: return InvokeSharedAtomic(EmitSharedAtomicSMax64, ctx, inst);
+        case IrOpcode::SharedAtomicUMax64: return InvokeSharedAtomic(EmitSharedAtomicUMax64, ctx, inst);
+        case IrOpcode::SharedAtomicAnd64: return InvokeSharedAtomic(EmitSharedAtomicAnd64, ctx, inst);
+        case IrOpcode::SharedAtomicOr64: return InvokeSharedAtomic(EmitSharedAtomicOr64, ctx, inst);
+        case IrOpcode::SharedAtomicXor64: return InvokeSharedAtomic(EmitSharedAtomicXor64, ctx, inst);
+        case IrOpcode::SharedAtomicFMin64: return InvokeSharedAtomic(EmitSharedAtomicFMin64, ctx, inst);
+        case IrOpcode::SharedAtomicFMax64: return InvokeSharedAtomic(EmitSharedAtomicFMax64, ctx, inst);
+        case IrOpcode::SharedAtomicCmpst64: return InvokeSharedAtomic(EmitSharedAtomicCmpst64, ctx, inst);
+        case IrOpcode::SharedAtomicCmpstF64: return InvokeSharedAtomic(EmitSharedAtomicCmpstF64, ctx, inst);
+        case IrOpcode::SharedAtomicMskor64: return InvokeSharedAtomic(EmitSharedAtomicMskor64, ctx, inst);
         case IrOpcode::DataAppend: return Invoke(EmitDataAppend, ctx, inst);
         case IrOpcode::DataConsume: return Invoke(EmitDataConsume, ctx, inst);
         case IrOpcode::DataOrderedCount: return Invoke(EmitDataOrderedCount, ctx, inst);
