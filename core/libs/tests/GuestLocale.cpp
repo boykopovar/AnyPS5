@@ -484,6 +484,25 @@ static void CheckFacetGetcat() {
     Require(punctVtable->falsename(&name, punctFacet)->size == 5 && std::memcmp(contents, "false", 5) == 0);
     contents = name.size <= 15 ? name.buffer : name.pointer;
     Require(punctVtable->truename(&name, punctFacet)->size == 4 && std::memcmp(contents, "true", 4) == 0);
+    Require(sizeof(_ZNSt8numpunctIwE2idE_nid_postfix) == 8);
+    _ZNSt8numpunctIwE2idE_nid_postfix = 11;
+    Require(_ZNSt8numpunctIwE2idE_nid_postfix == 11);
+    _ZNSt8numpunctIwE2idE_nid_postfix = 0;
+    GuestLocale::Facet* widePunct = nullptr;
+    Require(_ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&widePunct, &locale) == 4 && widePunct != nullptr);
+    auto* widePunctVtable = reinterpret_cast<const GuestLocale::WideNumpunctVtable*>(widePunct->vtable);
+    auto* widePunctFacet = reinterpret_cast<const GuestLocale::WideNumpunctFacet*>(widePunct);
+    Require(widePunctVtable->decimalPoint(widePunctFacet) == u'.' && widePunctVtable->thousandsSep(widePunctFacet) == u',');
+    GuestLocale::String wideName{};
+    Require(widePunctVtable->grouping(&wideName, widePunctFacet) == &wideName && wideName.size == 0);
+    Require(wideName.capacity == 15 && wideName.buffer[0] == '\0');
+    const auto* wideContents = reinterpret_cast<const std::uint16_t*>(wideName.size <= 7 ? wideName.buffer : wideName.pointer);
+    Require(widePunctVtable->falsename(&wideName, widePunctFacet)->size == 5);
+    wideContents = reinterpret_cast<const std::uint16_t*>(wideName.size <= 7 ? wideName.buffer : wideName.pointer);
+    Require(std::memcmp(wideContents, u"false", 10) == 0);
+    Require(widePunctVtable->truename(&wideName, widePunctFacet)->size == 4);
+    wideContents = reinterpret_cast<const std::uint16_t*>(wideName.size <= 7 ? wideName.buffer : wideName.pointer);
+    Require(std::memcmp(wideContents, u"true", 8) == 0);
     GuestLocale::Facet* numPut = nullptr;
     Require(_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&numPut, &locale) == 4 && numPut != nullptr);
     GuestLocale::Facet* timePut = nullptr;
@@ -491,7 +510,7 @@ static void CheckFacetGetcat() {
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 11;
     Require(_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 11);
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
-    for (GuestLocale::Facet* facet : {codecvt, punct, numPut, timePut}) {
+    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut}) {
         facet->vtable->retain(facet);
         facet->vtable->retain(facet);
         Require(facet->references == 2);

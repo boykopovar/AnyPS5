@@ -4,6 +4,7 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 
@@ -108,6 +109,16 @@ int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
 void* APS5_VABI sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void* tag) noexcept;
 void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment);
+char APS5_VABI sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+char APS5_VABI sceLibcInternalNumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctDoTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+char APS5_VABI sceLibcInternalNumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+char APS5_VABI sceLibcInternalNumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI sceLibcInternalNumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 
 int APS5_VABI sceLibcMspaceSetMallocCallback();
 int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();

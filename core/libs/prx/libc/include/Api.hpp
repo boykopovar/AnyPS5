@@ -1530,6 +1530,18 @@ std::uint64_t APS5_VABI _Stoulx_nid_postfix(const char* text, char** end, int ba
 std::int64_t APS5_VABI _Stolx_nid_postfix(const char* text, char** end, int base, int* error);
 std::size_t APS5_VABI _ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPKS2__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
+extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
+std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
+char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self);
+char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+char APS5_VABI _ZNKSt8numpunctIcE13decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self);
+char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 int APS5_VABI siginterrupt_nid_postfix(int guest, int flag);

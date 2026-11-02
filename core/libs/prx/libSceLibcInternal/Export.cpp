@@ -98,66 +98,6 @@ int APS5_VABI sceLibcInternalPending4_014_nid_no_patch() {
 }
 APS5_EXPORT("AjkxQBlsOOY", sceLibcInternalPending4_014_nid_no_patch);
 
-int APS5_VABI sceLibcInternalPending4_015_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("cnNz2ftNwEU", sceLibcInternalPending4_015_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_016_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("nRf0VQ++OEw", sceLibcInternalPending4_016_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_017_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("ozLi0i4r6ds", sceLibcInternalPending4_017_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_018_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("klWxQ2nKAHY", sceLibcInternalPending4_018_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_019_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("QGSIlqfIU2c", sceLibcInternalPending4_019_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_020_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("JXzQGOtumdM", sceLibcInternalPending4_020_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_021_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("zv1EMhI7R1c", sceLibcInternalPending4_021_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_022_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("JWplGh2O0Rs", sceLibcInternalPending4_022_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_023_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("fXUuZEw7C24", sceLibcInternalPending4_023_nid_no_patch);
-
-int APS5_VABI sceLibcInternalPending4_024_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("3+VwUA8-QPI", sceLibcInternalPending4_024_nid_no_patch);
-
 int APS5_VABI sceLibcInternalPending4_025_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
