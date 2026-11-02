@@ -1481,7 +1481,21 @@ static int FindImagesOverlapping(dl_phdr_info* image, std::size_t, void* data) {
 }
 #endif
 
+static bool OnGuestThreadStack(std::uintptr_t address, std::size_t len, int prot, std::uintptr_t* stackStart, std::uintptr_t* stackEnd) {
+    return (prot & GuestProtGpuReadWrite) == 0 && GuestThreadStack(address, stackStart, stackEnd) && address >= *stackStart && address + len <= *stackEnd;
+}
+
+static bool HostStackPage(std::uintptr_t page) {
+    return !GuestThreadStackHostRanges(page, page + PS5_PAGE_SIZE).empty();
+}
+
+static int ProtectGuestRange(const void* addr, size_t len, int prot, bool requireMappedStart, bool hostStackSkipped);
+
 int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) {
+    return ProtectGuestRange(addr, len, prot, requireMappedStart, false);
+}
+
+static int ProtectGuestRange(const void* addr, size_t len, int prot, bool requireMappedStart, bool hostStackSkipped) {
     Trace("protect %p+0x%zx prot=0x%x", addr, len, prot);
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
     constexpr auto pageMask = static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1);
@@ -1495,20 +1509,29 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     auto bytes = static_cast<std::size_t>(end - first);
     const void* pointer = reinterpret_cast<const void*>(first);
     const auto nativeProtection = LinuxProtFromSce(prot);
-    if (const auto hostRanges = GuestThreadStackHostRanges(address, address + len); !hostRanges.empty()) {
-        if (requireMappedStart && hostRanges.front().first == address) return SCE_KERNEL_ERROR_EINVAL;
-        auto cursor = address;
-        for (const auto& [low, high] : hostRanges) {
-            if (cursor < low)
-                if (const int result = DoMprotect(reinterpret_cast<const void*>(cursor), low - cursor, prot, requireMappedStart && cursor == address); result != 0) return result;
-            cursor = high;
-        }
-        if (cursor < address + len) return DoMprotect(reinterpret_cast<const void*>(cursor), address + len - cursor, prot, false);
-        return 0;
-    }
     std::uintptr_t stackStart = 0;
     std::uintptr_t stackEnd = 0;
-    if ((prot & GuestProtGpuReadWrite) == 0 && GuestThreadStack(address, &stackStart, &stackEnd) && address >= stackStart && address + len <= stackEnd) {
+    const auto hostRanges = hostStackSkipped ? std::vector<std::pair<std::uintptr_t, std::uintptr_t>>{} : GuestThreadStackHostRanges(first, end);
+    if (!hostRanges.empty()) {
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> parts;
+        auto cursor = address;
+        for (const auto& [low, high] : hostRanges) {
+            if (requireMappedStart && low <= address && address < high) return SCE_KERNEL_ERROR_EINVAL;
+            if (cursor < std::min(low, address + len)) parts.emplace_back(cursor, std::min(low, address + len));
+            cursor = std::max(cursor, high);
+        }
+        if (cursor < address + len) parts.emplace_back(cursor, address + len);
+        for (auto [low, high] : parts) {
+            if (!OnGuestThreadStack(low, high - low, prot, &stackStart, &stackEnd)) {
+                if (HostStackPage(low & ~pageMask)) low = (low + pageMask) & ~pageMask;
+                if (HostStackPage((high - 1) & ~pageMask)) high = (high - 1) & ~pageMask;
+                if (low >= high) continue;
+            }
+            if (const int result = ProtectGuestRange(reinterpret_cast<const void*>(low), high - low, prot, requireMappedStart && low == address, true); result != 0) return result;
+        }
+        return 0;
+    }
+    if (OnGuestThreadStack(address, len, prot, &stackStart, &stackEnd)) {
         constexpr std::uintptr_t hostPageMask = 0xfff;
         const auto requested = std::max(first, (stackStart + hostPageMask) & ~hostPageMask);
         const auto insideEnd = std::min(end, stackEnd & ~hostPageMask);

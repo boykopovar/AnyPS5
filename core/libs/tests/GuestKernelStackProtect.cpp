@@ -262,6 +262,9 @@ static void* APS5_VABI Worker(void* arg) {
         Require(!QueryPage(outside + Page).writable);
         Require(mprotect_nid_postfix(start, GuardBytes, 3) == 0);
         Require(QueryPage(outside + Page).writable);
+        Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 2 * Page, 0x11) == 0);
+        Require(QueryPage(below).raw == belowBefore);
+        Require(mprotect_nid_postfix(start, GuardBytes, 3) == 0);
     }
     const auto stackBytes = reinterpret_cast<std::uintptr_t>(end) - reinterpret_cast<std::uintptr_t>(start);
     Require(mprotect_nid_postfix(start, stackBytes, 0xc2) == 0);
