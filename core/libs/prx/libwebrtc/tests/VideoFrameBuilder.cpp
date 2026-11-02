@@ -8,6 +8,7 @@
 #include <limits>
 #include <source_location>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -84,6 +85,23 @@ void TestDestructor() {
     Require(builder.id == 5);
 }
 
+void TestRenderTimeMs() {
+    WebRtcVideoFrame frame;
+    std::memset(&frame, 0xA5, sizeof(frame));
+    for (const auto [microseconds, milliseconds] : {std::pair<std::int64_t, std::int64_t>{0, 0}, {999, 0}, {1000, 1}, {123456789, 123456}, {-1, 0}, {-999, 0}, {-1000, -1}, {-1500, -1},
+             {std::numeric_limits<std::int64_t>::max(), std::numeric_limits<std::int64_t>::max() / 1000}}) {
+        frame.timestampUs = microseconds;
+        Require(_ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(&frame) == milliseconds);
+    }
+    bool threw = false;
+    try {
+        _ZNK6webrtc10VideoFrame14render_time_msEv_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 void TestNullBuilderThrows() {
     try {
         _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(nullptr, 1);
@@ -102,6 +120,7 @@ int main() {
     TestId();
     TestConstructor();
     TestDestructor();
+    TestRenderTimeMs();
     TestNullBuilderThrows();
     return 0;
 }
