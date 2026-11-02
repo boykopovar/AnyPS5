@@ -7,6 +7,12 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 namespace {
 
 constexpr int Stream = 1;
@@ -404,6 +410,95 @@ void UnknownRequestsFail() {
 
 }
 
+constexpr int ErrorFault = 14;
+constexpr int SoReceiveTimeout = 0x1006;
+constexpr int SoNoSigpipe2 = 0x800;
+
+void* MapPage(bool readable) {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);
+    Require(page != nullptr, "VirtualAlloc failed");
+#else
+    void* page = mmap(nullptr, 4096, readable ? PROT_READ : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED, "mmap failed");
+#endif
+    return page;
+}
+
+void UnmapPage(void* page) {
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, 4096);
+#endif
+}
+
+bool GetFails(int descriptor, int level, int option, void* value, std::uint32_t* size, int error) {
+    return getsockopt_nid_postfix(descriptor, level, option, value, size) == -1 && *__error_nid_postfix() == error;
+}
+
+void BadPointersFail() {
+    void* unreadable = MapPage(false);
+    void* readOnly = MapPage(true);
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    const int datagram = socket_nid_postfix(2, Datagram, 0);
+    Require(stream >= 0 && datagram >= 0, "socket failed");
+    for (void* bad : {reinterpret_cast<void*>(0x10), unreadable}) {
+        Require(SetFails(stream, SolSocket, SoKeepAlive, bad, sizeof(int), ErrorFault), "setsockopt with an unreadable value must fail with EFAULT (14)");
+        Require(GetInt(stream, SoKeepAlive) == 0, "a faulting setsockopt must not change the option");
+        Require(SetFails(stream, SolSocket, SoLinger, bad, sizeof(Linger), ErrorFault), "SO_LINGER with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, SolSocket, SoReceiveTimeout, bad, 16, ErrorFault), "SO_RCVTIMEO with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, SolSocket, SoNoSigpipe2, bad, sizeof(int), ErrorFault), "SO_NOSIGPIPE with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, SolSocket, SoSendBuffer, bad, sizeof(int), ErrorFault), "SO_SNDBUF with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, 6, 1, bad, sizeof(int), ErrorFault), "TCP_NODELAY with an unreadable value must fail with EFAULT");
+        Require(SetFails(stream, 0, 4, bad, sizeof(int), ErrorFault), "IP_TTL with an unreadable value must fail with EFAULT");
+        Require(SetFails(datagram, 0, 12, bad, 8, ErrorFault), "IP_ADD_MEMBERSHIP with an unreadable value must fail with EFAULT");
+        Require(SetFails(datagram, 0, 9, bad, 4, ErrorFault), "IP_MULTICAST_IF with an unreadable value must fail with EFAULT");
+        Require(SetFails(datagram, 0, 9, bad, 12, ErrorFault), "IP_MULTICAST_IF with an unreadable ip_mreqn must fail with EFAULT");
+        Require(SetFails(datagram, 0, 10, bad, 1, ErrorFault), "IP_MULTICAST_TTL with an unreadable byte must fail with EFAULT");
+        Require(SetFails(datagram, 0, 10, bad, 4, ErrorFault), "IP_MULTICAST_TTL with an unreadable int must fail with EFAULT");
+        Require(SetFails(stream, SolSocket, SoKeepAlive, bad, 2, ErrorInvalid), "a short length is rejected before the value is read");
+        Require(SetFails(stream, SolSocket, 0x7777, bad, sizeof(int), ErrorNoProtocolOption), "an unknown option is rejected before the value is read");
+        Require(SetFails(stream, 99, SoKeepAlive, bad, sizeof(int), ErrorInvalid), "an unknown level is rejected before the value is read");
+        Require(SetFails(-1, SolSocket, SoKeepAlive, bad, sizeof(int), ErrorBadDescriptor), "the descriptor is checked before the value is read");
+    }
+    const int on = 1;
+    Require(SetFails(stream, SolSocket, SoKeepAlive, &on, 0x80000000u, ErrorInvalid), "a negative length must fail with EINVAL (22)");
+
+    for (void* bad : {reinterpret_cast<void*>(0x10), unreadable, readOnly}) {
+        std::uint32_t size = sizeof(int);
+        Require(GetFails(stream, SolSocket, SoType, bad, &size, ErrorFault) && size == sizeof(int), "getsockopt into an unwritable value must fail with EFAULT and keep the length");
+        Require(GetFails(stream, SolSocket, SoLinger, bad, &size, ErrorFault), "SO_LINGER into an unwritable value must fail with EFAULT");
+        size = 16;
+        Require(GetFails(stream, SolSocket, SoReceiveTimeout, bad, &size, ErrorFault), "SO_RCVTIMEO into an unwritable value must fail with EFAULT");
+        size = sizeof(int);
+        Require(GetFails(stream, 6, 1, bad, &size, ErrorFault), "TCP_NODELAY into an unwritable value must fail with EFAULT");
+        Require(GetFails(stream, 0, 4, bad, &size, ErrorFault), "IP_TTL into an unwritable value must fail with EFAULT");
+        Require(GetFails(datagram, 0, 9, bad, &size, ErrorFault), "IP_MULTICAST_IF into an unwritable value must fail with EFAULT");
+        Require(GetFails(stream, SolSocket, 0x7777, bad, &size, ErrorNoProtocolOption), "an unknown option is rejected before the value is written");
+        Require(GetFails(-1, SolSocket, SoType, bad, &size, ErrorBadDescriptor), "the descriptor is checked before the value is written");
+        std::uint32_t zero = 0;
+        Require(getsockopt_nid_postfix(stream, SolSocket, SoType, bad, &zero) == 0 && zero == 0, "a zero length never touches the value");
+    }
+
+    for (std::uint32_t* bad : {reinterpret_cast<std::uint32_t*>(0x10), static_cast<std::uint32_t*>(unreadable), static_cast<std::uint32_t*>(nullptr)}) {
+        int value = 0;
+        Require(GetFails(stream, SolSocket, SoType, &value, bad, ErrorFault), "getsockopt with an unreadable length must fail with EFAULT");
+        Require(GetFails(-1, SolSocket, SoType, &value, bad, ErrorFault), "the length is read before the descriptor is checked");
+        Require(GetFails(stream, SolSocket, 0x7777, &value, bad, ErrorFault), "the length is read before the option is checked");
+    }
+    for (std::uint32_t* bad : {reinterpret_cast<std::uint32_t*>(0x10), static_cast<std::uint32_t*>(unreadable), static_cast<std::uint32_t*>(readOnly), static_cast<std::uint32_t*>(nullptr)}) {
+        Require(GetFails(stream, SolSocket, SoType, nullptr, bad, ErrorFault), "the final length store failing must give EFAULT");
+        Require(GetFails(stream, SolSocket, 0x7777, nullptr, bad, ErrorNoProtocolOption), "an option error is reported before the length store");
+    }
+    int value = 0;
+    std::uint32_t size = sizeof(int);
+    Require(getsockopt_nid_postfix(stream, SolSocket, SoType, &value, &size) == 0 && value == Stream && size == sizeof(int), "valid getsockopt still works");
+    Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
+    UnmapPage(unreadable);
+    UnmapPage(readOnly);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "multicast") == 0) {
         MulticastOnTheHost();
@@ -417,6 +512,7 @@ int main(int argc, char** argv) {
     LengthsFollowFreeBsd();
     BuffersFollowThePs5();
     NullValues();
+    BadPointersFail();
     IpLevelFollowsThePs5();
     MulticastMembership();
     UnknownRequestsFail();
