@@ -235,6 +235,7 @@ std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& 
 std::uint32_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
 std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std::uint8_t componentMapping, std::uint32_t exportedMask);
 std::uint32_t PackedBlendControl(std::uint32_t blendControl);
+std::uint32_t PackedBlendControl(ShaderRecompiler::ColorExportPacking packing, std::uint32_t blendControl);
 GuestTextureResource TargetMergeSurface(const ColorTarget& color);
 ColorTarget StagedMergeTarget(const ColorTarget& staged);
 bool DepthStencilWrites(const State& state);
