@@ -484,7 +484,7 @@ To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVER
 
 ### Tracing system library calls
 
-Windows, Linux and macOS. An executable converted with `--trace-imports` records the calls it makes to the libraries named in `APS5_TRACE_CALLS`, a comma-separated list such as `libkernel,libSceSaveData`, or `all`. Without the variable nothing is recorded. The crash and abort reports then end with the last 64 calls (on Linux and macOS, which have no crash report, only an abort prints them): sequence number, thread, library, import name as the executable imports it (a NID) and the caller's address. The last 32 of these calls made by the reporting thread follow, taken from the 65536 most recent calls, so a thread whose calls were pushed out of the last 64 by a busier one still shows them. Then come the 32 most called imports since start-up, with their number of calls.
+Windows, Linux and macOS. An executable converted with `--trace-imports` records the calls it makes to the libraries named in `APS5_TRACE_CALLS`, a comma-separated list such as `libkernel,libSceSaveData`, or `all`. Without the variable nothing is recorded. The crash and abort reports then end with the last 64 calls (on macOS, which has no crash report, only an abort prints them): sequence number, thread, library, import name as the executable imports it (a NID) and the caller's address. The last 32 of these calls made by the reporting thread follow, taken from the 65536 most recent calls, so a thread whose calls were pushed out of the last 64 by a busier one still shows them. Then come the 32 most called imports since start-up, with their number of calls.
 
 ```
 last traced system library calls (APS5_TRACE_CALLS):
@@ -582,6 +582,18 @@ The panel uses the font and scale of the [performance overlay](#performance-over
 Some system dialogs need PlayStation Network: the profile, the friend list, the store, the invitation dialog, the Facebook link and the authorized-apps dialog. AnyPS5 does not provide PlayStation Network, so these dialogs finish at once with the same answer as a cancel, and nothing is shown. The web browser dialog is not known to need PlayStation Network, so its notice only says that the system feature is not available.
 
 Set `ANYPS5_PSN_DIALOGS=show` to show a notice on the game's screen when one of these dialogs opens. The notice has one OK button and takes the controller until it is answered. It is not shown again within two seconds of the previous one, and it is not shown while another dialog or notice is showing. The game's result is the same either way. `silent`, an unset variable and an empty one show nothing. Any other value stops the game at its first such dialog with an error that names `ANYPS5_PSN_DIALOGS`.
+
+### Linux crash report
+
+On Linux x86-64, a `SIGSEGV`, `SIGBUS`, `SIGILL` or `SIGFPE` that nothing else handles prints a report to stderr, and to the log file when `ANYPS5_LOG_FILE` is set, before the process ends with that signal:
+
+- the signal, its `si_code`, the fault address and the thread ID;
+- `rip`, as an address and as the mapped file plus its offset in that file, for example `app.elf+0xc77cda` or `libkernel.prx+0xc7e30`;
+- the sixteen general registers;
+- the return addresses of the `rbp` frame chain, up to 32;
+- up to 24 stack words within 32 KiB above `rsp` that point at executable mappings.
+
+With `--trace-imports` and `APS5_TRACE_CALLS`, the last traced calls follow, as in the abort report. An offset in a guest module or the executable can be disassembled from the converted file at that file offset.
 
 ### Windows crash diagnostics
 
