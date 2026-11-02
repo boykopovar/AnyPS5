@@ -84,34 +84,48 @@ def default_of(match, window):
 
 
 def expression_window(text, code, matches, match, start, end):
-    peers = sorted((other.start() for _, other in matches if start <= other.start() < end))
-    if len(peers) < 2:
-        return text[start:end]
-    peer_set = set(peers)
-    depths = {}
+    reader_depth = 0
+    stack = []
+    ancestors = set()
+    closes = {}
     commas = []
-    depth = 0
     for pos in range(start, end):
-        if pos in peer_set:
-            depths[pos] = depth
+        if pos == match.start():
+            reader_depth = len(stack)
+            ancestors = {opening for opening, _ in stack}
         token = code[pos]
         if token in "([":
-            depth += 1
+            previous = code[start:pos].rstrip()
+            call = token == "(" and bool(previous) and (previous[-1].isalnum() or previous[-1] in "_>)]")
+            stack.append((pos, call))
         elif token in ")]":
-            depth -= 1
+            if stack:
+                opening, _ = stack.pop()
+                closes[opening] = pos
         elif token == ",":
-            commas.append((pos, depth))
-    for pos, comma_depth in commas:
-        left = bisect.bisect_left(peers, pos)
-        if not left or left == len(peers):
+            owner, call = stack[-1] if stack else (None, True)
+            commas.append((pos, len(stack), owner, call))
+    excluded = []
+    for pos, comma_depth, owner, call in commas:
+        if comma_depth > reader_depth:
             continue
-        if comma_depth > min(depths[peers[left - 1]], depths[peers[left]]):
+        if not call:
+            if owner in ancestors:
+                if pos < match.start():
+                    excluded.append((owner + 1, pos + 1))
+                elif pos >= match.end():
+                    excluded.append((pos, closes.get(owner, end)))
             continue
         if pos < match.start():
             start = max(start, pos + 1)
         elif pos >= match.end():
             end = min(end, pos)
-    return text[start:end]
+    window = list(text[start:end])
+    for left, right in excluded:
+        left, right = max(left, start), min(right, end)
+        if left < right:
+            window[left - start:right - start] = " " * (right - left)
+    return "".join(window)
 
 
 def source_files(root):
