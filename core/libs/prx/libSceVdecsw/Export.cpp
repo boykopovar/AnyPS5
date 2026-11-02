@@ -168,7 +168,13 @@ void advance(std::uint64_t handle, Decoder& decoder) {
             const auto* au = static_cast<const void*>(decoder.inputs.front().input.auData);
             auto input = decoder.inputs.front().input;
             input.auData = decoder.inputs.front().data.data();
-            sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output);
+            try {
+                sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output);
+            } catch (...) {
+                decoder.inputs.pop_front();
+                decoder.consumed.push_back({au, 0u});
+                throw;
+            }
 
             decoder.inputs.pop_front();
             decoder.consumed.push_back({au, output.isValid ? 1u : 0u});
