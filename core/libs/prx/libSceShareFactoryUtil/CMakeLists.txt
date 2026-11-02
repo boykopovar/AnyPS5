@@ -1,0 +1,15 @@
+add_library(libSceShareFactoryUtil SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceShareFactoryUtil PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceShareFactoryUtil)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_share_factory_util_tests ${LIBS_INCLUDE_DIR}/tests/GuestShareFactoryUtil.cpp)
+    configure_windows_unwind(guest_share_factory_util_tests)
+    target_include_directories(guest_share_factory_util_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_share_factory_util_tests PRIVATE libSceShareFactoryUtil libc)
+    add_test(NAME guest_share_factory_util COMMAND guest_share_factory_util_tests)
+    if(WIN32)
+        set_tests_properties(guest_share_factory_util PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceShareFactoryUtil>")
+    endif()
+endif()
