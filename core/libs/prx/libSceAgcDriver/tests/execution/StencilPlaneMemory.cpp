@@ -167,12 +167,21 @@ int main() {
         Require(Holding(stencilPlane, 0x2au) == StencilBytes, "retiring the surface for a write over its depth plane only dropped the stencil 0x2a a draw wrote");
         Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane stored after its surface retired stored it again");
 
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x3cu)}) == PlaneTexels, "the draw writing stencil 0x3c did not cover the plane");
+        device->WaitIdle();
+        Fill(stencilPlane, 0x77u);
+        AgcDriver::Graphics::RetireDepthSurfaces(device->graphicsContext().device, reinterpret_cast<std::uintptr_t>(depthPlane), DepthBytes);
+        device->WaitIdle();
+        Require(Holding(stencilPlane, 0x77u) == StencilBytes, "retiring the surface stored its stale stencil 0x3c over the guest's later write of 0x77");
+        Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a read of the stencil plane the guest overwrote stored the stale stencil");
+
         if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(stencilBase, StencilBytes)) {
             std::puts("guest memory is not write-watched here: a guest write into the stencil plane is not exercised");
         } else {
             Fill(stencilPlane, 0x05u);
             Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, 0x05u)}) == PlaneTexels, "a draw testing stencil EQUAL 0x05 after the guest wrote 0x05 into the stencil plane did not pass everywhere");
             Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_EQUAL, VK_STENCIL_OP_KEEP, 0x18u)}) == 0u, "a draw testing stencil EQUAL 0x18 passed after the guest wrote 0x05 over the stored stencil plane");
+
         }
         Require(readOnlyFailures == 0, "read-only stencil draws dirtied the stored plane");
 
