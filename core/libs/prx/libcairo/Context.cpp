@@ -1,6 +1,8 @@
 #include "prx/libcairo/include/Context.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <new>
 
 namespace {
@@ -10,11 +12,25 @@ constexpr int kNoMemory = 1;
 constexpr int kInvalidRestore = 2;
 constexpr int kInvalidMatrix = 5;
 constexpr int kNullPointer = 7;
+constexpr int kInvalidDash = 19;
 
 constexpr CairoMatrix kIdentity{1, 0, 0, 1, 0, 0};
 
+struct GraphicsStyle {
+    int antialias{};
+    int fillRule{};
+    int lineCap{};
+    int lineJoin{};
+    double lineWidth{2};
+    double miterLimit{10};
+    double* dashes{};
+    int dashCount{};
+    double dashOffset{};
+};
+
 struct SavedState {
     CairoMatrix matrix;
+    GraphicsStyle style;
     SavedState* previous;
 };
 
@@ -24,6 +40,7 @@ struct ContextStorage {
     bool immortal{false};
     CairoSurface* target{};
     CairoMatrix matrix{kIdentity};
+    GraphicsStyle style{};
     SavedState* saved{};
 
     explicit ContextStorage(int error = kSuccess, bool staticError = false)
@@ -58,8 +75,10 @@ ContextStorage* Valid(CairoContext* context) {
 }
 
 void ReleaseStorage(ContextStorage* state) {
+    delete[] state->style.dashes;
     while (state->saved) {
         SavedState* previous = state->saved->previous;
+        delete[] state->saved->style.dashes;
         delete state->saved;
         state->saved = previous;
     }
@@ -105,10 +124,19 @@ void APS5_VABI cairo_destroy(CairoContext* context) {
 void APS5_VABI cairo_save(CairoContext* context) {
     auto* state = Valid(context);
     if (!state) return;
-    auto* snapshot = new (std::nothrow) SavedState{state->matrix, state->saved};
+    auto* snapshot = new (std::nothrow) SavedState{state->matrix, state->style, state->saved};
     if (!snapshot) {
         state->status = kNoMemory;
         return;
+    }
+    if (snapshot->style.dashCount > 0) {
+        snapshot->style.dashes = new (std::nothrow) double[snapshot->style.dashCount];
+        if (!snapshot->style.dashes) {
+            delete snapshot;
+            state->status = kNoMemory;
+            return;
+        }
+        std::copy_n(state->style.dashes, snapshot->style.dashCount, snapshot->style.dashes);
     }
     state->saved = snapshot;
 }
@@ -122,6 +150,8 @@ void APS5_VABI cairo_restore(CairoContext* context) {
     }
     SavedState* snapshot = state->saved;
     state->matrix = snapshot->matrix;
+    delete[] state->style.dashes;
+    state->style = snapshot->style;
     state->saved = snapshot->previous;
     delete snapshot;
 }
@@ -207,6 +237,128 @@ void APS5_VABI cairo_device_to_user_distance(CairoContext* context, double* dx, 
         return;
     }
     cairo_matrix_transform_distance(&inverse, dx, dy);
+}
+
+void APS5_VABI cairo_set_antialias(CairoContext* context, int antialias) {
+    auto* state = Valid(context);
+    if (state) state->style.antialias = antialias;
+}
+
+int APS5_VABI cairo_get_antialias(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.antialias : 0;
+}
+
+void APS5_VABI cairo_set_fill_rule(CairoContext* context, int fillRule) {
+    auto* state = Valid(context);
+    if (state) state->style.fillRule = fillRule;
+}
+
+int APS5_VABI cairo_get_fill_rule(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.fillRule : 0;
+}
+
+void APS5_VABI cairo_set_line_cap(CairoContext* context, int cap) {
+    auto* state = Valid(context);
+    if (state) state->style.lineCap = cap;
+}
+
+int APS5_VABI cairo_get_line_cap(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.lineCap : 0;
+}
+
+void APS5_VABI cairo_set_line_join(CairoContext* context, int join) {
+    auto* state = Valid(context);
+    if (state) state->style.lineJoin = join;
+}
+
+int APS5_VABI cairo_get_line_join(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.lineJoin : 0;
+}
+
+void APS5_VABI cairo_set_line_width(CairoContext* context, double width) {
+    auto* state = Valid(context);
+    if (state) state->style.lineWidth = width < 0 ? 0 : width;
+}
+
+double APS5_VABI cairo_get_line_width(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.lineWidth : 2;
+}
+
+void APS5_VABI cairo_set_miter_limit(CairoContext* context, double limit) {
+    auto* state = Valid(context);
+    if (state) state->style.miterLimit = limit;
+}
+
+double APS5_VABI cairo_get_miter_limit(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.miterLimit : 10;
+}
+
+void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes,
+                             int numDashes, double offset) {
+    auto* state = Valid(context);
+    if (!state) return;
+    if (numDashes < 0 || (numDashes > 0 && !dashes)) {
+        state->status = kInvalidDash;
+        return;
+    }
+    double total = 0;
+    for (int i = 0; i < numDashes; ++i) {
+        if (!(dashes[i] >= 0)) {
+            state->status = kInvalidDash;
+            return;
+        }
+        total += dashes[i];
+    }
+    if (numDashes > 0 && !(total > 0)) {
+        state->status = kInvalidDash;
+        return;
+    }
+
+    double* copy = nullptr;
+    if (numDashes > 0) {
+        copy = new (std::nothrow) double[numDashes];
+        if (!copy) {
+            state->status = kNoMemory;
+            return;
+        }
+        std::copy_n(dashes, numDashes, copy);
+    }
+    const double period = (numDashes % 2 == 0 ? total : total * 2);
+    // Cairo's raster dash cycle cannot represent intervals below 1/256 pixel.
+    // The native API turns such an otherwise valid dash array into solid strokes.
+    if (numDashes > 0 && period < 1.0 / 256.0) {
+        delete[] copy;
+        copy = nullptr;
+        numDashes = 0;
+    }
+    if (numDashes > 0) {
+        offset = std::fmod(offset, period);
+        if (offset < 0) offset += period;
+    } else {
+        offset = 0;
+    }
+    delete[] state->style.dashes;
+    state->style.dashes = copy;
+    state->style.dashCount = numDashes;
+    state->style.dashOffset = offset;
+}
+
+void APS5_VABI cairo_get_dash(CairoContext* context, double* dashes, double* offset) {
+    auto* state = Valid(context);
+    if (!state) return;
+    if (dashes) std::copy_n(state->style.dashes, state->style.dashCount, dashes);
+    if (offset) *offset = state->style.dashOffset;
+}
+
+int APS5_VABI cairo_get_dash_count(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.dashCount : 0;
 }
 
 } // extern "C"
