@@ -19404,10 +19404,6 @@ int APS5_VABI _ZN3WTF19isCompilationThreadEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF19mimeTypeFromDataURLENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF19numGraphemeClustersENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -36569,10 +36565,6 @@ int APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv() {
 }
 
 int APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
