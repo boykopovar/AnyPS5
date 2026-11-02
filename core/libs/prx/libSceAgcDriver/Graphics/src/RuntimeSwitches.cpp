@@ -18,6 +18,7 @@ constexpr std::size_t SwitchCount = static_cast<std::size_t>(RuntimeSwitch::Coun
 
 constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_BARRIER_BATCH",
+    "APS5_NO_SIZE_ONLY_SURFACE_BYTES",
 };
 
 struct SwitchValues {
@@ -25,6 +26,7 @@ struct SwitchValues {
     SwitchValues() {
         const std::array<bool, SwitchCount> environment{
             std::getenv("APS5_NO_BARRIER_BATCH") != nullptr,
+            std::getenv("APS5_NO_SIZE_ONLY_SURFACE_BYTES") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }
