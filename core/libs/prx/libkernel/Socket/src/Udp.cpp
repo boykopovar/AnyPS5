@@ -49,6 +49,7 @@
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketConnect.hpp"
+#include "prx/libkernel/Socket/include/SubmittedRecords.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -1065,6 +1066,44 @@ std::int64_t ListenQueueLength(NativeSocket socket) {
 #endif
     return 1;
 }
+#ifdef _WIN32
+struct DatagramPeek {
+    WSAOVERLAPPED overlapped{};
+    WSAEVENT event = WSA_INVALID_EVENT;
+    char buffer[65536];
+};
+using DatagramPeeks = KernelSocketPeek::SubmittedRecords<DatagramPeek>;
+DatagramPeeks& PeekPool() {
+    static auto* pool = new DatagramPeeks();
+    return *pool;
+}
+std::int64_t NextDatagramSize(const Socket& socket, std::int64_t queued) {
+    auto& pool = PeekPool();
+    auto* slot = pool.Acquire([](DatagramPeek& peek) { return HasOverlappedIoCompleted(&peek.overlapped); }, [](DatagramPeek& peek) {
+        if (peek.event == WSA_INVALID_EVENT) peek.event = WSACreateEvent();
+        return peek.event != WSA_INVALID_EVENT;
+    });
+    if (!slot) return queued;
+    auto& peek = slot->record;
+    WSAResetEvent(peek.event);
+    peek.overlapped = WSAOVERLAPPED{};
+    peek.overlapped.hEvent = peek.event;
+    WSABUF buffer{sizeof(peek.buffer), peek.buffer};
+    DWORD received = 0;
+    DWORD flags = MSG_PEEK;
+    std::int64_t size = queued;
+    bool submitted = false;
+    if (WSARecv(socket.value, &buffer, 1, &received, &flags, &peek.overlapped, nullptr) == 0) {
+        size = received;
+    } else if (WSAGetLastError() == WSA_IO_PENDING) {
+        submitted = true;
+        CancelIoEx(reinterpret_cast<HANDLE>(socket.value), &peek.overlapped);
+        size = WSAGetOverlappedResult(socket.value, &peek.overlapped, &received, FALSE, &flags) ? received : 0;
+    }
+    pool.Release(slot, submitted);
+    return size;
+}
+#endif
 }
 
 bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* eof) {
@@ -1115,6 +1154,7 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
 #ifdef _WIN32
         unsigned long available = 0;
         if (ioctlsocket(socket->value, FIONREAD, &available) == 0) *data = static_cast<std::int64_t>(available);
+        if (socket->type == 2 && available != 0) *data = NextDatagramSize(*socket, *data);
 #else
         int available = 0;
         if (QueuedBytes(*socket, available) == 0) *data = available;
