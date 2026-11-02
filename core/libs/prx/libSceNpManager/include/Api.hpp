@@ -153,7 +153,7 @@ int APS5_VABI sceNpManagerIntGetVshAccessTokenWithCheck(void);
 int APS5_VABI sceNpManagerIntGetVshClientId(void);
 int APS5_VABI sceNpManagerIntIsSubAccount(void);
 int APS5_VABI sceNpManagerIntIsTemporarySignout(void);
-int APS5_VABI sceNpManagerIntIsUnregisteredClientError(void);
+bool APS5_VABI sceNpManagerIntIsUnregisteredClientError(int error);
 int APS5_VABI sceNpManagerIntLoginAuthenticate(void);
 int APS5_VABI sceNpManagerIntLoginBind(void);
 int APS5_VABI sceNpManagerIntLoginCreateAuthenticationTicket(void);
