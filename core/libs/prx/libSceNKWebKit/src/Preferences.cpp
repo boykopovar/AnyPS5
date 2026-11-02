@@ -2109,6 +2109,12 @@ bool APS5_VABI WKPreferencesGetLoadsSiteIconsIgnoringImageLoadingPreference(cons
     return false;
 }
 
+void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled(const void*, bool) {
+}
+
+void APS5_VABI WKPreferencesSetQTKitEnabled(const void*, bool) {
+}
+
 void APS5_VABI WKPreferencesSetMediaPlayable(const void* preferencesRef, bool enabled) {
     PreferencesFromRef(preferencesRef, __func__)->Set(u"MediaPlayable", enabled);
 }

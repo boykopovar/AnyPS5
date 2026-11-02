@@ -742,8 +742,6 @@ int APS5_VABI WKPopupMenuItemIsSeparator();
 int APS5_VABI WKPreferencesGetAccelerated2DCanvasEnabled();
 int APS5_VABI WKPreferencesGetQTKitEnabled();
 int APS5_VABI WKPreferencesGetTypeID();
-int APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled();
-int APS5_VABI WKPreferencesSetQTKitEnabled();
 int APS5_VABI WKProtectionSpaceCopyCertificateInfo();
 int APS5_VABI WKProtectionSpaceCopyHost();
 int APS5_VABI WKProtectionSpaceCopyRealm();

@@ -15158,14 +15158,6 @@ int APS5_VABI WKPopupMenuItemIsSeparator() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKPreferencesSetQTKitEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKProtectionSpaceCopyCertificateInfo() {
     NotImplemented_nid_no_patch(__func__);
 }

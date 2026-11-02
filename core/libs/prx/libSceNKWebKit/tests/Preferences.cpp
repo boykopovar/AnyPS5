@@ -266,6 +266,14 @@ void Deprecated() {
     Require(WKPreferencesGetJavaEnabled(nullptr) == false);
     WKPreferencesSetJavaEnabled(nullptr, false);
     Require(WKPreferencesGetJavaEnabled(nullptr) == false);
+    WKPreferencesSetAccelerated2DCanvasEnabled(nullptr, true);
+    Require(WKPreferencesGetAccelerated2DCanvasEnabled() == 0);
+    WKPreferencesSetAccelerated2DCanvasEnabled(nullptr, false);
+    Require(WKPreferencesGetAccelerated2DCanvasEnabled() == 0);
+    WKPreferencesSetQTKitEnabled(nullptr, true);
+    Require(WKPreferencesGetQTKitEnabled() == 0);
+    WKPreferencesSetQTKitEnabled(nullptr, false);
+    Require(WKPreferencesGetQTKitEnabled() == 0);
     WKPreferencesSetKeygenElementEnabled(nullptr, true);
     Require(WKPreferencesGetKeygenElementEnabled(nullptr) == false);
     WKPreferencesSetKeygenElementEnabled(nullptr, false);
