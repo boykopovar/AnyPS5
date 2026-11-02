@@ -1,3 +1,6 @@
+#include "prx/libSceMetadataReaderWriter/include/LegacyExports.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceMetadataReaderWriter/include/InventoryExports.hpp"
 #include "prx/libSceMetadataReaderWriter/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -200,5 +203,53 @@ int APS5_VABI _ZNK23sceMetadataReaderWriter8Metadata9dumpValueEv() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceMetadataReaderWriterUnknown_2oFr2hbrkRs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2oFr2hbrkRs", libSceMetadataReaderWriterUnknown_2oFr2hbrkRs_nid_no_patch);
+
+int APS5_VABI libSceMetadataReaderWriterUnknown_ElB1bNKymPg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ElB1bNKymPg", libSceMetadataReaderWriterUnknown_ElB1bNKymPg_nid_no_patch);
+
+int APS5_VABI libSceMetadataReaderWriterUnknown_GCOzTsybYr0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("GCOzTsybYr0", libSceMetadataReaderWriterUnknown_GCOzTsybYr0_nid_no_patch);
+
+int APS5_VABI libSceMetadataReaderWriterUnknown_Ly4V1dsyKCA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Ly4V1dsyKCA", libSceMetadataReaderWriterUnknown_Ly4V1dsyKCA_nid_no_patch);
+
+int APS5_VABI libSceMetadataReaderWriterUnknown_YeIbFGmyUVM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("YeIbFGmyUVM", libSceMetadataReaderWriterUnknown_YeIbFGmyUVM_nid_no_patch);
+
+int APS5_VABI libSceMetadataReaderWriterUnknown_ckVz4iaNj4E_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ckVz4iaNj4E", libSceMetadataReaderWriterUnknown_ckVz4iaNj4E_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI metadataReaderLegacyUnknown_2n7W08UL4yA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2n7W08UL4yA", metadataReaderLegacyUnknown_2n7W08UL4yA_nid_no_patch);
+
+int APS5_VABI metadataReaderLegacyUnknown_4SkB_plus_X3N5F0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4SkB+X3N5F0", metadataReaderLegacyUnknown_4SkB_plus_X3N5F0_nid_no_patch);
 
 }

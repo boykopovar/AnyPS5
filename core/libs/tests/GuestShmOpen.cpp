@@ -49,6 +49,25 @@ int main() {
 #ifndef _WIN32
     Require(pwrite_nid_disambig1_nid_postfix(third, text, sizeof(text), 0) == 0);
 #endif
+    const unsigned char privateCode[] = {0xb8, 0x07, 0, 0, 0, 0xc3};
+    Require(pwrite_nid_disambig1_nid_postfix(first, privateCode, sizeof(privateCode), 0x3000) == static_cast<std::int64_t>(sizeof(privateCode)));
+    auto* copy = static_cast<volatile char*>(mmap_nid_postfix(nullptr, 0x4000, 3, 0x2, first, 0));
+    Require(copy != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    Require(copy[0x1000] == 'a' && copy[0x2000] == 'm');
+    copy[0x1000] = 'P';
+    Require(copy[0x1000] == 'P');
+    Require(pread_nid_postfix(first, &last, 1, 0x1000) == 1 && last == 'a');
+    Require(munmap_nid_postfix(const_cast<char*>(copy), 0x4000) == 0);
+    auto* readable = static_cast<const volatile char*>(mmap_nid_postfix(nullptr, 0x4000, 1, 0x2, first, 0));
+    Require(readable != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)) && readable[0x2000] == 'm');
+    Require(munmap_nid_postfix(const_cast<char*>(readable), 0x4000) == 0);
+    void* privateExecutable = mmap_nid_postfix(nullptr, 0x4000, 5, 0x2, first, 0);
+    Require(privateExecutable != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    int (*privateFunction)();
+    const void* privateEntry = static_cast<const unsigned char*>(privateExecutable) + 0x3000;
+    std::memcpy(&privateFunction, &privateEntry, sizeof(privateFunction));
+    Require(privateFunction() == 7);
+    Require(munmap_nid_postfix(privateExecutable, 0x4000) == 0);
     Require(ftruncate_nid_postfix(third, 0x4000) == 0);
     Require(pwrite_nid_disambig1_nid_postfix(third, text, sizeof(text), 0) == static_cast<std::int64_t>(sizeof(text)));
     Require(close_nid_postfix(first) == 0 && close_nid_postfix(second) == 0 && close_nid_postfix(third) == 0);

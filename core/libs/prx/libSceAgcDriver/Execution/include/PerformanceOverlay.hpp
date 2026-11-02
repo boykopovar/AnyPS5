@@ -205,6 +205,7 @@ struct OverlayDetailSample {
     std::optional<std::uint64_t> refusedShaders;
     std::string title;
     std::string presentMode;
+    std::optional<double> fpsLimit;
 };
 
 struct OverlayHits {
@@ -221,6 +222,7 @@ struct OverlayPresentInfo {
     std::uint64_t displayAddress = 0;
     VkPresentModeKHR presentMode = VK_PRESENT_MODE_MAX_ENUM_KHR;
     std::uint64_t acquireDrops = 0;
+    double fpsLimit = 0.0;
 };
 
 struct OverlayTraceFigures {
@@ -257,6 +259,7 @@ std::optional<std::uint64_t> ReadProcessPrivateBytes();
 std::optional<OverlayMemory> ParseCommitCharge(std::string_view meminfo);
 std::optional<OverlayMemory> ReadCommitCharge();
 std::optional<std::uint64_t> ReadPageFaults();
+std::optional<std::uint64_t> ReadPhysicalMemoryBytes();
 std::int32_t OverlayScale(VkExtent2D extent, const OverlayContent& content);
 OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, OverlayCorner corner);
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace);

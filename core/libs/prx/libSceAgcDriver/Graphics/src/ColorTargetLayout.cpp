@@ -54,6 +54,7 @@ ColorTileMode DecodeColorTileMode(std::uint32_t attrib3) {
 }
 
 TileMipLayout ComputeColorTargetMipLayout(ColorTileMode mode, std::uint32_t bytesPerElement, std::uint32_t surfaceWidth, std::uint32_t surfaceHeight, std::uint32_t mipCount, std::uint32_t mipLevel) {
+    require(!ColorTileModeIsGcn(mode), "AGC graphics: PS4 color target mips are laid out by ComputeGcnMipLayout");
     auto mips = ComputeElementMipLayout(ColorTextureTileMode(mode), bytesPerElement, surfaceWidth, surfaceHeight, mipCount);
     require(mipLevel < mips.size(), "AGC graphics: color target mip is outside its surface");
     auto mip = mips[mipLevel];
@@ -156,8 +157,22 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
             yOffsets = tables.y.data();
             break;
         }
+        case ColorTileMode::GcnThin1D:
+        case ColorTileMode::GcnDisplay1D:
+        case ColorTileMode::GcnDisplay2D:
+        case ColorTileMode::GcnThin2D: {
+            const auto geometry = GcnTiling(ColorTextureTileMode(mode), bytesPerElement);
+            blockWidth = geometry.blockWidth;
+            blockHeight = geometry.blockHeight;
+            pitch = (width + blockWidth - 1u) / blockWidth * blockWidth;
+            paddedHeight = (height + blockHeight - 1u) / blockHeight * blockHeight;
+            gcn = true;
+            gcnEquation = geometry.equation;
+            break;
+        }
         default: throw std::runtime_error("AGC graphics: unsupported color tile mode");
     }
+    blockBytes = gcn ? static_cast<std::size_t>(blockWidth) * blockHeight * bytesPerElement : ColorTileModeBlockBytes(mode);
     const auto size = static_cast<std::uint64_t>(pitch) * paddedHeight * bytesPerElement;
     require(size <= std::numeric_limits<std::size_t>::max(), "AGC graphics: color surface size overflow");
     bytes = static_cast<std::size_t>(size);
@@ -166,6 +181,11 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
 std::size_t ColorTargetLayout::offset(std::uint32_t x, std::uint32_t y) const {
     if (mode == ColorTileMode::Linear) return (static_cast<std::size_t>(y) * pitch + x) * elementBytes;
     const auto block = static_cast<std::size_t>(y / blockHeight) * (pitch / blockWidth) + x / blockWidth;
+    if (gcn) {
+        std::uint32_t inBlock = 0;
+        for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= parity((x & gcnEquation[bit] & 0xfffu) ^ ((y << 12u) & gcnEquation[bit] & 0xfff000u)) << bit;
+        return block * blockBytes + inBlock;
+    }
     auto inBlock = xOffsets[x % blockWidth] ^ yOffsets[y % blockHeight];
     if (equation != nullptr) {
         const auto highX = (x & ~(blockWidth - 1u)) & 0xfffu;

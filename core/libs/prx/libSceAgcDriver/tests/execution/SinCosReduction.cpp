@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -72,7 +73,6 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Input[tid] = Rows[tid].x;
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -134,8 +134,20 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) Input[tid] = Rows[tid].x;
         Run(*device);
         Check();
+        for (const auto boundary : {0x3e000000u, 0x3ec00000u}) {
+            for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+                Input[tid] = (boundary + tid % 16u - 8u) | (tid >= 16u ? 0x80000000u : 0u);
+            }
+            Run(*device);
+            for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+                const auto radians = static_cast<double>(std::bit_cast<float>(Input[tid])) * (2.0 * std::numbers::pi);
+                const auto expected = std::bit_cast<std::uint32_t>(static_cast<float>(std::cos(radians)));
+                Require(Near(Output[tid * Results + 1], expected), "cosine range boundary " + Hex(Input[tid]) + " is " + Hex(Output[tid * Results + 1]) + ", expected near " + Hex(expected));
+            }
+        }
         std::puts("sin cos reduction tests passed");
         return 0;
     } catch (const std::exception& error) {
