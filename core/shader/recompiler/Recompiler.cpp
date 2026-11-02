@@ -496,6 +496,10 @@ struct ResourcePlanState {
     std::mutex registryMutex;
     std::vector<std::weak_ptr<SourceEntry>> sources;
     std::mutex trimMutex;
+    std::mutex reportMutex;
+    std::uint64_t reportedReloads = 0;
+    std::uint64_t reportedEvictions = 0;
+    std::function<void()> reportHook;
 };
 
 ResourcePlanState& resourcePlans() {
@@ -1861,11 +1865,8 @@ void reportResultMemo() {
     const auto total = static_cast<double>(hits + patched + misses);
     std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
     auto& plans = resourcePlans();
-    static std::uint64_t reportedReloads = 0;
-    static std::uint64_t reportedEvictions = 0;
-    const auto reloads = plans.reloads.load(std::memory_order_relaxed);
-    const auto planEvictions = plans.evictions.load(std::memory_order_relaxed);
-    std::fprintf(stderr, "[recompile] resource plans (10 s): %llu reloaded, %llu evicted; %llu plans held, %.1f MiB of a %.1f MiB budget\n", static_cast<unsigned long long>(reloads - std::exchange(reportedReloads, reloads)), static_cast<unsigned long long>(planEvictions - std::exchange(reportedEvictions, planEvictions)), static_cast<unsigned long long>(plans.heldPlans.load(std::memory_order_relaxed)), static_cast<double>(plans.heldBytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<double>(resourcePlanBudgetBytes().load(std::memory_order_relaxed)) / 1048576.0);
+    const auto interval = TakeResourcePlanInterval();
+    std::fprintf(stderr, "[recompile] resource plans (10 s): %llu reloaded, %llu evicted; %llu plans held, %.1f MiB of a %.1f MiB budget\n", static_cast<unsigned long long>(interval.reloads), static_cast<unsigned long long>(interval.evictions), static_cast<unsigned long long>(plans.heldPlans.load(std::memory_order_relaxed)), static_cast<double>(plans.heldBytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<double>(resourcePlanBudgetBytes().load(std::memory_order_relaxed)) / 1048576.0);
 }
 
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
@@ -2351,6 +2352,21 @@ void SetResourcePlanBudget(std::uint64_t bytes) {
     resourcePlanBudgetBytes().store(bytes, std::memory_order_relaxed);
     resourcePlans().trimmedTo.store(0, std::memory_order_relaxed);
     trimResourcePlans(bytes);
+}
+
+ResourcePlanInterval TakeResourcePlanInterval() {
+    auto& plans = resourcePlans();
+    std::lock_guard lock(plans.reportMutex);
+    const auto reloads = plans.reloads.load(std::memory_order_relaxed);
+    const auto evictions = plans.evictions.load(std::memory_order_relaxed);
+    if (auto hook = std::exchange(plans.reportHook, nullptr)) hook();
+    return {reloads - std::exchange(plans.reportedReloads, reloads), evictions - std::exchange(plans.reportedEvictions, evictions)};
+}
+
+void SetResourcePlanReportHook(std::function<void()> hook) {
+    auto& plans = resourcePlans();
+    std::lock_guard lock(plans.reportMutex);
+    plans.reportHook = std::move(hook);
 }
 
 ResourcePlanCounters ResourcePlanTotals() {

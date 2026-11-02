@@ -2518,6 +2518,36 @@ void verifyQueuedPlanWrite() {
     require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "queued plan write: the plan evicted after its write finished did not reload as a disk cache hit");
 }
 
+void verifyPlanReport() {
+    auto fixture = planFixtures().front();
+    fixture.waveSize = 32u;
+    fixture.code.insert(fixture.code.begin(), 0xbf800004u);
+    fixture.codeAddress += 0x50000u;
+    SetResourcePlanBudget(0u);
+    static_cast<void>(GetResourcePlan(fixture.Request(true)));
+    ShaderDiskCache::Flush();
+    static_cast<void>(TakeResourcePlanInterval());
+    const auto before = ResourcePlanTotals();
+    ResourcePlanInterval overlapping;
+    std::future<void> next;
+    SetResourcePlanReportHook([&] {
+        SetResourcePlanBudget(1u);
+        SetResourcePlanBudget(0u);
+        static_cast<void>(GetResourcePlan(fixture.Request(true)));
+        next = std::async(std::launch::async, [&] { overlapping = TakeResourcePlanInterval(); });
+        static_cast<void>(next.wait_for(std::chrono::milliseconds(250)));
+    });
+    const auto delayed = TakeResourcePlanInterval();
+    next.get();
+    const auto after = ResourcePlanTotals();
+    const auto evicted = after.evictions - before.evictions;
+    const auto reloaded = after.reloads - before.reloads;
+    require(evicted != 0u && reloaded == 1u, "plan report: the delayed reporter's hook did not evict and reload a plan");
+    require(delayed.evictions <= evicted && overlapping.evictions <= evicted && delayed.evictions + overlapping.evictions == evicted && delayed.reloads <= reloaded && overlapping.reloads <= reloaded && delayed.reloads + overlapping.reloads == reloaded, "plan report: a reporter delayed past the next interval counted it twice or underflowed");
+    const auto later = TakeResourcePlanInterval();
+    require(later.evictions == 0u && later.reloads == 0u, "plan report: the interval after two overlapping reporters is not empty");
+}
+
 void verifyPlanKey() {
     auto fixtures = planFixtures();
     auto& fixture = fixtures[1];
@@ -2816,6 +2846,7 @@ int main(int argc, char** argv) {
         verifyPlanBudget();
         verifySharedPlanBudget();
         verifyQueuedPlanWrite();
+        verifyPlanReport();
         ShaderRecompiler::ShaderDiskCache::Flush();
         removeCacheDirectory(directory);
         std::cout << "shader disk cache tests passed\n";
