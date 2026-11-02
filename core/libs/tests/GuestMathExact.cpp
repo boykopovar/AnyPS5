@@ -199,6 +199,38 @@ static void CheckClassification() {
     Require(_LDsign_nid_postfix(-2.0L) == -32768 && _LDsign_nid_postfix(2.0L) == 0);
 }
 
+static void CheckLogSpecialValues() {
+    Require(log_nid_postfix(1.0) == 0.0 && !std::signbit(log_nid_postfix(1.0)));
+    errno = 0;
+    Require(log_nid_postfix(0.0) == -INFINITY && errno == ERANGE);
+    errno = 0;
+    Require(log_nid_postfix(-0.0) == -INFINITY && errno == ERANGE);
+    errno = 0;
+    Require(std::isnan(log_nid_postfix(-1.0)) && errno == EDOM);
+    errno = 0;
+    Require(std::isnan(log_nid_postfix(-INFINITY)) && errno == EDOM);
+    Require(log_nid_postfix(INFINITY) == INFINITY);
+    Require(std::isnan(log_nid_postfix(NAN)));
+    Require(std::abs(log_nid_postfix(2.0) - 0.6931471805599453) <= 0.6931471805599453 * 1e-15);
+    Require(std::abs(log_nid_postfix(0.5) + 0.6931471805599453) <= 0.6931471805599453 * 1e-15);
+    Require(std::abs(log_nid_postfix(2.718281828459045) - 1.0) <= 1e-15);
+
+    Require(logf_nid_postfix(1.0f) == 0.0f && !std::signbit(logf_nid_postfix(1.0f)));
+    errno = 0;
+    Require(logf_nid_postfix(0.0f) == -INFINITY && errno == ERANGE);
+    errno = 0;
+    Require(logf_nid_postfix(-0.0f) == -INFINITY && errno == ERANGE);
+    errno = 0;
+    Require(std::isnan(logf_nid_postfix(-1.0f)) && errno == EDOM);
+    errno = 0;
+    Require(std::isnan(logf_nid_postfix(-INFINITY)) && errno == EDOM);
+    Require(logf_nid_postfix(INFINITY) == INFINITY);
+    Require(std::isnan(logf_nid_postfix(NAN)));
+    Require(std::abs(logf_nid_postfix(2.0f) - 0.6931472f) <= 0.6931472f * 1e-6f);
+    Require(std::abs(logf_nid_postfix(0.5f) + 0.6931472f) <= 0.6931472f * 1e-6f);
+    Require(std::abs(logf_nid_postfix(1.4012985e-45f) + 103.27893f) <= 103.27893f * 1e-6f);
+}
+
 int main() {
     CheckRoundingAndScaling();
     CheckLogblLroundl();
@@ -209,5 +241,6 @@ int main() {
     CheckRoundingModes();
     CheckRintTiesToEven();
     CheckClassification();
+    CheckLogSpecialValues();
     return 0;
 }
