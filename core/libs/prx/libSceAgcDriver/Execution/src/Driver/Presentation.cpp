@@ -63,12 +63,13 @@ void Driver::AttachWindow(const PresentationWindow& window) {
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
     PerformanceTimer timing("Driver.AttachWindow");
     std::lock_guard lock(GuestMemory::GpuMutex());
+    timing.Mark("gpu_mutex_wait");
     if (device) {
         require(device->Window() == nullptr, "a window is already attached to the device");
         device->PrepareForReplacement();
         replacedDevices.push_back(device);
+        timing.Mark("device_replacement");
     }
-    timing.Mark("device_replacement");
     device = std::make_shared<VulkanDevice>(&window);
     timing.Mark("vulkan_device_create");
 }
