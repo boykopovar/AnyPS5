@@ -344,7 +344,9 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderAddressResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/GuestBufferMemory.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MapImportGate.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ResidentMirror.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ReferenceStorage.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BdaResources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderValidation.cpp
@@ -398,6 +400,7 @@ set(agcZlibIncludeDir ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.cpp PROPERTIES
         INCLUDE_DIRECTORIES ${agcZlibIncludeDir}
 )
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
 
 add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${agcDriverSources}
@@ -423,6 +426,10 @@ add_shader_recompiler(shader_recompiler_agc_driver libc
         ${agcShaderCacheGuardSources}
 )
 
+target_include_directories(libSceAgcDriver INTERFACE
+        $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
 target_link_libraries(libSceAgcDriver PRIVATE
         shader_recompiler_agc_driver
         decoder_png
@@ -433,6 +440,13 @@ target_link_libraries(libSceAgcDriver PRIVATE
         libzstd_static
         ${CMAKE_DL_LIBS}
 )
+if(WIN32)
+    target_link_libraries(libSceAgcDriver PRIVATE pdh)
+endif()
+target_include_directories(libSceAgcDriver SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/zstd/lib)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libSceAgcDriver PRIVATE LINKER:--exclude-libs,libzstd.a)
+endif()
 if(APS5_ENABLE_TRACY)
     target_link_libraries(libSceAgcDriver PUBLIC TracyClient)
 endif()
@@ -891,6 +905,22 @@ target_link_libraries(agc_compute_pipeline_replay PRIVATE libSceAgcDriver libc)
 set_target_properties(agc_compute_pipeline_replay PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_compute_pipeline_replay)
 
+add_library(agc_oracle_support STATIC tools/OracleCodeObject.cpp tools/OracleDispatch.cpp)
+target_include_directories(agc_oracle_support PUBLIC
+        ${LIBS_INCLUDE_DIR}
+        $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+        ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
+)
+target_link_libraries(agc_oracle_support PUBLIC libSceAgcDriver libc)
+set_target_properties(agc_oracle_support PROPERTIES CXX_EXTENSIONS OFF)
+
+add_executable(agc_oracle_runner EXCLUDE_FROM_ALL tools/OracleRunner.cpp)
+target_link_libraries(agc_oracle_runner PRIVATE agc_oracle_support)
+set_target_properties(agc_oracle_runner PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_oracle_runner)
+
 if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS)
     add_test(NAME agc_compute_pipeline_inspection COMMAND ${CMAKE_COMMAND}
             -DREPLAY=$<TARGET_FILE:agc_compute_pipeline_replay>
@@ -904,7 +934,28 @@ if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS)
 endif()
 
 if(BUILD_TESTING)
+    add_test(NAME agc_driver_fill_completion_labels_cpu_overlap COMMAND agc_driver_fill_completion_labels_tests --cpu-overlap)
+    add_test(NAME agc_driver_fill_completion_labels_cpu_disjoint COMMAND agc_driver_fill_completion_labels_tests --cpu-disjoint)
+    add_test(NAME agc_driver_fill_completion_labels_submitted COMMAND agc_driver_fill_completion_labels_tests --submitted)
+    add_test(NAME agc_driver_fill_completion_labels_inline COMMAND agc_driver_fill_completion_labels_tests)
+    add_test(NAME agc_driver_fill_completion_labels_chain COMMAND agc_driver_fill_completion_labels_tests)
+    add_test(NAME agc_driver_fill_completion_labels_late COMMAND agc_driver_fill_completion_labels_tests)
+    set(agcFillCompletionLabelTests agc_driver_fill_completion_labels agc_driver_fill_completion_labels_cpu_overlap agc_driver_fill_completion_labels_cpu_disjoint agc_driver_fill_completion_labels_submitted agc_driver_fill_completion_labels_inline agc_driver_fill_completion_labels_chain agc_driver_fill_completion_labels_late)
+    set_tests_properties(${agcFillCompletionLabelTests} PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_OPPORTUNISTIC_REAP=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_property(TEST agc_driver_fill_completion_labels_inline APPEND PROPERTY ENVIRONMENT "APS5_LABEL_RUNS_INLINE=1")
+    set_property(TEST agc_driver_fill_completion_labels_chain APPEND PROPERTY ENVIRONMENT "APS5_FILL_CHAIN=1")
+    set_property(TEST agc_driver_fill_completion_labels_late APPEND PROPERTY ENVIRONMENT "APS5_LABEL_TRUST_LATE=1")
+    if(WIN32)
+        set_tests_properties(agc_driver_fill_completion_labels_cpu_overlap agc_driver_fill_completion_labels_cpu_disjoint agc_driver_fill_completion_labels_submitted agc_driver_fill_completion_labels_inline agc_driver_fill_completion_labels_chain agc_driver_fill_completion_labels_late PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     get_directory_property(agcRegisteredTests TESTS)
     list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal|agc_pipeline_store_replay_growth)$")
     set_property(TEST ${agcRegisteredTests} APPEND PROPERTY ENVIRONMENT "APS5_NO_PIPELINE_JOURNAL=1")
 endif()
+
+target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)

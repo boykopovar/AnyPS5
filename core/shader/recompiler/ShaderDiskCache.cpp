@@ -87,7 +87,9 @@ namespace ShaderRecompiler::ShaderDiskCache {
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
 static_assert(sizeof(CompiledShaderArtifact) == 288, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
+#if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
+#endif
 static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
@@ -95,7 +97,7 @@ static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: updat
 static_assert(sizeof(CompiledShaderInfo) == 352, "CompiledShaderInfo changed: update the info encoder");
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
-static_assert(sizeof(ImageResource) == 96, "ImageResource changed: update the info encoder");
+static_assert(sizeof(ImageResource) == 108, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
 static_assert(sizeof(SampledResourcePair) == 12, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
@@ -109,7 +111,7 @@ static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update Enc
 static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
-static_assert(sizeof(DescriptorSource) == 224, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 248, "DescriptorSource changed: update the plan encoder");
 static_assert(sizeof(TableColumn) == 144, "TableColumn changed: update the plan encoder");
 static_assert(sizeof(KeyDomain) == 16, "KeyDomain changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 104, "ResourceBlock changed: update the plan encoder");
@@ -141,15 +143,15 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 46, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 49, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
-static_assert(fieldCount<IrResourcePlan>() == 24, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(fieldCount<IrResourcePlan>() == 25, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
-static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
+static_assert(fieldCount<DescriptorSource>() == 4, "DescriptorSource changed: update the plan encoder");
 static_assert(fieldCount<TableColumn>() == 22, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 5, "ResourceBlock changed: update the plan encoder");
@@ -571,6 +573,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Values(std::span<const std::uint32_t>(result.stencilReferences));
     writer.Value(result.stencilReplaySafe);
     writer.Value(result.bdaWrites);
+    writer.Value(result.layerReplaySafe);
     writer.Value(result.stencilReferenceDword);
 }
 
@@ -640,6 +643,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Values(result.stencilReferences);
     reader.Value(result.stencilReplaySafe);
     reader.Value(result.bdaWrites);
+    reader.Value(result.layerReplaySafe);
     reader.Value(result.stencilReferenceDword);
     result.variantId = 0;
 }
@@ -809,6 +813,9 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.foldTexelOffsetsOnly);
         out.Value(image.convertedSamples);
         out.Value(image.remappedDepth1D);
+        out.Value(image.layerRowsCompatible);
+        out.Value(image.layerRows);
+        out.Value(image.maxArrayLayers);
         out.Value(image.optionalDescriptor);
         out.Value(image.byElements);
         out.Value(image.byComponents);
@@ -920,6 +927,9 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.foldTexelOffsetsOnly);
         in.Value(image.convertedSamples);
         in.Value(image.remappedDepth1D);
+        in.Value(image.layerRowsCompatible);
+        in.Value(image.layerRows);
+        in.Value(image.maxArrayLayers);
         in.Value(image.optionalDescriptor);
         in.Value(image.byElements);
         in.Value(image.byComponents);
@@ -1110,6 +1120,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
     writer.Value(plan.userDataBase);
     writer.Value(plan.userDataCount);
     writer.Value(plan.srgbDecodeFormats);
+    writer.Value(plan.maxImageArrayLayers);
     writer.List(plan.blockStorage, [](Writer& out, const std::unique_ptr<IrBlock>& block) { out.Value(block->Id()); });
     writer.Value<std::uint64_t>(plan.valueStorage.Size());
     for (const auto& stored : plan.valueStorage) {
@@ -1183,6 +1194,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         out.Value(column.selected);
         out.Value(column.selection);
         out.Value(column.pointerKeyed);
+        out.Values(std::span<const std::uint32_t>(source.requiredBlocks));
     });
     writer.List(plan.controlFlow, [&](Writer& out, const ResourceBlock& block) {
         out.Value(valueIndex(block.condition));
@@ -1233,6 +1245,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     reader.Value(plan.userDataBase);
     reader.Value(plan.userDataCount);
     reader.Value(plan.srgbDecodeFormats);
+    reader.Value(plan.maxImageArrayLayers);
     std::vector<std::uint32_t> blockIds;
     reader.Values(blockIds);
     std::vector<PlanValueRecord> records;
@@ -1314,7 +1327,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         value.SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
     }
     reader.List(plan.memoryInfo, 79, decodeMemoryInfo);
-    reader.List(plan.descriptorSources, 74, [&](Reader& in, DescriptorSource& source) {
+    reader.List(plan.descriptorSources, 82, [&](Reader& in, DescriptorSource& source) {
         for (auto& dword : source.dwords) dword = valueAt(in.Get<std::uint32_t>());
         in.Value(source.dwordCount);
         const bool table = in.Get<bool>();
@@ -1361,6 +1374,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         in.Value(column.selection);
         in.Value(column.pointerKeyed);
         source.tableColumn = table ? std::optional(std::move(column)) : std::nullopt;
+        in.Values(source.requiredBlocks);
     });
     reader.List(plan.controlFlow, 36, [&](Reader& in, ResourceBlock& block) {
         block.condition = valueAt(in.Get<std::uint32_t>());
@@ -1392,6 +1406,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     for (auto& value : plan.uniformFill.values) value = valueAt(reader.Get<std::uint32_t>());
     if (!valid || !reader.Done() || fill.words > plan.uniformFill.values.size()) return false;
     const auto knownSource = [&](std::uint32_t source) { return source < plan.descriptorSources.size(); };
+    if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return std::ranges::all_of(source.requiredBlocks, [&](std::uint32_t block) { return block < plan.controlFlow.size(); }); })) return false;
     if (!std::ranges::all_of(plan.materializationSources, knownSource)) return false;
     if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return source.dwordCount <= source.dwords.size() && (!source.tableColumn.has_value() || (knownSource(source.tableColumn->heapSource) && (!source.tableColumn->selected || knownSource(source.tableColumn->selection)) && std::ranges::all_of(source.tableColumn->keyDomains, [&](const KeyDomain& domain) { return knownSource(domain.source); }))); })) return false;
     for (const auto& source : plan.descriptorSources) {
@@ -1430,6 +1445,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_PERF_DOM_INTERSECTION",
     "APS5_NO_PERF_ITERATION_SELECTION",
     "APS5_NO_PERF_LAYOUT_PAIR",
+    "APS5_NO_BUFFER_SUBSTITUTES",
     "APS5_NO_RESULT_MEMO",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
@@ -1548,6 +1564,7 @@ public:
         if (DecodeEntry(bytes, key, *persisted, std::move(mapped)) != LoadStatus::Loaded) return nullptr;
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
+        persisted->substitutes = variant.substitutes;
         return persisted;
     }
 
@@ -1924,7 +1941,7 @@ DiskStore& store() {
 }
 
 std::uint64_t SourceVersion() {
-    return Generated::SourceVersion;
+    return ExactF32Arithmetic() ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
 }
 
 void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key) {
