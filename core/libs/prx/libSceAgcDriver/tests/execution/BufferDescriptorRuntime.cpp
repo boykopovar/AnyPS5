@@ -241,7 +241,8 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
         try {
             dispatch(code, raw(Output.data(), sizeof(Output), word3));
         } catch (const std::runtime_error& error) {
-            Require(std::string(error.what()).find("buffer descriptor uses an unsupported type") != std::string::npos, std::string(access) + " through V# word 3 " + Hex(word3) + " failed for another reason: " + error.what());
+            const auto message = std::string(error.what());
+            Require(message.find("buffer descriptor uses an unsupported type") != std::string::npos && message.find("first used at pc 0x") != std::string::npos, std::string(access) + " through V# word 3 " + Hex(word3) + " failed for another reason: " + message);
             rejected = true;
         }
         Require(rejected, std::string(access) + " accepted V# word 3 " + Hex(word3));

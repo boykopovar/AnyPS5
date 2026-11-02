@@ -157,6 +157,7 @@ int APS5_VABI sceNpJoinThread(Pthread thread, void** retval) {
 }
 
 int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec) {
+    if (usec == nullptr) return NP_ERROR_INVALID_ARGUMENT;
     KernelTimespec now{};
     const int result = sceKernelClockGettime(CLOCK_MONOTONIC_ID, &now);
     if (result == 0) *usec = now.tv_sec * 1000000 + now.tv_nsec / 1000;

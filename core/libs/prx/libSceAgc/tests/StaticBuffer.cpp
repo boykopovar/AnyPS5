@@ -1,5 +1,8 @@
 #include "prx/libSceAgc/Misc/include/StaticBuffer.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#ifdef __APPLE__
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
+#endif
 
 #include <array>
 #include <cstdint>
@@ -9,7 +12,11 @@
 
 namespace {
 
+#ifdef __APPLE__
+constexpr std::uintptr_t StaticTable = AgcDriver::DriverDetail::RetargetPs5DriverMemory(0xfe0040000ull) + GuestArena::GuestAddressOffset;
+#else
 constexpr std::uintptr_t StaticTable = 0xfe0040000ull + GuestArena::GuestAddressOffset;
+#endif
 constexpr int InvalidStaticBuffer = static_cast<int>(0x8a6c000bu);
 
 void check(bool condition, const char* message) {

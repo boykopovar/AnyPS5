@@ -177,6 +177,24 @@ class ConfigureSeedPathTests(unittest.TestCase):
                                  'set("HAVE_FEATURE" "1" CACHE INTERNAL "Test HAVE_FEATURE")\n')
                 self.assertEqual(self.cache.read_bytes(), self.original)
 
+    def test_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cmake"
+        try:
+            loop.symlink_to(loop.name)
+        except OSError as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        for arguments in ((str(self.cache), str(loop)), (str(loop), str(self.root / "seed.cmake"))):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, str(TOOL), *arguments], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(str(loop), result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(loop.is_symlink())
+                self.assertEqual(os.readlink(loop), loop.name)
+                self.assertFalse((self.root / "seed.cmake").exists())
+                self.assertEqual(self.cache.read_bytes(), self.original)
+
     def test_filters_do_not_allow_overwriting_cache(self):
         for options in (("--include", "HAVE_*"), ("--include", "NO_MATCH_*"), ("--exclude", "HAVE_*")):
             with self.subTest(options=options):
@@ -327,6 +345,56 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
 
 
 class ChecksParsingTests(unittest.TestCase):
+    def test_unicode_line_separators_are_preserved_in_cache_fields(self):
+        entries = {
+            f"FEATURE_{index}_{separator}_TAIL": (f"before{separator}after", f"Test help{separator}tail")
+            for index, separator in enumerate(("\u0085", "\u2028", "\u2029"))
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            for newline in ("\n", "\r\n"):
+                for encoding in ("utf-8", "utf-8-sig"):
+                    with self.subTest(newline=newline, encoding=encoding):
+                        text = newline.join(f"//{doc}{newline}{name}:INTERNAL={value}"
+                                            for name, (value, doc) in entries.items())
+                        cache.write_bytes(text.encode(encoding))
+                        self.assertEqual(configure_seed.checks(cache), entries)
+
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required for cache round trips")
+    def test_unicode_cache_fields_survive_real_cmake_seed_round_trip(self):
+        entries = {
+            f"FEATURE_{index}_{separator}_TAIL": (f"before{separator}after", f"Test help{separator}tail")
+            for index, separator in enumerate(("\u0085", "\u2028", "\u2029"))
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            lines = ["cmake_minimum_required(VERSION 3.20)", "project(unicode_cache NONE)"]
+            for index, (name, (value, doc)) in enumerate(entries.items()):
+                lines.extend(("if(NOT REQUIRE_SEED)",
+                              f"set({configure_seed.quote(name)} {configure_seed.quote(value)} CACHE INTERNAL {configure_seed.quote(doc)})",
+                              "endif()",
+                              f"get_property(help CACHE {configure_seed.quote(name)} PROPERTY HELPSTRING)",
+                              f"get_property(value CACHE {configure_seed.quote(name)} PROPERTY VALUE)",
+                              f'file(WRITE "${{CMAKE_BINARY_DIR}}/{index}.help" "${{help}}")',
+                              f'file(WRITE "${{CMAKE_BINARY_DIR}}/{index}.value" "${{value}}")'))
+            (source / "CMakeLists.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            first, second = root / "first", root / "second"
+            configured = subprocess.run(["cmake", "-S", str(source), "-B", str(first), "-G", "Ninja"], capture_output=True)
+            self.assertEqual(configured.returncode, 0, configured.stderr.decode("utf-8", errors="replace"))
+            cache = first / "CMakeCache.txt"
+            self.assertEqual(configure_seed.checks(cache), entries)
+            seed = root / "seed.cmake"
+            subprocess.run([sys.executable, str(TOOL), str(cache), str(seed)], check=True, capture_output=True)
+            subprocess.run(["cmake", "-C", str(seed), "-DREQUIRE_SEED=ON", "-S", str(source), "-B", str(second), "-G", "Ninja"],
+                           check=True, capture_output=True)
+            self.assertEqual(configure_seed.checks(second / "CMakeCache.txt"), entries)
+            for index, (value, doc) in enumerate(entries.values()):
+                for build in (first, second):
+                    self.assertEqual((build / f"{index}.value").read_text(encoding="utf-8"), value)
+                    self.assertEqual((build / f"{index}.help").read_text(encoding="utf-8"), doc)
+
     def test_architecture_dependent_sizes_leave_compile_guards_to_cmake(self):
         entries = {
             "ARCH_SIZE": ("0", "CHECK_TYPE_SIZE: sizeof(architecture_type)"),
