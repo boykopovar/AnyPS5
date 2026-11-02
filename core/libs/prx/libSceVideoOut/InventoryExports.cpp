@@ -8,6 +8,12 @@
 namespace {
 constexpr int VideoOutErrorCurveSamplePoints = static_cast<int>(0x8029001Cu);
 constexpr int VideoOutErrorLatestEopHandle = static_cast<int>(0x802900FFu);
+
+std::uint32_t ModeFlags(const void* mode) {
+    std::uint32_t flags;
+    std::memcpy(&flags, static_cast<const std::uint8_t*>(mode) + 0x20, sizeof(flags));
+    return flags;
+}
 }
 
 extern "C" {
@@ -424,8 +430,10 @@ int APS5_VABI sceVideoOutSysHdmiMonitorInfoIsMorpheus() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSysInitMode() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI sceVideoOutSysInitMode(void* mode) {
+    std::memset(mode, 0xFF, 0x20);
+    const std::uint32_t size = 0x20;
+    std::memcpy(mode, &size, sizeof(size));
 }
 
 int APS5_VABI sceVideoOutSysIsModeS3d() {
@@ -452,26 +460,25 @@ int APS5_VABI sceVideoOutSysIsUserStatusVr() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceVideoOutSysModeIsHdr() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSysModeIsHdr(const void* mode) {
+    const auto value = static_cast<const std::uint8_t*>(mode)[6];
+    return static_cast<std::uint8_t>(value - 12u) < 6u ? 1 : 0;
 }
 
-int APS5_VABI sceVideoOutSysModeIsSystemDefault() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSysModeIsSystemDefault(const void* mode) {
+    return static_cast<int>(~ModeFlags(mode) & 1u);
 }
 
-int APS5_VABI sceVideoOutSysModeIsVrLegacy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSysModeIsVrLegacy(const void* mode) {
+    return (ModeFlags(mode) & 6u) == 6u ? 1 : 0;
 }
 
-int APS5_VABI sceVideoOutSysModeIsVrNative() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutSysModeIsVrNative(const void* mode) {
+    return (ModeFlags(mode) & 6u) == 2u ? 1 : 0;
 }
 
 int APS5_VABI sceVideoOutSysModeIsVr(const void* mode) {
-    std::uint32_t flags;
-    std::memcpy(&flags, static_cast<const std::uint8_t*>(mode) + 0x20, sizeof(flags));
-    return static_cast<int>((flags >> 1) & 1u);
+    return static_cast<int>((ModeFlags(mode) >> 1) & 1u);
 }
 
 int APS5_VABI sceVideoOutSysOpenInternal() {

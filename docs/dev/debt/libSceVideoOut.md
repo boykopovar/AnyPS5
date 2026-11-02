@@ -158,17 +158,12 @@
 | `sceVideoOutSysGetVblankStatus` | `d1AjT2uZJn0` |
 | `sceVideoOutSysGetVideoOutModeByBusSpecifier` | `AAELy8Yc3Mc` |
 | `sceVideoOutSysHdmiMonitorInfoIsMorpheus` | `3-9DXFGVg0M` |
-| `sceVideoOutSysInitMode` | `9cmjhjqa7Sg` |
 | `sceVideoOutSysIsModeS3d` | `iUigHJ2op4M` |
 | `sceVideoOutSysIsOutputSupported` | `Z0EyU29WqOg` |
 | `sceVideoOutSysIsSupportedByMonitorInfo_` | `mfxElr79O7Q` |
 | `sceVideoOutSysIsUserStatusHdr` | `q+vWPvYIh8o` |
 | `sceVideoOutSysIsUserStatusSystemDefault` | `O57F5ikhGxo` |
 | `sceVideoOutSysIsUserStatusVr` | `4XsQdhiOaAc` |
-| `sceVideoOutSysModeIsHdr` | `I7-lGGvFgBM` |
-| `sceVideoOutSysModeIsSystemDefault` | `5Y8uUbGMio0` |
-| `sceVideoOutSysModeIsVrLegacy` | `zecl8Gox+P0` |
-| `sceVideoOutSysModeIsVrNative` | `SgA2MtojPto` |
 | `sceVideoOutSysOpenInternal` | `kP4l+nyBjRA` |
 | `sceVideoOutSysOpenVrNative` | `WUU+ufqgLJg` |
 | `sceVideoOutSysReadCrc64` | `eBvoaLwfBBQ` |
@@ -237,6 +232,8 @@
 | `Unknown` | `ys239q8VgXY` |
 
 - [Firmware 13.42 answers](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) (libSceVideoOut) - `sceVideoOutAddBufferHdrPrivilege`, `sceVideoOutRazorRecallCallbacks` and `sceVideoOutSysUpdateRenderingMode` return 0, `sceVideoOutCurveSamplePointsCalc_` returns 0x8029001C, `sceVideoOutDriverGetLatestEopHandle` 0x802900FF and `sceVideoOutSysGetMonitorInfo_` -1, and `sceVideoOutSysModeIsVr` returns bit 1 of the dword at offset 0x20 of its argument, as firmware 13.42's libSceVideoOut does: read to the return, disassembly only, not measured on a console. Their parameter lists are unverified beyond what the code reads; the layout of the structure `sceVideoOutSysModeIsVr` reads is unknown apart from that dword. The module reads that dword without checking the pointer, so a null argument faults on the console as it does here
+
+- [Firmware 13.42 mode helpers](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) (libSceVideoOut) - `sceVideoOutSysInitMode` fills the first 0x20 bytes of its argument with 0xFF and then stores 0x20 in the first dword. Of the dword at offset 0x20, `sceVideoOutSysModeIsSystemDefault` reports bit 0 clear, `sceVideoOutSysModeIsVrNative` bits 2:1 equal to 01 and `sceVideoOutSysModeIsVrLegacy` both bits set; `sceVideoOutSysModeIsHdr` reports byte 6 from 12 to 17. As firmware 13.42's libSceVideoOut does: read to the return, disassembly only, not measured on a console. The init function leaves EAX unset, so it is declared `void`. Field meanings are unknown, and none of them checks the pointer.
 
 - [sceVideoOutSetConfigurationMode](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): the name hashes to NID `N1+j0RymMUQ`, a function export in both older and later version-labelled images. Its signature and behavior are unverified; this import-resolution declaration throws.
 
