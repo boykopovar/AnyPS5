@@ -270,7 +270,7 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
                             minExp,
                             static_cast<std::int64_t>(std::numeric_limits<TFloat>::max_exponent))));
                     } else {
-                        const std::int64_t clamped = std::clamp(pten, -ExponentLimit, ExponentLimit);
+                        const std::int64_t clamped = std::clamp<std::int64_t>(pten, -ExponentLimit, ExponentLimit);
                         const std::int64_t minExp = static_cast<std::int64_t>(-std::numeric_limits<TFloat>::max_exponent) - static_cast<std::int64_t>(std::numeric_limits<TFloat>::digits) + 1;
                         value = std::scalbn(std::pow(static_cast<TFloat>(10), static_cast<TFloat>(clamped)),
                             static_cast<int>(std::clamp(hexExp,
@@ -295,7 +295,7 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
                     if (decMantissa.empty()) decMantissa = "0";
                     std::reverse(decMantissa.begin(), decMantissa.end());
                     const long long digitEstimate = std::llround(static_cast<long long>(hexExp) * 0.3010299956639812L);
-                    long long decExp = std::clamp(pten, -ExponentLimit, ExponentLimit) + digitEstimate;
+                    long long decExp = std::clamp<long long>(pten, -ExponentLimit, ExponentLimit) + digitEstimate;
                     decExp = std::clamp(decExp, -ExponentLimit, ExponentLimit);
                     std::string number = decMantissa + 'e' + std::to_string(decExp);
                     guestErrno = 0;
