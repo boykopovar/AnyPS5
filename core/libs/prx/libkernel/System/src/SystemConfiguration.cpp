@@ -601,6 +601,10 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         static constexpr int mib[] = {1, 14, 12};
         return sysctl_nid_postfix(mib, 3, oldValue, oldLength, newValue, newLength);
     }
+    if (std::strcmp(name, "kern.proc.proc") == 0) {
+        static constexpr int mib[] = {1, 14, 8};
+        return sysctl_nid_postfix(mib, 3, oldValue, oldLength, newValue, newLength);
+    }
     if (std::strcmp(name, "kern.boottime") == 0) {
         static constexpr int mib[] = {1, 21};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
@@ -803,6 +807,7 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
         {"kern.maxfilesperproc", {1, 27}, 2},
         {"kern.maxproc", {1, 6}, 2},
         {"kern.proc.pathname", {1, 14, 12}, 3},
+        {"kern.proc.proc", {1, 14, 8}, 3},
         {"kern.ps_strings", {1, 32}, 2},
         {"kern.rng_pseudo", {1, 50}, 2},
         {"vm.loadavg", {2, 2}, 2},
