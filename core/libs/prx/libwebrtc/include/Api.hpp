@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libwebrtc/include/AudioDecoder.hpp"
+#include "prx/libwebrtc/include/RtcpRemb.hpp"
 #include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
 #include "prx/libwebrtc/include/AudioEncoder.hpp"
 #include "prx/libwebrtc/include/AudioFrame.hpp"
@@ -247,7 +248,7 @@ int APS5_VABI _ZN6webrtc4rtcp3PliD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp14ReceiverReportC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4Remb5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp4RembC1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc4rtcp4RembD1Ev_nid_postfix(WebRtcRtcpRemb* self);
 int APS5_VABI _ZNK6webrtc4rtcp17TransportFeedback15GetBaseSequenceEv_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp17TransportFeedback5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp17TransportFeedbackC1Ev_nid_postfix(void);
