@@ -107,5 +107,30 @@ int main() {
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, -1, &setid) == 0);
     Require(setid == 0);
 
+    Require(cpuset_getid_nid_postfix(LevelRoot, WhichCpuset, -1, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, -1, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelWhich, WhichCpuset, -1, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 999999, &setid) == -1 && Error() == Esrch);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 4294967296LL, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, -4294967296LL, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 4294967296LL + 999999, &setid) == -1 && Error() == Esrch);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 0, nullptr) == -1 && Error() == Efault);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, -1, nullptr) == -1 && Error() == Efault);
+    Require(cpuset_getid_nid_postfix(LevelRoot, WhichCpuset, 0, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 0, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelWhich, WhichCpuset, 0, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelRoot, WhichCpuset, 1, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 1, &setid) == 0 && setid == 1);
+    Require(cpuset_getid_nid_postfix(LevelWhich, WhichCpuset, 1, &setid) == 0 && setid == 1);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, set2, &setid) == -1 && Error() == Esrch);
+
+    int set3 = -1;
+    Require(cpuset_nid_postfix(&set3) == 0 && set3 >= 2);
+    Require(cpuset_getid_nid_postfix(LevelRoot, WhichCpuset, set3, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, set3, &setid) == 0 && setid == set3);
+    Require(cpuset_getid_nid_postfix(LevelWhich, WhichCpuset, set3, &setid) == 0 && setid == set3);
+    Require(cpuset_setid_nid_postfix(WhichProcess, -1, 0) == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, set3, &setid) == -1 && Error() == Esrch);
+
     return 0;
 }
