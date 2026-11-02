@@ -648,7 +648,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/externals
-          key: ffmpeg-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
+          key: ffmpeg-${{ runner.os }}-winlibs-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.ffmpeg }}
       - id: seed-cache
         uses: actions/cache/restore@v6
         with:
