@@ -227,7 +227,7 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
 }
 
 ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const std::map<std::size_t, std::vector<std::uint32_t>>& registerLists) {
-    constexpr std::array<std::uint32_t, 6> programRegisters{0x008u, 0x088u, 0x0c8u, 0x108u, 0x148u, 0x20cu};
+    constexpr std::array<std::uint32_t, 7> programRegisters{0x008u, 0x048u, 0x088u, 0x0c8u, 0x108u, 0x148u, 0x20cu};
     std::array<std::uint32_t, programRegisters.size() * 2> values{};
     std::array<bool, programRegisters.size() * 2> written{};
     std::array<bool, programRegisters.size()> bound{};
