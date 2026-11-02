@@ -23166,10 +23166,6 @@ int APS5_VABI _ZN7WebCore14endOfParagraphERKNS_15VisiblePositionENS_27EditingBou
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore14stopResolveDNSEm() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -23851,10 +23847,6 @@ int APS5_VABI _ZN7WebCore15clearBackingSetERN3JSC14JSGlobalObjectERNS0_8JSObject
 }
 
 int APS5_VABI _ZN7WebCore15createLiveRangeERKNS_11SimpleRangeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore15defaultMIMETypeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -28851,10 +28843,6 @@ int APS5_VABI _ZN7WebCore24presentingApplicationPIDEv() {
 }
 
 int APS5_VABI _ZN7WebCore24previousSentencePositionERKNS_15VisiblePositionE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

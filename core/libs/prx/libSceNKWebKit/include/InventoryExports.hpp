@@ -2770,7 +2770,6 @@ int APS5_VABI _ZN7WebCore14StyleSheetListD2Ev();
 int APS5_VABI _ZN7WebCore14XMLHttpRequestD0Ev();
 int APS5_VABI _ZN7WebCore14XMLHttpRequestD2Ev();
 int APS5_VABI _ZN7WebCore14endOfParagraphERKNS_15VisiblePositionENS_27EditingBoundaryCrossingRuleE();
-int APS5_VABI _ZN7WebCore14foldQuoteMarksERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore14stopResolveDNSEm();
 int APS5_VABI _ZN7WebCore14valueForLengthERKNS_6LengthENS_10LayoutUnitE();
 int APS5_VABI _ZN7WebCore15ActiveDOMObject15suspendIfNeededEv();
@@ -2942,7 +2941,6 @@ int APS5_VABI _ZN7WebCore15addToBackingSetERN3JSC14JSGlobalObjectERNS0_8JSObject
 int APS5_VABI _ZN7WebCore15clearBackingMapERN3JSC14JSGlobalObjectERNS0_8JSObjectE();
 int APS5_VABI _ZN7WebCore15clearBackingSetERN3JSC14JSGlobalObjectERNS0_8JSObjectE();
 int APS5_VABI _ZN7WebCore15createLiveRangeERKNS_11SimpleRangeE();
-int APS5_VABI _ZN7WebCore15defaultMIMETypeEv();
 int APS5_VABI _ZN7WebCore15isDraggableLinkERKNS_7ElementE();
 int APS5_VABI _ZN7WebCore15isEndOfDocumentERKNS_15VisiblePositionE();
 int APS5_VABI _ZN7WebCore15localizedStringEPKc();
@@ -4203,7 +4201,6 @@ int APS5_VABI _ZN7WebCore24distanceBetweenPositionsERKNS_15VisiblePositionES2_()
 int APS5_VABI _ZN7WebCore24passesAccessControlCheckERKNS_16ResourceResponseENS_23StoredCredentialsPolicyERKNS_14SecurityOriginEPKNS_37CrossOriginAccessControlCheckDisablerE();
 int APS5_VABI _ZN7WebCore24presentingApplicationPIDEv();
 int APS5_VABI _ZN7WebCore24previousSentencePositionERKNS_15VisiblePositionE();
-int APS5_VABI _ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE();
 int APS5_VABI _ZN7WebCore25ArchiveResourceCollection21archiveResourceForURLERKN3WTF3URLE();
 int APS5_VABI _ZN7WebCore25DropShadowFilterOperation6createERKNS_8IntPointEiRKNS_5ColorE();
 int APS5_VABI _ZN7WebCore25DropShadowFilterOperationC1ERKNS_8IntPointEiRKNS_5ColorE();
