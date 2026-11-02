@@ -81,6 +81,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Error.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/ThermalSensors.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Signals.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SigvecRegistration.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SignalSets.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Notification.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/UserContext.cpp
@@ -804,6 +805,46 @@ if(BUILD_TESTING)
     set_tests_properties(guest_pthread_join_detach PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_pthread_join_detach PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_pthread_handle_after_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadHandleAfterExit.cpp)
+    target_include_directories(guest_pthread_handle_after_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pthread_handle_after_exit_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_pthread_handle_after_exit_tests)
+    add_test(NAME guest_pthread_handle_after_exit COMMAND guest_pthread_handle_after_exit_tests)
+    set_tests_properties(guest_pthread_handle_after_exit PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pthread_handle_after_exit PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_pthread_detach_attr_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadDetachAttr.cpp)
+    target_include_directories(guest_pthread_detach_attr_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pthread_detach_attr_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_pthread_detach_attr_tests)
+    add_test(NAME guest_pthread_detach_attr COMMAND guest_pthread_detach_attr_tests)
+    set_tests_properties(guest_pthread_detach_attr PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pthread_detach_attr PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_pthread_released_handle_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadReleasedHandle.cpp)
+    target_include_directories(guest_pthread_released_handle_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pthread_released_handle_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_pthread_released_handle_tests)
+    add_test(NAME guest_pthread_released_handle COMMAND guest_pthread_released_handle_tests)
+    set_tests_properties(guest_pthread_released_handle PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pthread_released_handle PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_pthread_final_release_race_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadFinalReleaseRace.cpp)
+    target_include_directories(guest_pthread_final_release_race_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pthread_final_release_race_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_pthread_final_release_race_tests)
+    add_test(NAME guest_pthread_final_release_race COMMAND guest_pthread_final_release_race_tests)
+    set_tests_properties(guest_pthread_final_release_race PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pthread_final_release_race PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_pthread_attr_errors_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadAttrErrors.cpp)
@@ -2193,6 +2234,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_posix_specific PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_pipe_fault_tests ${LIBS_INCLUDE_DIR}/tests/GuestPipeFault.cpp)
+    target_include_directories(guest_pipe_fault_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pipe_fault_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_pipe_fault_tests)
+    add_test(NAME guest_pipe_fault COMMAND guest_pipe_fault_tests)
+    set_tests_properties(guest_pipe_fault PROPERTIES TIMEOUT 15)
+    if(WIN32)
+        set_tests_properties(guest_pipe_fault PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_rename_dot_tests ${LIBS_INCLUDE_DIR}/tests/GuestRenameDot.cpp)
     target_include_directories(guest_rename_dot_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_rename_dot_tests PRIVATE libkernel libc)
@@ -2255,8 +2306,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_fcntl_sync PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_stream_close_tests ${LIBS_INCLUDE_DIR}/tests/GuestStreamClose.cpp)
+    target_include_directories(guest_stream_close_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_stream_close_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_stream_close_tests)
+    add_test(NAME guest_stream_close COMMAND guest_stream_close_tests)
+    set_tests_properties(guest_stream_close PROPERTIES TIMEOUT 15)
     if(WIN32)
-        set_tests_properties(guest_kernel_fcntl guest_append_writes PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_kernel_fcntl guest_append_writes guest_stream_close PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test_executable(guest_file_lock_tests ${LIBS_INCLUDE_DIR}/tests/GuestFileLock.cpp)
         target_include_directories(guest_file_lock_tests PRIVATE ${LIBS_INCLUDE_DIR})
