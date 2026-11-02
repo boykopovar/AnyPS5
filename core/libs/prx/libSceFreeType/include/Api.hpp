@@ -4,6 +4,7 @@
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libSceFreeType/include/PostScriptInfo.hpp"
 #include "SceTypes.hpp"
+#include "prx/libSceFreeType/include/MemoryRecord.hpp"
 
 extern "C" {
 
