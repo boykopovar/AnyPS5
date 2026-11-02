@@ -895,6 +895,7 @@ static HostIpv6Selection QueryHostIpv6Selection() {
     if (GetAdaptersAddresses(AF_INET6, flags, nullptr, adapters, &size) != NO_ERROR) return found;
     for (auto* adapter = adapters; adapter; adapter = adapter->Next) {
         if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        HostIpv6Address adapterGlobal;
         HostIpv6Address adapterLinkLocal;
         for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
             if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET6) continue;
@@ -904,15 +905,16 @@ static HostIpv6Selection QueryHostIpv6Selection() {
             candidate.prefix = unicast->OnLinkPrefixLength;
             candidate.valid = true;
             if (Ipv6IsGlobal(address->sin6_addr)) {
-                if (!found.global.valid) {
-                    found.global = candidate;
-                    if (adapterLinkLocal.valid) found.linkLocalOfGlobal = adapterLinkLocal;
-                }
+                if (!adapterGlobal.valid) adapterGlobal = candidate;
             } else if (IN6_IS_ADDR_LINKLOCAL(&address->sin6_addr)) {
-                if (!found.linkLocal.valid) found.linkLocal = candidate;
                 if (!adapterLinkLocal.valid) adapterLinkLocal = candidate;
             }
         }
+        if (adapterGlobal.valid && !found.global.valid) {
+            found.global = adapterGlobal;
+            found.linkLocalOfGlobal = adapterLinkLocal;
+        }
+        if (!found.linkLocal.valid && adapterLinkLocal.valid) found.linkLocal = adapterLinkLocal;
     }
     return found;
 }
