@@ -17,7 +17,7 @@
 
 ### Known export names; ABI prototypes unverified
 
-- The 127 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
+- The 121 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
 
 ### Older callable exports
 
@@ -750,12 +750,6 @@
 | `WKSessionStateCopyData` | `Uybzrh+1nJE` |
 | `WKSessionStateCreateFromData` | `AMrPlFNJec8` |
 | `WKTextCheckerSetTestingMode` | `uhbwdrVWKnk` |
-| `WKURLCopyHostName` | `eL7PAmyp2fs` |
-| `WKURLCopyLastPathComponent` | `zjB-cbY-OcE` |
-| `WKURLCopyPath` | `DZzXHBYmlw0` |
-| `WKURLCopyScheme` | `GmJyq9LDPJs` |
-| `WKURLCreateWithBaseURL` | `W+FQt2MUK+4` |
-| `WKURLIsEqual` | `S9pzhyNVdFE` |
 | `WKURLRequestCopyFirstPartyForCookies` | `l0Hmd0lFea8` |
 | `WKURLRequestCopyHTTPMethod` | `SxWVkTIB01Y` |
 | `WKURLRequestCopySettingHTTPBody` | `LOgEfXqoLL0` |
