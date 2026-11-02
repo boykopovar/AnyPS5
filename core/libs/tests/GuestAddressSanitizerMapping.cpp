@@ -31,6 +31,15 @@ int main(int argc, char* argv[]) {
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     if (si.dwPageSize != 4096) return 1;
+    if (argc > 1 && std::string_view(argv[1]) == "lazy") {
+        MEMORY_BASIC_INFORMATION region{};
+        if (VirtualQuery(reinterpret_cast<void*>(REGION_BASE), &region, sizeof(region)) != sizeof(region) || region.State != MEM_FREE) return 10;
+        constexpr std::uintptr_t app = 0x30000000;
+        __asan_poison_memory_region(reinterpret_cast<const volatile void*>(app), 8);
+        if (VirtualQuery(reinterpret_cast<void*>(REGION_BASE), &region, sizeof(region)) != sizeof(region) || region.State == MEM_FREE) return 11;
+        __asan_unpoison_memory_region(reinterpret_cast<const volatile void*>(app), 8);
+        return 0;
+    }
     if (argc > 1 && std::string_view(argv[1]) == "collision") {
         void* prep = VirtualAlloc(reinterpret_cast<void*>(REGION_BASE), 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         if (prep != reinterpret_cast<void*>(REGION_BASE)) return 2;
