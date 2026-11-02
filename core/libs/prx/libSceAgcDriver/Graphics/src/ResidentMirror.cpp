@@ -616,13 +616,13 @@ std::shared_ptr<Buffer> ResidentBuffer::RecordReadback(VkCommandBuffer commands,
 std::shared_ptr<Buffer> ResidentBuffer::RecordReference(std::uint64_t guest, std::uint64_t bytes) {
     GuestMemory::AssertGpuLockHeld("heap mirror reference copy");
     auto* recorder = Recorder::Active();
-    if (recorder == nullptr || Recorder::InCompletion()) return readbackBatch(guest, bytes);
+    if (recorder == nullptr) return readbackBatch(guest, bytes);
     const auto commands = recorder->Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     auto staging = RecordReadback(commands, guest, bytes);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0);
-    recorder->Keep(staging);
+    recorder->Keep(staging, static_cast<std::size_t>(bytes));
     recorder->Keep(shared_from_this());
     return staging;
 }

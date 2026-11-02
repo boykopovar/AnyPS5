@@ -190,7 +190,7 @@ std::uint32_t Pattern(std::uint32_t thread) {
     return 0x5a000000u + thread * 0x00010203u + 1u;
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, bool wait = true) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -202,10 +202,10 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
-    device.WaitIdle();
+    if (wait) device.WaitIdle();
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::uint64_t read, std::uint64_t written, const OutputBlock& output) {
+void Dispatch(AgcDriver::VulkanDevice& device, std::uint64_t read, std::uint64_t written, const OutputBlock& output, bool wait = true) {
     std::fill(output.Data(), output.Data() + Threads, 0xdeadbeefu);
     std::vector<std::uint32_t> userData(12, 0u);
     userData[0] = static_cast<std::uint32_t>(read);
@@ -214,11 +214,11 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint64_t read, std::uint64_t
     const auto store = BufferDescriptor(written + StoreBlock, static_cast<std::uint32_t>(Threads * sizeof(std::uint32_t)));
     std::copy(out.begin(), out.end(), userData.begin() + 4);
     std::copy(store.begin(), store.end(), userData.begin() + 8);
-    Run(device, Code, userData);
+    Run(device, Code, userData, wait);
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, const GuestHeap& read, const GuestHeap& written, const OutputBlock& output) {
-    Dispatch(device, read.Address(), written.Address(), output);
+void Dispatch(AgcDriver::VulkanDevice& device, const GuestHeap& read, const GuestHeap& written, const OutputBlock& output, bool wait = true) {
+    Dispatch(device, read.Address(), written.Address(), output, wait);
 }
 
 void Copy(AgcDriver::VulkanDevice& device, std::uint64_t source, const OutputBlock& output) {
@@ -328,6 +328,35 @@ void PartialBlockTests(AgcDriver::VulkanDevice& device) {
         const auto word = thread + Shift;
         const auto expected = word < Threads ? word * 4u : word == Threads ? 0x66u : word == Threads + 1 ? 0x55u : 0u;
         Require(output.Data()[thread] == expected, "resident heap mirror: a GPU read of a block holding GPU stores and CPU writes read " + Hex(output.Data()[thread]) + " at word " + std::to_string(word) + ", expected " + Hex(expected));
+    }
+}
+
+void ConcurrentWriteTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t Neighbor = StoreBlock + Threads * sizeof(std::uint32_t);
+    constexpr std::uint32_t Shift = Threads / 2;
+    GuestHeap read(false);
+    GuestHeap written(true);
+    const OutputBlock output;
+    for (std::uint32_t thread = 0; thread * ThreadStride < Block; ++thread) read.Store(thread * ThreadStride, Pattern(thread));
+    written.Store(Neighbor, 0x66u);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    Dispatch(device, read, written, output, false);
+    written.Store(Neighbor, 0x77u);
+    written.Store(Neighbor + sizeof(std::uint32_t), 0x55u);
+    device.WaitIdle();
+    CheckStores(written, "concurrent CPU writes, first dispatch");
+    Require(written.Load(Neighbor) == 0x77u && written.Load(Neighbor + sizeof(std::uint32_t)) == 0x55u, "resident heap mirror: the write-back after a dispatch rolled back CPU writes made next to its stores while it was in flight: " + Hex(written.Load(Neighbor)) + " " + Hex(written.Load(Neighbor + sizeof(std::uint32_t))));
+    Dispatch(device, read, written, output, false);
+    Dispatch(device, read, written, output, false);
+    written.Store(Neighbor + 2 * sizeof(std::uint32_t), 0x44u);
+    device.WaitIdle();
+    CheckStores(written, "two dispatches writing the same range");
+    Require(written.Load(Neighbor) == 0x77u && written.Load(Neighbor + 2 * sizeof(std::uint32_t)) == 0x44u, "resident heap mirror: two dispatches writing the same range lost CPU writes next to it: " + Hex(written.Load(Neighbor)) + " " + Hex(written.Load(Neighbor + 2 * sizeof(std::uint32_t))));
+    Copy(device, written.Address() + StoreBlock + Shift * sizeof(std::uint32_t), output);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        const auto word = thread + Shift;
+        const auto expected = word < Threads ? word * 4u : word == Threads ? 0x77u : word == Threads + 1 ? 0x55u : word == Threads + 2 ? 0x44u : 0u;
+        Require(output.Data()[thread] == expected, "resident heap mirror: a GPU read after CPU writes made while dispatches were in flight read " + Hex(output.Data()[thread]) + " at word " + std::to_string(word) + ", expected " + Hex(expected));
     }
 }
 
@@ -623,6 +652,7 @@ int main() {
             ResidentTests(*device);
             StagingChunkTests(*device);
             PartialBlockTests(*device);
+            ConcurrentWriteTests(*device);
             ReusedAddressTests(*device);
             JoinedImportTests(*device);
         } else {

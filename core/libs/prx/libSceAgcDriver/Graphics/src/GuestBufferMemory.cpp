@@ -6306,7 +6306,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
                 recording = true;
             }
             heapReadbacks.emplace_back(from, region.mirror->resident->RecordReadback(commands, from, to - from));
-            recorder.Keep(heapReadbacks.back().second);
+            recorder.Keep(heapReadbacks.back().second, static_cast<std::size_t>(to - from));
             copiedBytes += to - from;
         }
     }
