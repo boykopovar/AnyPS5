@@ -411,6 +411,8 @@ class MarkdownCellTests(unittest.TestCase):
 
 
 class ReportSizeCapTests(unittest.TestCase):
+    CAP_UNDER_GITHUB_LIMIT = 60000
+
     def test_empty_report_stays_empty(self):
         self.assertEqual(pr_overlap.report({}, "https://example.invalid/blob/base"), "")
 
@@ -434,7 +436,7 @@ class ReportSizeCapTests(unittest.TestCase):
             "|---|---|\n"
             "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
         ))
-        self.assertLessEqual(len(report), pr_overlap.MAX_REPORT_CHARS)
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
 
     def test_pathological_report_with_many_overlaps_and_paths_is_capped(self):
         rows = {
@@ -446,7 +448,7 @@ class ReportSizeCapTests(unittest.TestCase):
             for number in range(2, 400)
         }
         report = pr_overlap.report(rows, "https://github.com/boykopovar/AnyPS5/blob/deadbeef")
-        self.assertLessEqual(len(report), pr_overlap.MAX_REPORT_CHARS)
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
         self.assertTrue(report.startswith(pr_overlap.MARKER))
         match = re.search(r"_Report truncated: (\d+) more lines omitted\._\n\Z", report)
         self.assertIsNotNone(match)
@@ -457,6 +459,14 @@ class ReportSizeCapTests(unittest.TestCase):
         self.assertEqual(table_rows[1], "|---|---|---|---|")
         pipe_counts = {line.count("|") for line in table_rows}
         self.assertEqual(pipe_counts, {5})
+
+    def test_single_oversized_row_still_yields_a_capped_report(self):
+        rows = {2: {"added": set(),
+                    "conflicts": {f"core/libs/prx/libExample/path_{i}.cpp": [(1, 2)] for i in range(2000)}}}
+        report = pr_overlap.report(rows, "https://github.com/boykopovar/AnyPS5/blob/deadbeef")
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
+        self.assertTrue(report.startswith(pr_overlap.MARKER))
+        self.assertRegex(report, r"_Report truncated: \d+ more lines omitted\._\n\Z")
 
 
 class CommentStateTests(unittest.TestCase):
