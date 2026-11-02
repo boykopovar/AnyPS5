@@ -542,6 +542,7 @@ int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len)
     if (what == KenvSet || what == KenvUnset) return static_cast<int>(Fail(GuestEperm));
     std::string key;
     if (const int error = CopyKernelEnvString(name, KenvNameLength + 1, key)) return static_cast<int>(Fail(error));
+    if (what == KenvGet && len < 0) return static_cast<int>(Fail(GuestEinval));
     if (what == KenvGet) return static_cast<int>(Fail(GuestEnoent));
     return static_cast<int>(Fail(GuestEinval));
 }
