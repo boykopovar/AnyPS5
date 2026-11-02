@@ -1589,16 +1589,6 @@ int APS5_VABI libwebrtcUnknown47(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZThn8_NK3rtc14NetworkManager16GetMdnsResponderEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("01K7H6PnH5g", libwebrtcUnknown48);
 int APS5_VABI libwebrtcUnknown48(void) {
     NotImplemented_nid_no_patch("01K7H6PnH5g");
