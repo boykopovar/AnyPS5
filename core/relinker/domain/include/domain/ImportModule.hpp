@@ -58,13 +58,24 @@ inline std::string ImportModule(const std::string& symbol, const std::map<std::u
     if (name.empty()) return {};
     if (ModuleSuffix(name).empty()) name += ".prx";
     if (std::find(dependencies.begin(), dependencies.end(), name) != dependencies.end()) return name;
-    std::string matched;
-    for (const auto& dependency : dependencies) {
-        if (ImportModuleName(dependency) != ImportModuleName(name)) continue;
-        if (!matched.empty() && matched != dependency) throw RelinkerException("Ambiguous import module dependency: " + name);
-        matched = dependency;
-    }
-    return matched;
+    const auto normalized = ImportModuleName(name);
+    auto lookup = normalized;
+    if (lookup == "libmonosgen") lookup = "libmonosgen-2_0";
+    if (lookup == "libSceLibreSSl3") lookup = "libSceLibreSsl3";
+    if (lookup == "libSceLibreSSL") lookup = "libSceLibreSsl";
+    if (lookup == "libSceJson") lookup = "libSceJson2";
+    if (lookup == "libSceAudiodec") lookup = "libSceAudiodec_native";
+    const auto findMatch = [&](const std::string& candidate) {
+        std::string matched;
+        for (const auto& dependency : dependencies) {
+            if (ImportModuleName(dependency) != candidate) continue;
+            if (!matched.empty() && matched != dependency) throw RelinkerException("Ambiguous import module dependency: " + name);
+            matched = dependency;
+        }
+        return matched;
+    };
+    if (const auto matched = findMatch(normalized); !matched.empty()) return matched;
+    return lookup == normalized ? std::string{} : findMatch(lookup);
 }
 
 }
