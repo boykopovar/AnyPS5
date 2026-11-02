@@ -5,14 +5,21 @@
 #include <cstring>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 namespace {
 
+std::atomic<unsigned> runningHelpers{0};
+
 class ComparePool {
 public:
     explicit ComparePool(unsigned count) {
-        for (unsigned i = 0; i < count; ++i) std::thread([this] { work(); }).detach();
+        stopping = count == 0;
+        for (unsigned i = 0; i < count; ++i) {
+            workers.emplace_back([this] { work(); });
+            runningHelpers.fetch_add(1, std::memory_order_acq_rel);
+        }
     }
 
     bool Run(std::span<const CompareSpan> spans, std::span<std::uint8_t> equal) {
@@ -20,6 +27,7 @@ public:
         if (!caller.owns_lock()) return false;
         {
             std::unique_lock lock(mutex);
+            if (stopping) return false;
             finished.wait(lock, [&] { return working == 0; });
             jobSpans = spans;
             jobEqual = equal;
@@ -34,6 +42,21 @@ public:
         jobSpans = {};
         jobEqual = {};
         return true;
+    }
+
+    void Stop() {
+        std::vector<std::thread> joined;
+        {
+            std::lock_guard caller(callers);
+            std::lock_guard lock(mutex);
+            stopping = true;
+            joined.swap(workers);
+        }
+        wake.notify_all();
+        for (auto& worker : joined) {
+            if (worker.get_id() == std::this_thread::get_id()) worker.detach();
+            else worker.join();
+        }
     }
 
 private:
@@ -51,7 +74,8 @@ private:
         std::uint64_t seen = 0;
         std::unique_lock lock(mutex);
         for (;;) {
-            wake.wait(lock, [&] { return generation != seen; });
+            wake.wait(lock, [&] { return generation != seen || stopping; });
+            if (stopping) break;
             seen = generation;
             const auto spans = jobSpans;
             const auto equal = jobEqual;
@@ -62,6 +86,7 @@ private:
             --working;
             if (working == 0) finished.notify_all();
         }
+        runningHelpers.fetch_sub(1, std::memory_order_acq_rel);
     }
 
     std::mutex callers;
@@ -74,10 +99,32 @@ private:
     std::span<std::uint8_t> jobEqual;
     std::atomic<std::size_t> next{0};
     std::atomic<std::size_t> done{0};
+    std::vector<std::thread> workers;
+    bool stopping = false;
 };
 
+std::mutex& poolLifecycle() {
+    static std::mutex lifecycle;
+    return lifecycle;
+}
+
+bool& poolStopped() {
+    static bool stopped = false;
+    return stopped;
+}
+
+std::atomic<ComparePool*>& createdPool() {
+    static std::atomic<ComparePool*> created{nullptr};
+    return created;
+}
+
 ComparePool* sharedPool() {
-    static ComparePool* const pool = new ComparePool(CompareHelpers());
+    static ComparePool* const pool = [] {
+        std::lock_guard lifecycle(poolLifecycle());
+        auto* created = new ComparePool(poolStopped() ? 0u : CompareHelpers());
+        createdPool().store(created, std::memory_order_release);
+        return created;
+    }();
     return pool;
 }
 
@@ -95,6 +142,20 @@ void CompareSpansFrom(std::span<const CompareSpan> spans, std::span<std::uint8_t
         if (sharedPool()->Run(spans, equal)) return;
     }
     for (std::size_t index = 0; index < spans.size(); ++index) equal[index] = std::memcmp(spans[index].first, spans[index].second, spans[index].bytes) == 0 ? 1 : 0;
+}
+
+void StopCompareHelpers() {
+    ComparePool* pool = nullptr;
+    {
+        std::lock_guard lifecycle(poolLifecycle());
+        poolStopped() = true;
+        pool = createdPool().load(std::memory_order_acquire);
+    }
+    if (pool != nullptr) pool->Stop();
+}
+
+unsigned CompareHelpersRunning() {
+    return runningHelpers.load(std::memory_order_acquire);
 }
 
 void CompareSpans(std::span<const CompareSpan> spans, std::span<std::uint8_t> equal) {

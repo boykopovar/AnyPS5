@@ -115,6 +115,8 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("Reference", Void, U1),
     makeMeta("ReferenceU32", Void, U32),
     makeMeta("UnlinkedCall", Void, U32, U32, U32),
+    makeMeta("WindowLaneGuard", Void, U32, U32, U32, U32, U32),
+    makeMeta("DescriptorFault", Void, U1, U32, U32, U32),
     makeMeta("GetUserData", U32, ScalarReg),
     makeMeta("GetShaderBase", U64),
     makeMeta("ShaderClock", U64),
@@ -123,6 +125,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("MeshArgument", U32, U32),
     makeMeta("MeshRestartStart", U32, U32, U1),
     makeMeta("MeshAllocate", Void, U32),
+    makeMeta("MeshCapturedWord", U32, U32, U1),
     makeMeta("TessellationBase", U32, U32),
     makeMeta("GetTessellationAttribute", U32, U32, U32, U1),
     makeMeta("SetTessellationAttribute", Void, U32, U32, U32, U1),
@@ -474,6 +477,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("DataAppend", U32, U32, U1, U32, U32),
     makeMeta("DataConsume", U32, U32, U1, U32, U32),
     makeMeta("DataOrderedCount", U32, U32, U1, U32, U32, U32),
+    makeMeta("DataOrderedSwap", U32, U32, U1, U32, U32, U32),
     makeMeta("SwizzleU32", U32, U32, U32, U1),
     makeMeta("ImageQueryDimensions", U32x4, ImageResource, ImageAddress, U1),
     makeMeta("ImageQueryLod", U32x4, ImageResource, SamplerResource, ImageAddress, U1),
@@ -698,6 +702,7 @@ SharedAccess SharedAccessOf(IrOpcode opcode) {
             return SharedAccess::Atomic;
         case IrOpcode::DataAppend:
         case IrOpcode::DataOrderedCount:
+        case IrOpcode::DataOrderedSwap:
             return SharedAccess::Append;
         case IrOpcode::DataConsume:
             return SharedAccess::Consume;
@@ -892,6 +897,8 @@ bool IrOpcodeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::Reference:
         case IrOpcode::ReferenceU32:
         case IrOpcode::UnlinkedCall:
+        case IrOpcode::WindowLaneGuard:
+        case IrOpcode::DescriptorFault:
         case IrOpcode::SetTessellationAttribute:
         case IrOpcode::InterpolateHostP2:
         case IrOpcode::SetThreadBitScalarRegister:

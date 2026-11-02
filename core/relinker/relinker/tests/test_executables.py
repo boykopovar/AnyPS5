@@ -1,11 +1,13 @@
 from pathlib import Path
 import os
+import stat
 import subprocess
 import sys
 import tempfile
 
 from test_guest_host_libc import importing
 from test_guest_intel_trampolines import main_fixture
+from test_guest_module_dir import pe_export_names
 from test_guest_module_directories import module_with_symbol, needed_libraries
 from test_guest_needed_modules import executable_with_needed
 
@@ -25,7 +27,7 @@ def main():
             output = case / "out" / ("app.exe" if windows else "app.elf")
             output.parent.mkdir(exist_ok=True)
             result = subprocess.run([str(relinker), *(["--windows"] if windows else []), "--registry", *options, str(source), str(output)],
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=60)
             return result, output
 
         for windows in (False, True):
@@ -42,6 +44,9 @@ def main():
             assert sorted(path.name for path in output.parent.rglob("*.guest.prx")) == ["bundled.prx.guest.prx"]
             if not windows:
                 assert "$ORIGIN/app0/sce_module/bundled.prx.guest.prx" in needed_libraries(secondary.read_bytes())
+                if os.name != "nt":
+                    for executable in (output, secondary):
+                        assert stat.S_IMODE(executable.stat().st_mode) & 0o111 == 0o111, (executable, oct(executable.stat().st_mode))
             if windows and os.name == "nt":
                 for executable in (output, secondary):
                     run = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30)
@@ -59,13 +64,42 @@ def main():
                 assert result.returncode == 2 and message in result.stderr, (options, result.stderr)
                 assert not output.exists(), options
 
+            for linked, options in (("eboot.exe", ["--executable", "picker/eboot.exe"]),
+                                    ("picker.exe", ["--executable", "picker/picker.bin", "--executable", "picker/picker.exe"])):
+                case = work / f"{windows}-hardlink-{linked}"
+                (case / "picker").mkdir(parents=True)
+                target = case / ("eboot.bin" if linked == "eboot.exe" else "picker/picker.bin")
+                target.write_bytes(main_fixture())
+                os.link(target, case / "picker" / linked)
+                result, output = convert(case, windows, options)
+                assert result.returncode == 2 and "converted twice" in result.stderr, (linked, result.stdout, result.stderr)
+                assert not output.exists(), linked
+
+            for index, (directory, executable) in enumerate((("Picker", "picker/picker.bin"), ("picker", "PICKER/picker.bin"), ("linked", "picker/picker.bin"))):
+                case = work / f"{windows}-identity-{index}"
+                case.mkdir()
+                insensitive = (work / f"{windows}-IDENTITY-{index}").exists()
+                if (directory == "linked" and os.name == "nt") or (executable != "picker/picker.bin" and not insensitive):
+                    continue
+                if directory == "linked":
+                    (case / "linked").symlink_to("picker", target_is_directory=True)
+                elif not insensitive:
+                    (case / directory).mkdir()
+                result, output = convert(case, windows, ["--module-dir", directory, "--executable", executable])
+                if insensitive or directory == "linked":
+                    assert result.returncode == 2 and "in a guest module directory" in result.stderr, (directory, executable, result.stderr)
+                    assert not output.exists(), (directory, executable)
+                else:
+                    assert result.returncode == 0, (directory, executable, result.stdout, result.stderr)
+
             case = work / f"{windows}-needed"
             (case / "Media" / "Modules").mkdir(parents=True)
             (case / "Media" / "Modules" / "needed.prx").write_bytes(module_with_symbol(True))
             result, output = convert(case, windows, ["--module-dir", "Media/Modules", "--executable", "picker/picker.bin"], executable_with_needed())
             if windows:
-                assert result.returncode == 2 and "Guest modules convert differently for picker/picker.bin" in result.stderr, result.stderr
-                assert not output.exists()
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                assert (output.parent / "picker.picker.bin.exe").exists()
+                assert "__aps5_guest_initialize" in pe_export_names((output.parent / "app0" / "Media" / "Modules" / "needed.prx.guest.prx").read_bytes())
             else:
                 assert result.returncode == 0, (result.stdout, result.stderr)
                 secondary = output.parent / "picker.picker.bin.elf"
@@ -84,6 +118,13 @@ def main():
                     assert needed_libraries(modules[0].read_bytes()) == [], needed_libraries(modules[0].read_bytes())
                     assert "libSceVideoOut.prx" in needed_libraries(output.read_bytes())
                     assert "libScePad.prx" in needed_libraries(secondary.read_bytes())
+
+        if os.name != "nt":
+            result, output = convert(work / "macos-picker", False, ["--macos", "--executable", "picker/picker.bin"])
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            for executable in (output, output.parent / "picker.picker.bin.elf"):
+                assert executable.read_bytes().startswith(bytes.fromhex("cffaedfe")), executable
+                assert stat.S_IMODE(executable.stat().st_mode) & 0o111 == 0o111, (executable, oct(executable.stat().st_mode))
 
 
 if __name__ == "__main__":

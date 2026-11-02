@@ -38,7 +38,6 @@ struct MemoryOperand {
 [[nodiscard]] MemoryOperand DecodeMemoryOperand(const std::uint8_t* data, std::size_t length, std::size_t modRmOffset, std::uint8_t rex, std::vector<std::uint8_t> prefixes);
 
 void EmitSse(std::vector<std::uint8_t>& out, std::uint8_t prefix, std::initializer_list<std::uint8_t> opcode, std::uint8_t dst, std::uint8_t src);
-void EmitShiftImm(std::vector<std::uint8_t>& out, std::uint8_t extension, std::uint8_t reg, std::uint8_t imm);
 void ApplyStubRelocations(std::span<std::uint8_t> body, std::span<const StubRelocation> relocations, std::uint64_t siteAddress, std::uint64_t stubAddress, Domain::FileByteOffset failureOffset);
 
 class StubBodyBuilder {

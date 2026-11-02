@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -16,13 +17,6 @@
 #include <utility>
 #include <vector>
 
-extern "C" {
-void* APS5_VABI malloc_nid_postfix(std::size_t);
-void APS5_VABI free_nid_postfix(void*);
-void* APS5_VABI realloc_nid_postfix(void*, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-}
-
 namespace {
 
 constexpr std::size_t HeaderBytes = 2 * sizeof(void*);
@@ -40,6 +34,7 @@ bool checkThreshold(std::size_t bytes, unsigned char value) {
     pointer[bytes - 1] = static_cast<unsigned char>(value + 1);
     const bool preserved = pointer[0] == value && pointer[bytes - 1] == static_cast<unsigned char>(value + 1);
     free_nid_postfix(pointer);
+
     return preserved;
 }
 
@@ -77,14 +72,15 @@ DWORD runChild(const wchar_t* mode) {
 
 int runMallocOverflow() {
     registerDefaultHeap();
-    *__error_nid_postfix() = 0;
+    *__error_nid_postfix() = 77;
     try {
         auto* pointer = malloc_nid_postfix(std::numeric_limits<std::size_t>::max() - HeaderBytes);
         if (pointer != nullptr) {
             free_nid_postfix(pointer);
+
             return 1;
         }
-        return *__error_nid_postfix() == 12 ? 0 : 4;
+        return *__error_nid_postfix() == 77 ? 0 : 4;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "malloc failed with an unexpected exception: %s\n", error.what());
         return 2;
@@ -100,14 +96,15 @@ int runReallocOverflow() {
     auto* original = static_cast<unsigned char*>(malloc_nid_postfix(bytes));
     std::memset(original, 0x5a, bytes);
     bool rejectedWithExpectedError = false;
-    *__error_nid_postfix() = 0;
+    *__error_nid_postfix() = 77;
     try {
         auto* result = realloc_nid_postfix(original, std::numeric_limits<std::size_t>::max() - HeaderBytes);
         if (result != nullptr) {
             free_nid_postfix(result);
+
             return 4;
         }
-        rejectedWithExpectedError = *__error_nid_postfix() == 12;
+        rejectedWithExpectedError = *__error_nid_postfix() == 77;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "realloc failed with an unexpected exception: %s\n", error.what());
     } catch (...) {
@@ -141,6 +138,7 @@ int runReallocOverflow() {
     if (result == 0) {
         free_nid_postfix(replacement);
         free_nid_postfix(original);
+
     }
     return static_cast<int>(result);
 }

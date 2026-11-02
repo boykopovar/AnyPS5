@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <future>
 #include <iostream>
@@ -5,17 +7,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-extern "C" int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-extern "C" int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-extern "C" int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-extern "C" int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
-extern "C" int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t size);
-extern "C" int APS5_VABI scePthreadAttrGetstack(const PthreadAttr* attr, void** address, std::size_t* size);
-extern "C" Pthread APS5_VABI scePthreadSelf();
-extern "C" void APS5_VABI scePthreadExit(void* retval);
-extern "C" int APS5_VABI scePthreadDetach(Pthread thread);
 
 struct ThreadContext {
     Pthread thread = nullptr;

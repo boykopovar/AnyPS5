@@ -1,0 +1,73 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI ScePsmMonoArrayAddrWithSize(void);
+int APS5_VABI ScePsmMonoArrayLength(void);
+int APS5_VABI ScePsmMonoDomainGet(void);
+int APS5_VABI ScePsmMonoFree(void);
+int APS5_VABI ScePsmMonoGcWbarrierGenericStore(void);
+int APS5_VABI ScePsmMonoStringChars(void);
+int APS5_VABI ScePsmMonoStringFromUtf16(void);
+int APS5_VABI ScePsmMonoStringLength(void);
+int APS5_VABI ScePsmMonoStringNew(void);
+int APS5_VABI ScePsmMonoStringNewWrapper(void);
+int APS5_VABI ScePsmMonoStringToUtf8(void);
+int APS5_VABI _ZN3sce3pss4core14IntHandleTable13NextIntHandleEv(void);
+int APS5_VABI _ZN3sce3pss4core8graphics14NativeGraphics18ReleaseVideoMemoryEPv(void);
+int APS5_VABI _ZN3sce3pss4core8graphics14NativeGraphics19AllocateVideoMemoryEjj(void);
+int APS5_VABI _ZN3sce3pss4core8graphics14NativeGraphics19AllocateVideoMemoryEjjPv(void);
+int APS5_VABI _ZN3sce3pss4core8graphics14NativeGraphics19ReleaseSystemMemoryEPv(void);
+int APS5_VABI _ZN3sce3pss4core8graphics14NativeGraphics20AllocateSystemMemoryEjj(void);
+int APS5_VABI _ZN3sce3pss4core8graphics14NativeGraphics20AllocateSystemMemoryEjjPv(void);
+int APS5_VABI _ZN3sce3pss4core9PsmObjectC1Ev(void);
+int APS5_VABI _ZN3sce3pss4core9PsmObjectC2Ev(void);
+int APS5_VABI _ZN3sce3pss4core9PsmObjectD0Ev(void);
+int APS5_VABI _ZN3sce3pss4core9PsmObjectD1Ev(void);
+int APS5_VABI _ZN3sce3pss4core9PsmObjectD2Ev(void);
+int APS5_VABI _ZN3sce3pss4core9threading4Cond4WaitEi(void);
+int APS5_VABI _ZN3sce3pss4core9threading4Cond6NotifyEv(void);
+int APS5_VABI _ZN3sce3pss4core9threading4CondC1ERNS2_5MutexEPKci(void);
+int APS5_VABI _ZN3sce3pss4core9threading4CondC2ERNS2_5MutexEPKci(void);
+int APS5_VABI _ZN3sce3pss4core9threading4CondD1Ev(void);
+int APS5_VABI _ZN3sce3pss4core9threading4CondD2Ev(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework11PsmArrayObj6LengthEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework11PsmArrayObj9ToPointerEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework11PsmCallList10UnregisterEPFvPvES4_(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework11PsmCallList6UpdateEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework11PsmCallList8RegisterEPFvPvES4_(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework11PsmCallListC1Ev(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework11PsmCallListC2Ev(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmEventData8SetValueERKNS_4Json5ValueE(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmFramework10InitializeERKNS2_12PsmInitParamEiPPc(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmFramework20RegisterInternalCallEPKNS2_12PsmCallEntryE(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmFramework24RegisterPInvokeCallTableEPKNS2_15PsmLibraryEntryE(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmFramework3RunEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmFramework8FinalizeEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmInitParamC1Ev(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmInitParamC2Ev(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmStringObj17NewAndStoreStringEPvPc(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmStringObj6ToUtf8Ev(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework12PsmStringObj8FreeUtf8EPc(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework14PsmDelegateObj11FreePointerEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework14PsmDelegateObj15AllocatePointerEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework18PsmFrameworkCsharp21SetEnableNativeMethodEb(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework21PsmMainThreadCallList10UnregisterEPFvPvES4_(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework21PsmMainThreadCallList6UpdateEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework21PsmMainThreadCallList8RegisterEPFvPvES4_(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework23TerminatePsmEventCsharpEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework24InitializePsmEventCsharpEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework27TerminatePsmFrameworkCsharpEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework28InitializePsmFrameworkCsharpEv(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework8PsmEvent10UnregisterEiPFvRKNS2_12PsmEventDataEPvES7_(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework8PsmEvent17RegisterDelegatorEPFvRKNS2_12PsmEventDataEPvES7_(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework8PsmEvent19UnregisterDelegatorEPFvRKNS2_12PsmEventDataEPvES7_(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework8PsmEvent4PostERKNS2_12PsmEventDataE(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework8PsmEvent4SendERKNS2_12PsmEventDataE(void);
+int APS5_VABI _ZN3sce3pss5orbis9framework8PsmEvent8RegisterEiPFvRKNS2_12PsmEventDataEPvES7_(void);
+int APS5_VABI scePsmRegisterInternalCall(void);
+int APS5_VABI scePsmRegisterPInvokeCallTable(void);
+
+}

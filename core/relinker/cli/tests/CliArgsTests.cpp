@@ -52,7 +52,7 @@ void defaults() {
     const auto args = parse({"input.elf", "output.elf"});
     require(args.inputPath == "input.elf", "input path was not captured");
     require(args.outputPath == "output.elf", "output path was not captured");
-    require(!args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
+    require(!args.dryRun && !args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
         !args.toWindows && !args.lazyBinding && !args.autorun && !args.windowsDiagnostics && !args.windowsGui,
         "a flag defaulted to true");
     require(args.unusedFilterLevel == 0u, "unused filter level did not default to 0");
@@ -94,6 +94,25 @@ void singleDashIsPositional() {
     require(args.inputPath == "-x" && args.outputPath == "-o", "a single-dash argument was not treated as a positional");
 }
 
+void optionTerminator() {
+    const auto paths = parse({"--", "--help", "--version"});
+    require(paths.inputPath == "--help" && paths.outputPath == "--version" && !paths.showHelp && !paths.showVersion,
+        "options after the terminator were not treated as paths");
+    const auto target = parse({"--windows", "--", "unused-filter=2", "--registry"});
+    require(target.toWindows && target.inputPath == "unused-filter=2" && target.outputPath == "--registry" &&
+        target.unusedFilterLevel == 0 && !target.writeRegistry, "the terminator changed preceding options or parsed a following one");
+    const auto output = parse({"input.elf", "--", "--"});
+    require(output.inputPath == "input.elf" && output.outputPath == "--", "a second terminator was not a literal path");
+    const auto value = parse({"--rpath", "--", "input.elf", "output.elf"});
+    require(value.runPath == "--" && value.outputPath == "output.elf", "an option value ended option parsing");
+    const auto verify = parse({"--verify-patches", "p.toml", "--", "--windows"});
+    require(verify.inputPath == "--windows" && !verify.toWindows, "a verification path was recorded as an option");
+    expectUsage({"--"});
+    expectUsage({"--", "input.elf"});
+    expectThrows({"--", "", "output.elf"}, "input and output paths must be nonempty");
+    expectThrows({"--", "input.elf", "output.elf", "--help"}, "unexpected argument: --help");
+}
+
 void rpath() {
     const auto args = parse({"--rpath", "/custom/libs", "input.elf", "output.elf"});
     require(args.runPath == "/custom/libs", "--rpath value was not captured");
@@ -125,6 +144,9 @@ void excludeSceModuleConsumesNextTokenVerbatim() {
 
 void excludeSceModuleWithoutValue() {
     expectThrows({"--exclude-sce-module"}, "--exclude-sce-module requires a file name");
+    expectThrows({"--exclude-sce-module", "", "input.elf", "output.elf"}, "--exclude-sce-module requires a file name");
+    const auto args = parse({"--exclude-sce-module", "module with spaces.prx", "input.elf", "output.elf"});
+    require(args.excludedSceModules.count("module with spaces.prx") == 1, "a nonempty excluded file name was changed");
 }
 
 void excludeConflictsWithSkip() {
@@ -169,7 +191,6 @@ void unusedFilterBareWordIsUnknown() {
 
 void unknownOption() {
     expectThrows({"--nonexistent", "input.elf", "output.elf"}, "unknown option: --nonexistent");
-    expectThrows({"--", "input.elf", "output.elf"}, "unknown option: --");
 }
 
 void emptyPositionals() {
@@ -199,6 +220,14 @@ void windowsGuiRequiresWindows() {
     require(ok.windowsGui && ok.toWindows, "--windows-gui with --windows was rejected");
 }
 
+void frameRedZoneRequiresWindows() {
+    const std::string message = "--frame-red-zone requires --windows";
+    expectThrows({"--frame-red-zone", "input.elf", "output.elf"}, message);
+    expectThrows({"--macos", "--frame-red-zone", "input.elf", "output.elf"}, message);
+    const auto ok = parse({"--windows", "--frame-red-zone", "input.elf", "output.elf"});
+    require(ok.frameRedZone && ok.toWindows, "--frame-red-zone with --windows was rejected");
+}
+
 void missingPositionals() {
     expectUsage({});
     expectUsage({"input.elf"});
@@ -212,6 +241,8 @@ void windowsFixedBase() {
         const auto args = parse({"--windows-fixed-base", value, "--windows", "input.elf", "output.exe"});
         require(args.windowsFixedBase == 0x400000, "fixed base was parsed incorrectly");
     }
+    require(parse({"--windows", "--windows-fixed-base", "0x20000", "input.elf", "output.exe"}).windowsFixedBase == 0x20000, "lowest fixed base was rejected");
+    require(parse({"--windows", "--windows-fixed-base", "0x7fffffff0000", "input.elf", "output.exe"}).windowsFixedBase == 0x7fffffff0000, "highest fixed base was rejected");
     require(parse({"--windows", "--windows-fixed-base", "0x400000000", "input.elf", "output.exe"}).windowsFixedBase == 0x400000000, "fixed base was truncated to 32 bits");
     for (const auto& value : {"0", "0x10000", "0x400001", "0x", "-4194304", "+4194304", " 4194304", "0x400000junk", "18446744073709551616", "0x800000000000"})
         expectThrows({"--windows", "--windows-fixed-base", value, "input.elf", "output.exe"}, "--windows-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");
@@ -241,6 +272,24 @@ void linuxFixedBase() {
     expectThrows({"--lazy-binding", "--linux-fixed-base", "0x400000", "input.elf", "output.elf"}, "--linux-fixed-base conflicts with --lazy-binding");
 }
 
+void macosFixedBase() {
+    require(!parse({"--macos", "input.elf", "output"}).macosFixedBase, "fixed base was enabled by default");
+    for (const auto& value : {"0x400000", "0X400000", "4194304"})
+        require(parse({"--macos-fixed-base", value, "--macos", "input.elf", "output"}).macosFixedBase == 0x400000, "fixed base was parsed incorrectly");
+    require(parse({"--macos", "input.elf", "--macos-fixed-base", "0x20000", "output"}).macosFixedBase == 0x20000, "lowest fixed base was rejected");
+    require(parse({"--macos", "--macos-fixed-base", "0x7fffffff0000", "input.elf", "output"}).macosFixedBase == 0x7fffffff0000, "highest fixed base was rejected");
+    require(parse({"--macos", "--macos-fixed-base", "0x400000000", "input.elf", "output"}).macosFixedBase == 0x400000000, "fixed base was truncated to 32 bits");
+    const std::string range = "--macos-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000";
+    for (const auto& value : {"0", "0x10000", "0x400001", "0x408000", "0x", "-4194304", "+4194304", " 4194304", "0x400000junk", "18446744073709551616", "0x800000000000"})
+        expectThrows({"--macos", "--macos-fixed-base", value, "input.elf", "output"}, range);
+    expectThrows({"--macos-fixed-base"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos-fixed-base", "", "--macos", "input.elf", "output"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos-fixed-base", "--macos", "input.elf", "output"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos", "--macos-fixed-base", "0x400000", "--macos-fixed-base", "0x400000", "input.elf", "output"}, "--macos-fixed-base cannot be repeated");
+    expectThrows({"--macos-fixed-base", "0x400000", "input.elf", "output.elf"}, "--macos-fixed-base requires --macos");
+    expectThrows({"--windows", "--macos-fixed-base", "0x400000", "input.elf", "output.exe"}, "--macos-fixed-base requires --macos");
+}
+
 }
 
 void moduleDirectories() {
@@ -248,6 +297,12 @@ void moduleDirectories() {
     require(args.moduleDirectories == std::vector<std::string>{"Media/Plugins", "extra"}, "--module-dir directories were not recorded in order");
     require(args.inputPath == "input.elf" && args.outputPath == "output.elf", "--module-dir consumed a positional path");
     expectThrows({"--module-dir"}, "--module-dir requires a directory");
+    expectThrows({"--module-dir", "", "input.elf", "output.elf"}, "--module-dir requires a directory");
+    const auto literal = parse({"--module-dir", "--windows", "input.elf", "output.elf"});
+    require(literal.moduleDirectories == std::vector<std::string>{"--windows"} && !literal.toWindows,
+        "--module-dir must keep consuming the next token verbatim");
+    const auto spaced = parse({"--module-dir", "module with spaces", "input.elf", "output.elf"});
+    require(spaced.moduleDirectories == std::vector<std::string>{"module with spaces"}, "a nonempty module directory was changed");
     expectThrows({"--skip-sce-module", "--module-dir", "Media/Plugins", "input.elf", "output.elf"}, "--module-dir conflicts with --skip-sce-module");
     expectThrows({"--module-dir", "Media/Plugins", "--skip-sce-module", "input.elf", "output.elf"}, "--module-dir conflicts with --skip-sce-module");
 }
@@ -278,13 +333,67 @@ void targetSelection() {
     expectThrows({"--to-rosetta", "--windows", "input.elf", "output.elf"}, rosettaConflict);
 }
 
+void patchOptions() {
+    auto args = parse({"--patches", "p.toml", "in.elf", "out.elf"});
+    require(args.patchesPath == "p.toml" && !args.noPatches, "--patches value");
+    args = parse({"--no-patches", "in.elf", "out.elf"});
+    require(args.noPatches && args.patchesPath.empty(), "--no-patches");
+    expectThrows({"--patches", "p.toml", "--no-patches", "in.elf", "out.elf"}, "--patches conflicts with --no-patches");
+    expectThrows({"--patches", "p.toml", "--patches", "q.toml", "in.elf", "out.elf"}, "--patches cannot be repeated");
+    expectThrows({"in.elf", "out.elf", "--patches"}, "--patches requires a file");
+}
+
+void verifyMode() {
+    auto args = parse({"--verify-patches", "p.toml", "in.elf"});
+    require(args.verifyPatchesPath == "p.toml" && args.inputPath == "in.elf" && args.outputPath.empty() && !args.verifyOutput, "verify positional");
+    require(!args.sceModulePath.empty(), "input mode keeps the default module path");
+    args = parse({"in.elf", "--verify-patches", "p.toml", "--sce-module-path", "m", "--module-dir", "d", "--exclude-sce-module", "x.prx", "--executable", "a/b.bin"});
+    require(args.sceModulePath == "m" && args.executables.size() == 1, "input mode options");
+    args = parse({"--verify-patches", "p.toml", "--skip-sce-module", "in.elf"});
+    require(args.skipSceModule, "input mode --skip-sce-module");
+    args = parse({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--executable", "a/b.bin"});
+    require(args.verifyOutput && args.sceModulePath.empty() && args.executables.size() == 1, "output mode accepts --executable");
+    const std::string noEffect = "module discovery options have no effect with --verify-output";
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--sce-module-path", "m"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--module-dir", "d"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--exclude-sce-module", "x.prx"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--skip-sce-module"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "in.elf", "extra"}, "unexpected argument: extra");
+    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--frame-red-zone", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
+        expectThrows({"--verify-patches", "p.toml", option, "in.elf"}, std::string(option) + " cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--rpath", "x", "in.elf"}, "--rpath cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--patches", "q.toml", "in.elf"}, "--patches cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "unused-filter=1", "in.elf"}, "unused-filter= cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--linux-fixed-base", "0x10000", "in.elf"}, "--linux-fixed-base cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--macos-fixed-base", "0x20000", "in.elf"}, "--macos-fixed-base cannot be used with --verify-patches");
+    expectThrows({"--verify-output", "in.elf", "out.elf"}, "--verify-output requires --verify-patches");
+    expectThrows({"--verify-patches"}, "--verify-patches requires a file");
+    expectUsage({"--verify-patches", "p.toml"});
+}
+
+void dryRun() {
+    for (const auto* target : {"--windows", "--macos"}) {
+        const auto args = parse({"input.elf", "--dry-run", target, "--registry", "output"});
+        require(args.dryRun && args.writeRegistry, "dry run must preserve conversion options");
+        require(args.inputPath == "input.elf" && args.outputPath == "output", "dry run consumed a positional path");
+    }
+    require(parse({"--dry-run", "input.elf", "output"}).dryRun, "Linux dry run was ignored");
+    require(parse({"--dry-run", "--dry-run", "input.elf", "output"}).dryRun, "repeated dry run was rejected");
+    expectThrows({"--dry-run", "--autorun", "input.elf", "output"}, "--dry-run conflicts with --autorun");
+    expectThrows({"--autorun", "--dry-run", "input.elf", "output"}, "--dry-run conflicts with --autorun");
+    expectThrows({"--verify-patches", "p.toml", "--dry-run", "input.elf"}, "--dry-run cannot be used with --verify-patches");
+    expectUsage({"--dry-run", "input.elf"});
+}
+
 int main() {
     try {
         defaults();
+        dryRun();
         booleanFlags();
         trapSdkSyscallStubs();
         positionalsInterleaveWithFlags();
         singleDashIsPositional();
+        optionTerminator();
         rpath();
         rpathConsumesNextTokenVerbatim();
         rpathWithoutValue();
@@ -305,9 +414,13 @@ int main() {
         tooManyPositionals();
         windowsDiagnosticsRequiresWindows();
         windowsGuiRequiresWindows();
+        frameRedZoneRequiresWindows();
         missingPositionals();
         windowsFixedBase();
         linuxFixedBase();
+        patchOptions();
+        verifyMode();
+        macosFixedBase();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

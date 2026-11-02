@@ -1,5 +1,7 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -12,12 +14,6 @@
 #include <unistd.h>
 #endif
 
-extern "C" {
-int APS5_VABI fgetpos_nid_postfix(FileStream*, std::int64_t*);
-int APS5_VABI fsetpos_nid_postfix(FileStream*, const std::int64_t*);
-std::int64_t APS5_VABI ftello_nid_postfix(FileStream*);
-}
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "File position check failed at line %d\n", line);
@@ -26,8 +22,23 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
+static void CheckFseekBounds() {
+    FileStream file(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("0123456789", 1, 10, &file) == 10);
+    rewind_nid_postfix(&file);
+    errno = 0;
+    Require(fseek_nid_postfix(&file, -1, SEEK_SET) == -1 && errno == EINVAL);
+    Require(ftello_nid_postfix(&file) == 0);
+    Require(fseek_nid_postfix(&file, -3, SEEK_END) == 0 && ftello_nid_postfix(&file) == 7);
+    Require(fgetc_nid_postfix(&file) == '7');
+    Require(fseek_nid_postfix(&file, 100, SEEK_SET) == 0 && ftello_nid_postfix(&file) == 100);
+    Require(fgetc_nid_postfix(&file) == EOF && feof_nid_postfix(&file) != 0);
+    file.Close();
+}
+
 int main() {
-    FileStream file(std::tmpfile());
+    CheckFseekBounds();
+    FileStream file(TemporaryFile::Open());
     Require(std::fputs("position", file.GetHandle()) >= 0);
     std::int64_t position = -1;
     Require(fgetpos_nid_postfix(&file, &position) == 0);

@@ -1,9 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-
-extern "C" int* APS5_VABI __error_nid_postfix();
+#include <stdexcept>
 
 namespace {
 constexpr int kGuestInet = 2;
@@ -189,15 +190,17 @@ std::size_t V6ToText(const std::uint8_t* bytes, char* out) {
 extern "C" {
 int APS5_VABI __inet_pton_nid_postfix(int family, const char* text, void* destination) {
     if (family != kGuestInet && family != kGuestInet6) { *__error_nid_postfix() = 47; return -1; }
-    if (!text || !destination) { *__error_nid_postfix() = 14; return -1; }
+    if (!text) throw std::runtime_error("inet_pton: null text");
     if (family == kGuestInet) {
         std::uint8_t quad[4];
         if (!ParseQuad(text, text + std::strlen(text), quad)) return 0;
+        if (!destination) throw std::runtime_error("inet_pton: null destination");
         std::memcpy(destination, quad, sizeof(quad));
         return 1;
     }
     std::uint8_t address[16];
     if (!TextToV6(text, address)) return 0;
+    if (!destination) throw std::runtime_error("inet_pton: null destination");
     std::memcpy(destination, address, sizeof(address));
     return 1;
 }
@@ -205,13 +208,31 @@ int APS5_VABI __inet_pton_nid_postfix(int family, const char* text, void* destin
 const char* APS5_VABI __inet_ntop_nid_postfix(int family, const void* source,
                                             char* destination, std::uint32_t capacity) {
     if (family != kGuestInet && family != kGuestInet6) { *__error_nid_postfix() = 47; return nullptr; }
-    if (!source || !destination) { *__error_nid_postfix() = 14; return nullptr; }
+    if (!source) throw std::runtime_error("inet_ntop: null source");
     char text[kMaxText + 1];
     const auto* bytes = static_cast<const std::uint8_t*>(source);
     const std::size_t length = family == kGuestInet ? FormatQuad(bytes, text) : V6ToText(bytes, text);
     text[length] = '\0';
     if (length + 1 > capacity) { *__error_nid_postfix() = 28; return nullptr; }
+    if (!destination) throw std::runtime_error("inet_ntop: null destination");
     std::memcpy(destination, text, length + 1);
+    if (family == kGuestInet6) std::memset(destination + length + 1, 0, capacity - length - 1);
     return destination;
+}
+
+std::uint32_t APS5_VABI htonl_nid_postfix(std::uint32_t value) {
+    return __builtin_bswap32(value);
+}
+
+std::uint32_t APS5_VABI ntohl_nid_postfix(std::uint32_t value) {
+    return __builtin_bswap32(value);
+}
+
+std::uint16_t APS5_VABI htons_nid_postfix(std::uint16_t value) {
+    return __builtin_bswap16(value);
+}
+
+std::uint16_t APS5_VABI ntohs_nid_postfix(std::uint16_t value) {
+    return __builtin_bswap16(value);
 }
 }

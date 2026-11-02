@@ -160,10 +160,14 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     const auto vertexResult = ShaderRecompiler::Recompile(vertex);
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
     const auto pixelResult = RecompilePixel(PixelCode, waveSize, Fp16Input, target, vertexPush);
-    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
-        {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
-    }};
+    Require(pixelResult.barycentricEmulation.active != target.fragmentShaderBarycentricEnabled, "16-bit interpolation must emulate barycentrics exactly when the device lacks them");
+    std::vector<AgcDriver::Graphics::CompiledShader> shaders{{ShaderStage::Vertex, &vertexResult, 0}};
+    ShaderRecompiler::RecompileResult geometry;
+    if (pixelResult.barycentricEmulation.active) {
+        geometry = ShaderRecompiler::BuildBarycentricGeometryShader(vertexResult, pixelResult, target, device.GeometryLimits());
+        shaders.push_back({ShaderStage::Geometry, &geometry, 0});
+    }
+    shaders.push_back({ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)});
 
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, waveSize, waveSize, std::nullopt, std::nullopt};
@@ -259,6 +263,8 @@ ShaderRecompiler::SpirvTarget OfflineTarget(bool barycentric) {
     target.spirvVersion = 0x00010300u;
     target.subgroupSize = 64;
     target.fragmentShaderBarycentricEnabled = barycentric;
+    static constexpr std::array<std::uint32_t, 1> capabilities{spv::CapabilityFloat64};
+    target.supportedCapabilities = capabilities;
     return target;
 }
 
@@ -281,7 +287,8 @@ void ExpectRejected(std::uint32_t word0, std::uint32_t word1, const char* expect
 
 int main() {
     try {
-        ExpectFailure(PixelCode, Fp16Input, false, "requires fragmentShaderBarycentric", "16-bit interpolation was accepted without barycentrics");
+        Require(RecompilePixel(PixelCode, 64u, Fp16Input, OfflineTarget(false), 0u).barycentricEmulation.active, "16-bit interpolation without barycentrics does not emulate them");
+        Require(!RecompilePixel(PixelCode, 64u, Fp16Input, OfflineTarget(true), 0u).barycentricEmulation.active, "16-bit interpolation emulates barycentrics on a device that has them");
         ExpectFailure(PixelCode, 0x03000000u, true, "without FP16_INTERP_MODE", "16-bit interpolation of a 32-bit input was accepted");
         ExpectFailure(PixelCode, 0x03080420u, true, "passes its vertices through unchanged", "16-bit interpolation of a pass-through input was accepted");
         ExpectRejected(0xd75a001bu, 0x0c6a0200u, "interpolation modifiers", "v_interp_p2_f16 accepted an output modifier");
@@ -291,12 +298,18 @@ int main() {
         ExpectRejected(0xd743001du, 0x003e0140u, "not a vector register", "v_interp_p1lv_f16 accepted a scalar P0");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!device->Target().fragmentShaderBarycentricEnabled) {
-            std::puts("skipped, the device has no fragmentShaderBarycentric");
+        if (!device->Target().fragmentShaderBarycentricEnabled && !device->GeometryLimits()) {
+            std::puts("skipped, the device has neither fragmentShaderBarycentric nor geometryShader");
             return VulkanTestSkipped;
         }
         for (const auto waveSize : {64u, 32u}) {
-            Draw(*device, waveSize);
+            try {
+                Draw(*device, waveSize);
+            } catch (const std::exception& error) {
+                if (std::string(error.what()).find("need the Float64 capability") == std::string::npos) throw;
+                std::puts("skipped, the device has no Float64 capability for the exact interpolation sums");
+                return VulkanTestSkipped;
+            }
             Check(waveSize);
         }
         std::puts("16-bit interpolation tests passed");

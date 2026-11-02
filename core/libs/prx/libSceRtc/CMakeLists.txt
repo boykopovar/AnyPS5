@@ -1,4 +1,5 @@
 add_library(libSceRtc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_link_libraries(libSceRtc PRIVATE libkernel libc)
 target_include_directories(libSceRtc PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceRtc)
 
@@ -8,8 +9,9 @@ if(BUILD_TESTING)
     target_link_libraries(guest_rtc_tests PRIVATE libSceRtc libc)
     configure_windows_unwind(guest_rtc_tests)
     add_test(NAME guest_rtc COMMAND guest_rtc_tests)
+    add_test(NAME guest_rtc_ps5_title COMMAND guest_rtc_tests ps5-title)
     if(WIN32)
-        set_tests_properties(guest_rtc PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_rtc guest_rtc_ps5_title PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRtc>")
     endif()
 endif()

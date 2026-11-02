@@ -18,11 +18,18 @@
 #include <exception>
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
+
+std::string Hex(std::uint32_t value) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08x", value);
+    return text;
+}
 
 using AgcDriver::Graphics::Require;
 
@@ -94,7 +101,7 @@ void CheckSplitCoverage(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(guest.Data()), guest.Bytes);
     for (std::uint32_t i = 0; i < Stores; ++i) {
-        Require(guest.Data()[i] == Pattern[i % Period], "oversized dispatch: dword " + std::to_string(i) + " is 0x" + std::to_string(guest.Data()[i]) + ", expected 0x" + std::to_string(Pattern[i % Period]));
+        Require(guest.Data()[i] == Pattern[i % Period], "oversized dispatch: dword " + std::to_string(i) + " is " + Hex(guest.Data()[i]) + ", expected " + Hex(Pattern[i % Period]));
     }
 }
 
@@ -135,38 +142,50 @@ void CheckLdsSplitThrows(AgcDriver::VulkanDevice& device) {
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     Require(result.workgroupMemoryDwords != 0u, "oversized dispatch: the LDS shader did not take the device-memory path");
-    bool threw = false;
-    try {
-        device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
-    } catch (const std::runtime_error&) {
-        threw = true;
+    for (const auto z : {1u, std::numeric_limits<std::uint32_t>::max()}) {
+        bool threw = false;
+        try {
+            device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, z, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        } catch (const std::runtime_error& error) {
+            Require(std::string(error.what()).find("a split aliases the device-memory LDS slots") != std::string::npos, "oversized dispatch: wrong LDS split refusal: " + std::string(error.what()));
+            threw = true;
+        }
+        device.WaitIdle();
+        Require(threw, "oversized dispatch: a Y count over the limit with device-memory LDS did not throw");
     }
-    device.WaitIdle();
-    Require(threw, "oversized dispatch: a Y count over the limit with device-memory LDS did not throw");
 }
 
-void CheckNvidiaSplitThrows(AgcDriver::VulkanDevice& device) {
-    const GuestBlock guest(Threads);
+alignas(256) constexpr std::array<std::uint32_t, 6> GroupYCode{
+    0x7e000204u, 0x34020082u, 0x4a040081u, 0xe0701000u, 0x80000201u, 0xbf810000u};
+constexpr std::uint32_t GroupYSplitCap = 1u << 20u;
+constexpr std::uint32_t GroupYTail = 4097u;
+
+bool CheckGroupYSplitCoverage(AgcDriver::VulkanDevice& device) {
+    const auto limit = device.WorkGroupCountLimit()[1];
+    if (limit >= GroupYSplitCap) {
+        std::printf("oversized dispatch Y split: skipped, the device reports a %u Y workgroup limit\n", limit);
+        return false;
+    }
+    const auto groups = limit + GroupYTail;
+    const GuestBlock guest(groups);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(guest.Data()));
     const std::vector<std::uint32_t> userData{
-        static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u),
-        Threads, 0x00014004u, Pattern[0], Pattern[1], Pattern[2], Pattern[3], Threads, Period};
-    const std::span<const std::uint32_t> code(Code);
+        static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), groups * 4u, 0x31016facu};
+    const std::span<const std::uint32_t> code(GroupYCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {true, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, true, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {64, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(), {0, 0, 0, 128}, std::nullopt, false};
     const auto result = ShaderRecompiler::Recompile(request);
-    bool threw = false;
-    try {
-        device.Dispatch(result, 1, device.WorkGroupCountLimit()[1] + 1u, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
+    device.Dispatch(result, 1, groups, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
-    Require(threw, "oversized dispatch: NVIDIA did not throw for a count over the workgroup limit");
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(guest.Data()), guest.Bytes);
+    for (std::uint32_t group = 0; group < groups; ++group) {
+        Require(guest.Data()[group] == group + 1u, "oversized dispatch Y split: dword " + std::to_string(group) + " is " + std::to_string(guest.Data()[group]) + ", expected " + std::to_string(group + 1u));
+    }
+    return true;
 }
 
 }
@@ -176,12 +195,15 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         CheckLdsSplitThrows(*device);
-        if (device->VendorId() == 0x10de) {
-            CheckNvidiaSplitThrows(*device);
-        } else if (device->WorkGroupCountLimit()[0] < Groups) {
+        bool split = CheckGroupYSplitCoverage(*device);
+        if (device->WorkGroupCountLimit()[0] < Groups) {
             CheckSplitCoverage(*device);
+            split = true;
         } else {
-            std::printf("oversized dispatch split: skipped, the device reports a %u workgroup limit, which never splits a %ux1x1 dispatch\n", device->WorkGroupCountLimit()[0], Groups);
+            std::printf("oversized dispatch X split: skipped, the device reports a %u workgroup limit, which never splits a %ux1x1 dispatch\n", device->WorkGroupCountLimit()[0], Groups);
+        }
+        if (!split) {
+            AgcDriverShutdown_nid_postfix();
             return VulkanTestSkipped;
         }
         AgcDriverShutdown_nid_postfix();

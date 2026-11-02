@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -13,11 +16,6 @@ extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handle
 #else
 #include <unistd.h>
 #endif
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI open_nid_postfix(const char*, int, int);
-}
 
 namespace {
 constexpr char Characters[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";

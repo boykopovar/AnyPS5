@@ -10,8 +10,7 @@
 extern "C" {
 
 void* APS5_VABI sceAgcGetRegisterDefaults() {
-    // The legacy API has no version argument; use the baseline public table.
-    return Agc::Command::GetRegisterDefaults(0, false, __func__);
+    return Agc::Command::GetRegisterDefaults(13, false, __func__, Agc::Command::RegisterDefaultsTypeLayout::KeyBankPairs);
 }
 
 void* APS5_VABI sceAgcGetRegisterDefaultsInternal() {
@@ -24,6 +23,10 @@ void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t version) {
 
 void* APS5_VABI sceAgcGetRegisterDefaults2Internal(std::uint32_t version) {
     return Agc::Command::GetRegisterDefaults(version, true, __func__);
+}
+
+int APS5_VABI sceAgcGetDefaultCxStateFlat(void* out_state, std::uint32_t size) {
+    return Agc::Command::GetDefaultCxStateFlat(out_state, size);
 }
 
 }

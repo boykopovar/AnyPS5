@@ -20,7 +20,7 @@ namespace {
         if (ShaderWorkgroupInput(state) == nullptr) {
             FailEmit("function LDS was not prepared before function emission");
         }
-        state.ldsVariable = state.module.DefineGlobalVariable(TypeU32ArrayPointer(state, spv::StorageClassWorkgroup, LdsDwordCount(state) + (state.requirements.ldsLock ? 1u : 0u)), spv::StorageClassWorkgroup);
+        state.ldsVariable = state.module.DefineGlobalVariable(TypeU32ArrayPointer(state, spv::StorageClassWorkgroup, LdsStorageDwords(state)), spv::StorageClassWorkgroup);
         state.module.AddName(state.ldsVariable, "lds_dwords");
     }
 
@@ -70,10 +70,55 @@ bool LdsInDeviceMemory(const SpirvEmitterState& state) {
 }
 
 std::uint32_t LdsMemorySemantics(const SpirvEmitterState& state) {
-    return spv::MemorySemanticsWorkgroupMemoryMask | (LdsInDeviceMemory(state) ? spv::MemorySemanticsUniformMemoryMask : 0u);
+    return spv::MemorySemanticsWorkgroupMemoryMask | (LdsInDeviceMemory(state) || state.pixelFunctionLdsBuffer ? spv::MemorySemanticsUniformMemoryMask : 0u);
+}
+
+void EmitPixelFunctionLdsBase(SpirvEmitterState& state) {
+    if (!state.pixelFunctionLdsBuffer) return;
+    if (state.ldsBufferVariable == 0u || state.hostSubgroupSize == 0u) FailEmit("pixel function LDS buffer was not declared");
+    const auto element = [&](std::uint32_t dword) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.ldsBufferVariable, ConstantU32(state, 0u), ConstantU32(state, dword));
+        return pointer;
+    };
+    const auto slotVar = state.module.AllocateId();
+    state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), slotVar, spv::StorageClassFunction, ConstantU32(state, 0u));
+    const auto elected = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformElect, TypeBool(state), elected, ConstantU32(state, spv::ScopeSubgroup));
+    EmitIfCondition(state, elected, [&] {
+        const auto acquired = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), acquired, element(0u), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask), ConstantU32(state, 1u));
+        const auto capacity = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), capacity, element(2u));
+        const auto exhausted = state.module.AllocateId();
+        state.module.AddFunction(spv::OpUGreaterThanEqual, TypeBool(state), exhausted, acquired, capacity);
+        EmitIfCondition(state, exhausted, [&] {
+            state.module.AddFunction(spv::OpAtomicStore, element(1u), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask), ConstantU32(state, 1u));
+        });
+        const auto claimed = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelect, TypeU32(state), claimed, exhausted, ConstantU32(state, 0u), acquired);
+        state.module.AddFunction(spv::OpStore, slotVar, claimed);
+    });
+    const auto local = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), local, slotVar);
+    const auto slot = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformBroadcastFirst, TypeU32(state), slot, ConstantU32(state, spv::ScopeSubgroup), local);
+    std::uint32_t lane;
+    if (state.splitSubgroup) {
+        if (state.subgroupLocalInvocationIdVariable == 0) FailEmit("pixel function LDS lane was not declared");
+        lane = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), lane, state.subgroupLocalInvocationIdVariable);
+    } else lane = EmitSubgroupLocalInvocationId(state);
+    const auto within = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, slot, ConstantU32(state, state.hostSubgroupSize)), lane);
+    state.ldsBufferBase = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, within, ConstantU32(state, FunctionLdsDwordLimit)), ConstantU32(state, 3u));
+}
+
+std::uint32_t LdsMemoryBarrierScope(const SpirvEmitterState& state) {
+    return state.deviceScopeLdsMemoryBarriers ? spv::ScopeDevice : spv::ScopeWorkgroup;
 }
 
 void EmitLdsBufferBase(SpirvEmitterState& state) {
+    EmitPixelFunctionLdsBase(state);
     if (!LdsInDeviceMemory(state)) {
         return;
     }
@@ -111,11 +156,26 @@ std::uint32_t EmitLdsLockPointer(SpirvEmitterState& state) {
     return pointer;
 }
 
+std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t index) {
+    if (!state.requirements.ldsBufferInt64Atomics || state.ldsBufferU64Variable == 0u || state.ldsBufferBase == 0u) {
+        FailEmit("64-bit device memory LDS atomics were not prepared at function entry");
+    }
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassStorageBuffer, TypeScalarU64(state)), pointer, state.ldsBufferU64Variable, ConstantU32(state, 0u), EmitBinaryU32(state, spv::OpShiftRightLogical, EmitAddU32(state, state.ldsBufferBase, index), ConstantU32(state, 1u)));
+    return pointer;
+}
+
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem) {
     MemoryResourceAccess access;
     access.kind = mem.kind;
     switch (mem.kind) {
     case ResourceKind::Lds:
+        if (state.pixelFunctionLdsBuffer) {
+            if (state.ldsBufferVariable == 0u || state.ldsBufferBase == 0u) FailEmit("pixel function LDS buffer was not prepared at function entry");
+            access.objectPointer = state.ldsBufferVariable;
+            access.length = ConstantU32(state, LdsDwordCount(state));
+            return access;
+        }
         if (LdsInDeviceMemory(state)) {
             if (state.ldsBufferVariable == 0u || state.ldsBufferBase == 0u) {
                 FailEmit("device memory LDS was not prepared at function entry");
@@ -173,7 +233,30 @@ bool InFunctionStorage(const SpirvEmitterState& state, ResourceKind kind) {
     return kind == ResourceKind::Lds && !LdsInDeviceMemory(state) && ShaderWorkgroupInput(state) == nullptr;
 }
 
+std::uint32_t EmitValueOrZero(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t value) {
+    return Select(state, TypeU32(state), condition, value, ConstantU32(state, 0u));
+}
+
+std::uint32_t LdsStorageDwords(const SpirvEmitterState& state) {
+    return LdsDwordCount(state) + (state.requirements.ldsLock ? 1u : 0u);
+}
+
+bool LoadsSelectable(const SpirvEmitterState& state, const MemoryResourceAccess& access) {
+    if (access.kind == ResourceKind::Scratch) return true;
+    if (access.kind == ResourceKind::Lds) return false;
+    return state.robustBufferAccess2;
+}
+
+std::uint32_t GuardedElementIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t condition, std::uint32_t index) {
+    if (access.kind == ResourceKind::Lds) FailEmit("LDS loads keep their branch and have no guarded element");
+    const auto fallback = access.kind == ResourceKind::Scratch ? 0u : 0xfffffffeu;
+    return Select(state, TypeU32(state), condition, index, ConstantU32(state, fallback));
+}
+
 std::uint32_t EmitMemoryElementPointer(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t index) {
+    if (access.kind == ResourceKind::Lds && state.pixelFunctionLdsBuffer) {
+        return EmitStorageBufferElementPointer(state, access, EmitAddU32(state, state.ldsBufferBase, index), TypeStorageBufferElementPointer(state));
+    }
     if (access.kind == ResourceKind::Lds && LdsInDeviceMemory(state)) {
         return EmitStorageBufferElementPointer(state, access, EmitAddU32(state, state.ldsBufferBase, index), TypeStorageBufferElementPointer(state));
     }

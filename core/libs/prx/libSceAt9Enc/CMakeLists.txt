@@ -1,0 +1,15 @@
+add_library(libSceAt9Enc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAt9Enc PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAt9Enc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_at9_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestAt9Enc.cpp)
+    target_include_directories(guest_at9_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_at9_enc_tests PRIVATE libSceAt9Enc libc)
+    configure_windows_unwind(guest_at9_enc_tests)
+    add_test(NAME guest_at9_enc COMMAND guest_at9_enc_tests)
+    if(WIN32)
+        set_tests_properties(guest_at9_enc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAt9Enc>")
+    endif()
+endif()

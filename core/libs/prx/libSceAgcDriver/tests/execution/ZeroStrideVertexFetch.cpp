@@ -124,6 +124,28 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     device.WaitIdle();
 }
 
+void DescriptorDiagnostics(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t component = 0; component < 4u; ++component) {
+        for (const auto selector : {2u, 3u}) {
+            const auto shift = component * 3u;
+            const Case value{3u, 16u, true, "reserved selector", (0xfacu & ~(7u << shift)) | (selector << shift)};
+            const auto fields = VertexBufferDescriptor(value);
+            char expected[192];
+            std::snprintf(expected, sizeof(expected), "reserved prepared vertex component selector %u at location 0 component %u (V#=[%08x %08x %08x %08x])",
+                selector, component, fields[0], fields[1], fields[2], fields[3]);
+            bool rejected = false;
+            try {
+                Draw(device, value);
+            } catch (const std::runtime_error& error) {
+                const std::string message(error.what());
+                Require(message.find(expected) != std::string::npos, "reserved selector error did not identify the component and descriptor: " + message);
+                rejected = true;
+            }
+            Require(rejected, "a reserved vertex component selector was accepted");
+        }
+    }
+}
+
 void Check(const Case& value) {
     for (std::uint32_t vertex = 0; vertex < Vertices; ++vertex) {
         for (std::uint32_t component = 0; component < 4u; ++component) {
@@ -142,19 +164,34 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        constexpr std::array<Case, 7> cases{{
-            {2u, 1u, true, "OOB_SELECT 2, one record"},
+        constexpr std::uint32_t Wzyx = 7u | (6u << 3u) | (1u << 6u) | (0u << 9u);
+        constexpr std::array<Case, 20> cases{{
+            {0u, 0u, false, "OOB_SELECT 0, no records"},
+            {0u, 1u, false, "OOB_SELECT 0, one record"},
+            {0u, 16u, false, "OOB_SELECT 0, records cover the element's bytes"},
+            {0u, 0xffffffffu, false, "OOB_SELECT 0, NUM_RECORDS 0xffffffff"},
+            {0u, 0xffffffffu, false, "OOB_SELECT 0, NUM_RECORDS 0xffffffff, selectors W Z 1 0", Wzyx},
+            {1u, 0u, false, "OOB_SELECT 1, no records"},
+            {1u, 3u, true, "OOB_SELECT 1, NUM_RECORDS counts the three vertices' records"},
+            {1u, 4u, true, "OOB_SELECT 1, NUM_RECORDS past the vertices"},
+            {1u, 0xffffffffu, true, "OOB_SELECT 1, NUM_RECORDS 0xffffffff"},
+            {1u, 3u, true, "OOB_SELECT 1, NUM_RECORDS 3, selectors W Z 1 0", Wzyx},
             {2u, 0u, false, "OOB_SELECT 2, no records"},
-            {3u, 16u, true, "OOB_SELECT 3, whole element in range"},
+            {2u, 1u, true, "OOB_SELECT 2, one record"},
+            {2u, 16u, true, "OOB_SELECT 2, whole element in range"},
             {3u, 0u, false, "OOB_SELECT 3, no records"},
-            {0u, 16u, true, "OOB_SELECT 0, whole element in range"},
-            {3u, 16u, true, "OOB_SELECT 3, selectors W Z 1 0", 7u | (6u << 3u) | (1u << 6u) | (0u << 9u)},
-            {3u, 0u, false, "OOB_SELECT 3, no records, selectors W Z 1 0", 7u | (6u << 3u) | (1u << 6u) | (0u << 9u)},
+            {3u, 8u, false, "OOB_SELECT 3, the element only partly fits"},
+            {3u, 15u, false, "OOB_SELECT 3, the element misses its last byte"},
+            {3u, 16u, true, "OOB_SELECT 3, whole element in range"},
+            {3u, 0xffffffffu, true, "OOB_SELECT 3, NUM_RECORDS 0xffffffff"},
+            {3u, 16u, true, "OOB_SELECT 3, selectors W Z 1 0", Wzyx},
+            {3u, 8u, false, "OOB_SELECT 3, partly fits, selectors W Z 1 0", Wzyx},
         }};
         for (const auto& value : cases) {
             Draw(*device, value);
             Check(value);
         }
+        DescriptorDiagnostics(*device);
         std::puts("zero-stride vertex fetch tests passed");
         return 0;
     } catch (const std::exception& error) {

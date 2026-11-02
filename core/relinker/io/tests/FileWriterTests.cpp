@@ -40,18 +40,18 @@ std::vector<std::string> siblings(const std::filesystem::path& output) {
     std::vector<std::string> names;
     for (const auto& entry : std::filesystem::directory_iterator(output.parent_path())) {
         const auto name = entry.path().filename().string();
-        if (name.starts_with(output.filename().string() + "."))
+        if (name.starts_with(output.filename().string() + ".") || name.starts_with(".anyps5-"))
             names.push_back(name);
     }
     return names;
 }
 
 template<typename TValue>
-void requireRunningReplacement(const std::filesystem::path& directory, const TValue& data, const bool leftover) {
-    const auto output = directory / (leftover ? "leftover" : "running");
+void requireRunningReplacement(const std::filesystem::path& directory, const TValue& data, const bool leftover, const std::string& name = "running") {
+    const auto output = directory / (leftover ? "leftover" : name);
     if (leftover)
         std::ofstream(directory / "leftover.tmp", std::ios::binary) << "killed";
-    std::filesystem::copy_file("/bin/sleep", output);
+    std::filesystem::copy_file(std::filesystem::read_symlink("/proc/self/exe"), output);
     const auto permissions = std::filesystem::perms::owner_all | std::filesystem::perms::group_all;
     std::filesystem::permissions(output, permissions);
     const auto previous = readFile(output);
@@ -59,7 +59,7 @@ void requireRunningReplacement(const std::filesystem::path& directory, const TVa
     if (child < 0)
         throw std::runtime_error("Cannot start the previous executable");
     if (child == 0) {
-        execl(output.c_str(), "sleep", "30", nullptr);
+        execl(output.c_str(), output.c_str(), "wait", nullptr);
         _exit(127);
     }
     std::error_code error;
@@ -107,8 +107,8 @@ void requireRunningReplacement(const std::filesystem::path& directory, const TVa
 }
 
 template<typename TValue>
-void requireFailedReplacement(const std::filesystem::path& directory, const TValue& data) {
-    const auto output = directory / "limited";
+void requireFailedReplacement(const std::filesystem::path& directory, const TValue& data, const std::string& name = "limited") {
+    const auto output = directory / name;
     std::ofstream(output, std::ios::binary) << "previous";
     rlimit limit{};
     getrlimit(RLIMIT_FSIZE, &limit);
@@ -158,6 +158,11 @@ void requireReplacement(const TValue& data) {
         requireRunningReplacement(directory, data, false);
         requireRunningReplacement(directory, data, true);
         requireFailedReplacement(directory, data);
+        const auto maximumName = pathconf(directory.c_str(), _PC_NAME_MAX);
+        if (maximumName <= 0)
+            throw std::runtime_error("Cannot determine the output filename limit");
+        requireFailedReplacement(directory, data, std::string(static_cast<std::size_t>(maximumName), 'f'));
+        requireRunningReplacement(directory, data, false, std::string(static_cast<std::size_t>(maximumName), 'r'));
         requireInPlaceWrites(directory, data);
     } catch (...) {
         std::filesystem::remove_all(directory, error);
@@ -172,6 +177,10 @@ int main(int argc, char* argv[]) {
     try {
         if (argc != 2) throw std::runtime_error("Expected binary or text");
         const std::string mode = argv[1];
+        if (mode == "wait") {
+            sleep(30);
+            return 0;
+        }
         for (const std::size_t size : {std::size_t{3}, std::size_t{65536}}) {
             if (mode == "binary") {
                 const std::vector<std::uint8_t> data(size, 0x41);

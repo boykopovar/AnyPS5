@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include "ShaderDiskCache.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -7,9 +8,16 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <new>
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace AgcDriver::Graphics {
 
@@ -35,7 +43,7 @@ std::mutex& pathMutex(const std::filesystem::path& path) {
 
 }
 
-PipelineCache::PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties) : context(context), properties(properties) {
+PipelineCache::PipelineCache(const Context& context, const VkPhysicalDeviceProperties& properties, bool loadFromFile) : context(context), properties(properties) {
     static_assert(sizeof(FileHeader) == 24);
     const auto directory = ShaderRecompiler::ShaderCacheDirectory();
     if (!directory.empty()) {
@@ -45,14 +53,16 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
             std::snprintf(digits, sizeof(digits), "%02x", static_cast<unsigned>(byte));
             uuid += digits;
         }
+        char version[17];
+        std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::SourceVersion()));
         char name[160];
         std::snprintf(name, sizeof(name), "vk-pipelines-%04x-%04x-%08x-%s.bin", properties.vendorID, properties.deviceID, properties.driverVersion, uuid.c_str());
-        path = directory / name;
+        path = directory / version / name;
     }
     std::vector<std::byte> initialData;
     if (!path.empty()) {
         std::lock_guard pathLock(pathMutex(path));
-        load(initialData);
+        if (loadFromFile) load(initialData);
     }
     VkPipelineCacheCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     info.initialDataSize = initialData.size();
@@ -69,7 +79,12 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
         result = create(context.device, &info, nullptr, &cache);
     }
     Check(result, "vkCreatePipelineCache");
-    if (!path.empty()) saver = std::thread([this] { run(); });
+    try {
+        if (!path.empty()) saver = std::thread([this] { run(); });
+    } catch (...) {
+        context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
+        throw;
+    }
 }
 
 PipelineCache::~PipelineCache() {
@@ -80,7 +95,7 @@ PipelineCache::~PipelineCache() {
         }
         wake.notify_all();
         saver.join();
-        save(true);
+        save(true, true);
     }
     context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
 }
@@ -91,9 +106,18 @@ std::span<const std::byte> PipelineCache::File::Payload() const {
 
 PipelineCache::File PipelineCache::readFile() const {
     File file;
+    if (path.empty()) {
+        file.state = FileState::Missing;
+        return file;
+    }
     if (!ShaderRecompiler::ReadWholeFile(path, file.contents)) {
         std::error_code error;
+#ifdef _WIN32
+        const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
+        const bool exists = !error && std::filesystem::exists(native, error);
+#else
         const bool exists = std::filesystem::exists(path, error);
+#endif
         file.state = exists || error ? FileState::Unreadable : FileState::Missing;
         return file;
     }
@@ -138,14 +162,29 @@ PipelineCache::File PipelineCache::readFile() const {
 }
 
 std::optional<PipelineCache::FileHeader> PipelineCache::readHeader() const {
+    if (path.empty()) return std::nullopt;
+#ifdef _WIN32
+    std::error_code error;
+    const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
+    if (error) return std::nullopt;
+    const auto file = CreateFileW(native.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return std::nullopt;
+    struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{file};
+    FileHeader header{};
+    DWORD readBytes = 0;
+    if (!ReadFile(file, &header, sizeof(header), &readBytes, nullptr) || readBytes != sizeof(header)) return std::nullopt;
+#else
     std::ifstream file(path, std::ios::binary);
     FileHeader header{};
     if (!file.read(reinterpret_cast<char*>(&header), sizeof(header))) return std::nullopt;
+#endif
+    if (header.magic != FileMagic || header.format != FileFormat) return std::nullopt;
     return header;
 }
 
 void PipelineCache::load(std::vector<std::byte>& initialData) {
-    const auto file = readFile();
+    auto file = readFile();
     if (file.state == FileState::Missing) return;
     if (file.state == FileState::Unreadable) {
         std::fprintf(stderr, "[pipeline-cache] cannot read %s; starting empty\n", path.string().c_str());
@@ -155,43 +194,52 @@ void PipelineCache::load(std::vector<std::byte>& initialData) {
         std::fprintf(stderr, "[pipeline-cache] ignoring %s: %s\n", path.string().c_str(), file.invalidReason);
         return;
     }
-    const auto data = file.Payload();
-    initialData.assign(data.begin(), data.end());
+    initialData = std::move(file.contents);
+    initialData.erase(initialData.begin(), initialData.begin() + sizeof(FileHeader));
     loadedBytes = initialData.size();
     settledBytes = initialData.size();
     settledFile = file.header;
+    holdsFile = true;
     std::fprintf(stderr, "[pipeline-cache] loaded %.1f KiB from %s\n", static_cast<double>(initialData.size()) / 1024.0, path.string().c_str());
 }
 
-void PipelineCache::save(bool final) {
+void PipelineCache::save(bool final, bool waitForPipelines) try {
+    if (path.empty()) return;
     std::lock_guard pathLock(pathMutex(path));
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
+    const auto snapshot = [&] { return waitForPipelines ? synchronization.LockForSnapshot() : synchronization.TryLockForSnapshot(); };
     std::size_t liveBytes = 0;
     {
-        auto synchronizationLock = synchronization.LockForSnapshot();
+        auto synchronizationLock = snapshot();
+        if (!synchronizationLock.owns_lock()) return;
         if (getData(context.device, cache, &liveBytes, nullptr) != VK_SUCCESS || liveBytes == 0) return;
     }
-    if (liveBytes == settledBytes && readHeader() == settledFile) return;
+    const auto onDisk = readHeader();
+    if (liveBytes == settledBytes && onDisk == settledFile) return;
+    const bool fileUnchanged = holdsFile && settledFile.has_value() && onDisk == settledFile;
     const auto started = std::chrono::steady_clock::now();
     const auto settle = [&](const std::optional<FileHeader>& file) {
         settledBytes = liveBytes;
         settledFile = file;
     };
-    const auto disk = readFile();
+    auto disk = fileUnchanged ? File{} : readFile();
     if (disk.state == FileState::Unreadable) {
         std::fprintf(stderr, "[pipeline-cache] cannot read %s; not saving over it\n", path.string().c_str());
-        settle(readHeader());
         return;
     }
     if (disk.state == FileState::Invalid) std::fprintf(stderr, "[pipeline-cache] replacing %s: %s\n", path.string().c_str(), disk.invalidReason);
-    std::size_t floor = 0;
+    std::size_t floor = fileUnchanged ? std::max<std::size_t>(loadedBytes, settledFile->dataBytes) : 0;
     VkPipelineCache merged = VK_NULL_HANDLE;
+    bool mergedWithFile = false;
     struct DestroyMerged {
         const Context& context;
-        const VkPipelineCache& cache;
-        ~DestroyMerged() {
-            if (cache != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
+        VkPipelineCache& cache;
+        void Reset() {
+            if (cache == VK_NULL_HANDLE) return;
+            context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
+            cache = VK_NULL_HANDLE;
         }
+        ~DestroyMerged() { Reset(); }
     } destroyMerged{context, merged};
     if (disk.state == FileState::Valid) {
         const auto data = disk.Payload();
@@ -201,13 +249,16 @@ void PipelineCache::save(bool final) {
         const auto result = context.Function<PFN_vkCreatePipelineCache>("vkCreatePipelineCache")(context.device, &info, nullptr, &merged);
         if (result == VK_SUCCESS) {
             floor = std::max(loadedBytes, data.size());
+            mergedWithFile = true;
         } else {
             merged = VK_NULL_HANDLE;
             std::fprintf(stderr, "[pipeline-cache] replacing %s: the driver refused it (Vulkan result %d)\n", path.string().c_str(), static_cast<int>(result));
         }
     }
+    std::vector<std::byte>().swap(disk.contents);
     if (merged != VK_NULL_HANDLE) {
-        auto synchronizationLock = synchronization.LockForSnapshot();
+        auto synchronizationLock = snapshot();
+        if (!synchronizationLock.owns_lock()) return;
         const auto result = context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, merged, 1, &cache);
         if (result != VK_SUCCESS) {
             std::fprintf(stderr, "[pipeline-cache] cannot merge into %s (Vulkan result %d); not saving over it\n", path.string().c_str(), static_cast<int>(result));
@@ -218,7 +269,8 @@ void PipelineCache::save(bool final) {
     std::size_t size = 0;
     std::vector<std::byte> file;
     {
-        auto synchronizationLock = source == cache ? synchronization.LockForSnapshot() : PipelineCacheSynchronization::SnapshotLock{};
+        auto synchronizationLock = source == cache ? snapshot() : PipelineCacheSynchronization::SnapshotLock{};
+        if (source == cache && !synchronizationLock.owns_lock()) return;
         if (getData(context.device, source, &size, nullptr) != VK_SUCCESS || size == 0) return;
         if (merged != VK_NULL_HANDLE && size == disk.header.dataBytes) {
             settle(disk.header);
@@ -229,9 +281,10 @@ void PipelineCache::save(bool final) {
         if (result != VK_SUCCESS && result != VK_INCOMPLETE) return;
         file.resize(sizeof(FileHeader) + size);
     }
+    destroyMerged.Reset();
     if (size < floor) {
         std::fprintf(stderr, "[pipeline-cache] keeping %s: the merged cache has %.1f KiB, less than the %.1f KiB on disk or loaded at start\n", path.string().c_str(), static_cast<double>(size) / 1024.0, static_cast<double>(floor) / 1024.0);
-        settle(disk.header);
+        settle(fileUnchanged ? *settledFile : disk.header);
         return;
     }
     const FileHeader header{FileMagic, FileFormat, size, ShaderRecompiler::HashBytes(std::span(file).subspan(sizeof(FileHeader)))};
@@ -241,14 +294,24 @@ void PipelineCache::save(bool final) {
         return;
     }
     settle(header);
-    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), merged != VK_NULL_HANDLE ? " (merged with the file)" : "", final ? " (teardown)" : "");
+    if (final || profiling()) std::fprintf(stderr, "[pipeline-cache] saved %.1f KiB to %s in %.1f ms%s%s\n", static_cast<double>(size) / 1024.0, path.string().c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(), mergedWithFile ? " (merged with the file)" : "", final ? " (teardown)" : "");
+} catch (const std::bad_alloc&) {
+    std::fputs("[pipeline-cache] save skipped: host memory exhausted\n", stderr);
+}
+
+void PipelineCache::SaveNow() {
+    save(false, true);
+}
+
+void PipelineCache::SaveUnlessBusy() {
+    save(false, false);
 }
 
 void PipelineCache::run() {
     std::unique_lock lock(mutex);
     while (!wake.wait_for(lock, std::chrono::seconds(SaveIntervalSeconds), [&] { return stopping; })) {
         lock.unlock();
-        save(false);
+        save(false, false);
         lock.lock();
     }
 }

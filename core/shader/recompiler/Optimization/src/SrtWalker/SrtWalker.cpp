@@ -29,7 +29,7 @@ void SrtWalker::EvaluateUniformValues(const IrResourcePlan& program, std::span<I
     clean.readMemory = runtime.readSpecializationMemory != nullptr ? runtime.readSpecializationMemory : +[](void*, std::uint64_t, std::uint32_t*) { return false; };
     Detail::Evaluator evaluator(program, clean);
     for (std::size_t i = 0; i < values.size(); ++i) {
-        if (!evaluator.Evaluate(values[i], results[i])) {
+        if (!evaluator.Evaluate(Detail::IrNode(values[i]), results[i])) {
             throw std::runtime_error("SrtWalker::EvaluateUniformValues failed to evaluate a uniform value");
         }
     }

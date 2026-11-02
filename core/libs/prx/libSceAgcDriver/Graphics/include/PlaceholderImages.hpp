@@ -5,6 +5,7 @@
 #include "RuntimeAbi.hpp"
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace AgcDriver::Graphics {
 
@@ -49,6 +50,12 @@ constexpr PlaceholderImageShape PlaceholderImageShapeOf(std::uint32_t heap) {
             types[dimension],
             views[dimension],
             samples[dimension]};
+}
+
+constexpr std::optional<PlaceholderImageShape> PlaceholderImageShapeForDevice(std::uint32_t heap, bool storageImageMultisample) {
+    const auto shape = PlaceholderImageShapeOf(heap);
+    if (!storageImageMultisample && (shape.usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0 && shape.samples != VK_SAMPLE_COUNT_1_BIT) return std::nullopt;
+    return shape;
 }
 
 class PlaceholderImages {

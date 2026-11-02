@@ -1,5 +1,8 @@
 #include "Optimization/ReadLaneEliminator.hpp"
 #include <algorithm>
+#include <list>
+#include <map>
+#include <set>
 #include <queue>
 #include <stdexcept>
 #include <unordered_map>
@@ -12,15 +15,238 @@ namespace {
 struct ChainResult {
     IrValue* value = nullptr;
     IrValue* write = nullptr;
+    IrValue* scalar = nullptr;
+    bool cycle = false;
 };
+
+ChainResult searchChain(IrValue* value, std::uint32_t lane, std::uint32_t waveSize);
 
 bool isImmediateU32(const IrValue& value) {
     return value.HasImmediate() && value.Type() == IrType::U32;
 }
 
+struct WindowLane {
+    IrValue* value = nullptr;
+    bool known = false;
+};
+
+struct LaneState {
+    enum class Kind : std::uint8_t { Unreached, Known, Unknown };
+    Kind kind = Kind::Unreached;
+    IrValue* value = nullptr;
+
+    bool operator==(const LaneState& other) const {
+        return kind == other.kind && (kind != Kind::Known || value->Resolve() == other.value->Resolve());
+    }
+};
+
+LaneState meetLanes(const LaneState& left, const LaneState& right) {
+    if (left.kind == LaneState::Kind::Unreached) return right;
+    if (right.kind == LaneState::Kind::Unreached) return left;
+    if (left.kind == LaneState::Kind::Unknown || right.kind == LaneState::Kind::Unknown) return {LaneState::Kind::Unknown, nullptr};
+    return left.value->Resolve() == right.value->Resolve() ? left : LaneState{LaneState::Kind::Unknown, nullptr};
+}
+
+struct LaneFlow {
+    std::unordered_map<const IrBlock*, LaneState> exits;
+    std::unordered_map<const IrValue*, LaneState> loads;
+};
+
+struct WindowFlows {
+    const IrProgram* program = nullptr;
+    std::unordered_map<std::uint64_t, LaneFlow> flows;
+    std::unordered_set<std::uint64_t> computing;
+    std::vector<std::pair<IrValue*, std::uint32_t>>* folded = nullptr;
+};
+
+thread_local WindowFlows* windowFlows = nullptr;
+
+LaneState windowLoadLane(const IrValue* load, std::uint32_t lane, std::uint32_t waveSize);
+
+LaneState storedLane(IrValue* value, std::uint32_t slot, std::uint32_t lane, std::uint32_t waveSize, const LaneFlow& flow) {
+    for (;;) {
+        value = value->Resolve();
+        if (value->Opcode() == IrOpcode::WriteLane) {
+            IrValue* selector = value->Argument(1)->Resolve();
+            if (!isImmediateU32(*selector)) return {LaneState::Kind::Unknown, nullptr};
+            if (selector->ImmediateU32() % waveSize == lane) return {LaneState::Kind::Known, value->Argument(0)};
+            value = value->Argument(2);
+            continue;
+        }
+        if (value->Opcode() != IrOpcode::LoadVectorWindow) return {LaneState::Kind::Unknown, nullptr};
+        const IrValue* index = value->Argument(0)->Resolve();
+        if (!isImmediateU32(*index)) return {LaneState::Kind::Unknown, nullptr};
+        if (index->ImmediateU32() != slot) return windowLoadLane(value, lane, waveSize);
+        const auto found = flow.loads.find(value);
+        return found == flow.loads.end() ? LaneState{} : found->second;
+    }
+}
+
+const LaneFlow* laneFlow(std::uint32_t slot, std::uint32_t lane, std::uint32_t waveSize) {
+    auto& flows = *windowFlows;
+    const auto key = (static_cast<std::uint64_t>(slot) << 32u) | lane;
+    if (const auto found = flows.flows.find(key); found != flows.flows.end()) return &found->second;
+    if (!flows.computing.insert(key).second) return nullptr;
+    LaneFlow flow;
+    const auto& blocks = flows.program->Blocks();
+    constexpr int MaxPasses = 64;
+    bool settled = false;
+    for (int pass = 0; pass < MaxPasses && !settled; ++pass) {
+        settled = true;
+        for (const auto& block : blocks) {
+            LaneState running{};
+            if (block->Predecessors().empty()) {
+                running = {LaneState::Kind::Unknown, nullptr};
+            } else {
+                for (const IrBlock* predecessor : block->Predecessors()) {
+                    const auto exit = flow.exits.find(predecessor);
+                    running = meetLanes(running, exit == flow.exits.end() ? LaneState{} : exit->second);
+                }
+            }
+            for (IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() == IrOpcode::LoadVectorWindow) {
+                    const IrValue* index = inst->Argument(0)->Resolve();
+                    if (!isImmediateU32(*index) || index->ImmediateU32() != slot) continue;
+                    auto& seen = flow.loads[inst];
+                    if (!(seen == running)) {
+                        seen = running;
+                        settled = false;
+                    }
+                } else if (inst->Opcode() == IrOpcode::StoreVectorWindow) {
+                    const IrValue* index = inst->Argument(0)->Resolve();
+                    if (!isImmediateU32(*index) || index->ImmediateU32() != slot) continue;
+                    running = storedLane(inst->Argument(1), slot, lane, waveSize, flow);
+                }
+            }
+            auto& exit = flow.exits[block.get()];
+            if (!(exit == running)) {
+                exit = running;
+                settled = false;
+            }
+        }
+    }
+    flows.computing.erase(key);
+    if (!settled) {
+        for (auto& [load, state] : flow.loads) state = {LaneState::Kind::Unknown, nullptr};
+    }
+    return &(flows.flows[key] = std::move(flow));
+}
+
+LaneState windowLoadLane(const IrValue* load, std::uint32_t lane, std::uint32_t waveSize) {
+    const IrValue* index = load->Argument(0)->Resolve();
+    if (windowFlows == nullptr || !isImmediateU32(*index) || load->Parent() == nullptr) return {LaneState::Kind::Unknown, nullptr};
+    const LaneFlow* flow = laneFlow(index->ImmediateU32(), lane, waveSize);
+    if (flow == nullptr) return {LaneState::Kind::Unknown, nullptr};
+    const auto found = flow->loads.find(load);
+    return found == flow->loads.end() ? LaneState{LaneState::Kind::Unknown, nullptr} : found->second;
+}
+
+WindowLane windowLane(IrValue* load, std::uint32_t lane, std::uint32_t waveSize) {
+    const LaneState state = windowLoadLane(load, lane, waveSize);
+    if (state.kind != LaneState::Kind::Known) return {};
+    if (windowFlows != nullptr && windowFlows->folded != nullptr) windowFlows->folded->emplace_back(load, lane);
+    return {state.value, true};
+}
+
+IrValue* laneSource(IrValue* value, std::uint32_t lane, std::uint32_t waveSize) {
+    for (;;) {
+        value = value->Resolve();
+        if (value->Opcode() == IrOpcode::WriteLane) {
+            const IrValue* selector = value->Argument(1)->Resolve();
+            if (!isImmediateU32(*selector) || selector->ImmediateU32() % waveSize == lane) return nullptr;
+            value = value->Argument(2);
+            continue;
+        }
+        if (value->Opcode() != IrOpcode::LoadVectorWindow || !isImmediateU32(*value->Argument(0)->Resolve())) return nullptr;
+        return value;
+    }
+}
+
+IrValue& immediate(IrProgram& program, std::uint32_t value) {
+    IrValue& constant = program.CreateValue(IrOpcode::Void, IrType::U32);
+    constant.SetImmediateU32(value);
+    return constant;
+}
+
+std::size_t guardSpilledLanes(IrProgram& program, const std::vector<std::pair<IrValue*, std::uint32_t>>& folded, std::uint32_t waveSize) {
+    const auto keyOf = [](std::uint32_t slot, std::uint32_t lane) { return (static_cast<std::uint64_t>(slot) << 32u) | lane; };
+    std::map<std::uint64_t, std::unordered_set<const IrValue*>> used;
+    std::vector<std::uint64_t> work;
+    const auto use = [&](IrValue* load, std::uint32_t lane) {
+        const auto key = keyOf(load->Argument(0)->Resolve()->ImmediateU32(), lane);
+        if (!used[key].insert(load).second) return false;
+        work.push_back(key);
+        return true;
+    };
+    for (const auto& [load, lane] : folded) use(load, lane);
+    std::unordered_map<const IrValue*, std::set<std::uint64_t>> guarded;
+    while (!work.empty()) {
+        const auto key = work.back();
+        work.pop_back();
+        const auto slot = static_cast<std::uint32_t>(key >> 32u);
+        const auto lane = static_cast<std::uint32_t>(key);
+        const auto& usedLoads = used[key];
+        std::unordered_map<const IrBlock*, bool> liveIn;
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (auto block = program.Blocks().rbegin(); block != program.Blocks().rend(); ++block) {
+                bool live = false;
+                for (const IrBlock* successor : (*block)->Successors()) live = live || liveIn[successor];
+                for (auto inst = (*block)->Instructions().rbegin(); inst != (*block)->Instructions().rend(); ++inst) {
+                    IrValue* value = *inst;
+                    if (value->Opcode() == IrOpcode::LoadVectorWindow) {
+                        live = live || usedLoads.contains(value);
+                        continue;
+                    }
+                    if (value->Opcode() != IrOpcode::StoreVectorWindow) continue;
+                    const IrValue* index = value->Argument(0)->Resolve();
+                    if (!isImmediateU32(*index)) {
+                        if (live) guarded[value].insert(key);
+                        continue;
+                    }
+                    if (index->ImmediateU32() != slot) continue;
+                    if (live) {
+                        if (IrValue* source = laneSource(value->Argument(1), lane, waveSize); source != nullptr && use(source, lane)) changed = true;
+                    }
+                    live = false;
+                }
+                if (const auto found = liveIn.find(block->get()); found == liveIn.end() || found->second != live) {
+                    changed = changed || live || found != liveIn.end();
+                    liveIn[block->get()] = live;
+                }
+            }
+        }
+    }
+    std::size_t guards = 0;
+    for (const auto& block : program.Blocks()) {
+        for (IrValue* store : std::vector<IrValue*>(block->Instructions().begin(), block->Instructions().end())) {
+            const auto found = guarded.find(store);
+            if (found == guarded.end()) continue;
+            IrValue& current = program.CreateValue(IrOpcode::LoadVectorWindow, IrType::U32);
+            current.AddArgument(store->Argument(0));
+            block->InsertInstructionBefore(store, &current);
+            for (const auto key : found->second) {
+                IrValue& guard = program.CreateValue(IrOpcode::WindowLaneGuard, IrType::Void);
+                for (IrValue* argument : {store->Argument(0), store->Argument(1), &current, &immediate(program, static_cast<std::uint32_t>(key >> 32u)), &immediate(program, static_cast<std::uint32_t>(key))}) guard.AddArgument(argument);
+                block->InsertInstructionBefore(store, &guard);
+                ++guards;
+            }
+        }
+    }
+    if (guards != 0u) program.Info().usesFaultBuffer = true;
+    return guards;
+}
+
 ChainResult searchChain(IrValue* value, std::uint32_t lane, std::uint32_t waveSize) {
     for (;;) {
         value = value->Resolve();
+        if (value->Opcode() == IrOpcode::LoadVectorWindow) {
+            const WindowLane found = windowLane(value, lane, waveSize);
+            if (found.known && found.value != nullptr) {
+                return ChainResult {value, value, found.value};
+            }
+            return ChainResult {value, nullptr, nullptr, found.known};
+        }
         if (value->Opcode() != IrOpcode::WriteLane) {
             return ChainResult {value, nullptr};
         }
@@ -29,7 +255,7 @@ ChainResult searchChain(IrValue* value, std::uint32_t lane, std::uint32_t waveSi
             return ChainResult {value, nullptr};
         }
         if (selector->ImmediateU32() % waveSize == lane) {
-            return ChainResult {value, value};
+            return ChainResult {value, value, value->Argument(0)};
         }
         value = value->Argument(2);
     }
@@ -65,7 +291,7 @@ using PhiMap = std::unordered_map<IrValue*, IrValue*>;
 IrValue* getRealValue(IrProgram& program, PhiMap& phiMap, IrValue* source, std::uint32_t lane, std::uint32_t waveSize) {
     const ChainResult chain = searchChain(source, lane, waveSize);
     if (chain.write != nullptr) {
-        return chain.write->Argument(0);
+        return chain.scalar;
     }
 
     IrValue* inst = chain.value;
@@ -190,6 +416,13 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
     if (waveSize != 32u && waveSize != 64u) {
         return stats;
     }
+    WindowFlows flows;
+    flows.program = &program;
+    std::vector<std::pair<IrValue*, std::uint32_t>> folded;
+    struct FlowScope {
+        ~FlowScope() { windowFlows = nullptr; }
+    } flowScope;
+    windowFlows = &flows;
 
     for (const auto& block : program.Blocks()) {
         for (IrValue* inst : block->Instructions()) {
@@ -204,7 +437,8 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
             const std::uint32_t lane = selector->ImmediateU32() % waveSize;
             const ChainResult chain = searchChain(inst->Argument(0), lane, waveSize);
             if (chain.write != nullptr) {
-                inst->ReplaceUsesWith(chain.write->Argument(0), true);
+                if (chain.value->Opcode() == IrOpcode::LoadVectorWindow) folded.emplace_back(chain.value, lane);
+                inst->ReplaceUsesWith(chain.scalar, true);
                 stats.rewrittenReads++;
                 continue;
             }
@@ -220,10 +454,14 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
             }
 
             PhiMap phiMap;
-            inst->ReplaceUsesWith(getRealValue(program, phiMap, chain.value, lane, waveSize), true);
+            flows.folded = &folded;
+            IrValue* real = getRealValue(program, phiMap, chain.value, lane, waveSize);
+            flows.folded = nullptr;
+            inst->ReplaceUsesWith(real, true);
             stats.rewrittenReads++;
         }
     }
+    stats.guardedStores = static_cast<std::uint32_t>(guardSpilledLanes(program, folded, waveSize));
     return stats;
 }
 

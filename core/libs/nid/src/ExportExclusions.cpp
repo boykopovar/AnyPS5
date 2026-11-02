@@ -175,7 +175,7 @@ std::unordered_set<std::string> ReadExportExclusions(const std::string& path) {
 }
 
 std::unordered_set<std::string> ReadExportList(const std::string& path) {
-    std::ifstream input(path, std::ios::binary);
+    std::ifstream input(Internal::NativePath(path), std::ios::binary);
     if (!input) throw std::runtime_error("cannot open export list: " + path);
     const auto text = ReadText(path, input);
     if (text.empty() || text.back() != '\n') throw std::runtime_error("malformed export list: " + path);
@@ -192,8 +192,8 @@ std::unordered_set<std::string> ReadExportList(const std::string& path) {
 
 bool WriteExportList(const std::string& referencePath, const std::string& path) {
     const auto text = FormatExportList(ReadExportExclusions(referencePath));
-    if (std::ifstream existing(path, std::ios::binary); existing && ReadText(path, existing) == text) return false;
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (std::ifstream existing(Internal::NativePath(path), std::ios::binary); existing && ReadText(path, existing) == text) return false;
+    std::ofstream output(Internal::NativePath(path), std::ios::binary | std::ios::trunc);
     if (!output) throw std::runtime_error("cannot write export list: " + path);
     output.write(text.data(), static_cast<std::streamsize>(text.size()));
     output.close();

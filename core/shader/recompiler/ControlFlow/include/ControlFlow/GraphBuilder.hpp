@@ -51,6 +51,7 @@ struct TableCall {
     std::uint32_t descriptorOffset = 0;
     std::uint32_t entryOffset = 0;
     std::uint32_t entryStride = 0;
+    std::optional<std::uint64_t> constantPointer;
 };
 
 struct TableCallee {
@@ -60,7 +61,7 @@ struct TableCallee {
 
 [[nodiscard]] std::optional<std::uint32_t> UnresolvableSwappcTarget(const RdnaProgram& program, const SwappcInfo* swappc);
 [[nodiscard]] std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const SwappcInfo& swappc);
-[[nodiscard]] std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t> callee, std::uint32_t linkRegister);
+[[nodiscard]] std::optional<std::uint32_t> UserDataCalleeLength(std::span<const std::uint32_t> callee, std::uint32_t linkRegister, bool allowGetpc = false);
 [[nodiscard]] std::vector<std::uint32_t> LinkUserDataCalls(const RdnaProgram& program, std::span<const UserDataCall> calls, std::span<const std::vector<std::uint32_t>> callees);
 [[nodiscard]] std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcInfo& swappc);
 struct LinkedCalls {

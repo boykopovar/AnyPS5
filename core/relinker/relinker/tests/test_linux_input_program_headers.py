@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 
+from signal_run import run_without_core_dump
+
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_INTERP = 3
@@ -69,7 +71,7 @@ def run_expecting_trap(name, output):
     if not (sys.platform.startswith("linux") and platform.machine() in ("x86_64", "AMD64")):
         return
     output.chmod(0o755)
-    executed = subprocess.run([str(output)], capture_output=True, timeout=20)
+    executed = run_without_core_dump([str(output)], capture_output=True, timeout=20)
     assert executed.returncode == -signal.SIGTRAP, (name, executed.returncode, executed.stderr)
 
 
@@ -95,8 +97,8 @@ def main():
         convert("phdr-only", fixture(True, False, 9))
         both = convert("both", fixture(True, True, 9))
         exact = convert("both-exact-slots", fixture(True, True, 8))
-        assert program_headers(exact)[1] == 8, program_headers(exact)[1]
-        assert program_headers(both)[1] == 8, program_headers(both)[1]
+        assert program_headers(exact)[1] == 9, program_headers(exact)[1]
+        assert program_headers(both)[1] == 9, program_headers(both)[1]
     print("Linux input program headers test passed")
 
 

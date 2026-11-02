@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdint>
@@ -12,16 +14,7 @@
 #include <sys/stat.h>
 #endif
 
-struct LibcUtimbuf {
-    std::int64_t actime;
-    std::int64_t modtime;
-};
 static_assert(sizeof(LibcUtimbuf) == 16);
-
-extern "C" {
-int APS5_VABI utime_nid_postfix(const char*, const LibcUtimbuf*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition, int line) {
     if (!condition) {

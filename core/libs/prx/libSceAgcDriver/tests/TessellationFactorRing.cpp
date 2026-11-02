@@ -1,13 +1,9 @@
+#include "prx/libSceAgcDriver/State/include/Configuration.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceAgcDriverSetTFRing(const volatile void* base, uint32_t size);
-int APS5_VABI sceAgcDriverGetTFRing(uintptr_t* base, uint32_t* size);
-}
 
 namespace {
 

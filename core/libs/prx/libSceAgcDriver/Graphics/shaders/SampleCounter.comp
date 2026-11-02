@@ -11,6 +11,10 @@ layout(push_constant) uniform Parameters {
 } parameters;
 
 void main() {
+    if (parameters.store == 2u) {
+        for (uint db = 0u; db < 16u; ++db) parameters.target.words[db * 4u + 1u] |= 0x80000000u;
+        return;
+    }
     uint low = parameters.counter.words[0];
     uint high = parameters.counter.words[1];
     for (uint i = 0u; i < parameters.count; ++i) {
@@ -18,12 +22,13 @@ void main() {
         low = uaddCarry(low, parameters.counter.words[4u + 2u * i], carry);
         high = high + parameters.counter.words[5u + 2u * i] + carry;
     }
+    if (parameters.store == 1u) {
+        for (uint db = 0u; db < 16u; ++db) parameters.target.words[db * 4u + 1u] = db == 0u ? (high & 0x7fffffffu) : 0u;
+        return;
+    }
+    if (parameters.store == 3u) {
+        for (uint db = 0u; db < 16u; ++db) parameters.target.words[db * 4u] = db == 0u ? low : 0u;
+    }
     parameters.counter.words[0] = low;
     parameters.counter.words[1] = high;
-    if (parameters.store != 0u) {
-        for (uint db = 0u; db < 16u; ++db) {
-            parameters.target.words[db * 4u] = db == 0u ? low : 0u;
-            parameters.target.words[db * 4u + 1u] = (db == 0u ? high : 0u) | 0x80000000u;
-        }
-    }
 }

@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Shader/include/GsOversubscription.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>

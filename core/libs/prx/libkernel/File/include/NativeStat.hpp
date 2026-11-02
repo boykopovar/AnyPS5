@@ -6,8 +6,8 @@
 
 namespace File {
 
-std::filesystem::path PathOrRelinkedModule(const std::filesystem::path& nativePath);
 void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb);
+bool TryFillFileStat(const std::filesystem::path& nativePath, FileStat* sb);
 void FillFileStat(int nativeDescriptor, FileStat* sb);
 bool FillFileStatFromDescriptor(int fd, FileStat* sb);
 bool FillLinkStat(const std::filesystem::path& nativePath, FileStat* sb);

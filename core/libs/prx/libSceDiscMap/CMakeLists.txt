@@ -1,0 +1,15 @@
+add_library(libSceDiscMap SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceDiscMap PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDiscMap)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_disc_map_tests ${LIBS_INCLUDE_DIR}/tests/GuestDiscMap.cpp)
+    target_include_directories(guest_disc_map_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_disc_map_tests PRIVATE libSceDiscMap libc)
+    configure_windows_unwind(guest_disc_map_tests)
+    add_test(NAME guest_disc_map COMMAND guest_disc_map_tests)
+    if(WIN32)
+        set_tests_properties(guest_disc_map PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDiscMap>")
+    endif()
+endif()

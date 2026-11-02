@@ -14,7 +14,8 @@ public:
         const std::vector<std::uint8_t>& textSection,
         FileByteOffset textSectionVAddr,
         VirtualAddress targetGotOrPltAddress,
-        ByteCount targetGotOrPltSize
+        ByteCount targetGotOrPltSize,
+        const std::vector<CodeRange>& unwindRanges = {}
     ) = 0;
 };
 

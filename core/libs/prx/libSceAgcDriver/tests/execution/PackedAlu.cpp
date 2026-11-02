@@ -196,7 +196,7 @@ constexpr const char* Names[48] = {
 };
 
 bool Ieee = false;
-bool FlushHalf = false;
+bool DirectedHalf = false;
 
 void Fill(std::uint32_t tid, std::uint32_t* words) {
     std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), words);
@@ -236,7 +236,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     };
     request.useCache = false;
     if (Ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
-    if (FlushHalf) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0x30u, true, false, false};
+    if (DirectedHalf) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf4u, true, false, false};
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -264,14 +264,14 @@ int main() {
             Check();
         }
         Ieee = false;
-        FlushHalf = true;
+        DirectedHalf = true;
         bool refused = false;
         try {
             Run(*device);
         } catch (const std::exception& error) {
-            refused = std::string(error.what()).find("f16 denormals not kept") != std::string::npos;
+            refused = std::string(error.what()).find("f16 rounding not to nearest even") != std::string::npos;
         }
-        Require(refused, "packed alu: flushed f16 denormals were not refused");
+        Require(refused, "packed alu: directed f16 rounding was not refused");
         std::puts("packed alu tests passed");
         return 0;
     } catch (const std::exception& error) {

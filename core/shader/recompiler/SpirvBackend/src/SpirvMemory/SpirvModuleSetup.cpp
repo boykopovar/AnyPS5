@@ -5,6 +5,11 @@
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
+#include <cstdlib>
+#include <optional>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include <stdexcept>
 #include <string>
 
@@ -41,13 +46,296 @@ std::uint32_t DefineInterfaceVariable(SpirvEmitterState& state, std::uint32_t ty
     return variable;
 }
 
+namespace {
+
+class WindowIndexBounds {
+public:
+    std::optional<std::uint64_t> Of(const IrValue& input) {
+        const IrValue* value = input.Resolve();
+        if (value->HasImmediate()) return value->ImmediateU32();
+        if (const auto found = memo.find(value); found != memo.end()) return found->second;
+        if (!active.insert(value).second || active.size() > 256u) return std::nullopt;
+        const auto bound = compute(*value);
+        active.erase(value);
+        memo.emplace(value, bound);
+        return bound;
+    }
+
+private:
+    using Bound = std::optional<std::uint64_t>;
+
+    Bound maxOf(std::initializer_list<Bound> bounds) {
+        std::uint64_t result = 0;
+        for (const auto& bound : bounds) {
+            if (!bound) return std::nullopt;
+            result = std::max(result, *bound);
+        }
+        return result;
+    }
+
+    static std::vector<const IrValue*> reachingStores(const IrValue& load, std::uint32_t slot) {
+        std::vector<const IrValue*> values;
+        std::unordered_set<const IrBlock*> visited;
+        std::vector<std::pair<IrBlock*, const IrValue*>> pending {{load.Parent(), &load}};
+        while (!pending.empty()) {
+            const auto [block, before] = pending.back();
+            pending.pop_back();
+            const auto& instructions = block->Instructions();
+            auto it = instructions.rbegin();
+            if (before != nullptr) it = std::next(std::find(instructions.rbegin(), instructions.rend(), before));
+            bool stored = false;
+            for (; it != instructions.rend() && !stored; ++it) {
+                if ((*it)->Opcode() != IrOpcode::StoreVectorWindow) continue;
+                const IrValue* index = (*it)->Argument(0)->Resolve();
+                if (!index->HasImmediate() || index->ImmediateU32() != slot) continue;
+                values.push_back((*it)->Argument(1));
+                stored = true;
+            }
+            if (stored) continue;
+            for (IrBlock* predecessor : block->Predecessors()) {
+                if (visited.insert(predecessor).second) pending.emplace_back(predecessor, nullptr);
+            }
+        }
+        return values;
+    }
+
+    Bound compute(const IrValue& value) {
+        const auto arg = [&](std::size_t index) { return Of(*value.Argument(index)); };
+        const auto immediate = [&](std::size_t index) -> std::optional<std::uint32_t> {
+            const IrValue* operand = value.Argument(index)->Resolve();
+            if (!operand->HasImmediate()) return std::nullopt;
+            return operand->ImmediateU32();
+        };
+        const auto fits = [](std::uint64_t bound) -> Bound { return bound <= 0xffffffffull ? Bound(bound) : std::nullopt; };
+        switch (value.Opcode()) {
+        case IrOpcode::BitFieldUExtract: {
+            const auto count = immediate(2);
+            if (count && *count < 32u) return (std::uint64_t {1} << *count) - 1u;
+            return arg(0);
+        }
+        case IrOpcode::BitwiseAnd32: {
+            const auto lhs = arg(0);
+            const auto rhs = arg(1);
+            if (lhs && rhs) return std::min(*lhs, *rhs);
+            return lhs ? lhs : rhs;
+        }
+        case IrOpcode::UMin32: {
+            const auto lhs = arg(0);
+            const auto rhs = arg(1);
+            if (!lhs || !rhs) return std::nullopt;
+            return std::min(*lhs, *rhs);
+        }
+        case IrOpcode::UMax32:
+            return maxOf({arg(0), arg(1)});
+        case IrOpcode::BitwiseOr32: {
+            const auto both = maxOf({arg(0), arg(1)});
+            if (!both) return std::nullopt;
+            std::uint64_t mask = 0;
+            while (mask < *both) mask = mask << 1u | 1u;
+            return mask;
+        }
+        case IrOpcode::IAdd32: {
+            const auto lhs = arg(0);
+            const auto rhs = arg(1);
+            if (!lhs || !rhs) return std::nullopt;
+            return fits(*lhs + *rhs);
+        }
+        case IrOpcode::ShiftRightLogical32: {
+            const auto shift = immediate(1);
+            const auto bound = arg(0);
+            if (!bound) return std::nullopt;
+            return shift ? *bound >> (*shift & 31u) : *bound;
+        }
+        case IrOpcode::ShiftLeftLogical32: {
+            const auto shift = immediate(1);
+            const auto bound = arg(0);
+            if (!bound || !shift) return std::nullopt;
+            return fits(*bound << (*shift & 31u));
+        }
+        case IrOpcode::ConvertU32U16:
+            return 0xffffu;
+        case IrOpcode::Select:
+        case IrOpcode::SelectU32:
+        {
+            if (value.Argument(0)->Resolve()->Opcode() == IrOpcode::GetExec || value.Argument(2)->Resolve()->Opcode() == IrOpcode::LoadVectorWindow) return arg(1);
+            const auto lhs = arg(1);
+            const auto rhs = arg(2);
+            if (lhs && rhs) return std::max(*lhs, *rhs);
+            return lhs ? lhs : rhs;
+        }
+        case IrOpcode::ReadFirstLane:
+            return arg(0);
+        case IrOpcode::Identity:
+        case IrOpcode::Phi: {
+            Bound bound;
+            for (std::size_t index = 0; index < value.ArgumentCount(); ++index) {
+                if (const auto incoming = arg(index)) bound = std::max(bound.value_or(0u), *incoming);
+            }
+            return bound;
+        }
+        case IrOpcode::LoadVectorWindow: {
+            const IrValue* index = value.Argument(0)->Resolve();
+            if (!index->HasImmediate()) return std::nullopt;
+            Bound bound = 0u;
+            for (const IrValue* stored : reachingStores(value, index->ImmediateU32())) {
+                bound = maxOf({bound, Of(*stored)});
+                if (!bound) return std::nullopt;
+            }
+            return bound;
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    std::unordered_map<const IrValue*, Bound> memo;
+    std::unordered_set<const IrValue*> active;
+};
+
+constexpr std::uint64_t MaxNarrowedSwitchCases = 4096;
+
+std::uint32_t IndexedWindowSlots(const IrProgram& program, std::uint32_t laneCount) {
+    const auto window = program.Metadata().vectorWindowSize;
+    WindowIndexBounds bounds;
+    std::uint64_t reached = 0;
+    std::uint64_t dynamicAccesses = 0;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() != IrOpcode::LoadVectorWindow && inst->Opcode() != IrOpcode::StoreVectorWindow) continue;
+            const IrValue* index = inst->Argument(0)->Resolve();
+            if (index->HasImmediate()) continue;
+            ++dynamicAccesses;
+            const auto bound = bounds.Of(*index);
+            if (bound && *bound < window / 2u) reached = std::max(reached, *bound + 1u);
+        }
+    }
+    if (reached == 0u || dynamicAccesses * (window - reached) * laneCount > MaxNarrowedSwitchCases) return 0u;
+    return static_cast<std::uint32_t>(reached);
+}
+
+void PlanMeshWindowBuffer(SpirvEmitterState& state) {
+    using Slots = std::vector<bool>;
+    const auto& program = state.program;
+    const std::size_t slots = program.Metadata().vectorWindowSize;
+    const auto constantSlot = [slots](const IrValue* inst) -> std::optional<std::uint32_t> {
+        const IrValue* index = inst->Argument(0)->Resolve();
+        if (!index->HasImmediate() || index->ImmediateU32() >= slots) return std::nullopt;
+        return index->ImmediateU32();
+    };
+    const auto& order = program.BlockOrder();
+    const auto staleAfter = [&](const IrValue* inst, Slots& stale, bool collect) {
+        const bool load = inst->Opcode() == IrOpcode::LoadVectorWindow;
+        if (!load && inst->Opcode() != IrOpcode::StoreVectorWindow) return;
+        const auto slot = constantSlot(inst);
+        if (!slot) {
+            if (!load) stale.assign(slots, true);
+            return;
+        }
+        if (load && collect && stale[*slot]) state.meshWindowBufferLoads.insert(inst);
+        stale[*slot] = false;
+    };
+    std::unordered_map<const IrBlock*, Slots> staleOut;
+    for (const IrBlock* block : order) staleOut.emplace(block, Slots(slots, false));
+    const auto staleIn = [&](const IrBlock* block) {
+        Slots stale(slots, false);
+        for (const IrBlock* predecessor : block->Predecessors()) {
+            const auto found = staleOut.find(predecessor);
+            if (found == staleOut.end()) return Slots(slots, true);
+            for (std::size_t slot = 0; slot < slots; ++slot) stale[slot] = stale[slot] || found->second[slot];
+        }
+        return stale;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const IrBlock* block : order) {
+            auto stale = staleIn(block);
+            for (const IrValue* inst : block->Instructions()) staleAfter(inst, stale, false);
+            auto& exit = staleOut[block];
+            if (stale != exit) {
+                exit = std::move(stale);
+                changed = true;
+            }
+        }
+    }
+    for (const IrBlock* block : order) {
+        auto stale = staleIn(block);
+        for (const IrValue* inst : block->Instructions()) staleAfter(inst, stale, true);
+    }
+    const auto liveBefore = [&](const IrValue* inst, Slots& live) {
+        if (inst->Opcode() == IrOpcode::LoadVectorWindow) {
+            const auto slot = constantSlot(inst);
+            if (!slot) live.assign(slots, true);
+            else if (state.meshWindowBufferLoads.contains(inst)) live[*slot] = true;
+            return;
+        }
+        if (inst->Opcode() != IrOpcode::StoreVectorWindow) return;
+        if (const auto slot = constantSlot(inst)) live[*slot] = false;
+    };
+    std::unordered_map<const IrBlock*, Slots> liveIn;
+    for (const IrBlock* block : order) liveIn.emplace(block, Slots(slots, false));
+    const auto liveOut = [&](const IrBlock* block) {
+        Slots live(slots, false);
+        for (const IrBlock* successor : block->Successors()) {
+            const auto found = liveIn.find(successor);
+            if (found == liveIn.end()) return Slots(slots, true);
+            for (std::size_t slot = 0; slot < slots; ++slot) live[slot] = live[slot] || found->second[slot];
+        }
+        return live;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (auto block = order.rbegin(); block != order.rend(); ++block) {
+            auto live = liveOut(*block);
+            const auto& instructions = (*block)->Instructions();
+            for (auto inst = instructions.rbegin(); inst != instructions.rend(); ++inst) liveBefore(*inst, live);
+            auto& entry = liveIn[*block];
+            if (live != entry) {
+                entry = std::move(live);
+                changed = true;
+            }
+        }
+    }
+    for (const IrBlock* block : order) {
+        auto live = liveOut(block);
+        const auto& instructions = block->Instructions();
+        for (auto inst = instructions.rbegin(); inst != instructions.rend(); ++inst) {
+            if ((*inst)->Opcode() == IrOpcode::StoreVectorWindow) {
+                if (const auto slot = constantSlot(*inst); slot && live[*slot]) state.meshWindowBufferStores.insert(*inst);
+            }
+            liveBefore(*inst, live);
+        }
+    }
+    state.meshWindowEntryLive = order.empty() ? Slots(slots, true) : liveIn.at(order.front());
+}
+
+bool WritesGuestMemory(const IrProgram& program) {
+    const auto& info = program.Info();
+    const auto writtenImage = [](const ImageResource& image) { return !image.targetMerge && (image.written || image.atomic || image.atomic64); };
+    const auto writtenModes = [&](const std::vector<ImageResource>& modes) { return std::ranges::any_of(modes, writtenImage); };
+    const auto writtenBuffer = [](const BufferResource& buffer) { return buffer.written || buffer.atomic; };
+    if (info.bdaWrites || std::ranges::any_of(info.buffers, writtenBuffer) || std::ranges::any_of(info.images, writtenImage) || std::ranges::any_of(info.runtimeImageModes, writtenModes)) return true;
+    const auto& memory = program.Resources().memoryInfo;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            const auto access = SharedAccessOf(inst->Opcode());
+            if (access == SharedAccess::None || access == SharedAccess::Read) continue;
+            const auto index = inst->Flags<MemoryFlags>().index;
+            if (index >= memory.size()) FailEmit("a shared memory access has no memory metadata");
+            if (memory[index].kind == ResourceKind::Gds) return true;
+        }
+    }
+    return false;
+}
+
+}
+
 void DefineModule(SpirvEmitterState& state) {
     state.interfaceVariables.reserve(state.program.Info().inputs.size() + state.program.Info().outputs.size());
     DefineInputs(state);
     DefineOutputs(state);
     DefineTessellationInterfaces(state);
     DefineDescriptors(state);
-    if (state.requirements.functionLds) {
+    if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.ldsVariable = state.module.AllocateId();
     }
     if (state.requirements.functionScratch) {
@@ -55,9 +343,15 @@ void DefineModule(SpirvEmitterState& state) {
             state.scratchVariable.at(half) = state.module.AllocateId();
         }
     }
-    if (state.program.Metadata().vectorWindowSize != 0u) {
+    if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
+        static const bool narrowWindow = std::getenv("APS5_NO_WINDOW_NARROWING") == nullptr;
+        state.vectorWindowIndexed = narrowWindow && !state.meshWindowBuffer ? IndexedWindowSlots(state.program, state.laneCount) : 0u;
+        if (state.meshWindowBuffer) PlanMeshWindowBuffer(state);
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.vectorWindowVariable.at(half) = state.module.AllocateId();
+            if (state.vectorWindowIndexed == 0u && !state.meshWindowBuffer) continue;
+            auto& slots = state.vectorWindowSlots.at(half);
+            for (std::uint32_t slot = state.vectorWindowIndexed; slot < window; slot++) slots.push_back(state.module.AllocateId());
         }
     }
     state.mainFunc = state.module.AllocateId();
@@ -66,7 +360,7 @@ void DefineModule(SpirvEmitterState& state) {
         state.meshGuestFunc = state.module.AllocateId();
         state.module.EmitCapability(spv::CapabilityMeshShadingEXT);
         state.module.EmitExtension("SPV_EXT_mesh_shader");
-        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeOutputTrianglesEXT);
+        state.module.AddExecutionMode(state.mainFunc, mesh.outputPrimitiveSize == 1u ? spv::ExecutionModeOutputPoints : mesh.outputPrimitiveSize == 2u ? spv::ExecutionModeOutputLinesEXT : spv::ExecutionModeOutputTrianglesEXT);
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeOutputVertices, mesh.maxVertices);
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeOutputPrimitivesEXT, mesh.maxPrimitives);
     }
@@ -85,11 +379,17 @@ void DefineModule(SpirvEmitterState& state) {
         if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) == state.supportedCapabilities.end()) {
             FailEmit("64-bit buffer atomics need shaderBufferInt64Atomics");
         }
+    }
+    if (state.requirements.bufferU64View) {
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
     }
     if (state.requirements.sharedInt64Atomics) {
         state.module.EmitCapability(spv::CapabilityInt64);
+    }
+    if (state.requirements.ldsBufferInt64Atomics) {
+        state.module.EmitCapability(spv::CapabilityInt64);
+        state.module.EmitCapability(spv::CapabilityInt64Atomics);
     }
     if (state.requirements.imageInt64Atomics) {
         if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end()) {
@@ -115,7 +415,15 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityShaderLayer);
     }
     if (InputVariableForKind(state, StageInputKind::Layer) != 0) {
-        state.module.EmitCapability(spv::CapabilityGeometry);
+        const auto supported = [&state](spv::Capability capability) {
+            return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end();
+        };
+        if (supported(spv::CapabilityGeometry) || !supported(spv::CapabilityShaderViewportIndexLayerEXT)) {
+            state.module.EmitCapability(spv::CapabilityGeometry);
+        } else {
+            state.module.EmitExtension("SPV_EXT_shader_viewport_index_layer");
+            state.module.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
+        }
     }
     if (state.viewportIndexVariable != 0) {
         state.module.RequireVersion(0x00010500u);
@@ -153,8 +461,20 @@ void DefineModule(SpirvEmitterState& state) {
     state.module.EmitCapability(spv::CapabilitySignedZeroInfNanPreserve);
     state.module.EmitExtension("SPV_KHR_float_controls");
     state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeSignedZeroInfNanPreserve, 32u);
-    if (state.requirements.float64) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) == state.supportedCapabilities.end()) {
+    if (state.float32FlushToZero && std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDenormFlushToZero)) != state.supportedCapabilities.end()) {
+        state.module.EmitCapability(spv::CapabilityDenormFlushToZero);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDenormFlushToZero, 32u);
+    } else if (state.float32DenormPreserve && !state.float32FlushToZero) {
+        state.module.EmitCapability(spv::CapabilityDenormPreserve);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDenormPreserve, 32u);
+    }
+    const bool deviceFloat64 = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) != state.supportedCapabilities.end();
+    state.integerInterpolation = state.requirements.float64Interpolation && !deviceFloat64;
+    if (state.integerInterpolation) state.module.EmitCapability(spv::CapabilityInt64);
+    state.integerFloat64 = state.requirements.float64 && !deviceFloat64 && !state.requirements.float64NeedsDevice;
+    if (state.integerFloat64) state.module.EmitCapability(spv::CapabilityInt64);
+    if (!state.integerFloat64 && (state.requirements.float64 || (state.requirements.float64Interpolation && deviceFloat64))) {
+        if (!deviceFloat64) {
             throw std::runtime_error("64-bit float instructions need the Float64 capability, which the device lacks");
         }
         state.module.EmitCapability(spv::CapabilityFloat64);
@@ -165,16 +485,8 @@ void DefineModule(SpirvEmitterState& state) {
         }
     }
     if (const auto* workgroup = ShaderWorkgroupInput(state)) {
-        const std::uint32_t derivativeDefault = state.requirements.computeDerivatives ? 2u : 1u;
-        std::uint32_t localX = workgroup->threadsNum[0] != 0u ? workgroup->threadsNum[0] : derivativeDefault;
-        std::uint32_t localY = workgroup->threadsNum[1] != 0u ? workgroup->threadsNum[1] : derivativeDefault;
-        std::uint32_t localZ = workgroup->threadsNum[2] != 0u ? workgroup->threadsNum[2] : 1u;
-        if (state.laneCount == 2) {
-            localX = ((localX * localY * localZ + 63u) / 64u) * 32u;
-            localY = 1u;
-            localZ = 1u;
-        }
-        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeLocalSize, localX, localY, localZ);
+        const auto local = WorkgroupLocalSize(state, *workgroup);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeLocalSize, local[0], local[1], local[2]);
     }
     if (StageOf(state) == IrShaderStage::Pixel) {
         const auto& pixel = PixelInfo(state);
@@ -196,12 +508,23 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.EmitExtension("SPV_EXT_shader_stencil_export");
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeStencilRefReplacingEXT);
         }
-        if (pixel.psEarlyZ && !pixel.psAlphaToCoverage) {
+        const bool merge = !pixel.merges.empty();
+        const std::string mergeName = merge && pixel.merges.front().blend.enabled ? "blending into an unclamped normalized color target" : "a partial write of a packed color target";
+        if (merge && (state.depthVariable != 0 || state.stencilRefVariable != 0 || pixel.psDepthExportEnable || pixel.psSampleMaskExportEnable || pixel.psStencilRefExportEnable || pixel.psAlphaToCoverage || pixel.QuadMasked() || (pixel.psPixelKillEnable && !pixel.psEarlyZ && pixel.mergeDepthStencilWrites))) {
+            throw std::runtime_error(mergeName + " merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests of a draw writing depth or stencil, exports depth, stencil or coverage, or runs with a quad sample mask cannot use");
+        }
+        if (merge && pixel.mergeSamples > 1u && WritesGuestMemory(state.program)) {
+            throw std::runtime_error("a partial write of a multisampled packed color target runs the pixel shader once per sample, which a shader that writes guest memory (stores, atomics or GDS) cannot use: each covered sample would repeat its writes");
+        }
+        if (merge && !pixel.psEarlyZ && pixel.mergeDepthStencilTests && WritesGuestMemory(state.program)) {
+            throw std::runtime_error(mergeName + " merges inside the pixel shader after early depth and stencil tests, which a shader that writes guest memory (stores, atomics or GDS) under late tests cannot use: the pixels the tests reject would still write it");
+        }
+        if ((pixel.psEarlyZ && !pixel.psAlphaToCoverage && !pixel.QuadMasked()) || merge) {
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeEarlyFragmentTests);
         }
-        if (pixel.psOrderedPixelShader) {
+        if (pixel.psOrderedPixelShader || merge) {
             if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFragmentShaderPixelInterlockEXT)) == state.supportedCapabilities.end()) {
-                throw std::runtime_error("a primitive-ordered pixel shader needs the fragmentShaderPixelInterlock feature, which the device lacks");
+                throw std::runtime_error(merge ? mergeName + " needs the fragmentShaderPixelInterlock feature, which the device lacks" : "a primitive-ordered pixel shader needs the fragmentShaderPixelInterlock feature, which the device lacks");
             }
             state.module.EmitCapability(spv::CapabilityFragmentShaderPixelInterlockEXT);
             state.module.EmitExtension("SPV_EXT_fragment_shader_interlock");
@@ -212,7 +535,7 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDerivativeGroupLinearKHR);
     }
     state.module.AddName(state.mainFunc, "main");
-    if (state.requirements.functionLds) {
+    if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.module.AddName(state.ldsVariable, "lds_dwords");
     }
     if (state.requirements.functionScratch) {
@@ -220,7 +543,7 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.AddName(state.scratchVariable.at(half), "scratch_dwords");
         }
     }
-    if (state.program.Metadata().vectorWindowSize != 0u) {
+    if (state.program.Metadata().vectorWindowSize != 0u && !state.meshWindowBuffer) {
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.module.AddName(state.vectorWindowVariable.at(half), "vector_window");
         }

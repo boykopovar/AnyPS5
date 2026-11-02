@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+#include "prx/libc/include/general/VabiMacros.hpp"
+
 using _Unwind_Word = std::uintptr_t;
 using _Unwind_Ptr = std::uintptr_t;
 using _Unwind_Reason_Code = int;
@@ -26,14 +28,14 @@ static constexpr _Unwind_Action _UA_END_OF_STACK = 16;
 
 struct _Unwind_Exception {
     std::uint64_t exception_class;
-    void (*exception_cleanup)(_Unwind_Reason_Code, _Unwind_Exception*);
+    void (APS5_VABI *exception_cleanup)(_Unwind_Reason_Code, _Unwind_Exception*);
     std::uintptr_t private_1;
     std::uintptr_t private_2;
 };
 
 struct _Unwind_Context;
 
-using _Unwind_Trace_Fn = _Unwind_Reason_Code (*)(_Unwind_Context*, void*);
-using _Unwind_Stop_Fn = _Unwind_Reason_Code (*)(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*, void*);
+using _Unwind_Trace_Fn = _Unwind_Reason_Code (APS5_VABI *)(_Unwind_Context*, void*);
+using _Unwind_Stop_Fn = _Unwind_Reason_Code (APS5_VABI *)(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*, void*);
 
 #endif

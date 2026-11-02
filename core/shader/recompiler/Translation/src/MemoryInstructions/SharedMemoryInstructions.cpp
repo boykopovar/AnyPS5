@@ -32,7 +32,7 @@ MemoryInfo sharedMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 
 bool TranslationContext::dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
-    memory.flushDenormals = sharedFloatFlush(opcode);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     memory.flushDenormalResults = opcode == IrOpcode::SharedAtomicFAdd32 && (!floatMode.has_value() || ((floatMode->floatMode >> 5u) & 1u) == 0u);
     const IrU32 address = readU32(inst.source0);
     const IrU32 value = readU32(inst.source1);
@@ -213,25 +213,9 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
     return true;
 }
 
-bool TranslationContext::sharedFloatFlush(IrOpcode opcode) const {
-    switch (opcode) {
-    case IrOpcode::SharedAtomicFMin32:
-    case IrOpcode::SharedAtomicFMax32:
-    case IrOpcode::SharedAtomicCmpstF32:
-    case IrOpcode::SharedAtomicFAdd32:
-        return !floatMode.has_value() || ((floatMode->floatMode >> 4u) & 1u) == 0u;
-    case IrOpcode::SharedAtomicFMin64:
-    case IrOpcode::SharedAtomicFMax64:
-    case IrOpcode::SharedAtomicCmpstF64:
-        return floatMode.has_value() && ((floatMode->floatMode >> 6u) & 1u) == 0u;
-    default:
-        return false;
-    }
-}
-
 bool TranslationContext::dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
-    memory.flushDenormals = sharedFloatFlush(opcode);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     const IrU32 address = readU32(inst.source0);
     const IrU32 data0 = readU32(inst.source1);
     const IrU32 data1 = readU32(inst.source2);
@@ -246,7 +230,7 @@ bool TranslationContext::dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode
         throw std::runtime_error("64-bit GDS atomics are not supported");
     }
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
-    memory.flushDenormals = sharedFloatFlush(opcode);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     const IrU32 address = readU32(inst.source0);
     const IrU64 data0 = readU64(inst.source1);
     IrValue& active = ir.GetExec();
@@ -299,7 +283,6 @@ bool TranslationContext::dsOrderedCount(const RdnaInstruction& inst) {
     const std::uint32_t flags = (inst.memoryOffset >> 8u) & 0xffu;
     const auto location = "ds_ordered_count at pc " + std::to_string(inst.programCounter);
     if (!inst.gds) throw std::runtime_error(location + " without GDS is not modeled");
-    if ((flags & 0x10u) != 0u) throw std::runtime_error(location + ": ordered swap is not modeled");
     if (((flags >> 6u) & 3u) != 0u) throw std::runtime_error(location + ": counting more than one dword is not modeled");
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
     memory.offset = inst.memoryOffset & 0xffu;
@@ -308,7 +291,8 @@ bool TranslationContext::dsOrderedCount(const RdnaInstruction& inst) {
     IrValue& active = ir.GetExec();
     IrValue& activeLo = ir.GetExecLo();
     IrValue& activeHi = ir.GetExecHi();
-    IrValue& result = ir.Emit(IrOpcode::DataOrderedCount, IrOpcodeType(IrOpcode::DataOrderedCount), {&address, &active, &activeLo, &activeHi, &amount.Value()}, addMemoryInfo(memory, inst.programCounter));
+    const auto opcode = (flags & 0x10u) != 0u ? IrOpcode::DataOrderedSwap : IrOpcode::DataOrderedCount;
+    IrValue& result = ir.Emit(opcode, IrOpcodeType(opcode), {&address, &active, &activeLo, &activeHi, &amount.Value()}, addMemoryInfo(memory, inst.programCounter));
     writeOperand(inst.destination, &result);
     return true;
 }

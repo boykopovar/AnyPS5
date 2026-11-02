@@ -1,4 +1,7 @@
+#include "prx/libScePngEnc/include/Api.hpp"
 #include <algorithm>
+#include <bit>
+#include <new>
 #include <cstdint>
 #include <cstddef>
 #include <exception>
@@ -18,7 +21,7 @@ constexpr int PNG_ENC_ERROR_FATAL = static_cast<int>(0x80690120);
 
 constexpr std::uint32_t MAX_IMAGE_WIDTH = 1000000;
 constexpr std::uint32_t MAX_IMAGE_HEIGHT = 1000000;
-constexpr std::uint32_t MAX_FILTER_NUMBER = 5;
+constexpr std::uint32_t MAX_FILTER_NUMBER = 4;
 constexpr std::uint16_t COLOR_SPACE_RGB = 3;
 constexpr std::uint16_t COLOR_SPACE_RGBA = 19;
 constexpr std::uint16_t PIXEL_FORMAT_R8G8B8A8 = 0;
@@ -28,12 +31,15 @@ constexpr std::uint16_t FILTER_UP = 2;
 constexpr std::uint16_t FILTER_AVERAGE = 4;
 constexpr std::uint16_t FILTER_PAETH = 8;
 constexpr std::uint16_t FILTER_ALL = FILTER_SUB | FILTER_UP | FILTER_AVERAGE | FILTER_PAETH;
-constexpr std::uint64_t CONTEXT_MAGIC = 0x434E45474E505341ull;
+constexpr std::uintptr_t HANDLE_ALIGNMENT = 16;
 
 struct PngEncContext {
-    std::uint64_t magic;
-    std::uint32_t maxImageWidth;
+    PngEncContext* self;
+    std::uint32_t size;
     std::uint32_t reserved;
+    std::uint32_t maxImageWidth;
+    std::uint32_t maxFilterNumber;
+    std::uint32_t scratchSize;
 };
 
 static_assert(sizeof(PngEncCreateParam) == 16);
@@ -42,20 +48,25 @@ static_assert(sizeof(PngEncOutputInfo) == 8);
 
 int validateCreateParam(const PngEncCreateParam* param) {
     if (!param) return PNG_ENC_ERROR_INVALID_ADDR;
-    if (param->attribute != 0 || param->max_filter_number > MAX_FILTER_NUMBER) return PNG_ENC_ERROR_INVALID_PARAM;
-    if (param->max_image_width == 0 || param->max_image_width > MAX_IMAGE_WIDTH) return PNG_ENC_ERROR_INVALID_SIZE;
+    if (param->this_size != sizeof(PngEncCreateParam)) return PNG_ENC_ERROR_INVALID_SIZE;
+    if (param->attribute != 0 || param->max_image_width == 0 || param->max_image_width > MAX_IMAGE_WIDTH || param->max_filter_number > MAX_FILTER_NUMBER) return PNG_ENC_ERROR_INVALID_PARAM;
     return 0;
 }
 
+std::uint32_t workMemorySize(const PngEncCreateParam& param) {
+    return 285808 + ((4 * param.max_image_width + 28) & ~std::uint32_t{31}) * (param.max_filter_number + 2);
+}
+
 PngEncContext* context(void* handle) {
+    if (reinterpret_cast<std::uintptr_t>(handle) % HANDLE_ALIGNMENT != 0) return nullptr;
     auto* ctx = static_cast<PngEncContext*>(handle);
-    return ctx && ctx->magic == CONTEXT_MAGIC ? ctx : nullptr;
+    return ctx && ctx->self == ctx ? ctx : nullptr;
 }
 
 std::uint8_t filterSet(std::uint16_t filterType) {
     if (filterType == FILTER_ALL) return Decoder::Png::FILTER_ALL;
     if (filterType == 0) return Decoder::Png::FILTER_NONE;
-    std::uint8_t filters = 0;
+    std::uint8_t filters = Decoder::Png::FILTER_NONE;
     if (filterType & FILTER_SUB) filters |= Decoder::Png::FILTER_SUB;
     if (filterType & FILTER_UP) filters |= Decoder::Png::FILTER_UP;
     if (filterType & FILTER_AVERAGE) filters |= Decoder::Png::FILTER_AVERAGE;
@@ -69,41 +80,50 @@ extern "C" {
 
 int APS5_VABI scePngEncQueryMemorySize(const PngEncCreateParam* param) {
     if (const int result = validateCreateParam(param); result != 0) return result;
-    return sizeof(PngEncContext);
+    return static_cast<int>(workMemorySize(*param));
 }
 
 int APS5_VABI scePngEncCreate(const PngEncCreateParam* param, void* memoryAddress, uint32_t memorySize, void** handle) {
     if (const int result = validateCreateParam(param); result != 0) return result;
-    if (!memoryAddress || !handle) return PNG_ENC_ERROR_INVALID_ADDR;
-    if (memorySize < sizeof(PngEncContext)) return PNG_ENC_ERROR_INVALID_SIZE;
-    *static_cast<PngEncContext*>(memoryAddress) = {CONTEXT_MAGIC, param->max_image_width, 0};
-    *handle = memoryAddress;
+    if (!memoryAddress) return PNG_ENC_ERROR_INVALID_ADDR;
+    const std::uint32_t requiredSize = workMemorySize(*param);
+    if (memorySize < requiredSize) return PNG_ENC_ERROR_INVALID_SIZE;
+    if (!handle) return PNG_ENC_ERROR_INVALID_ADDR;
+    const std::uintptr_t aligned = (reinterpret_cast<std::uintptr_t>(memoryAddress) + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
+    auto* ctx = new (reinterpret_cast<void*>(aligned)) PngEncContext{};
+    ctx->self = ctx;
+    ctx->size = sizeof(PngEncCreateParam);
+    ctx->maxImageWidth = (param->max_image_width + 7) & ~std::uint32_t{7};
+    ctx->maxFilterNumber = param->max_filter_number;
+    ctx->scratchSize = requiredSize - 112;
+    *handle = ctx;
     return 0;
 }
 
 int APS5_VABI scePngEncDelete(void* handle) {
     PngEncContext* ctx = context(handle);
     if (!ctx) return PNG_ENC_ERROR_INVALID_HANDLE;
-    ctx->magic = 0;
+    ctx->self = nullptr;
     return 0;
 }
 
 int APS5_VABI scePngEncEncode(void* handle, const PngEncEncodeParam* param, PngEncOutputInfo* outputInfo) {
     const PngEncContext* ctx = context(handle);
     if (!ctx) return PNG_ENC_ERROR_INVALID_HANDLE;
-    if (!param) return PNG_ENC_ERROR_INVALID_PARAM;
-    if (!param->image_mem_addr || !param->png_mem_addr) return PNG_ENC_ERROR_INVALID_ADDR;
-    if ((param->pixel_format != PIXEL_FORMAT_R8G8B8A8 && param->pixel_format != PIXEL_FORMAT_B8G8R8A8)
-        || (param->color_space != COLOR_SPACE_RGB && param->color_space != COLOR_SPACE_RGBA) || param->bit_depth != 8
-        || param->clut_number != 0 || (param->filter_type & ~FILTER_ALL) != 0 || param->compression_level > 9) {
-        return PNG_ENC_ERROR_INVALID_PARAM;
-    }
-
+    if (!param) return PNG_ENC_ERROR_INVALID_ADDR;
+    if (!param->image_mem_addr || reinterpret_cast<std::uintptr_t>(param->image_mem_addr) % 4 != 0 || !param->png_mem_addr) return PNG_ENC_ERROR_INVALID_ADDR;
+    if (param->image_mem_size == 0 || param->png_mem_size == 0) return PNG_ENC_ERROR_INVALID_SIZE;
     const std::uint32_t width = param->image_width;
     const std::uint32_t height = param->image_height;
-    if (width == 0 || height == 0 || width > ctx->maxImageWidth || height > MAX_IMAGE_HEIGHT || param->png_mem_size == 0
-        || param->image_pitch < width * 4 || static_cast<std::uint64_t>(param->image_pitch) * (height - 1) + width * 4 > param->image_mem_size) {
-        return PNG_ENC_ERROR_INVALID_SIZE;
+    const std::uint64_t inputSize = static_cast<std::uint64_t>(param->image_pitch) * height;
+    if (width == 0 || width > ctx->maxImageWidth || height == 0 || height > MAX_IMAGE_HEIGHT
+        || param->image_pitch == 0 || param->image_pitch % 4 != 0 || param->image_pitch > 0x0FFFFFFF || param->image_pitch / 4 < width
+        || inputSize > 0x7FFFFFFF || inputSize > param->image_mem_size) return PNG_ENC_ERROR_INVALID_PARAM;
+    if ((param->pixel_format != PIXEL_FORMAT_R8G8B8A8 && param->pixel_format != PIXEL_FORMAT_B8G8R8A8)
+        || (param->color_space != COLOR_SPACE_RGB && param->color_space != COLOR_SPACE_RGBA) || param->bit_depth != 8
+        || param->clut_number != 0 || (param->filter_type & ~FILTER_ALL) != 0
+        || static_cast<std::uint32_t>(std::popcount(param->filter_type)) > ctx->maxFilterNumber || param->compression_level > 9) {
+        return PNG_ENC_ERROR_INVALID_PARAM;
     }
 
     const std::uint32_t channels = param->color_space == COLOR_SPACE_RGBA ? 4 : 3;

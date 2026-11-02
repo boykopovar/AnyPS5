@@ -1,0 +1,44 @@
+name: Fix label
+
+on:
+  schedule:
+    - cron: '45 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: fix-label
+  cancel-in-progress: true
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LABEL: fix error
+    steps:
+      - run: |
+          gh api graphql --paginate -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" -f query='
+            query($owner: String!, $name: String!, $endCursor: String) {
+              repository(owner: $owner, name: $name) {
+                pullRequests(states: OPEN, first: 100, after: $endCursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { number closingIssuesReferences { totalCount } labels(first: 100) { nodes { name } } }
+                }
+              }
+            }' --jq '.data.repository.pullRequests.nodes[]
+              | (.closingIssuesReferences.totalCount > 0) as $fix
+              | ([.labels.nodes[].name] | index(env.LABEL) != null) as $has
+              | if $fix and ($has | not) then "add \(.number)" elif $has and ($fix | not) then "remove \(.number)" else empty end' > "$RUNNER_TEMP/fix-todo"
+          label=$(jq -rn 'env.LABEL | @uri')
+          while read -r action number; do
+            if [ "$action" = add ]; then
+              gh api "repos/$GITHUB_REPOSITORY/issues/$number/labels" -f "labels[]=$LABEL" --silent
+            else
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$number/labels/$label" --silent
+            fi
+          done < "$RUNNER_TEMP/fix-todo"

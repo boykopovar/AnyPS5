@@ -1,4 +1,5 @@
 #include <elfpatcher/macos/MacOsImage.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -7,6 +8,7 @@
 #include <algorithm>
 #include <bit>
 #include <iomanip>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <memory>
@@ -19,10 +21,10 @@ namespace Elfpatcher::MacOs {
 
 namespace {
 
-using Windows::ImageBase;
 using Windows::LoadRva;
 
 constexpr std::uint64_t PageSize = 0x1000;
+constexpr std::uint64_t UserAddressEnd = 0x7fffffe00000;
 
 constexpr std::uint32_t MhMagic64 = 0xfeedfacf;
 constexpr std::uint32_t CpuTypeX8664 = 0x01000007;
@@ -32,6 +34,7 @@ constexpr std::uint32_t MhDylib = 6;
 constexpr std::uint32_t MhNoUndefs = 0x1;
 constexpr std::uint32_t MhDyldLink = 0x4;
 constexpr std::uint32_t MhTwoLevel = 0x80;
+constexpr std::uint32_t MhWeakDefines = 0x8000;
 
 constexpr std::uint32_t LcSegment64 = 0x19;
 constexpr std::uint32_t LcSymtab = 0x2;
@@ -85,11 +88,47 @@ constexpr std::uint8_t EntryStub[] = {
     0x4c, 0xc4, 0x08, 0x49, 0xff, 0xc0, 0xeb, 0xed, 0x48, 0xc7, 0x44, 0xfc, 0x08, 0x00, 0x00, 0x00,
     0x00, 0x4c, 0x8d, 0x54, 0xfc, 0x10, 0x45, 0x31, 0xc0, 0x49, 0x39, 0xc8, 0x74, 0x0d, 0x4e, 0x8b,
     0x0c, 0xc2, 0x4f, 0x89, 0x0c, 0xc2, 0x49, 0xff, 0xc0, 0xeb, 0xee, 0x49, 0xc7, 0x04, 0xca, 0x00,
-    0x00, 0x00, 0x00, 0x48, 0x89, 0xe6, 0x48, 0x8d, 0x3d, 0x00, 0x00, 0x00, 0x00, 0xff, 0x15, 0x00,
-    0x00, 0x00, 0x00, 0x0f, 0x0b,
+    0x00, 0x00, 0x00, 0x48, 0x89, 0xe6, 0x48, 0x8d, 0x3d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x83, 0xec,
+    0x10, 0x0f, 0xae, 0x1c, 0x24, 0xc7, 0x44, 0x24, 0x04, 0xc0, 0x9f, 0x00, 0x00, 0x0f, 0xae, 0x54,
+    0x24, 0x04, 0xff, 0x15, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xae, 0x14, 0x24, 0x48, 0x83, 0xc4, 0x10,
+    0x0f, 0x0b,
 };
 constexpr std::size_t EntryStubEntryDisplacement = 0x69;
-constexpr std::size_t EntryStubStartDisplacement = 0x6f;
+constexpr std::size_t EntryStubStartDisplacement = 0x84;
+
+struct MacOsTracePrologue {
+    std::vector<std::uint8_t> Bytes;
+    std::size_t EntryDisplacement;
+};
+
+MacOsTracePrologue BuildTracePrologue(const std::uint32_t prologueRva, const std::uint32_t tableRva, const std::uint32_t tableEndRva, const std::uint32_t functionSlotRva) {
+    std::vector<std::uint8_t> code = {0x57, 0x56, 0x52, 0x51, 0x53, 0x41, 0x54, 0x48, 0x83, 0xec, 0x08};
+    const auto rip = [&](const std::initializer_list<std::uint8_t> opcode, const std::uint32_t target) {
+        code.insert(code.end(), opcode);
+        const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(prologueRva + code.size() + 4);
+        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+            throw Domain::RelinkerException("Import trace stub exceeds rel32 range");
+        Io::AppendU32(code, static_cast<std::uint32_t>(displacement));
+    };
+    rip({0x48, 0x8d, 0x1d}, tableRva);
+    rip({0x4c, 0x8d, 0x25}, tableEndRva);
+    const auto loop = code.size();
+    code.insert(code.end(), {0x4c, 0x39, 0xe3, 0x73, 0x00});
+    const auto exit = code.size();
+    code.insert(code.end(), {0x48, 0x8b, 0x03, 0x48, 0x8b, 0x3c, 0x03, 0x48, 0x8b, 0x73, 0x08, 0x48, 0x01, 0xde, 0x48, 0x8b, 0x53, 0x10, 0x48, 0x01, 0xda});
+    rip({0xff, 0x15}, functionSlotRva);
+    code.insert(code.end(), {0x48, 0x8b, 0x0b, 0x48, 0x89, 0x04, 0x0b, 0x48, 0x83, 0xc3, 0x18, 0xeb});
+    const auto back = static_cast<std::int64_t>(loop) - static_cast<std::int64_t>(code.size() + 1);
+    if (back < -128 || back > 127)
+        throw Domain::RelinkerException("Import trace loop exceeds rel8 range");
+    code.push_back(static_cast<std::uint8_t>(static_cast<std::int8_t>(back)));
+    if (code.size() - exit > 127)
+        throw Domain::RelinkerException("Import trace loop exceeds rel8 range");
+    code[exit - 1] = static_cast<std::uint8_t>(code.size() - exit);
+    code.insert(code.end(), {0x48, 0x83, 0xc4, 0x08, 0x41, 0x5c, 0x5b, 0x59, 0x5a, 0x5e, 0x5f, 0xe9, 0x00, 0x00, 0x00, 0x00});
+    const auto entry = code.size() - 4;
+    return {std::move(code), entry};
+}
 
 struct Section {
     std::string Name;
@@ -153,11 +192,39 @@ void PadTo(std::vector<std::uint8_t>& out, const std::size_t alignment) {
     while (out.size() % alignment != 0) out.push_back(0);
 }
 
+void FitDyldSegmentLimit(std::vector<Windows::PeSection>& sections, const std::size_t limit) {
+    while (sections.size() > limit) {
+        auto best = sections.end();
+        std::uint64_t bestGap = 0;
+        for (auto section = sections.begin(); std::next(section) != sections.end(); ++section) {
+            const auto next = std::next(section);
+            if (section->Name == ".amdstub" || next->Name == ".amdstub" || section->Characteristics != next->Characteristics ||
+                section->Rva + section->MemorySize() != next->Rva)
+                continue;
+            const auto gap = next->Rva - section->Rva - section->Data.size();
+            if (best == sections.end() || gap < bestGap) {
+                best = section;
+                bestGap = gap;
+            }
+        }
+        if (best == sections.end()) return;
+        const auto next = std::next(best);
+        const auto memorySize = next->Rva + next->MemorySize() - best->Rva;
+        if (!next->Data.empty()) {
+            best->Data.resize(next->Rva - best->Rva);
+            best->Data.insert(best->Data.end(), next->Data.begin(), next->Data.end());
+        }
+        best->VirtualSize = static_cast<std::uint32_t>(memorySize);
+        sections.erase(next);
+    }
+}
+
 std::pair<std::uint8_t, std::uint64_t> Locate(const std::vector<Segment>& segments, const std::uint64_t rva, const std::uint64_t size) {
     for (std::size_t index = 0; index < segments.size(); ++index) {
         const auto& segment = segments[index];
         if (segment.MemorySize == 0 || rva < segment.Rva || rva - segment.Rva >= segment.MemorySize || size > segment.MemorySize - (rva - segment.Rva)) continue;
         if (index > 15) throw Domain::RelinkerException("Too many Mach-O segments for dyld opcodes", rva);
+        if ((segment.Protection & VmProtWrite) == 0) throw Domain::RelinkerException("Mach-O fixup target is not in a writable segment", rva);
         return {static_cast<std::uint8_t>(index), rva - segment.Rva};
     }
     throw Domain::RelinkerException("Mach-O fixup target is outside the image", rva);
@@ -165,7 +232,9 @@ std::pair<std::uint8_t, std::uint64_t> Locate(const std::vector<Segment>& segmen
 
 Segment& SegmentAt(std::vector<Segment>& segments, const std::uint64_t rva, const std::uint64_t size) {
     for (auto& segment : segments) {
-        if (rva >= segment.Rva && rva - segment.Rva + size <= segment.Data.size()) return segment;
+        if (rva < segment.Rva || rva - segment.Rva + size > segment.MemorySize) continue;
+        if (rva - segment.Rva + size > segment.Data.size()) segment.Data.resize(rva - segment.Rva + size);
+        return segment;
     }
     throw Domain::RelinkerException("Mach-O image patch is outside the image data", rva);
 }
@@ -193,6 +262,11 @@ void AppendPathCommand(std::vector<std::uint8_t>& out, const std::uint32_t cmd, 
     out.resize(start + size, 0);
 }
 
+struct GsTrap {
+    std::uint32_t Rva;
+    std::size_t Length;
+};
+
 struct TlsAccess {
     std::uint32_t Rva;
     std::size_t Length;
@@ -200,34 +274,48 @@ struct TlsAccess {
     std::uint32_t Immediate;
     std::uint8_t Register;
     std::uint32_t Displacement;
+    std::uint8_t AluOpcode;
 };
+
+bool IsAluReadOpcode(std::uint8_t opcode) {
+    return opcode == 0x03 || opcode == 0x0b || opcode == 0x13 || opcode == 0x1b || opcode == 0x23 || opcode == 0x2b || opcode == 0x33 || opcode == 0x3b;
+}
 
 struct TlsScan {
     const Domain::ProgramHeader* Tls = nullptr;
     std::vector<TlsAccess> Accesses;
     std::set<std::uint32_t> BranchTargets;
+    std::vector<GsTrap> GsTraps;
 };
 
-TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image) {
+TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image, const std::function<void(std::string_view)>& message) {
     TlsScan scan;
     const Codegen::X64InstructionDecoder decoder;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, {}, nullptr, message);
     for (const auto& header : headers) {
         if (header.Type == 7) {
             if (scan.Tls != nullptr) throw Domain::RelinkerException("Multiple ELF TLS segments");
             scan.Tls = &header;
         }
         if (header.Type != 1 || (header.Flags & 1) == 0) continue;
+        std::uint64_t decodedEnd = 0;
         for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
             const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
             const auto rva = image.GetRva(header.MappedAddress + offset, info.Length);
+            const bool insidePrevious = *instruction < decodedEnd;
+            decodedEnd = std::max(decodedEnd, *instruction + info.Length);
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const auto target = static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(info.Length) + info.BranchDisp;
                 if (target >= 0 && target <= std::numeric_limits<std::uint32_t>::max()) scan.BranchTargets.insert(static_cast<std::uint32_t>(target));
             }
-            if (info.SegmentPrefix == 0) continue;
+            if (info.SegmentPrefix == 0 || (insidePrevious && info.SegmentPrefix != 0x64)) continue;
+            if (info.SegmentPrefix == 0x65) {
+                if (info.HasMemoryOperand)
+                    scan.GsTraps.push_back({rva, info.Length});
+                continue;
+            }
             const auto position = info.OpcodeOffset;
             bool hasOperandSizePrefix = false;
             bool supportedPrefixes = info.SegmentPrefix == 0x64;
@@ -239,14 +327,15 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
             const auto loadRegister = info.Length - position == 7 ? static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1)) : std::uint8_t{4};
             const bool loadValue = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && bytes[position] == 0x8b && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
             const bool storeImmediate = supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) && info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
-            if (!loadValue && !storeImmediate) {
+            const bool aluRead = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && IsAluReadOpcode(bytes[position]) && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
+            if (!loadValue && !storeImmediate && !aluRead) {
                 std::ostringstream message;
                 message << "Unsupported macOS guest TLS instruction (bytes:" << std::hex << std::setfill('0');
                 for (std::size_t index = 0; index < info.Length; ++index) message << ' ' << std::setw(2) << static_cast<unsigned int>(bytes[index]);
                 message << ')';
                 throw Domain::RelinkerException(message.str(), header.Offset + offset);
             }
-            scan.Accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3)});
+            scan.Accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3), aluRead ? bytes[position] : std::uint8_t{0}});
         }
     }
     return scan;
@@ -291,7 +380,7 @@ public:
 private:
     struct Node {
         std::vector<std::pair<std::string, std::unique_ptr<Node>>> Children;
-        std::optional<std::uint32_t> Rva;
+        std::optional<MacOsExport> Export;
         std::uint64_t Offset = 0;
     };
 
@@ -323,8 +412,8 @@ private:
                 rest = {};
             }
         }
-        if (node->Rva) throw Domain::RelinkerException("Duplicate Mach-O export: " + entry.Symbol);
-        node->Rva = entry.Rva;
+        if (node->Export) throw Domain::RelinkerException("Duplicate Mach-O export: " + entry.Symbol);
+        node->Export = entry;
     }
 
     static void Collect(Node* node, std::vector<Node*>& order) {
@@ -334,9 +423,9 @@ private:
 
     static std::vector<std::uint8_t> TerminalBytes(const Node& node) {
         std::vector<std::uint8_t> bytes;
-        if (!node.Rva) return bytes;
-        AppendUleb(bytes, 0);
-        AppendUleb(bytes, *node.Rva);
+        if (!node.Export) return bytes;
+        AppendUleb(bytes, node.Export->Flags);
+        AppendUleb(bytes, node.Export->Value);
         return bytes;
     }
 
@@ -360,8 +449,9 @@ std::uint64_t GuestTlsBlockSize(const Domain::ProgramHeader& tls) {
 std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     auto& image = *input.Image;
     const auto& headers = *input.Headers;
-    const auto tls = ScanTls(*input.Source, headers, image);
-    const bool hasTls = tls.Tls != nullptr && tls.Tls->MemorySize != 0;
+    const auto imageBase = image.GetImageBase();
+    const auto tls = ScanTls(*input.Source, headers, image, input.Message);
+    const bool hasTls = tls.Tls != nullptr && (tls.Tls->MemorySize != 0 || !tls.Accesses.empty());
     if (!hasTls && !tls.Accesses.empty()) throw Domain::RelinkerException("Guest TLS access without a non-empty PT_TLS");
     if (!hasTls && !input.TlsModuleSlots.empty()) throw Domain::RelinkerException("Guest TLS module relocation without a non-empty PT_TLS");
 
@@ -370,6 +460,26 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     segments.push_back({"__TEXT", 0, LoadRva, VmProtRead | VmProtExecute, {}, {}});
     const auto guestSegments = segments.size();
     auto sections = image.BuildSections();
+    for (const auto& trap : tls.GsTraps) {
+        const auto target = tls.BranchTargets.upper_bound(trap.Rva);
+        if (target != tls.BranchTargets.end() && *target < trap.Rva + trap.Length)
+            throw Domain::RelinkerException("Branch enters a guest GS instruction", *target);
+        if (input.Trampolines != nullptr) {
+            for (const auto& site : *input.Trampolines) {
+                const auto siteRva = image.GetRva(site.Address, site.Length);
+                if (siteRva < trap.Rva + trap.Length && trap.Rva < siteRva + site.Length)
+                    throw Domain::RelinkerException("AMD-only instruction is also a guest GS access", siteRva);
+            }
+        }
+        const auto section = std::find_if(sections.begin(), sections.end(), [&](const auto& candidate) {
+            return trap.Rva >= candidate.Rva && trap.Rva - candidate.Rva < candidate.Data.size();
+        });
+        if (section == sections.end()) throw Domain::RelinkerException("Guest GS instruction is outside the image", trap.Rva);
+        const auto offset = trap.Rva - section->Rva;
+        if (trap.Length > section->Data.size() - offset) throw Domain::RelinkerException("Guest GS instruction crosses a section boundary", trap.Rva);
+        std::fill_n(section->Data.begin() + offset, trap.Length, 0x90);
+        std::copy(std::begin(kStubOpUd2), std::end(kStubOpUd2), section->Data.begin() + offset);
+    }
     if (input.Trampolines != nullptr && !input.Trampolines->empty()) {
         for (const auto& access : tls.Accesses) {
             for (const auto& site : *input.Trampolines) {
@@ -381,6 +491,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         auto stubRva = Windows::AlignRva(image.GetEndRva());
         Windows::WindowsTrampolineBuilder().Build(*input.Trampolines, image, sections, stubRva);
     }
+    FitDyldSegmentLimit(sections, 16 - guestSegments - 2);
     std::uint64_t guestEnd = image.GetEndRva();
     for (auto& section : sections) {
         std::uint32_t protection = 0;
@@ -388,8 +499,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         if (section.Characteristics & Windows::SectionWrite) protection |= VmProtWrite;
         if (section.Characteristics & Windows::SectionExecute) protection |= VmProtExecute;
         auto name = section.Name == ".amdstub" ? std::string("__AMDSTUB") : "__ELF" + std::to_string(segments.size() - guestSegments);
-        guestEnd = std::max<std::uint64_t>(guestEnd, section.Rva + section.Data.size());
-        segments.push_back({std::move(name), section.Rva, section.Data.size(), protection, std::move(section.Data), {}});
+        guestEnd = std::max<std::uint64_t>(guestEnd, section.Rva + section.MemorySize());
+        segments.push_back({std::move(name), section.Rva, section.MemorySize(), protection, std::move(section.Data), {}});
     }
 
     const auto metaRva = static_cast<std::uint32_t>(AlignUp(guestEnd, PageSize));
@@ -398,7 +509,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     Io::WriteU64(meta, 0, MetaVersion);
     const auto firstLoad = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 1; });
     if (firstLoad == headers.end()) throw Domain::RelinkerException("No PT_LOAD segments found");
-    Io::WriteU64(meta, MetaLoadBias, ImageBase + image.GetRva(firstLoad->MappedAddress) - firstLoad->MappedAddress);
+    Io::WriteU64(meta, MetaLoadBias, imageBase + image.GetRva(firstLoad->MappedAddress) - firstLoad->MappedAddress);
     input.Rebases.push_back(metaRva + MetaLoadBias);
     Io::WriteU64(meta, MetaHeaderCount, headers.size());
     for (std::size_t index = 0; index < headers.size(); ++index) {
@@ -416,7 +527,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto descriptor = metaRva + static_cast<std::uint32_t>(MetaTlsDescriptor);
     const auto initPointer = AlignUp(metaSize, 8);
     const auto startSlot = initPointer + 8;
-    const auto tlsExports = startSlot + 8;
+    const auto traceFunctionSlot = input.TraceImports ? startSlot + 8 : startSlot;
+    const auto tlsExports = traceFunctionSlot + 8;
     std::map<std::string, std::uint64_t> tlsImportSlots;
     for (const auto& import : input.TlsImports) tlsImportSlots.emplace(import.Symbol, 0);
     auto metaEnd = tlsExports + input.TlsExports.size() * 16;
@@ -438,12 +550,11 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     for (std::size_t index = 0; index < input.TlsExports.size(); ++index) {
         const auto& variable = input.TlsExports[index];
         if (!hasTls) throw Domain::RelinkerException("Guest TLS export has no TLS block: " + variable.Symbol);
-        if (variable.Offset >= tls.Tls->MemorySize) throw Domain::RelinkerException("Guest TLS export is outside the TLS block: " + variable.Symbol);
         const auto at = tlsExports + index * 16;
-        Io::WriteU64(meta, at, ImageBase + descriptor);
+        Io::WriteU64(meta, at, imageBase + descriptor);
         Io::WriteU64(meta, at + 8, variable.Offset);
         input.Rebases.push_back(metaRva + static_cast<std::uint32_t>(at));
-        input.Exports.push_back({variable.Symbol, metaRva + static_cast<std::uint32_t>(at)});
+        input.Exports.push_back({variable.Symbol, metaRva + static_cast<std::uint32_t>(at), variable.Flags});
     }
     const auto codeRva = static_cast<std::uint32_t>(AlignUp(metaRva + metaEnd, PageSize));
     Windows::WindowsStubEmitter code(codeRva);
@@ -460,7 +571,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         }
         Io::WriteU64(meta, MetaTlsDescriptor, 1);
         if (header.FileSize != 0) {
-            Io::WriteU64(meta, MetaTlsDescriptor + 8, ImageBase + image.GetRva(header.MappedAddress, header.FileSize));
+            Io::WriteU64(meta, MetaTlsDescriptor + 8, imageBase + image.GetRva(header.MappedAddress, header.FileSize));
             input.Rebases.push_back(descriptor + 8);
         }
         Io::WriteU64(meta, MetaTlsDescriptor + 0x10, header.FileSize);
@@ -470,7 +581,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         input.Binds.push_back({"_Aps5GuestTlsRegister_nid_no_patch", metaRva + static_cast<std::uint32_t>(MetaRegisterSlot)});
         for (const auto slot : input.TlsModuleSlots) {
             auto& segment = SegmentAt(segments, slot, 8);
-            Io::WriteU64(segment.Data, slot - segment.Rva, ImageBase + descriptor);
+            Io::WriteU64(segment.Data, slot - segment.Rva, imageBase + descriptor);
             input.Rebases.push_back(slot);
         }
 
@@ -481,8 +592,13 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             const auto stub = code.GetRva();
             const bool preserveAccumulator = access.StoreImmediate || access.Register != 0;
             code.Emit({0x48, 0x8d, 0x64, 0x24, 0x80});
-            code.Emit({0x9c});
-            if (preserveAccumulator) code.Emit({0x50});
+            if (access.AluOpcode != 0) {
+                code.Emit({0x50});
+                code.Emit({0x9c});
+            } else {
+                code.Emit({0x9c});
+                if (preserveAccumulator) code.Emit({0x50});
+            }
             code.Rip({0x48, 0x8b, 0x05}, metaRva + static_cast<std::uint32_t>(MetaTlsKey));
             code.Emit({0x65, 0x48, 0x8b, 0x04, 0xc5, 0, 0, 0, 0});
             code.Emit({0x48, 0x85, 0xc0});
@@ -497,10 +613,21 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
                 code.Emit({0x48, 0x8b, 0x80});
                 code.U32(access.Displacement);
             }
-            if (!access.StoreImmediate && access.Register != 0)
-                code.Emit({static_cast<std::uint8_t>(0x48 | (access.Register >> 3)), 0x89, static_cast<std::uint8_t>(0xc0 | (access.Register & 7))});
-            if (preserveAccumulator) code.Emit({0x58});
-            code.Emit({0x9d});
+            if (access.AluOpcode != 0 && access.Register == 0) {
+                code.Emit({0x9d});
+                code.Emit({0x48, 0x87, 0x04, 0x24});
+                code.Emit({0x48, access.AluOpcode, 0x04, 0x24});
+                code.Emit({0x48, 0x8d, 0x64, 0x24, 0x08});
+            } else if (access.AluOpcode != 0) {
+                code.Emit({0x9d});
+                code.Emit({static_cast<std::uint8_t>(0x48 | ((access.Register >> 3) << 2)), access.AluOpcode, static_cast<std::uint8_t>(0xc0 | ((access.Register & 7) << 3))});
+                code.Emit({0x58});
+            } else {
+                if (!access.StoreImmediate && access.Register != 0)
+                    code.Emit({static_cast<std::uint8_t>(0x48 | (access.Register >> 3)), 0x89, static_cast<std::uint8_t>(0xc0 | (access.Register & 7))});
+                if (preserveAccumulator) code.Emit({0x58});
+                code.Emit({0x9d});
+            }
             code.Emit({0x48, 0x8d, 0xa4, 0x24, 0x80, 0, 0, 0});
             code.Rip({0xe9}, static_cast<std::uint32_t>(access.Rva + access.Length));
 
@@ -569,12 +696,50 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(MetaCxaAtexitSlot));
         }
         code.Emit({0x5d, 0xc3});
-        Io::WriteU64(meta, initPointer, ImageBase + initStub);
+        Io::WriteU64(meta, initPointer, imageBase + initStub);
         input.Rebases.push_back(metaRva + static_cast<std::uint32_t>(initPointer));
         dataSections.push_back({"__mod_init_func", initPointer, 8, SectionModInitFuncPointers, 3});
     }
     if (input.Executable) {
         input.Binds.push_back({"_Aps5StartGuest_nid_no_patch", metaRva + static_cast<std::uint32_t>(startSlot)});
+        if (input.TraceImports)
+            input.Binds.push_back({"_TraceImport_nid_no_patch", metaRva + static_cast<std::uint32_t>(traceFunctionSlot)});
+    }
+    std::size_t traceEntryPatch = 0;
+    std::uint32_t tracePrologueRva = 0;
+    if (input.Executable && input.TraceImports) {
+        const auto tableRva = code.GetRva();
+        const auto tableEnd = tableRva + static_cast<std::uint32_t>(input.Traced.size() * 24);
+        std::map<std::string, std::uint32_t> stringRva;
+        std::vector<std::string> stringOrder;
+        auto cursor = tableEnd;
+        const auto intern = [&](const std::string& text) {
+            const auto existing = stringRva.find(text);
+            if (existing != stringRva.end()) return existing->second;
+            stringRva.emplace(text, cursor);
+            stringOrder.push_back(text);
+            cursor += static_cast<std::uint32_t>(text.size() + 1);
+            return stringRva.at(text);
+        };
+        std::vector<std::uint8_t> table;
+        for (std::size_t index = 0; index < input.Traced.size(); ++index) {
+            const auto entry = tableRva + static_cast<std::uint32_t>(index * 24);
+            const auto relative = [entry](const std::uint32_t target) { return static_cast<std::uint64_t>(static_cast<std::int64_t>(target) - static_cast<std::int64_t>(entry)); };
+            Io::AppendU64(table, relative(input.Traced[index].Rva));
+            Io::AppendU64(table, relative(intern(input.Traced[index].Name)));
+            Io::AppendU64(table, relative(intern(input.Traced[index].Library)));
+        }
+        for (const auto byte : table) code.Emit({byte});
+        for (const auto& text : stringOrder) {
+            if (code.GetRva() != stringRva.at(text)) throw Domain::RelinkerException("Import trace string was placed at the wrong address");
+            for (const auto character : text) code.Emit({static_cast<std::uint8_t>(character)});
+            code.Emit({0});
+        }
+        if (code.GetRva() != cursor) throw Domain::RelinkerException("Import trace table size changed while it was written");
+        tracePrologueRva = cursor;
+        const auto prologue = BuildTracePrologue(cursor, tableRva, tableEnd, metaRva + static_cast<std::uint32_t>(traceFunctionSlot));
+        traceEntryPatch = static_cast<std::size_t>(code.GetRva() - codeRva) + prologue.EntryDisplacement;
+        for (const auto byte : prologue.Bytes) code.Emit({byte});
     }
     const auto metaBytes = meta.size();
     segments.push_back({"__APS5DATA", metaRva, metaBytes, VmProtRead | VmProtWrite, std::move(meta), std::move(dataSections)});
@@ -589,6 +754,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             while (used != 0 && data[used - 1] == 0) --used;
             data.resize(used);
         }
+        if (segments[index].Name == "__APS5TEXT" && traceEntryPatch != 0 && data.size() < traceEntryPatch + 4)
+            data.resize(traceEntryPatch + 4, 0);
         data.resize(AlignUp(data.size(), PageSize), 0);
     }
 
@@ -725,17 +892,34 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
 
     std::vector<std::uint8_t> file;
     constexpr std::size_t HeaderSize = 32;
-    const auto stubOffset = AlignUp(HeaderSize + commands.size(), 16);
-    if (stubOffset + (input.Executable ? sizeof(EntryStub) : 0) > LoadRva)
+    constexpr std::size_t LoadCommandReserve = 0x400;
+    const auto stubOffset = AlignUp(HeaderSize + commands.size() + LoadCommandReserve, 16);
+    const auto traceJump = input.Executable && input.TraceImports;
+    const auto entryOffset = stubOffset + (traceJump ? 5 : 0);
+    if (entryOffset + (input.Executable ? sizeof(EntryStub) : 0) > LoadRva)
         throw Domain::RelinkerException("Mach-O load commands do not fit before the guest image");
     file.resize(LoadRva, 0);
     if (input.Executable) {
-        std::copy(std::begin(EntryStub), std::end(EntryStub), file.begin() + static_cast<std::ptrdiff_t>(stubOffset));
-        const auto writeDisplacement = [&](const std::size_t field, const std::uint64_t targetRva) {
-            const auto displacement = static_cast<std::int64_t>(targetRva) - static_cast<std::int64_t>(stubOffset + field + 4);
+        if (traceJump) {
+            const auto text = std::find_if(segments.begin(), segments.end(), [](const Segment& segment) { return segment.Name == "__APS5TEXT"; });
+            if (text == segments.end() || traceEntryPatch + 4 > text->Data.size())
+                throw Domain::RelinkerException("Import trace prologue is missing from the Mach-O image");
+            const auto displacement = static_cast<std::int64_t>(entryOffset) - static_cast<std::int64_t>(codeRva + traceEntryPatch + 4);
             if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
                 throw Domain::RelinkerException("macOS entry stub target is out of rel32 range");
-            Io::WriteU32(file, stubOffset + field, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
+            Io::WriteU32(text->Data, traceEntryPatch, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
+            const auto jump = static_cast<std::int64_t>(tracePrologueRva) - static_cast<std::int64_t>(stubOffset + 5);
+            if (jump < std::numeric_limits<std::int32_t>::min() || jump > std::numeric_limits<std::int32_t>::max())
+                throw Domain::RelinkerException("Import trace prologue is out of rel32 range");
+            file[stubOffset] = 0xe9;
+            Io::WriteU32(file, stubOffset + 1, static_cast<std::uint32_t>(static_cast<std::int32_t>(jump)));
+        }
+        std::copy(std::begin(EntryStub), std::end(EntryStub), file.begin() + static_cast<std::ptrdiff_t>(entryOffset));
+        const auto writeDisplacement = [&](const std::size_t field, const std::uint64_t targetRva) {
+            const auto displacement = static_cast<std::int64_t>(targetRva) - static_cast<std::int64_t>(entryOffset + field + 4);
+            if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                throw Domain::RelinkerException("macOS entry stub target is out of rel32 range");
+            Io::WriteU32(file, entryOffset + field, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
         };
         writeDisplacement(EntryStubEntryDisplacement, input.EntryRva);
         writeDisplacement(EntryStubStartDisplacement, metaRva + startSlot);
@@ -760,6 +944,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto imageEnd = segments.back().Rva + AlignUp(segments.back().MemorySize, PageSize);
     if (file.size() > std::numeric_limits<std::uint32_t>::max())
         throw Domain::RelinkerException("Mach-O output exceeds 4 GiB");
+    if (imageBase + imageEnd + AlignUp(linkeditSize, PageSize) > UserAddressEnd)
+        throw Domain::RelinkerException("Mach-O image ends outside the macOS user address space");
 
     const auto writeSegment = [&](const std::size_t at, const std::uint64_t vmaddr, const std::uint64_t vmsize, const std::uint64_t fileoff, const std::uint64_t filesize) {
         Io::WriteU64(commands, at + 24, vmaddr);
@@ -768,19 +954,19 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         Io::WriteU64(commands, at + 48, filesize);
     };
     std::size_t index = 0;
-    if (input.Executable) writeSegment(segmentCommandOffsets[index++], 0, ImageBase, 0, 0);
-    writeSegment(segmentCommandOffsets[index++], ImageBase, LoadRva, 0, LoadRva);
+    if (input.Executable) writeSegment(segmentCommandOffsets[index++], 0, imageBase, 0, 0);
+    writeSegment(segmentCommandOffsets[index++], imageBase, LoadRva, 0, LoadRva);
     for (; index < segments.size(); ++index) {
         const auto& segment = segments[index];
-        writeSegment(segmentCommandOffsets[index], ImageBase + segment.Rva, AlignUp(segment.MemorySize, PageSize), segment.FileOffset, segment.Data.size());
+        writeSegment(segmentCommandOffsets[index], imageBase + segment.Rva, AlignUp(segment.MemorySize, PageSize), segment.FileOffset, segment.Data.size());
         for (std::size_t sectionIndex = 0; sectionIndex < segment.Sections.size(); ++sectionIndex) {
             const auto& section = segment.Sections[sectionIndex];
             const auto at = segmentCommandOffsets[index] + 72 + sectionIndex * 80;
-            Io::WriteU64(commands, at + 32, ImageBase + segment.Rva + section.Offset);
+            Io::WriteU64(commands, at + 32, imageBase + segment.Rva + section.Offset);
             Io::WriteU32(commands, at + 48, static_cast<std::uint32_t>(segment.FileOffset + section.Offset));
         }
     }
-    writeSegment(linkeditCommand, ImageBase + imageEnd, AlignUp(linkeditSize, PageSize), linkeditOffset, linkeditSize);
+    writeSegment(linkeditCommand, imageBase + imageEnd, AlignUp(linkeditSize, PageSize), linkeditOffset, linkeditSize);
     Io::WriteU32(commands, dyldInfoCommand + 8, static_cast<std::uint32_t>(rebaseOffset));
     Io::WriteU32(commands, dyldInfoCommand + 12, static_cast<std::uint32_t>(rebase.size()));
     Io::WriteU32(commands, dyldInfoCommand + 16, static_cast<std::uint32_t>(bindOffset));
@@ -804,7 +990,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     Io::WriteU32(file, 12, input.Executable ? MhExecute : MhDylib);
     Io::WriteU32(file, 16, commandCount);
     Io::WriteU32(file, 20, static_cast<std::uint32_t>(commands.size()));
-    Io::WriteU32(file, 24, MhNoUndefs | MhDyldLink | MhTwoLevel);
+    const bool weakDefinitions = std::any_of(input.Exports.begin(), input.Exports.end(), [](const auto& entry) { return (entry.Flags & ExportWeakDefinition) != 0; });
+    Io::WriteU32(file, 24, MhNoUndefs | MhDyldLink | MhTwoLevel | (weakDefinitions ? MhWeakDefines : 0));
     std::copy(commands.begin(), commands.end(), file.begin() + HeaderSize);
     return file;
 }

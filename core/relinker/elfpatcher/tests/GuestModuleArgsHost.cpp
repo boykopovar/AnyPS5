@@ -45,6 +45,13 @@ extern "C" void SetPendingArgs(std::size_t args, const void* argp) {
     pending.argp = argp;
 }
 
+extern "C" void APS5_VABI RecordFini(std::size_t args, const void* argp, const void* callback) {
+    char line[112];
+    std::snprintf(line, sizeof(line), "fini=%016zx argp=%016zx callback=%016zx\n", args,
+                  reinterpret_cast<std::uintptr_t>(argp), reinterpret_cast<std::uintptr_t>(callback));
+    Write(line);
+}
+
 extern "C" const void* __aps5_get_pending_module_args_nid_no_patch() {
     return &pending;
 }

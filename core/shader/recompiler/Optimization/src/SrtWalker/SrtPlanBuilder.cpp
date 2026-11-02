@@ -117,12 +117,12 @@ void PlanBuilder::PatchReads() {
             throw std::runtime_error("SrtWalker::BuildPlan patched value has no parent block");
         }
         builder.SetInsertionPoint(*block);
-        IrValue& resource = builder.Emit(IrOpcode::GetSrtResource, IrType::SrtResource, {});
-        block->RemoveInstruction(&resource);
+        IrValue& resource = _program.CreateValue(IrOpcode::GetSrtResource, IrType::SrtResource);
         block->InsertInstructionBefore(patch.inst, &resource);
         IrValue& slotConstant = builder.Constant(patch.slot);
-        IrValue& flat = builder.Emit(IrOpcode::ReadConst, IrType::U32, {&resource, &slotConstant});
-        block->RemoveInstruction(&flat);
+        IrValue& flat = _program.CreateValue(IrOpcode::ReadConst, IrType::U32);
+        flat.AddArgument(&resource);
+        flat.AddArgument(&slotConstant);
         block->InsertInstructionBefore(patch.inst, &flat);
         patch.inst->ReplaceAllUsesWith(&flat);
         for (auto& info : _program.Metadata().blockInfo) {

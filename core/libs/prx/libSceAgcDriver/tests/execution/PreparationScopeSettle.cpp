@@ -1,8 +1,10 @@
+#include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
 #include "VulkanTestDevice.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <condition_variable>
@@ -13,8 +15,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
-
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 
 namespace {
 
@@ -75,11 +75,22 @@ struct PixelHeader {
 class HeldPreparationThreads {
 public:
     HeldPreparationThreads() {
-        for (unsigned index = 0; index < std::thread::hardware_concurrency() + 2u; ++index) {
+        const unsigned hardwareConcurrency = std::thread::hardware_concurrency();
+        const unsigned workerCount = std::max(2u, hardwareConcurrency / 2u);
+        for (unsigned index = 0; index < hardwareConcurrency + 2u; ++index) {
             AgcDriver::DriverDetail::SubmitRegistrationPreparation([state = state] {
                 std::unique_lock lock(state->mutex);
+                ++state->active;
+                state->changed.notify_all();
                 state->changed.wait(lock, [&] { return state->released; });
             });
+        }
+        std::unique_lock lock(state->mutex);
+        const bool workersBusy = state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return state->active >= workerCount; });
+        lock.unlock();
+        if (!workersBusy) {
+            Release();
+            throw std::runtime_error("registration preparation workers did not become busy");
         }
     }
 
@@ -99,6 +110,7 @@ private:
     struct State {
         std::mutex mutex;
         std::condition_variable changed;
+        unsigned active = 0;
         bool released = false;
     };
     std::shared_ptr<State> state = std::make_shared<State>();

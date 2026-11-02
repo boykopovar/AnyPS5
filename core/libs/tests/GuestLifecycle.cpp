@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <cstdint>
@@ -9,19 +10,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-struct InitEnvParams {
-    int argc;
-    std::uint32_t pad;
-    const char* argv[3];
-};
-
-extern "C" {
-int APS5_VABI cxa_atexit_nid_postfix(void (APS5_VABI *)(void*), void*, void*);
-void APS5_VABI cxa_finalize_nid_postfix(void*);
-int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (APS5_VABI *)(void*), void*, void*);
-void APS5_VABI init_env_nid_postfix(const InitEnvParams*);
-}
 
 namespace {
 
@@ -54,10 +42,13 @@ int main() {
     Require(cxa_atexit_nid_postfix(Second, nullptr, first) == 0);
     Require(cxa_atexit_nid_postfix(Other, nullptr, second) == 0);
     cxa_finalize_nid_postfix(first);
+
     Require(secondAt == 0 && firstAt == 1 && otherAt == -1);
     cxa_finalize_nid_postfix(reinterpret_cast<void*>(3));
+
     Require(otherAt == -1);
     cxa_finalize_nid_postfix(second);
+
     Require(otherAt == 2);
 
     std::thread worker([] {
@@ -79,6 +70,7 @@ int main() {
 
     try {
         init_env_nid_postfix(nullptr);
+
     } catch (const std::runtime_error& error) {
         Require(std::strstr(error.what(), "not implemented") == nullptr);
         return 0;

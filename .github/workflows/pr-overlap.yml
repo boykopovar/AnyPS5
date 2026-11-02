@@ -38,11 +38,12 @@ jobs:
           record() { jq --arg pr "$1" --arg h "$2" '.[$pr] = $h' "$state" > "$state.new" && mv "$state.new" "$state"; }
           shopt -s nullglob
           marker='<!-- pr-overlap -->'
+          unpinned() { sed -E 's#/blob/[0-9a-f]{40}/#/blob/main/#g'; }
           prev=
           for file in "$out"/*.md; do
             [ -z "$prev" ] || record "$prev" "$hash"
             pr=$(basename "$file" .md)
-            hash=$(sha256sum "$file" | cut -d' ' -f1)
+            hash=$(unpinned < "$file" | sha256sum | cut -d' ' -f1)
             prev=
             [ "$(jq -r --arg pr "$pr" '.[$pr] // empty' "$state")" = "$hash" ] && continue
             prev=$pr
@@ -50,7 +51,7 @@ jobs:
               --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | head -n1)
             id=$(jq -r '.[0] // empty' <<< "${comment:-null}")
             if [ -s "$file" ]; then
-              [ "$(jq -r '.[1]' <<< "${comment:-null}")" = "$(cat "$file")" ] && continue
+              [ "$(jq -r '.[1]' <<< "${comment:-null}" | unpinned)" = "$(unpinned < "$file")" ] && continue
               if [ -n "$id" ]; then
                 gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@"$file" > /dev/null
               else

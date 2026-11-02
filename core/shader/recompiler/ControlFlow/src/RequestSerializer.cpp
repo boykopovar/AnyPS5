@@ -1,9 +1,14 @@
 #include "ControlFlow/RequestSerializer.hpp"
+#include <bit>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
 
 namespace {
+
+constexpr std::uint32_t TargetBlendFlag = 0x10000u;
+constexpr std::uint32_t FurtherMergeShift = 17u;
+constexpr std::uint32_t FurtherMergeMask = 7u << FurtherMergeShift;
 
 constexpr char kBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -239,7 +244,7 @@ ConservativeZExport readConservativeZExport(Reader& reader) {
 
 ColorExportPacking readColorExportPacking(Reader& reader) {
     const auto value = reader.ReadU8();
-    if (value > static_cast<std::uint8_t>(ColorExportPacking::Unorm10_11_11)) {
+    if (value > static_cast<std::uint8_t>(ColorExportPacking::Uint)) {
         throw std::runtime_error("RequestSerializer: invalid ColorExportPacking value");
     }
     return static_cast<ColorExportPacking>(value);
@@ -251,6 +256,14 @@ RasterPrimitive readRasterPrimitive(Reader& reader) {
         throw std::runtime_error("RequestSerializer: invalid RasterPrimitive value");
     }
     return static_cast<RasterPrimitive>(value);
+}
+
+PixelPositionLocation readPixelPositionLocation(Reader& reader) {
+    const auto value = reader.ReadU8();
+    if (value > static_cast<std::uint8_t>(PixelPositionLocation::UpperLeft)) {
+        throw std::runtime_error("RequestSerializer: invalid PixelPositionLocation value");
+    }
+    return static_cast<PixelPositionLocation>(value);
 }
 
 void writeShaderBinary(Writer& writer, const ShaderBinary& binary) {
@@ -338,8 +351,42 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
     writer.WriteBool(info.stencilRefExportEnable);
     writer.WriteU8(static_cast<std::uint8_t>(info.rasterPrimitive));
     writer.WriteBool(info.layerExported);
-    writer.WriteBool(info.ditheredAlphaToCoverage);
+    writer.WriteU8(info.ditheredAlphaToCoverage ? (info.ditheredAlphaSamples == 2u ? 2u : 1u) : 0u);
     writer.WriteBool(info.frontFaceAllBits);
+    writer.WriteU8(info.quadPixelMask);
+    for (const std::uint16_t mask : info.quadSampleMask) writer.WriteU32(mask);
+    writer.WriteU32(info.reversedBlend);
+    writer.WriteBool(info.iteratesSamples);
+    writer.WriteU8(static_cast<std::uint8_t>(info.positionLocation));
+    for (const std::uint8_t location : info.sampleLocations) writer.WriteU8(location);
+    writer.WriteBool(info.stencilOperationValueExport);
+    for (const std::uint32_t order : info.sampleOrder) writer.WriteU32(order);
+    if (info.targetMerges.size() > 8u) throw std::runtime_error("a recompile request merges into more than eight color targets");
+    const auto further = static_cast<std::uint32_t>(std::max<std::size_t>(info.targetMerges.size(), 1u) - 1u);
+    for (std::uint32_t index = 0; index <= further; ++index) {
+        const auto& merge = info.targetMerges.empty() ? TargetMerge{} : info.targetMerges[index];
+        writer.WriteU8(merge.target);
+        writer.WriteU32(static_cast<std::uint32_t>(merge.mask) | (merge.blend.enabled ? TargetBlendFlag : 0u) | (index == 0u ? further << FurtherMergeShift : 0u));
+        writer.WriteU8(merge.samples);
+        for (const std::uint32_t word : merge.descriptor) writer.WriteU32(word);
+        writer.WriteBool(merge.depthStencilWrites);
+        writer.WriteBool(merge.depthStencilTests);
+        if (!merge.blend.enabled) continue;
+        const auto& blend = merge.blend;
+        writer.WriteBool(blend.snorm);
+        writer.WriteU8(blend.colorSource);
+        writer.WriteU8(blend.colorDestination);
+        writer.WriteU8(blend.colorOperation);
+        writer.WriteU8(blend.alphaSource);
+        writer.WriteU8(blend.alphaDestination);
+        writer.WriteU8(blend.alphaOperation);
+        writer.WriteU8(blend.writeMask);
+        for (const std::uint32_t word : blend.constants) writer.WriteU32(word);
+    }
+    if (info.depthExportEnable) {
+        writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMin));
+        writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMax));
+    }
 }
 
 ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
@@ -391,8 +438,62 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     if (version >= 17u) info.stencilRefExportEnable = reader.ReadBool();
     if (version >= 19u) info.rasterPrimitive = readRasterPrimitive(reader);
     if (version >= 23u) info.layerExported = reader.ReadBool();
-    if (version >= 25u) info.ditheredAlphaToCoverage = reader.ReadBool();
+    if (version >= 25u) {
+        const auto dither = reader.ReadU8();
+        if (dither > (version >= 47u ? 2u : 1u)) throw std::runtime_error("RequestSerializer: invalid alpha-to-coverage dither value");
+        info.ditheredAlphaToCoverage = dither != 0u;
+        info.ditheredAlphaSamples = dither == 2u ? 2u : 8u;
+    }
     if (version >= 27u) info.frontFaceAllBits = reader.ReadBool();
+    if (version >= 28u) info.quadPixelMask = reader.ReadU8();
+    if (version >= 29u) {
+        for (std::uint16_t& mask : info.quadSampleMask) {
+            const auto value = reader.ReadU32();
+            if (value > 0xffffu) throw std::runtime_error("invalid recompile request quad sample mask");
+            mask = static_cast<std::uint16_t>(value);
+        }
+    }
+    if (version >= 30u) info.reversedBlend = reader.ReadU32();
+    if (version >= 34u) {
+        info.iteratesSamples = reader.ReadBool();
+        info.positionLocation = readPixelPositionLocation(reader);
+        for (std::uint8_t& location : info.sampleLocations) location = reader.ReadU8();
+    }
+    if (version >= 37u) info.stencilOperationValueExport = reader.ReadBool();
+    if (version >= 42u) {
+        for (std::uint32_t& order : info.sampleOrder) order = reader.ReadU32();
+    }
+    for (std::uint32_t index = 0, count = version >= 46u ? 1u : 0u; index < count; ++index) {
+        TargetMerge merge;
+        merge.target = reader.ReadU8();
+        const auto word = reader.ReadU32();
+        if ((word & ~(0xffffu | TargetBlendFlag | (index == 0u ? FurtherMergeMask : 0u))) != 0u) throw std::runtime_error("invalid recompile request target merge mask");
+        count += (word & FurtherMergeMask) >> FurtherMergeShift;
+        merge.mask = static_cast<std::uint16_t>(word & 0xffffu);
+        merge.samples = reader.ReadU8();
+        for (std::uint32_t& descriptor : merge.descriptor) descriptor = reader.ReadU32();
+        merge.depthStencilWrites = reader.ReadBool();
+        merge.depthStencilTests = reader.ReadBool();
+        if ((word & TargetBlendFlag) != 0u) {
+            auto& blend = merge.blend;
+            blend.enabled = true;
+            blend.snorm = reader.ReadBool();
+            blend.colorSource = reader.ReadU8();
+            blend.colorDestination = reader.ReadU8();
+            blend.colorOperation = reader.ReadU8();
+            blend.alphaSource = reader.ReadU8();
+            blend.alphaDestination = reader.ReadU8();
+            blend.alphaOperation = reader.ReadU8();
+            blend.writeMask = reader.ReadU8();
+            for (std::uint32_t& constant : blend.constants) constant = reader.ReadU32();
+        }
+        if (merge.mask != 0u) info.targetMerges.push_back(merge);
+        else if (index != 0u || count != 1u) throw std::runtime_error("invalid recompile request target merge mask");
+    }
+    if (version >= 49u && info.depthExportEnable) {
+        info.depthExportMin = std::bit_cast<float>(reader.ReadU32());
+        info.depthExportMax = std::bit_cast<float>(reader.ReadU32());
+    }
     if (version < 5u) {
         const auto input = [](PixelInput value, bool present) { return present ? PixelInputBit(value) : 0u; };
         info.inputAddr = input(PixelInput::PerspectiveSample, info.hasPerspectiveCenterVgpr && inputAddrOrCenterVgpr == 2u) | input(PixelInput::PerspectiveCenter, info.hasPerspectiveCenterVgpr) |
@@ -506,6 +607,7 @@ void writeMeshConfiguration(Writer& writer, const MeshConfiguration& configurati
     writer.WriteU32(configuration.ldsSizeDwords);
     writer.WriteU32(configuration.provokingVertex);
     writer.WriteU32(configuration.esgsItemSize);
+    writer.WriteU32(configuration.outputPrimitiveSize);
 }
 
 MeshConfiguration readMeshConfiguration(Reader& reader, std::uint32_t version) {
@@ -519,6 +621,7 @@ MeshConfiguration readMeshConfiguration(Reader& reader, std::uint32_t version) {
     configuration.ldsSizeDwords = reader.ReadU32();
     configuration.provokingVertex = reader.ReadU32();
     configuration.esgsItemSize = version >= 4u ? reader.ReadU32() : 4u;
+    if (version >= 31u) configuration.outputPrimitiveSize = reader.ReadU32();
     return configuration;
 }
 
@@ -531,6 +634,7 @@ void writeTessellationConfiguration(Writer& writer, const TessellationConfigurat
     writer.WriteU32(configuration.patchesPerGroup);
     writer.WriteU32(configuration.primitiveGroupSize);
     writer.WriteBool(configuration.breakAtInstance);
+    writer.WriteBool(configuration.mergedHull);
 }
 
 TessellationConfiguration readTessellationConfiguration(Reader& reader, std::uint32_t version) {
@@ -545,6 +649,7 @@ TessellationConfiguration readTessellationConfiguration(Reader& reader, std::uin
         configuration.primitiveGroupSize = reader.ReadU32();
         configuration.breakAtInstance = reader.ReadBool();
     }
+    if (version >= 39u) configuration.mergedHull = reader.ReadBool();
     return configuration;
 }
 
@@ -717,6 +822,19 @@ void writeGraphicsCompileContext(Writer& writer, const GraphicsCompileContext& g
     writer.WriteU32(graphics.draw.indexCount);
     writer.WriteU32(graphics.draw.indexElementBytes);
     writer.WriteU32(graphics.draw.instanceCount);
+    writer.WriteBool(graphics.meshBarycentrics.has_value());
+    if (graphics.meshBarycentrics.has_value()) {
+        const auto& barycentrics = *graphics.meshBarycentrics;
+        writer.WriteBool(barycentrics.emulation.active);
+        writer.WriteBool(barycentrics.emulation.smooth);
+        writer.WriteBool(barycentrics.emulation.linear);
+        writer.WriteU64(barycentrics.parameters.size());
+        for (const auto& parameter : barycentrics.parameters) {
+            writer.WriteU32(parameter.location);
+            writer.WriteU32(parameter.sourceLocation);
+            writer.WriteBool(parameter.perVertex);
+        }
+    }
 }
 
 GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGraphicsCompileContext& storage, std::uint32_t version) {
@@ -755,6 +873,22 @@ GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGr
     storage.draw.indexElementBytes = reader.ReadU32();
     storage.draw.instanceCount = reader.ReadU32();
     graphics.draw = storage.draw;
+    if (version >= 38u && reader.ReadBool()) {
+        MeshBarycentricLayout barycentrics;
+        barycentrics.emulation.active = reader.ReadBool();
+        barycentrics.emulation.smooth = reader.ReadBool();
+        barycentrics.emulation.linear = reader.ReadBool();
+        const auto count = reader.ReadU64();
+        reader.Require(count, 9u);
+        for (std::uint64_t i = 0; i < count; i++) {
+            FragmentParameter parameter{};
+            parameter.location = reader.ReadU32();
+            parameter.sourceLocation = reader.ReadU32();
+            parameter.perVertex = reader.ReadBool();
+            barycentrics.parameters.push_back(parameter);
+        }
+        graphics.meshBarycentrics = std::move(barycentrics);
+    }
     return graphics;
 }
 
@@ -764,7 +898,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(27u);
+    writer.WriteU32(51u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -789,6 +923,24 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.vertexSubgroups);
     writer.WriteBool(request.target.float16DenormPreserve);
     writer.WriteU32Span(request.context.linkedCallFallbacks);
+    writer.WriteBool(request.target.spannedWaves);
+    writer.WriteBool(request.target.depthRangeRemap);
+    if (request.context.vertex.has_value()) {
+        writer.WriteU32(request.context.vertex->depthRemapMode);
+    }
+    writer.WriteBool(request.target.float32FlushToZero);
+    writer.WriteBool(request.target.float32DenormPreserve);
+    if (request.context.vertex.has_value()) {
+        writer.WriteBool(request.context.vertex->pointList);
+        writer.WriteU32(std::bit_cast<std::uint32_t>(request.context.vertex->pointSize));
+        writer.WriteU32(std::bit_cast<std::uint32_t>(request.context.vertex->pointSizeMin));
+        writer.WriteU32(std::bit_cast<std::uint32_t>(request.context.vertex->pointSizeMax));
+    }
+    writer.WriteBool(request.target.fusedExactArithmetic);
+    writer.WriteBool(request.target.largePixelFunctionLdsBuffer);
+    writer.WriteU32(request.target.pixelFunctionStorageDwords);
+    writer.WriteBool(request.target.fragmentBarycentricBuiltins);
+    writer.WriteBool(request.target.tessellationEvaluationSubgroups);
     return base64Encode(buffer);
 }
 
@@ -797,7 +949,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 27u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 51u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -833,6 +985,31 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.linkedCallFallbacks = reader.ReadU32Vector();
         result.request.context.linkedCallFallbacks = result.linkedCallFallbacks;
     }
+    if (version >= 32u) result.request.target.spannedWaves = reader.ReadBool();
+    if (version >= 35u) {
+        result.request.target.depthRangeRemap = reader.ReadBool();
+        if (result.vertex.has_value()) {
+            result.vertex->depthRemapMode = reader.ReadU32();
+            result.request.context.vertex = result.vertex;
+        }
+    }
+    if (version >= 36u) result.request.target.float32FlushToZero = reader.ReadBool();
+    if (version >= 41u) result.request.target.float32DenormPreserve = reader.ReadBool();
+    if (version >= 43u && result.request.context.vertex.has_value()) {
+        auto& vertex = *result.request.context.vertex;
+        vertex.pointList = reader.ReadBool();
+        vertex.pointSize = std::bit_cast<float>(reader.ReadU32());
+        vertex.pointSizeMin = std::bit_cast<float>(reader.ReadU32());
+        vertex.pointSizeMax = std::bit_cast<float>(reader.ReadU32());
+        result.vertex = vertex;
+    }
+    if (version >= 44u) result.request.target.fusedExactArithmetic = reader.ReadBool();
+    if (version >= 45u) {
+        result.request.target.largePixelFunctionLdsBuffer = reader.ReadBool();
+        result.request.target.pixelFunctionStorageDwords = reader.ReadU32();
+    }
+    if (version >= 48u) result.request.target.fragmentBarycentricBuiltins = reader.ReadBool();
+    if (version >= 51u) result.request.target.tessellationEvaluationSubgroups = reader.ReadBool();
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

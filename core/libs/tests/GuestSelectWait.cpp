@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <chrono>
@@ -9,11 +11,6 @@ struct GuestTimeval {
     std::int64_t seconds;
     std::int64_t microseconds;
 };
-
-extern "C" {
-int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -56,14 +53,17 @@ int main() {
     }
     std::array<std::uint64_t, 16> read{};
     read[0] = 1 | (std::uint64_t{1} << 63);
+    read[1] = 1;
     const GuestTimeval limit{0, 500};
     const auto start = Clock::now();
     Require(select_nid_postfix(1, read.data(), nullptr, nullptr, &limit) == 0,
         "select with no ready device did not time out");
     Require(Clock::now() - start >= std::chrono::microseconds(limit.microseconds),
         "select with no ready device returned before its deadline");
-    Require(read[0] == (std::uint64_t{1} << 63),
-        "select did not preserve bits outside the descriptor limit");
+    Require(read[0] == 0,
+        "select did not clear the bits up to the end of the last copied word");
+    Require(read[1] == 1,
+        "select did not preserve the words past the descriptor limit");
     std::array<std::uint64_t, 16> write{};
     write[0] = 2;
     const GuestTimeval longLimit{1, 0};

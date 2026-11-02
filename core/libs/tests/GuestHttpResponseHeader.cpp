@@ -1,3 +1,4 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdio>
@@ -12,8 +13,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" int APS5_VABI sceHttpParseResponseHeader(const char*, std::size_t, const char*, const char**, std::size_t*);
 
 static void Require(bool value) {
     if (!value) {
@@ -55,7 +54,7 @@ static void CheckGuardPage() {
     constexpr std::string_view text = "X: abc\r\n\tdef\r\n";
     char* header = pages + pageSize - text.size();
     std::memcpy(header, text.data(), text.size());
-    Check({header, text.size()}, "x", 3, "abc\r\n\tdef", static_cast<int>(text.size()));
+    Check({header, text.size()}, "x", 3, "abc\r\n\tdef\r\n", static_cast<int>(text.size()));
     Check({header, 6}, "x", 3, "abc", 6);
     const char* value = header;
     std::size_t length = 123;
@@ -75,17 +74,25 @@ int main() {
     constexpr int invalidResponse = static_cast<int>(0x80432060);
     constexpr int invalidValue = static_cast<int>(0x804321FE);
     constexpr int notFound = static_cast<int>(0x80432025);
-    Check("HTTP/1.1 200 OK\r\nX: \tvalue \t\r\nNext: no\r\n", "x", 21, "value \t", 30);
-    Check("X: first\r\nX: second\r\n", "X", 3, "first", 10);
-    Check("X: abc\n def\n\tghi\nY: no\n", "x", 3, "abc\n def\n\tghi", 17);
+    Check("HTTP/1.1 200 OK\r\nX: \tvalue \t\r\nNext: no\r\n", "x", 21, "value \t", 28);
+    Check("X: first\r\nX: second\r\n", "X", 3, "first", 8);
+    Check("X: abc\n def\n\tghi\nY: no\n", "x", 3, "abc\n def\n\tghi", 16);
     Check("X: no-newline", "X", 3, "no-newline", 13);
     Check("X: value\r", "X", 3, "value\r", 9);
     Check("X:", "X", 2, "", 0);
     Check("X: \t", "X", 4, "", 0);
     Check("X:\r\n\r\n", "X", 5, "", 0);
-    Check("X:\r\nnext\r\n", "X", 4, "next", 10);
-    Check("Prefix: wrong\n X: wrong\nXy: wrong\nX: right\n", "X", 37, "right", 43);
-    Check(std::string_view("X: a\0b\n", 7), "X", 3, std::string_view("a\0b", 3), 7);
+    Check("X:\r\nnext\r\n", "X", 0, "", 0);
+    Check("X:\n b\r\n", "X", 4, "b\r\n", 7);
+    Check("X:\r\n\tb\r\nY: c", "X", 5, "b", 6);
+    Check("Prefix: wrong\n X: wrong\nXy: wrong\nX: right\n", "X", 37, "right\n", 43);
+    Check("HTTP/1.1 200 OK\r\nServer: x\r\n\r\nBody: no\r\n", "Body", 36, "no\r\n", 40);
+    Check(" A: b\r\nB:  c  \r\n", "B", 11, "c  \r\n", 16);
+    Check("Empty:\r\nSpaces:    \r\nNoSpace:v\r\nZ: z", "Empty", 0, "", 0);
+    Check("Empty:\r\nSpaces:    \r\nNoSpace:v\r\nZ: z", "Spaces", 0, "", 0);
+    Check("Empty:\r\nSpaces:    \r\nNoSpace:v\r\nZ: z", "NoSpace", 29, "v", 30);
+    Check(std::string_view("X: a\0b\n", 7), "X", 3, std::string_view("a\0b\n", 4), 7);
+    Check(std::string_view("X: a\0b\r\nY: z", 13), "X", 3, std::string_view("a\0b", 3), 6);
 
     const char* marker = "unchanged";
     const char* value = marker;
@@ -104,6 +111,6 @@ int main() {
     std::string field(0xfff, 'A');
     std::string header = field + ": value\n";
     field += "ignored";
-    Check(header, field.c_str(), 0x1000 + 1, "value", static_cast<int>(header.size()));
+    Check(header, field.c_str(), 0x1000 + 1, "value\n", static_cast<int>(header.size()));
     CheckGuardPage();
 }

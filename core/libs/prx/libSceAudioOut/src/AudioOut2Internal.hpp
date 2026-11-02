@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAUDIOOUT_SRC_AUDIOOUT2INTERNAL_HPP
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <chrono>
 #include <cstddef>
@@ -9,12 +10,15 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <optional>
+#include <stop_token>
 #include <utility>
 #include <vector>
 
 #include "SDL.h"
 #include "SceTypes.hpp"
 #include "AudioOut2PadMix.hpp"
+#include "prx/libSceAudioOut/include/HostGain.hpp"
 
 // Shared by the AudioOut2 context and port files.
 //
@@ -24,6 +28,8 @@
 bool AudioOut2TraceEnabled();
 // Seconds since the first AudioOut2 call, for the trace.
 double AudioOut2TraceSeconds();
+bool AudioOut2IsInitialized_nid_no_patch();
+void AudioOut2MarkInitialized_nid_no_patch();
 
 #define AUDIOOUT2_TRACE(...) \
     do { \
@@ -55,6 +61,12 @@ struct AudioOut2CapturedPort {
 
 using AudioOut2Grain = std::vector<AudioOut2CapturedPort>;
 
+struct AudioOut2QueuedData {
+    const void* data = nullptr;
+    std::vector<std::byte> pcm;
+    bool reused = false;
+};
+
 struct AudioOut2Port {
     bool used = false;
     std::uint64_t generation = 0;
@@ -67,9 +79,11 @@ struct AudioOut2Port {
     bool int16 = false;
     const AudioOut2StereoFold* fold = nullptr;
     const void* data = nullptr;
-    std::deque<const void*> queuedData;
+    std::deque<AudioOut2QueuedData> queuedData;
     const void* lastBuffer = nullptr;
     const void* repeatedData = nullptr;
+    std::vector<std::byte> repeatedPcm;
+    bool repeatedReused = false;
     float volume[AUDIO_OUT2_PORT_CHANNELS_MAX] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     std::uint64_t dataSets = 0;
     std::uint64_t attributeTraces = 0;
@@ -85,17 +99,19 @@ struct AudioOut2Context {
     std::uint32_t queued = 0;
     std::chrono::steady_clock::time_point playHead;
     SDL_AudioDeviceID device = 0;
+    HostGainRamp hostGain{AUDIO_OUT2_SAMPLE_RATE / 100};
     // Stereo float mix of the ports for one grain.
     std::vector<float> mix;
     // Mixed stereo frames the device has not played yet; it plays silence until the cushion is mixed.
     std::deque<float> output;
     bool priming = true;
     bool advancedMode = false;
-    std::condition_variable grainReady;
+    std::condition_variable_any grainReady;
     std::deque<AudioOut2Grain> advancedGrains;
     std::deque<AudioOut2Grain> pendingGrains;
     std::deque<std::chrono::steady_clock::time_point> pendingSince;
     SDL_AudioDeviceID padDevice = 0;
+    float padSpeakerFallbackGain = 1.0f;
     std::chrono::steady_clock::time_point nextPadProbe;
     AudioOut2PadLayout padLayout;
     std::vector<float> padMix;
@@ -114,7 +130,12 @@ struct AudioOut2Context {
     // Largest sample magnitude of the grains mixed since the last summary: the mixed signal's level.
     float summaryPeak = 0.0f;
     std::chrono::steady_clock::time_point summaryStart;
+    bool deviceBacked = false;
+    std::atomic<std::uint32_t> publishedQueueLevel{0};
+    std::optional<std::chrono::steady_clock::time_point> clockForTest;
 };
+
+AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx);
 
 // Mixes every port of the context that carries PCM data into out (stereo float, frames frames), summing
 // onto the zeroed buffer. Returns the number of ports mixed.

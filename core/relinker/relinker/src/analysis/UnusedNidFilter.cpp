@@ -4,6 +4,7 @@
 #include <relinker/analysis/UnusedNidFilter/IGotAccessIndex.hpp>
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <relinker/parsing/ElfReader.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 
 namespace Relinker {
 
@@ -41,7 +42,7 @@ public:
 
         std::vector<NidReference> result;
         for (const auto& ref : nidRefs)
-            if (index->IsGotSlotAccessed(ref.RelocationAddress))
+            if (ref.RelocationTypeValue != Elfpatcher::R_X86_64_GLOB_DAT || index->IsGotSlotAccessed(ref.RelocationAddress))
                 result.push_back(ref);
         return result;
     }

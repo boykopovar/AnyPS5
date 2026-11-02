@@ -129,7 +129,7 @@ void testFusion(std::size_t misalignment, std::uint32_t terminator = SSetpcS6) {
     Halves halves(terminator);
     SizeAlign size{};
     check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "fused size query failed");
-    check(size.m_size == 7 * sizeof(ShaderRegister) && size.m_align == 4, "fused size is not the fused register list");
+    check(size.m_size == 6 * sizeof(ShaderRegister) && size.m_align == 4, "fused size is not the back half's register list");
     std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
     auto* scratch = aligned(storage, 256) + misalignment;
     Shader fused{};
@@ -147,12 +147,12 @@ void testFusion(std::size_t misalignment, std::uint32_t terminator = SSetpcS6) {
     const auto* frontLo = find(fused, 0x0C8u);
     check(backLo != nullptr && backLo->value == static_cast<std::uint32_t>((base + 256) >> 8u), "back program address was not patched");
     check(frontLo != nullptr && frontLo->value == static_cast<std::uint32_t>(base >> 8u), "fused program address was not patched");
-    check(find(fused, 0x08Au)->value == ((1u << 24u) | (2u << 6u) | 5u), "RSRC1 register counts were not merged");
+    check(find(fused, 0x08Au)->value == ((1u << 24u) | (1u << 6u) | 5u), "RSRC1 register counts were not merged");
     check(find(fused, 0x08Bu)->value == ((6u << 1u) | (1u << 7u) | (1u << 15u)), "RSRC2 user SGPRs were not taken from the front half");
-    check(find(fused, 0x0B2u) != nullptr && find(fused, 0x0B2u)->value == 0x55u, "front-only SH register was lost");
+    check(find(fused, 0x0B2u) == nullptr, "a front-only SH register was added to the fused list");
     check(find(fused, 0x080u) == nullptr, "front program checksum was kept");
-    check(fused.num_sh_registers == 7 && fused.num_cx_registers == 2, "fused register counts are wrong");
-    check(fused.cx_registers[0].offset == 0x29Bu && fused.cx_registers[0].value == 2u && fused.cx_registers[1].offset == 0x2D5u, "context registers were not merged");
+    check(fused.num_sh_registers == halves.back.num_sh_registers && fused.num_cx_registers == halves.back.num_cx_registers, "fused register counts are wrong");
+    check(fused.cx_registers[0].offset == 0x29Bu && fused.cx_registers[0].value == 2u, "context registers are not the back half's");
     check(fused.num_input_semantics == 2 && fused.input_semantics[1].semantic == 2, "front inputs were not kept");
     check(fused.num_output_semantics == 1 && fused.output_semantics[0].semantic == 3, "back outputs were not kept");
     check(fused.scratch_size_dw_per_thread == 16, "scratch size is not the larger half's");
@@ -195,6 +195,65 @@ void testScratchReuse() {
     check(reinterpret_cast<std::uintptr_t>(changed.code) != firstCode && word(reinterpret_cast<const void*>(firstCode), 64) == SMovS0, "changed halves reused the earlier fused program");
 }
 
+void testOffchipLdsEnable() {
+    constexpr std::uint32_t offchip = 1u << 18u;
+    for (const auto frontEnable : {0u, offchip}) {
+        for (const auto backEnable : {0u, offchip}) {
+            Halves halves;
+            halves.frontSh[2].value |= frontEnable;
+            halves.backSh[3].value |= backEnable;
+            SizeAlign size{};
+            check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "offchip LDS enable rejected by the size query");
+            std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
+            Shader fused{};
+            check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, aligned(storage, 256)) == 0, "offchip LDS enable rejected by fusion");
+            const auto* resource = find(fused, 0x08bu);
+            check(resource != nullptr && resource->value == ((6u << 1u) | (1u << 7u) | (1u << 15u) | frontEnable), "fusion did not take offchip LDS enable and user SGPRs from the front half");
+        }
+    }
+    Halves reported;
+    reported.frontSh[2].value = 0x00070004u;
+    reported.backSh[3].value = 0x00ab0020u;
+    SizeAlign size{};
+    check(sceAgcGetFusedShaderSize_0080(&size, &reported.front, &reported.back) == 0, "reported shader resources rejected by size query");
+    std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
+    Shader fused{};
+    check(sceAgcFuseShaderHalves_0200(&fused, &reported.front, &reported.back, aligned(storage, 256)) == 0, "reported shader resources rejected by fusion");
+    check(find(fused, 0x08bu)->value == 0x00af0004u, "reported shader resources did not retain the front offchip LDS enable");
+}
+
+void testResourceMerging() {
+    struct Case {
+        std::uint32_t front1;
+        std::uint32_t front2;
+        std::uint32_t back1;
+        std::uint32_t back2;
+        std::uint32_t expected1;
+        std::uint32_t expected2;
+    };
+    const Case cases[] = {
+        {0u, 0x80000000u, 0u, 0u, 0u, 0x10000000u},
+        {1u, 0xf0000000u, 3u, 0u, 3u, 0x10000000u},
+        {0u, 0xf0000000u, 0u, 0xf0000000u, 0u, 0u},
+        {0x400003c1u, 0x0006000cu, 0x61000043u, 0x00018001u, 0x61000043u, 0x0006800du},
+        {0x60000007u, 0x00010000u, 0x21000041u, 0x00020000u, 0x61000047u, 0x00020000u}
+    };
+    for (const auto& entry : cases) {
+        Halves halves;
+        halves.frontSh[1].value = entry.front1;
+        halves.frontSh[2].value = entry.front2;
+        halves.backSh[2].value = entry.back1;
+        halves.backSh[3].value = entry.back2;
+        SizeAlign size{};
+        check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "resource merge size query failed");
+        std::vector<std::uint8_t> scratch(size.m_size);
+        Shader fused{};
+        check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch.data()) == 0, "resource merge failed");
+        check(find(fused, 0x08au)->value == entry.expected1, "resource register 1 merge mismatch");
+        check(find(fused, 0x08bu)->value == entry.expected2, "resource register 2 merge mismatch");
+    }
+}
+
 void testRejections() {
     Halves halves;
     SizeAlign size{};
@@ -221,11 +280,6 @@ void testRejections() {
         Halves noTrailer;
         noTrailer.frontCode[5] = 0;
         expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &noTrailer.front, &noTrailer.back); });
-    }
-    {
-        Halves hardware;
-        hardware.frontSh[2].value |= 1u << 16u;
-        expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &hardware.front, &hardware.back); });
     }
     {
         Halves constants;
@@ -277,6 +331,8 @@ int main() {
         testFusion(4);
         testFusion(0, SSwappcNullS6);
         testScratchReuse();
+        testOffchipLdsEnable();
+        testResourceMerging();
         testRejections();
         testHullHalves();
         LibcRunShutdown_nid_postfix();

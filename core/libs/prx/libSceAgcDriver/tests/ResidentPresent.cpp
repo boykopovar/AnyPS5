@@ -40,6 +40,8 @@ void decisionTests() {
     Require(ResidentPresentPath(VK_FORMAT_B8G8R8A8_UNORM, Bgra8, false) == ResidentPresent::Convert, "an 8-bit image that cannot be a blit source is not converted");
     Require(ResidentPresentPath(VK_FORMAT_R8G8B8A8_UNORM, Bgra8, true) == ResidentPresent::Convert && ResidentPresentPath(VK_FORMAT_B8G8R8A8_UNORM, Rgba8, true) == ResidentPresent::Convert, "an 8-bit image in the other order is not converted");
     Require(ResidentPresentPath(VK_FORMAT_R8G8B8A8_SRGB, Rgba8, true) == ResidentPresent::Convert, "an sRGB image is blitted (the blit would decode it)");
+    Require(ResidentPresentPath(VK_FORMAT_R8G8B8A8_UINT, Rgba8, true) == ResidentPresent::Convert && ResidentPresentPath(VK_FORMAT_B8G8R8A8_UINT, Bgra8, true) == ResidentPresent::Convert, "an 8-bit integer image is not converted");
+    Require(ResidentPresentPath(VK_FORMAT_R8G8B8A8_UINT, Rgba8 | TenBit, true) == ResidentPresent::None, "an 8-bit integer image presents a 10-bit display");
     for (const auto display : {Bgra8 | TenBit, Rgba8 | TenBit}) {
         for (const auto storage : {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32}) {
             Require(ResidentPresentPath(storage, display, true) == ResidentPresent::Convert, "a 10-bit image is blitted (the blit rounds where the guest path truncates)");

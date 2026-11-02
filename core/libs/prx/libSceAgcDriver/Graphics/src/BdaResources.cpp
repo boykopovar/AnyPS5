@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "ImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
@@ -17,33 +19,15 @@ namespace AgcDriver::Graphics {
 
 namespace {
 
-// The page tables built per device, reused by a build whose ranges (guest ranges, device
-// addresses, permissions) equal one of them: consecutive address-based builds map the same registered
-// set through the same imports and mirrors, so the ~1200-entry table repeats. The shader only reads
-// the table (its lookup keeps its state in function variables), and a batch in flight keeps its
-// BdaResources, so sharing the buffer is safe. The cache holds the tables weakly: they never outlive
-// the builds that own them (a static owner would destroy the buffer after its device, at exit or on
-// device replacement, and would fail the tests' leak check), and with deferred lease release the
-// previous builds are still in flight when the next one asks, which is what makes the hit rate.
-// One table was enough while every build repeated the last one exactly; now the misaligned
-// descriptor sub-ranges the GPU copies out of imports sit in pool staging buffers whose device
-// addresses cycle through the few buffers the batches in flight leave free, and the three
-// address-based programs of one queue interleave with the lease draws, so a table differs from the
-// previous one and comes back a few builds later (69% misses in the wave-8 run, 4% before the GPU
-// copies). Hence several recent tables, most recently used first, matched by a word hash before
-// the byte compare. APS5_BDA_TABLE_CACHE_ENTRIES sets how many (default 8; 1 is the previous
-// behaviour); APS5_NO_BDA_TABLE_CACHE=1 builds every table.
-// A table built for (or found equal to) the cached address space's ranges carries the space's
-// serial: a build served by that space alone binds it by the serial, with no hash and no compare.
 struct TableEntry {
     std::uint64_t hash;
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     std::weak_ptr<Buffer> buffer;
-    std::uint64_t spaceSerial = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> spaceKeys;
 };
 
 struct TableCache {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     std::list<TableEntry> entries;
     std::uint64_t hits = 0;
@@ -53,8 +37,6 @@ struct TableCache {
 
 bool sameRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& left, const std::vector<ShaderRecompiler::BdaAbi::Range>& right);
 
-// APS5_PROFILE_DRAW: why the most recently used entry did not serve this build (see
-// TableCacheStats). Under the cache mutex.
 void classifyFirstEntry(TableCache& cache, std::uint64_t hash, const std::vector<ShaderRecompiler::BdaAbi::Range>& ranges) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;
@@ -127,14 +109,40 @@ BdaResources::BdaResources(const Context& context) {
     Require(ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA fault buffer exceeds storage buffer range limit");
     fault = std::make_unique<Buffer>(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::memset(fault->Bytes().data(), 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
+    std::memset(fault->Bytes().data() + ShaderRecompiler::BdaAbi::SrtGuardWord * sizeof(std::uint32_t), 0, sizeof(std::uint32_t));
 }
 
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory) : BdaResources(context) {
     const auto cached = memory.CachedAddressTable();
     std::vector<ShaderRecompiler::BdaAbi::Range> built;
     if (!cached.has_value()) built = memory.AddressRanges();
-    const auto& ranges = cached.has_value() ? *cached->ranges : built;
+    const auto& addressRanges = cached.has_value() ? *cached->ranges : built;
     const auto serial = cached.has_value() ? cached->serial : 0;
+    auto guardSerial = MultisampleTargetRangeGeneration();
+    if (tableCacheEnabled() && serial != 0) {
+        auto& cache = Tables();
+        std::lock_guard lock(cache.mutex);
+        if (cache.device != context.device) {
+            cache.entries.clear();
+            cache.device = context.device;
+        }
+        for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
+            const auto key = std::pair{serial, guardSerial};
+            if (std::find(it->spaceKeys.begin(), it->spaceKeys.end(), key) == it->spaceKeys.end()) continue;
+            if (auto shared = it->buffer.lock(); shared != nullptr) {
+                tableBytes = shared->Bytes().size();
+                ++cache.hits;
+                ++cache.classes.spaceTables;
+                table = std::move(shared);
+                cache.entries.splice(cache.entries.begin(), cache.entries, it);
+                return;
+            }
+            cache.entries.erase(it);
+            break;
+        }
+    }
+    auto filtered = ExcludeMultisampleTargetRanges(context.device, addressRanges, guardSerial);
+    const auto& ranges = filtered.has_value() ? *filtered : addressRanges;
     Require(ranges.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
     Require(ranges.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / sizeof(ShaderRecompiler::BdaAbi::Range), "BDA table size overflow");
     tableBytes = sizeof(ShaderRecompiler::BdaAbi::Header) + ranges.size() * sizeof(ShaderRecompiler::BdaAbi::Range);
@@ -147,20 +155,6 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         if (cache.device != context.device) {
             cache.entries.clear();
             cache.device = context.device;
-        }
-        if (serial != 0) {
-            for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
-                if (it->spaceSerial != serial) continue;
-                if (auto shared = it->buffer.lock(); shared != nullptr) {
-                    ++cache.hits;
-                    ++cache.classes.spaceTables;
-                    table = std::move(shared);
-                    cache.entries.splice(cache.entries.begin(), cache.entries, it);
-                    return;
-                }
-                cache.entries.erase(it);
-                break;
-            }
         }
         hash = hashRanges(ranges);
         classifyFirstEntry(cache, hash, ranges);
@@ -184,9 +178,13 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             }
             if (sameRanges(it->ranges, ranges)) {
                 ++cache.hits;
-                // An equal table of an earlier space (a rebuild that mapped the same ranges the
-                // same way): the next build of this space binds it by the serial.
-                if (serial != 0) it->spaceSerial = serial;
+                if (serial != 0) {
+                    const auto key = std::pair{serial, guardSerial};
+                    auto found = std::find(it->spaceKeys.begin(), it->spaceKeys.end(), key);
+                    if (found != it->spaceKeys.end()) it->spaceKeys.erase(found);
+                    it->spaceKeys.push_back(key);
+                    if (it->spaceKeys.size() > tableCacheEntries()) it->spaceKeys.erase(it->spaceKeys.begin());
+                }
                 table = std::move(shared);
                 cache.entries.splice(cache.entries.begin(), cache.entries, it);
                 return;
@@ -194,6 +192,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             ++it;
         }
     }
+    Require(ShaderRecompiler::BdaAbi::RangesOrdered(ranges.data(), ranges.size()), "BDA table ranges do not ascend by begin");
     for (const auto& range : ranges) Require((range.permissions & ShaderRecompiler::BdaAbi::Write) == 0 || range.end <= ShaderRecompiler::BdaAbi::WrittenAddressLimit, "a writable BDA range ends past the addresses the written-page record can hold");
     table = std::make_shared<Buffer>(context, tableBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     const ShaderRecompiler::BdaAbi::Header header{ShaderRecompiler::BdaAbi::Version, static_cast<std::uint32_t>(ranges.size()), sizeof(ShaderRecompiler::BdaAbi::Range), 0};
@@ -206,7 +205,9 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             cache.entries.clear();
             cache.device = context.device;
         }
-        cache.entries.push_front({hash, cached.has_value() ? ranges : std::move(built), table, serial});
+        auto cachedRanges = filtered.has_value() ? std::move(*filtered) : cached.has_value() ? *cached->ranges : std::move(built);
+        cache.entries.push_front({hash, std::move(cachedRanges), table, {}});
+        if (serial != 0) cache.entries.front().spaceKeys.emplace_back(serial, guardSerial);
         while (cache.entries.size() > tableCacheEntries()) cache.entries.pop_back();
     }
 }
@@ -243,10 +244,11 @@ void BdaResources::CheckFault() const {
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, fault->Bytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
-        Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.reserved == 0, "BDA fault record has data without publication");
+        Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.otherFaults == 0, "BDA fault record has data without publication");
+        checkSrtGuard();
         return;
     }
-    Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && report.reserved == 0, "incomplete or invalid BDA fault record");
+    Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && report.otherFaults <= 1, "incomplete or invalid BDA fault record");
     Require(report.reason != ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, "rect-list requires finite nondegenerate axis-aligned positions with equal positive W");
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::LoopLimit) {
         // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
@@ -268,7 +270,7 @@ void BdaResources::CheckFault() const {
                 message << std::dec << ")";
             }
             message << ": " << ShaderRecompiler::ImageTableAbi::PoisonReasonName(static_cast<ShaderRecompiler::ImageTableAbi::PoisonReason>(poison.reason));
-            if (report.bytes < tables->messages.size() && !tables->messages[report.bytes].empty()) message << ": " << tables->messages[report.bytes];
+            if (report.bytes < tables->messages.size() && tables->messages[report.bytes] != nullptr && !tables->messages[report.bytes]->empty()) message << ": " << *tables->messages[report.bytes];
         } else {
             message << ": poison entry " << report.bytes;
         }
@@ -277,6 +279,10 @@ void BdaResources::CheckFault() const {
     std::ostringstream message;
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::UnlinkedCall) {
         message << "shader stage " << report.stage << " called address 0x" << std::hex << report.address << " at program counter 0x" << report.instruction << ", which no linked callee of that call matches";
+        throw std::runtime_error(message.str());
+    }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::WindowLaneSpill) {
+        message << "shader stage " << report.stage << ": a relative write stored " << report.bytes << " in lane " << (report.address >> 32u) << " of vector window slot " << (report.address & 0xffffffffu) << ", which holds a scalar spilled with v_writelane_b32 that a later v_readlane_b32 was replaced with";
         throw std::runtime_error(message.str());
     }
     message << "BDA access failed: address=0x" << std::hex << report.address << " instruction=0x" << report.instruction << std::dec << " bytes=" << report.bytes << " stage=" << report.stage << " reason=" << static_cast<std::uint32_t>(report.reason);
@@ -292,6 +298,10 @@ void BdaResources::CheckFault() const {
             break;
         }
     }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::Unaligned) {
+        if (report.otherFaults == 0) throw BdaUnalignedAccess(message.str(), report.instruction);
+        message << "; a fault of another kind was recorded in the same dispatch";
+    }
     throw std::runtime_error(message.str());
 }
 
@@ -302,6 +312,27 @@ namespace AgcDriver::Graphics {
 void BdaResources::SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges) {
     imageTables = std::move(tables);
     imageTableRanges = std::move(ranges);
+}
+
+void BdaResources::SetSrtGuards(std::vector<SrtGuardFaults> guards) {
+    srtGuards = std::move(guards);
+}
+
+void BdaResources::checkSrtGuard() const {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    std::uint32_t guard = 0;
+    std::memcpy(&guard, fault->Bytes().data() + Abi::SrtGuardWord * sizeof(std::uint32_t), sizeof(guard));
+    if (guard == 0) return;
+    const auto stage = guard >> Abi::SrtGuardStageShift;
+    const auto record = guard & ((1u << Abi::SrtGuardStageShift) - 1u);
+    const auto found = std::find_if(srtGuards.begin(), srtGuards.end(), [&](const SrtGuardFaults& candidate) { return candidate.stage == stage; });
+    const auto* guards = found != srtGuards.end() ? &*found : srtGuards.size() == 1 ? &srtGuards.front() : nullptr;
+    Require(guards != nullptr && record + 2u < guards->flattenedSrt.size(), "a guarded SRT read faulted without its poison record");
+    const auto& words = guards->flattenedSrt;
+    const auto address = static_cast<std::uint64_t>(words[record + 1u]) | (static_cast<std::uint64_t>(words[record + 2u]) << 32u);
+    std::ostringstream message;
+    message << "BDA access failed: address=0x" << std::hex << address << " instruction=0x" << words[record] << std::dec << " bytes=4 stage=" << stage << " reason=" << static_cast<std::uint32_t>(Abi::FaultReason::Unmapped);
+    throw std::runtime_error(message.str());
 }
 
 void BdaResources::markWrittenPages() const {
@@ -319,7 +350,7 @@ void BdaResources::markWrittenPages() const {
                 Require(false, message.str());
             }
         }
-        GuestMemory::MarkWritten(begin, bytes);
+        GuestMemory::MarkPossiblyWritten(begin, bytes);
     }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[Abi::WrittenListWord + claim];

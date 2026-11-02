@@ -16,7 +16,10 @@ std::uint32_t readBigEndian(const std::vector<std::uint8_t>& bytes, const std::s
 }
 
 void validatePng(const std::vector<std::uint8_t>& bytes, const std::filesystem::path& path) {
-    const auto fail = [&path](const std::string& reason) { throw Domain::RelinkerException("Invalid Windows icon PNG '" + path.string() + "': " + reason); };
+    const auto fail = [&path](const std::string& reason) {
+        const auto utf8 = path.u8string();
+        throw Domain::RelinkerException("Invalid Windows icon PNG '" + std::string(utf8.begin(), utf8.end()) + "': " + reason);
+    };
     constexpr std::array<std::uint8_t, 8> signature{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
     if (bytes.size() < 33 || !std::equal(signature.begin(), signature.end(), bytes.begin())) fail("missing PNG signature or IHDR");
     if (readBigEndian(bytes, 8) != 13 || readBigEndian(bytes, 12) != 0x49484452) fail("invalid IHDR size or type");
@@ -74,6 +77,12 @@ void validatePng(const std::vector<std::uint8_t>& bytes, const std::filesystem::
 }
 
 PeDirectory WindowsIconResourceBuilder::Build(const std::vector<std::uint8_t>& png, const std::filesystem::path& iconPath, std::vector<PeSection>& sections, const std::uint32_t nextRva) const {
+    if (nextRva < LoadRva || nextRva % SectionAlignment != 0)
+        throw Domain::RelinkerException("Invalid Windows resource section RVA", nextRva);
+    if (std::any_of(sections.begin(), sections.end(), [](const auto& section) { return section.Name == ".rsrc"; }))
+        throw Domain::RelinkerException("Duplicate Windows resource section");
+    if (!sections.empty() && nextRva < AlignRva(static_cast<std::uint64_t>(sections.back().Rva) + sections.back().Data.size()))
+        throw Domain::RelinkerException("Windows resource section overlaps preceding section", nextRva);
     if (png.size() > 0x7fffffffu - 184) throw Domain::RelinkerException("Invalid Windows icon size");
     validatePng(png, iconPath);
     std::vector<std::uint8_t> data(184 + png.size());
