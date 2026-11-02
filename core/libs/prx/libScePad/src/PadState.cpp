@@ -307,7 +307,7 @@ PadData Pad::ReadState(int port) {
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
     auto& slot = slots[port];
     const bool withdrawn = WithdrawnPort(port, slot);
-    PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, slot.timestamp, now, injected, port);
+    PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, now, now, injected, port);
     if (!withdrawn && slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
         data.buttons |= slot.pressedSinceRead;
         if (slot.pressedSinceRead & 0x100u) data.analog_buttons_l2 = std::max(data.analog_buttons_l2, slot.pressedAnalogL2);
@@ -335,7 +335,7 @@ int Pad::Read(PadData* data, int num, int port) {
         return 1;
     }
     if (slot.queue.empty()) {
-        data[0] = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
+        data[0] = BuildData(slot, slot.state, now, now, injected, port);
         return 1;
     }
     int count = 0;
