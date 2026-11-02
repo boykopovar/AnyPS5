@@ -56,6 +56,8 @@ jobs:
         run: python3 ps5lift/tools/ps5lift.py runtime --triple aarch64-unknown-linux-gnu --output build/runtime --clang /usr/lib/llvm-18/bin/clang --clangxx /usr/lib/llvm-18/bin/clang++
       - name: Configure AnyPS5 for a lifted guest
         run: cmake -S . -B build/anyps5 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DANYPS5_GUEST_LIFTED=ON -DANYPS5_LIFTED_RUNTIME=$PWD/build/runtime/libps5lift_runtime.so -DCMAKE_C_COMPILER=/usr/lib/llvm-18/bin/clang -DCMAKE_CXX_COMPILER=/usr/lib/llvm-18/bin/clang++ -DCMAKE_C_FLAGS=-mcpu=neoverse-v2 -DCMAKE_CXX_FLAGS=-mcpu=neoverse-v2
+      - name: Build every library for a lifted guest
+        run: cmake --build build/anyps5 --target libs --parallel 4
       - name: Build and run the tests that pass in a lifted build
         run: python3 ps5lift/tools/lifted_tests.py --build build/anyps5 --jobs 4
       - if: always()
