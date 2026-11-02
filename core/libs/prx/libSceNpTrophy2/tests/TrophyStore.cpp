@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <locale>
 #include <optional>
 #include <random>
 #include <stdexcept>
@@ -158,6 +159,50 @@ void testDamagedRecords() {
     }
 }
 
+class GroupedNumbers : public std::numpunct<char> {
+protected:
+    char do_thousands_sep() const override { return ','; }
+    std::string do_grouping() const override { return "\3"; }
+};
+
+class ScopedNumberLocale {
+public:
+    ScopedNumberLocale() : previous(std::locale::global(std::locale(std::locale::classic(), new GroupedNumbers))) {}
+    ~ScopedNumberLocale() { std::locale::global(previous); }
+
+private:
+    std::locale previous;
+};
+
+void testLocaleIndependentRecords() {
+    {
+        ScopedNumberLocale locale;
+        NpTrophy2::TrophyStore trophies("locale");
+        check(trophies.Unlock(InitialUser, 1000, 1234, UINT64_MAX), "a trophy was not saved under a grouped number locale");
+        check(trophies.Unlock(InitialUser, 1000, 0, 0), "a second trophy was not saved under a grouped number locale");
+        NpTrophy2::StatStore stats("locale");
+        stats.Set(InitialUser, 1000, UINT64_MAX, UINT64_MAX);
+        check(stats.Raise(InitialUser, 1000, 1000, 1234567) == 1234567, "a statistic was not raised under a grouped number locale");
+        check(stats.Raise(InitialUser, 1000, 1000, 7654321) == 7654321, "a statistic was not updated under a grouped number locale");
+        stats.Set(InitialUser, 1000, 0, 0);
+        NpTrophy2::TrophyStore restartedTrophies("locale");
+        NpTrophy2::StatStore restartedStats("locale");
+        check(!throws([&] {
+            check(restartedTrophies.UnlockTick(InitialUser, 1000, 1234) == UINT64_MAX && restartedTrophies.UnlockTick(InitialUser, 1000, 0) == 0,
+                  "trophy values changed after reopening under a grouped number locale");
+            check(restartedStats.Value(InitialUser, 1000, UINT64_MAX) == UINT64_MAX && restartedStats.Value(InitialUser, 1000, 1000) == 7654321 &&
+                      restartedStats.Value(InitialUser, 1000, 0) == 0,
+                  "statistic values changed after reopening under a grouped number locale");
+        }), "a saved record could not be reopened under a grouped number locale");
+    }
+    check(read("locale/268435456_1000.txt") == "0 0\n1234 18446744073709551615\n", "trophy records contain localized numbers");
+    check(read("locale/268435456_1000.stats.txt") == "0 0\n1000 7654321\n18446744073709551615 18446744073709551615\n", "statistic records contain localized numbers");
+    NpTrophy2::TrophyStore restartedTrophies("locale");
+    NpTrophy2::StatStore restartedStats("locale");
+    check(restartedTrophies.UnlockCount(InitialUser, 1000) == 2 && restartedStats.Value(InitialUser, 1000, 1000) == 7654321,
+          "records did not survive a number locale change");
+}
+
 struct Seen {
     std::vector<NpTrophy2Unlock> unlocks;
 };
@@ -287,6 +332,7 @@ int main() {
     write("app0/sce_sys/param.json", R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})");
     testPersistence();
     testDamagedRecords();
+    testLocaleIndependentRecords();
     testQueries();
     testPostedUnlockRules();
     testListenerRemovalWaitsForItsCallback();
