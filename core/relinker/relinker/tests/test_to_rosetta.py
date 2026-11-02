@@ -64,7 +64,7 @@ def main():
                 assert (andn not in output.read_bytes()) == lowered, f"{options} {'did not lower' if lowered else 'changed'} ANDN"
                 if lowered:
                     assert "ANDN" in result.stdout, result.stdout
-        for name, bls in (("BLSR", "c4e2f8f3ce"), ("BLSMSK", "c4e2f8f3d6"), ("BLSI", "c4e2f8f3de")):
+        for name, bls in (("BLSR", "c4e2f8f3ce"), ("BLSMSK", "c4e2f8f3d6"), ("BLSI", "c4e2f8f3de"), ("BZHI", "c4e2e8f5c6"), ("BEXTR", "c4e2e8f7c6")):
             code = bytes.fromhex(bls + "c3")
             for target in ((), ("--macos",)):
                 for conversion in ((), ("--to-intel",), ("--to-rosetta",)):
