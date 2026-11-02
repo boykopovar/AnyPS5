@@ -1799,9 +1799,16 @@ int PassedDescriptors(const GuestMsghdr& message, std::vector<int>& descriptors)
     }
     return 0;
 }
+static bool ReadGuest(void* destination, const void* source, std::size_t bytes);
 std::int64_t SendPassing(Socket& socket, const GuestMsghdr& message, std::vector<char>& data, int flags) {
+    constexpr std::size_t MostControlBytes = 2048;
+    if (message.controlLength < 12 || message.controlLength > MostControlBytes) return Fail(22);
+    std::vector<unsigned char> controlCopy(message.controlLength);
+    if (!ReadGuest(controlCopy.data(), message.control, controlCopy.size())) return Fail(14);
+    GuestMsghdr checked = message;
+    checked.control = controlCopy.data();
     std::vector<int> descriptors;
-    if (const int error = PassedDescriptors(message, descriptors)) return Fail(error);
+    if (const int error = PassedDescriptors(checked, descriptors)) return Fail(error);
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (message.name) return Fail(47);
     if (!descriptors.empty() && data.empty() && socket.type == 1) NotImplemented_nid_no_patch("sendmsg: SCM_RIGHTS without data on a stream socket");
