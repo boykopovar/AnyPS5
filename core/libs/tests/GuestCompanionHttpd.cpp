@@ -90,10 +90,16 @@ void CheckStates() {
 }
 
 void CheckResponseBuilders() {
-    unsigned char response[0x20]{};
-    RequireNotImplemented([&] { sceCompanionHttpdAddHeader("key", "value", response); }, "sceCompanionHttpdAddHeader");
-    RequireNotImplemented([&] { sceCompanionHttpdSetStatus(200, response); }, "sceCompanionHttpdSetStatus");
-    RequireNotImplemented([&] { sceCompanionHttpdSetBody("body", 4, response); }, "sceCompanionHttpdSetBody");
+    unsigned char response[0x20];
+    unsigned char untouched[sizeof(response)];
+    std::memset(response, 0xa5, sizeof(response));
+    std::memcpy(untouched, response, sizeof(response));
+    Require(sceCompanionHttpdAddHeader("key", "value", response) == 0, "sceCompanionHttpdAddHeader did not return zero");
+    Require(std::memcmp(response, untouched, sizeof(response)) == 0, "sceCompanionHttpdAddHeader wrote the response");
+    Require(sceCompanionHttpdSetStatus(200, response) == 0, "sceCompanionHttpdSetStatus did not return zero");
+    Require(std::memcmp(response, untouched, sizeof(response)) == 0, "sceCompanionHttpdSetStatus wrote the response");
+    Require(sceCompanionHttpdSetBody("body", 4, response) == 0, "sceCompanionHttpdSetBody did not return zero");
+    Require(std::memcmp(response, untouched, sizeof(response)) == 0, "sceCompanionHttpdSetBody wrote the response");
     RequireNotImplemented([] { sceCompanionHttpdGet2ndScreenStatus(); }, "sceCompanionHttpdGet2ndScreenStatus");
     RequireNotImplemented([] { sceCompanionHttpdGetUserId(); }, "sceCompanionHttpdGetUserId");
     RequireNotImplemented([] { sceCompanionHttpdInitialize2(); }, "sceCompanionHttpdInitialize2");

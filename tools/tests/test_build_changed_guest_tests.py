@@ -285,6 +285,20 @@ class Main(unittest.TestCase):
             code = self.main(build, ["core/libs/prx/libc/src/FloatBuiltins.cpp"])
         self.assertEqual(code, 1)
 
+    def test_symbolic_link_loop_build_directory_is_reported_cleanly(self):
+        root = Path(self.temporary.name)
+        loop = root / "build"
+        try:
+            loop.symlink_to(root / "other")
+            (root / "other").symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertEqual(build_changed_guest_tests.main([str(loop)]), 1)
+        self.assertIn("no CMake File API index", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+
 
 if __name__ == "__main__":
     with contextlib.redirect_stdout(io.StringIO()):

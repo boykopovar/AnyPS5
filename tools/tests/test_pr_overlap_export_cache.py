@@ -13,7 +13,7 @@ import pr_overlap
 
 def run(*args):
     return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
-                          capture_output=True, text=True, check=True).stdout.strip()
+                          capture_output=True, encoding="utf-8", check=True).stdout.strip()
 
 
 def write(path, text):

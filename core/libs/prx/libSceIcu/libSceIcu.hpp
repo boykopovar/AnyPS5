@@ -11,3 +11,5 @@
 #include "Unescape.hpp"
 #include "Identified.hpp"
 #include "prx/libSceIcu/ResourceReaders.hpp"
+
+#include "prx/libSceIcu/include/Api.hpp"
