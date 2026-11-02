@@ -268,6 +268,7 @@ int main() {
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize), nullptr) == invalidAddr);
     Require(scePngDecCreate(reinterpret_cast<const PngDecCreateParam*>(0x10), unaligned, static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize), reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(scePngDecCreate(&param, reinterpret_cast<void*>(0x10), static_cast<std::uint32_t>(memorySize), &handle) == invalidAddr);
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize) - 1, &handle) == invalidSize);
     Require(handle == nullptr);
     Require(scePngDecCreate(&param, unaligned, static_cast<std::uint32_t>(memorySize), &handle) == 0);
@@ -293,6 +294,9 @@ int main() {
     Require(scePngDecParseHeader(&parse, nullptr) == invalidAddr);
     Require(scePngDecParseHeader(reinterpret_cast<const PngDecParseParam*>(0x10), &info) == invalidAddr);
     Require(scePngDecParseHeader(&parse, reinterpret_cast<PngDecImageInfo*>(0x10)) == invalidAddr);
+    PngDecParseParam parseBadPng = parse;
+    parseBadPng.png_mem_addr = reinterpret_cast<const void*>(0x10);
+    Require(scePngDecParseHeader(&parseBadPng, &info) == invalidAddr);
     const PngDecParseParam parseNull{nullptr, 16, 0};
     Require(scePngDecParseHeader(&parseNull, &info) == invalidAddr);
     const PngDecParseParam parseEmpty{rgbPng.data(), 0, 0};
@@ -307,6 +311,12 @@ int main() {
     Require(scePngDecDecode(reinterpret_cast<void*>(0x20), &decode, &info) == invalidHandle);
     Require(scePngDecDecode(handle, reinterpret_cast<const PngDecDecodeParam*>(0x10), &info) == invalidAddr);
     Require(scePngDecDecode(handle, &decode, reinterpret_cast<PngDecImageInfo*>(0x10)) == invalidAddr);
+    PngDecDecodeParam decodeBadPng = decode;
+    decodeBadPng.png_mem_addr = reinterpret_cast<const void*>(0x10);
+    Require(scePngDecDecode(handle, &decodeBadPng, &info) == invalidAddr);
+    PngDecDecodeParam decodeBadImage = decode;
+    decodeBadImage.image_mem_addr = reinterpret_cast<void*>(0x10);
+    Require(scePngDecDecode(handle, &decodeBadImage, &info) == invalidAddr);
     Require(scePngDecDecode(handle, &decode, &info) == (3 << 16 | 2));
     Require(info.image_width == 3 && info.image_height == 2 && info.color_space == 3);
     for (std::size_t pixel = 0; pixel < 6; ++pixel) {

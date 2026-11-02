@@ -2,6 +2,8 @@
 
 ### Functional
 
+- [libScePngDec](../../../core/libs/prx/libScePngDec/Export.cpp) returns SCE_PNG_DEC_ERROR_INVALID_ADDR for unmapped or unwritable pointer arguments and buffers and SCE_PNG_DEC_ERROR_INVALID_HANDLE for an unreadable handle. This is a defensive host-protection fallback; console behaviour for unmapped or read-only memory is unmeasured.
+
 - [libScePngDec](../../../core/libs/prx/libScePngDec/Export.cpp): the supplied module confirms the work-memory size formula, 16-byte handle alignment, the first 24 bytes of its context, and Create/QueryMemorySize validation order. The host now exposes these values but still allocates decoder working storage on the host instead of using the guest work region.
 - [scePngDecDecode](../../../core/libs/prx/libScePngDec/Export.cpp): the original's accepted pixel format 132 remains unsupported and throws. The input bit-depth limit and 16-to-8-bit conversion follow [Prosper's PS5 3.20 module analysis](https://github.com/mattias800/prosper/blob/550886e3677e4a2ef81ad1603bf313f6a9696de2/prosper/src/hle/util/hle_pngdec.cpp#L412-L414), and the large-dimension image-info requirement and its validation order follow [Prosper's PS5 3.20 module analysis](https://github.com/mattias800/prosper/blob/550886e3677e4a2ef81ad1603bf313f6a9696de2/prosper/src/hle/util/hle_pngdec.cpp#L385-L396), not console measurements here. Malformed-image diagnostics and decoder scratch-memory behavior are not fully matched to the supplied module.
 
