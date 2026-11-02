@@ -79,7 +79,6 @@ int APS5_VABI sceVideoOutSetGamutMetadata_();
 int APS5_VABI sceVideoOutSetGlobalAlpha();
 int APS5_VABI sceVideoOutSetToneMap_();
 int APS5_VABI sceVideoOutSetVrrMaster();
-int APS5_VABI sceVideoOutSubmitChangeBufferAttribute();
 int APS5_VABI sceVideoOutSysAddSetModeEvent2();
 int APS5_VABI sceVideoOutSysAddSetModeEvent();
 int APS5_VABI sceVideoOutSysAddVblankEvent2();
