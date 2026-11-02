@@ -682,7 +682,7 @@ jobs:
       - name: Check that every test executable is registered with ctest
         shell: cmd
         run: python tools/check_test_registration.py build
-      - if: ${{ inputs.select }}
+      - if: ${{ inputs.select || github.event_name == 'pull_request' }}
         uses: actions/cache/restore@v6
         with:
           path: test-graph.json
@@ -708,11 +708,11 @@ jobs:
       - name: Link changed host-only core/libs test executables
         if: github.event_name == 'pull_request'
         shell: cmd
-        run: python tools/build_mingw_host_only_tests.py build changed.txt
+        run: python tools/build_mingw_host_only_tests.py build changed.txt --graph test-graph.json
       - name: Build and run changed guest core/libs tests
         if: github.event_name == 'pull_request'
         shell: cmd
-        run: python tools/build_changed_guest_tests.py build changed.txt
+        run: python tools/build_changed_guest_tests.py build changed.txt --graph test-graph.json
       - id: libs
         if: github.event_name != 'pull_request'
         shell: cmd

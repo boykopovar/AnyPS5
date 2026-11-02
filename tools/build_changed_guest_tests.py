@@ -15,6 +15,7 @@ BROAD_CHANGES = {
     ".github/workflows/build.yml",
     "tools/build_mingw_host_only_tests.py",
     "tools/build_changed_guest_tests.py",
+    "tools/select_tests.py",
 }
 
 
@@ -25,7 +26,7 @@ def reaches_libs(changed):
     )
 
 
-def guest_test_targets(source_root, targets, changed_paths=None):
+def guest_test_targets(source_root, targets, changed_paths=None, graph_path=None):
     selected = []
     for target in targets.values():
         if target.get("type") != "EXECUTABLE":
@@ -45,30 +46,9 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     if changed_paths is None:
         return selected
     changed = {Path(path).as_posix() for path in changed_paths if path}
-    broad_change = any(path in BROAD_CHANGES or path.startswith("core/libs/") and (
-        path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
-    ) for path in changed)
-    if broad_change:
-        return selected
-    changed_source = {
-        relative
-        for target in targets.values()
-        if target.get("name") in selected
-        for item in target.get("sources", []) if not item.get("isGenerated")
-        for relative in [host_only.source_relative_path(source_root, source_root / item["path"])]
-        if relative is not None
-    }
-    matched_sources = changed & changed_source
-    if matched_sources:
-        return [
-            target["name"] for target in targets.values()
-            if target.get("name") in selected
-            and any(
-                host_only.source_relative_path(source_root, source_root / item["path"]) in matched_sources
-                for item in target.get("sources", []) if not item.get("isGenerated")
-            )
-        ]
-    return []
+    if any(path in BROAD_CHANGES or host_only.graph_resolvable(path) for path in changed):
+        return host_only.narrow_broad_change(selected, BROAD_CHANGES, source_root, targets, changed, graph_path)
+    return host_only.changed_source_targets(source_root, targets, selected, changed)
 
 
 def target_artifact_names(target):
@@ -130,6 +110,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="build and run changed core/libs tests that link guest libc")
     parser.add_argument("build_dir", type=Path)
     parser.add_argument("changed_paths", nargs="?", type=Path)
+    parser.add_argument("--graph", type=Path, help="test graph of main; narrows header and CMakeLists.txt changes")
     args = parser.parse_args(argv)
     try:
         if args.changed_paths is not None:
@@ -139,7 +120,7 @@ def main(argv=None):
                 return 0
         source_root, targets = host_only.read_reply(Path(os.path.realpath(args.build_dir)))
         changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
-        selected = guest_test_targets(source_root, targets, changed_paths)
+        selected = guest_test_targets(source_root, targets, changed_paths, args.graph)
         if not selected:
             print("No guest core/libs test sources changed")
         else:
