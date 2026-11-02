@@ -12,6 +12,12 @@
 #include <span>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace AgcDriver::Graphics {
 
@@ -100,6 +106,10 @@ std::span<const std::byte> PipelineCache::File::Payload() const {
 
 PipelineCache::File PipelineCache::readFile() const {
     File file;
+    if (path.empty()) {
+        file.state = FileState::Missing;
+        return file;
+    }
     if (!ShaderRecompiler::ReadWholeFile(path, file.contents)) {
         std::error_code error;
 #ifdef _WIN32
@@ -152,16 +162,24 @@ PipelineCache::File PipelineCache::readFile() const {
 }
 
 std::optional<PipelineCache::FileHeader> PipelineCache::readHeader() const {
+    if (path.empty()) return std::nullopt;
 #ifdef _WIN32
     std::error_code error;
     const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(path, error);
     if (error) return std::nullopt;
-    std::ifstream file(native, std::ios::binary);
+    const auto file = CreateFileW(native.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return std::nullopt;
+    struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{file};
+    FileHeader header{};
+    DWORD readBytes = 0;
+    if (!ReadFile(file, &header, sizeof(header), &readBytes, nullptr) || readBytes != sizeof(header)) return std::nullopt;
 #else
     std::ifstream file(path, std::ios::binary);
-#endif
     FileHeader header{};
     if (!file.read(reinterpret_cast<char*>(&header), sizeof(header))) return std::nullopt;
+#endif
+    if (header.magic != FileMagic || header.format != FileFormat) return std::nullopt;
     return header;
 }
 
@@ -186,6 +204,7 @@ void PipelineCache::load(std::vector<std::byte>& initialData) {
 }
 
 void PipelineCache::save(bool final, bool waitForPipelines) try {
+    if (path.empty()) return;
     std::lock_guard pathLock(pathMutex(path));
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     const auto snapshot = [&] { return waitForPipelines ? synchronization.LockForSnapshot() : synchronization.TryLockForSnapshot(); };

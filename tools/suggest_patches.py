@@ -1,4 +1,5 @@
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -9,7 +10,7 @@ import sys
 import tomllib
 from collections import Counter
 from datetime import date
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import urlsplit
 
 
@@ -23,14 +24,19 @@ TEST_STAGES = {"verification", "conversion", "launch", "gameplay"}
 TEST_RESULTS = {"passed", "failed", "partial"}
 
 
-def confined(root, name):
+def relative_path(name):
     if not isinstance(name, str) or not name or "\\" in name:
         raise ValueError(f"invalid relative path: {name!r}")
     path = PurePosixPath(name)
-    if path.is_absolute() or any(part in (".", "..") for part in name.split("/")):
+    if path.is_absolute() or PureWindowsPath(name).drive or any(part in (".", "..") for part in name.split("/")):
         raise ValueError(f"invalid relative path: {name!r}")
+    return Path(*path.parts)
+
+
+def confined(root, name):
+    path = relative_path(name)
     try:
-        resolved = (root / Path(*path.parts)).resolve()
+        resolved = (root / path).resolve()
     except RuntimeError as error:
         raise ValueError(f"invalid relative path: {name!r}: {error}") from error
     if not resolved.is_relative_to(root.resolve()) or not resolved.is_file():
@@ -63,12 +69,16 @@ def conversion_options(args, patch):
     return command_line(options)
 
 
-def load_catalog(directory, title, version):
-    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"))
+def read_catalog(directory, object_pairs_hook=None):
+    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"), object_pairs_hook=object_pairs_hook)
     if not isinstance(data, dict) or set(data) != {"format", "entries"} or type(data["format"]) is not int or data["format"] != 1 or not isinstance(data["entries"], list):
         raise ValueError("catalog must have format 1 and an entries array")
+    return data["entries"]
+
+
+def load_catalog(directory, title, version):
     entries = []
-    for number, entry in enumerate(data["entries"], 1):
+    for number, entry in enumerate(read_catalog(directory), 1):
         if not isinstance(entry, dict) or (entry.get("titleId"), entry.get("contentVersion")) != (title, version):
             continue
         entries.append((number, entry))
@@ -164,6 +174,29 @@ def validate_entry(directory, entry):
     return patch, {name: digest.lower() for name, digest in targets.items()}, metadata
 
 
+def resolve_path(path):
+    path = Path(path)
+    try:
+        resolved = path.resolve()
+    except RuntimeError as error:
+        raise ValueError(str(error)) from error
+    except OSError as error:
+        raise path_error(path, error) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise path_error(path, error) from error
+        raise ValueError(f"Symlink loop from {path!r}")
+    return resolved
+
+
+def path_error(path, error):
+    if error.errno == getattr(errno, "ELOOP", None) or getattr(error, "winerror", None) == 1921:
+        return ValueError(f"Symlink loop from {path!r}: {error}")
+    return ValueError(str(error))
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -195,13 +228,14 @@ def main(argv=None):
             raise ValueError("--skip-sce-module conflicts with --sce-module-path")
         if args.timeout_seconds <= 0:
             raise ValueError("timeout-seconds must be positive")
-        root = (args.sce_module_path or args.input.parent).resolve()
+        root = resolve_path(args.sce_module_path or args.input.parent)
         if not root.is_dir():
             raise ValueError("module parent must be a directory")
         for executable in args.executable:
             confined(root, executable)
+        catalog = resolve_path(args.catalog)
         matches = []
-        entries = load_catalog(args.catalog.resolve(), title, version)
+        entries = load_catalog(catalog, title, version)
         if not entries:
             print(f"{prefix}: no catalog entry for {title} {version}.")
             return 1
@@ -209,14 +243,14 @@ def main(argv=None):
         for number, entry in entries:
             label = f"Catalog entry {number} ({entry.get('patch')!r})"
             try:
-                patch, targets, catalog_metadata = validate_entry(args.catalog.resolve(), entry)
+                patch, targets, catalog_metadata = validate_entry(catalog, entry)
             except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
                 print(f"{label}: rejected: {error}")
                 continue
             errors = []
             for name, expected in targets.items():
                 try:
-                    source = args.input.resolve() if name == args.input.name else confined(root, name)
+                    source = resolve_path(args.input) if name == args.input.name else confined(root, name)
                     actual = sha256(source)
                     if actual != expected:
                         errors.append(f"{name}: SHA-256 mismatch ({actual})")
@@ -225,7 +259,7 @@ def main(argv=None):
             if errors:
                 print(f"{label}: rejected: {'; '.join(errors)}")
                 continue
-            command = [str(args.relinker.resolve()), "--verify-patches", str(patch)]
+            command = [str(resolve_path(args.relinker)), "--verify-patches", str(patch)]
             if args.skip_sce_module:
                 command.append("--skip-sce-module")
             if args.sce_module_path:

@@ -197,6 +197,7 @@ int main() {
     constexpr int invalidArgument = static_cast<int>(0x80890001);
     constexpr int invalidHandle = static_cast<int>(0x80890006);
     Require(sceSystemGestureOpen(0, nullptr) == static_cast<int>(0x80890003));
+    Require(sceSystemGestureGetTouchEventsCount(0, nullptr) == static_cast<int>(0x80890003));
     Require(sceSystemGestureInitializePrimitiveTouchRecognizer() == 0);
     Require(sceSystemGestureOpen(1, nullptr) == invalidArgument);
     const std::int32_t handle = sceSystemGestureOpen(0, nullptr);
@@ -220,6 +221,8 @@ int main() {
     constexpr int indexOutOfArray = static_cast<int>(0x80890004);
     SystemGestureTouchRecognizer recognizer{};
     SystemGestureRectangle rectangle{};
+    Require(sceSystemGestureGetTouchEventsCount(handle + 1, &recognizer) == invalidHandle);
+    Require(sceSystemGestureGetTouchEventsCount(handle, &recognizer) == 0);
     count = 7;
     Require(sceSystemGestureGetTouchEvents(handle, &recognizer, reinterpret_cast<SystemGestureTouchEvent*>(buffer.data()), 4, &count) == 0 && count == 0);
     Require(sceSystemGestureGetTouchEvents(handle, &recognizer, reinterpret_cast<SystemGestureTouchEvent*>(buffer.data()), 4, nullptr) == invalidArgument);

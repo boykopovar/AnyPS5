@@ -573,6 +573,59 @@ void testFoldedBitcastsAndNanTests() {
     }
 }
 
+void testInstructionLengthBounds() {
+    SpirvModule module;
+    std::vector<std::uint32_t> large(65536, 0u);
+    bool threw = false;
+    try {
+        module.EmitFunctionInstruction(large);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    check(threw, "an instruction exceeding 65535 words did not throw");
+}
+
+void testDeferredPhiValidation() {
+    SpirvModule module;
+    module.AddFunction(spv::OpNop);
+    bool threwNop = false;
+    try {
+        module.PatchDeferredPhi({0}, 0, 1u, 2u);
+    } catch (const std::runtime_error&) {
+        threwNop = true;
+    }
+    check(threwNop, "PatchDeferredPhi on OpNop did not throw");
+
+    bool threwOutOfBounds = false;
+    try {
+        module.PatchDeferredPhi({100}, 0, 1u, 2u);
+    } catch (const std::runtime_error&) {
+        threwOutOfBounds = true;
+    }
+    check(threwOutOfBounds, "PatchDeferredPhi with out-of-bounds offset did not throw");
+
+    SpirvModule moduleNonDeferred;
+    moduleNonDeferred.EmitFunctionInstruction({spv::OpPhi, 11u, 12u, 0u, 0u});
+    bool threwNonDeferred = false;
+    try {
+        moduleNonDeferred.PatchDeferredPhi({0}, 0, 21u, 22u);
+    } catch (const std::runtime_error&) {
+        threwNonDeferred = true;
+    }
+    check(threwNonDeferred, "PatchDeferredPhi on non-deferred OpPhi offset did not throw");
+
+    SpirvModule moduleCount;
+    const auto deferred = moduleCount.AddDeferredPhi(1u, 2u, 1);
+    moduleCount.PatchDeferredPhi(deferred, 0, 10u, 20u);
+    bool threwExcess = false;
+    try {
+        moduleCount.PatchDeferredPhi(deferred, 0, 10u, 20u);
+    } catch (const std::runtime_error&) {
+        threwExcess = true;
+    }
+    check(threwExcess, "PatchDeferredPhi beyond registered incoming count did not throw");
+}
+
 int main() {
     testFoldedBitcastsAndNanTests();
     testFoldingLeavesNoDeadBlocksOrConstants();
@@ -592,6 +645,8 @@ int main() {
     testBlockBallotsOfOnePredicateShareOneBallot();
     testInternedSpirvSharesEqualWords();
     testInternedSpirvReleasesUnusedWords();
+    testInstructionLengthBounds();
+    testDeferredPhiValidation();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
