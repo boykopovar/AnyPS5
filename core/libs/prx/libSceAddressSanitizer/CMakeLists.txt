@@ -23,7 +23,8 @@ if(BUILD_TESTING)
         configure_windows_unwind(guest_addresssanitizer_mapping_tests)
         add_test(NAME guest_addresssanitizer_mapping COMMAND guest_addresssanitizer_mapping_tests)
         add_test(NAME guest_addresssanitizer_mapping_collision COMMAND guest_addresssanitizer_mapping_tests collision)
-        set_tests_properties(guest_addresssanitizer_mapping guest_addresssanitizer_mapping_collision PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+        add_test(NAME guest_addresssanitizer_mapping_lazy COMMAND guest_addresssanitizer_mapping_tests lazy)
+        set_tests_properties(guest_addresssanitizer_mapping guest_addresssanitizer_mapping_collision guest_addresssanitizer_mapping_lazy PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAddressSanitizer>")
         foreach(mode load4 load16 storeN unaligned partial report_error)
             add_test(NAME guest_addresssanitizer_report_${mode} COMMAND guest_addresssanitizer_mapping_tests report ${mode})
