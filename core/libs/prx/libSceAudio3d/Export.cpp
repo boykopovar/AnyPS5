@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cerrno>
 #include <deque>
 #include <iterator>
 #include <map>
@@ -292,6 +293,14 @@ void Report(std::uint32_t port_id, std::uint32_t object_id, int result, const ch
     DispatchReport_nid_no_patch(AUDIO3D_REPORT_TYPE_CALL, port_id, object_id, result, function, argument_types, ReportArgument(arguments)...);
 }
 
+bool CopyOutU32(std::uint32_t* dst, std::uint32_t value) {
+    if (dst == nullptr) return true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dst, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 }
 
 extern "C" {
@@ -380,8 +389,10 @@ int APS5_VABI sceAudio3dPortGetQueueLevel(uint32_t port_id, uint32_t* queue_leve
     if (!PortIsOpen(port_id)) return AUDIO3D_ERROR_INVALID_PORT;
     if (queue_level == nullptr && queue_available == nullptr) return AUDIO3D_ERROR_INVALID_PARAMETER;
     const std::uint32_t level = QueueLevel();
-    if (queue_level != nullptr) *queue_level = level;
-    if (queue_available != nullptr) *queue_available = g_port.queue_depth - level;
+    const std::uint32_t avail = g_port.queue_depth - level;
+    if (!CopyOutU32(queue_level, level) || !CopyOutU32(queue_available, avail)) {
+        return AUDIO3D_ERROR_INVALID_PARAMETER;
+    }
     return 0;
 }
 
