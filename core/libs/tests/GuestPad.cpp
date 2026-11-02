@@ -1054,7 +1054,14 @@ int main() {
     const auto first = Pad::ReadState();
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     const auto second = Pad::ReadState();
-    Require(second.timestamp > first.timestamp);
+    Require(second.timestamp == first.timestamp);
+    PadPublishInput_nid_postfix(PadInputState{});
+    PadInputState changed;
+    changed.buttons = 0x4000;
+    PadPublishInput_nid_postfix(changed);
+    const auto third = Pad::ReadState();
+    Require(third.timestamp > first.timestamp && (third.buttons & 0x4000u) != 0);
+    PadPublishInput_nid_postfix(PadInputState{});
     Require(scePadSetAngularVelocityDeadbandState(handle, false) == 0);
     Require(scePadSetAngularVelocityDeadbandState(handle + 1, false) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetAngularVelocityDeadbandState(handle + 1, true) == PAD_ERROR_INVALID_HANDLE);
