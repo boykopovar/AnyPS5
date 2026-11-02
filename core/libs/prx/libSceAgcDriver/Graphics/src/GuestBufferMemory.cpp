@@ -32,8 +32,20 @@ struct udmabuf_create {
     std::uint64_t offset;
     std::uint64_t size;
 };
+struct udmabuf_create_item {
+    std::uint32_t memfd;
+    std::uint32_t pad;
+    std::uint64_t offset;
+    std::uint64_t size;
+};
+struct udmabuf_create_list {
+    std::uint32_t flags;
+    std::uint32_t count;
+    udmabuf_create_item list[];
+};
 constexpr std::uint32_t UDMABUF_FLAGS_CLOEXEC = 0x01;
 constexpr unsigned long UDMABUF_CREATE = 0;
+constexpr unsigned long UDMABUF_CREATE_LIST = 0;
 #else
 #include <linux/udmabuf.h>
 #endif
