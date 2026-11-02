@@ -252,6 +252,7 @@ static void RequireEncoders(const Encoders& encoders, const void* profile, void*
         std::uint32_t read = 0;
         std::uint32_t written = 0;
         const int expected = sceCesUcs2StrToMbcsStr(context, &ucs2, 1, &read, bytes, sizeof(bytes), &written);
+        Require(expected == 0 ? read == 1 && written >= 1 && written <= 2 && bytes[written] == 0 : read == 0 && written == 0 && bytes[0] == 0);
         RequireEncode(encoders, profile, code, expected, bytes, written);
     }
     RequireEncode(encoders, profile, 0, 0, Bytes("\0"), 1);
@@ -395,6 +396,32 @@ int main() {
     Require(sceCesUtf8ToEucKr(Bytes("\xEA\xB0\x80"), 2, &read, eucKr, out, 2, &size) == srcBufferEnd);
     Require(sceCesUtf8ToEucKr(Bytes("\xC0\x80"), 2, &read, eucKr, out, 2, &size) == illegalCode);
     Require(sceCesUtf8ToEucKr(Bytes("\xEA\xB0\x80"), 3, &read, eucKr, out, 1, &size) == dstBufferEnd);
+    const struct {
+        FromUtf8 convert;
+        const void* profile;
+    } utf8Encoders[] = {{sceCesUtf8ToEucKr, eucKr}, {sceCesUtf8ToUhc, uhc}, {sceCesUtf8ToBig5, big5}};
+    const struct {
+        const char* bytes;
+        std::uint32_t length;
+        int result;
+    } utf8Errors[] = {
+        {"\xC0\x80", 2, illegalCode},
+        {"\xED\xA0\x80", 3, illegalCode},
+        {"\xEA\xB0", 2, srcBufferEnd},
+        {"\xEA\x41\x80", 3, invalidEncode},
+        {"\x80", 1, invalidEncode},
+    };
+    for (const auto& encoder : utf8Encoders) {
+        for (const auto& error : utf8Errors) {
+            std::uint8_t output[] = {0x55, 0x55, 0x55, 0x55};
+            std::uint32_t consumed = 77;
+            std::uint32_t produced = 88;
+            Require(encoder.convert(Bytes(error.bytes), error.length, &consumed, encoder.profile, output + 1, 2, &produced) == error.result);
+            Require(consumed == 77 && produced == 88 && std::memcmp(output, "\x55\x55\x55\x55", 4) == 0);
+            Require(encoder.convert(Bytes(error.bytes), error.length, nullptr, encoder.profile, output + 1, 2, nullptr) == error.result);
+            Require(std::memcmp(output, "\x55\x55\x55\x55", 4) == 0);
+        }
+    }
     const std::uint16_t lowSurrogate[1] = {0xDC00};
     const std::uint16_t highSurrogate[2] = {0xD800, 0x0041};
     Require(sceCesUtf16ToUhc(lowSurrogate, 1, &read, uhc, out, 2, &size) == invalidEncode);

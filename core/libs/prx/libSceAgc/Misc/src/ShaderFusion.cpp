@@ -354,14 +354,6 @@ int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Shader* front,
     return 0;
 }
 
-int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Shader* vs, const Shader* ps) {
-    (void)regs;
-    (void)vs;
-    (void)ps;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAgcGetFusedShaderSize(SizeAlign* dst, const Shader* front, const Shader* back) {
     if (front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
     if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
