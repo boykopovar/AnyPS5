@@ -11,3 +11,5 @@
 #include "Space.hpp"
 #include "Unescape.hpp"
 #include "Identified.hpp"
+
+#include "prx/libSceIcu/include/Api.hpp"
