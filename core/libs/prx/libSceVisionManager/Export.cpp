@@ -74,6 +74,7 @@ int APS5_VABI sceVisionManagerGetLibraryVersion(std::uint64_t* version) {
 }
 
 int APS5_VABI sceVisionManagerGetNumOfRegisterUserDataSlot(std::uint64_t version, std::uint32_t* count) {
+    if (count == nullptr) return ErrorInvalidArgument;
     if (version == RegisterUserDataVersion) *count = 16;
     else if (version == LibraryVersion) *count = 30;
     else return ErrorInvalidArgument;
