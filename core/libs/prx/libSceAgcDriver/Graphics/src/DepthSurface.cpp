@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -82,7 +83,7 @@ struct DepthGuard {
 };
 
 std::shared_mutex& depthGuardMutex() {
-    static std::shared_mutex mutex;
+    static PrimedSharedMutex mutex;
     return mutex;
 }
 
