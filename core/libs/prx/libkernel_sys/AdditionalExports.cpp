@@ -205,13 +205,17 @@ int APS5_VABI _wait4_nid_postfix() {
 }
 
 int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta) {
+    constexpr int GuestEperm = 1;
     constexpr int GuestEfault = 14;
     KernelTimeval adjustment{};
     if (delta != nullptr && !GuestCopyIn_nid_no_patch(&adjustment, delta, sizeof(adjustment))) {
         *__error_nid_postfix() = GuestEfault;
         return -1;
     }
-    if (delta != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (delta != nullptr) {
+        *__error_nid_postfix() = GuestEperm;
+        return -1;
+    }
     if (oldDelta != nullptr) {
         const KernelTimeval pending{};
         if (!GuestCopyOut_nid_no_patch(oldDelta, &pending, sizeof(pending))) {
