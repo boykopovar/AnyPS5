@@ -232,7 +232,7 @@ static void* APS5_VABI Worker(void* arg) {
     }
     Require(hostGuard != 0);
     const auto hostGuardBefore = QueryPage(hostGuard).raw;
-    Require(mprotect_nid_postfix(reinterpret_cast<void*>(hostGuard), Page, 3) == -1);
+    Require(mprotect_nid_postfix(reinterpret_cast<void*>(hostGuard), Page, 3) == 0);
     Require(QueryPage(hostGuard).raw == hostGuardBefore);
 #endif
     auto* guard = reinterpret_cast<volatile unsigned char*>(low);
@@ -255,13 +255,13 @@ static void* APS5_VABI Worker(void* arg) {
     static_cast<volatile unsigned char*>(start)[0] = 3;
     const auto outside = reinterpret_cast<std::uintptr_t>(start) & ~(Page - 1);
     if (outside >= Page) {
-        const int straddle = mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 2 * Page, 3);
+        Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 2 * Page, 3) == 0);
         Require(QueryPage(below).raw == belowBefore);
-#ifndef __linux__
-        Require(straddle == 0);
-#else
-        (void)straddle;
-#endif
+        Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 3 * Page, 1) == 0);
+        Require(QueryPage(below).raw == belowBefore);
+        Require(!QueryPage(outside + Page).writable);
+        Require(mprotect_nid_postfix(start, GuardBytes, 3) == 0);
+        Require(QueryPage(outside + Page).writable);
     }
     const auto stackBytes = reinterpret_cast<std::uintptr_t>(end) - reinterpret_cast<std::uintptr_t>(start);
     Require(mprotect_nid_postfix(start, stackBytes, 0xc2) == 0);
