@@ -69,6 +69,33 @@ int main(int argc, char** argv) {
     NpEntitlementAccessAddcontEntitlementInfo info{};
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &label, &info) == 0);
     Require(std::strcmp(info.entitlement_label.data, "SECONDADDON") == 0 && info.package_type == 3 && info.download_status == 4);
+    for (std::int32_t userId : {1, 0x10000000, std::numeric_limits<std::int32_t>::min()}) {
+        NpEntitlementAccessAddcontEntitlementInfo individual{};
+        Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(userId, 0, &label, &individual) == 0);
+        Require(std::memcmp(&individual, &info, sizeof(info)) == 0);
+    }
+    NpEntitlementAccessAddcontEntitlementInfo untouched{};
+    std::memset(&untouched, 0x5a, sizeof(untouched));
+    const auto original = untouched;
+    NpUnifiedEntitlementLabel unlisted{};
+    std::memcpy(unlisted.data, "UNLISTEDADDON", 13);
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &unlisted, &untouched) == static_cast<int>(0x80558007));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(-1, 0, &label, &untouched) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(-1, 0, nullptr, nullptr) == static_cast<int>(0x80558003));
+    Require(std::memcmp(&untouched, &original, sizeof(original)) == 0);
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, nullptr, &untouched) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &label, nullptr) == static_cast<int>(0x80558003));
+    NpUnifiedEntitlementLabel empty{};
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &empty, &untouched) == static_cast<int>(0x80558007));
+    NpUnifiedEntitlementLabel unterminated{};
+    std::memset(unterminated.data, 'A', sizeof(unterminated.data));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &unterminated, &untouched) == static_cast<int>(0x80558007));
+    Require(std::memcmp(&untouched, &original, sizeof(original)) == 0);
+    auto padded = label;
+    std::memset(padded.padding, 0x5a, sizeof(padded.padding));
+    NpEntitlementAccessAddcontEntitlementInfo paddedInfo{};
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &padded, &paddedInfo) == 0);
+    Require(std::memcmp(&paddedInfo, &info, sizeof(info)) == 0);
     NpEntitlementAccessEntitlementKey key{};
     Require(sceNpEntitlementAccessGetEntitlementKey(0, nullptr, &key) == static_cast<int>(0x817D0002));
     Require(sceNpEntitlementAccessGetEntitlementKey(0, &label, nullptr) == static_cast<int>(0x817D0002));

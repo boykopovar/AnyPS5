@@ -290,13 +290,32 @@ bool StackWritable(DWORD64 low, DWORD64 high) {
 struct QueuedDelivery {
     GuestExceptionHandler handler;
     int signum;
+    Pthread thread;
     std::atomic<bool> taken{false};
     std::atomic<bool> waiting{false};
+    std::atomic<bool> posted{false};
+    std::atomic<bool> closed{false};
     std::atomic<int> references{1};
 };
 
 void ReleaseQueued(QueuedDelivery* queued) {
     if (queued != nullptr && queued->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete queued;
+}
+
+void SettleQueued(QueuedDelivery* queued) {
+    if (queued != nullptr) queued->closed.store(true, std::memory_order_release);
+}
+
+void DeferredWaitingEntry(void* parameter) {
+    auto* queued = static_cast<QueuedDelivery*>(parameter);
+    const auto handler = queued->handler;
+    const int signum = queued->signum;
+    const bool claimed = !queued->closed.load(std::memory_order_acquire) && !queued->thread->_finished.load(std::memory_order_acquire) && !queued->taken.exchange(true, std::memory_order_acq_rel);
+    ReleaseQueued(queued);
+    if (!claimed) return;
+    CONTEXT context{};
+    RtlCaptureContext(&context);
+    Deliver(handler, signum, context);
 }
 
 void CALLBACK WaitingEntry(ULONG_PTR parameter) {
@@ -532,8 +551,8 @@ constexpr DWORD64 ReturnBreakBits = 0xf0003ull;
 
 struct ReturnBreak {
     std::atomic<DWORD> thread{0};
-    DWORD64 at = 0;
-    QueuedDelivery* queued = nullptr;
+    std::atomic<DWORD64> at{0};
+    std::atomic<QueuedDelivery*> queued{nullptr};
 };
 
 std::atomic<bool>& ReturnBreaksInstalled() {
@@ -589,11 +608,10 @@ bool DisarmedReturnBreak(const EXCEPTION_POINTERS& info) {
     return at == context.Rip && ArmedOnThread(GetCurrentThreadId(), at);
 }
 
-QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, DWORD thread) {
-    DWORD expected = thread;
-    if (!entry.thread.compare_exchange_strong(expected, ReservedThread, std::memory_order_acq_rel)) return nullptr;
-    auto* queued = entry.queued;
-    entry.thread.store(0, std::memory_order_release);
+QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, QueuedDelivery* queued) {
+    if (queued == nullptr) return nullptr;
+    auto* expected = queued;
+    if (!entry.queued.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) return nullptr;
     return queued;
 }
 
@@ -619,8 +637,8 @@ LONG CALLBACK ReturnBreakHandler(EXCEPTION_POINTERS* info) {
     const DWORD self = GetCurrentThreadId();
     QueuedDelivery* queued = nullptr;
     for (auto& entry : ReturnBreaks()) {
-        if (entry.thread.load(std::memory_order_acquire) != self || entry.at != at) continue;
-        queued = ClaimReturnBreak(entry, self);
+        if (entry.thread.load(std::memory_order_acquire) != self || entry.at.load(std::memory_order_acquire) != at) continue;
+        queued = ClaimReturnBreak(entry, entry.queued.load(std::memory_order_acquire));
         if (queued != nullptr) break;
     }
     if (queued == nullptr && !ArmedOnThread(self, at)) return EXCEPTION_CONTINUE_SEARCH;
@@ -663,9 +681,18 @@ bool SetReturnBreak(HANDLE native, DWORD64 at, bool armed) {
 
 struct ReturnArm {
     ReturnBreak* entry = nullptr;
-    DWORD thread = 0;
+    QueuedDelivery* queued = nullptr;
     DWORD64 at = 0;
 };
+
+void RetireReturnBreak(HANDLE native, ReturnArm& arm, bool suspended) {
+    if (auto* queued = ClaimReturnBreak(*arm.entry, arm.queued)) {
+        if (suspended && !Exited(native)) static_cast<void>(SetReturnBreak(native, arm.at, false));
+        ReleaseQueued(queued);
+    }
+    arm.entry->thread.store(0, std::memory_order_release);
+    arm = {};
+}
 
 void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queued, ReturnArm& arm, DWORD64& unknown) {
     if (!ReturnBreaksInstalled().load(std::memory_order_acquire) || queued == nullptr) return;
@@ -673,24 +700,23 @@ void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queue
     if (!GuestReturn(context, at, unknown)) return;
     if (arm.entry != nullptr && arm.at == at) return;
     if (arm.entry != nullptr) {
-        static_cast<void>(SetReturnBreak(native, arm.at, false));
-        ReleaseQueued(ClaimReturnBreak(*arm.entry, arm.thread));
-        arm = {};
+        RetireReturnBreak(native, arm, true);
     }
     const DWORD thread = GetThreadId(native);
     for (auto& entry : ReturnBreaks()) {
         DWORD expected = 0;
         if (!entry.thread.compare_exchange_strong(expected, ReservedThread, std::memory_order_acq_rel)) continue;
-        entry.at = at;
-        entry.queued = queued;
+        entry.at.store(at, std::memory_order_relaxed);
+        entry.queued.store(queued, std::memory_order_release);
         queued->references.fetch_add(1, std::memory_order_relaxed);
         entry.thread.store(thread, std::memory_order_release);
         NoteArmedBreak(thread, at);
         if (!SetReturnBreak(native, at, true)) {
-            ReleaseQueued(ClaimReturnBreak(entry, thread));
+            ReleaseQueued(ClaimReturnBreak(entry, queued));
+            entry.thread.store(0, std::memory_order_release);
             return;
         }
-        arm = {&entry, thread, at};
+        arm = {&entry, queued, at};
         return;
     }
 }
@@ -698,10 +724,8 @@ void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queue
 void DisarmReturnBreak(HANDLE native, ReturnArm& arm) {
     if (arm.entry == nullptr) return;
     const bool suspended = SuspendThread(native) != static_cast<DWORD>(-1);
-    if (suspended && !Exited(native)) static_cast<void>(SetReturnBreak(native, arm.at, false));
-    ReleaseQueued(ClaimReturnBreak(*arm.entry, arm.thread));
+    RetireReturnBreak(native, arm, suspended);
     if (suspended) ResumeThread(native);
-    arm = {};
 }
 
 Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler, int signum, QueuedDelivery*& queued, ReturnArm* arm = nullptr) {
@@ -730,7 +754,7 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
             continue;
         }
         if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
-            if (queued == nullptr) queued = new QueuedDelivery{handler, signum};
+            if (queued == nullptr) queued = new QueuedDelivery{handler, signum, thread};
             const bool accepted = QueueWaitingDelivery(native, queued);
             ResumeThread(native);
             if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
@@ -751,10 +775,16 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
             Redirect(native, delivery);
             return Attempt::Delivered;
         }
-        if (running == CodeKind::Host && queued == nullptr) queued = new QueuedDelivery{handler, signum};
+        bool postAfterResume = false;
+        if (running == CodeKind::Host) {
+            if (queued == nullptr) queued = new QueuedDelivery{handler, signum, thread};
+            postAfterResume = !queued->posted.exchange(true, std::memory_order_acq_rel);
+            if (postAfterResume) queued->references.fetch_add(1, std::memory_order_acq_rel);
+        }
         DWORD64 unknown = 0;
         if (arm != nullptr && running == CodeKind::Host && !restoring) ArmReturnBreak(native, delivery.context, queued, *arm, unknown);
         ResumeThread(native);
+        if (postAfterResume) TimedWait::QueueForDeliveryDrain(GetThreadId(native), &thread->_finished, &DeferredWaitingEntry, queued);
         if (running == CodeKind::Unknown) {
             static_cast<void>(ClassifyImage(image));
             continue;
@@ -818,6 +848,7 @@ private:
                     continue;
                 }
                 DisarmReturnBreak(raise.native, raise.arm);
+                SettleQueued(raise.queued);
                 ReleaseQueued(raise.queued);
                 CloseHandle(raise.native);
             }
@@ -859,6 +890,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         const auto attempt = TryDeliver(thread, native, handler, signum, queued, &arm);
         if (attempt == Attempt::Delivered || attempt == Attempt::Exited) {
             DisarmReturnBreak(native, arm);
+            SettleQueued(queued);
             ReleaseQueued(queued);
             return attempt == Attempt::Delivered;
         }
@@ -866,6 +898,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         if (attempt == Attempt::Restoring && now >= retryDeadline) {
             const bool taken = queued != nullptr && queued->taken.exchange(true, std::memory_order_acq_rel);
             DisarmReturnBreak(native, arm);
+            SettleQueued(queued);
             ReleaseQueued(queued);
             if (taken) return true;
             throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue for 1 s");
@@ -874,6 +907,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
             HANDLE owned = nullptr;
             if (!DuplicateHandle(GetCurrentProcess(), native, GetCurrentProcess(), &owned, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
                 DisarmReturnBreak(native, arm);
+                SettleQueued(queued);
                 ReleaseQueued(queued);
                 throw std::runtime_error("sceKernelRaiseException: cannot keep the target thread for a later delivery");
             }

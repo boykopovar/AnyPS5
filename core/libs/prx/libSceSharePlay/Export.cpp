@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceSharePlay/include/InventoryExports.hpp"
 #include "prx/libSceSharePlay/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -134,5 +136,29 @@ int APS5_VABI sceSharePlayStopStreaming(void) {
 int APS5_VABI sceSharePlaySetShareScreenStatus() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceSharePlayUnknown_6egMR0eB8RU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6egMR0eB8RU", libSceSharePlayUnknown_6egMR0eB8RU_nid_no_patch);
+
+int APS5_VABI libSceSharePlayUnknown_891hmdoV7UQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("891hmdoV7UQ", libSceSharePlayUnknown_891hmdoV7UQ_nid_no_patch);
+
+int APS5_VABI libSceSharePlayUnknown_LpPA6mprZ8Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("LpPA6mprZ8Q", libSceSharePlayUnknown_LpPA6mprZ8Q_nid_no_patch);
+
+int APS5_VABI libSceSharePlayUnknown_wcI2co2I4Xc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wcI2co2I4Xc", libSceSharePlayUnknown_wcI2co2I4Xc_nid_no_patch);
 
 }

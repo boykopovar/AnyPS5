@@ -17,7 +17,10 @@
 #include <vector>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceNgs2/include/Api.hpp"
 #include "Ngs2Internal.hpp"
+
+using Ngs2ParseReadHandler = std::int32_t (APS5_VABI *)(std::uintptr_t user_data, std::uint32_t offset, void* data, std::size_t size);
 
 static std::vector<Ngs2System*>& Systems() {
     static auto* const systems = new std::vector<Ngs2System*>();
@@ -611,6 +614,62 @@ int APS5_VABI sceNgs2ReportUnregisterHandler(Ngs2Handle report_handle) {
     registrations.erase(found);
     delete registration;
     return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2SystemEnumHandles(uintptr_t* out_handles, uint32_t max_handles) {
+    constexpr int invalid_argument = static_cast<int>(0x804A0053);
+    if (max_handles != 0 && out_handles == nullptr) return invalid_argument;
+    const Ngs2Lock lock;
+    uint32_t count = 0;
+    for (const auto* system : Systems()) {
+        if (out_handles != nullptr && count < max_handles) out_handles[count] = reinterpret_cast<uintptr_t>(system);
+        ++count;
+    }
+    return static_cast<int>(count);
+}
+
+int APS5_VABI sceNgs2SystemEnumRackHandles(uintptr_t system_handle, uintptr_t* out_handles, uint32_t max_handles) {
+    constexpr int invalid_argument = static_cast<int>(0x804A0053);
+    constexpr int invalid_system_handle = static_cast<int>(0x804A0230);
+    if (max_handles != 0 && out_handles == nullptr) return invalid_argument;
+    const Ngs2Lock lock;
+    const auto* system = Ngs2FindSystem(system_handle);
+    if (system == nullptr) return invalid_system_handle;
+    uint32_t count = 0;
+    for (const auto* rack : system->racks) {
+        if (out_handles != nullptr && count < max_handles) out_handles[count] = reinterpret_cast<uintptr_t>(rack);
+        ++count;
+    }
+    return static_cast<int>(count);
+}
+
+int APS5_VABI sceNgs2FftQuerySize(std::uint32_t length, std::uint32_t flags, std::uint64_t* size) {
+    static constexpr std::uint32_t samples[] = {64, 128, 256, 512, 1024};
+    if (size == nullptr || length < 8 || length > 12) return -1;
+    std::uint32_t count = samples[length - 8];
+    if ((flags & 2) != 0) count /= 2;
+    *size = static_cast<std::uint64_t>(count) * 2 * 16 + 64;
+    return 0;
+}
+
+int APS5_VABI sceNgs2ParseWaveformUser(std::uintptr_t handler, std::uintptr_t user_data, Ngs2WaveformInfo* out_info) {
+    constexpr int invalid_out_address = static_cast<int>(0x804A0053);
+    constexpr int invalid_handler = static_cast<int>(0x804A0408);
+    constexpr std::uint64_t max_waveform_bytes = 256ull * 1024 * 1024;
+    if (out_info == nullptr) return invalid_out_address;
+    if (handler == 0) return invalid_handler;
+    const auto read = reinterpret_cast<Ngs2ParseReadHandler>(handler);
+    std::uint8_t header[12] = {};
+    if (read(user_data, 0, header, sizeof(header)) < 0) return invalid_handler;
+    if (std::memcmp(header, "RIFF", 4) != 0 || std::memcmp(header + 8, "WAVE", 4) != 0)
+        return SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT;
+    const std::uint32_t riff_size = static_cast<std::uint32_t>(header[4]) | static_cast<std::uint32_t>(header[5]) << 8 |
+                                    static_cast<std::uint32_t>(header[6]) << 16 | static_cast<std::uint32_t>(header[7]) << 24;
+    const std::uint64_t riff_end = 8ull + riff_size;
+    if (riff_end < 12 || riff_end > max_waveform_bytes) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(riff_end));
+    if (read(user_data, 0, bytes.data(), bytes.size()) < 0) return invalid_handler;
+    return sceNgs2ParseWaveformData(bytes.data(), bytes.size(), out_info);
 }
 
 }
