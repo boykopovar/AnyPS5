@@ -223,10 +223,9 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     const bool overflowed = std::isinf(value) && guestErrno == RangeError;
     if (pten != 0 && (stop != text || Hexadecimal(text)) && (std::isfinite(value) || overflowed)) {
         if (Hexadecimal(text)) {
-            const bool underflowed = value == static_cast<TFloat>(0) && guestErrno == RangeError;
             const int pow10Safe = std::numeric_limits<TFloat>::max_exponent10;
             const bool largePten = pten > pow10Safe || pten < -pow10Safe;
-            if (overflowed && pten < 0 || underflowed || (value == static_cast<TFloat>(0) && pten > 0)) {
+            if (true) {
                 const char* cursor = text;
                 while (std::isspace(static_cast<unsigned char>(*cursor))) ++cursor;
                 if (*cursor == '+' || *cursor == '-') ++cursor;
@@ -296,40 +295,11 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
                     if (decMantissa.empty()) decMantissa = "0";
                     std::reverse(decMantissa.begin(), decMantissa.end());
                     const long long digitEstimate = std::llround(static_cast<long long>(hexExp) * 0.3010299956639812L);
-                    long long decExp = std::clamp(pten, -ExponentLimit, ExponentLimit) - digitEstimate;
+                    long long decExp = std::clamp(pten, -ExponentLimit, ExponentLimit) + digitEstimate;
                     decExp = std::clamp(decExp, -ExponentLimit, ExponentLimit);
                     std::string number = decMantissa + 'e' + std::to_string(decExp);
                     guestErrno = 0;
                     value = parse(number.c_str(), nullptr);
-                    if (hexExp != 0) {
-                        const TFloat before = value;
-                        const TFloat scaled = std::scalbn(value, static_cast<int>(std::clamp(hexExp,
-                            static_cast<std::int64_t>(-std::numeric_limits<TFloat>::max_exponent),
-                            static_cast<std::int64_t>(std::numeric_limits<TFloat>::max_exponent))));
-                        if (std::isinf(scaled) || (scaled == static_cast<TFloat>(0) && before != static_cast<TFloat>(0))) {
-                            guestErrno = RangeError;
-                        }
-                        value = scaled;
-                    }
-                }
-            } else if (largePten) {
-                int binaryExp = 0;
-                const TFloat mantissa = std::frexp(value, &binaryExp);
-                const std::int64_t totalExp = (binaryExp - 1) + std::llround(static_cast<long long>(pten) * 3.321928094887362L);
-                guestErrno = 0;
-                value = std::scalbn(mantissa, static_cast<int>(std::clamp(totalExp,
-                    static_cast<std::int64_t>(-std::numeric_limits<TFloat>::max_exponent),
-                    static_cast<std::int64_t>(std::numeric_limits<TFloat>::max_exponent))));
-                if (std::isinf(value) || value == static_cast<TFloat>(0)) {
-                    guestErrno = RangeError;
-                }
-            } else {
-                const std::int64_t clamped = std::clamp(pten, -ExponentLimit, ExponentLimit);
-                const TFloat before = value;
-                guestErrno = 0;
-                value = value * std::pow(static_cast<TFloat>(10), static_cast<TFloat>(clamped));
-                if (std::isinf(value) || (value == static_cast<TFloat>(0) && before != static_cast<TFloat>(0))) {
-                    guestErrno = RangeError;
                 }
             }
         } else {
