@@ -27,8 +27,14 @@ constexpr int MOUSE_ERROR_INVALID_ARG = static_cast<int>(0x80df0001u);
 constexpr int MOUSE_ERROR_INVALID_HANDLE = static_cast<int>(0x80df0003u);
 constexpr int MOUSE_ERROR_ALREADY_OPENED = static_cast<int>(0x80df0004u);
 constexpr int MOUSE_ERROR_NOT_INITIALIZED = static_cast<int>(0x80df0005u);
+constexpr int MOUSE_ERROR_NO_HANDLE = static_cast<int>(0x80df0008u);
 constexpr int MOUSE_MAX_DATA_NUM = 64;
 constexpr int MOUSE_HANDLE = 1;
+constexpr std::uint32_t MOUSE_MAX_HAND_TYPE = 1;
+constexpr std::uint32_t MOUSE_MAX_POINTER_SPEED = 8;
+constexpr std::uint32_t MOUSE_EXTENSION_DATA_SIZE = 0x30;
+constexpr std::uint32_t MOUSE_EXTENSION_STATE_SIZE = 0x40;
+constexpr std::size_t MOUSE_EXTENSION_CONFIG_SIZE = 0x20;
 constexpr std::uint8_t MOUSE_OPEN_PARAM_MERGED = 1;
 
 static_assert(sizeof(MouseOpenParam) == 8);
