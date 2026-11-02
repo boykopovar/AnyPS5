@@ -80,6 +80,8 @@ Param DialogParam(char16_t* buffer, std::uint32_t maxLength) {
 }
 
 std::uint32_t EndStatus() {
+    Require(sceImeDialogGetResult(nullptr) == ErrorNotOpened);
+    Require(sceImeDialogGetResult(reinterpret_cast<Result*>(0x10)) == ErrorNotOpened);
     Result result{};
     Require(sceImeDialogGetResult(&result) == 0);
     return result.endstatus;
