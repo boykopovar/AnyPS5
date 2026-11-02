@@ -19,6 +19,6 @@ int APS5_VABI sceAudiodecGetContext(void);
 int APS5_VABI sceAudiodecInitialize(void);
 int APS5_VABI sceAudiodecRegisterCodec(void);
 int APS5_VABI sceAudiodecTerminate(void);
-int APS5_VABI sceAudiodecUnregisterCodec(void);
+int APS5_VABI sceAudiodecUnregisterCodec(const void* context, std::uint32_t codecType);
 
 }
