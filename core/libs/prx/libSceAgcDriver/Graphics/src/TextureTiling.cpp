@@ -430,10 +430,8 @@ std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::ui
     for (std::uint32_t level = 0; level < mipCount; ++level) {
         auto levelWidth = std::max(pitch >> level, 1u);
         auto levelHeight = std::max(height >> level, 1u);
-        if (pow2Pad && level != 0) {
-            levelWidth = std::bit_ceil(levelWidth);
-            levelHeight = std::bit_ceil(levelHeight);
-        }
+        if (pow2Pad && level != 0) levelWidth = std::bit_ceil(levelWidth);
+        if (pow2Pad && (level != 0 || mipCount > 1)) levelHeight = std::bit_ceil(levelHeight);
         auto rowElements = (levelWidth + texelWidth - 1u) / texelWidth;
         auto rows = (levelHeight + texelHeight - 1u) / texelHeight;
         bool macro = false;
