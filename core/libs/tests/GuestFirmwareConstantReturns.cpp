@@ -108,6 +108,8 @@ void CheckVisionManager() {
         const int result = sceVisionManagerGetNumOfRegisterUserDataSlot(versions[i], &count);
         Require(slots[i] == 0 ? result == VisionInvalid && count == 0xaaaaaaaa : result == 0 && count == slots[i]);
     }
+    Require(sceVisionManagerGetNumOfRegisterUserDataSlot(LibraryVersion, nullptr) == VisionInvalid);
+    Require(sceVisionManagerGetNumOfRegisterUserDataSlot(RegisterUserDataVersion, nullptr) == VisionInvalid);
 
     const std::uint32_t fills[] = {0xaaaaaaaau, 0u, ~0u};
     for (const std::uint32_t fill : fills) {
