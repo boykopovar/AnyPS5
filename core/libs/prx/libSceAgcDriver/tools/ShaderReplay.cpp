@@ -79,6 +79,13 @@ bool Replay(const char* path) {
         // mem_<code address>_<guest address>.bin next to the request for inspection with other tools.
         const auto& context = request.request.context;
         for (std::size_t i = 0; i < context.userData.size(); ++i) std::printf("  user[%zu] = 0x%08x\n", i, context.userData[i]);
+        if (request.request.graphics.has_value()) {
+            const auto& linked = request.request.graphics->linkedPrograms;
+            for (std::size_t index = 0; index < linked.size(); ++index) {
+                std::printf("  linked program %zu (stage %u, 0x%llx): user data base register %u, first user SGPR %u\n", index, static_cast<unsigned>(linked[index].binary.stage), static_cast<unsigned long long>(linked[index].binary.codeAddress), linked[index].userDataBaseRegister, linked[index].firstUserSgpr);
+                for (std::size_t i = 0; i < linked[index].userData.size(); ++i) std::printf("    user[%zu] = 0x%08x\n", i, linked[index].userData[i]);
+            }
+        }
         for (const auto& region : context.memory) {
             char name[96];
             std::snprintf(name, sizeof(name), "mem_%llx_%llx.bin", static_cast<unsigned long long>(request.request.shader.codeAddress), static_cast<unsigned long long>(region.guestAddress));
