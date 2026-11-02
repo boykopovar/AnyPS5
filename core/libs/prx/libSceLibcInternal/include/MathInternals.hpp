@@ -16,7 +16,7 @@ int APS5_VABI _FTan_nid_postfix();
 int APS5_VABI _FTgamma_nid_postfix();
 int APS5_VABI _FXp_addh_nid_postfix();
 int APS5_VABI _FXp_addx_nid_postfix();
-int APS5_VABI _FXp_getw_nid_postfix();
+float APS5_VABI _FXp_getw_nid_postfix(const float* parts, int count);
 int APS5_VABI _FXp_invx_nid_postfix();
 int APS5_VABI _FXp_ldexpx_nid_postfix();
 int APS5_VABI _FXp_movx_nid_postfix();
