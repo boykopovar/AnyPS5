@@ -28,6 +28,21 @@ struct NpWebApiContentParameter {
 
 static_assert(sizeof(NpWebApiContentParameter) == 32);
 
+struct NpWebApiHttpHeader {
+    const char* name;
+    const char* value;
+};
+
+static_assert(sizeof(NpWebApiHttpHeader) == 16);
+
+struct NpWebApiMultipartPartParameter {
+    const NpWebApiHttpHeader* headers;
+    std::size_t headerNum;
+    std::size_t contentLength;
+};
+
+static_assert(sizeof(NpWebApiMultipartPartParameter) == 24);
+
 extern "C" {
 
 int APS5_VABI sceNpWebApiAbortRequest(std::int64_t requestId);
@@ -56,7 +71,7 @@ int APS5_VABI sceNpWebApiUtilityParseNpId();
 
 int APS5_VABI sceNpWebApiAbortHandle(int libCtxId, int handleId);
 int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char* fieldName, const char* value);
-int APS5_VABI sceNpWebApiAddMultipartPart();
+int APS5_VABI sceNpWebApiAddMultipartPart(std::int64_t requestId, const NpWebApiMultipartPartParameter* parameter, int* partIndex);
 void APS5_VABI sceNpWebApiCheckTimeout();
 int APS5_VABI sceNpWebApiClearAllUnusedConnection();
 int APS5_VABI sceNpWebApiClearUnusedConnection();
@@ -72,8 +87,8 @@ int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallback();
 int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallbackA();
 int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback();
 int APS5_VABI sceNpWebApiRegisterNotificationCallback(int titleUserCtxId, void* callback, void* userArg);
-int APS5_VABI sceNpWebApiSendMultipartRequest();
-int APS5_VABI sceNpWebApiSendMultipartRequest2();
+int APS5_VABI sceNpWebApiSendMultipartRequest(std::int64_t requestId, int partIndex, const void* data, std::size_t dataSize);
+int APS5_VABI sceNpWebApiSendMultipartRequest2(std::int64_t requestId, int partIndex, const void* data, std::size_t dataSize, void* responseInformation);
 int APS5_VABI sceNpWebApiSendRequest2(std::int64_t requestId, const void* data, std::size_t dataSize, void* responseInformation);
 int APS5_VABI sceNpWebApiSetHandleTimeout(int libCtxId, int handleId, std::uint32_t timeout);
 int APS5_VABI sceNpWebApiSetMaxConnection();
