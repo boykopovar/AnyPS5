@@ -37,3 +37,11 @@ test('Egyptian diagnostics retain action tokens and unknown technical details', 
     assert.equal(diagnostic('ar-EG', 'Unexpected diagnostic'), 'Unexpected diagnostic');
     assert.equal(diagnostic('fr', 'Cross: Unknown or empty KEY value.'), 'Cross: Unknown or empty KEY value.');
 });
+
+test('Egyptian diagnostics translate setting refusals with their names and ranges', () => {
+    assert.equal(diagnostic('ar-EG', 'MouseSensitivity is set more than once.'), 'MouseSensitivity متكرر ومش لازم يتحدد أكتر من مرة.');
+    assert.equal(diagnostic('ar-EG', 'LeftStickDeadzone must be a whole percentage from 0 to 90.'), 'LeftStickDeadzone لازم يكون رقم صحيح من 0 لـ 90.');
+    assert.equal(diagnostic('ar-EG', 'MouseSensitivity must be a number greater than 0 and at most 10.'), 'MouseSensitivity لازم يكون رقم أكبر من 0 وبحد أقصى 10.');
+    assert.equal(diagnostic('ar-EG', 'MouseCurve must be a number from 0.2 to 5.'), 'MouseCurve لازم يكون رقم من 0.2 لـ 5.');
+    assert.equal(diagnostic('ar-EG', 'MadeUp: unknown input setting.'), 'الإعداد MadeUp مش معروف.');
+});
