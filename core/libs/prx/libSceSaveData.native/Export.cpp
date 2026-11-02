@@ -7,6 +7,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <utility>
 #include <vector>
 #include <chrono>
 #include <cstdint>
@@ -38,12 +39,121 @@
 #endif
 
 static constexpr char SAVE_DIR[] = "_sd";
+static constexpr char SAVE_DATA_SUBDIR[] = "saves";
+static constexpr char MEMORY_SUBDIR[] = "memory";
 
 static std::atomic<std::int32_t> g_transaction_counter{1};
 static std::atomic<int> g_initializations{0};
 static std::atomic<float> g_convertProgress{0.0f};
 
+namespace {
+std::mutex g_save_root_mutex;
+std::string g_save_root_override;
+std::string g_mem_root_override;
+bool g_save_root_configured = false;
+bool g_save_root_config_valid = true;
+bool g_save_root_config_invalid = false;
+
+std::pair<bool, std::string> get_anyps5_save_data_root_env() {
+    const char* env = std::getenv("ANYPS5_SAVE_DATA_ROOT");
+    if (env == nullptr) {
+        return std::make_pair(false, std::string()); // not set
+    }
+    return std::make_pair(true, std::string(env)); // set (possibly empty)
+}
+
+bool is_absolute_path(const std::filesystem::path& p) {
+#ifdef _WIN32
+    std::string s = p.string();
+    if (s.empty()) return false;
+    // Reject relative drive paths like C:foo
+    if (s.size() >= 2 && ((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z')) && s[1] == ':') {
+        if (s.size() == 2) return false;
+        if (s[2] == '\\' || s[2] == '/') return true;
+        return false; // C:foo is relative
+    }
+    if (s.size() >= 2 && s[0] == '\\' && s[1] == '\\') return true;
+    return false;
+#else
+    return p.is_absolute();
+#endif
+}
+
+bool validate_save_root_config(const std::string& root_str, std::string* error_out) {
+    if (root_str.empty()) {
+        if (error_out) *error_out = "ANYPS5_SAVE_DATA_ROOT is empty";
+        return false;
+    }
+    std::filesystem::path root_path(root_str);
+    if (!is_absolute_path(root_path)) {
+        if (error_out) *error_out = "ANYPS5_SAVE_DATA_ROOT must be an absolute path";
+        return false;
+    }
+    std::error_code ec;
+    // Must be predisposta dal launcher - require directory to exist
+    if (!std::filesystem::exists(root_path, ec)) {
+        if (ec) {
+            if (error_out) *error_out = "ANYPS5_SAVE_DATA_ROOT path validation error";
+            return false;
+        }
+        if (error_out) *error_out = "ANYPS5_SAVE_DATA_ROOT directory must exist (predisposta dal launcher)";
+        return false;
+    }
+    if (!std::filesystem::is_directory(root_path, ec)) {
+        if (error_out) *error_out = "ANYPS5_SAVE_DATA_ROOT must point to a directory";
+        return false;
+    }
+    if (ec) {
+        if (error_out) *error_out = "ANYPS5_SAVE_DATA_ROOT path validation error";
+        return false;
+    }
+    return true;
+}
+
+void initialize_save_roots() {
+    std::lock_guard<std::mutex> lock(g_save_root_mutex);
+    if (g_save_root_configured) return;
+    g_save_root_configured = true;
+    auto env_info = get_anyps5_save_data_root_env();
+    if (!env_info.first) {
+        // Unset - use legacy defaults
+        g_save_root_override.clear();
+        g_mem_root_override.clear();
+        g_save_root_config_valid = true;
+        g_save_root_config_invalid = false;
+        return;
+    }
+    const std::string env_root = env_info.second;
+    // If set (even if empty) - must be valid absolute path
+    std::string error;
+    if (!validate_save_root_config(env_root, &error)) {
+        g_save_root_config_valid = false;
+        g_save_root_config_invalid = true;
+        g_save_root_override.clear();
+        g_mem_root_override.clear();
+        std::fprintf(stderr, "[SAVEDATA:native] ANYPS5_SAVE_DATA_ROOT invalid: %s (no fallback to legacy)\n", error.c_str());
+        return;
+    }
+    g_save_root_config_valid = true;
+    g_save_root_config_invalid = false;
+    std::filesystem::path root_path(env_root);
+    g_save_root_override = (root_path / SAVE_DATA_SUBDIR).string();
+    g_mem_root_override = (root_path / MEMORY_SUBDIR).string();
+}
+} // namespace
+
 static std::string save_root() {
+    initialize_save_roots();
+    std::lock_guard<std::mutex> lock(g_save_root_mutex);
+    if (g_save_root_config_invalid) {
+        throw std::runtime_error("SaveData: ANYPS5_SAVE_DATA_ROOT is invalid (no fallback)");
+    }
+    if (!g_save_root_override.empty()) {
+        if (!g_save_root_config_valid) {
+            throw std::runtime_error("SaveData: ANYPS5_SAVE_DATA_ROOT is invalid (no fallback)");
+        }
+        return g_save_root_override;
+    }
     return std::string(SAVE_DIR);
 }
 
@@ -96,9 +206,30 @@ constexpr std::size_t MEM_MAX_SIZE = 32u * 1024u * 1024u;
 std::mutex g_mem_mutex;
 
 std::string mem_path(std::int32_t user_id, std::uint32_t slot, const char* ext) {
-    char buf[96];
-    std::snprintf(buf, sizeof(buf), "%s/u%d/slot%u.%s", MEM_DIR, static_cast<int>(user_id), static_cast<unsigned>(slot), ext);
-    return buf;
+    initialize_save_roots();
+    std::string mem_base;
+    {
+        std::lock_guard<std::mutex> lock(g_save_root_mutex);
+        if (g_save_root_config_invalid) {
+            throw std::runtime_error("SaveData: ANYPS5_SAVE_DATA_ROOT is invalid (no fallback)");
+        }
+        if (!g_mem_root_override.empty()) {
+            if (!g_save_root_config_valid) {
+                throw std::runtime_error("SaveData: ANYPS5_SAVE_DATA_ROOT is invalid (no fallback)");
+            }
+            mem_base = g_mem_root_override;
+        } else {
+            mem_base = std::string(MEM_DIR);
+        }
+    }
+    std::string result = mem_base;
+    result += "/u";
+    result += std::to_string(static_cast<int>(user_id));
+    result += "/slot";
+    result += std::to_string(static_cast<unsigned>(slot));
+    result += ".";
+    result += ext;
+    return result;
 }
 
 bool file_size_of(const std::string& path, std::size_t* out) {
@@ -364,7 +495,34 @@ static int deleteSave(const SaveDataDelete* del) {
     if (dirName.empty() || dirName == "." || dirName == ".." || dirName.find_first_of("/\\:") != std::string::npos) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (dirName.find("..") != std::string::npos) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     const std::string path = save_root() + "/" + dirName;
+    {
+        initialize_save_roots();
+        std::lock_guard<std::mutex> lock(g_save_root_mutex);
+        if (!g_save_root_override.empty() && g_save_root_config_valid && g_save_root_override.find("__INVALID_ANYPS5_SAVE_DATA_ROOT__") == std::string::npos) {
+            try {
+                std::filesystem::path root_p(g_save_root_override);
+                std::filesystem::path rp = std::filesystem::absolute(path);
+                std::filesystem::path root_abs = std::filesystem::absolute(root_p);
+                std::vector<std::string> rp_parts, root_parts;
+                for (auto& p : rp) rp_parts.push_back(p.string());
+                for (auto& p : root_abs) root_parts.push_back(p.string());
+                if (rp_parts.size() < root_parts.size()) {
+                    return SAVE_DATA_ERROR_PARAMETER;
+                }
+                for (size_t i = 0; i < root_parts.size(); ++i) {
+                    if (rp_parts[i] != root_parts[i]) {
+                        return SAVE_DATA_ERROR_PARAMETER;
+                    }
+                }
+            } catch (...) {
+                return SAVE_DATA_ERROR_PARAMETER;
+            }
+        }
+    }
     std::lock_guard lock(g_slots_mutex);
     std::error_code error;
     if (isMountedDirectory(path, error)) return SAVE_DATA_ERROR_BUSY;
@@ -694,7 +852,41 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     if (dirName.empty() || dirName == "." || dirName == ".." || dirName.find_first_of("/\\:") != std::string::npos) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    // Additional traversal protection
+    if (dirName.find("..") != std::string::npos) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     const std::string real_path = save_root() + "/" + dirName;
+    // In opt-in mode, ensure path doesn't escape root
+    {
+        initialize_save_roots();
+        std::lock_guard<std::mutex> lock(g_save_root_mutex);
+        if (!g_save_root_override.empty() && g_save_root_config_valid && g_save_root_override.find("__INVALID_ANYPS5_SAVE_DATA_ROOT__") == std::string::npos) {
+            try {
+                std::filesystem::path root_p(g_save_root_override);
+                std::filesystem::path rp = std::filesystem::absolute(real_path);
+                std::filesystem::path root_abs = std::filesystem::absolute(root_p);
+                // Check containment properly
+                auto rp_it = rp.begin();
+                auto root_it = root_abs.begin();
+                bool equal_prefix = true;
+                // Compare components
+                std::vector<std::string> rp_parts, root_parts;
+                for (auto& p : rp) rp_parts.push_back(p.string());
+                for (auto& p : root_abs) root_parts.push_back(p.string());
+                if (rp_parts.size() < root_parts.size()) {
+                    return SAVE_DATA_ERROR_PARAMETER;
+                }
+                for (size_t i = 0; i < root_parts.size(); ++i) {
+                    if (rp_parts[i] != root_parts[i]) {
+                        return SAVE_DATA_ERROR_PARAMETER;
+                    }
+                }
+            } catch (...) {
+                return SAVE_DATA_ERROR_PARAMETER;
+            }
+        }
+    }
     std::lock_guard lock(g_slots_mutex);
     std::error_code error;
     if (isMountedDirectory(real_path, error)) return SAVE_DATA_ERROR_BUSY;

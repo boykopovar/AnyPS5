@@ -4,6 +4,7 @@
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -17,6 +18,32 @@
 
 namespace {
     struct ScriptedPress { std::uint64_t startUs; std::uint64_t endUs; std::uint32_t buttons; };
+
+    // Global hard cap for pad diagnostics (opt-in only). Thread-safe, per-process.
+    static std::mutex padDiagCapMutex;
+    static std::atomic<std::uint64_t> padDiagTotalCount{0};
+    static constexpr std::uint64_t kPadDiagHardCap = 4096;
+
+    static bool PadDiag() {
+        static const bool enabled = std::getenv("APS5_PAD_DIAG") != nullptr;
+        return enabled;
+    }
+
+    static bool PadDiagCapAllow() {
+        if (!PadDiag()) return false;
+        std::lock_guard<std::mutex> lock(padDiagCapMutex);
+        if (padDiagTotalCount.load(std::memory_order_relaxed) >= kPadDiagHardCap) {
+            return false;
+        }
+        padDiagTotalCount.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    template<typename... Args>
+    static void PadDiagLog(const char* fmt, Args&&... args) {
+        if (!PadDiagCapAllow()) return;
+        std::fprintf(stderr, fmt, std::forward<Args>(args)...);
+    }
 
     const std::vector<ScriptedPress>& scriptedPresses() {
         static const std::vector<ScriptedPress> presses = [] {
@@ -32,6 +59,11 @@ namespace {
                 result.push_back({startMs * 1000, (startMs + holdMs) * 1000, mask});
                 text += consumed;
                 if (*text == ';') ++text;
+            }
+            if (PadDiag()) {
+                PadDiagLog("[pad-diag] APS5_PAD_SCRIPT parsed events=%zu", result.size());
+                for (const ScriptedPress& press : result) PadDiagLog(" window_us=[%llu,%llu) mask=0x%08x", static_cast<unsigned long long>(press.startUs), static_cast<unsigned long long>(press.endUs), press.buttons);
+                PadDiagLog("\n");
             }
             return result;
         }();
@@ -190,10 +222,27 @@ bool Pad::IsInitialized() {
 }
 
 namespace {
+static bool diagBuildSeen[PAD_MAX_CONTROLLERS] = {};
+static std::uint32_t diagBuildCount[PAD_MAX_CONTROLLERS] = {};
+static std::uint32_t diagLastScripted[PAD_MAX_CONTROLLERS] = {};
+
 PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t now, const Pad::InputCommandFile::Input& injected, int port) {
     PadData data{};
     const bool intercepted = state.intercepted;
-    data.buttons = intercepted ? kInterceptedButton : state.buttons | injected.buttons | (port == 0 ? scriptedButtons(now) : 0u);
+    const std::uint32_t scripted = port == 0 ? scriptedButtons(now) : 0u;
+    data.buttons = intercepted ? kInterceptedButton : state.buttons | injected.buttons | scripted;
+    if (PadDiag()) {
+        if (!diagBuildSeen[port]) {
+            diagBuildSeen[port] = true;
+            PadDiagLog("[pad-diag] BuildData first port=%d now_us=%llu changeTime_us=%llu scripted_mask=0x%08x\n", port, static_cast<unsigned long long>(now), static_cast<unsigned long long>(changeTime), scripted);
+        }
+        if (scripted != diagLastScripted[port]) {
+            diagLastScripted[port] = scripted;
+            PadDiagLog("[pad-diag] port=%d script_mask transition to 0x%08x at now_us=%llu\n", port, scripted, static_cast<unsigned long long>(now));
+        }
+        if (++diagBuildCount[port] % 1000 == 0)
+            PadDiagLog("[pad-diag] port=%d BuildData count=%u now_us=%llu scripted_mask=0x%08x\n", port, diagBuildCount[port], static_cast<unsigned long long>(now), scripted);
+    }
     const auto& sticks = !intercepted && injected.hasSticks ? injected.sticks : state.sticks;
     data.left_stick_x = sticks[0];
     data.left_stick_y = sticks[1];
@@ -329,15 +378,28 @@ std::uint64_t LatchExpiry(const PadSlot& slot) {
 }
 }
 
+static bool diagReadStateSeen[PAD_MAX_CONTROLLERS] = {};
+
 PadData Pad::ReadState(int port) {
-    if (port < 0 || port >= PAD_MAX_CONTROLLERS) throw std::invalid_argument("Pad: invalid port");
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) {
+        if (PadDiag()) PadDiagLog("[pad-diag] ReadState invalid port=%d\n", port);
+        throw std::invalid_argument("Pad: invalid port");
+    }
     std::lock_guard lock(stateMutex);
     if (failure) std::rethrow_exception(failure);
-    if (!initialized) throw std::runtime_error("Pad: read before initialization");
+    if (!initialized) {
+        if (PadDiag()) PadDiagLog("[pad-diag] ReadState not initialized port=%d\n", port);
+        throw std::runtime_error("Pad: read before initialization");
+    }
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
     auto& slot = slots[port];
     const bool withdrawn = WithdrawnPort(port, slot);
+    if (PadDiag() && !diagReadStateSeen[port]) {
+        diagReadStateSeen[port] = true;
+        const std::uint32_t scriptedNow = port == 0 ? scriptedButtons(now) : 0u;
+        PadDiagLog("[pad-diag] ReadState first port=%d now_us=%llu initialized=%d withdrawn=%d scripted_now=0x%08x\n", port, static_cast<unsigned long long>(now), initialized, withdrawn, scriptedNow);
+    }
     PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, slot.timestamp, now, injected, port);
     if (!withdrawn && slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
         data.buttons |= slot.pressedSinceRead;
@@ -347,26 +409,64 @@ PadData Pad::ReadState(int port) {
     slot.pressedSinceRead = 0;
     if (slot.lastReadAt != 0) slot.readInterval = now - slot.lastReadAt;
     slot.lastReadAt = now;
+    if (PadDiag()) {
+        const std::uint32_t scriptedNowRet = port == 0 ? scriptedButtons(now) : 0u;
+        PadDiagLog("[pad-ret] func=ReadState port=%d now_us=%llu ret_count=1 ret_code=0 timestamp=%llu connected=%d withdrawn=%d intercepted=%d scripted_win_hasbit=%d buttons_has_scriptbit=%d\n",
+                     port, static_cast<unsigned long long>(now), static_cast<unsigned long long>(data.timestamp), data.connected ? 1 : 0,
+                     withdrawn ? 1 : 0, slot.state.intercepted ? 1 : 0, scriptedNowRet != 0 ? 1 : 0,
+                     (port == 0 && scriptedNowRet != 0 && (data.buttons & scriptedNowRet) != 0) ? 1 : 0);
+    }
     return data;
 }
 
+static bool diagReadSeen[PAD_MAX_CONTROLLERS] = {};
+
 int Pad::Read(PadData* data, int num, int port) {
-    if (data == nullptr || num <= 0) throw std::invalid_argument("Pad: invalid read buffer");
-    if (port < 0 || port >= PAD_MAX_CONTROLLERS) throw std::invalid_argument("Pad: invalid port");
+    if (data == nullptr || num <= 0) {
+        if (PadDiag()) PadDiagLog("[pad-diag] Read invalid buffer port=%d\n", port);
+        throw std::invalid_argument("Pad: invalid read buffer");
+    }
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) {
+        if (PadDiag()) PadDiagLog("[pad-diag] Read invalid port=%d\n", port);
+        throw std::invalid_argument("Pad: invalid port");
+    }
     std::lock_guard lock(stateMutex);
     if (failure) std::rethrow_exception(failure);
-    if (!initialized) throw std::runtime_error("Pad: read before initialization");
+    if (!initialized) {
+        if (PadDiag()) PadDiagLog("[pad-diag] Read not initialized port=%d\n", port);
+        throw std::runtime_error("Pad: read before initialization");
+    }
     auto& slot = slots[port];
     slot.pressedSinceRead = 0;
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
-    if (WithdrawnPort(port, slot)) {
+    const bool withdrawn = WithdrawnPort(port, slot);
+    if (PadDiag() && !diagReadSeen[port]) {
+        diagReadSeen[port] = true;
+        const std::uint32_t scriptedNow = port == 0 ? scriptedButtons(now) : 0u;
+        PadDiagLog("[pad-diag] Read first port=%d now_us=%llu initialized=%d withdrawn=%d scripted_now=0x%08x\n", port, static_cast<unsigned long long>(now), initialized, withdrawn, scriptedNow);
+    }
+    if (withdrawn) {
         slot.queue.clear();
         data[0] = WithdrawnData(slot.timestamp);
+        if (PadDiag()) {
+            const std::uint32_t scriptedNowRet = port == 0 ? scriptedButtons(now) : 0u;
+            PadDiagLog("[pad-ret] func=Read port=%d now_us=%llu ret_count=1 ret_code=0 timestamp=%llu connected=%d withdrawn=1 intercepted=%d scripted_win_hasbit=%d buttons_has_scriptbit=%d\n",
+                         port, static_cast<unsigned long long>(now), static_cast<unsigned long long>(data[0].timestamp), data[0].connected ? 1 : 0,
+                         slot.state.intercepted ? 1 : 0, scriptedNowRet != 0 ? 1 : 0,
+                         (port == 0 && scriptedNowRet != 0 && (data[0].buttons & scriptedNowRet) != 0) ? 1 : 0);
+        }
         return 1;
     }
     if (slot.queue.empty()) {
         data[0] = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
+        if (PadDiag()) {
+            const std::uint32_t scriptedNowRet = port == 0 ? scriptedButtons(now) : 0u;
+            PadDiagLog("[pad-ret] func=Read port=%d now_us=%llu ret_count=1 ret_code=0 timestamp=%llu connected=%d withdrawn=0 intercepted=%d scripted_win_hasbit=%d buttons_has_scriptbit=%d\n",
+                         port, static_cast<unsigned long long>(now), static_cast<unsigned long long>(data[0].timestamp), data[0].connected ? 1 : 0,
+                         slot.state.intercepted ? 1 : 0, scriptedNowRet != 0 ? 1 : 0,
+                         (port == 0 && scriptedNowRet != 0 && (data[0].buttons & scriptedNowRet) != 0) ? 1 : 0);
+        }
         return 1;
     }
     int count = 0;
@@ -374,6 +474,13 @@ int Pad::Read(PadData* data, int num, int port) {
         const QueuedInput& entry = slot.queue.front();
         data[count++] = BuildData(slot, entry.input, port == 0 ? std::max(entry.timestamp, injectedTimestamp) : entry.timestamp, now, injected, port);
         slot.queue.pop_front();
+    }
+    if (PadDiag() && count > 0) {
+        const std::uint32_t scriptedNowRet = port == 0 ? scriptedButtons(now) : 0u;
+        PadDiagLog("[pad-ret] func=Read port=%d now_us=%llu ret_count=%d ret_code=0 timestamp=%llu connected=%d withdrawn=0 intercepted=%d scripted_win_hasbit=%d buttons_has_scriptbit=%d\n",
+                     port, static_cast<unsigned long long>(now), count, static_cast<unsigned long long>(data[0].timestamp), data[0].connected ? 1 : 0,
+                     slot.state.intercepted ? 1 : 0, scriptedNowRet != 0 ? 1 : 0,
+                     (port == 0 && scriptedNowRet != 0 && (data[0].buttons & scriptedNowRet) != 0) ? 1 : 0);
     }
     return count;
 }
@@ -637,3 +744,4 @@ extern "C" void PadSubmitAudioHaptics_nid_postfix(std::uint8_t large, std::uint8
 extern "C" void PadSetPortConnected_nid_postfix(int port, bool connected) {
     Pad::SetConnected(port, connected);
 }
+
