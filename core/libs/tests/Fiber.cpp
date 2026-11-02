@@ -566,6 +566,12 @@ int main(int argc, char** argv) {
 #endif
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == FiberErrorPermission, "no fiber on the thread");
+    Require(sceFiberOptParamInitialize(nullptr) == FiberErrorNull, "null opt param");
+    Require(sceFiberOptParamInitialize(reinterpret_cast<FiberOptParam*>(0x10)) == FiberErrorInvalid, "unwritable opt param");
+    FiberOptParam optParam{};
+    optParam.magic = 0x12345678;
+    Require(sceFiberOptParamInitialize(&optParam) == 0, "initialize opt param");
+    Require(optParam.magic == 0, "opt param cleared");
     Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), nullptr, 0) == 0, "initialize first");
     Require(_sceFiberInitializeImpl_nid_postfix(g_second, "second", SecondEntry, 22, g_secondContext.data(), g_secondContext.size(), nullptr, 0) == 0, "initialize second");
     const auto threadCsr = _mm_getcsr();
