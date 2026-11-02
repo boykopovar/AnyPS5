@@ -158,6 +158,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
                     }
                     fx.flags |= 3;
                 }
+                for (auto& port : ports) port.mixed = false;
             }
             break;
         case SCE_NGS2_VOICE_EVENT_STOP:
@@ -659,7 +660,6 @@ static Ngs2PendingControl CaptureCommandControl(Ngs2Voice& voice, const Ngs2Voic
 static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 
 void Ngs2Voice::ApplyPendingControls() {
-    Ngs2PrepareControlMix(*this);
     bool restart = false, stop = false, kill = false;
     std::uint32_t pause = 0;
     const auto applyEvents = [&] {
@@ -724,7 +724,6 @@ void Ngs2Voice::ApplyPendingControls() {
                         port.detachedDest = 0;
                         port.destInput = patch.dest_input_id;
                     } else ApplyParam(*this, param);
-                    if (param.id == SCE_NGS2_VOICE_PARAM_PATCH) ports[reinterpret_cast<const Ngs2VoicePatchParam&>(param).port].rampFrom.clear();
                 } else Ngs2ApplyCustomParam(*this, value.header);
             }, control);
             ++applied;
