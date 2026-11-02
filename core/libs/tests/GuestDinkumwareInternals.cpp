@@ -327,6 +327,18 @@ void TestFloatErrors() {
     Require(_Stodx_nid_postfix("0x1p0", &end, 2, &error) == 100.0 && error == 0 && *__error_nid_postfix() == 7, "_Stodx hexadecimal scaled kept preset errno");
     error = 99;
     Require(std::isnan(_Stodx_nid_postfix("nan", &end, 2, &error)) && error == 0 && end[0] == '\0', "_Stodx NaN");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    const double intermediateOverflow = _Stodx_nid_postfix("0x1p-1022", &end, 400, &error);
+    Require(std::isfinite(intermediateOverflow) && intermediateOverflow > 0 && error == 0 && *__error_nid_postfix() == 0, "_Stodx hexadecimal avoids intermediate overflow with large positive scale");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    const double subnormalRescue = _Stodx_nid_postfix("0x1p-1075", &end, 1, &error);
+    Require(subnormalRescue > 0 && subnormalRescue < 1e-308 && error == 0 && *__error_nid_postfix() == 0, "_Stodx hexadecimal subnormal rescue with positive scale");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    const double largeDown = _Stodx_nid_postfix("0x1p1023", &end, -400, &error);
+    Require(std::isfinite(largeDown) && largeDown > 0 && error == 0 && *__error_nid_postfix() == 0, "_Stodx hexadecimal large value scaled down stays finite");
 }
 
 void TestScaledNan() {
