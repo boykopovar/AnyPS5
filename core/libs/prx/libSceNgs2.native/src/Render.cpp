@@ -541,13 +541,13 @@ static std::size_t SampleBytes(std::uint32_t waveformType) {
 }
 
 static bool HasMasteringMap(std::uint32_t channels, std::uint32_t outputChannels) {
-    if (PS4_LIBRARY) return channels == 2 && (outputChannels == 6 || outputChannels == 8);
     return HasDefaultMap(channels) && HasDefaultMap(outputChannels);
 }
 
-static float MasteringOutputLevel(std::uint32_t channels, std::uint32_t channel, std::uint32_t outputChannels, std::uint32_t dest) {
+static float MasteringOutputLevel(std::uint32_t channels, std::uint32_t channel, std::uint32_t outputChannels, std::uint32_t dest, bool customMastering) {
+    if (PS4_LIBRARY && customMastering) return channel == dest ? 1.0f : 0.0f;
     if (channels == outputChannels) return PS4_LIBRARY || HasDefaultMap(channels) ? static_cast<float>(channel == dest) : OddCountLevel(channels, channel, channels, dest);
-    if (channels == 1) return dest == 0 ? 1.0f : 0.0f;
+    if (channels == 1 && !PS4_LIBRARY) return dest == 0 ? 1.0f : 0.0f;
     return Ngs2DefaultLevel(channels, channel, outputChannels, dest);
 }
 
@@ -592,6 +592,16 @@ static std::vector<std::size_t> OutputBytes(const Ngs2System& system, const Ngs2
     return outputBytes;
 }
 
+void Ngs2RenderRefused(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo) {
+    const std::size_t grain = system.option.num_grain_samples;
+    for (std::uint32_t i = 0; i < numBufferInfo; i++) {
+        const auto& output = bufferInfo[i];
+        const std::size_t bytes = grain * output.num_channels * SampleBytes(output.waveform_type);
+        if (output.buffer_size < bytes) throw std::invalid_argument("NGS2: render buffer " + std::to_string(i) + " is too small");
+        if (output.buffer != nullptr) std::memset(output.buffer, 0, bytes);
+    }
+}
+
 void Ngs2RenderSilence(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo) {
     const auto outputBytes = OutputBytes(system, bufferInfo, numBufferInfo);
     for (std::uint32_t i = 0; i < numBufferInfo; i++) {
@@ -630,7 +640,7 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
                 const bool lfe = channel == 3 && (voice->channels == 6 || voice->channels == 8);
                 const float level = lfe ? voice->lfeLevel : voice->fbwLevel;
                 for (std::uint32_t dest = 0; dest < outputChannels; dest++) {
-                    const float map = MasteringOutputLevel(voice->channels, channel, outputChannels, dest);
+                    const float map = MasteringOutputLevel(voice->channels, channel, outputChannels, dest, voice->rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING);
                     if (map == 0.0f) continue;
                     for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + dest] += voice->samples[channel * grain + i] * level * map;
                 }

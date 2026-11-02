@@ -37,6 +37,10 @@ static float ClampPortVolume(float level) {
     return PS4_LIBRARY ? std::clamp(level, -MAX_PS4_PORT_VOLUME, MAX_PS4_PORT_VOLUME) : std::clamp(level, 0.0f, MAX_PORT_VOLUME);
 }
 
+static void RejectPs4Channels(const Ngs2Voice& voice, std::uint32_t channels) {
+    if (PS4_LIBRARY && (Ngs2Ps4UnsupportedChannels(channels) || channels > voice.rack->maxChannels)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS};
+}
+
 static void SendEvent(Ngs2Voice& voice, std::uint32_t eventId) {
     if (eventId == SCE_NGS2_VOICE_EVENT_PLAY && voice.channels == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
     voice.SetEvent(eventId);
@@ -585,7 +589,9 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) {
         const auto& value = ParamAs<Ngs2SubmixerVoiceSetupParam>(param);
         if (value.flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
-        if (value.num_io_channels == 0 || value.num_io_channels > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
+        if (value.num_io_channels == 0) APS5_INVALID_ARG_EX;
+        RejectPs4Channels(voice, value.num_io_channels);
+        if (value.num_io_channels > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
         return CopyParam(param);
     }
     if (IsSamplerSetup(voice, param.id)) {
@@ -996,6 +1002,12 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         ApplyCommonParam(voice, param);
         return;
     }
+    if (param.id == SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP && voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+        const auto& setup = ParamAs<Ngs2CustomSubmixerVoiceSetupParam>(param);
+        for (const auto count : {setup.num_input_channels, setup.num_output_channels}) {
+            if (PS4_LIBRARY && ((count != 1 && count != 2 && count != 6 && count != 8) || count > voice.rack->maxChannels)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS};
+        }
+    }
     if (rackId == (SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 >> 16) || rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
         Ngs2ApplyCustomParam(voice, param);
         return;
@@ -1021,6 +1033,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id != SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) break;
             if (ParamAs<Ngs2SubmixerVoiceSetupParam>(param).flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
+            RejectPs4Channels(voice, ParamAs<Ngs2SubmixerVoiceSetupParam>(param).num_io_channels);
             SetupMixer(voice, ParamAs<Ngs2SubmixerVoiceSetupParam>(param).num_io_channels);
             return;
         case SCE_NGS2_RACK_ID_REVERB:
@@ -1028,7 +1041,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
                 const auto& setup = ParamAs<Ngs2ReverbVoiceSetupParam>(param);
                 if (setup.flags != 0) throw std::runtime_error("NGS2: reverb setup flags are not implemented");
                 for (const auto count : {setup.num_input_channels, setup.num_output_channels}) {
-                    if ((count != 1 && count != 2 && count != 6 && count != 8) || count > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
+                    if ((count != 1 && count != 2 && count != 6 && count != 8) || count > voice.rack->maxChannels) {
+                        if (PS4_LIBRARY) throw Ngs2ReturnCode{SCE_NGS2_ERROR_PS4_INVALID_NUM_CHANNELS};
+                        APS5_INVALID_ARG_EX;
+                    }
                 }
                 SetupMixer(voice, setup.num_output_channels);
                 voice.inputChannels = setup.num_input_channels;
@@ -1043,6 +1059,7 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_MASTERING:
         case SCE_NGS2_RACK_ID_CUSTOM_MASTERING:
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_SETUP || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP) {
+                RejectPs4Channels(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
                 SetupMixer(voice, ParamAs<Ngs2MasteringVoiceSetupParam>(param).num_io_channels);
                 return;
             }

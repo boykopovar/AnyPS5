@@ -385,6 +385,13 @@ void Ngs2ResetUserFx2(Ngs2Voice& voice);
 void Ngs2PrepareControlMix(Ngs2Voice& voice);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 void Ngs2RenderSilence(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
+inline bool Ngs2Ps4UnsupportedChannels(std::uint32_t channels) {
+    return channels == 3 || channels == 4 || channels == 5 || channels == 7;
+}
+inline bool Ngs2Ps4UnsupportedBufferChannels(std::uint32_t channels) {
+    return Ngs2Ps4UnsupportedChannels(channels) || channels > NGS2_MAX_CHANNELS;
+}
+void Ngs2RenderRefused(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest);
 float Ngs2FixedDownmixLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest);
 int Ngs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers);
