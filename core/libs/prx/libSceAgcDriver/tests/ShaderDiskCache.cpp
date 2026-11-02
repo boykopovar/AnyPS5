@@ -161,6 +161,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
+    require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
@@ -174,6 +175,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
     require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
+    require(left.layerReplaySafe == right.layerReplaySafe, prefix + "layer replay proof differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
     require(left.depthBoundsDword == right.depthBoundsDword, prefix + "depth bounds push offset differs");
     require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
@@ -266,6 +268,7 @@ RecompileResult sampleResult() {
     result.readsDepthRemapPush = true;
     result.bdaAbiVersion = 3;
     result.descriptorFaults = 2;
+    result.windowLaneGuards = 7u;
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
     result.fullSubgroups = true;
@@ -288,6 +291,7 @@ RecompileResult sampleResult() {
     result.stencilReferences = {0u, 17u, 255u};
     result.stencilReplaySafe = true;
     result.bdaWrites = true;
+    result.layerReplaySafe = true;
     result.stencilReferenceDword = 23u;
     result.depthBoundsDword = 24u;
     result.poisonedSrtReads = 3;
@@ -363,6 +367,7 @@ CompiledVariant sampleVariant() {
     image.emulatedCompare = 0x1a07u;
     image.table = 0;
     image.tableOperation = TableOperation::Unsupported;
+    image.targetMerge = true;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
@@ -975,14 +980,14 @@ int runLargeFileWrite() {
     } cleanup{directory};
     const auto space = std::filesystem::space(directory, error);
     if (error || space.available < size + (std::uintmax_t{1} << 30u)) {
-        std::cout << "skipping: not enough free disk space for a file of more than 2 GiB\n";
+        std::cout << "skipped, the host has not enough free disk space for a file of more than 2 GiB\n";
         return 77;
     }
     std::vector<std::byte> bytes;
     try {
         bytes.resize(size);
     } catch (const std::bad_alloc&) {
-        std::cout << "skipping: cannot allocate a buffer of more than 2 GiB\n";
+        std::cout << "skipped, the host cannot allocate a buffer of more than 2 GiB\n";
         return 77;
     }
     const std::array<std::size_t, 6> samples{0u, (std::size_t{1} << 30u) - 1u, std::size_t{1} << 30u, (std::size_t{2} << 30u) - 1u, std::size_t{2} << 30u, size - 1u};
@@ -1404,6 +1409,10 @@ void verifyInvocationIsolation() {
         require(changed.cacheHit && first.variantId == changed.variantId, "buffer metadata changed the compiled variant");
         if ((descriptor[0] & 3u) == (original[0] & 3u) && (descriptor[1] & 0xffff0000u) == (original[1] & 0xffff0000u) && descriptor[3] == original[3] && (descriptor[0] != 0u || (descriptor[1] & 0xffffu) != 0u)) {
             require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
+        }
+        if (descriptor[2] == 0u) {
+            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
+            continue;
         }
         ComputeRequest fresh(false);
         fresh.userData = descriptor;
@@ -2052,7 +2061,7 @@ bool samePlan(const IrResourcePlan& left, const IrResourcePlan& right) {
     for (std::size_t index = 0; index < left.descriptorSources.size(); ++index) {
         const auto& a = left.descriptorSources[index];
         const auto& b = right.descriptorSources[index];
-        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || (a.tableColumn.has_value() && (a.tableColumn->keyDomains != b.tableColumn->keyDomains || a.tableColumn->unkeyed != b.tableColumn->unkeyed || a.tableColumn->maxKey != b.tableColumn->maxKey))) return false;
+        if (a.dwordCount != b.dwordCount || a.tableColumn != b.tableColumn || a.requiredBlocks != b.requiredBlocks || (a.tableColumn.has_value() && (a.tableColumn->keyDomains != b.tableColumn->keyDomains || a.tableColumn->unkeyed != b.tableColumn->unkeyed || a.tableColumn->maxKey != b.tableColumn->maxKey))) return false;
         for (std::size_t dword = 0; dword < a.dwords.size(); ++dword) {
             if (!sameValue(a.dwords[dword], b.dwords[dword])) return false;
         }

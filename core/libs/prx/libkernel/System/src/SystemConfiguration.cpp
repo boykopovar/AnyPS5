@@ -205,6 +205,15 @@ struct GuestKinfoProc {
 };
 static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1088);
 
+GuestKinfoProc GuestProcessRecord() {
+    GuestKinfoProc process{};
+    process.structSize = sizeof(process);
+    process.pid = getpid_nid_postfix();
+    process.parentPid = getppid_nid_postfix();
+    std::memcpy(process.command, "eboot.bin", sizeof("eboot.bin"));
+    return process;
+}
+
 std::vector<GuestVmEntry> GuestVmEntries() {
     std::vector<GuestVmEntry> entries;
     std::uintptr_t start = 0;
@@ -454,6 +463,18 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         static constexpr char path[] = "/app0/eboot.bin";
         return CopyOut(path, sizeof(path), oldValue, oldLength);
     }
+    if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 8) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        if (nameLength > 4) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+        const GuestKinfoProc process = GuestProcessRecord();
+        return CopyOut(&process, sizeof(process), oldValue, oldLength);
+    }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 1) {
         if (newValue != nullptr) {
             *__error_nid_postfix() = 1;
@@ -467,11 +488,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 3;
             return -1;
         }
-        GuestKinfoProc process{};
-        process.structSize = sizeof(process);
-        process.pid = name[3];
-        process.parentPid = getppid_nid_postfix();
-        std::memcpy(process.command, "eboot.bin", sizeof("eboot.bin"));
+        const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
     }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 35) {
@@ -684,9 +701,13 @@ int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* 
     if (version == nullptr) {
         return 0;
     }
-    std::memset(version->versionString, 0, sizeof(version->versionString));
-    std::memcpy(version->versionString, "01.000.000", sizeof("01.000.000"));
-    version->version = 0x01000000;
+    char versionString[sizeof(version->versionString)] = {};
+    std::memcpy(versionString, "01.000.000", sizeof("01.000.000"));
+    constexpr std::uint32_t packedVersion = 0x01000000;
+    if (!GuestCopyOut_nid_no_patch(version->versionString, versionString, sizeof(versionString)) ||
+        !GuestCopyOut_nid_no_patch(&version->version, &packedVersion, sizeof(packedVersion))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -694,8 +715,11 @@ int APS5_VABI sceKernelGetSystemExVersion(char* first, char* second) {
     if (first == nullptr || second == nullptr) {
         return 22;
     }
-    *first = '\0';
-    *second = '\0';
+    constexpr char zero = '\0';
+    if (!GuestCopyOut_nid_no_patch(first, &zero, sizeof(zero)) ||
+        !GuestCopyOut_nid_no_patch(second, &zero, sizeof(zero))) {
+        return 14;
+    }
     return 0;
 }
 
@@ -703,7 +727,10 @@ int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version) {
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    *version = '\0';
+    constexpr char zero = '\0';
+    if (!GuestCopyOut_nid_no_patch(version, &zero, sizeof(zero))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -711,7 +738,10 @@ int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* versio
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    *version = 0;
+    constexpr std::uint32_t zero = 0;
+    if (!GuestCopyOut_nid_no_patch(version, &zero, sizeof(zero))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -778,21 +808,26 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
         {"vm.loadavg", {2, 2}, 2},
     };
     if (name == nullptr || size == nullptr) throw std::invalid_argument(std::string(__func__) + ": null name or size");
-    const std::size_t nameLength = strnlen(name, MaximumSysctlName);
-    if (nameLength == MaximumSysctlName) {
-        *__error_nid_postfix() = 63;
+    std::string guestName;
+    if (const int error = CopyGuestPath_nid_no_patch(name, guestName)) {
+        *__error_nid_postfix() = error;
         return -1;
     }
+    name = guestName.c_str();
     const std::string trimmed = WithoutTrailingDot(name);
     name = trimmed.c_str();
-    if (nameLength == 0 || std::strcmp(name, "hw.cacheline_size") == 0 || std::strcmp(name, "hw.usermem") == 0 || std::strcmp(name, "machdep.cacheline_size") == 0) {
+    if (trimmed.empty() || std::strcmp(name, "hw.cacheline_size") == 0 || std::strcmp(name, "hw.usermem") == 0 || std::strcmp(name, "machdep.cacheline_size") == 0) {
         *__error_nid_postfix() = 2;
         return -1;
     }
+    std::size_t count = 0;
+    if (!GuestCopyIn_nid_no_patch(&count, size, sizeof(count))) return Fault();
     const auto copyMib = [&](const int* found, std::size_t length) {
-        std::size_t bytes = *size * sizeof(int);
+        std::size_t bytes = count * sizeof(int);
         const int result = CopyOut(found, length * sizeof(int), mib, &bytes);
-        *size = bytes / sizeof(int);
+        if (result != 0 && *__error_nid_postfix() != 12) return result;
+        count = bytes / sizeof(int);
+        if (!GuestCopyOut_nid_no_patch(size, &count, sizeof(count))) return Fault();
         return result;
     };
     if (const int node = TopLevelNode(trimmed); node >= 0) return copyMib(&node, 1);

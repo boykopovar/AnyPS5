@@ -65,6 +65,11 @@ using NtTestAlertFunction = LONG(NTAPI*)();
 
 void DrainApcs() {
     static const auto testAlert = reinterpret_cast<NtTestAlertFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtTestAlert")));
+    auto* state = WaitState().bound;
+    state->fetch_add(1, std::memory_order_seq_cst);
+    if (testAlert) testAlert();
+    else SleepEx(0, TRUE);
+    state->fetch_sub(1, std::memory_order_seq_cst);
     if (testAlert) testAlert();
     else SleepEx(0, TRUE);
 }

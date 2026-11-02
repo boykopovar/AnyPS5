@@ -4,6 +4,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
 #include "PipelineSpecialization.hpp"
 #include <array>
 #include <cstdint>
@@ -30,12 +31,15 @@ struct LoadCase {
     IrType type;
     std::uint32_t bits = 32;
     std::uint32_t components = 1;
+    IrShaderStage stage = IrShaderStage::Compute;
+    bool coherent = true;
+    bool written = false;
 };
 
-std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool exact = false, bool valid = true, bool coherent = true) {
+std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool exact = false, bool valid = true) {
     IrProgram program;
     program.SetWaveSize(32);
-    program.Resources().stage = IrShaderStage::Compute;
+    program.Resources().stage = test.stage;
     program.Resources().srtPlanComplete = true;
     program.Resources().resourceTrackingComplete = true;
     program.Metadata().shaderInfoComplete = true;
@@ -70,8 +74,9 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
         auto& handle = emit(IrOpcode::GetScratchResource, IrType::AddressResource, {});
         emit(test.opcode, test.type, {&handle, &address, &zero, &enabled});
     } else if (test.kind == ResourceKind::Buffer) {
-        program.Resources().memoryInfo.front().coherent = coherent;
+        program.Resources().memoryInfo.front().coherent = test.coherent;
         program.Info().buffers.emplace_back().read = true;
+        program.Info().buffers.front().written = test.written;
         program.Metadata().bindings.descriptors.push_back({DescriptorBindingKind::Buffers, {0}});
         program.Metadata().bindings.pushDataStartDword = 0;
         program.Metadata().bindings.memoryOffsetCount = 1;
@@ -92,7 +97,9 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
     compute.hostSubgroupSize = 32;
     compute.waveSize = 32;
     ShaderStageInputInfo inputs;
-    inputs.compute = &compute;
+    ShaderPixelInputInfo pixel;
+    if (test.stage == IrShaderStage::Pixel) inputs.pixel = &pixel;
+    else inputs.compute = &compute;
     CompiledBindingLayout bindings;
     bindings.layout = program.Metadata().bindings;
     SpirvTargetOptions target{};
@@ -386,6 +393,52 @@ int main() {
         const auto plain = emitLoad(test, true, 8, 64, false, true);
         require(AccessTrace(plain, 0).Run() == std::vector<std::uint32_t>({2}), "exact request without robustBufferAccess2 changed the plain variant");
     });
+    run("read-only pixel robust buffer result", [] {
+        const auto selections = [](const std::vector<std::uint32_t>& module) {
+            unsigned count = 0;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) count += (module[offset] & 0xffffu) == spv::OpSelect;
+            return count;
+        };
+        LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32, 32, 1, IrShaderStage::Pixel, false};
+        for (const bool robust : {false, true}) {
+            for (const bool exact : {false, true}) {
+                const auto readOnly = selections(emitLoad(test, true, 8, 64, robust, exact));
+                test.written = true;
+                const auto writing = selections(emitLoad(test, true, 8, 64, robust, exact));
+                require(writing == readOnly + (robust && !exact ? 1u : 0u), "only read-only robust pixel loads may omit the result selection");
+                test.written = false;
+                test.coherent = true;
+                require(selections(emitLoad(test, true, 8, 64, robust, exact)) == readOnly, "coherent loads must retain the upstream volatile result folding");
+                test.coherent = false;
+            }
+        }
+    });
+    run("storage writers keep guarded results", [] {
+        IrProgram program;
+        program.Resources().stage = IrShaderStage::Pixel;
+        require(AnalyzeProgramRequirements(program).readOnlyStorage, "read-only pixel program lost its storage proof");
+        program.Resources().stage = IrShaderStage::Compute;
+        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "compute entry bookkeeping must keep result guards");
+        program.Resources().stage = IrShaderStage::Pixel;
+        program.Info().usesFaultBuffer = true;
+        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "fault-buffer writes must keep result guards");
+        program.Info().usesFaultBuffer = false;
+        program.Info().runtimeImageModes.emplace_back().emplace_back().targetMerge = true;
+        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "runtime target merge writes must keep result guards");
+        program.Info().runtimeImageModes.clear();
+        auto& block = program.CreateBlock();
+        program.BlockOrder().push_back(&block);
+        program.Resources().memoryInfo.emplace_back().kind = ResourceKind::Lds;
+        auto& address = program.CreateValue(IrOpcode::Void, IrType::U32);
+        address.SetImmediateU32(0u);
+        auto& active = program.CreateValue(IrOpcode::Void, IrType::Bool);
+        active.SetImmediateBool(true);
+        auto& load = program.CreateValue(IrOpcode::LoadSharedU32, IrType::U32);
+        load.AddArgument(&address);
+        load.AddArgument(&active);
+        block.AppendInstruction(&load);
+        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "read-only LDS may allocate storage and must keep result guards");
+    });
     run("volatile robust buffer omits repeated zero selection", [] {
         const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
         const auto selections = [](const std::vector<std::uint32_t>& module) {
@@ -397,7 +450,9 @@ int main() {
         };
         for (const bool robust : {false, true}) {
             for (const bool exact : {false, true}) {
-                const auto plain = emitLoad(test, true, 8, 64, robust, exact, true, false);
+                auto plainTest = test;
+                plainTest.coherent = false;
+                const auto plain = emitLoad(plainTest, true, 8, 64, robust, exact);
                 const auto coherent = emitLoad(test, true, 8, 64, robust, exact);
                 require(selections(plain) == selections(coherent) + (robust && !exact ? 1u : 0u), "only volatile guarded robust loads may omit the repeated zero selection");
             }
