@@ -56,7 +56,7 @@ void require(bool condition, std::source_location location = std::source_locatio
     }
 }
 
-void installProcessParameters() {
+void installProcessParameters(bool present = true) {
 #ifdef _WIN32
     auto* image = reinterpret_cast<std::byte*>(GetModuleHandleW(nullptr));
     require(image != nullptr);
@@ -71,8 +71,8 @@ void installProcessParameters() {
         }
     }
     require(target != nullptr);
-    processParameterMetadata[0] = static_cast<std::uint32_t>(process.data() - image);
-    processParameterMetadata[1] = static_cast<std::uint32_t>(process.size());
+    processParameterMetadata[0] = present ? static_cast<std::uint32_t>(process.data() - image) : 0;
+    processParameterMetadata[1] = present ? static_cast<std::uint32_t>(process.size()) : 0;
     DWORD oldProtect = 0;
     require(VirtualProtect(target, sizeof(*target), PAGE_READWRITE, &oldProtect) != 0);
     std::memcpy(target->Name, ".procpar", 8);
@@ -284,6 +284,23 @@ int main(int argc, char** argv) {
         require(initializes == 1);
         return 0;
     }
+#ifdef _WIN32
+    if (argc > 1 && std::strcmp(argv[1], "none") == 0) {
+        installProcessParameters(false);
+        auto* pointer = static_cast<unsigned char*>(_Znwm_nid_postfix(40));
+        require(pointer != nullptr && pointer != reinterpret_cast<unsigned char*>(storage.data()) && lastSize == 0 && initializes == 0);
+        const auto* parameters = static_cast<const unsigned char*>(ApplicationProcessParameters_nid_no_patch());
+        require(parameters != nullptr);
+        for (std::size_t offset = 0; offset < 0x40; ++offset) require(parameters[offset] == 0);
+        std::memset(pointer, 0x6b, 40);
+        _ZdlPv_nid_postfix(pointer);
+        void* aligned = nullptr;
+        require(posix_memalign_nid_postfix(&aligned, 64, 100) == 0 && aligned != nullptr && reinterpret_cast<std::uintptr_t>(aligned) % 64 == 0);
+        require(posixCalls == 0);
+        ApplicationHeapFree_nid_no_patch(aligned);
+        return 0;
+    }
+#endif
     if (argc > 1 && std::strcmp(argv[1], "default") == 0) {
         std::array<void*, 10> partial{};
         partial[0] = reinterpret_cast<void*>(&allocate);
@@ -342,6 +359,36 @@ int main(int argc, char** argv) {
         *__error_nid_postfix() = 0;
         require(reallocarray_nid_postfix(pointer, 2, SIZE_MAX) == nullptr && *__error_nid_postfix() == 12);
         ApplicationHeapFree_nid_no_patch(pointer);
+        pointer = static_cast<unsigned char*>(recallocarray_nid_postfix(nullptr, 0, 4, 10));
+        require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 40);
+        for (unsigned i = 0; i < 40; ++i) require(pointer[i] == 0);
+        std::memset(pointer, 0x5a, 40);
+        pointer = static_cast<unsigned char*>(recallocarray_nid_postfix(pointer, 4, 6, 10));
+        require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 60);
+        for (unsigned i = 0; i < 40; ++i) require(pointer[i] == 0x5a);
+        for (unsigned i = 40; i < 60; ++i) require(pointer[i] == 0);
+        auto* shrunken = static_cast<unsigned char*>(recallocarray_nid_postfix(pointer, 6, 5, 10));
+        require(shrunken == pointer);
+        for (unsigned i = 0; i < 40; ++i) require(shrunken[i] == 0x5a);
+        for (unsigned i = 40; i < 60; ++i) require(shrunken[i] == 0);
+        pointer = static_cast<unsigned char*>(recallocarray_nid_postfix(shrunken, 5, 2, 10));
+        require(pointer != nullptr);
+        for (unsigned i = 0; i < 20; ++i) require(pointer[i] == 0x5a);
+        *__error_nid_postfix() = 0;
+        require(recallocarray_nid_postfix(pointer, 2, 2, SIZE_MAX) == nullptr && *__error_nid_postfix() == 12);
+        *__error_nid_postfix() = 0;
+        require(recallocarray_nid_postfix(pointer, SIZE_MAX, 2, 2) == nullptr && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        require(recallocarray_nid_postfix(nullptr, 0, SIZE_MAX, 2) == nullptr && *__error_nid_postfix() == 12);
+        ApplicationHeapFree_nid_no_patch(pointer);
+        pointer = static_cast<unsigned char*>(recallocarray_nid_postfix(nullptr, 0, 20, 1000));
+        require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 20000);
+        std::memset(pointer, 0x33, 20000);
+        shrunken = static_cast<unsigned char*>(recallocarray_nid_postfix(pointer, 20, 14, 1000));
+        require(shrunken == pointer);
+        for (unsigned i = 0; i < 14000; ++i) require(shrunken[i] == 0x33);
+        for (unsigned i = 14000; i < 20000; ++i) require(shrunken[i] == 0);
+        ApplicationHeapFree_nid_no_patch(shrunken);
         for (std::size_t alignment : {16, 64, 4096}) {
             auto* aligned = ApplicationHeapAlign_nid_no_patch(alignment, 37);
             require(reinterpret_cast<std::uintptr_t>(aligned) % alignment == 0);
@@ -487,6 +534,14 @@ int main(int argc, char** argv) {
     require(strndup_nid_postfix(text, 5) == nullptr && *__error_nid_postfix() == 12);
     *__error_nid_postfix() = 0;
     require(getcwd_nid_postfix(nullptr, 0) == nullptr && *__error_nid_postfix() == 12);
+    *__error_nid_postfix() = 0;
+    require(recallocarray_nid_postfix(nullptr, 0, 4, 10) == nullptr && *__error_nid_postfix() == 12);
+    *__error_nid_postfix() = 0;
+    require(recallocarray_nid_postfix(nullptr, 0, SIZE_MAX, 2) == nullptr && *__error_nid_postfix() == 12);
+    std::memset(storage.data(), 0x7b, 32);
+    *__error_nid_postfix() = 0;
+    require(recallocarray_nid_postfix(storage.data(), 4, 8, 10) == nullptr && *__error_nid_postfix() == 12);
+    for (unsigned i = 0; i < 32; ++i) require(reinterpret_cast<unsigned char*>(storage.data())[i] == 0x7b);
     fail = false;
     const auto beforeScripting = frees;
     const auto sizeBeforeScripting = lastSize;

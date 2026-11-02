@@ -124,6 +124,7 @@ enum class DrawVerdict { Drawn, Nothing, Rejected };
 struct StageCapture {
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
+    std::shared_ptr<const std::vector<ShaderRecompiler::RegisteredImageView>> registeredViews;
     std::vector<ShaderRecompiler::MemoryRegion> regions;
     std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied;
     std::uint64_t forgetSerial = 0;
@@ -135,6 +136,8 @@ struct StageCapture {
 struct RelocatableUserWord {
     std::uint32_t reg;
     std::vector<std::pair<std::int64_t, std::uint32_t>> reads;
+    bool value = false;
+    std::uint32_t high = 0;
 };
 
 struct DrawRelocation {
