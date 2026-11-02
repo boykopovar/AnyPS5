@@ -299,6 +299,9 @@ if(BUILD_TESTING)
         set_tests_properties(tools_sanitizer_json PROPERTIES TIMEOUT 20)
         add_test(NAME build_eligibility COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_eligibility.py)
+        add_test(NAME tools_release_notes_check COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_release_notes_check.py)
+        set_tests_properties(tools_release_notes_check PROPERTIES TIMEOUT 20)
         add_test(NAME check_skips_ctest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips_ctest.py)
         set_tests_properties(check_skips_ctest PROPERTIES TIMEOUT 30)
@@ -461,6 +464,9 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py" "EnvReferenceDiffTests.${test_case}")
             set_tests_properties(conventions_env_reference_${test_case} PROPERTIES TIMEOUT 30)
         endforeach()
+        add_test(NAME tools_annotation_symbols_json COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotation_symbols_json.py)
+        set_tests_properties(tools_annotation_symbols_json PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_body_bom COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_body_bom.py)
         add_test(NAME conventions_blob_reads COMMAND ${Python3_EXECUTABLE}
