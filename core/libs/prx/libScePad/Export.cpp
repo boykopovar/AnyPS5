@@ -1012,9 +1012,9 @@ int APS5_VABI scePadGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
 }
 
 int APS5_VABI scePadGetInfoByPortType(std::int32_t type, PadPortInfo* info) {
-    if ((static_cast<std::uint32_t>(type) & ~2u) != 0) return PAD_ERROR_INVALID_ARG;
+    if (info == nullptr) return PAD_ERROR_INVALID_ARG;
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
-    static_cast<void>(info);
+    if ((static_cast<std::uint32_t>(type) & ~2u) != 0) return PAD_ERROR_INVALID_ARG;
     NotImplemented_nid_no_patch(__func__);
 }
 

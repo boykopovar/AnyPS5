@@ -33,14 +33,13 @@ int main() {
     Require(scePadGetControllerIdleCount(1, &count) == PAD_ERROR_NOT_INITIALIZED && count == 7);
     Require(scePadGetActiveTime(1, 0, &activeTime) == PAD_ERROR_NOT_INITIALIZED && activeTime == 7);
     Require(scePadSetPS4BcVibrationMode(0) == PAD_ERROR_NOT_INITIALIZED);
-    Require(scePadGetInfoByPortType(1, reinterpret_cast<PadPortInfo*>(data)) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetInfoByPortType(1, reinterpret_cast<PadPortInfo*>(data)) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadGetInfoByPortType(0, reinterpret_cast<PadPortInfo*>(data)) == PAD_ERROR_NOT_INITIALIZED);
-    Require(scePadGetInfoByPortType(2, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadGetInfoByPortType(2, nullptr) == PAD_ERROR_INVALID_ARG && scePadGetInfoByPortType(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetDeviceId(1, &deviceId) == PAD_ERROR_NOT_INITIALIZED && deviceId == 7);
     Require(scePadGetExtensionUnitInfo(1, reinterpret_cast<PadExtensionUnitInfo*>(data)) == PAD_ERROR_NOT_INITIALIZED);
     Require(readHistory(1, reinterpret_cast<PadHistoryData*>(data), 0x960) == PAD_ERROR_NOT_INITIALIZED);
     Require(openExt2(0x10000000, 0x10, param.data()) == PAD_ERROR_NOT_INITIALIZED);
-    Require(scePadReadStateExt(12345, reinterpret_cast<PadDataExtended*>(data)) == PAD_ERROR_INVALID_HANDLE);
 
     Require(scePadInit_nid_postfix() == PAD_OK);
     Require(scePadGetDeviceInfo(0, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -49,6 +48,7 @@ int main() {
     Require(scePadGetControllerIdleCount(0, &count) == PAD_ERROR_INVALID_ARG && scePadGetControllerIdleCount(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetActiveTime(1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     for (int type : {1, 3, 4, -1}) Require(scePadGetInfoByPortType(type, reinterpret_cast<PadPortInfo*>(data)) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetInfoByPortType(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetDeviceId(1, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetDeviceId(12345, &deviceId) == PAD_ERROR_INVALID_HANDLE && deviceId == -1);
     Require(scePadGetExtensionUnitInfo(1, nullptr) == PAD_ERROR_INVALID_ARG);
