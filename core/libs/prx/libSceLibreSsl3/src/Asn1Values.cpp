@@ -41,7 +41,7 @@ int APS5_VABI ASN1_STRING_set_nid_postfix(Asn1String* string, const void* data, 
         length = static_cast<int>(size);
     }
     auto& value = Checked(string);
-    if (data && length > 0 && value.data && value.length > 0 && !(value.flags & BorrowedData)) {
+    if (data && length > 0 && value.data && value.length >= 0 && !(value.flags & BorrowedData)) {
         const auto source = reinterpret_cast<std::uintptr_t>(data);
         const auto old = reinterpret_cast<std::uintptr_t>(value.data);
         if ((source >= old && source - old <= static_cast<std::uintptr_t>(value.length)) ||
