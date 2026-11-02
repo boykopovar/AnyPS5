@@ -19,7 +19,7 @@ int APS5_VABI sceRudpBind(int ctxId, int socketId, uint16_t vport, uint8_t muxMo
 int APS5_VABI sceRudpSetOption(int ctxId, int option, const void* value, uint32_t len);
 int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, uint32_t len);
 int APS5_VABI sceRudpInitiate(int ctxId, const void* to, uint32_t tolen, uint16_t vport);
-int APS5_VABI sceRudpGetContextStatus(int ctxId, void* status, uint32_t size);
+int APS5_VABI sceRudpGetContextStatus(int ctxId, void* status, std::size_t size);
 int APS5_VABI sceRudpGetRemoteInfo(int contextId, void* address, std::uint32_t* addressSize, std::uint16_t* virtualPort);
 int APS5_VABI sceRudpGetNumberOfPacketsToRead(int ctxId);
 int APS5_VABI sceRudpGetSizeWritable(int ctxId);
