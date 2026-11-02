@@ -58,6 +58,9 @@ void TestValidation() {
     param = Valid(output.data(), output.size());
     param.setupPacketSize = 8;
     Require(Create(param) == InvalidSetup, "a setup packet below 9 bytes is refused");
+    param = Valid(output.data(), output.size());
+    param.setupPacketSize = 0x10000;
+    Require(Create(param) == InvalidSetup, "a setup packet that does not fit the 16-bit length field is refused");
     param = Valid(nullptr, 0);
     Require(Create(param) == InvalidParameter, "a null output is refused before its size");
     param = Valid(output.data(), 9);
