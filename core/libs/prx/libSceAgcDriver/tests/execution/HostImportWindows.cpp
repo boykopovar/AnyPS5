@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -20,6 +21,9 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <span>
+#include <string_view>
+#include <vector>
 
 namespace AgcDriver {
 
@@ -206,10 +210,101 @@ Outcome SmallMappingsImportOnFirstUse() {
     return Outcome::Passed;
 }
 
+void PartialResidentAliasDispatch(AgcDriver::VulkanDevice& device, bool left) {
+#ifdef _WIN32
+    constexpr std::size_t page = GuestAlignment;
+    constexpr std::size_t bytes = 4 * page;
+    auto* data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 0x200000));
+    Require(data != nullptr, "cannot reserve the partial resident dispatch fixture");
+    struct Cleanup {
+        std::uint8_t* data;
+        VkDevice device;
+        HANDLE section = nullptr;
+        void* registered = nullptr;
+        ~Cleanup() {
+            Graphics::ClearHostImports(device);
+            if (registered != nullptr) GuestAllocations::Mutation().Remove(registered);
+            GuestArena::GuestArenaReset_nid_postfix(data, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(data, bytes);
+            if (section != nullptr) {
+                GuestArena::GuestArenaForgetSection_nid_postfix(section);
+                CloseHandle(section);
+            }
+        }
+    } cleanup{data, device.Device()};
+    cleanup.section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, bytes, nullptr);
+    Require(cleanup.section != nullptr, "cannot reserve the partial resident dispatch backing");
+    const auto shared = left ? 3 * page : 0;
+    const auto resident = left ? 0 : page;
+    GuestArena::GuestArenaMap_nid_postfix(data + shared, page, cleanup.section, shared, PAGE_READWRITE);
+    GuestArena::GuestArenaMapDirect_nid_postfix(data + resident, 3 * page, cleanup.section, resident, PAGE_READWRITE);
+    const auto requested = left ? page : 0;
+    const auto input = shared + 128;
+    const auto output = left ? shared - 64 : page - 64;
+    std::memset(data, 0x37, bytes);
+    std::vector<std::uint8_t> expected(data, data + bytes);
+    for (std::uint32_t lane = 0; lane < 32; ++lane) {
+        const std::uint32_t value = 0x12340000u + lane;
+        std::memcpy(data + input + lane * 4, &value, 4);
+        std::memcpy(expected.data() + input + lane * 4, &value, 4);
+        std::memcpy(expected.data() + output + lane * 4, &value, 4);
+    }
+    GuestAllocations::Mutation().Add(data + requested, 3 * page, true, true, true);
+    cleanup.registered = data + requested;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    Require(context.hostImportAlignment != 0, "partial resident dispatch requires host import support");
+    alignas(256) constexpr std::array<std::uint32_t, 7> code{0x34020082, 0xe0301000, 0x80000201, 0xbf8c3f70, 0xe0701000, 0x80010201, 0xbf810000};
+    std::array<std::uint32_t, 8> userData{};
+    for (const auto [index, offset] : {std::pair{0, input}, std::pair{4, output}}) {
+        const auto address = reinterpret_cast<std::uintptr_t>(data + offset);
+        userData[index] = static_cast<std::uint32_t>(address);
+        userData[index + 1] = static_cast<std::uint32_t>(address >> 32u);
+        userData[index + 2] = 128;
+        userData[index + 3] = 0x31016facu;
+    }
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{32, 1, 1}, 0, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        if (pass != 0) {
+            const GuestArena::HostWrite write(data + input, 128);
+            for (std::uint32_t lane = 0; lane < 32; ++lane) {
+                const std::uint32_t value = 0x56780000u + lane;
+                std::memcpy(data + input + lane * 4, &value, 4);
+                std::memcpy(expected.data() + input + lane * 4, &value, 4);
+                std::memcpy(expected.data() + output + lane * 4, &value, 4);
+            }
+        }
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        Require(std::memcmp(data, expected.data(), bytes) == 0, "partial resident dispatch lost copied writes or changed neighboring bytes");
+        Require(!Graphics::HostImportCovers(context, reinterpret_cast<std::uintptr_t>(data + output), 128), "partial resident dispatch unexpectedly imported the mixed range");
+    }
+#endif
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--partial-resident-alias") {
+            auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            if (AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).hostImportAlignment == 0) {
+                std::puts("skipped, the device does not import guest memory");
+                return VulkanTestSkipped;
+            }
+            for (const bool left : {false, true}) PartialResidentAliasDispatch(*device, left);
+            std::puts("partial resident alias dispatch tests passed");
+            return 0;
+        }
         const auto counting = ClearingDropsImports();
         if (counting == Outcome::NoDevice) return VulkanTestSkipped;
         if (counting == Outcome::NoImport) {

@@ -2172,7 +2172,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         try {
             entry.alias = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
         } catch (const std::runtime_error&) {
-            if (entry.ranges.size() == 1) throw;
+            if (entry.ranges.size() == 1) return failedImport();
             return joined ? failedImport() : failedBlockImport();
         }
         if (entry.alias == nullptr) return nullptr;
