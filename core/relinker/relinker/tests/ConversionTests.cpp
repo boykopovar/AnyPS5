@@ -283,7 +283,7 @@ void scanning() {
         Io::WriteU64(wrappingImage, 0x128, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         const auto roots = Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, controlDataHeader});
-        require(roots == std::set<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
+        require(roots == std::vector<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
         Io::WriteU64(wrappingImage, 0x3c0, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         Io::WriteU64(wrappingImage, 0x3c0, 0x2008);
