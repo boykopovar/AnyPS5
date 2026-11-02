@@ -31,7 +31,7 @@ overrides it).
 
 On Windows `oracle_hip.py` replaces `oracle.c`: comgr assembles and links the kernel, and HIP runs it. The CLI, the Python
 interface and the results are the same as on Linux. `HW_ORACLE_RUNTIME` picks the runtime (`hip` on Windows, `hsa`
-elsewhere). `HW_ORACLE_HIP` and `HW_ORACLE_COMGR` name other DLLs. `ROCR_VISIBLE_DEVICES` selects the GPU, through
+elsewhere; `vulkan` is never the default, see [Recompiler comparison](#recompiler-comparison)). `HW_ORACLE_HIP` and `HW_ORACLE_COMGR` name other DLLs. `ROCR_VISIBLE_DEVICES` selects the GPU, through
 `HIP_VISIBLE_DEVICES`, unless that variable is already set.
 
 ## Kernel
@@ -88,6 +88,41 @@ results = run(body, rows, wave64=True, ieee=0, dx10_clamp=1,
 
 Usual workflow: run the instruction on rows that separate the candidate models (edge values, NaN payloads, rounding
 ties), write a model that matches every row, implement it, and put measured rows in the execution test.
+
+## Recompiler comparison
+
+The `vulkan` runtime runs the same assembled kernel through the shader recompiler on the Vulkan device instead of on AMD
+hardware, so one body and one set of rows can be measured on both and the results compared. Build the runner:
+
+```sh
+cmake --build build --target agc_oracle_runner
+```
+
+| Variable | Meaning |
+| --- | --- |
+| `HW_ORACLE_RUNTIME=vulkan` | selects the runtime |
+| `HW_ORACLE_VULKAN_RUNNER` | path of the built `agc_oracle_runner` executable |
+| `ANYPS5_GPU` | case-insensitive substring of the Vulkan device name, as for every AnyPS5 tool |
+
+On Windows the runner needs `build/core/libs/libs/unpatched` in `PATH` ([BUILD](BUILD.md)). Run the hardware with the default
+runtime and the recompiler with `vulkan`, with the same body, rows and settings, each with `--json`, then compare:
+
+```sh
+SETTINGS="--ieee 0 --dx10-clamp 1 --denorm32 0 --denorm16 3 --round32 0 --round16 0 --fp16-overflow 0"
+python3 tools/hw-oracle/hw_oracle.py body.s rows.txt --json $SETTINGS > hardware.json
+HW_ORACLE_RUNTIME=vulkan HW_ORACLE_VULKAN_RUNNER=<path to agc_oracle_runner> \
+  python3 tools/hw-oracle/hw_oracle.py body.s rows.txt --json $SETTINGS > recompiler.json
+python3 tools/hw-oracle/compare_results.py hardware.json recompiler.json
+```
+
+The report's `runtime` field says which side produced it.
+
+- Compute only.
+- Whole waves: Python pads the rows with zeros to the wave size, so cross-lane instructions see the padded lanes.
+- At most 1024 lanes per dispatch.
+- No `coarse`.
+- The assembly target comes from the AMD driver on Windows or from `HW_ORACLE_TARGET`; the recompiler has no target of its
+  own, and the encoding assembled is the RDNA2 one.
 
 ## Limits
 

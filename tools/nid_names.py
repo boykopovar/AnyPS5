@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 import urllib.request
+from base64 import b64encode
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -15,7 +16,6 @@ DB_URL = ("https://raw.githubusercontent.com/zecoxao/sce_symbols"
           "/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv")
 DEFAULT_CACHE = Path(tempfile.gettempdir()) / "anyps5-nid-db" / "aerolib.csv"
 
-CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-"
 SUFFIX = bytes([0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1,
                 0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30])
 CPP_TOKEN = re.compile(
@@ -31,16 +31,7 @@ ASM_FUNCTION_MACROS = {"APS5_ASM_FUNCTION", "APS5_SIGNAL_ASM_FUNCTION"}
 
 def compute_nid(symbol):
     digest = hashlib.sha1(symbol.encode() + SUFFIX).digest()
-    rev = bytes(digest[7 - i] for i in range(8))
-    out = []
-    for i in range(0, 6, 3):
-        triple = (rev[i] << 16) | (rev[i + 1] << 8) | rev[i + 2]
-        out += [CHARSET[(triple >> 18) & 63], CHARSET[(triple >> 12) & 63],
-                CHARSET[(triple >> 6) & 63], CHARSET[triple & 63]]
-    tail = (rev[6] << 16) | (rev[7] << 8)
-    out += [CHARSET[(tail >> 18) & 63], CHARSET[(tail >> 12) & 63],
-            CHARSET[(tail >> 6) & 63]]
-    return "".join(out)
+    return b64encode(digest[:8][::-1], altchars=b"+-").decode("ascii").rstrip("=")
 
 
 def strip_nid_postfix(name):

@@ -20,6 +20,7 @@ inline constexpr std::uint8_t PrefixAddressSize = 0x67;
 inline constexpr std::uint8_t RexMin = 0x40;
 inline constexpr std::uint8_t RexMax = 0x4F;
 inline constexpr std::uint8_t RexWBit = 0x08;
+inline constexpr std::uint8_t RexBBit = 0x01;
 
 inline constexpr std::uint8_t TwoByteOpcodeEscape = 0x0F;
 
@@ -108,6 +109,8 @@ inline constexpr std::uint8_t OneByteLoopMax = 0xE2;
 inline constexpr std::uint8_t OneByteInOutImm8Min = 0xE4;
 inline constexpr std::uint8_t OneByteInOutImm8Max = 0xE7;
 inline constexpr std::uint8_t OneByteInt = 0xCD;
+inline constexpr std::uint8_t OneByteInt3 = 0xCC;
+inline constexpr std::uint8_t OneByteNop = 0x90;
 inline constexpr std::uint8_t OneByteRetImm16 = 0xC2;
 inline constexpr std::uint8_t OneByteRetFarImm16 = 0xCA;
 inline constexpr std::uint8_t OneByteEnter = 0xC8;
@@ -215,6 +218,8 @@ inline constexpr std::uint8_t ModRmRmRipRelative = 0x05;
 inline constexpr std::uint8_t Grp3RegTestMax = 0x01;
 inline constexpr std::uint8_t SibBaseMask = 0x07;
 inline constexpr std::uint8_t SibBaseDisp32 = 0x05;
+inline constexpr std::uint8_t SibIndexMask = 0x38;
+inline constexpr std::uint8_t SibIndexNone = 0x20;
 
 inline constexpr std::size_t Disp8Size = 1;
 inline constexpr std::size_t Disp32Size = 4;

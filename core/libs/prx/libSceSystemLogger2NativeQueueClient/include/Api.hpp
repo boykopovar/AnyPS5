@@ -17,4 +17,6 @@ int APS5_VABI sceSystemLogger2NativeQueueClientGetEvent2();
 int APS5_VABI sceSystemLogger2NativeQueueClientInitialize();
 int APS5_VABI sceSystemLogger2NativeQueueClientTerminate();
 
+int APS5_VABI libSceSystemLogger2NativeQueueClientUnknown_AuwwRl6zAcU_nid_no_patch();
+
 }

@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/IndirectDispatch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WriteEvidence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Packets/PacketTiming.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/LabelTakes.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
@@ -102,6 +103,9 @@ public:
     static void FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, const DrawProgram& program, Pm4::DrawParameters& parameters);
     static std::optional<Graphics::IndirectDrawPath> ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect);
     static void tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied = {});
+    static void tagUserValueWords(DispatchVariant& variant, const DrawProgram& program);
+    static std::uint64_t relocatedContentKey(const RelocatableUserWord& word, std::uint32_t value, bool& readable);
+    static void applyShaderDataPatches(DispatchVariant& variant);
     static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request, std::string_view suffix = {});
     static void reportSkip(const char* kind, const std::string& what);
     DrawEntryCounters DrawCacheCounters();
@@ -117,8 +121,16 @@ public:
     static std::uint64_t DrawCacheBytes();
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
+    static void SetCaptureCheckHook(void (*hook)());
 
 private:
+    class RecaptureScope {
+    public:
+        RecaptureScope();
+        ~RecaptureScope();
+        RecaptureScope(const RecaptureScope&) = delete;
+        RecaptureScope& operator=(const RecaptureScope&) = delete;
+    };
     friend class SampledReadScope;
     friend struct PendingView;
     friend struct PacketTimer;
@@ -194,8 +206,6 @@ private:
     void traceDrawKeyLookup(const std::array<std::uint64_t, 5>& components, bool cacheMiss);
     static std::uint64_t drawIdentityKey(const QueueState& queue, const ShaderRegistry& registry);
     static bool drawRelocationEnabled();
-    static std::uint64_t relocatedContentKey(const RelocatableUserWord& word, std::uint32_t value, bool& readable);
-    static void applyShaderDataPatches(DispatchVariant& variant);
     void learnPendingRelocation();
     void relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches);
     void reportDrawRelocation();
@@ -220,6 +230,7 @@ private:
     void noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
     void noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue);
     void noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue);
+    void retireLabelTakes(std::uint32_t queue, std::uint64_t received);
     bool storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer = nullptr);
     static void traceLabel(std::span<const std::uint32_t> packet, std::uint32_t queue);
     static std::array<WriteRecord, 16384>& writeHistory();
@@ -319,20 +330,21 @@ private:
     static void notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received);
     void landPendingWaits(std::uint32_t queue);
     struct ResolvedDispatch {
-        std::uint64_t address = 0, key = 0, indirectArguments = 0;
+        std::uint64_t address = 0, key = 0, indirectArguments = 0, forgetAtCapture = 0;
         std::array<std::uint32_t, 5> packet{};
         std::shared_ptr<const ShaderSnapshot> registeredShader;
         std::shared_ptr<const ShaderRecompiler::RecompileResult> compiledResult;
         std::shared_ptr<DispatchVariant> keepVariant, attachVariant;
+        std::shared_ptr<DispatchEntry> missedEntry;
         std::shared_ptr<ShaderMemory> shaderMemory;
         std::vector<ShaderRecompiler::MemoryRegion> captured;
         std::vector<std::uint32_t> liveWords;
         std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
-        bool dataHit = false, cached = false, validated = false;
+        bool dataHit = false, cached = false, validated = false, missedDiffering = false, noDispatchCache = false;
         std::chrono::steady_clock::time_point resolvedAt{};
     };
     struct GroupCaptureStats {
-        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, memoryMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, deviceRejects = 0, argumentMismatches = 0;
+        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, memoryMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, unknownWrites = 0, deviceRejects = 0, argumentMismatches = 0;
         double resolveMs = 0, resolveMaxMs = 0, ageMs = 0, ageMaxMs = 0;
         std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
     };
@@ -363,6 +375,8 @@ private:
     bool recordLabelsForPacket(VulkanDevice* localDevice, std::uint32_t queue);
     void recordQueuedLabelsBeforeRead(std::uint32_t queue);
     bool recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> regions);
+    static void runCaptureCheckHook();
+    static bool capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared = {});
     void noteQueuedLabels(std::uint32_t queue);
     void recordQueuedLabelsByTry(std::uint32_t queue, std::atomic<std::uint64_t>& counter);
     static void recordQueuedLabelsFromHook();
@@ -462,8 +476,7 @@ private:
 
     AgcDriver::Mutex labelStoresMutex;
     std::unordered_map<std::uint64_t, std::array<LabelStore, LabelStoreHistory>> labelStores;
-    std::unordered_map<std::uint64_t, std::uint64_t> labelPasses;
-    std::unordered_map<std::uint64_t, std::uint64_t> labelTaken;
+    LabelTakes labelTakes;
 
     std::vector<std::shared_ptr<VulkanDevice>> replacedDevices;
     std::stop_token shutdownToken = LibcShutdownToken_nid_postfix();

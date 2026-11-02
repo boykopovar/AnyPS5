@@ -32,6 +32,7 @@ int APS5_VABI sceAppContentAddcontEnqueueDownloadByEntitlemetId(const char* enti
 int APS5_VABI sceAppContentAddcontEnqueueDownloadSp(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel);
 int APS5_VABI sceAppContentAddcontMountByEntitlemetId(const char* entitlementId, AppContentMountPoint* mountPoint);
 int APS5_VABI sceAppContentAddcontShrink(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel);
+int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel);
 int APS5_VABI sceAppContentAppParamGetString(void);
 int APS5_VABI sceAppContentDownload0Expand(void);
 int APS5_VABI sceAppContentDownload0Shrink(void);
@@ -41,7 +42,9 @@ int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlement
 int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppContentAddcontInfo* list, uint32_t listNum, uint32_t* hitNum);
 int APS5_VABI sceAppContentGetDownloadedStoreCountry(void);
 int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key);
+int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag);
 int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag);
+int APS5_VABI sceAppContentGetPlayableStatus(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, uint32_t* playableStatus);
 int APS5_VABI sceAppContentGetRegion(void);
 int APS5_VABI sceAppContentRequestPatchInstall(void);
 int APS5_VABI sceAppContentTemporaryDataMount(AppContentMountPoint* mountPoint);

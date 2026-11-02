@@ -20,6 +20,28 @@ CASES = ("memory", "owned_state", "concurrent_wait", "validation", "dispatch", "
 PARITY_CASES = tuple(case for case in CASES if case not in ("node_pool", "worker_wait"))
 
 
+def resolve_cli_path(path):
+    path = Path(path)
+    try:
+        resolved = Path(os.path.realpath(path))
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise ValueError(f"{path}: path is a symbolic link loop: {error}") from error
+        raise ValueError(f"{path}: path is a symbolic link loop")
+    return resolved
+
+
+def resolve_existing_cli_path(path):
+    resolved = resolve_cli_path(path)
+    if not resolved.exists():
+        raise FileNotFoundError(2, "No such file or directory", str(resolved))
+    return resolved
+
+
 def stage_libraries(directory, build, toolchain, dependencies):
     providers = {path.name.lower(): path for path in (build / "core/libs/libs").glob("*.prx")}
     if toolchain is not None:
@@ -112,6 +134,9 @@ def run(args, directory):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run the CPU JobManager fixtures through native relinker startup using an owned module or the host fallback.")
     provider = parser.add_mutually_exclusive_group(required=True)
     provider.add_argument("--module", type=Path, help="Owned decrypted SELF or ELF libSceJobManager.prx")
@@ -138,13 +163,13 @@ def main():
         for name in ("build", "relinker", "toolchain", "module"):
             value = getattr(args, name)
             if value is not None:
-                setattr(args, name, value.resolve(strict=True))
-        directory = args.output.resolve() if args.output else Path(tempfile.mkdtemp(prefix="anyps5-jobmanager-"))
+                setattr(args, name, resolve_existing_cli_path(value))
+        directory = resolve_cli_path(args.output) if args.output else Path(tempfile.mkdtemp(prefix="anyps5-jobmanager-"))
         if args.output:
             directory.mkdir(parents=True, exist_ok=False)
         print(f"Artifacts: {directory}", flush=True)
         return run(args, directory)
-    except (AuditError, OSError, Refused, RuntimeError, subprocess.SubprocessError) as error:
+    except (AuditError, OSError, Refused, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         if isinstance(error, subprocess.CalledProcessError) and error.stderr:
             print(error.stderr.decode(errors="replace"), file=sys.stderr)
