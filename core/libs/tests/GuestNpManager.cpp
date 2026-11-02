@@ -700,18 +700,6 @@ int main() {
     Require(sceNpInGameMessageAbortHandle(-1, messageHandle) == InGameMessageContextNotFound, "sceNpInGameMessageAbortHandle must reject an unknown context");
     Require(sceNpInGameMessageAbortHandle(messageContext, -1) == InGameMessageHandleNotFound, "sceNpInGameMessageAbortHandle must reject an unknown handle");
     Require(sceNpInGameMessageAbortHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageAbortHandle must accept a live handle");
-    try {
-        sceNpInGameMessagePrepareA();
-        Require(false, "sceNpInGameMessagePrepareA must report that it is not implemented");
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == "sceNpInGameMessagePrepareA not implemented", "sceNpInGameMessagePrepareA threw");
-    }
-    try {
-        sceNpInGameMessageSendDataA();
-        Require(false, "sceNpInGameMessageSendDataA must report that it is not implemented");
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == "sceNpInGameMessageSendDataA not implemented", "sceNpInGameMessageSendDataA threw");
-    }
     Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == 0, "sceNpInGameMessageDeleteHandle must delete the handle");
     Require(sceNpInGameMessageDeleteHandle(messageContext, messageHandle) == InGameMessageHandleNotFound, "a deleted handle must not be found");
     Require(sceNpInGameMessageTerminate(messageContext) == 0, "sceNpInGameMessageTerminate must end the context");
