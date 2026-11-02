@@ -223,15 +223,79 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     const bool overflowed = std::isinf(value) && guestErrno == RangeError;
     if (pten != 0 && stop != text && (std::isfinite(value) || overflowed)) {
         if (Hexadecimal(text)) {
-            if (const auto hexValue = UnscaledHexadecimal<TFloat>(text, end)) {
-                value = *hexValue;
-                if (std::isfinite(value) && value != static_cast<TFloat>(0)) {
-                    const int scaledPten = static_cast<int>(std::clamp(pten, -ExponentLimit, ExponentLimit));
-                    const TFloat scaled = value * std::pow(static_cast<TFloat>(10), static_cast<TFloat>(scaledPten));
-                    if (std::isinf(scaled) || (scaled == static_cast<TFloat>(0) && value != scaled)) {
-                        guestErrno = RangeError;
+            if (overflowed && pten < 0) {
+                const char* cursor = text;
+                while (std::isspace(static_cast<unsigned char>(*cursor))) ++cursor;
+                if (*cursor == '+' || *cursor == '-') ++cursor;
+                cursor += 2;
+                std::string hexMantissa;
+                std::int64_t hexFrac = 0;
+                bool hexPoint = false;
+                while (true) {
+                    const int d = HexadecimalDigit(*cursor);
+                    if (d < 0) {
+                        if (*cursor == '.' && !hexPoint) { hexPoint = true; ++cursor; continue; }
+                        break;
                     }
-                    value = scaled;
+                    if (!hexMantissa.empty() || d != 0) ++hexFrac;
+                    hexMantissa += "0123456789abcdef"[d];
+                    ++cursor;
+                }
+                std::int64_t hexExp = 0;
+                if (*cursor == 'p' || *cursor == 'P') {
+                    const char* first = cursor + 1;
+                    const bool minus = *first == '-';
+                    if (*first == '+' || *first == '-') ++first;
+                    if (std::isdigit(static_cast<unsigned char>(*first))) {
+                        do {
+                            hexExp = hexExp > std::numeric_limits<std::int64_t>::max() / 10
+                                ? std::numeric_limits<std::int64_t>::max()
+                                : hexExp * 10 + (*first++ - '0');
+                        } while (std::isdigit(static_cast<unsigned char>(*first)));
+                        if (minus) hexExp = -hexExp;
+                        cursor = first;
+                    }
+                }
+                hexExp -= 4 * hexFrac;
+                if (end != nullptr) *end = const_cast<char*>(cursor);
+                if (!hexMantissa.empty()) {
+                    std::uint64_t hi = 0, lo = 0;
+                    for (const char c : hexMantissa) {
+                        hi = (hi << 4u) | (lo >> 60u);
+                        lo = (lo << 4u) | static_cast<unsigned>(HexadecimalDigit(c));
+                    }
+                    std::string decMantissa;
+                    __int128_t val = static_cast<__int128_t>(hi) << 64 | static_cast<__int128_t>(lo);
+                    while (val > 0) {
+                        decMantissa += static_cast<char>('0' + static_cast<unsigned>(val % 10));
+                        val /= 10;
+                    }
+                    if (decMantissa.empty()) decMantissa = "0";
+                    std::reverse(decMantissa.begin(), decMantissa.end());
+                    const long long digitEstimate = std::llround(static_cast<long long>(hexExp) * 0.3010299956639812L);
+                    long long decExp = std::clamp(pten, -ExponentLimit, ExponentLimit) - digitEstimate;
+                    decExp = std::clamp(decExp, -ExponentLimit, ExponentLimit);
+                    std::string number = decMantissa + 'e' + std::to_string(decExp);
+                    guestErrno = 0;
+                    value = parse(number.c_str(), nullptr);
+                    if (hexExp != 0) {
+                        const TFloat scaled = std::scalbn(value, static_cast<int>(std::clamp(hexExp,
+                            static_cast<std::int64_t>(std::numeric_limits<TFloat>::max_exponent),
+                            static_cast<std::int64_t>(-std::numeric_limits<TFloat>::max_exponent))));
+                        if ((std::isinf(scaled) || (scaled == static_cast<TFloat>(0) && value != scaled))
+                            && std::isfinite(value) && value != static_cast<TFloat>(0)) {
+                            guestErrno = RangeError;
+                        }
+                        value = scaled;
+                    }
+                }
+            } else {
+                const std::int64_t clamped = std::clamp(pten, -ExponentLimit, ExponentLimit);
+                const TFloat before = value;
+                guestErrno = 0;
+                value = value * std::pow(static_cast<TFloat>(10), static_cast<TFloat>(clamped));
+                if (std::isinf(value) || (value == static_cast<TFloat>(0) && before != static_cast<TFloat>(0))) {
+                    guestErrno = RangeError;
                 }
             }
         } else {
