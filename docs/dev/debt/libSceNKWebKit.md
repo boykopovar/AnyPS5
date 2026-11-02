@@ -8,6 +8,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF and WebCore value layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfStringAbi.hpp) (libSceNKWebKit) - `WTF::String`, `StringImpl`, `StringView`, `CString`, `URL` and the WebCore geometry, transform and `Color` layouts follow the release 64-bit headers at the [pinned source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h) and are pinned with `static_assert`; they are tested on Windows, not against console binaries. `StringImpl::destroy`, atom and symbol strings and external buffers still throw, so a string whose last reference guest code drops terminates. `Expected<unsigned, HTMLIntegerParsingError>` follows the pinned `Expected.h`; its console ABI is unverified.
 - [WTF text builder layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfTextAbi.hpp) (libSceNKWebKit) - layouts, buffer growth and the `shrinkToFit` threshold are not checked against a console binary. `WTF::StringBuilder` (40 bytes) and `WTF::TextStream` (56 bytes) follow release 64-bit [StringBuilder.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilder.h#L365-L376), [CheckedArithmetic.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/CheckedArithmetic.h#L91-L114) and [TextStream.h](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/TextStream.h#L168-L171) without `ASSERT_ENABLED`, pinned with `static_assert`. They hold for every WebKit revision with all 27 exports, [bddada44652f](https://github.com/WebKit/WebKit/commit/bddada44652f) (January 2020) to [e12a212a531a](https://github.com/WebKit/WebKit/commit/e12a212a531a) (May 2021); from `1d10fce7651a` the `TextStream` flags are one byte, the bit read unchanged.
 - [Media preferences](../../../core/libs/prx/libSceNKWebKit/src/Preferences.cpp) (libSceNKWebKit) - unset `MediaSourceEnabled`, `EncryptedMediaAPIEnabled` and `SourceBufferChangeTypeEnabled` getters throw, and feature-key setters for `EncryptedMediaAPIEnabled`, `SourceBufferChangeTypeEnabled` and `WebMParserEnabled` throw, because the PlayStation media player configuration behind `ENABLE_MEDIA_SOURCE` and `ENABLE_ENCRYPTED_MEDIA` is not in the pinned source. Other defaults evaluate [UnifiedWebPreferences.yaml](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml) for PlayStation; downstream console overrides are unverified.
+- [WebCore::HTTPHeaderMap](../../../core/libs/prx/libSceNKWebKit/src/HttpHeaderMap.cpp) - the console module layout is unverified. The 32-byte map, two 16-byte vectors, default-int enum numbered by sorted names, string ownership and release operations follow [the pinned headers and implementation](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPHeaderMap.h); vector allocation uses WTF fastMalloc/fastFree. Null objects, null accessed storage, overflowing vector/value sizes and name-table indices outside 0–94 throw. `isolatedCopy` remains unimplemented: the inventory symbol has no ref qualifier, while this source declares `const &` and `&&` overloads; their ABI correspondence needs separate evidence.
 
 - [FastBitVector exports](../../../core/libs/prx/libSceNKWebKit/src/WtfFastBitVector.cpp) have no console ABI or behavior verification. The 16-byte owner (word pointer at 0, 64-bit bit count at 8), range clearing, growth and copying follow the paired header and [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastBitVector.cpp). `resizeSlow` preserves the stored bit count and unused bits of existing words; new words are zeroed. Allocation uses the module's `fastMalloc` and `fastFree`. Invalid ranges, null accessed storage, shrinking the word count and overflowing the upstream round-up throw instead of reproducing assertion failures or invalid memory access. Closes when: compared with a console module.
 
@@ -58,7 +59,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 ### Known export names; ABI prototypes unverified
 
-- The 114 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
+- The 113 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
 
 ### Older callable exports
 
@@ -68,7 +69,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6501 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 6491 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -2220,12 +2221,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore13GraphicsLayerD0Ev` | `5Rj2MyJZATM` |
 | `_ZN7WebCore13GraphicsLayerD1Ev` | `Qf7JVe4YMQ8` |
 | `_ZN7WebCore13GraphicsLayerD2Ev` | `YXN2MQWUcQE` |
-| `_ZN7WebCore13HTTPHeaderMap3setERKN3WTF6StringES4_` | `CUlajtWO-L4` |
-| `_ZN7WebCore13HTTPHeaderMap6appendERKN3WTF6StringES4_` | `17lDGYhSTx4` |
-| `_ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE` | `+uk5J35y6WQ` |
-| `_ZN7WebCore13HTTPHeaderMap6removeERKN3WTF6StringE` | `-LVXigKk--w` |
-| `_ZN7WebCore13HTTPHeaderMapC1Ev` | `qVrMxeDN6Zs` |
-| `_ZN7WebCore13HTTPHeaderMapC2Ev` | `lsMB2OXXR-Q` |
 | `_ZN7WebCore13HitTestResult12setInnerNodeEPNS_4NodeE` | `SCoaMrvikBA` |
 | `_ZN7WebCore13HitTestResultC1ERKNS_10LayoutRectE` | `Eheq1igFqCM` |
 | `_ZN7WebCore13HitTestResultC1ERKNS_11LayoutPointE` | `8IR1mG6ZOnM` |
@@ -3321,7 +3316,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore20UserGestureIndicatorD2Ev` | `y8w4lDQtlAo` |
 | `_ZN7WebCore20endOfEditableContentERKNS_15VisiblePositionE` | `c9gkeiGoRPU` |
 | `_ZN7WebCore20findClosestPlainTextERKNS_11SimpleRangeERKN3WTF6StringENS3_9OptionSetINS_14FindOptionFlagEEEm` | `S-JBod0h2e0` |
-| `_ZN7WebCore20httpHeaderNameStringENS_14HTTPHeaderNameE` | `jajO-tAdNek` |
 | `_ZN7WebCore20lastOffsetForEditingERKNS_4NodeE` | `GSIH23bQiUk` |
 | `_ZN7WebCore20nextSentencePositionERKNS_15VisiblePositionE` | `0P2v-cE-4Hg` |
 | `_ZN7WebCore20previousWordPositionERKNS_15VisiblePositionE` | `6ZjTW1uImXg` |
@@ -5491,9 +5485,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore13FetchResponse16resourceResponseEv` | `FAKbB9NPYHA` |
 | `_ZNK7WebCore13GraphicsLayer18getDebugBorderInfoERNS_5ColorERf` | `PjcqP0lC4U8` |
 | `_ZNK7WebCore13GraphicsLayer26backingStoreMemoryEstimateEv` | `NDAHXMuRQ5M` |
-| `_ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE` | `Zkmt7pm3d5M` |
-| `_ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE` | `oKamLgrFO+k` |
-| `_ZNK7WebCore13HTTPHeaderMap8containsERKN3WTF6StringE` | `9w0VG82erX8` |
 | `_ZNK7WebCore13HitTestResult10isSelectedEv` | `dkCPPTsZyu4` |
 | `_ZNK7WebCore13HitTestResult10targetNodeEv` | `p8H37RdDza0` |
 | `_ZNK7WebCore13HitTestResult11targetFrameEv` | `kwYsxmyDsvU` |
