@@ -86,6 +86,12 @@ void TestRemap() {
     RequireInvalidArgument([&] { remapQP_nid_postfix(&wide, 11, 1); }, "QP over 32 bits");
     wide.index = 3;
     RequireInvalidArgument([&] { remapQP_nid_postfix(&wide, -1, 1); }, "negative shift");
+    for (const std::uint8_t index : {std::uint8_t{3}, std::uint8_t{255}}) {
+        wide.index = index;
+        RequireInvalidArgument([&] { remapQP_nid_postfix(&wide, INT32_MAX, 1); }, "largest shift");
+        RequireInvalidArgument([&] { remapQP_nid_postfix(&wide, INT32_MIN, 1); }, "smallest shift");
+    }
+    wide.index = 3;
     remapQP_nid_postfix(&wide, -1, 0);
 }
 

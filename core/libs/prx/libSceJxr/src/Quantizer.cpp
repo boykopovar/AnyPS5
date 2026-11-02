@@ -24,7 +24,7 @@ void RequireShift(const void* quantizer, std::int32_t shift, std::int32_t scaled
     Require(quantizer != nullptr, function, "null quantizer");
     const auto index = *static_cast<const std::uint8_t*>(quantizer);
     if (index == 0 || !scaled) return;
-    const auto exponent = index < 16 ? shift : (index >> 4) - 1 + shift;
+    const std::int64_t exponent = static_cast<std::int64_t>(shift) + (index < 16 ? 0 : (index >> 4) - 1);
     Require(exponent >= 0 && exponent <= 24, function, "shift leaves the QP outside 32 bits");
 }
 
