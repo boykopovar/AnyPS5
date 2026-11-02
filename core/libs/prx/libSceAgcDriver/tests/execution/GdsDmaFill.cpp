@@ -147,8 +147,11 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         using namespace AgcDriver::DriverDetail;
+        const bool sharedMapping = AgcDriver::Pm4::GdsShared();
+        check(sharedMapping == (AgcDriver::Pm4::ImportableGdsRequested() && std::getenv("APS5_NO_SHARED_GDS") == nullptr), sharedMapping ? "the GDS is in shared memory although that was not requested or is switched off" : "the GDS kept its private mapping although shared memory was requested");
         const bool shared = AgcDriver::Pm4::GdsImportable();
-        check(shared == (AgcDriver::Pm4::ImportableGdsRequested() && std::getenv("APS5_NO_SHARED_GDS") == nullptr), shared ? "the GDS is in shared memory although that was not requested or is switched off" : "the GDS kept its private mapping although shared memory was requested");
+        check(!shared || sharedMapping, "the GDS counts as importable without a shared mapping");
+        if (sharedMapping && !shared) std::printf("the device refused the host import of the shared GDS: the copy path is checked\n");
         auto* readBack = GuestBlock();
         auto* filled = GuestBlock();
         auto* held = GuestBlock();

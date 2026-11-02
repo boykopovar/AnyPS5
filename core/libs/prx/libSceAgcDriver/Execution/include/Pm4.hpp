@@ -16,7 +16,9 @@ constexpr std::size_t GdsBytes = 0x10000;
 std::uint64_t GdsAddress();
 void RequestImportableGds(bool requested);
 bool ImportableGdsRequested();
+bool GdsShared();
 bool GdsImportable();
+void RejectGdsImport();
 
 struct DrawParameters {
     std::uint64_t indexAddress;

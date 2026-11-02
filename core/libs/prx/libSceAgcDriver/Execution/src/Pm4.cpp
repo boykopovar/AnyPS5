@@ -20,6 +20,7 @@ namespace AgcDriver::Pm4 {
 namespace {
 
 std::atomic<bool> importableGdsRequested{false};
+std::atomic<bool> gdsShared{false};
 std::atomic<bool> gdsImportable{false};
 
 }
@@ -32,9 +33,18 @@ bool ImportableGdsRequested() {
     return importableGdsRequested.load(std::memory_order_acquire);
 }
 
+bool GdsShared() {
+    static_cast<void>(GdsAddress());
+    return gdsShared.load(std::memory_order_acquire);
+}
+
 bool GdsImportable() {
     static_cast<void>(GdsAddress());
     return gdsImportable.load(std::memory_order_acquire);
+}
+
+void RejectGdsImport() {
+    gdsImportable.store(false, std::memory_order_release);
 }
 
 std::uint64_t GdsAddress() {
@@ -50,6 +60,7 @@ std::uint64_t GdsAddress() {
                 close_nid_postfix(descriptor);
                 if (shared != nullptr && shared != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1))) {
                     std::memset(shared, 0, GdsBytes);
+                    gdsShared.store(true, std::memory_order_release);
                     gdsImportable.store(true, std::memory_order_release);
                     return reinterpret_cast<std::uint64_t>(shared);
                 }
