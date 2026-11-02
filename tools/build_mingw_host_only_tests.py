@@ -1,9 +1,33 @@
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+
+
+def object_document(value, path, name):
+    if not isinstance(value, dict):
+        raise ValueError(f"{path}: invalid {name} (expected an object)")
+    return value
+
+
+def object_entries(value, path, name):
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise ValueError(f"{path}: invalid {name} (expected a list of objects)")
+    return value
+
+
+def target_document(value, path):
+    target = object_document(value, path, "CMake target")
+    if "name" in target and not isinstance(target["name"], str):
+        raise ValueError(f"{path}: invalid CMake target name (expected a string)")
+    link = object_document(target.get("link", {}), path, "CMake target link")
+    object_entries(link.get("commandFragments", []), path, "CMake link command fragments")
+    object_entries(target.get("artifacts", []), path, "CMake target artifacts")
+    object_entries(target.get("sources", []), path, "CMake target sources")
+    return target
 
 
 def read_reply(build_dir):
@@ -12,17 +36,26 @@ def read_reply(build_dir):
     if not indexes:
         raise ValueError(f"{reply_dir}: no CMake File API index; configure with the codemodel-v2 query first")
     index = max(indexes, key=lambda path: path.stat().st_mtime_ns)
-    document = json.loads(index.read_text(encoding="utf-8"))
-    codemodel = document.get("reply", {}).get("codemodel-v2")
+    document = object_document(json.loads(index.read_text(encoding="utf-8")), index, "CMake File API index")
+    reply = object_document(document.get("reply", {}), index, "CMake File API reply")
+    codemodel = reply.get("codemodel-v2")
+    if codemodel is None:
+        raise ValueError(f"{index}: missing codemodel-v2 reply")
+    codemodel = object_document(codemodel, index, "CMake codemodel reference")
     if not codemodel:
         raise ValueError(f"{index}: missing codemodel-v2 reply")
-    model = json.loads((reply_dir / codemodel["jsonFile"]).read_text(encoding="utf-8"))
+    model_path = reply_dir / codemodel["jsonFile"]
+    model = object_document(json.loads(model_path.read_text(encoding="utf-8")), model_path, "CMake codemodel")
     configurations = model.get("configurations", [])
     if len(configurations) != 1:
         raise ValueError(f"{index}: expected one CMake configuration, found {len(configurations)}")
+    configuration = object_document(configurations[0], model_path, "CMake configuration")
     targets = {}
-    for target in configurations[0].get("targets", []):
-        targets[target["id"]] = json.loads((reply_dir / target["jsonFile"]).read_text(encoding="utf-8"))
+    for target in configuration.get("targets", []):
+        target = object_document(target, model_path, "CMake target reference")
+        target_path = reply_dir / target["jsonFile"]
+        targets[target["id"]] = target_document(
+            json.loads(target_path.read_text(encoding="utf-8")), target_path)
     return Path(model["paths"]["source"]).resolve(), targets
 
 
@@ -36,33 +69,48 @@ def is_libc_link(name, target):
     if name == "libc":
         return True
     command = link_command(target)
-    return re.search(r"(?i)(?:^|[/\\\s])libc(?:\.prx|\.dll\.a)(?:$|[\s\"'])", command) is not None
+    return re.search(r"(?i)(?:^|[/\\\s])(?:libc\.prx|(?:lib)?libc\.dll\.a)(?:$|[\s\"'])", command) is not None
 
 
 def links_guest_libc(target):
     return is_libc_link(target["name"], target)
 
 
+def is_core_libs_test_source(source_path, core_libs):
+    try:
+        relative = source_path.resolve().relative_to(core_libs)
+    except ValueError:
+        return False
+    return "tests" in relative.parent.parts
+
+
 def is_product_library(target, source_root):
     if target.get("type") not in {"STATIC_LIBRARY", "SHARED_LIBRARY", "MODULE_LIBRARY"}:
         return False
     source_dir = (source_root / target["paths"]["source"]).resolve()
+    core_libs = (source_root / "core" / "libs").resolve()
     try:
-        source_dir.relative_to(source_root / "core" / "libs")
+        source_dir.relative_to(core_libs)
     except ValueError:
         return False
-    try:
-        source_dir.relative_to(source_root / "core" / "libs" / "tests")
-    except ValueError:
-        return True
-    return False
+    sources = target.get("sources", [])
+    if not isinstance(sources, list) or any(not isinstance(source, dict) for source in sources):
+        raise ValueError("invalid library sources: expected a list of objects")
+    original_sources = [source_root / source["path"] for source in sources if not source.get("isGenerated")]
+    if not original_sources:
+        try:
+            source_dir.relative_to(core_libs / "tests")
+        except ValueError:
+            return True
+        return False
+    return not all(is_core_libs_test_source(source, core_libs) for source in original_sources)
 
 
 def link_command_mentions_target(command, target):
     link_names = set()
     for artifact in target.get("artifacts", []):
         name = Path(artifact.get("path", "")).name
-        if name and name in command:
+        if name and re.search(rf"(?i)(?:^|[/\\:=\s\"',]){re.escape(name)}(?=$|[\s\"',])", command):
             return True
         for suffix in (".dll.a", ".dylib", ".prx", ".so", ".a", ".lib"):
             if name.casefold().endswith(suffix):
@@ -82,12 +130,24 @@ def link_command_mentions_target(command, target):
 
 
 def links_product_library(target, targets, source_root):
-    command = link_command(target)
-    if not command:
-        return False
-    for linked_target in targets.values():
-        if is_product_library(linked_target, source_root) and link_command_mentions_target(command, linked_target):
-            return True
+    if links_guest_libc(target):
+        return True
+    pending = [target]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        command = link_command(current)
+        if not command:
+            continue
+        for candidate_id, candidate in targets.items():
+            if candidate_id in seen or candidate.get("type") not in {"STATIC_LIBRARY", "SHARED_LIBRARY", "MODULE_LIBRARY"}:
+                continue
+            if not link_command_mentions_target(command, candidate):
+                continue
+            if is_product_library(candidate, source_root) or links_guest_libc(candidate):
+                return True
+            seen.add(candidate_id)
+            pending.append(candidate)
     return False
 
 
@@ -155,7 +215,7 @@ def main(argv=None):
     parser.add_argument("--list-only", action="store_true")
     args = parser.parse_args(argv)
     try:
-        source_root, targets = read_reply(args.build_dir.resolve())
+        source_root, targets = read_reply(Path(os.path.realpath(args.build_dir)))
         changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
         selected = host_only_test_targets(source_root, targets, changed_paths)
         if not selected:

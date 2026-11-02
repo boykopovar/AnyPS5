@@ -55,7 +55,7 @@ struct FrameRecord {
 };
 static_assert(sizeof(FrameRecord) == NameOffset);
 
-[[gnu::noinline]] std::vector<Frame> CaptureFrames(int limit) {
+[[gnu::noinline]] std::vector<Frame> CaptureFrames(int limit, const void* caller) {
     void* addresses[MaxFrames];
 #if defined(__linux__) || defined(__APPLE__)
     const int captured = backtrace(addresses, MaxFrames);
@@ -77,8 +77,14 @@ static_assert(sizeof(FrameRecord) == NameOffset);
 
     const int captured = state.count;
 #endif
+    int first = 2;
+    for (int index = 0; index < captured; ++index) {
+        if (addresses[index] != caller) continue;
+        first = index;
+        break;
+    }
     std::vector<Frame> frames;
-    for (int index = 2; index < captured && (limit < 0 || static_cast<int>(frames.size()) < limit); ++index) {
+    for (int index = first; index < captured && (limit < 0 || static_cast<int>(frames.size()) < limit); ++index) {
 #if defined(__linux__) || defined(__APPLE__)
         Dl_info info{};
         if (dladdr(addresses[index], &info) == 0 || info.dli_fbase == nullptr || info.dli_fname == nullptr) continue;
@@ -114,7 +120,7 @@ extern "C" {
 
 int APS5_VABI sceLibcBacktraceGetBufferSize_nid_postfix(int limit, int* count, std::size_t* size) {
     if (count == nullptr || size == nullptr) throw std::invalid_argument("sceLibcBacktraceGetBufferSize: null output");
-    const auto frames = CaptureFrames(limit);
+    const auto frames = CaptureFrames(limit, __builtin_return_address(0));
     std::size_t total = 0;
     for (const auto& frame : frames) total += RecordSize(frame);
     *count = static_cast<int>(frames.size());
@@ -124,7 +130,7 @@ int APS5_VABI sceLibcBacktraceGetBufferSize_nid_postfix(int limit, int* count, s
 
 int APS5_VABI sceLibcBacktraceSelf_nid_postfix(int limit, void* buffer, std::size_t size, int* count) {
     if (buffer == nullptr || count == nullptr) throw std::invalid_argument("sceLibcBacktraceSelf: null argument");
-    const auto frames = CaptureFrames(limit);
+    const auto frames = CaptureFrames(limit, __builtin_return_address(0));
     auto* cursor = static_cast<std::byte*>(buffer);
     FrameRecord* previous = nullptr;
     int written = 0;

@@ -43,6 +43,10 @@ alignas(256) constexpr std::array<std::uint32_t, 12> StoreCode{
     0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0201f08, 0x0001141e,
     0x7e3e0281, 0xf0201508, 0x0001141e, 0xbf810000,
 };
+alignas(256) constexpr std::array<std::uint32_t, 12> StoreD16Code{
+    0x34020084, 0xe0381000, 0x80001401, 0xbf8c3f70, 0x7e3c0300, 0x7e3e0280, 0xf0201f08, 0x8001141e,
+    0x7e3e0281, 0xf0201508, 0x8001141e, 0xbf810000,
+};
 
 struct Format {
     const char* name;
@@ -141,28 +145,35 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, const Format& f
             ((Width - 1u) >> 2u) | ((Height - 1u) << 14u), (format.components == 2u ? TwoChannelSwizzle : IdentitySwizzle) | (Type2D << 28u), 0u, 0u, 0u, 0u};
 }
 
-void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Format& format) {
+std::uint16_t Half(std::uint32_t tid, std::uint32_t component) {
+    return HalfTowardZero(Value(tid, component));
+}
+
+void Store(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Format& format, bool d16) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        for (std::uint32_t component = 0; component < 4u; ++component) Input[tid * 4u + component] = Value(tid, component);
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            Input[tid * 4u + component] = d16 ? component < 2u ? static_cast<std::uint32_t>(Half(tid, component * 2u)) | (static_cast<std::uint32_t>(Half(tid, component * 2u + 1u)) << 16u) : 0u : Value(tid, component);
+        }
     }
+    const auto& storeCode = d16 ? StoreD16Code : StoreCode;
     std::fill(texels, texels + TexelBytes, 0x5au);
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * sizeof(Input[0])));
     const auto texture = TextureDescriptor(texels, format);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(StoreCode);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(StoreCode.data()), std::as_bytes(code)}}};
+    const std::span<const std::uint32_t> code(storeCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(storeCode.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
-        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(StoreCode.data()), code, 0, {}},
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(storeCode.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
         {0, 0, 0, 128}
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(storeCode.data()));
     device.WaitIdle();
     AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(texels), TexelBytes, nullptr, "test");
     device.WaitIdle();
@@ -172,10 +183,10 @@ std::uint16_t ExpectedComponent(std::uint32_t tid, std::uint32_t dmask, std::uin
     if (((dmask >> component) & 1u) == 0u) return 0u;
     std::uint32_t source = 0u;
     for (std::uint32_t lower = 0u; lower < component; ++lower) source += (dmask >> lower) & 1u;
-    return HalfTowardZero(Value(tid, source));
+    return Half(tid, source);
 }
 
-void Check(const std::uint8_t* texels, const Format& format) {
+void Check(const std::uint8_t* texels, const Format& format, bool d16) {
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
             const auto offset = TexelOffset(format, x, y);
@@ -184,7 +195,7 @@ void Check(const std::uint8_t* texels, const Format& format) {
                 std::memcpy(&actual, texels + offset + component * sizeof(actual), sizeof(actual));
                 const auto dmask = y == Writes[0].row ? Writes[0].dmask : y == Writes[1].row ? Writes[1].dmask : 0u;
                 const auto expected = dmask != 0u ? ExpectedComponent(x, dmask, component) : 0x5a5au;
-                Require(actual == expected, std::string("image_store of ") + format.name + ": texel (" + std::to_string(x) + ", " + std::to_string(y) + ") component " + std::to_string(component) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
+                Require(actual == expected, std::string(d16 ? "D16 image_store of " : "image_store of ") + format.name + ": texel (" + std::to_string(x) + ", " + std::to_string(y) + ") component " + std::to_string(component) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
             }
         }
     }
@@ -197,9 +208,11 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         GuestBlock block;
-        for (const auto& format : Formats) {
-            Store(*device, block.Data(), format);
-            Check(block.Data(), format);
+        for (const bool d16 : {false, true}) {
+            for (const auto& format : Formats) {
+                Store(*device, block.Data(), format, d16);
+                Check(block.Data(), format, d16);
+            }
         }
         std::puts("image store float rounding tests passed");
         return 0;
