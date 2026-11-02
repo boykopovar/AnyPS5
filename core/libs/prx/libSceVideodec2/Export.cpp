@@ -42,6 +42,7 @@ constexpr std::uint32_t HeightAlignment = 32;
 constexpr std::uint32_t CodecAvc = 1;
 constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
+constexpr std::size_t MaxAvcParameterSetsBytes = 2u * 1024u * 1024u;
 constexpr int Videodec2ErrorAccessUnitSize = static_cast<int>(0x811D010Du);
 constexpr int Videodec2ErrorAccessUnitPointer = static_cast<int>(0x811D010Eu);
 constexpr int Videodec2ErrorStructureSize = static_cast<int>(0x811D0101u);
@@ -579,8 +580,9 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
         return 0;
     }
     const auto* unit = ToAnnexB(decoder, input->auData, static_cast<std::size_t>(input->auSize));
-    auto avc = decoder.codec == CodecAvc ? Videodec2Avc::Parse_nid_no_patch(decoder.avc, *unit) : Videodec2Avc::Metadata{};
     if (decoder.codec == CodecAvc && !CarriesAvcSlice(*unit)) {
+        if (decoder.parameterSets.size() + unit->size() > MaxAvcParameterSetsBytes) throw std::runtime_error("Videodec2: invalid access unit");
+        Videodec2Avc::Parse_nid_no_patch(decoder.avc, *unit);
         decoder.parameterSets.insert(decoder.parameterSets.end(), unit->begin(), unit->end());
         EmitDecoded(handle, decoder, frame, output);
         return 0;
@@ -604,7 +606,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
         tagged.hevc.info.attachedData = picture.attached;
     }
     if (decoder.codec == CodecAvc) {
-        tagged.avc = std::move(avc);
+        tagged.avc = Videodec2Avc::Parse_nid_no_patch(decoder.avc, *unit);
         tagged.avc.info.ptsData = picture.pts;
         tagged.avc.info.dtsData = picture.dts;
         tagged.avc.info.attachedData = picture.attached;

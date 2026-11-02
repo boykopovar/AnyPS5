@@ -29,6 +29,7 @@ using namespace SceVideodec2;
 using namespace H264Fixture;
 using namespace HevcFixture;
 
+constexpr std::uint32_t CodecAvc = 1;
 constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
 
@@ -1039,6 +1040,68 @@ void testConcurrentOwnership() {
     check(sceVideodec2DeleteDecoder_nid_postfix(keeper) == 0, "delete failed");
 }
 
+void testParameterSetsBound() {
+    constexpr std::uint8_t DifferentParameters[] = {
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0a, 0xda, 0x11,
+        0xec, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00,
+        0x0f, 0x03, 0xc4, 0x89, 0xa8, 0x00, 0x00, 0x00, 0x01, 0x68,
+        0xce, 0x0f, 0x2c, 0x80,
+    };
+    const DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, CodecAvc, 1, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
+    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
+    check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
+    std::uint64_t handle = 0;
+    check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &handle) == 0, "decoder creation failed");
+    std::vector<std::uint8_t> storage;
+    const auto buffer = AlignedFrameStorage(storage, memory.maxFrameBufferSize, memory.frameBufferAlignment);
+    auto units = accessUnits(false);
+    auto first = units.front();
+    std::size_t slice = 0;
+    for (std::size_t index = 0; index + 3 < first.size(); ++index) {
+        if (first[index] != 0 || first[index + 1] != 0 || first[index + 2] != 1) continue;
+        const auto type = first[index + 3] & 0x1fu;
+        if (type >= 1 && type <= 5) {
+            slice = index > 0 && first[index - 1] == 0 ? index - 1 : index;
+            break;
+        }
+        index += 2;
+    }
+    check(slice != 0, "first access unit missing slice");
+    const std::vector<std::uint8_t> validParameters(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(slice));
+    first.erase(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(slice));
+    const InputData paramInput{sizeof(InputData), validParameters.data(), validParameters.size(), 999, 0, 0x9f};
+    FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+    OutputInfo output{sizeof(OutputInfo)};
+    check(sceVideodec2Decode_nid_postfix(handle, &paramInput, &frame, &output) == 0, "valid parameter unit failed");
+    check(!output.isValid && !frame.isAccepted, "parameter unit produced picture");
+    std::vector<std::uint8_t> largeParameters(2u * 1024u * 1024u + 1u);
+    for (std::size_t offset = 0; offset + sizeof(DifferentParameters) <= largeParameters.size(); offset += sizeof(DifferentParameters)) {
+        std::memcpy(largeParameters.data() + offset, DifferentParameters, sizeof(DifferentParameters));
+    }
+    const InputData largeInput{sizeof(InputData), largeParameters.data(), largeParameters.size(), 1000, 0, 0};
+    bool threw = false;
+    try {
+        sceVideodec2Decode_nid_postfix(handle, &largeInput, &frame, &output);
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()) == "Videodec2: invalid access unit";
+    }
+    check(threw, "oversized parameter unit did not throw");
+    const InputData sliceInput{sizeof(InputData), first.data(), first.size(), 1001, 0, 0xa0};
+    check(sceVideodec2Decode_nid_postfix(handle, &sliceInput, &frame, &output) == 0, "slice decode failed after rejected parameter unit");
+    if (!output.isValid) check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0, "flush failed");
+    check(output.isValid && frame.isAccepted, "slice failed to produce picture");
+    auto expected = streamRecord(DisplayOrderUnits[0]);
+    expected.sequenceParameterSetPresentFlag = 0;
+    expected.pictureParameterSetPresentFlag = 0;
+    expected.auDelimiterPresentFlag = 0;
+    expected.ptsData = 1001;
+    expected.dtsData = 0;
+    expected.attachedData = 0xa0;
+    check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture info differs from original staged state");
+    check(sceVideodec2Reset_nid_postfix(handle) == 0, "reset failed");
+    check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
+}
+
 }
 
 void testComputeQueues() {
@@ -1097,6 +1160,7 @@ int main() {
         testFlushAfterEveryUnit();
         testPictureOwnership();
         testConcurrentOwnership();
+        testParameterSetsBound();
         std::puts("Videodec2 tests passed");
         return 0;
     } catch (const std::exception& error) {
