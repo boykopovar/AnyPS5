@@ -4,6 +4,7 @@
 #include "Iterator.hpp"
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"
 #include "Utf8.hpp"
+#include "Numeric.hpp"
 #include "Version.hpp"
 #include "ConverterCallbacks.hpp"
 #include "CString.hpp"
