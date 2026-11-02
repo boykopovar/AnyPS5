@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
     const std::size_t expected = (mode == "declared" ? 800u : mode == "limited" ? 16u : 448u) * 1024u * 1024u;
     Require(sceKernelConfiguredFlexibleMemorySize(&configured) == 0 && configured == expected);
     const std::size_t direct = sceKernelGetDirectMemorySize();
-    Require(direct == GAME_MEMORY_SIZE - configured);
+    Require(direct == (std::getenv("APS5_DIRECT_MEMORY_FROM_FLEXIBLE") != nullptr ? GAME_MEMORY_SIZE - configured : DIRECT_MEMORY_SIZE));
     std::int64_t physical = -7;
     Require(sceKernelAllocateDirectMemory(static_cast<std::int64_t>(direct), INT64_MAX, PS5_PAGE_SIZE, 0, 0, &physical) == SCE_KERNEL_ERROR_EAGAIN && physical == -7);
     Require(sceKernelMemoryPoolExpand(static_cast<std::int64_t>(direct), INT64_MAX, 0x200000, 0, &physical) == SCE_KERNEL_ERROR_EAGAIN && physical == -7);

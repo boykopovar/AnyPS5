@@ -36,6 +36,7 @@
 #include <iterator>
 #include <map>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -224,6 +225,7 @@ void ReleaseFlexibleMappingRange(std::uintptr_t address, size_t len) {
 
 size_t DirectMemorySize() {
     static const size_t size = [] {
+        if (std::getenv("APS5_DIRECT_MEMORY_FROM_FLEXIBLE") == nullptr) return DIRECT_MEMORY_SIZE;
         const size_t flexible = _configuredFlexibleSize();
         if (flexible >= GAME_MEMORY_SIZE) throw std::runtime_error("param.json kernel.flexibleMemorySize leaves no direct memory");
         return GAME_MEMORY_SIZE - flexible;
