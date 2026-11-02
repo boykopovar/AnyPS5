@@ -1,0 +1,16 @@
+add_library(libSceDataTransfer SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_link_libraries(libSceDataTransfer PRIVATE libkernel libc)
+target_include_directories(libSceDataTransfer PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDataTransfer)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_datatransfer_tests ${LIBS_INCLUDE_DIR}/tests/GuestDataTransfer.cpp)
+    target_include_directories(guest_datatransfer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_datatransfer_tests PRIVATE libSceDataTransfer libc)
+    configure_windows_unwind(guest_datatransfer_tests)
+    add_test(NAME guest_datatransfer COMMAND guest_datatransfer_tests)
+    if(WIN32)
+        set_tests_properties(guest_datatransfer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDataTransfer>")
+    endif()
+endif()
