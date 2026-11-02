@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #define main frameReplayToolMain
 #include "../tools/FrameReplay.cpp"
 #undef main
@@ -418,6 +419,185 @@ void testFreshNote(const std::filesystem::path& directory) {
 }
 #endif
 
+std::uintptr_t mockHandles = 1;
+std::map<VkFence, bool> mockFences;
+
+VKAPI_ATTR VkResult VKAPI_CALL mockAllocateCommandBuffers(VkDevice, const VkCommandBufferAllocateInfo*, VkCommandBuffer* commands) {
+    *commands = reinterpret_cast<VkCommandBuffer>(mockHandles++);
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockFreeCommandBuffers(VkDevice, VkCommandPool, std::uint32_t, const VkCommandBuffer*) {}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateFence(VkDevice, const VkFenceCreateInfo*, const VkAllocationCallbacks*, VkFence* fence) {
+    *fence = reinterpret_cast<VkFence>(mockHandles++);
+    mockFences[*fence] = false;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyFence(VkDevice, VkFence fence, const VkAllocationCallbacks*) {
+    mockFences.erase(fence);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockGetFenceStatus(VkDevice, VkFence fence) {
+    return mockFences.at(fence) ? VK_SUCCESS : VK_NOT_READY;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockWaitForFences(VkDevice, std::uint32_t count, const VkFence* fences, VkBool32, std::uint64_t) {
+    for (std::uint32_t index = 0; index < count; ++index) mockFences.at(fences[index]) = true;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockResetFences(VkDevice, std::uint32_t count, const VkFence* fences) {
+    for (std::uint32_t index = 0; index < count; ++index) mockFences.at(fences[index]) = false;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockBeginCommandBuffer(VkCommandBuffer, const VkCommandBufferBeginInfo*) {
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockEndCommandBuffer(VkCommandBuffer) {
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) {
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockDeviceWaitIdle(VkDevice) {
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockCmdUpdateBuffer(VkCommandBuffer, VkBuffer, VkDeviceSize, VkDeviceSize, const void*) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdBeginQuery(VkCommandBuffer, VkQueryPool, std::uint32_t, VkQueryControlFlags) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdEndQuery(VkCommandBuffer, VkQueryPool, std::uint32_t) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdResetQueryPool(VkCommandBuffer, VkQueryPool, std::uint32_t, std::uint32_t) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdCopyQueryPoolResults(VkCommandBuffer, VkQueryPool, std::uint32_t, std::uint32_t, VkBuffer, VkDeviceSize, VkDeviceSize, VkQueryResultFlags) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdBindPipeline(VkCommandBuffer, VkPipelineBindPoint, VkPipeline) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdPushConstants(VkCommandBuffer, VkPipelineLayout, VkShaderStageFlags, std::uint32_t, std::uint32_t, const void*) {}
+VKAPI_ATTR void VKAPI_CALL mockCmdDispatch(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t) {}
+
+PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
+    static const std::map<std::string_view, PFN_vkVoidFunction> table{
+        {"vkAllocateCommandBuffers", reinterpret_cast<PFN_vkVoidFunction>(mockAllocateCommandBuffers)},
+        {"vkFreeCommandBuffers", reinterpret_cast<PFN_vkVoidFunction>(mockFreeCommandBuffers)},
+        {"vkCreateFence", reinterpret_cast<PFN_vkVoidFunction>(mockCreateFence)},
+        {"vkDestroyFence", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyFence)},
+        {"vkGetFenceStatus", reinterpret_cast<PFN_vkVoidFunction>(mockGetFenceStatus)},
+        {"vkWaitForFences", reinterpret_cast<PFN_vkVoidFunction>(mockWaitForFences)},
+        {"vkResetFences", reinterpret_cast<PFN_vkVoidFunction>(mockResetFences)},
+        {"vkBeginCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockBeginCommandBuffer)},
+        {"vkEndCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockEndCommandBuffer)},
+        {"vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(mockQueueSubmit)},
+        {"vkDeviceWaitIdle", reinterpret_cast<PFN_vkVoidFunction>(mockDeviceWaitIdle)},
+        {"vkCmdUpdateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdUpdateBuffer)},
+        {"vkCmdPipelineBarrier", reinterpret_cast<PFN_vkVoidFunction>(mockCmdPipelineBarrier)},
+        {"vkCmdBeginQuery", reinterpret_cast<PFN_vkVoidFunction>(mockCmdBeginQuery)},
+        {"vkCmdEndQuery", reinterpret_cast<PFN_vkVoidFunction>(mockCmdEndQuery)},
+        {"vkCmdResetQueryPool", reinterpret_cast<PFN_vkVoidFunction>(mockCmdResetQueryPool)},
+        {"vkCmdCopyQueryPoolResults", reinterpret_cast<PFN_vkVoidFunction>(mockCmdCopyQueryPoolResults)},
+        {"vkCmdBindPipeline", reinterpret_cast<PFN_vkVoidFunction>(mockCmdBindPipeline)},
+        {"vkCmdPushConstants", reinterpret_cast<PFN_vkVoidFunction>(mockCmdPushConstants)},
+        {"vkCmdDispatch", reinterpret_cast<PFN_vkVoidFunction>(mockCmdDispatch)},
+    };
+    const auto found = table.find(name);
+    return found == table.end() ? nullptr : found->second;
+}
+
+AgcDriver::Graphics::Context mockContext() {
+    AgcDriver::Graphics::Context context{};
+    context.device = reinterpret_cast<VkDevice>(mockHandles++);
+    context.queue = reinterpret_cast<VkQueue>(mockHandles++);
+    context.deviceProc = mockProc;
+    return context;
+}
+
+constexpr std::size_t FilledBytes = 4096;
+std::atomic<std::byte*> pendingFill{nullptr};
+std::atomic<int> landedFills{0};
+
+void landPendingFill(std::uint64_t begin, std::size_t bytes) {
+    auto* const fill = pendingFill.load();
+    if (fill == nullptr || begin >= address(fill) + FilledBytes || address(fill) >= begin + bytes) return;
+    std::fill_n(fill, FilledBytes, std::byte{0x5a});
+    pendingFill = nullptr;
+    ++landedFills;
+}
+
+void testGpuWriteBeforeDelta(const std::filesystem::path& directory) {
+    auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
+    std::fill_n(bytes, FrameCaptureWriter::BlockBytes, std::byte{0x11});
+    auto* page = bytes + FilledBytes;
+    const std::vector<std::byte> cleared(FilledBytes);
+    {
+        FrameCaptureWriter writer(directory);
+        writer.WriteDelta(1, 0, address(page), cleared);
+        writer.Finish("{}");
+    }
+    const FrameCaptureReader reader(directory);
+    Options options;
+    options.pace = false;
+    options.release = false;
+    Replay replay{options, reader};
+    collectGroups(replay);
+    struct ActiveRecorder {
+        std::unique_ptr<AgcDriver::Graphics::Recorder> recorder;
+        ~ActiveRecorder() {
+            AgcDriver::GuestMemory::SetFlushHook(nullptr);
+            pendingFill = nullptr;
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            recorder.reset();
+        }
+    } active{std::make_unique<AgcDriver::Graphics::Recorder>(mockContext())};
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        active.recorder->Activate();
+        active.recorder->NotePendingWrite(address(page), FilledBytes);
+    }
+    AgcDriver::GuestMemory::SetFlushHook(&landPendingFill);
+    pendingFill = page;
+    check(AgcDriver::Graphics::Recorder::SnapshotWriteOverlaps(address(page), FilledBytes), "the GPU write is not pending in the driver's write snapshot");
+    replay.execute(memoryCall(1, 1));
+    std::vector<std::byte> replayed(FilledBytes);
+    AgcDriver::GuestMemory::ReadCommitted(address(page), replayed);
+    check(landedFills.load() == 1, "the GPU write pending over the page never landed, so the test did not exercise the replay's order");
+    const auto stale = std::find_if(replayed.begin(), replayed.end(), [](std::byte value) { return value != std::byte{0}; });
+    if (stale != replayed.end()) throw std::runtime_error("the replay restored a memory delta while a GPU write over its range was still pending, and the next read landed that write over it: the page holds byte " + std::to_string(static_cast<int>(*stale)) + ", not the 0 the capture recorded after the write");
+}
+
+void testVersionOneRefused(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = FrameCaptureWriter::BlockBytes;
+    constexpr std::string_view VersionOne = "aps5-frame-calls 1\n";
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0x55});
+    std::uintptr_t base = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
+    {
+        FrameCaptureWriter writer(directory);
+        writer.WriteRange(address(bytes), Size, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+        writer.WriteSnapshot(address(bytes), std::vector<std::byte>(Size, std::byte{0x7f}));
+        writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    }
+    {
+        std::fstream calls(directory / FrameCaptureWriter::CallsName, std::ios::binary | std::ios::in | std::ios::out);
+        calls.write(VersionOne.data(), static_cast<std::streamsize>(VersionOne.size()));
+        check(calls.good(), "cannot write the calls format 1 magic");
+    }
+    const FrameCaptureReader reader(directory);
+    std::string refusal;
+    try {
+        restoreMemory(reader);
+    } catch (const std::runtime_error& error) {
+        refusal = error.what();
+    }
+    check(!refusal.empty(), "the replay restored a calls format 1 capture, which does not record whether GPU writes had landed before its memory deltas were read");
+    if (refusal.find("record the capture again") == std::string::npos) throw std::runtime_error("the calls format 1 capture was refused for another reason: " + refusal);
+    check(std::all_of(bytes, bytes + Size, [](std::byte value) { return value == std::byte{0x55}; }), "the replay restored memory before refusing the calls format 1 capture");
+}
+
 void testEopTokens() {
     Frames frames;
     auto output = std::make_shared<ReplayOutput>(frames);
@@ -575,6 +755,8 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         else if (mode == "fresh_note") testFreshNote(directory);
 #endif
+        else if (mode == "gpu_write_before_delta") testGpuWriteBeforeDelta(directory);
+        else if (mode == "calls_v1") testVersionOneRefused(directory);
         else if (mode == "tokens") testEopTokens();
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
