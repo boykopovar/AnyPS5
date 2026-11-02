@@ -124,6 +124,11 @@ def source_files(root):
         yield path
 
 
+def cpp_reads(text):
+    return CPP_TOKEN.sub(lambda match: re.sub(r"[^\r\n]", " ", match.group())
+                         if match.lastgroup in ("comment", "raw", "char") else match.group(), text)
+
+
 class _NamedRead:
     """A read whose name was reached through a string constant, positioned like the literal read."""
 
@@ -228,6 +233,8 @@ def reads(roots, prefixes=PREFIXES):
         for path in source_files(root):
             try:
                 text = path.read_text(encoding="utf-8")
+                if path.suffix != ".py":
+                    text = cpp_reads(text)
             except (OSError, UnicodeDecodeError) as error:
                 raise ValueError(f"cannot read {path.as_posix()}: {error}") from error
             sources.append((path, text))
