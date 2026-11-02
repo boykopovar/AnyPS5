@@ -101,4 +101,12 @@ public:
     bool valid = false;
 };
 
+class FrameHandle final : public ObjectOf<ObjectType::FrameHandle> {
+public:
+    FrameHandle() = default;
+    explicit FrameHandle(std::uint64_t frameID) : frameID(frameID) {}
+
+    std::uint64_t frameID = 0;
+};
+
 }  // namespace NKWebKit
