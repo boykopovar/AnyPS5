@@ -7,11 +7,6 @@
 #include <cerrno>
 #include <cstring>
 
-#ifdef _WIN32
-extern "C" int _set_printf_count_output(int);
-extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
-#endif
-
 namespace LibcDetail {
 
 template <typename TScanner>
@@ -82,14 +77,7 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
             pointers.push_back(&suppressedEnds[suppressedCount++]);
         }
     }
-#ifdef _WIN32
-    _set_printf_count_output(1);
-    const auto previousHandler = _set_thread_local_invalid_parameter_handler(+[](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {});
-#endif
     const int result = scan(translated.c_str(), reinterpret_cast<char*>(pointers.data()));
-#ifdef _WIN32
-    _set_thread_local_invalid_parameter_handler(previousHandler);
-#endif
     for (const auto& integer : narrowIntegers) {
         if (integer.end < 0) continue;
         if (integer.isUnsigned) {

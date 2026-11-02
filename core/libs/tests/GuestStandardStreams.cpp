@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
 #include <climits>
@@ -35,14 +36,24 @@ extern int __isthreaded_nid_postfix;
 
 }
 static bool failAllocation = false;
-static void* APS5_VABI StreamTestAllocate(std::size_t size) { return failAllocation ? nullptr : std::malloc(size); }
-static void APS5_VABI StreamTestFree(void* ptr) { std::free(ptr); }
-static void* APS5_VABI StreamTestReallocate(void* ptr, std::size_t size) { return failAllocation ? nullptr : std::realloc(ptr, size); }
-static void* APS5_VABI StreamTestCalloc(std::size_t count, std::size_t size) { return failAllocation ? nullptr : std::calloc(count, size); }
-static void* APS5_VABI StreamTestAlign(std::size_t, std::size_t size) { return failAllocation ? nullptr : std::malloc(size); }
-static void* APS5_VABI StreamTestRealign(void* ptr, std::size_t size, std::size_t) { return failAllocation ? nullptr : std::realloc(ptr, size); }
-static int APS5_VABI StreamTestPosixAlign(void** ptr, std::size_t, std::size_t size) {
-    *ptr = failAllocation ? nullptr : std::malloc(size);
+static void* APS5_VABI StreamTestAllocate(std::size_t size) { return failAllocation ? nullptr : GuestHeap::GuestHeapAllocate_nid_postfix(size); }
+static void APS5_VABI StreamTestFree(void* ptr) { GuestHeap::GuestHeapFree_nid_postfix(ptr); }
+static void* APS5_VABI StreamTestReallocate(void* ptr, std::size_t size) { return failAllocation ? nullptr : GuestHeap::GuestHeapReallocate_nid_postfix(ptr, size); }
+static void* APS5_VABI StreamTestCalloc(std::size_t count, std::size_t size) {
+    if (failAllocation) return nullptr;
+    if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size) return nullptr;
+    void* const ptr = GuestHeap::GuestHeapAllocate_nid_postfix(count * size);
+    if (ptr != nullptr) std::memset(ptr, 0, count * size);
+    return ptr;
+}
+static void* APS5_VABI StreamTestAlign(std::size_t align, std::size_t size) { return failAllocation ? nullptr : GuestHeap::GuestHeapAlign_nid_postfix(align, size); }
+static void* APS5_VABI StreamTestRealign(void* ptr, std::size_t size, std::size_t align) { return failAllocation ? nullptr : GuestHeap::GuestHeapRealign_nid_postfix(ptr, size, align); }
+static int APS5_VABI StreamTestPosixAlign(void** ptr, std::size_t align, std::size_t size) {
+    if (failAllocation) {
+        *ptr = nullptr;
+        return 12;
+    }
+    *ptr = GuestHeap::GuestHeapAlign_nid_postfix(align, size);
     return *ptr ? 0 : 12;
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -474,6 +485,17 @@ static void CheckGetdelimAndGetline() {
     fclose_nid_postfix(midReadStream);
     std::filesystem::remove(readErrFile);
 
+    void* const testHeapApi[10] = {
+        reinterpret_cast<void*>(&StreamTestAllocate),
+        reinterpret_cast<void*>(&StreamTestFree),
+        reinterpret_cast<void*>(&StreamTestCalloc),
+        reinterpret_cast<void*>(&StreamTestReallocate),
+        reinterpret_cast<void*>(&StreamTestAlign),
+        reinterpret_cast<void*>(&StreamTestRealign),
+        reinterpret_cast<void*>(&StreamTestPosixAlign),
+        nullptr, nullptr, nullptr
+    };
+    ApplicationHeapRegister_nid_no_patch(testHeapApi);
     FileStream allocStream(TemporaryFile::Open());
     Require(fwrite_nid_postfix("alloc test line\n", 1, 16, &allocStream) == 16);
     rewind_nid_postfix(&allocStream);
@@ -1009,17 +1031,6 @@ static void CheckStandardStreamDeleteSharing() {
 #endif
 
 int main(int argc, char** argv) {
-    void* const testHeapApi[10] = {
-        reinterpret_cast<void*>(&StreamTestAllocate),
-        reinterpret_cast<void*>(&StreamTestFree),
-        reinterpret_cast<void*>(&StreamTestCalloc),
-        reinterpret_cast<void*>(&StreamTestReallocate),
-        reinterpret_cast<void*>(&StreamTestAlign),
-        reinterpret_cast<void*>(&StreamTestRealign),
-        reinterpret_cast<void*>(&StreamTestPosixAlign),
-        nullptr, nullptr, nullptr
-    };
-    ApplicationHeapRegister_nid_no_patch(testHeapApi);
     if (argc > 1 && std::string_view(argv[1]) == "--update-stdout") return CheckUpdateStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--closed-stdout") return CheckClosedStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--exclusive-stdout") return CheckExclusiveStandardOutput();
