@@ -162,7 +162,7 @@ bool unicodeToSbc(const uint8_t* profile, uint32_t code, uint8_t& sbc) {
         }
         if (code == SingleByte::Unassigned) return false;
         for (uint32_t i = 0; i < 128; ++i) {
-            if (high[i] == code) {
+            if (high[i] != SingleByte::Unassigned && high[i] == code) {
                 sbc = static_cast<uint8_t>(0x80 + i);
                 return true;
             }
@@ -1671,6 +1671,38 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1251(void) {
 
 const void* APS5_VABI sceCesRefersUcsProfileCp1250(void) {
     return CP1250_PROFILE;
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_3(void) {
+    return singleByteProfile(SingleByte::Iso8859_3);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_6(void) {
+    return singleByteProfile(SingleByte::Iso8859_6);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_7(void) {
+    return singleByteProfile(SingleByte::Iso8859_7);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_8(void) {
+    return singleByteProfile(SingleByte::Iso8859_8);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_11(void) {
+    return singleByteProfile(SingleByte::Iso8859_11);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp857(void) {
+    return singleByteProfile(SingleByte::Cp857);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp869(void) {
+    return singleByteProfile(SingleByte::Cp869);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp874(void) {
+    return singleByteProfile(SingleByte::Cp874);
 }
 
 const uint8_t* APS5_VABI sceCesRefersUcsProfileIso8859_1(void) {
