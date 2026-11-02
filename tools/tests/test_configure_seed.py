@@ -185,7 +185,8 @@ class ConfigureSeedPathTests(unittest.TestCase):
             self.skipTest(f"symbolic links unavailable: {error}")
         for arguments in ((str(self.cache), str(loop)), (str(loop), str(self.root / "seed.cmake"))):
             with self.subTest(arguments=arguments):
-                result = subprocess.run([sys.executable, str(TOOL), *arguments], capture_output=True, text=True)
+                result = subprocess.run([sys.executable, str(TOOL), *arguments],
+                                        capture_output=True, text=True, encoding="utf-8")
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
                 self.assertIn(str(loop), result.stderr)
@@ -264,7 +265,7 @@ class ConfigureSeedTests(ConfigureSeedProject):
         seed = self.root / "filtered.cmake"
         result = subprocess.run([sys.executable, str(TOOL), str(self.root / "fresh" / "CMakeCache.txt"), str(seed),
                                  "--include", "MINI_HAVE_*", "--include", "MINI_COMPILES", "--exclude", "*MISSING*"],
-                                check=True, capture_output=True, text=True)
+                                check=True, capture_output=True, text=True, encoding="utf-8")
         self.assertIn("3 check results", result.stdout)
         seeded = seed.read_text(encoding="utf-8")
         self.assertIn("MINI_HAVE_STDIO_H", seeded)

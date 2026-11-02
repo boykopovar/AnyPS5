@@ -777,7 +777,7 @@ class ReleaseNoteDestinationsTests(unittest.TestCase):
                 previous = {path: path.read_bytes() for index, path in enumerate(paths) if index != position}
                 result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
                                          "--input", str(paths[0]), "--body", str(paths[1]), "--full", str(paths[2])],
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, text=True, encoding="utf-8", timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertTrue(paths[position].is_symlink())
@@ -1127,7 +1127,7 @@ class ReleaseMainTests(unittest.TestCase):
                 self.skipTest(str(error))
             result = subprocess.run([sys.executable, str(Path(package_release.__file__)),
                                      "--docs", str(docs), "--output", str(output)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertNotIn("Traceback", result.stderr)
             self.assertIn("symbolic link loop", result.stderr)
