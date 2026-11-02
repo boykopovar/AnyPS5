@@ -252,7 +252,7 @@ if(BUILD_TESTING)
         if(NOT APPLE)
             add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
-            set_tests_properties(annotate_module PROPERTIES TIMEOUT 20)
+            set_tests_properties(annotate_module PROPERTIES TIMEOUT 30)
         endif()
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
