@@ -49,7 +49,6 @@ int APS5_VABI _ZNK7WebCore11WindowProxy6windowEv();
 int APS5_VABI WKPageLoadFile();
 int APS5_VABI _ZN3JSC13JSSetIterator14finishCreationERNS_2VMEPNS_5JSSetENS_13IterationKindE();
 int APS5_VABI _ZN3JSC21MarkedJSValueRefArrayC1EP15OpaqueJSContextj();
-int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE();
 int APS5_VABI _ZNK7WebCore4Page14renderTreeSizeEv();
 int APS5_VABI _ZN9Inspector22HeapFrontendDispatcher13trackingStartEdRKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore11JSDOMWindow9setOpenerERN3JSC14JSGlobalObjectENS1_7JSValueE();
