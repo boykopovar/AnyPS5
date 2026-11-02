@@ -735,6 +735,28 @@ class HipOracleTests(unittest.TestCase):
         import oracle_hip
         self.oracle_hip = oracle_hip
 
+    def test_library_loader_reports_unsupported_platform_cleanly(self):
+        for variable, names in (("HW_ORACLE_HIP", self.oracle_hip.HIP_LIBRARIES),
+                                ("HW_ORACLE_COMGR", self.oracle_hip.COMGR_LIBRARIES)):
+            with self.subTest(variable=variable), patch.object(self.oracle_hip.ctypes, "WinDLL", None, create=True), \
+                    self.assertRaisesRegex(self.oracle_hip.OracleError, "Windows DLL loading is unavailable on this platform"):
+                self.oracle_hip.load(variable, names)
+
+    def test_library_loader_preserves_fallback_and_override_selection(self):
+        fallback = unittest.mock.MagicMock(side_effect=[OSError("missing first"), object()])
+        environment = {key: value for key, value in os.environ.items() if key != "HW_ORACLE_HIP"}
+        with patch.object(self.oracle_hip.ctypes, "WinDLL", fallback, create=True), \
+                patch.dict(os.environ, environment, clear=True):
+            self.oracle_hip.load("HW_ORACLE_HIP", self.oracle_hip.HIP_LIBRARIES)
+        self.assertEqual([call.args[0] for call in fallback.call_args_list], list(self.oracle_hip.HIP_LIBRARIES[:2]))
+
+        selected = object()
+        override = unittest.mock.MagicMock(return_value=selected)
+        with patch.object(self.oracle_hip.ctypes, "WinDLL", override, create=True), \
+                patch.dict(os.environ, {"HW_ORACLE_HIP": "custom-hip.dll"}, clear=True):
+            self.assertIs(self.oracle_hip.load("HW_ORACLE_HIP", self.oracle_hip.HIP_LIBRARIES), selected)
+        override.assert_called_once_with("custom-hip.dll")
+
     def test_cli_rejects_mixed_or_incomplete_requests(self):
         for argv in ([], ["--target", "code", "32", "in", "out", "16"], ["--wave64", "code", "32", "in", "out", "16"],
                      ["code", "32", "in", "out"], ["code", "0", "in", "out", "16"], ["code", "1025", "in", "out", "16"],
