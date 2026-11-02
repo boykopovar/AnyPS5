@@ -43,6 +43,9 @@ int main() {
     *__error_nid_postfix() = 22;
     Check(gethostname_nid_postfix(nullptr, 0) == 0 && *__error_nid_postfix() == 22);
     Check(gethostname_nid_postfix(nullptr, 1024) == 0 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 22;
+    Check(gethostname_nid_postfix(reinterpret_cast<char*>(0x10), 256) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 22;
     std::thread worker([expected] {
         char byte = '#';
         *__error_nid_postfix() = 0;
