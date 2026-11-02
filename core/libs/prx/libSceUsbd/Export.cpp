@@ -454,9 +454,10 @@ std::uint8_t* APS5_VABI sceUsbdGetIsoPacketBuffer(UsbdTransfer* transfer, std::u
         capacity = IsoCapacity(state, transfer);
     }
     if (transfer->numIsoPackets < 0 || transfer->numIsoPackets > capacity || packet >= static_cast<std::uint32_t>(transfer->numIsoPackets) || transfer->buffer == nullptr) return nullptr;
-    std::uint8_t* pointer = transfer->buffer;
-    for (std::uint32_t index = 0; index < packet; ++index) pointer += transfer->isoPacketDescriptors[index].length;
-    return pointer;
+    std::uint64_t offset = 0;
+    for (std::uint32_t index = 0; index < packet; ++index) offset += transfer->isoPacketDescriptors[index].length;
+    if (transfer->length < 0 || offset + transfer->isoPacketDescriptors[packet].length > static_cast<std::uint64_t>(transfer->length)) return nullptr;
+    return transfer->buffer + offset;
 }
 
 std::int32_t APS5_VABI sceUsbdBulkTransfer(void* deviceHandle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t* transferred, std::uint32_t timeout) {
