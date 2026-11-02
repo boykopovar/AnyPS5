@@ -14,6 +14,10 @@ struct RectValue;
 extern "C" {
 
 std::uint32_t APS5_VABI WKAXObjectGetTypeID();
+const void* APS5_VABI WKAXObjectCopyTitle(const void* objectRef);
+const void* APS5_VABI WKAXObjectCopyDescription(const void* objectRef);
+const void* APS5_VABI WKAXObjectCopyHelpText(const void* objectRef);
+const void* APS5_VABI WKAXObjectCopyURL(const void* objectRef);
 std::uint32_t APS5_VABI WKApplicationCacheManagerGetTypeID();
 void APS5_VABI WKArrayAppendItem(void* arrayRef, const void* itemRef);
 const void* APS5_VABI WKArrayCreate(const void** values, std::size_t numberOfValues);
