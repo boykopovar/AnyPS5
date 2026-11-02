@@ -58,6 +58,16 @@ int main() {
     Require(sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, &iconSize) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
     Require(iconSize == 0);
     Require(sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, nullptr) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+    std::size_t gameIconSize = 1234;
+    Require(sceNpTrophy2GetGameIcon(1, 1, nullptr, &gameIconSize) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+    Require(gameIconSize == 0);
+    std::size_t groupIconSize = 1234;
+    Require(sceNpTrophy2GetGroupIcon(1, 1, 2, nullptr, &groupIconSize) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+    Require(groupIconSize == 0);
+    std::size_t trophyIconSize = 1234;
+    Require(sceNpTrophy2GetTrophyIcon(1, 1, 3, nullptr, &trophyIconSize) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+    Require(trophyIconSize == 0);
+    Require(sceNpTrophy2GetTrophyIcon(1, 1, 3, nullptr, nullptr) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
 
     int handle = -1;
     Require(sceNpTrophy2CreateHandle(&handle) == SCE_NP_TROPHY2_OK);
