@@ -71,11 +71,11 @@ static bool HasSettings(const Http2Handle& handle) {
 }
 
 template<class TUpdate>
-static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false) {
+static int Update(int id, const char* function, TUpdate update, bool otherKindsAreInvalid = false, bool contextHasSettings = false) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindAnyHandle(id);
     if (!handle) return ERROR_INVALID_ID;
-    if (!HasSettings(*handle)) {
+    if (!HasSettings(*handle) && !(contextHasSettings && handle->kind == Http2Kind::Context)) {
         if (otherKindsAreInvalid) return ERROR_INVALID_ID;
         NotImplemented_nid_no_patch(function);
     }
@@ -111,7 +111,7 @@ static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
     if (!handle) return nullptr;
     if (create && !handle->transport) {
         if (handle->version != 3) NotImplemented_nid_no_patch("sceHttp2SendRequest: HTTP/1.x transport is not implemented");
-        handle->transport = Http2::CreateRequest_nid_no_patch(handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
+        handle->transport = Http2::CreateRequest_nid_no_patch(id, handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
     }
     if (!handle->transport) NotImplemented_nid_no_patch("sceHttp2: request has not been sent");
     return handle->transport;
@@ -259,8 +259,11 @@ int APS5_VABI sceHttp2SetRecvTimeOut(int id, uint32_t usec) {
     });
 }
 
-int APS5_VABI sceHttp2SetRedirectCallback(int id, void* cb_func, void* user_arg) {
-    return Update(id, __func__, [&](auto&) { if (cb_func || user_arg) NotImplemented_nid_no_patch("sceHttp2SetRedirectCallback"); });
+int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cb_func, void* user_arg) {
+    return Update(id, __func__, [&](auto& settings) {
+        settings.redirectCallback = cb_func;
+        settings.redirectArgument = user_arg;
+    });
 }
 
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t content_length) {
@@ -296,14 +299,14 @@ int APS5_VABI sceHttp2SslDisableOption(int id, uint32_t ssl_flags) {
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslDisableOption");
         settings.verifyFlags &= ~ssl_flags;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
     return Update(id, __func__, [&](auto& settings) {
         if (ssl_flags & ~0x3du) NotImplemented_nid_no_patch("sceHttp2SslEnableOption");
         settings.verifyFlags |= ssl_flags;
-    });
+    }, false, true);
 }
 
 int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
