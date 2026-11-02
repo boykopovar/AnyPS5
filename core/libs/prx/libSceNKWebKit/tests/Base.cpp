@@ -351,6 +351,89 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static const void* MakeProtectionSpace(const char* host, int port, NKWebKit::ProtectionSpaceServerType serverType, const char* realm, NKWebKit::ProtectionSpaceAuthenticationScheme scheme) {
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProtectionSpace>(NKWebKit::String::FromUtf8(host), port, serverType, NKWebKit::String::FromUtf8(realm), scheme));
+}
+
+static void TestProtectionSpace() {
+    using Server = NKWebKit::ProtectionSpaceServerType;
+    using Scheme = NKWebKit::ProtectionSpaceAuthenticationScheme;
+
+    auto* space = MakeProtectionSpace("example.com", 8443, Server::HTTPS, "Private Area", Scheme::HTTPBasic);
+    Require(WKGetTypeID(space) == WKProtectionSpaceGetTypeID());
+    auto* host = WKProtectionSpaceCopyHost(space);
+    Require(WKStringIsEqualToUTF8CString(host, "example.com"));
+    WKRelease(host);
+    auto* realm = WKProtectionSpaceCopyRealm(space);
+    Require(WKStringIsEqualToUTF8CString(realm, "Private Area"));
+    WKRelease(realm);
+    Require(WKProtectionSpaceGetPort(space) == 8443);
+    Require(WKProtectionSpaceGetServerType(space) == 2);
+    Require(WKProtectionSpaceGetAuthenticationScheme(space) == 2);
+    Require(!WKProtectionSpaceGetIsProxy(space));
+    Require(WKProtectionSpaceGetReceivesCredentialSecurely(space));
+    WKRelease(space);
+
+    const Server servers[] = {Server::HTTP, Server::HTTPS, Server::FTP, Server::FTPS, Server::ProxyHTTP, Server::ProxyHTTPS, Server::ProxyFTP, Server::ProxySOCKS};
+    const bool proxies[] = {false, false, false, false, true, true, true, true};
+    const bool secure[] = {false, true, false, true, false, true, false, false};
+    for (int index = 0; index < 8; ++index) {
+        auto* typed = MakeProtectionSpace("h", 1, servers[index], "r", Scheme::Default);
+        Require(WKProtectionSpaceGetServerType(typed) == static_cast<std::uint32_t>(index + 1));
+        Require(WKProtectionSpaceGetIsProxy(typed) == proxies[index]);
+        Require(WKProtectionSpaceGetReceivesCredentialSecurely(typed) == secure[index]);
+        WKRelease(typed);
+    }
+
+    const Scheme schemes[] = {Scheme::Default, Scheme::HTTPBasic, Scheme::HTTPDigest, Scheme::HTMLForm, Scheme::NTLM, Scheme::Negotiate, Scheme::ClientCertificateRequested, Scheme::ServerTrustEvaluationRequested, Scheme::OAuth};
+    for (int index = 0; index < 9; ++index) {
+        auto* typed = MakeProtectionSpace("h", 1, Server::HTTP, "r", schemes[index]);
+        Require(WKProtectionSpaceGetAuthenticationScheme(typed) == static_cast<std::uint32_t>(index + 1));
+        Require(WKProtectionSpaceGetReceivesCredentialSecurely(typed) == (schemes[index] == Scheme::HTTPDigest));
+        WKRelease(typed);
+    }
+
+    auto* unknown = MakeProtectionSpace("h", 1, Server::HTTP, "r", Scheme::Unknown);
+    Require(WKProtectionSpaceGetAuthenticationScheme(unknown) == 100);
+    WKRelease(unknown);
+    auto* outOfRange = MakeProtectionSpace("h", 1, static_cast<Server>(0), "r", static_cast<Scheme>(42));
+    Require(WKProtectionSpaceGetServerType(outOfRange) == 1);
+    Require(WKProtectionSpaceGetAuthenticationScheme(outOfRange) == 100);
+    WKRelease(outOfRange);
+
+    auto* empty = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::ProtectionSpace>());
+    auto* emptyHost = WKProtectionSpaceCopyHost(empty);
+    Require(WKStringIsEmpty(emptyHost));
+    WKRelease(emptyHost);
+    auto* emptyRealm = WKProtectionSpaceCopyRealm(empty);
+    Require(WKStringIsEmpty(emptyRealm));
+    WKRelease(emptyRealm);
+    Require(WKProtectionSpaceGetPort(empty) == 0);
+    Require(WKProtectionSpaceGetServerType(empty) == 1);
+    Require(WKProtectionSpaceGetAuthenticationScheme(empty) == 1);
+    Require(!WKProtectionSpaceGetIsProxy(empty));
+    Require(!WKProtectionSpaceGetReceivesCredentialSecurely(empty));
+    WKRelease(empty);
+
+    auto* notSpace = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a protection space"));
+    bool threw = false;
+    try {
+        WKProtectionSpaceGetPort(notSpace);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    WKRelease(notSpace);
+
+    threw = false;
+    try {
+        WKProtectionSpaceCopyHost(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -373,6 +456,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestProtectionSpace();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;

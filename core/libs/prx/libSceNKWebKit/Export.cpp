@@ -15232,34 +15232,6 @@ int APS5_VABI WKProtectionSpaceCopyCertificateInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKProtectionSpaceCopyHost() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKProtectionSpaceCopyRealm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKProtectionSpaceGetAuthenticationScheme() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKProtectionSpaceGetIsProxy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKProtectionSpaceGetPort() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKProtectionSpaceGetReceivesCredentialSecurely() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKProtectionSpaceGetServerType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKRegistrableDomainCreate() {
     NotImplemented_nid_no_patch(__func__);
 }
