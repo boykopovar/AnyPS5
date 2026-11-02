@@ -4052,7 +4052,7 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
     HostImportFor(context, address, bytes);
 }
 
-bool bdaStagingTests(const Device& device, Recorder& recorder) {
+bool bdaStagingTests(const Device& device, Recorder& recorder, bool includeOverlap = false) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0 || !context.bufferDeviceAddress || !AddressSpaceCounters().enabled || std::getenv("APS5_NO_BDA_STAGING") != nullptr) {
         std::cout << "skipped, host imports are unavailable (no device addresses or address space cache)\n";
@@ -4152,6 +4152,47 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
         memory.RecordCopyBacks(recorder);
         recorder.Sync();
         memory.WriteBack();
+    }
+    if (includeOverlap) {
+        constexpr std::size_t overlapBytes = 64u << 10u;
+        constexpr std::size_t shift = overlapBytes / 2;
+        const auto left = address + (256u << 10u);
+        const auto right = left + shift;
+        GuestBufferMemory firstMemory(context);
+        GuestBufferMemory secondMemory(context);
+        for (auto* memory : {&firstMemory, &secondMemory}) {
+            memory->AllowDeviceStaging();
+            memory->AcquireRegistered();
+        }
+        firstMemory.AddWritable(left, overlapBytes, false, false);
+        secondMemory.AddWritable(right, overlapBytes, false, false);
+        firstMemory.Upload(true);
+        secondMemory.Upload(true);
+        std::uint32_t firstAdjustment = 0;
+        std::uint32_t secondAdjustment = 0;
+        const auto firstView = firstMemory.Descriptor(left, overlapBytes, firstAdjustment);
+        const auto secondView = secondMemory.Descriptor(right, overlapBytes, secondAdjustment);
+        Require(firstView.buffer != importBuffer && secondView.buffer != importBuffer && firstView.buffer != secondView.buffer, "overlapping copy-back fixture did not create two shadows");
+        recorder.Sync();
+        auto commands = recorder.Commands();
+        fill(commands, firstView.buffer, firstView.offset + firstAdjustment, overlapBytes, 0x22222222u);
+        fill(commands, secondView.buffer, secondView.offset + secondAdjustment, overlapBytes, 0x33333333u);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        recorder.DeferDispatchBarrier(0x20u, {}, {});
+        recorder.AfterRun([&](Recorder& current) { Require(current.AfterRunMerging(), "overlapping copy-backs did not use the merged path"); firstMemory.RecordCopyBacks(current); });
+        recorder.AfterRun([&](Recorder& current) { secondMemory.RecordCopyBacks(current); });
+        static_cast<void>(recorder.Commands());
+        recorder.Sync();
+        firstMemory.MarkDirectWrites();
+        secondMemory.MarkDirectWrites();
+        const auto base = static_cast<std::size_t>((left - address) / sizeof(std::uint32_t));
+        for (std::size_t index = 0; index < (overlapBytes + shift) / sizeof(std::uint32_t); ++index) {
+            const auto expected = index < shift / sizeof(std::uint32_t) ? 0x22222222u : 0x33333333u;
+            Require(words[base + index] == expected, "overlapping staged copy-backs produced incorrect bytes");
+        }
+        firstMemory.WriteBack();
+        secondMemory.WriteBack();
+        std::cout << "overlapping staged GPU copy-backs passed\n";
     }
     std::memset(block, 0xff, allocationBytes);
     {
@@ -14004,6 +14045,10 @@ int main(int argc, char** argv) {
             unlandedOwnLabelTests(recorder);
             unlandedOwnStoreWaitTests(recorder);
             std::cout << "Completion label storage and ordering tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--bda-staging-overlap-only") {
+            if (!bdaStagingTests(device, recorder, true)) return 77;
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--bda-staging-only") {
