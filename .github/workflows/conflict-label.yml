@@ -19,7 +19,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: eps1lon/actions-label-merge-conflict@v3
+      - uses: eps1lon/actions-label-merge-conflict@0273be72a0bbd58fcd71d0d6c02c209b50d1e5e1
         with:
           dirtyLabel: needs rebase
           repoToken: ${{ secrets.GITHUB_TOKEN }}

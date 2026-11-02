@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Compile native library sources and test guest long doubles
@@ -27,7 +27,7 @@ jobs:
           cmake -S core/libs/tests/emscripten -B build-native -DCMAKE_BUILD_TYPE=Release
           cmake --build build-native --parallel 2
           ctest --test-dir build-native --output-on-failure
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '26'
       - name: Compile memory64 libraries and test conversions and module errors

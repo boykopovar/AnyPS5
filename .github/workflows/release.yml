@@ -39,7 +39,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           submodules: recursive
@@ -54,7 +54,7 @@ jobs:
           echo "::error::No CA bundle found in Git for Windows"; exit 1
       - id: toolchain
         if: matrix.platform == 'windows'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: C:\winlibs
           key: ${{ env.WINLIBS_ZIP }}
@@ -64,7 +64,7 @@ jobs:
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs
       - if: matrix.platform == 'windows'
         run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
-      - uses: hendrikmuhs/ccache-action@v1.2.24
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d
         with:
           key: ${{ matrix.platform }}
           save: false
@@ -104,7 +104,7 @@ jobs:
         run: cmake --build build --target libs
       - name: Package release files
         run: python tools/package_release.py --platform "${{ matrix.platform }}" --build build --output dist --version "$RELEASE_TAG"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-${{ matrix.platform }}
           path: dist/*
@@ -116,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
       - name: Build web converter
@@ -133,7 +133,7 @@ jobs:
       - name: Package web converter
         shell: bash
         run: python3 tools/package_release.py --platform web --build build-wasm --output dist --version "$RELEASE_TAG" --revision "$(git rev-parse HEAD)"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-web
           path: dist/*
@@ -151,10 +151,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: release-*
           merge-multiple: true
