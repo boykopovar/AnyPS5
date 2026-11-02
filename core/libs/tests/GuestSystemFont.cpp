@@ -497,7 +497,10 @@ int main() {
     Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
     sceFontRenderSurfaceInit(&measuring, untouched.data(), 0, 1, 128, 128);
 
-    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_OK);
+    Require(measured.Horizontal.advance == 60.0f);
+    Require(std::any_of(untouched.begin(), untouched.begin() + 128, [](std::uint8_t value) { return value != 0; }));
+    Require(std::all_of(untouched.begin() + 128, untouched.end(), [](std::uint8_t value) { return value == 0; }));
     sceFontRenderSurfaceInit(&measuring, nullptr, 0, 1, 0, 31);
 
     Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
