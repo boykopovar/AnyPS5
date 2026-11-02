@@ -8,21 +8,41 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <exception>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
 static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
+static constexpr int ERROR_TIMEOUT = static_cast<int>(0x817B1079);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
 
 enum class Http2Kind : std::uint8_t { Context, Template, Request, CookieBox };
+
+struct Http2AsyncCompletion {
+    Http2AsyncResult result{};
+    std::exception_ptr failure;
+};
+
+struct Http2AsyncState {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::deque<Http2AsyncCompletion> pending;
+    bool retired = false;
+};
 
 struct Http2Handle {
     Http2Kind kind;
@@ -35,11 +55,47 @@ struct Http2Handle {
     std::string method, url;
     std::shared_ptr<Http2::Request> transport;
     std::shared_ptr<Http2::Capacity> capacity;
+    std::shared_ptr<Http2AsyncState> async = std::make_shared<Http2AsyncState>();
 };
 
 static std::atomic<int> g_nextHandle{1};
 static std::mutex g_handlesMutex;
 static std::unordered_map<int, Http2Handle> g_handles;
+static std::atomic<GuestSceHttp2Test::AsyncPublishHook> g_asyncPublishHook{nullptr};
+static std::atomic<void*> g_asyncPublishHookData{nullptr};
+
+static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state, int req_id, const Http2AsyncOption* option,
+    int event_type, int result, std::exception_ptr failure) {
+    std::lock_guard lock(state->mutex);
+    if (state->retired) return;
+    Http2AsyncCompletion completion{};
+    completion.result.event_type = event_type;
+    completion.result.req_id = req_id;
+    completion.result.result = result;
+    completion.failure = std::move(failure);
+    state->pending.push_back(std::move(completion));
+    state->changed.notify_all();
+    if (const auto hook = g_asyncPublishHook.load(std::memory_order_acquire)) {
+        hook(g_asyncPublishHookData.load(std::memory_order_acquire));
+    }
+    if (option) sceKernelTriggerUserEvent(option->equeue, option->user_event_id, option->user_data);
+}
+
+static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
+    {
+        std::lock_guard lock(state->mutex);
+        state->retired = true;
+        state->pending.clear();
+    }
+    state->changed.notify_all();
+}
+
+namespace GuestSceHttp2Test {
+void SetAsyncPublishHookForTests_nid_no_patch(AsyncPublishHook hook, void* data) noexcept {
+    g_asyncPublishHookData.store(data, std::memory_order_release);
+    g_asyncPublishHook.store(hook, std::memory_order_release);
+}
+}
 
 static Http2Handle* FindHandle(int id, Http2Kind kind) {
     const auto entry = g_handles.find(id);
@@ -61,6 +117,7 @@ static void ReleaseOwnedHandles(int owner) {
         const int id = child->first;
         ReleaseOwnedHandles(id);
         auto& handle = g_handles.at(id);
+        RetireAsync(handle.async);
         if (handle.transport) handle.transport->Stop();
         g_handles.erase(id);
     }
@@ -110,7 +167,7 @@ static bool IsConnectionHeader(const char* name) {
     return true;
 }
 
-static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
+static std::shared_ptr<Http2::Request> Transport(int id, bool create, std::shared_ptr<Http2AsyncState>* async = nullptr) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindHandle(id, Http2Kind::Request);
     if (!handle) return nullptr;
@@ -119,6 +176,7 @@ static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
         handle->transport = Http2::CreateRequest_nid_no_patch(handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
     }
     if (!handle->transport) NotImplemented_nid_no_patch("sceHttp2: request has not been sent");
+    if (async) *async = handle->async;
     return handle->transport;
 }
 
@@ -170,6 +228,7 @@ int APS5_VABI sceHttp2DeleteRequest(int req_id) {
     std::lock_guard lock(g_handlesMutex);
     auto* handle = FindHandle(req_id, Http2Kind::Request);
     if (!handle) return ERROR_INVALID_ID;
+    RetireAsync(handle->async);
     if (handle->transport) handle->transport->Stop();
     g_handles.erase(req_id);
     return 0;
@@ -217,7 +276,23 @@ int APS5_VABI sceHttp2ReadData(int req_id, void* data, size_t size) {
 }
 
 int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* kqueue_option, void* option) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)option;
+    if (!data && size) return ERROR_NULL_POINTER;
+    std::shared_ptr<Http2AsyncState> state;
+    const auto request = Transport(req_id, false, &state);
+    if (!request) return ERROR_INVALID_ID;
+    const std::optional<Http2AsyncOption> async = kqueue_option
+        ? std::optional<Http2AsyncOption>(*static_cast<const Http2AsyncOption*>(kqueue_option)) : std::nullopt;
+    std::thread([request, state, async, data, size, req_id] {
+        int result = 0;
+        std::exception_ptr failure;
+        try {
+            result = request->Read(data, size);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+        CompleteAsync(state, req_id, async ? &*async : nullptr, 1, result, std::move(failure));
+    }).detach();
     return 0;
 }
 
@@ -227,9 +302,25 @@ int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size
 }
 
 int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t size, Http2AsyncOption* kqueue_option, void* option) {
-    std::lock_guard lock(g_handlesMutex);
-    if (!FindHandle(req_id, Http2Kind::Request)) return ERROR_INVALID_ID;
-    NotImplemented_nid_no_patch(__func__);
+    (void)option;
+    if (!post_data && size) return ERROR_NULL_POINTER;
+    std::shared_ptr<Http2AsyncState> state;
+    const auto request = Transport(req_id, true, &state);
+    if (!request) return ERROR_INVALID_ID;
+    std::vector<std::uint8_t> body;
+    if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
+    const std::optional<Http2AsyncOption> async = kqueue_option
+        ? std::optional<Http2AsyncOption>(*kqueue_option) : std::nullopt;
+    std::thread([request, state, async, body = std::move(body), req_id]() mutable {
+        int result = 0;
+        std::exception_ptr failure;
+        try {
+            result = request->Send(body.empty() ? nullptr : body.data(), body.size());
+        } catch (...) {
+            failure = std::current_exception();
+        }
+        CompleteAsync(state, req_id, async ? &*async : nullptr, 0, result, std::move(failure));
+    }).detach();
     return 0;
 }
 
@@ -324,7 +415,32 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 }
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!result) return ERROR_NULL_POINTER;
+    if (option || result->reserved) return ERROR_INVALID_VALUE;
+    std::shared_ptr<Http2AsyncState> state;
+    {
+        std::lock_guard lock(g_handlesMutex);
+        auto* handle = FindHandle(req_id, Http2Kind::Request);
+        if (!handle) return ERROR_INVALID_ID;
+        state = handle->async;
+    }
+    if (timeout && *timeout == 0) NotImplemented_nid_no_patch(__func__);
+    std::unique_lock lock(state->mutex);
+    const auto available = [&] { return state->retired || !state->pending.empty(); };
+    if (timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(*timeout);
+        const bool ready = state->changed.wait_until(lock, deadline, available);
+        const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - std::chrono::steady_clock::now());
+        *timeout = remaining.count() > 0 ? static_cast<std::uint32_t>(remaining.count()) : 0;
+        if (!ready) return ERROR_TIMEOUT;
+    } else {
+        state->changed.wait(lock, available);
+    }
+    if (state->retired) return ERROR_INVALID_ID;
+    auto completion = std::move(state->pending.front());
+    state->pending.pop_front();
+    if (completion.failure) std::rethrow_exception(completion.failure);
+    *result = completion.result;
     return 0;
 }
 
