@@ -33,6 +33,12 @@ void CheckContextLifetime() {
     cairo_reference(nullptr);
     CairoContext* nil = cairo_create(nullptr);
     assert(nil);
+    assert(cairo_get_target(nil) != nullptr);
+    assert(cairo_surface_status(cairo_get_target(nil)) == 1);
+    CairoMatrix nilMatrix{};
+    cairo_get_matrix(nil, &nilMatrix);
+    Near(nilMatrix.xx, 1);
+    Near(nilMatrix.yy, 1);
     assert(cairo_reference(nil) == nil);
     cairo_save(nil);
     cairo_restore(nil);
@@ -138,6 +144,11 @@ void CheckMatrixAliasingAndErrorState() {
     context = cairo_create(surface);
     cairo_surface_destroy(surface);
     cairo_scale(context, 0, 1); // Noninvertible CTM is a sticky context error.
+    CairoMatrix failedMatrix{42, 42, 42, 42, 42, 42};
+    cairo_get_matrix(context, &failedMatrix);
+    Near(failedMatrix.xx, 1);
+    Near(failedMatrix.yy, 1);
+    Near(failedMatrix.x0, 0);
     cairo_translate(context, 10, 20);
     cairo_save(context);
     cairo_destroy(context);
@@ -146,7 +157,41 @@ void CheckMatrixAliasingAndErrorState() {
     context = cairo_create(surface);
     cairo_surface_destroy(surface);
     cairo_restore(context); // Empty save stack is a sticky context error.
+    cairo_get_matrix(context, &failedMatrix);
+    Near(failedMatrix.xx, 1);
+    Near(failedMatrix.yy, 1);
     cairo_save(context);
+    cairo_destroy(context);
+
+    surface = cairo_image_surface_create(0, 1, 1);
+    context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    cairo_scale(context, std::numeric_limits<double>::infinity(), 1);
+    cairo_get_matrix(context, &failedMatrix);
+    Near(failedMatrix.xx, 1);
+    Near(failedMatrix.yy, 1);
+    cairo_destroy(context);
+
+    surface = cairo_image_surface_create(0, 1, 1);
+    context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    CairoMatrix infiniteOrigin{1, 0, 0, 1, std::numeric_limits<double>::infinity(), 0};
+    cairo_set_matrix(context, &infiniteOrigin); // Native permits nonfinite translation in set_matrix.
+    cairo_get_matrix(context, &failedMatrix);
+    assert(std::isinf(failedMatrix.x0));
+    cairo_identity_matrix(context);
+    cairo_translate(context, std::numeric_limits<double>::infinity(), 0);
+    cairo_get_matrix(context, &failedMatrix);
+    Near(failedMatrix.x0, 0); // Native translate rejects nonfinite operands.
+    cairo_destroy(context);
+
+    surface = cairo_image_surface_create(0, 1, 1);
+    context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    cairo_scale(context, 1e200, 1e200); // Product determinant overflows.
+    cairo_get_matrix(context, &failedMatrix);
+    Near(failedMatrix.xx, 1);
+    Near(failedMatrix.yy, 1);
     cairo_destroy(context);
 }
 
