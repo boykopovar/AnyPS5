@@ -442,6 +442,41 @@ struct TraceClockSample {
     std::chrono::steady_clock::time_point cpu{};
 };
 
+class TraceCapture {
+public:
+    TraceCapture() = default;
+    TraceCapture(const TraceCapture&) = delete;
+    TraceCapture& operator=(const TraceCapture&) = delete;
+
+    void Add(TraceThread::Snapshot snapshot) {
+        slices.emplace_back(snapshot.slices.begin(), snapshot.slices.end());
+        for (auto& slice : slices.back()) {
+            slice.scope = own(slice.scope);
+            slice.stage = own(slice.stage);
+        }
+        for (auto& total : snapshot.totals) {
+            total.scope = own(total.scope);
+            total.stage = own(total.stage);
+        }
+        snapshot.slices = slices.back();
+        threads.push_back(std::move(snapshot));
+    }
+
+    TraceSummary summary;
+    std::vector<TraceThread::Clock::time_point> presents;
+    std::vector<TraceThread::Snapshot> threads;
+    std::uint64_t process = 0;
+    std::size_t presenter = 0;
+
+private:
+    const char* own(const char* text) {
+        return text != nullptr ? labels.try_emplace(text, text).first->second.c_str() : nullptr;
+    }
+
+    std::vector<std::vector<TraceThread::Slice>> slices;
+    std::map<const char*, std::string> labels;
+};
+
 class TraceFormat {
 public:
     using Clock = std::chrono::steady_clock;
