@@ -15268,29 +15268,11 @@ int APS5_VABI WKRemoveMockMediaDevice() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKRenderLayerCopyElementID() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKRenderLayerCopyElementTagName() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKRenderLayerCopyRendererName() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKRenderLayerGetAbsoluteBounds() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKRenderLayerGetBackingStoreMemoryEstimate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKRenderLayerGetCompositingLayerType() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKRenderLayerGetElementClassNames() {
     NotImplemented_nid_no_patch(__func__);
@@ -15316,17 +15298,6 @@ int APS5_VABI WKRenderLayerGetRenderer() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKRenderLayerIsClipped() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKRenderLayerIsClipping() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKRenderLayerIsReflection() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKRenderObjectCopyElementID() {
     NotImplemented_nid_no_patch(__func__);

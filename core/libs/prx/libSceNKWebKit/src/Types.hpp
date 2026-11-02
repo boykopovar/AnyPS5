@@ -101,4 +101,16 @@ public:
     bool valid = false;
 };
 
+class RenderLayer final : public ObjectOf<ObjectType::RenderLayer> {
+public:
+    Retained<String> elementID;
+    Retained<String> elementTagName;
+    Retained<String> rendererName;
+    std::uint32_t backingStoreMemoryEstimate = 0;
+    std::uint32_t compositingLayerType = 0;
+    bool isClipped = false;
+    bool isClipping = false;
+    bool isReflection = false;
+};
+
 }  // namespace NKWebKit

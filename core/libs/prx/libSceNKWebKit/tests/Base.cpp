@@ -351,6 +351,68 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestRenderLayer() {
+    auto layer = NKWebKit::Make<NKWebKit::RenderLayer>();
+    const void* ref = layer.Get();
+
+    Require(WKRenderLayerCopyElementID(ref) == nullptr);
+    Require(WKRenderLayerCopyElementTagName(ref) == nullptr);
+    Require(WKRenderLayerCopyRendererName(ref) == nullptr);
+    Require(WKRenderLayerGetBackingStoreMemoryEstimate(ref) == 0);
+    Require(WKRenderLayerGetCompositingLayerType(ref) == 0);
+    Require(!WKRenderLayerIsClipped(ref));
+    Require(!WKRenderLayerIsClipping(ref));
+    Require(!WKRenderLayerIsReflection(ref));
+
+    layer->elementID = NKWebKit::String::FromUtf8("main-layer");
+    auto* id = WKRenderLayerCopyElementID(ref);
+    Require(id != nullptr);
+    Require(WKStringIsEqualToUTF8CString(id, "main-layer"));
+    WKRelease(id);
+
+    layer->elementTagName = NKWebKit::String::FromUtf8("div");
+    auto* tag = WKRenderLayerCopyElementTagName(ref);
+    Require(tag != nullptr);
+    Require(WKStringIsEqualToUTF8CString(tag, "div"));
+    WKRelease(tag);
+
+    layer->rendererName = NKWebKit::String::FromUtf8("RenderBlock");
+    auto* rend = WKRenderLayerCopyRendererName(ref);
+    Require(rend != nullptr);
+    Require(WKStringIsEqualToUTF8CString(rend, "RenderBlock"));
+    WKRelease(rend);
+
+    layer->backingStoreMemoryEstimate = 1024;
+    layer->compositingLayerType = 2;
+    Require(WKRenderLayerGetBackingStoreMemoryEstimate(ref) == 1024);
+    Require(WKRenderLayerGetCompositingLayerType(ref) == 2);
+
+    layer->isClipped = true;
+    Require(WKRenderLayerIsClipped(ref));
+    Require(!WKRenderLayerIsClipping(ref));
+    Require(!WKRenderLayerIsReflection(ref));
+
+    layer->isClipped = false;
+    layer->isClipping = true;
+    Require(!WKRenderLayerIsClipped(ref));
+    Require(WKRenderLayerIsClipping(ref));
+    Require(!WKRenderLayerIsReflection(ref));
+
+    layer->isClipping = false;
+    layer->isReflection = true;
+    Require(!WKRenderLayerIsClipped(ref));
+    Require(!WKRenderLayerIsClipping(ref));
+    Require(WKRenderLayerIsReflection(ref));
+
+    bool threw = false;
+    try {
+        WKRenderLayerIsClipped(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -373,6 +435,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestRenderLayer();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
