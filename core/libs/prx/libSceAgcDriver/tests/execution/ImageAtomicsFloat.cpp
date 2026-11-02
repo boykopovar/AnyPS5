@@ -544,8 +544,8 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         for (const auto format : {Format32UInt, Format32SInt, Format32Float}) {
-            Run(*device, 32, device->Target(), "wave32", format);
-            Run(*device, 64, device->Target(), "wave64", format);
+            Run(*device, 32, device->ComputeTarget(32), "wave32", format);
+            Run(*device, 64, device->ComputeTarget(64), "wave64", format);
             Run(*device, 64, device->ComputeTarget(32), "wave64 split", format);
         }
         bool refused = false;

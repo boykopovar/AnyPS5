@@ -2,15 +2,31 @@
 
 layout(local_size_x = 64) in;
 
+#ifdef ADDRESSED
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Source { uint data[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Destination { uint data[]; };
+#else
 layout(std430, set = 0, binding = 0) readonly buffer Source { uint source[]; };
 layout(std430, set = 0, binding = 1) buffer Destination { uint destination[]; };
+#endif
 
 layout(push_constant) uniform Push {
     uint sourceBase;
     uint destinationBase;
     uint words;
     uint rowWords;
+#ifdef ADDRESSED
+    uvec2 sourceAddress;
+    uvec2 destinationAddress;
+#endif
 } push;
+
+#ifdef ADDRESSED
+#define source Source(push.sourceAddress).data
+#define destination Destination(push.destinationAddress).data
+#endif
 
 void main() {
     const uint index = gl_GlobalInvocationID.y * push.rowWords + gl_GlobalInvocationID.x;

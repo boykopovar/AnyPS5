@@ -242,8 +242,16 @@ function(add_shader_recompiler target runtimeTarget)
     endif()
     set(shaderCacheReviewedNames
             BdaAbi::RangesOrdered
+            RuntimeAbi::GpuHeapStorageKind
+            RuntimeAbi::StageGroup
+            RuntimeAbi::UintStorageImageKind
+            StorageElementPointer
+            FirstAtomicStorageImageBinding
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
+            HeapFragmentEligible
+            CompleteHeapDataWords
+            HeapTemplateCounts
             BuildPreparedShaderKey
             BuildRectListShaders
             BuildTessellationCaptureGeometryShader
@@ -279,7 +287,10 @@ function(add_shader_recompiler target runtimeTarget)
             MaterializeShader
             RegistrationResult
             ResolveSource
+            DescriptorBindingForImage
             ResourceMaterializer::EvaluateNanoseconds
+            ResourceMaterializer::TryRuntimeImageMode
+            ResourceMaterializer::ExpectedDeviceImages
             ResourceMaterializer::MaterializeNanoseconds
             ReleaseUndrawnResourcePlan
             ResourceMaterializer::SpecializationNanoseconds
