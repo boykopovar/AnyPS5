@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/TraceRevision.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -284,6 +285,8 @@ void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Sh
 void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders) {
     if (state == State::Waiting) {
         if (!prologueCall) return;
+        std::set<std::uint64_t> blocks;
+        collectShaderPages(shaders, blocks, prologueHostPages);
         call.ordinal = ++ordinal;
         prologue.push_back(std::move(call));
         return;
@@ -360,9 +363,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::newRanges() {
     return added;
 }
 
-void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
-    std::set<std::uint64_t> blocks;
-    std::set<std::uint64_t> hostPages;
+void FrameRecorder::collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages) {
     std::uintptr_t arenaBase = 0;
     std::size_t arenaBytes = 0;
     GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
@@ -390,6 +391,12 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
         note(shader->user_data->direct_resource_offset);
         for (const auto* sharps : shader->user_data->sharp_resource_offset) note(sharps);
     }
+}
+
+void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
+    std::set<std::uint64_t> blocks;
+    std::set<std::uint64_t> hostPages;
+    collectShaderPages(shaders, blocks, hostPages);
     if (blocks.empty() && hostPages.empty()) return;
     const auto mark = GuestMemory::WriteGeneration();
     std::vector<Span> spans;
@@ -432,7 +439,7 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
         }
         for (std::uint64_t at = 0; at < range.bytes;) {
             bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, range.bytes - at)));
-            GuestMemory::ReadCommittedUnsynced(range.address + at, bytes);
+            readGuest(range.address + at, bytes, GuestMemory::ReadCommittedUnsynced);
             const bool zero = std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
             if (!zero) {
                 writer->WriteDelta(group, completed, range.address + at, bytes);
@@ -456,7 +463,7 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
     }
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
-        GuestMemory::ReadCommittedUnsynced(begin, bytes);
+        readGuest(begin, bytes, GuestMemory::ReadCommittedUnsynced);
         writer->WriteDelta(group, completed, begin, bytes);
         deltaBytes += bytes.size();
         any = true;
@@ -481,15 +488,20 @@ void FrameRecorder::snapshot(const Range& range) {
     for (std::uint64_t at = 0; at < range.bytes; at += SnapshotPieceBytes) {
         if (abandonIfDiskLow()) return;
         bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(SnapshotPieceBytes, range.bytes - at)));
-        GuestMemory::ReadCommitted(range.address + at, bytes);
+        readGuest(range.address + at, bytes, GuestMemory::ReadCommitted);
         snapshotBytes += writer->WriteSnapshot(range.address + at, bytes);
     }
+}
+
+void FrameRecorder::readGuest(std::uint64_t address, std::span<std::byte> bytes, GuestRead read) {
+    hostOnlySampleBytes += ReadAroundRanges(address, bytes, Graphics::HostOnlySampleRanges(address, bytes.size()), read);
 }
 
 bool FrameRecorder::abandonIfDiskLow() {
     std::error_code error;
     const auto space = std::filesystem::space(directory, error);
-    if (error || space.available >= MinimumFreeBytes) return false;
+    static const auto minimumFree = readNumber(std::getenv("APS5_FRAME_CAPTURE_MIN_FREE_BYTES"), MinimumFreeBytes);
+    if (error || space.available >= minimumFree) return false;
     stop("stopped: less than 4 GiB free on the capture volume");
     return true;
 }
@@ -532,6 +544,21 @@ void FrameRecorder::start() {
         snapshot(range);
         if (!writer) return;
     }
+    for (const auto page : prologueHostPages) {
+        const auto* address = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(page));
+        if (!GuestMemory::Accessible(address, HostPageBytes)) continue;
+        const bool covered = std::ranges::any_of(ranges, [&](const auto& range) {
+            return range.readable && range.address <= page && page - range.address <= range.bytes && HostPageBytes <= range.bytes - (page - range.address);
+        });
+        if (covered) continue;
+        const bool writable = GuestMemory::Accessible(address, HostPageBytes, true);
+        Range range{page, HostPageBytes, FrameRangeKind::Host, writable ? 0x04u : 0x02u,
+            FrameRangeAccess::Readable | (writable ? FrameRangeAccess::Writable : 0u), true};
+        snapshot(range);
+        if (!writer) return;
+        ranges.push_back(range);
+    }
+    prologueHostPages.clear();
     for (const auto& call : prologue) writer->WriteCall(call);
     std::uintptr_t ringBase = 0;
     std::uint32_t ringSize = 0;
@@ -583,7 +610,7 @@ std::string FrameRecorder::header() const {
     text += ",\"arena_base\":" + std::to_string(arenaBase) + ",\"arena_bytes\":" + std::to_string(arenaBytes);
     text += ",\"start_boundary\":" + std::to_string(startBoundary) + ",\"frames\":" + std::to_string(recordedFrames);
     text += ",\"calls\":" + std::to_string(recordedCalls) + ",\"prologue_calls\":" + std::to_string(prologue.size());
-    text += ",\"ranges\":" + std::to_string(ranges.size()) + ",\"late_ranges\":" + std::to_string(lateRanges) + ",\"snapshot_bytes\":" + std::to_string(snapshotBytes) + ",\"unreadable_bytes\":" + std::to_string(unreadableBytes);
+    text += ",\"ranges\":" + std::to_string(ranges.size()) + ",\"late_ranges\":" + std::to_string(lateRanges) + ",\"snapshot_bytes\":" + std::to_string(snapshotBytes) + ",\"unreadable_bytes\":" + std::to_string(unreadableBytes) + ",\"host_only_sample_bytes\":" + std::to_string(hostOnlySampleBytes);
     text += ",\"memory_groups\":" + std::to_string(deltaGroups) + ",\"delta_bytes\":" + std::to_string(deltaBytes);
     text += ",\"capture_seconds\":" + std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count());
     text += ",\"env\":{";
@@ -598,6 +625,7 @@ std::string FrameRecorder::header() const {
         text += (first ? "" : ",") + jsonString(warning);
         first = false;
     }
+    if (hostOnlySampleBytes != 0) text += (first ? "" : ",") + jsonString(std::to_string(hostOnlySampleBytes) + " bytes under multisampled targets whose samples are only on the host are zero in the capture, so replay starts those targets without their earlier contents");
     return text + "]}\n";
 }
 

@@ -1,0 +1,9 @@
+add_test_executable(agc_tessellation_pipeline_cache_tests EXCLUDE_FROM_ALL tests/TessellationPipelineCache.cpp)
+target_include_directories(agc_tessellation_pipeline_cache_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+set_target_properties(agc_tessellation_pipeline_cache_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_tessellation_pipeline_cache_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_tessellation_pipeline_cache_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_tessellation_pipeline_cache COMMAND agc_tessellation_pipeline_cache_tests)
+endif()

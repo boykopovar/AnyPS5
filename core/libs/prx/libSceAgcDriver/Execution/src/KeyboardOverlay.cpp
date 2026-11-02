@@ -249,6 +249,7 @@ constexpr std::array<KeyboardGlyphRows, 8> KeyboardSymbolGlyphs{{
 
 std::mutex systemOverlayMutex;
 std::optional<ImeKeyboardView> systemOverlay;
+std::optional<ModalDialogView> systemDialog;
 
 std::int32_t gridWidth(const ImeKeyboardView& view) {
     return view.columns * KeyboardMetrics::KeyWidth + (view.columns - 1) * KeyboardMetrics::Gap;
@@ -371,7 +372,20 @@ OverlayLayout LayOutKeyboard(const ImeKeyboardView& view, VkExtent2D extent) {
     const auto inner = gridWidth(view);
     rect(KeyboardMetrics::Padding, KeyboardMetrics::Padding, inner, KeyboardMetrics::FieldHeight, OverlayColor::Field);
     std::size_t caret = 0;
-    const auto characters = decode(view.text, view.caret, &caret);
+    auto characters = decode(view.text, view.caret, &caret);
+    std::vector<std::uint8_t> marks(characters.size(), 0);
+    if (!view.preedit.empty()) {
+        Graphics::Require(view.preeditCursor <= view.preedit.size() && view.preeditSelection <= view.preedit.size() - view.preeditCursor, "the system keyboard composition cursor is past its text");
+        std::size_t cursor = 0;
+        std::size_t selectionEnd = 0;
+        const auto composed = decode(view.preedit, view.preeditCursor, &cursor);
+        decode(view.preedit, view.preeditCursor + view.preeditSelection, &selectionEnd);
+        std::vector<std::uint8_t> composedMarks(composed.size(), KeyboardCompositionMark);
+        std::fill(composedMarks.begin() + static_cast<std::ptrdiff_t>(cursor), composedMarks.begin() + static_cast<std::ptrdiff_t>(selectionEnd), KeyboardSelectionMark);
+        characters.insert(characters.begin() + static_cast<std::ptrdiff_t>(caret), composed.begin(), composed.end());
+        marks.insert(marks.begin() + static_cast<std::ptrdiff_t>(caret), composedMarks.begin(), composedMarks.end());
+        caret += cursor;
+    }
     const auto textLeft = KeyboardMetrics::Padding + KeyboardMetrics::FieldInset;
     const auto textTop = KeyboardMetrics::Padding + KeyboardMetrics::FieldInset;
     const auto visible = static_cast<std::size_t>((inner - 2 * KeyboardMetrics::FieldInset + 1) / KeyboardMetrics::Advance);
@@ -380,6 +394,8 @@ OverlayLayout LayOutKeyboard(const ImeKeyboardView& view, VkExtent2D extent) {
     for (auto index = first; index < last; ++index) {
         const auto column = static_cast<std::int32_t>(index - first);
         glyph(layout, KeyboardGlyph(characters[index]), left + (textLeft + column * KeyboardMetrics::Advance) * scale, top + textTop * scale, scale, OverlayColor::Text);
+        if (marks[index] == KeyboardCompositionMark) rect(textLeft + column * KeyboardMetrics::Advance, textTop + KeyboardMetrics::GlyphHeight, KeyboardMetrics::Advance, 1, OverlayColor::Accent);
+        else if (marks[index] == KeyboardSelectionMark) rect(textLeft + column * KeyboardMetrics::Advance, textTop + KeyboardMetrics::GlyphHeight, KeyboardMetrics::Advance, 2, OverlayColor::Text);
     }
     rect(textLeft + static_cast<std::int32_t>(caret - first) * KeyboardMetrics::Advance - 1, KeyboardMetrics::Padding + 1, 1, KeyboardMetrics::FieldHeight - 2, OverlayColor::Accent);
     for (const auto& key : view.keys) {
@@ -407,6 +423,147 @@ OverlayLayout LayOutKeyboard(const ImeKeyboardView& view, VkExtent2D extent) {
     return layout;
 }
 
+std::vector<std::u32string> WrapDialogMessage(const std::u16string& message, std::size_t columns, std::size_t maxLines) {
+    Graphics::Require(columns > 3 && maxLines != 0, "the dialog needs room for its text");
+    std::size_t unused = 0;
+    const auto characters = decode(message, 0, &unused);
+    std::vector<std::u32string> lines;
+    std::u32string current;
+    const auto addWord = [&](std::u32string word) {
+        while (word.size() > columns) {
+            if (!current.empty()) {
+                lines.push_back(std::move(current));
+                current.clear();
+            }
+            lines.push_back(word.substr(0, columns));
+            word.erase(0, columns);
+        }
+        if (word.empty()) return;
+        if (current.empty()) {
+            current = std::move(word);
+        } else if (current.size() + 1 + word.size() <= columns) {
+            current.push_back(U' ');
+            current += word;
+        } else {
+            lines.push_back(std::move(current));
+            current = std::move(word);
+        }
+    };
+    std::u32string word;
+    for (const char32_t character : characters) {
+        if (character == U'\r') continue;
+        if (character == U' ' || character == U'\n') {
+            addWord(std::move(word));
+            word.clear();
+            if (character == U'\n') {
+                lines.push_back(std::move(current));
+                current.clear();
+            }
+        } else {
+            word.push_back(character);
+        }
+    }
+    addWord(std::move(word));
+    if (!current.empty() || lines.empty()) lines.push_back(std::move(current));
+    if (lines.size() > maxLines) {
+        lines.resize(maxLines);
+        auto& last = lines.back();
+        if (last.size() + 3 > columns) last.resize(columns - 3);
+        last += U"...";
+    }
+    return lines;
+}
+
+namespace {
+
+std::int32_t buttonWidth(const ModalDialogButtonView& button) {
+    std::size_t unused = 0;
+    const auto characters = std::min<std::size_t>(decode(button.label, 0, &unused).size(), DialogMetrics::ButtonMaxColumns);
+    return std::max(DialogMetrics::ButtonMinWidth, lineWidth(characters) + 2 * DialogMetrics::ButtonInset);
+}
+
+std::int32_t buttonsWidth(const ModalDialogView& view) {
+    std::int32_t width = 0;
+    for (const auto& button : view.buttons) width += buttonWidth(button) + (width != 0 ? DialogMetrics::ButtonGap : 0);
+    return width;
+}
+
+std::vector<std::u32string> dialogLines(const ModalDialogView& view) {
+    return WrapDialogMessage(view.message, DialogMetrics::MaxColumns, DialogMetrics::MaxLines);
+}
+
+std::int32_t dialogInnerWidth(const ModalDialogView& view, const std::vector<std::u32string>& lines) {
+    std::int32_t width = buttonsWidth(view);
+    for (const auto& text : lines) width = std::max(width, lineWidth(text.size()));
+    return width;
+}
+
+std::int32_t dialogHeight(std::size_t lines) {
+    return DialogMetrics::Padding * 2 + static_cast<std::int32_t>(lines) * DialogMetrics::LineHeight + DialogMetrics::MessageGap + DialogMetrics::ButtonHeight;
+}
+
+}
+
+std::int32_t DialogScale(VkExtent2D extent, const ModalDialogView& view) {
+    const auto lines = dialogLines(view);
+    const auto width = dialogInnerWidth(view, lines) + 2 * DialogMetrics::Padding;
+    const auto height = dialogHeight(lines.size());
+    auto scale = std::max<std::int32_t>(1, static_cast<std::int32_t>(extent.height / KeyboardMetrics::LinesPerScale));
+    while (scale > 1 && (static_cast<std::int64_t>(width) * scale > extent.width || static_cast<std::int64_t>(height) * scale > extent.height)) --scale;
+    return scale;
+}
+
+OverlayLayout LayOutDialog(const ModalDialogView& view, VkExtent2D extent) {
+    Graphics::Require(extent.width != 0 && extent.height != 0, "the system dialog needs a destination");
+    Graphics::Require(!view.buttons.empty() && view.buttons.size() <= ModalDialogMaxButtons, "the system dialog needs one to three buttons");
+    const auto lines = dialogLines(view);
+    const auto inner = dialogInnerWidth(view, lines);
+    const auto width = inner + 2 * DialogMetrics::Padding;
+    const auto height = dialogHeight(lines.size());
+    OverlayLayout layout;
+    const auto scale = DialogScale(extent, view);
+    layout.scale = scale;
+    const auto left = std::max(0, (static_cast<std::int32_t>(extent.width) - width * scale) / 2);
+    const auto top = std::max(0, (static_cast<std::int32_t>(extent.height) - height * scale) / 2);
+    layout.bounds = {left, top, width * scale, height * scale, static_cast<std::uint32_t>(OverlayColor::Panel)};
+    layout.rects.push_back(layout.bounds);
+    const auto rect = [&](std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h, OverlayColor color) {
+        layout.rects.push_back({left + x * scale, top + y * scale, w * scale, h * scale, static_cast<std::uint32_t>(color)});
+    };
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const auto y = DialogMetrics::Padding + static_cast<std::int32_t>(index) * DialogMetrics::LineHeight;
+        const auto x = DialogMetrics::Padding + (inner - lineWidth(lines[index].size())) / 2;
+        for (std::size_t column = 0; column < lines[index].size(); ++column) {
+            glyph(layout, KeyboardGlyph(lines[index][column]), left + (x + static_cast<std::int32_t>(column) * KeyboardMetrics::Advance) * scale, top + y * scale, scale, OverlayColor::Text);
+        }
+    }
+    const auto rowTop = DialogMetrics::Padding + static_cast<std::int32_t>(lines.size()) * DialogMetrics::LineHeight + DialogMetrics::MessageGap;
+    auto x = DialogMetrics::Padding + (inner - buttonsWidth(view)) / 2;
+    for (const auto& button : view.buttons) {
+        const auto w = buttonWidth(button);
+        if (button.selected) {
+            rect(x, rowTop, w, DialogMetrics::ButtonHeight, OverlayColor::Accent);
+            rect(x + KeyboardMetrics::Border, rowTop + KeyboardMetrics::Border, w - 2 * KeyboardMetrics::Border, DialogMetrics::ButtonHeight - 2 * KeyboardMetrics::Border, OverlayColor::Key);
+        } else {
+            rect(x, rowTop, w, DialogMetrics::ButtonHeight, OverlayColor::Key);
+        }
+        line(layout, button.label.substr(0, DialogMetrics::ButtonMaxColumns), layout.bounds, x, w, rowTop + (DialogMetrics::ButtonHeight - KeyboardMetrics::GlyphHeight) / 2, scale, OverlayColor::Text);
+        x += w + DialogMetrics::ButtonGap;
+    }
+    return layout;
+}
+
+std::optional<ModalDialogView> SystemDialogView() {
+    std::lock_guard lock(systemOverlayMutex);
+    return systemDialog;
+}
+
+std::optional<OverlayLayout> SystemOverlayLayout(VkExtent2D extent) {
+    if (const auto keyboard = SystemOverlayView()) return LayOutKeyboard(*keyboard, extent);
+    if (const auto dialog = SystemDialogView()) return LayOutDialog(*dialog, extent);
+    return std::nullopt;
+}
+
 std::optional<ImeKeyboardView> SystemOverlayView() {
     std::lock_guard lock(systemOverlayMutex);
     return systemOverlay;
@@ -418,4 +575,10 @@ extern "C" void AgcDriverSetSystemOverlay_nid_postfix(const ImeKeyboardView* vie
     std::lock_guard lock(AgcDriver::systemOverlayMutex);
     if (view != nullptr) AgcDriver::systemOverlay = *view;
     else AgcDriver::systemOverlay.reset();
+}
+
+extern "C" void AgcDriverSetSystemDialog_nid_postfix(const ModalDialogView* view) {
+    std::lock_guard lock(AgcDriver::systemOverlayMutex);
+    if (view != nullptr) AgcDriver::systemDialog = *view;
+    else AgcDriver::systemDialog.reset();
 }
