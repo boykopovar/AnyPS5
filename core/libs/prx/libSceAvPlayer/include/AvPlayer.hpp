@@ -98,12 +98,16 @@ std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::s
 
 std::uint32_t DetectSourceType(std::string_view path);
 
+extern "C" {
+
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds);
 void HoldAvPlayerAudioEofForTest_nid_no_patch(AvPlayerInternal* h, bool hold);
 bool AvPlayerAudioEofHeldForTest_nid_no_patch(AvPlayerInternal* h);
 bool AvPlayerAudioEndedForTest_nid_no_patch(AvPlayerInternal* h);
 int QueuedAvPlayerAudioForTest_nid_no_patch(AvPlayerInternal* h);
 bool NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(AvPlayerInternal* h, std::uint64_t* timestamp);
+
+}
 
 class Player final : public AvPlayerInternal, private ISourceEvents {
 public:
