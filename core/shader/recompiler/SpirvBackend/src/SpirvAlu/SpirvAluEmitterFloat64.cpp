@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <span>
+#include <tuple>
 #include <string>
 #include <utility>
 
@@ -17,6 +18,7 @@ struct F64Bits {
 };
 
 std::uint32_t TypeF64(SpirvEmitterState& state) {
+    if (state.integerFloat64) FailEmit("a 64-bit float operation in a shader that computes its f64 values with integers");
     return state.module.Type(spv::OpTypeFloat, 64u);
 }
 
@@ -93,14 +95,18 @@ F64Bits Quiet(SpirvEmitterState& state, F64Bits bits) {
     return {bits.low, Binary(state, spv::OpBitwiseOr, TypeU32(state), bits.high, ConstantU32(state, 0x00080000u))};
 }
 
-std::uint32_t NanResult(SpirvEmitterState& state, std::uint32_t value, std::initializer_list<std::uint32_t> inputs) {
-    const auto cls = Classify(state, FromF64(state, value));
+std::uint32_t NanResultBits(SpirvEmitterState& state, std::uint32_t bits, std::initializer_list<std::uint32_t> inputs) {
+    const auto cls = Classify(state, bits);
     auto result = SelectBits(state, cls.nan, {ConstantU32(state, 0u), ConstantU32(state, 0xfff80000u)}, cls.bits);
     for (auto it = std::rbegin(inputs); it != std::rend(inputs); ++it) {
         const auto input = Classify(state, *it);
         result = SelectBits(state, input.nan, Quiet(state, input.bits), result);
     }
     return Join(state, result);
+}
+
+std::uint32_t NanResult(SpirvEmitterState& state, std::uint32_t value, std::initializer_list<std::uint32_t> inputs) {
+    return NanResultBits(state, FromF64(state, value), inputs);
 }
 
 std::uint32_t MinMax(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, bool maxValue) {
@@ -572,13 +578,256 @@ std::uint32_t FusedMultiplyAdd(SpirvEmitterState& state, std::uint32_t arg0, std
     return Join(state, result);
 }
 
+class IntegerFloat64 {
+public:
+    explicit IntegerFloat64(SpirvEmitterState& state) : state(state), u64(TypeScalarU64(state)), u32(TypeU32(state)), boolean(TypeBool(state)) {}
+
+    std::uint32_t Add(std::uint32_t lhsBits, std::uint32_t rhsBits) const {
+        const auto lhs = scalar(lhsBits);
+        const auto rhs = scalar(rhsBits);
+        const auto lhsMagnitude = withConstant(spv::OpBitwiseAnd, lhs, MagnitudeMask);
+        const auto rhsMagnitude = withConstant(spv::OpBitwiseAnd, rhs, MagnitudeMask);
+        const auto swap = test(spv::OpULessThan, lhsMagnitude, rhsMagnitude);
+        const auto large = pick(swap, rhs, lhs);
+        const auto largeMagnitude = pick(swap, rhsMagnitude, lhsMagnitude);
+        const auto smallMagnitude = pick(swap, lhsMagnitude, rhsMagnitude);
+        const auto subtract = testConstant(spv::OpINotEqual, withConstant(spv::OpBitwiseAnd, op(spv::OpBitwiseXor, lhs, rhs), SignBit), 0u);
+        const auto largeField = withConstant(spv::OpShiftRightLogical, largeMagnitude, 52u);
+        const auto smallField = withConstant(spv::OpShiftRightLogical, smallMagnitude, 52u);
+        const auto largeExponent = effectiveExponent(largeField);
+        const auto wideLarge = withConstant(spv::OpShiftLeftLogical, significand(largeMagnitude, largeField), 10u);
+        const auto wideSmall = shiftRightJam(withConstant(spv::OpShiftLeftLogical, significand(smallMagnitude, smallField), 10u), op(spv::OpISub, largeExponent, effectiveExponent(smallField)));
+        const auto sum = op(spv::OpIAdd, wideLarge, wideSmall);
+        const auto carry = testConstant(spv::OpUGreaterThanEqual, sum, SignBit);
+        const auto sumSignificand = pick(carry, op(spv::OpBitwiseOr, withConstant(spv::OpShiftRightLogical, sum, 1u), withConstant(spv::OpBitwiseAnd, sum, 1u)), sum);
+        const auto sumExponent = op(spv::OpIAdd, largeExponent, pick(carry, constant(1u), constant(0u)));
+        const auto difference = op(spv::OpISub, wideLarge, wideSmall);
+        const auto normalizing = withConstant(spv::OpISub, leadingZeros(difference), 1u);
+        const auto room = withConstant(spv::OpISub, largeExponent, 1u);
+        const auto shift = pick(test(spv::OpULessThan, normalizing, room), normalizing, room);
+        const auto significandBits = pick(subtract, op(spv::OpShiftLeftLogical, difference, shift), sumSignificand);
+        const auto exponent = pick(subtract, op(spv::OpISub, largeExponent, shift), sumExponent);
+        const auto cancelled = logical(spv::OpLogicalAnd, subtract, testConstant(spv::OpIEqual, difference, 0u));
+        const auto finite = pick(cancelled, constant(0u), roundPack(withConstant(spv::OpBitwiseAnd, large, SignBit), exponent, significandBits));
+        const auto largeSpecial = testConstant(spv::OpIEqual, largeField, 0x7ffu);
+        const auto invalid = logical(spv::OpLogicalAnd, logical(spv::OpLogicalAnd, largeSpecial, testConstant(spv::OpIEqual, smallField, 0x7ffu)), subtract);
+        return pair(pick(largeSpecial, pick(invalid, constant(DefaultNan), large), finite));
+    }
+
+    std::uint32_t Mul(std::uint32_t lhsBits, std::uint32_t rhsBits) const {
+        const auto lhs = scalar(lhsBits);
+        const auto rhs = scalar(rhsBits);
+        const auto sign = withConstant(spv::OpBitwiseAnd, op(spv::OpBitwiseXor, lhs, rhs), SignBit);
+        const auto lhsMagnitude = withConstant(spv::OpBitwiseAnd, lhs, MagnitudeMask);
+        const auto rhsMagnitude = withConstant(spv::OpBitwiseAnd, rhs, MagnitudeMask);
+        const auto lhsField = withConstant(spv::OpShiftRightLogical, lhsMagnitude, 52u);
+        const auto rhsField = withConstant(spv::OpShiftRightLogical, rhsMagnitude, 52u);
+        const auto lhsNormal = normalized(lhsMagnitude, lhsField);
+        const auto rhsNormal = normalized(rhsMagnitude, rhsField);
+        const auto product = multiply(lhsNormal.significand, rhsNormal.significand);
+        const auto sticky = testConstant(spv::OpINotEqual, withConstant(spv::OpBitwiseAnd, product.low, (1ull << 42u) - 1u), 0u);
+        auto wide = op(spv::OpBitwiseOr, withConstant(spv::OpShiftLeftLogical, product.high, 22u), withConstant(spv::OpShiftRightLogical, product.low, 42u));
+        wide = op(spv::OpBitwiseOr, wide, pick(sticky, constant(1u), constant(0u)));
+        const auto carry = testConstant(spv::OpUGreaterThanEqual, wide, SignBit);
+        wide = pick(carry, op(spv::OpBitwiseOr, withConstant(spv::OpShiftRightLogical, wide, 1u), withConstant(spv::OpBitwiseAnd, wide, 1u)), wide);
+        auto exponent = op(spv::OpIAdd, op(spv::OpIAdd, lhsNormal.exponent, rhsNormal.exponent), pick(carry, constant(~std::uint64_t{1021u}), constant(~std::uint64_t{1022u})));
+        const auto tiny = test(spv::OpSLessThan, exponent, constant(1u));
+        wide = pick(tiny, shiftRightJam(wide, op(spv::OpISub, constant(1u), exponent)), wide);
+        exponent = pick(tiny, constant(1u), exponent);
+        const auto zero = logical(spv::OpLogicalOr, testConstant(spv::OpIEqual, lhsMagnitude, 0u), testConstant(spv::OpIEqual, rhsMagnitude, 0u));
+        const auto special = logical(spv::OpLogicalOr, testConstant(spv::OpIEqual, lhsField, 0x7ffu), testConstant(spv::OpIEqual, rhsField, 0x7ffu));
+        const auto infinity = withConstant(spv::OpBitwiseOr, sign, Infinity);
+        return pair(pick(special, pick(zero, constant(DefaultNan), infinity), pick(zero, sign, roundPack(sign, exponent, wide))));
+    }
+
+    std::uint32_t FromF32(std::uint32_t value) const {
+        const auto bits = widen(Unary(state, spv::OpBitcast, u32, value));
+        const auto sign = withConstant(spv::OpShiftLeftLogical, withConstant(spv::OpBitwiseAnd, bits, 0x80000000u), 32u);
+        const auto field = withConstant(spv::OpBitwiseAnd, withConstant(spv::OpShiftRightLogical, bits, 23u), 0xffu);
+        const auto fraction = withConstant(spv::OpBitwiseAnd, bits, 0x7fffffu);
+        const auto normal = op(spv::OpBitwiseOr, withConstant(spv::OpShiftLeftLogical, withConstant(spv::OpIAdd, field, 896u), 52u), withConstant(spv::OpShiftLeftLogical, fraction, 29u));
+        const auto zeros = leadingZeros(fraction);
+        const auto subnormal = op(spv::OpBitwiseOr, withConstant(spv::OpShiftLeftLogical, op(spv::OpISub, constant(937u), zeros), 52u), withConstant(spv::OpBitwiseAnd, op(spv::OpShiftLeftLogical, fraction, withConstant(spv::OpISub, zeros, 11u)), FractionMask));
+        auto magnitude = pick(testConstant(spv::OpIEqual, field, 0u), pick(testConstant(spv::OpIEqual, fraction, 0u), constant(0u), subnormal), normal);
+        magnitude = pick(testConstant(spv::OpIEqual, field, 0xffu), op(spv::OpBitwiseOr, constant(Infinity), withConstant(spv::OpShiftLeftLogical, fraction, 29u)), magnitude);
+        return pair(op(spv::OpBitwiseOr, sign, magnitude));
+    }
+
+    std::uint32_t ToF32(std::uint32_t pairBits) const {
+        const auto value = scalar(pairBits);
+        const auto sign = narrow(withConstant(spv::OpBitwiseAnd, withConstant(spv::OpShiftRightLogical, value, 32u), 0x80000000u));
+        const auto magnitude = withConstant(spv::OpBitwiseAnd, value, MagnitudeMask);
+        const auto wideField = withConstant(spv::OpShiftRightLogical, magnitude, 52u);
+        const auto significandBits = significand(magnitude, wideField);
+        const auto exponent = Binary(state, spv::OpISub, u32, narrow(wideField), ConstantU32(state, 896u));
+        const auto tiny = Binary(state, spv::OpSLessThan, boolean, exponent, ConstantU32(state, 1u));
+        const auto shift = Select(state, u32, tiny, Binary(state, spv::OpISub, u32, ConstantU32(state, 30u), exponent), ConstantU32(state, 29u));
+        const auto inRange = Binary(state, spv::OpULessThan, boolean, shift, ConstantU32(state, 64u));
+        const auto amount = Select(state, u32, inRange, shift, ConstantU32(state, 63u));
+        const auto kept = op(spv::OpShiftRightLogical, significandBits, widen(amount));
+        const auto remainder = op(spv::OpBitwiseAnd, significandBits, withConstant(spv::OpISub, op(spv::OpShiftLeftLogical, constant(1u), widen(amount)), 1u));
+        const auto half = op(spv::OpShiftLeftLogical, constant(1u), widen(Binary(state, spv::OpISub, u32, amount, ConstantU32(state, 1u))));
+        const auto odd = testConstant(spv::OpINotEqual, withConstant(spv::OpBitwiseAnd, kept, 1u), 0u);
+        const auto up = logical(spv::OpLogicalOr, test(spv::OpUGreaterThan, remainder, half), logical(spv::OpLogicalAnd, test(spv::OpIEqual, remainder, half), odd));
+        const auto rounded = Binary(state, spv::OpIAdd, u32, narrow(kept), Select(state, u32, up, ConstantU32(state, 1u), ConstantU32(state, 0u)));
+        const auto packedExponent = Select(state, u32, tiny, ConstantU32(state, 0u), Binary(state, spv::OpISub, u32, exponent, ConstantU32(state, 1u)));
+        const auto packed = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpShiftLeftLogical, u32, packedExponent, ConstantU32(state, 23u)), rounded);
+        const auto overflow = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpSGreaterThan, boolean, exponent, ConstantU32(state, 254u)), Binary(state, spv::OpUGreaterThanEqual, boolean, packed, ConstantU32(state, 0x7f800000u)));
+        const auto result = Select(state, u32, inRange, Select(state, u32, overflow, ConstantU32(state, 0x7f800000u), packed), ConstantU32(state, 0u));
+        return Binary(state, spv::OpBitwiseOr, u32, sign, result);
+    }
+
+private:
+    static constexpr std::uint64_t SignBit = 0x8000000000000000ull;
+    static constexpr std::uint64_t MagnitudeMask = 0x7fffffffffffffffull;
+    static constexpr std::uint64_t FractionMask = 0x000fffffffffffffull;
+    static constexpr std::uint64_t ImplicitBit = 0x0010000000000000ull;
+    static constexpr std::uint64_t Infinity = 0x7ff0000000000000ull;
+    static constexpr std::uint64_t DefaultNan = 0xfff8000000000000ull;
+
+    struct Normalized {
+        std::uint32_t significand = 0;
+        std::uint32_t exponent = 0;
+    };
+
+    struct Product {
+        std::uint32_t high = 0;
+        std::uint32_t low = 0;
+    };
+
+    std::uint32_t constant(std::uint64_t value) const {
+        return state.module.Constant(spv::OpConstant, u64, static_cast<std::uint32_t>(value), static_cast<std::uint32_t>(value >> 32u));
+    }
+
+    std::uint32_t op(spv::Op opcode, std::uint32_t lhs, std::uint32_t rhs) const {
+        return Binary(state, opcode, u64, lhs, rhs);
+    }
+
+    std::uint32_t withConstant(spv::Op opcode, std::uint32_t lhs, std::uint64_t rhs) const {
+        return op(opcode, lhs, constant(rhs));
+    }
+
+    std::uint32_t test(spv::Op opcode, std::uint32_t lhs, std::uint32_t rhs) const {
+        return Binary(state, opcode, boolean, lhs, rhs);
+    }
+
+    std::uint32_t testConstant(spv::Op opcode, std::uint32_t lhs, std::uint64_t rhs) const {
+        return test(opcode, lhs, constant(rhs));
+    }
+
+    std::uint32_t logical(spv::Op opcode, std::uint32_t lhs, std::uint32_t rhs) const {
+        return Binary(state, opcode, boolean, lhs, rhs);
+    }
+
+    std::uint32_t pick(std::uint32_t condition, std::uint32_t whenTrue, std::uint32_t whenFalse) const {
+        return Select(state, u64, condition, whenTrue, whenFalse);
+    }
+
+    std::uint32_t scalar(std::uint32_t bits) const {
+        return Unary(state, spv::OpBitcast, u64, bits);
+    }
+
+    std::uint32_t pair(std::uint32_t value) const {
+        return Unary(state, spv::OpBitcast, TypeU64(state), value);
+    }
+
+    std::uint32_t widen(std::uint32_t value) const {
+        return Unary(state, spv::OpUConvert, u64, value);
+    }
+
+    std::uint32_t narrow(std::uint32_t value) const {
+        return Unary(state, spv::OpUConvert, u32, value);
+    }
+
+    std::uint32_t effectiveExponent(std::uint32_t field) const {
+        return pick(testConstant(spv::OpIEqual, field, 0u), constant(1u), field);
+    }
+
+    std::uint32_t significand(std::uint32_t magnitude, std::uint32_t field) const {
+        return op(spv::OpBitwiseOr, withConstant(spv::OpBitwiseAnd, magnitude, FractionMask), pick(testConstant(spv::OpIEqual, field, 0u), constant(0u), constant(ImplicitBit)));
+    }
+
+    std::uint32_t leadingZeros(std::uint32_t value) const {
+        const auto high = narrow(withConstant(spv::OpShiftRightLogical, value, 32u));
+        const auto highZero = Binary(state, spv::OpIEqual, boolean, high, ConstantU32(state, 0u));
+        const auto highMsb = Binary(state, spv::OpIAdd, u32, Glsl(state, u32, GLSLstd450FindUMsb, high), ConstantU32(state, 32u));
+        const auto msb = Select(state, u32, highZero, Glsl(state, u32, GLSLstd450FindUMsb, narrow(value)), highMsb);
+        return widen(Binary(state, spv::OpISub, u32, ConstantU32(state, 63u), msb));
+    }
+
+    std::uint32_t shiftRightJam(std::uint32_t value, std::uint32_t count) const {
+        const auto inRange = testConstant(spv::OpULessThan, count, 64u);
+        const auto amount = pick(inRange, count, constant(0u));
+        const auto lost = op(spv::OpBitwiseAnd, value, withConstant(spv::OpISub, op(spv::OpShiftLeftLogical, constant(1u), amount), 1u));
+        const auto shifted = op(spv::OpBitwiseOr, op(spv::OpShiftRightLogical, value, amount), pick(testConstant(spv::OpINotEqual, lost, 0u), constant(1u), constant(0u)));
+        return pick(inRange, shifted, pick(testConstant(spv::OpINotEqual, value, 0u), constant(1u), constant(0u)));
+    }
+
+    Normalized normalized(std::uint32_t magnitude, std::uint32_t field) const {
+        const auto fraction = withConstant(spv::OpBitwiseAnd, magnitude, FractionMask);
+        const auto subnormal = testConstant(spv::OpIEqual, field, 0u);
+        const auto zeros = leadingZeros(fraction);
+        return {pick(subnormal, op(spv::OpShiftLeftLogical, fraction, withConstant(spv::OpISub, zeros, 11u)), withConstant(spv::OpBitwiseOr, fraction, ImplicitBit)),
+                pick(subnormal, op(spv::OpISub, constant(12u), zeros), field)};
+    }
+
+    Product multiply(std::uint32_t lhs, std::uint32_t rhs) const {
+        const auto low = [&](std::uint32_t value) { return withConstant(spv::OpBitwiseAnd, value, 0xffffffffull); };
+        const auto high = [&](std::uint32_t value) { return withConstant(spv::OpShiftRightLogical, value, 32u); };
+        const auto lowLow = op(spv::OpIMul, low(lhs), low(rhs));
+        const auto lowHigh = op(spv::OpIMul, low(lhs), high(rhs));
+        const auto highLow = op(spv::OpIMul, high(lhs), low(rhs));
+        const auto highHigh = op(spv::OpIMul, high(lhs), high(rhs));
+        const auto middle = op(spv::OpIAdd, op(spv::OpIAdd, high(lowLow), low(lowHigh)), low(highLow));
+        return {op(spv::OpIAdd, op(spv::OpIAdd, highHigh, high(lowHigh)), op(spv::OpIAdd, high(highLow), high(middle))), op(spv::OpBitwiseOr, withConstant(spv::OpShiftLeftLogical, middle, 32u), low(lowLow))};
+    }
+
+    std::uint32_t roundPack(std::uint32_t sign, std::uint32_t exponent, std::uint32_t significandBits) const {
+        const auto roundBits = withConstant(spv::OpBitwiseAnd, significandBits, 0x3ffu);
+        const auto kept = withConstant(spv::OpShiftRightLogical, significandBits, 10u);
+        const auto odd = testConstant(spv::OpINotEqual, withConstant(spv::OpBitwiseAnd, kept, 1u), 0u);
+        const auto up = logical(spv::OpLogicalOr, testConstant(spv::OpUGreaterThan, roundBits, 0x200u), logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, roundBits, 0x200u), odd));
+        const auto magnitude = op(spv::OpIAdd, withConstant(spv::OpShiftLeftLogical, withConstant(spv::OpISub, exponent, 1u), 52u), op(spv::OpIAdd, kept, pick(up, constant(1u), constant(0u))));
+        return op(spv::OpBitwiseOr, sign, pick(testConstant(spv::OpUGreaterThanEqual, magnitude, Infinity), constant(Infinity), magnitude));
+    }
+
+    SpirvEmitterState& state;
+    std::uint32_t u64 = 0;
+    std::uint32_t u32 = 0;
+    std::uint32_t boolean = 0;
+};
+
+template<typename TBody, typename... TParameters>
+std::uint32_t DefineIntegerFunction(SpirvEmitterState& state, const char* name, std::uint32_t result, TBody&& body, TParameters... parameterTypes) {
+    const auto function = state.module.AllocateId();
+    state.module.AddName(function, name);
+    state.module.AddFunction(spv::OpFunction, result, function, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, result, parameterTypes...));
+    std::array<std::uint32_t, sizeof...(TParameters)> parameters{};
+    std::size_t index = 0;
+    ((parameters[index] = state.module.AllocateId(), state.module.AddFunction(spv::OpFunctionParameter, parameterTypes, parameters[index]), ++index), ...);
+    EmitLabel(state, state.module.AllocateId());
+    state.module.AddFunction(spv::OpReturnValue, std::apply(body, parameters));
+    state.module.AddFunction(spv::OpFunctionEnd);
+    return function;
+}
+
+template<typename... TArguments>
+std::uint32_t CallIntegerFunction(SpirvEmitterState& state, std::uint32_t function, std::uint32_t type, TArguments... arguments) {
+    if (function == 0u) FailEmit("an integer f64 function was not defined before function emission");
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, type, result, function, arguments...);
+    return result;
+}
+
 }
 
 std::uint32_t EmitFPAdd64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    if (state.integerFloat64) return NanResultBits(state, CallIntegerFunction(state, state.integerAddF64Function, TypeU64(state), arg0, arg1), {arg0, arg1});
     return NanResult(state, Exact(state, spv::OpFAdd, ToF64(state, arg0), ToF64(state, arg1)), {arg0, arg1});
 }
 
 std::uint32_t EmitFPMul64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    if (state.integerFloat64) return NanResultBits(state, CallIntegerFunction(state, state.integerMulF64Function, TypeU64(state), arg0, arg1), {arg0, arg1});
     return NanResult(state, Exact(state, spv::OpFMul, ToF64(state, arg0), ToF64(state, arg1)), {arg0, arg1});
 }
 
@@ -914,6 +1163,24 @@ std::uint32_t Dot2F32F16Fast(SpirvEmitterState& state, std::uint32_t arg0, std::
 
 }
 
+void DefineIntegerFloat64Functions(SpirvEmitterState& state) {
+    if (!state.integerFloat64) return;
+    const auto uses = [&](IrOpcode opcode) {
+        for (const IrBlock* block : state.program.BlockOrder()) {
+            for (const IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() == opcode) return true;
+            }
+        }
+        return false;
+    };
+    const IntegerFloat64 integer(state);
+    const auto pairType = TypeU64(state);
+    if (uses(IrOpcode::FPAdd64)) state.integerAddF64Function = DefineIntegerFunction(state, "f64_add_integer", pairType, [&](std::uint32_t lhs, std::uint32_t rhs) { return integer.Add(lhs, rhs); }, pairType, pairType);
+    if (uses(IrOpcode::FPMul64)) state.integerMulF64Function = DefineIntegerFunction(state, "f64_mul_integer", pairType, [&](std::uint32_t lhs, std::uint32_t rhs) { return integer.Mul(lhs, rhs); }, pairType, pairType);
+    if (uses(IrOpcode::ConvertF64F32)) state.integerF64FromF32Function = DefineIntegerFunction(state, "f64_from_f32_integer", pairType, [&](std::uint32_t value) { return integer.FromF32(value); }, TypeF32(state));
+    if (uses(IrOpcode::ConvertF32F64)) state.integerF32FromF64Function = DefineIntegerFunction(state, "f32_from_f64_integer", TypeU32(state), [&](std::uint32_t value) { return integer.ToF32(value); }, pairType);
+}
+
 void DefineDot2F32F16Function(SpirvEmitterState& state) {
     bool used = false;
     for (const IrBlock* block : state.program.BlockOrder()) {
@@ -1085,7 +1352,7 @@ std::uint32_t EmitFPInterpolateF16(SpirvEmitterState& state, std::uint32_t arg0,
 }
 
 std::uint32_t EmitConvertF32F64(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto converted = Unary(state, spv::OpBitcast, TypeU32(state), Unary(state, spv::OpFConvert, TypeF32(state), ToF64(state, arg0)));
+    const auto converted = state.integerFloat64 ? CallIntegerFunction(state, state.integerF32FromF64Function, TypeU32(state), arg0) : Unary(state, spv::OpBitcast, TypeU32(state), Unary(state, spv::OpFConvert, TypeF32(state), ToF64(state, arg0)));
     const auto cls = Classify(state, arg0);
     const auto sign = Binary(state, spv::OpBitwiseAnd, TypeU32(state), cls.bits.high, ConstantU32(state, 0x80000000u));
     const auto payloadHigh = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), cls.bits.high, ConstantU32(state, 0x000fffffu)), ConstantU32(state, 3u));
@@ -1095,7 +1362,7 @@ std::uint32_t EmitConvertF32F64(SpirvEmitterState& state, std::uint32_t arg0) {
 }
 
 std::uint32_t EmitConvertF64F32(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto converted = Split(state, FromF64(state, Unary(state, spv::OpFConvert, TypeF64(state), arg0)));
+    const auto converted = Split(state, state.integerFloat64 ? CallIntegerFunction(state, state.integerF64FromF32Function, TypeU64(state), arg0) : FromF64(state, Unary(state, spv::OpFConvert, TypeF64(state), arg0)));
     const auto bits = Unary(state, spv::OpBitcast, TypeU32(state), arg0);
     const auto nan = Binary(state, spv::OpUGreaterThan, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), bits, ConstantU32(state, 0x7fffffffu)), ConstantU32(state, 0x7f800000u));
     const auto sign = Binary(state, spv::OpBitwiseAnd, TypeU32(state), bits, ConstantU32(state, 0x80000000u));

@@ -503,6 +503,84 @@ void testShowPadStatus() {
     check(both.showPadStatus && both.togglePerformanceOverlay, "a key shared with the overlay does not do both");
 }
 
+void testVolumeUpRequest() {
+    auto configuration = defaults();
+    configuration.bindings.push_back(Pad::InputBinding{SDL_SCANCODE_F5, Pad::MouseButton::None, Pad::InputControl::VolumeUp});
+    Pad::KeyboardMouse keyboardMouse(configuration);
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    const auto down = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F5, true), now);
+    check(down.volumeUp && !down.toggleFullscreen && !down.togglePerformanceOverlay && !down.screenshot, "a bound key asks for volume up");
+    auto repeated = KeyEvent(SDL_SCANCODE_F5, true);
+    repeated.key.repeat = 1;
+    check(!keyboardMouse.HandleEvent(repeated, now).volumeUp, "a repeated key asks for nothing");
+    check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F5, false), now).volumeUp, "releasing the key asks for nothing");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F5, true), now).volumeUp, "pressing it again asks again");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F5, false), now);
+    const auto state = keyboardMouse.Compose(PadInputState{});
+    check(state.buttons == PadInputState{}.buttons && state.sticks == PadInputState{}.sticks, "the key never reaches the title's pad state");
+}
+
+void testVolumeDownRequest() {
+    auto configuration = defaults();
+    configuration.bindings.push_back(Pad::InputBinding{SDL_SCANCODE_F6, Pad::MouseButton::None, Pad::InputControl::VolumeDown});
+    Pad::KeyboardMouse keyboardMouse(configuration);
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    const auto down = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F6, true), now);
+    check(down.volumeDown && !down.toggleFullscreen && !down.togglePerformanceOverlay && !down.screenshot, "a bound key asks for volume down");
+    auto repeated = KeyEvent(SDL_SCANCODE_F6, true);
+    repeated.key.repeat = 1;
+    check(!keyboardMouse.HandleEvent(repeated, now).volumeDown, "a repeated key asks for nothing");
+    check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F6, false), now).volumeDown, "releasing the key asks for nothing");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F6, true), now).volumeDown, "pressing it again asks again");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F6, false), now);
+    const auto state = keyboardMouse.Compose(PadInputState{});
+    check(state.buttons == PadInputState{}.buttons && state.sticks == PadInputState{}.sticks, "the key never reaches the title's pad state");
+}
+
+void testToggleMuteRequest() {
+    auto configuration = defaults();
+    configuration.bindings.push_back(Pad::InputBinding{SDL_SCANCODE_F8, Pad::MouseButton::None, Pad::InputControl::ToggleMute});
+    Pad::KeyboardMouse keyboardMouse(configuration);
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    const auto down = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F8, true), now);
+    check(down.toggleMute && !down.toggleFullscreen && !down.togglePerformanceOverlay && !down.screenshot, "a bound key asks for toggle mute");
+    auto repeated = KeyEvent(SDL_SCANCODE_F8, true);
+    repeated.key.repeat = 1;
+    check(!keyboardMouse.HandleEvent(repeated, now).toggleMute, "a repeated key asks for nothing");
+    check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F8, false), now).toggleMute, "releasing the key asks for nothing");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F8, true), now).toggleMute, "pressing it again asks again");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F8, false), now);
+    const auto state = keyboardMouse.Compose(PadInputState{});
+    check(state.buttons == PadInputState{}.buttons && state.sticks == PadInputState{}.sticks, "the key never reaches the title's pad state");
+}
+
+void testVolumeDownDefaultKey() {
+    Pad::KeyboardMouse keyboardMouse(defaults());
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F5, true), now).volumeDown, "F5 asks for VolumeDown with the built-in bindings");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F5, false), now);
+    const auto state = keyboardMouse.Compose(PadInputState{});
+    check(state.buttons == PadInputState{}.buttons && state.sticks == PadInputState{}.sticks, "F5 does not reach the title's pad state");
+}
+
+void testVolumeUpDefaultKey() {
+    Pad::KeyboardMouse keyboardMouse(defaults());
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F6, true), now).volumeUp, "F6 asks for VolumeUp with the built-in bindings");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F6, false), now);
+    const auto state = keyboardMouse.Compose(PadInputState{});
+    check(state.buttons == PadInputState{}.buttons && state.sticks == PadInputState{}.sticks, "F6 does not reach the title's pad state");
+}
+
+void testToggleMuteDefaultKey() {
+    Pad::KeyboardMouse keyboardMouse(defaults());
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F8, true), now).toggleMute, "F8 asks for ToggleMute with the built-in bindings");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F8, false), now);
+    const auto state = keyboardMouse.Compose(PadInputState{});
+    check(state.buttons == PadInputState{}.buttons && state.sticks == PadInputState{}.sticks, "F8 does not reach the title's pad state");
+}
+
 void testDefaultL2() {
     const auto l2 = static_cast<std::uint32_t>(Pad::PadButton::L2);
     const auto r2 = static_cast<std::uint32_t>(Pad::PadButton::R2);
@@ -564,6 +642,35 @@ void testTitleReadsMouse() {
     check(keyboardMouse.Compose(PadInputState{}).sticks[2] > 128, "motion in mouse mode no longer tilts the stick once the title stops reading the mouse");
 }
 
+void testMouseStickTarget() {
+    auto configuration = defaults();
+    check(configuration.settings.mouseControlsRightStick, "mouse must target right stick by default");
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    PadInputState controller{};
+    controller.sticks = {40, 75, 60, 90};
+    Pad::KeyboardMouse keyboardMouseRight(configuration);
+    keyboardMouseRight.SetMouseMode(true);
+    keyboardMouseRight.Advance(now);
+    keyboardMouseRight.HandleEvent(PadSimulation::MotionEvent(100, 50), now);
+    keyboardMouseRight.Advance(now + std::chrono::milliseconds(10));
+    const auto stateRight = keyboardMouseRight.Compose(controller);
+    check(stateRight.sticks[0] == 40, "mouse must preserve left stick X when targeting right stick");
+    check(stateRight.sticks[1] == 75, "mouse must preserve left stick Y when targeting right stick");
+    check(stateRight.sticks[2] > 128, "mouse must tilt right stick X when targeting right stick");
+    check(stateRight.sticks[3] > 128, "mouse must tilt right stick Y when targeting right stick");
+    configuration.settings.mouseControlsRightStick = false;
+    Pad::KeyboardMouse keyboardMouseLeft(configuration);
+    keyboardMouseLeft.SetMouseMode(true);
+    keyboardMouseLeft.Advance(now);
+    keyboardMouseLeft.HandleEvent(PadSimulation::MotionEvent(100, 50), now);
+    keyboardMouseLeft.Advance(now + std::chrono::milliseconds(10));
+    const auto stateLeft = keyboardMouseLeft.Compose(controller);
+    check(stateLeft.sticks[0] > 128, "mouse must tilt left stick X when targeting left stick");
+    check(stateLeft.sticks[1] > 128, "mouse must tilt left stick Y when targeting left stick");
+    check(stateLeft.sticks[2] == 60, "mouse must preserve right stick X when targeting left stick");
+    check(stateLeft.sticks[3] == 90, "mouse must preserve right stick Y when targeting left stick");
+}
+
 }
 
 int main() {
@@ -591,8 +698,15 @@ int main() {
             {"shake", testShake},
             {"toggle requests", testToggleRequests},
             {"show pad status", testShowPadStatus},
+            {"volume up request", testVolumeUpRequest},
+            {"volume down request", testVolumeDownRequest},
+            {"toggle mute request", testToggleMuteRequest},
+            {"VolumeDown default key", testVolumeDownDefaultKey},
+            {"VolumeUp default key", testVolumeUpDefaultKey},
+            {"ToggleMute default key", testToggleMuteDefaultKey},
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
+            {"mouse stick target", testMouseStickTarget}
         };
         for (const auto& [name, test] : tests) {
             test();

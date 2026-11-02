@@ -288,6 +288,25 @@ int main() {
     outputA.channelCount = 3;
     Require(reverb(1, reverbFilters, reverbOutputs) == BadPointer);
     Require(reverbBatch.offset == 0 && reverbBatch.buffer_size == sizeof(reverbCommands));
+    commandBatch = {commands, 0, sizeof(commands)};
+    std::memset(commands, 0xCC, sizeof(commands));
+    Require(sceAcmBatchJobPriority(nullptr, 0) == BadPointer);
+    Require(sceAcmBatchJobPriority(&commandBatch, 4) == BadPointer && commandBatch.offset == 0);
+    Require(sceAcmBatchJobPriority(&commandBatch, 0xFFFFFFFFu) == BadPointer && commandBatch.offset == 0);
+    Require(sceAcmBatchJobPriority(&commandBatch, 3) == 0 && commandBatch.offset == 8);
+    Require(sceAcmBatchJobPriority(&commandBatch, 0) == 0 && commandBatch.offset == 16 && commandBatch.buffer_size == sizeof(commands));
+    std::uint64_t priorityWords[3];
+    std::memcpy(priorityWords, commands, sizeof(priorityWords));
+    Require(priorityWords[0] == 0x310 && priorityWords[1] == 0x10 && priorityWords[2] == 0xCCCCCCCCCCCCCCCCull);
+    commandBatch = {commands, sizeof(commands) - 7, sizeof(commands)};
+    Require(sceAcmBatchJobPriority(&commandBatch, 1) == static_cast<int>(0x81940009) && commandBatch.offset == sizeof(commands) - 7);
+    Require(sceAcmBatchJobPriority(&commandBatch, 4) == BadPointer && commandBatch.offset == sizeof(commands) - 7);
+    commandBatch = {commands, sizeof(commands) + 8, sizeof(commands)};
+    Require(sceAcmBatchJobPriority(&commandBatch, 1) == static_cast<int>(0x81940009) && commandBatch.offset == sizeof(commands) + 8);
+    commandBatch = {commands, sizeof(commands) - 8, sizeof(commands)};
+    Require(sceAcmBatchJobPriority(&commandBatch, 1) == 0 && commandBatch.offset == sizeof(commands));
+    std::memcpy(priorityWords, commands + sizeof(commands) - 8, sizeof(std::uint64_t));
+    Require(priorityWords[0] == 0x110);
 
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
