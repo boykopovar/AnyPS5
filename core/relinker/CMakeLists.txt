@@ -672,6 +672,11 @@ if(BUILD_TESTING)
         add_test(NAME gs_trap_entry_roots COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_gs_trap_entry_roots.py $<TARGET_FILE:relinker>)
         set_tests_properties(gs_trap_entry_roots PROPERTIES TIMEOUT 30)
+        foreach(group IN ITEMS executable module rejected)
+            add_test(NAME function_symbol_roots_${group} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_function_symbol_roots.py $<TARGET_FILE:relinker> ${group})
+            set_tests_properties(function_symbol_roots_${group} PROPERTIES TIMEOUT 30)
+        endforeach()
         set(tlsCoverageGroups metadata padding register_loads displacement_bounds alu_execution register_address_loads moved_branch rejected)
         foreach(register IN ITEMS 0 1 2 3 5 6 7 8 9 10 11 12 13 14 15)
             list(APPEND tlsCoverageGroups displacement_r${register})

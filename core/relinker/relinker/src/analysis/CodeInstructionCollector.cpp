@@ -42,7 +42,7 @@ public:
 
 }
 
-std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots, const std::function<void(std::string_view)>& message) const {
+std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots, const std::function<void(std::string_view)>& message, const bool functionSymbolRoots) const {
     std::uint64_t lastProgress = 0;
     const auto report = [&](std::uint64_t completed) {
         if (completed <= lastProgress) return;
@@ -134,6 +134,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         }
     }
     std::set<std::uint64_t> roots;
+    std::set<std::uint64_t> functionEntries;
     std::map<std::uint64_t, std::uint64_t> functions;
     std::map<std::uint64_t, std::uint64_t> tables;
     const auto inTable = [&](std::uint64_t address) { const auto after = tables.upper_bound(address); return after != tables.begin() && address < std::prev(after)->second; };
@@ -300,8 +301,11 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             const auto section = Io::ReadU16(bytes, offset + 6);
             if ((bytes[offset + 4] & 15) == 2 && section != 0 && section != Elfpatcher::SHN_ABS) {
                 const auto address = Io::ReadU64(bytes, offset + 8);
+                if (functionSymbolRoots && !isCode(address))
+                    throw Domain::RelinkerException("Code analysis: function entry is not executable and file-backed", address);
+                if (functionSymbolRoots) functionEntries.insert(address);
                 addRoot(address);
-                addFunction(address, Io::ReadU64(bytes, offset + 16), true);
+                if (!functionSymbolRoots) addFunction(address, Io::ReadU64(bytes, offset + 16), true);
             }
         }
     }
@@ -394,6 +398,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                 end = std::min(end, table.Begin);
             }
         }
+        for (const auto address : functionEntries)
+            if (inTable(address)) throw Domain::RelinkerException("Code analysis: function entry lies in a jump table", address);
         std::erase_if(roots, inTable);
     }
     if (roots.empty()) throw Domain::RelinkerException("Code analysis: no code entry points");
@@ -528,13 +534,34 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
             auto& reached = sectionReachable[i];
             if (reached.empty()) reached.resize(header.FileSize);
-            for (const auto address : UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable)) {
+            for (const auto address : UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable, functionSymbolRoots)) {
                 if (!decodedInstructions.insert(address).second) continue;
                 instructions.insert(address);
                 const auto offset = address - header.MappedAddress;
                 const auto info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
                 addAddressTakenRoot(address, text.data() + offset, info);
-                if (info.HasBranchTarget && !info.HasRipRelativeDisp) addRoot(address + info.Length + static_cast<std::uint64_t>(info.BranchDisp));
+                if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
+                    const auto target = address + info.Length + static_cast<std::uint64_t>(info.BranchDisp);
+                    if (functionSymbolRoots && (!isCode(target) || inTable(target)))
+                        throw Domain::RelinkerException("Code analysis: branch target is not executable and file-backed", target);
+                    addRoot(target);
+                }
+                if (functionSymbolRoots && info.HasRipRelativeDisp && info.SegmentPrefix == 0 && (info.FlowKind == Codegen::ControlFlowKind::Call || info.FlowKind == Codegen::ControlFlowKind::UnconditionalJump)) {
+                    const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, header.Offset + offset + info.RipRelativeDispOffset));
+                    auto slot = address + info.Length + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
+                    if (info.AddressSize32) slot = static_cast<std::uint32_t>(slot);
+                    if (const auto target = pointers.TargetOfSlot(slot)) {
+                        if (!isCode(*target) || inTable(*target))
+                            throw Domain::RelinkerException("Code analysis: branch target is not executable and file-backed", *target);
+                        addRoot(*target);
+                    }
+                }
+                if (functionSymbolRoots && (info.FlowKind == Codegen::ControlFlowKind::Sequential || info.FlowKind == Codegen::ControlFlowKind::ConditionalBranch || info.FlowKind == Codegen::ControlFlowKind::Call || info.FlowKind == Codegen::ControlFlowKind::IndirectCall)) {
+                    const auto next = address + info.Length;
+                    if (!isCode(next) || inTable(next))
+                        throw Domain::RelinkerException("Code analysis: fall-through is not executable and file-backed", next);
+                    if (next - header.MappedAddress >= header.FileSize) addRoot(next);
+                }
             }
         }
     } while (roots.size() != previousRoots);

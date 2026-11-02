@@ -18,6 +18,7 @@ struct ConversionOptions {
     bool FrameRedZone = false;
     bool SkipSyscallCheck = false;
     bool TrapSdkSyscallStubs = false;
+    bool FunctionSymbolRoots = false;
     bool LazyBinding = false;
     bool WindowsGui = false;
     bool TraceImports = false;

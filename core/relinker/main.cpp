@@ -69,6 +69,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.FrameRedZone = args.frameRedZone;
     options.SkipSyscallCheck = args.skipSyscallCheck;
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;
+    options.FunctionSymbolRoots = args.functionSymbolRoots;
     options.UnusedFilterLevel = args.unusedFilterLevel;
     options.LazyBinding = args.lazyBinding;
     options.RunPath = args.runPath;
