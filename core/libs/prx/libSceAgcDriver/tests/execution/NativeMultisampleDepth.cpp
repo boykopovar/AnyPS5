@@ -3096,8 +3096,8 @@ enum class DriverFill { Whole, Partial, Queued };
 
 class DriverDepthTarget {
 public:
-    DriverDepthTarget(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one)
-        : context(context), recorder(recorder), extent{5u, 3u}, fragments(fragments),
+    DriverDepthTarget(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one, VkExtent2D size)
+        : context(context), recorder(recorder), extent(size), fragments(fragments),
           memory(static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments))),
           stencil(static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, fragments))),
           metadata(DriverMetadataSpan),
@@ -3190,8 +3190,8 @@ private:
     std::unique_ptr<Fetch> fetch;
 };
 
-void CheckDriverPathTarget(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one, DriverFill fill) {
-    const DriverDepthTarget target(context, recorder, fragments, one);
+void CheckDriverPathTarget(const Context& context, Recorder& recorder, std::uint32_t fragments, bool one, DriverFill fill, VkExtent2D size = {5u, 3u}) {
+    const DriverDepthTarget target(context, recorder, fragments, one, size);
     target.Sample(std::nullopt, std::nullopt, "native depth imported on the driver's device");
     target.Sample(0.25f, 0.25f, "native depth drawn on the driver's device");
     const auto fillsBefore = AgcDriver::DriverDetail::dmaFills.load();
@@ -3212,7 +3212,7 @@ void CheckDriverPathTarget(const Context& context, Recorder& recorder, std::uint
     Require(AgcDriver::DriverDetail::dmaFills.load() == fillsBefore, "a whole-HTILE DMA_DATA fill of 64 KiB or less was stored as a queued buffer fill");
     target.Sample(std::nullopt, std::nullopt, "a whole-HTILE DMA_DATA fill through the driver");
     target.Sample(0.125f, 0.125f, "native depth drawn after a DMA_DATA clear through the driver");
-    std::printf("Native depth on the driver's device samples=%u clear=%u: drawn, cleared by a DMA_DATA fill of its HTILE through the driver and sampled\n", fragments, one);
+    std::printf("Native depth on the driver's device samples=%u clear=%u %ux%u: drawn, cleared by a DMA_DATA fill of its HTILE through the driver and sampled\n", fragments, one, size.width, size.height);
 }
 
 int CheckDriverPath(bool queued) {
@@ -3242,8 +3242,9 @@ int CheckDriverPath(bool queued) {
         Require(supported(4u), "the native depth driver-path regression requires sampled D32S8 with four samples");
         std::uint32_t checked = 0u, unavailable = 0u;
         for (const auto samples : {2u, 4u, 8u}) {
-            if (!supported(samples)) { unavailable += 2u; continue; }
+            if (!supported(samples)) { unavailable += queued ? 2u : 3u; continue; }
             for (const bool one : {false, true}) { CheckDriverPathTarget(context, *recorder, samples, one, queued ? DriverFill::Queued : DriverFill::Whole); ++checked; }
+            if (!queued) { CheckDriverPathTarget(context, *recorder, samples, false, DriverFill::Whole, {64u, 32u}); ++checked; }
         }
         if (!queued) CheckDriverPathTarget(context, *recorder, 4u, false, DriverFill::Partial);
         AgcDriverWaitIdle_nid_postfix();
