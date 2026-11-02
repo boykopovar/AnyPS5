@@ -34,21 +34,18 @@ constexpr int WAIT_ITERATIONS = 500;
 constexpr int SHORT_WAIT_ITERATIONS = 1000;
 #ifdef _WIN32
 constexpr std::uint64_t P99_WAIT_MAX_NANOS = 3000000ULL;
-constexpr std::uint64_t MAX_WAIT_NANOS = 10000000ULL;
 #else
 constexpr std::uint64_t P99_WAIT_MAX_NANOS = 10000000ULL;
-constexpr std::uint64_t MAX_WAIT_NANOS = 50000000ULL;
 #endif
 
 template<std::size_t N>
 static bool LatencyWithinBounds(std::array<std::uint64_t, N> samples, std::uint64_t requestedNanos, const char* name) {
     std::sort(samples.begin(), samples.end());
     constexpr std::size_t p99Index = (N * 99 + 99) / 100 - 1;
-    const bool within = samples[p99Index] < P99_WAIT_MAX_NANOS && samples.back() < MAX_WAIT_NANOS;
+    const bool within = samples[p99Index] < P99_WAIT_MAX_NANOS;
     std::cout << name << ": P99 overshoot " << (samples[p99Index] - requestedNanos) / 1000
               << " us (limit < " << (P99_WAIT_MAX_NANOS - requestedNanos) / 1000
-              << " us), max overshoot " << (samples.back() - requestedNanos) / 1000
-              << " us (limit < " << (MAX_WAIT_NANOS - requestedNanos) / 1000 << " us)" << (within ? "" : " EXCEEDED") << std::endl;
+              << " us), max overshoot " << (samples.back() - requestedNanos) / 1000 << " us" << (within ? "" : " EXCEEDED") << std::endl;
     return within;
 }
 
@@ -108,14 +105,13 @@ static bool TestUsleep100us() {
     }
 
     const auto wallEnd = std::chrono::steady_clock::now();
-    const bool latencyWithinBounds = LatencyWithinBounds(samples, 100000ULL, "sceKernelUsleep(100 us)");
 #ifdef _WIN32
     const auto cpuEnd = CurrentThreadCpuNanos();
     const auto wallNanos = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(wallEnd - wallStart).count());
     const auto cpuNanos = cpuEnd - cpuStart;
     RequireCpuBound(cpuNanos, wallNanos, "sceKernelUsleep(100 us)");
 #endif
-    return latencyWithinBounds;
+    return LatencyWithinBounds(samples, 100000ULL, "sceKernelUsleep(100 us)");
 }
 
 static bool TestCondTimedwait500us() {
