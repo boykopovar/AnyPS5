@@ -117,7 +117,7 @@ int APS5_VABI is_in_sandbox_nid_postfix(void);
 int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len);
 int APS5_VABI kldfind_nid_postfix(const char* file);
 int APS5_VABI kldfirstmod_nid_postfix(int fileid);
-int APS5_VABI kldload_nid_postfix(void);
+int APS5_VABI kldload_nid_postfix(const char* file);
 int APS5_VABI kldnext_nid_postfix(int fileid);
 int APS5_VABI kldstat_nid_postfix(int fileid, void* stat);
 int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data);
