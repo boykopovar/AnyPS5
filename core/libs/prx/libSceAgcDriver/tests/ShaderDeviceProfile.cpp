@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
 #include "BdaAbi.hpp"
+#include "CacheKey.hpp"
 #include "Optimization/BindingAllocator.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -134,6 +135,60 @@ void CheckProfile() {
     Require(std::ranges::find(geometryAccepted.Target().supportedCapabilities, spv::CapabilityGeometry) != geometryAccepted.Target().supportedCapabilities.end(), "enabled geometry shaders were rejected");
 }
 
+std::vector<std::uint64_t> CacheKeyFor(const ShaderRecompiler::SpirvTarget& target) {
+    static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
+    ShaderRecompiler::RecompileRequest request{};
+    request.shader = {ShaderRecompiler::ShaderStage::Compute, 0x10000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.target = target;
+    std::vector<std::uint64_t> key;
+    ShaderRecompiler::RecompileCacheKey::Build(request, key);
+    return key;
+}
+
+std::vector<std::uint64_t> PerKeyDigestKeyFor(ShaderRecompiler::SpirvTarget target) {
+    target.featureDigestSealed = false;
+    return CacheKeyFor(target);
+}
+
+void CheckFeatureDigest() {
+    ProfileInput input;
+    const AgcDriver::ShaderDeviceProfile profile(input.Target(), input.device, input.limits);
+    const auto sealed = profile.Target();
+    Require(sealed.featureDigestSealed, "the shader device profile did not seal its feature digest");
+    const auto key = CacheKeyFor(sealed);
+    Require(key == PerKeyDigestKeyFor(sealed), "the sealed feature digest differs from the per-key digest");
+    const std::vector<std::uint32_t> capabilityCopy(sealed.supportedCapabilities.begin(), sealed.supportedCapabilities.end());
+    const std::vector<std::string> extensionStorage(sealed.supportedExtensions.begin(), sealed.supportedExtensions.end());
+    const std::vector<std::string_view> extensionCopy(extensionStorage.begin(), extensionStorage.end());
+    auto copied = sealed;
+    copied.supportedCapabilities = capabilityCopy;
+    copied.supportedExtensions = extensionCopy;
+    Require(CacheKeyFor(copied) == key, "equal feature lists in other storage gave another key than the sealed digest");
+    auto fewerCapabilities = sealed;
+    fewerCapabilities.supportedCapabilities = sealed.supportedCapabilities.first(sealed.supportedCapabilities.size() - 1u);
+    Require(CacheKeyFor(fewerCapabilities) != key && CacheKeyFor(fewerCapabilities) == PerKeyDigestKeyFor(fewerCapabilities), "a sealed digest outlived the capability list it was computed from");
+    auto fewerExtensions = sealed;
+    fewerExtensions.supportedExtensions = sealed.supportedExtensions.first(1u);
+    Require(CacheKeyFor(fewerExtensions) != key && CacheKeyFor(fewerExtensions) == PerKeyDigestKeyFor(fewerExtensions), "a sealed digest outlived the extension list it was computed from");
+    ProfileInput reordered;
+    std::ranges::reverse(reordered.capabilities);
+    std::ranges::reverse(reordered.extensions);
+    const AgcDriver::ShaderDeviceProfile reorderedProfile(reordered.Target(), reordered.device, reordered.limits);
+    Require(CacheKeyFor(reorderedProfile.Target()) == key, "two profiles with the same features gave different keys");
+    ProfileInput geometry;
+    geometry.capabilities.push_back(spv::CapabilityGeometry);
+    geometry.core.geometryShader = VK_TRUE;
+    const AgcDriver::ShaderDeviceProfile geometryProfile(geometry.Target(), geometry.device, geometry.limits);
+    const auto geometryKey = CacheKeyFor(geometryProfile.Target());
+    Require(geometryKey != key && geometryKey == PerKeyDigestKeyFor(geometryProfile.Target()), "a profile capability did not change the feature digest");
+    ProfileInput indexing;
+    indexing.extensions.push_back("SPV_EXT_descriptor_indexing");
+    const AgcDriver::ShaderDeviceProfile indexingProfile(indexing.Target(), indexing.device, indexing.limits);
+    const auto indexingKey = CacheKeyFor(indexingProfile.Target());
+    Require(indexingKey != key && indexingKey != geometryKey && indexingKey == PerKeyDigestKeyFor(indexingProfile.Target()), "a profile extension did not change the feature digest");
+}
+
 void CheckAbi() {
     using ShaderRecompiler::RuntimeAbi::Binding;
     using ShaderRecompiler::RuntimeAbi::BindingNumber;
@@ -219,6 +274,7 @@ int main() {
         CheckAbi();
         CheckHeaps();
         CheckProfile();
+        CheckFeatureDigest();
         std::cout << "shader runtime ABI and device profile tests passed\n";
         return 0;
     } catch (const std::exception& error) {
