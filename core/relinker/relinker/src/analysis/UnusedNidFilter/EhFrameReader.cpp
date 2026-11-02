@@ -140,7 +140,7 @@ private:
                 const bool negative = (value >> 63) != 0;
                 if (negative ? base < std::uint64_t{0} - value : value > std::numeric_limits<VirtualAddress>::max() - base)
                     throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
-            } else if ((encoding & 0x0F) == 2 || (encoding & 0x0F) == 3) {
+            } else if ((encoding & 0x0F) == 2 || (encoding & 0x0F) == 3 || ((encoding & 0x0F) == 4 && (encoding & 0x70) == 0x40)) {
                 if (value > std::numeric_limits<VirtualAddress>::max() - base)
                     throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
             }

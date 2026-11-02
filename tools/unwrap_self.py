@@ -34,6 +34,7 @@ usage: unwrap_self.py <input.self> <output.elf> [--verbose]
 import argparse
 import io
 import math
+import os
 import secrets
 import struct
 import sys
@@ -50,6 +51,7 @@ FIRST_REGION = 0x400
 MAX_ALIGNMENT_PADDING = 64 * 1024 * 1024
 MAX_OUTPUT_FACTOR = 4
 MIN_OUTPUT_LIMIT = 256 * 1024 * 1024
+PT_NULL = 0
 PT_LOAD = 1
 PT_NOTE = 4
 PT_PHDR = 6
@@ -136,11 +138,11 @@ def parse_elf(data):
         offset = inner + program_offset + index * 56
         kind, flags, file_offset, vaddr, _, file_size, memory_size, alignment = struct.unpack_from(
             "<IIQQQQQQ", data, offset)
+        if kind != PT_NULL and alignment and alignment & (alignment - 1):
+            raise Refused("segment %d alignment is not a power of two" % index)
         if kind in (PT_LOAD, PT_TLS):
             if file_size > memory_size:
                 raise Refused("segment %d file size exceeds memory size" % index)
-            if alignment and alignment & (alignment - 1):
-                raise Refused("segment %d alignment is not a power of two" % index)
         if kind == PT_TLS:
             if alignment > 8192:
                 raise Refused("segment %d TLS alignment exceeds 8192" % index)
@@ -264,8 +266,12 @@ def check_decrypted(data, headers):
 
 
 def unwrap(path, output, verbose=False):
-    source, destination = Path(path), Path(output).resolve()
-    if source.resolve() == destination or (destination.exists() and source.samefile(destination)):
+    source, destination = Path(path), Path(os.path.realpath(output))
+    try:
+        aliased = source.samefile(destination)
+    except FileNotFoundError:
+        aliased = False
+    if os.path.realpath(source) == str(destination) or aliased:
         raise Refused("output aliases the input container")
     data = bytes(source.read_bytes())
     if len(data) < FIRST_REGION:

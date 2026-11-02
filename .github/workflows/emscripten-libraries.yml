@@ -1,0 +1,43 @@
+name: Emscripten library portability
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/emscripten-libraries.yml
+      - core/libs/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/emscripten-libraries.yml
+      - core/libs/**
+
+permissions:
+  contents: read
+
+jobs:
+  library-portability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Compile native library sources and test guest long doubles
+        run: |
+          cmake -S core/libs/tests/emscripten -B build-native -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-native --parallel 2
+          ctest --test-dir build-native --output-on-failure
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+      - name: Compile memory64 libraries and test conversions and module errors
+        shell: bash
+        run: |
+          ANYPS5_TEST_NODE="$(command -v node)"
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.12
+          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.12
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          emcmake cmake -S core/libs/tests/emscripten -B build-portable -DCMAKE_BUILD_TYPE=Release -DANYPS5_NODE="$ANYPS5_TEST_NODE"
+          cmake --build build-portable --parallel 2
+          ctest --test-dir build-portable --output-on-failure
