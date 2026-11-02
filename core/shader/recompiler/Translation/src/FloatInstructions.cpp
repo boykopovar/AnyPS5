@@ -545,6 +545,11 @@ bool TranslationContext::vDivFmasF32(const RdnaInstruction& inst) {
         return IrU32(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&ir.BitCastU32(value), &ir.Constant(23u), &ir.Constant(8u)}));
     };
     const IrU1 up(ir.Emit(IrOpcode::UGreaterThanEqual32, IrType::U1, {&exponent(*addend).Value(), &ir.Constant(128u)}));
+    if (float64) {
+        IrValue& powerHigh = ir.Select(scale.Value(), ir.Select(up.Value(), ir.Constant(0x43f00000u), ir.Constant(0x3bf00000u)), ir.Constant(0x3ff00000u));
+        writeOperand(inst.destination, nanResultF32({lhs, rhs, addend}, &fmaScaledF32(*lhs, *rhs, *addend, powerHigh), &invalidProductF32(lhs, rhs)));
+        return true;
+    }
     IrValue& power = ir.Emit(IrOpcode::SelectF32, IrType::F32, {&up.Value(), &ir.ConstantF32(18446744073709551616.0f), &ir.ConstantF32(5.42101086242752217e-20f)});
     IrValue& plain = ir.Emit(IrOpcode::FPFma32, IrType::F32, {lhs, rhs, addend});
     const IrU1 plainInfinite(ir.IEqual(ir.BitwiseAnd(ir.BitCastU32(plain), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)));
@@ -561,6 +566,46 @@ bool TranslationContext::vDivFmasF32(const RdnaInstruction& inst) {
     IrValue& computed = ir.Emit(IrOpcode::SelectF32, IrType::F32, {&scale.Value(), &scaledResult, &plain});
     writeOperand(inst.destination, nanResultF32({lhs, rhs, addend}, &computed, &invalidProductF32(lhs, rhs)));
     return true;
+}
+
+IrValue& TranslationContext::fmaScaledF32(IrValue& lhs, IrValue& rhs, IrValue& addend, IrValue& powerHigh) {
+    const auto low = [&](IrValue& value) -> IrValue& { return ir.CompositeExtract(value, 0u); };
+    const auto high = [&](IrValue& value) -> IrValue& { return ir.CompositeExtract(value, 1u); };
+    const auto select = [&](IrValue& condition, IrValue& yes, IrValue& no) -> IrValue& {
+        return ir.ConstructU64(ir.Select(condition, low(yes), low(no)), ir.Select(condition, high(yes), high(no)));
+    };
+    const auto add = [&](IrValue& a, IrValue& b) -> IrValue& { return ir.Emit(IrOpcode::FPAdd64, IrType::U64, {&a, &b}); };
+    const auto multiply = [&](IrValue& a, IrValue& b) -> IrValue& { return ir.Emit(IrOpcode::FPMul64, IrType::U64, {&a, &b}); };
+    const auto negate = [&](IrValue& value) -> IrValue& { return ir.ConstructU64(low(value), ir.BitwiseXor(high(value), ir.Constant(0x80000000u))); };
+    const auto below = [&](IrValue& value, std::uint64_t limit) -> IrValue& { return ir.Emit(IrOpcode::ULessThan64, IrType::U1, {&value, &ir.ConstantU64(limit)}); };
+    const auto widen = [&](IrValue& value) -> IrValue& {
+        IrValue& bits = ir.BitCastU32(value);
+        IrValue& magnitude = ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu));
+        IrValue& denormal = multiply(ir.Emit(IrOpcode::ConvertF64U32, IrType::U64, {&magnitude}), ir.ConstantU64(0x36a0000000000000ull));
+        IrValue& signedDenormal = ir.ConstructU64(low(denormal), ir.BitwiseOr(high(denormal), ir.BitwiseAnd(bits, ir.Constant(0x80000000u))));
+        return select(ir.ULessThan(magnitude, ir.Constant(0x00800000u)), signedDenormal, ir.Emit(IrOpcode::ConvertF64F32, IrType::U64, {&value}));
+    };
+    IrValue& product = multiply(widen(lhs), widen(rhs));
+    IrValue& wideAddend = widen(addend);
+    IrValue& sum = add(product, wideAddend);
+    IrValue& productPart = add(sum, negate(wideAddend));
+    IrValue& addendPart = add(sum, negate(productPart));
+    IrValue& error = add(add(product, negate(productPart)), add(wideAddend, negate(addendPart)));
+    IrValue& finite = ir.INotEqual(ir.BitwiseAnd(high(sum), ir.Constant(0x7ff00000u)), ir.Constant(0x7ff00000u));
+    IrValue& inexact = ir.INotEqual(ir.BitwiseOr(low(error), ir.BitwiseAnd(high(error), ir.Constant(0x7fffffffu))), ir.Constant(0u));
+    IrValue& even = ir.IEqual(ir.BitwiseAnd(low(sum), ir.Constant(1u)), ir.Constant(0u));
+    IrValue& outward = ir.IEqual(ir.BitwiseAnd(ir.BitwiseXor(high(error), high(sum)), ir.Constant(0x80000000u)), ir.Constant(0u));
+    IrValue& odd = select(outward, ir.Emit(IrOpcode::IAdd64, IrType::U64, {&sum, &ir.ConstantU64(1u)}), ir.Emit(IrOpcode::ISub64, IrType::U64, {&sum, &ir.ConstantU64(1u)}));
+    IrValue& rounded = select(ir.LogicalAnd(finite, ir.LogicalAnd(inexact, even)), odd, sum);
+    IrValue& scaled = multiply(rounded, ir.ConstructU64(ir.Constant(0u), powerHigh));
+    IrValue& sign = ir.BitwiseAnd(high(scaled), ir.Constant(0x80000000u));
+    IrValue& magnitude = ir.ConstructU64(low(scaled), ir.BitwiseAnd(high(scaled), ir.Constant(0x7fffffffu)));
+    IrValue& denormal = ir.Emit(IrOpcode::ConvertU32F64, IrType::U32, {&ir.Emit(IrOpcode::FPRoundEven64, IrType::U64, {&multiply(magnitude, ir.ConstantU64(0x4940000000000000ull))})});
+    IrValue& overflow = ir.LogicalAnd(ir.LogicalNot(below(magnitude, 0x47effffff0000000ull)), below(magnitude, 0x7ff0000000000000ull));
+    IrValue* bits = &ir.BitCastU32(ir.Emit(IrOpcode::ConvertF32F64, IrType::F32, {&scaled}));
+    bits = &ir.Select(overflow, ir.BitwiseOr(sign, ir.Constant(0x7f800000u)), *bits);
+    bits = &ir.Select(below(magnitude, 0x3810000000000000ull), ir.BitwiseOr(sign, denormal), *bits);
+    return ir.BitCastF32(*bits);
 }
 
 bool TranslationContext::vDivFixupF32(const RdnaInstruction& inst) {
