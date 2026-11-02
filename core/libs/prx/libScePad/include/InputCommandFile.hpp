@@ -60,6 +60,24 @@ public:
 
     std::uint32_t Buttons(std::uint64_t now) { return Poll(now).buttons; }
 
+    std::uint32_t HeldThrough(std::uint64_t since, std::uint64_t now) const {
+        if (events.empty() || since < started || now < since) return 0;
+        const auto from = since - started;
+        const auto to = now - started;
+        auto event = std::upper_bound(events.begin(), events.end(), from,
+            [](std::uint64_t time, const Event& candidate) { return time < candidate.start; });
+        if (event == events.begin()) return 0;
+        --event;
+        std::uint32_t held = ~0u;
+        for (std::uint64_t covered = from; event != events.end() && event->start <= covered; ++event) {
+            if (covered >= event->end) return 0;
+            held &= event->input.buttons;
+            covered = event->end;
+            if (to < covered) return held;
+        }
+        return 0;
+    }
+
 private:
     struct Event {
         std::uint64_t start = 0;

@@ -81,12 +81,17 @@ inline std::optional<Mapping> ParseMapsLine(const std::string& line) {
     unsigned int devMajor = 0;
     unsigned int devMinor = 0;
     std::uint64_t inode = 0;
-    char path[4096] = {};
-    const int parsed = std::sscanf(line.c_str(), "%llx-%llx %7s %llx %x:%x %llu %4095s",
+    int prefix = 0;
+    const int parsed = std::sscanf(line.c_str(), "%llx-%llx %7s %llx %x:%x %llu%n",
         (unsigned long long*)&start, (unsigned long long*)&end, perms,
-        (unsigned long long*)&offset, &devMajor, &devMinor, (unsigned long long*)&inode, path);
+        (unsigned long long*)&offset, &devMajor, &devMinor, (unsigned long long*)&inode, &prefix);
     if (parsed < 7 || std::strlen(perms) < 4) return std::nullopt;
-    return Mapping{start, end, parsed >= 8 ? path : "", perms[0] == 'r', perms[1] == 'w', perms[2] == 'x', perms[3] == 's', inode};
+    std::string path;
+    if (prefix > 0 && static_cast<std::size_t>(prefix) < line.size()) {
+        const std::size_t begin = line.find_first_not_of(" \t", static_cast<std::size_t>(prefix));
+        if (begin != std::string::npos) path = line.substr(begin, 4095);
+    }
+    return Mapping{start, end, path, perms[0] == 'r', perms[1] == 'w', perms[2] == 'x', perms[3] == 's', inode};
 }
 
 inline std::optional<Mapping> ScanMaps(std::uint64_t address, const char* caller) {

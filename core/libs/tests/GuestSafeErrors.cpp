@@ -23,7 +23,7 @@ thread_local int violations = 0;
 thread_local void* violationBuffer = nullptr;
 
 void APS5_VABI Constraint(const char* message, void* buffer, int error) {
-    Require(message && std::strcmp(message, "strerror_s") == 0, "constraint callback message and ABI");
+    Require(message && std::strcmp(message, "strerror_s: bad argument") == 0, "constraint callback message and ABI");
     Require(error == 22, "constraint callback error");
     violationBuffer = buffer;
     ++violations;
@@ -79,12 +79,18 @@ void CheckConstraints() {
     std::array<char, 16> buffer;
     buffer.fill('!');
     constexpr auto maximum = std::numeric_limits<std::size_t>::max();
-    for (const auto capacity : {std::size_t{0}, (maximum >> 1) + 1, maximum}) {
+    for (const auto capacity : {std::size_t{0}, (maximum >> 3) + 1, (maximum >> 1) + 1, maximum}) {
         const int before = violations;
         Require(strerror_s_nid_postfix(buffer.data(), capacity, 2) == 22, "reject invalid capacity");
-        Require(violations == before + 1 && violationBuffer == buffer.data(), "one callback with destination");
+        Require(violations == before + 1 && violationBuffer == nullptr, "one callback with a null pointer");
         for (const char value : buffer) Require(value == '!', "constraint failure leaves destination untouched");
     }
+    std::array<char, 128> wide;
+    wide.fill('!');
+    const int beforeLargest = violations;
+    Require(strerror_s_nid_postfix(wide.data(), maximum >> 3, 2) == 0, "largest valid capacity");
+    Require(violations == beforeLargest, "largest valid capacity is not a violation");
+    Require(std::strcmp(wide.data(), "No such file or directory") == 0, "largest valid capacity writes the message");
     for (const auto capacity : {std::size_t{0}, std::size_t{1}, maximum}) {
         const int before = violations;
         Require(strerror_s_nid_postfix(nullptr, capacity, 2) == 22, "reject null destination");

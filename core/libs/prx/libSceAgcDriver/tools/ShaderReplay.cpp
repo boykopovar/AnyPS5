@@ -55,6 +55,11 @@ bool g_code = false;
 
 bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
+    if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
+    if (g_robust2) request.request.target.robustBufferAccess2 = true;
+    if (g_waveLdsMemoryBarriers) request.request.target.waveLdsMemoryBarriers = true;
+    if (g_deviceScopeLdsMemoryBarriers) request.request.target.deviceScopeLdsMemoryBarriers = true;
+    if (g_ldsLockFences) request.request.target.ldsLockFences = true;
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
@@ -113,7 +118,6 @@ bool Replay(const char* path) {
             return false;
         }
     }
-    if (g_materialize && g_maintenance8) request.request.target.nonConstantImageOffsets = true;
     if (!g_materialize) {
         try {
             auto program = ShaderRecompiler::PrepareResourceProgram(request.request);
@@ -148,11 +152,6 @@ bool Replay(const char* path) {
         }
     }
     try {
-        if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
-        if (g_robust2) request.request.target.robustBufferAccess2 = true;
-        if (g_waveLdsMemoryBarriers) request.request.target.waveLdsMemoryBarriers = true;
-        if (g_deviceScopeLdsMemoryBarriers) request.request.target.deviceScopeLdsMemoryBarriers = true;
-        if (g_ldsLockFences) request.request.target.ldsLockFences = true;
         const auto result = ShaderRecompiler::Recompile(request.request);
         std::printf("  recompiled: %zu SPIR-V words\n", result.spirv.size());
         if (g_spirv) {
@@ -195,6 +194,10 @@ int main(int argc, char** argv) {
     }
     int failures = 0;
     for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--gcn") {
+            ShaderRecompiler::SetGcnGuestShaders(true);
+            continue;
+        }
         if (std::string(argv[i]) == "--dis") {
             g_disassemble = true;
             continue;
