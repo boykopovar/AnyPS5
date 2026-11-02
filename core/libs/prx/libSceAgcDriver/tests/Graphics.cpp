@@ -1177,10 +1177,14 @@ void ShaderStageTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(fast); }, "unsupported geometry routing, fast launch or wave-ID state");
         fast.context[0x2d5] = 0x482030;
         fast.userConfig[0x25b] = 0x402;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(fast); }, "fast launch other than one point per subgroup");
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(fast); }, "fast launch other than one vertex and one primitive per subgroup");
         fast.userConfig[0x25b] = 0x201;
-        fast.userConfig[0x242] = 4;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(fast); }, "fast launch other than one point per subgroup");
+        for (const std::uint32_t type : {2u, 3u, 4u, 5u, 6u, 21u}) {
+            fast.userConfig[0x242] = type;
+            const auto typed = AgcDriver::Graphics::DecodeState(fast);
+            const auto& typedMesh = *typed.stages.mesh;
+            Require(typedMesh.inputPrimitive == 1 && typedMesh.primitivesPerGroup == 1 && typedMesh.verticesPerGroup == 1 && typedMesh.maxPrimitives == 64, "a fast-launch draw with a line or triangle input type did not decode as one point per subgroup");
+        }
         fast.userConfig[0x242] = 1;
         fast.context[0x2d3] = 0;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(fast); }, "amplifies to no primitives");
