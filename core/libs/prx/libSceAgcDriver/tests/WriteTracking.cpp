@@ -46,6 +46,7 @@ constexpr wchar_t ImportAliasSharedMode[] = L"--import-alias-shared";
 constexpr wchar_t SharedGenerationsMode[] = L"--compared-shared-generations";
 constexpr wchar_t CpuWritePinMode[] = L"--cpu-write-pin";
 constexpr wchar_t FreshViewMode[] = L"--fresh-view";
+constexpr wchar_t OwnStoreImagesMode[] = L"--own-store-images";
 #endif
 
 void Require(bool condition, const std::string& message) {
@@ -527,6 +528,60 @@ void CheckGpuWriteNotListed() {
     Require(MarkWritten(base + 0x100, 4) > since, "the GPU write was not stamped");
     CollectWrittenBlocks(base, Block, since, written);
     Require(written.empty(), "a block only a GPU write stamped was listed as written by the CPU");
+}
+
+void CheckOwnStoreImages() {
+    void* memory = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* guest = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, Block);
+    guest[0x4123] = 0x6d;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    auto since = CollectWrittenBlocks(base, Block, std::numeric_limits<std::uint64_t>::max(), written);
+    Require(since != 0 && written.empty(), "the own-store image block was not collected");
+    std::string failures;
+    const auto expect = [&](const std::vector<std::pair<std::uint64_t, std::uint64_t>>& expected, const char* message) {
+        since = CollectWrittenBlocks(base, Block, since, written);
+        if (written != expected) failures += std::string(failures.empty() ? "" : "; ") + message;
+    };
+    const auto page = [&](std::uint64_t offset) { return std::vector<std::pair<std::uint64_t, std::uint64_t>>{{base + offset, base + offset + 4096}}; };
+    StoreOwnBytes(base + 0xc100, 8, [&] { std::atomic_ref(*reinterpret_cast<std::uint64_t*>(base + 0xc100)).fetch_add(1); });
+    expect({}, "a driver store made while no capture compares was listed");
+    SetOwnStoreCompare(true);
+    const std::array<std::byte, 8> eight{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}, std::byte{6}, std::byte{7}, std::byte{8}};
+    Write(base + 0x100, eight);
+    expect({}, "a Write no other store met in its page was listed as a CPU write");
+    StoreOwnBytes(base + 0x1100, std::span<const std::byte>(eight));
+    expect({}, "a store of given bytes no other store met in its page was listed as a CPU write");
+    AgcDriverStoreGuestLabel_nid_postfix(reinterpret_cast<std::uint64_t*>(base + 0x2100), 7);
+    expect({}, "a guest label store no other store met in its page was listed as a CPU write");
+    const std::vector<std::byte> original(4096, std::byte{0x11});
+    auto current = original;
+    current[0x10] = std::byte{0x5a};
+    WriteChanged(base + 0x4000, current, original);
+    expect({}, "a write-back no other store met in its page was listed as a CPU write");
+    StoreOwnBytes(base + 0x5f00, 0x200, [&](std::span<std::byte> image) {
+        std::memset(reinterpret_cast<void*>(base + 0x5f00), 0x44, 0x200);
+        if (!image.empty()) std::memset(image.data(), 0x44, image.size());
+        std::thread([&] { guest[0x5800] = 0x7e; }).join();
+    });
+    expect(page(0x5000), "a store another thread made beside a driver store during the store did not list exactly its page");
+    StoreOwnBytes(base + 0x8100, 4, [&](std::span<std::byte> image) {
+        const std::uint32_t stored = 4;
+        std::memcpy(reinterpret_cast<void*>(base + 0x8100), &stored, sizeof(stored));
+        if (!image.empty()) std::memcpy(image.data(), &stored, sizeof(stored));
+        std::thread([&] { *reinterpret_cast<volatile std::uint32_t*>(base + 0x8100) = 9; }).join();
+    });
+    expect(page(0x8000), "a store another thread made over a driver store's bytes during the store was not listed");
+    StoreOwnBytes(base + 0xa100, 8, [&] {
+        std::atomic_ref word(*reinterpret_cast<std::uint64_t*>(base + 0xa100));
+        word.fetch_add(1);
+        std::thread([&] { word.fetch_sub(1); }).join();
+    });
+    expect(page(0xa000), "a store another thread made that undid a driver store which gives no bytes was not listed");
+    expect({}, "a page listed after a driver store was listed again");
+    SetOwnStoreCompare(false);
+    Require(failures.empty(), failures);
 }
 
 void CheckUnwatch() {
@@ -2356,6 +2411,10 @@ int main() {
             CheckFreshViewPagesListed();
             return 0;
         }
+        if (std::wstring_view(GetCommandLineW()).ends_with(OwnStoreImagesMode)) {
+            CheckOwnStoreImages();
+            return 0;
+        }
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
@@ -2398,6 +2457,9 @@ int main() {
         CheckUnwatchHooks();
         CheckCommittedRanges();
         CheckAdoptLatestEpoch();
+#ifndef _WIN32
+        CheckOwnStoreImages();
+#endif
     } catch (const std::exception& error) {
         std::cerr << "write tracking test failed: " << error.what() << "\n";
         return 1;
