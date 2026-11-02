@@ -220,6 +220,7 @@ class SymbolizeSamplesTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("--out needs a collapsed-stack file", result.stderr)
+        self.assertEqual(result.stdout, "")
         self.assertNotIn("module inputs", result.stderr)
         self.assertEqual(module.read_bytes(), original)
 
@@ -422,6 +423,26 @@ class SymbolizeSamplesTests(unittest.TestCase):
                            "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
         lines, errors = self.run_main(samples, "--libs", self.libs)
         self.assertIn("libSceAgcDriver.prx!short", "\n".join(lines))
+        self.assertEqual(errors, "")
+
+    def test_module_names_with_spaces_keep_their_samples_and_records(self):
+        build_pe(self.libs / "My Game.exe")
+        record = f"# module My Game.exe {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        samples = self.root / "worker.txt"
+        samples.write_text("# 5 samples\nMy Game.exe 0x1011 3 3\nntdll.dll 0x10 2 2\n" + record, encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs)
+        self.assertEqual(lines[0], "5 samples")
+        self.assertIn("3  60.0%  My Game.exe!short", lines[2])
+        self.assertIn("2  40.0%  ntdll.dll+0x10", lines[3])
+        self.assertEqual(errors, "")
+        samples.write_text("thread 7 samples 4\n  My Game.exe 0x1011 4 4\n" + record, encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs, "--thread", "7")
+        self.assertEqual(lines[0], "4 samples")
+        self.assertIn("4 100.0%  My Game.exe!short", lines[2])
+        self.assertEqual(errors, "")
+        samples.write_text(record + "My Game.exe+0x1011 4\n", encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs)
+        self.assertIn("My Game.exe!short", "\n".join(lines))
         self.assertEqual(errors, "")
 
     def test_thread_files_keep_each_heading_and_can_select_one_thread(self):
@@ -646,6 +667,25 @@ class CandidateModuleTests(unittest.TestCase):
             with self.subTest(unverified=unverified):
                 symbolizer = symbolize_samples.Symbolizer([self.old, self.current], {}, unverified=unverified, warn=lambda message: None)
                 self.assertEqual(symbolizer.frame(self.frame), self.frame)
+
+
+class ThreadFilterInputTests(unittest.TestCase):
+    def test_collapsed_stacks_reject_thread_filter_without_writing_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = root / "samples.txt"
+            capture.write_text("example.prx+0x1010 5\n", encoding="utf-8")
+            output = root / "output.txt"
+            output.write_bytes(b"existing output\n")
+            result = subprocess.run([sys.executable, symbolize_samples.__file__, str(capture),
+                                     "--libs", str(root), "--thread", "123", "--out", str(output)],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("thread filtering requires an address capture", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(output.read_bytes(), b"existing output\n")
+
 
 
 if __name__ == "__main__":

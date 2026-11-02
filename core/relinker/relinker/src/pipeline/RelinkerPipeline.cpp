@@ -126,6 +126,15 @@ RelinkResult RelinkerPipeline::Relink() {
     if (!hasDynamicSegment)
         throw RelinkerException("No PT_DYNAMIC segment found");
 
+    bool hasEhFrameSegment = false;
+    for (const auto& ph : programHeaders) {
+        if (ph.Type != PT_GNU_EH_FRAME)
+            continue;
+        if (hasEhFrameSegment)
+            throw RelinkerException("Multiple PT_GNU_EH_FRAME segments", ph.Offset);
+        hasEhFrameSegment = true;
+    }
+
     auto hasTag = [&](const std::int64_t tag) {
         for (const auto& t : dynTags)
             if (t.Tag == tag)
@@ -347,9 +356,12 @@ RelinkResult RelinkerPipeline::Relink() {
         const FileByteOffset symOff = symbolEntryPos(symIdx);
         std::uint16_t section = 0;
         std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
+        const auto type = raw[symOff + 4] & 15;
+        if (section == SHN_UNDEF && type != STT_TLS)
+            throw RelinkerException("TLS relocation names an undefined symbol that is not STT_TLS", pos);
         if (section == SHN_UNDEF)
             return std::nullopt;
-        if ((raw[symOff + 4] & 15) != STT_TLS)
+        if (type != STT_TLS)
             throw RelinkerException("TLS relocation names a defined symbol that is not STT_TLS", pos);
         if (section >= SHN_LORESERVE)
             throw RelinkerException("Unsupported executable TLS symbol section", pos);
