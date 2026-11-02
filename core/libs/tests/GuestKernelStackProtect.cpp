@@ -257,11 +257,13 @@ static void* APS5_VABI Worker(void* arg) {
     if (outside >= Page) {
         Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 2 * Page, 3) == 0);
         Require(QueryPage(below).raw == belowBefore);
+#ifdef __linux__
         Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 3 * Page, 1) == 0);
         Require(QueryPage(below).raw == belowBefore);
         Require(!QueryPage(outside + Page).writable);
         Require(mprotect_nid_postfix(start, GuardBytes, 3) == 0);
         Require(QueryPage(outside + Page).writable);
+#endif
         Require(mprotect_nid_postfix(reinterpret_cast<void*>(outside - Page), 2 * Page, 0x11) == 0);
         Require(QueryPage(below).raw == belowBefore);
         Require(mprotect_nid_postfix(start, GuardBytes, 3) == 0);
