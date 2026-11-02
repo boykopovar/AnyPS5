@@ -95,12 +95,24 @@ int main() {
         Require(sceUserServiceGetKeyboardType(123, &untouched) == USER_SERVICE_ERROR_UNKNOWN_USER && untouched == 0x5A5A);
         Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, &untouched) == USER_SERVICE_OK && untouched == 0);
     }
+#if defined(__linux__)
+    for (const char* name : {"LC_MESSAGES", "LANG", "LANGUAGE"}) Require(::unsetenv(name) == 0);
+    Require(::setenv("LC_ALL", "de_DE.UTF-8", 1) == 0);
+    SetLanguage("auto");
+    std::int32_t german = 0x5A5A;
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &german) == USER_SERVICE_OK && german == keyboardTypeByLanguage[4]);
+    Require(::setenv("LC_ALL", "ja_JP.UTF-8", 1) == 0);
+    german = 0x5A5A;
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &german) == USER_SERVICE_OK && german == keyboardTypeByLanguage[4]);
+#endif
     SetLanguage(nullptr);
     Require(color == 0);
 
     std::uint64_t account_id = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    Require(sceUserServiceGetNpAccountId(123, &account_id) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetNpAccountId(123, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(account_id == 0xdeadbeefu);
+    Require(sceUserServiceGetNpAccountId(123, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &account_id) == USER_SERVICE_OK);
     Require(account_id == 0);
 
@@ -115,6 +127,10 @@ int main() {
         Require(sceUserServiceGetPlatformPrivacyWs1(user_id, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         Require(privacy == 0x5a5a);
         Require(sceUserServiceGetPlatformPrivacyWs1(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        account_id = 0xdeadbeefu;
+        Require(sceUserServiceGetNpAccountId(user_id, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(account_id == 0xdeadbeefu);
+        Require(sceUserServiceGetNpAccountId(user_id, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, &age_level) == USER_SERVICE_OK);
     Require(age_level == 0xffffffffu);
@@ -148,7 +164,11 @@ int main() {
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     UserServiceGamePresets presets{};
     presets.difficulty = 0x5a;
-    Require(sceUserServiceGetGamePresets(0, &presets) == USER_SERVICE_ERROR_INVALID_ARGUMENT && presets.difficulty == 0x5a);
+    for (int user_id : absent_users) {
+        Require(sceUserServiceGetGamePresets(user_id, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(presets.difficulty == 0x5a);
+        Require(sceUserServiceGetGamePresets(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    }
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
     std::int32_t accessibilityValue = 0;
     bool threwKeyremap = false;
@@ -193,12 +213,20 @@ int main() {
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(privacy == 0x5a5a);
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    account_id = 0xdeadbeefu;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(account_id == 0xdeadbeefu);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         Require(value == 0x5a5a5a5a);
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     }
+    presets.difficulty = 0x5a;
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(presets.difficulty == 0x5a);
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
     UserServiceSetUserConnected_nid_postfix(1, true);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
@@ -213,11 +241,16 @@ int main() {
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_OK);
     Require(privacy == 0);
+    account_id = 0xdeadbeefu;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_OK);
+    Require(account_id == 0);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_OK);
         Require(value == setting.value);
     }
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
 
     UserServiceSetUserConnected_nid_postfix(1, false);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
@@ -231,10 +264,18 @@ int main() {
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(privacy == 0x5a5a);
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    account_id = 0xdeadbeefu;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(account_id == 0xdeadbeefu);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         Require(value == 0x5a5a5a5a);
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     }
+    presets.difficulty = 0x5a;
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(presets.difficulty == 0x5a);
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 }

@@ -13,6 +13,12 @@ struct LocinfoStorage {
     alignas(std::uint64_t) unsigned char bytes[64];
 };
 
+struct SceV2Locinfo {
+    std::uint64_t reserved;
+    const char* name;
+    const char* classicName;
+};
+
 struct Facet;
 
 struct FacetVtable {
@@ -26,6 +32,30 @@ struct Facet {
     const FacetVtable* vtable;
     std::uint32_t references;
     std::uint32_t reserved;
+};
+
+struct TimeInfo {
+    const char* amPm;
+    const char* days;
+    const char* abbreviatedDays;
+    const char* fullDays;
+    const char* months;
+    const char* abbreviatedMonths;
+    const char* fullMonths;
+    const char* formats;
+    const char* dateTimeFormat;
+    const char* dateFormat;
+    const char* timeFormat;
+    const char* timeFormatAmPm;
+    const char* eraFormats;
+    const char* eraDateTimeFormat;
+    const char* eraDateFormat;
+    const char* eraTimeFormat;
+    const char* eraTimeFormatAmPm;
+    const char* era;
+    const char* alternativeDigits;
+    const char* daylightSaving;
+    const char* timeZone;
 };
 
 struct Implementation {
@@ -46,6 +76,9 @@ struct String {
     std::uint64_t size;
     std::uint64_t capacity;
 };
+
+void* AllocateStringStorage(std::size_t bytes);
+void ReleaseStringStorage(String& string);
 
 struct CollateFacet {
     Facet base;
@@ -87,6 +120,24 @@ struct NumpunctVtable {
     String* (APS5_VABI *grouping)(String* result, const NumpunctFacet* self);
     String* (APS5_VABI *falsename)(String* result, const NumpunctFacet* self);
     String* (APS5_VABI *truename)(String* result, const NumpunctFacet* self);
+};
+
+struct WideNumpunctFacet {
+    Facet base;
+    const char* grouping;
+    std::uint16_t decimalPoint;
+    std::uint16_t thousandsSep;
+    const std::uint16_t* falsename;
+    const std::uint16_t* truename;
+};
+
+struct WideNumpunctVtable {
+    FacetVtable facet;
+    std::uint16_t (APS5_VABI *decimalPoint)(const WideNumpunctFacet* self);
+    std::uint16_t (APS5_VABI *thousandsSep)(const WideNumpunctFacet* self);
+    String* (APS5_VABI *grouping)(String* result, const WideNumpunctFacet* self);
+    String* (APS5_VABI *falsename)(String* result, const WideNumpunctFacet* self);
+    String* (APS5_VABI *truename)(String* result, const WideNumpunctFacet* self);
 };
 
 struct IosBase {
@@ -184,7 +235,18 @@ static_assert(offsetof(NumpunctFacet, falsename) == 0x20);
 static_assert(offsetof(NumpunctFacet, truename) == 0x28);
 static_assert(offsetof(NumpunctVtable, decimalPoint) == 0x20);
 static_assert(offsetof(NumpunctVtable, truename) == 0x40);
+static_assert(sizeof(WideNumpunctFacet) == 0x30);
+static_assert(offsetof(WideNumpunctFacet, grouping) == 0x10);
+static_assert(offsetof(WideNumpunctFacet, decimalPoint) == 0x18);
+static_assert(offsetof(WideNumpunctFacet, thousandsSep) == 0x1a);
+static_assert(offsetof(WideNumpunctFacet, falsename) == 0x20);
+static_assert(offsetof(WideNumpunctFacet, truename) == 0x28);
+static_assert(offsetof(WideNumpunctVtable, decimalPoint) == 0x20);
+static_assert(offsetof(WideNumpunctVtable, truename) == 0x40);
 static_assert(alignof(LocinfoStorage) == 8);
+static_assert(sizeof(SceV2Locinfo) == 24);
+static_assert(offsetof(SceV2Locinfo, name) == 8);
+static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 
 }
 

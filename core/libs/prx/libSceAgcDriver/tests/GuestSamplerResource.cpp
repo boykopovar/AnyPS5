@@ -428,31 +428,40 @@ void RunGuestSamplerResourceTests() {
     unnormalizedAniso.xyMagFilter = 2;
     unnormalizedAniso.xyMinFilter = 2;
     rejectUnnormalized(unnormalizedAniso, "unnormalized coordinates with anisotropic filtering");
-    for (const std::uint32_t clamp : {1u, 3u, 4u, 5u, 7u}) {
-        Fields clampX = unnormalizedBase;
-        clampX.clampX = clamp;
-        rejectUnnormalized(clampX, "unnormalized coordinates with clamp mode " + std::to_string(clamp) + " on X");
-    }
-    for (const std::uint32_t clamp : {1u, 3u, 4u, 5u, 7u}) {
-        Fields clampY = unnormalizedBase;
-        clampY.clampY = clamp;
-        rejectUnnormalized(clampY, "unnormalized coordinates with clamp mode " + std::to_string(clamp) + " on Y");
-    }
     Fields clampZero = unnormalizedBase;
     clampZero.clampX = 0;
     clampZero.clampY = 0;
     const auto zeroDecoded = DecodeSamplerResource(pack(clampZero), true);
     requireUnnormalized(zeroDecoded, "unnormalized S# with clamp mode 0");
     Require(zeroDecoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && zeroDecoded.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "unnormalized clamp mode 0 must decode to clamp-to-edge");
+    for (const std::uint32_t clamp : {1u, 3u}) {
+        Fields mirrored = unnormalizedBase;
+        mirrored.clampX = clamp;
+        mirrored.clampY = clamp;
+        const auto decoded = DecodeSamplerResource(pack(mirrored), true);
+        requireUnnormalized(decoded, clamp == 1u ? "unnormalized S# with clamp mode 1" : "unnormalized S# with clamp mode 3");
+        Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && decoded.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "unnormalized clamp mode " + std::to_string(clamp) + " must decode to clamp-to-edge after the shader mirrors the coordinate");
+    }
     Fields unnormalizedBiased = unnormalizedBase;
     unnormalizedBiased.lodBiasRaw = 256;
     unnormalizedBiased.lodBiasSec = 8;
     const auto unnormalizedBiasedResult = DecodeSamplerResource(pack(unnormalizedBiased), true);
     requireUnnormalized(unnormalizedBiasedResult, "unnormalized S# with primary and secondary LOD bias");
     Require(unnormalizedBiasedResult.lodBias == 0.0f, "unnormalized coordinates must zero host lodBias");
-    Fields unnormalizedTruncated = unnormalizedBase;
-    unnormalizedTruncated.truncCoord = true;
-    rejectUnnormalized(unnormalizedTruncated, "unnormalized coordinates with TRUNC_COORD");
+    for (const std::uint32_t filter : {0u, 1u}) {
+        Fields unnormalizedUntruncated = unnormalizedBase;
+        unnormalizedUntruncated.xyMagFilter = filter;
+        unnormalizedUntruncated.xyMinFilter = filter;
+        Fields unnormalizedTruncated = unnormalizedUntruncated;
+        unnormalizedTruncated.truncCoord = true;
+        const auto truncatedResult = DecodeSamplerResource(pack(unnormalizedTruncated), true);
+        const auto untruncatedResult = DecodeSamplerResource(pack(unnormalizedUntruncated), true);
+        requireUnnormalized(truncatedResult, "unnormalized S# with TRUNC_COORD");
+        Require(truncatedResult.magFilter == untruncatedResult.magFilter && truncatedResult.minFilter == untruncatedResult.minFilter
+                && truncatedResult.addressModeU == untruncatedResult.addressModeU && truncatedResult.addressModeV == untruncatedResult.addressModeV
+                && truncatedResult.borderColor == untruncatedResult.borderColor,
+            "TRUNC_COORD must not change the host sampler of an unnormalized S#");
+    }
     auto truncatedBlend = pack(unnormalizedBase);
     truncatedBlend[0] |= 1u << 19u;
     reject([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized coordinates with MC_COORD_TRUNC");

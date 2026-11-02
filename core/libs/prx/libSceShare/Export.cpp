@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceShare/include/InventoryExports.hpp"
 #include "prx/libSceShare/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -131,5 +133,36 @@ int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* application
     if (length == 0 || length == 5120) return ERROR_INVALID_PARAM;
     return 0;
 }
+
+}
+
+
+extern "C" {
+
+int APS5_VABI sceShareFeatureExPermit() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceShareFeatureExProhibit() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceShareRegisterUploadCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceShareUnregisterUploadCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI libSceShareUnknown_YPIiGz4uKOU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("YPIiGz4uKOU", libSceShareUnknown_YPIiGz4uKOU_nid_no_patch);
+
+int APS5_VABI libSceShareUnknown_txixe0fiPKM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("txixe0fiPKM", libSceShareUnknown_txixe0fiPKM_nid_no_patch);
 
 }
