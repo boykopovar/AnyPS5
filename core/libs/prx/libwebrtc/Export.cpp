@@ -1473,11 +1473,6 @@ int APS5_VABI _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc19SmoothingFilterImplD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc9WavReader5ResetEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
