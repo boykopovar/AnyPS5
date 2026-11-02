@@ -50,6 +50,7 @@ void registry() {
 }
 
 void parse() {
+    Require(Refusal("60:APS5_ASYNC_LANE").find("changing lanes would lose recorded label dependencies") != std::string::npos, "async queue selection was not refused with its lifetime reason");
     const auto config = AbSchedule::Parse(" 30 : APS5_NO_BARRIER_BATCH ", "815", "3");
     Require(config.phaseSeconds == 30 && config.settleSeconds == 3 && config.startPresent == 815 && !config.startSeconds.has_value(), "the phase settings were not parsed");
     Require(config.switches.size() == 1 && config.switches[0] == RuntimeSwitch::NoBarrierBatch, "the switch list was not parsed");
