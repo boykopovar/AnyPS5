@@ -144,10 +144,7 @@ struct DeviceFunctions {
 };
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
-inline std::uint64_t& DeviceProcLookups() {
-    thread_local std::uint64_t count = 0;
-    return count;
-}
+std::uint64_t& DeviceProcLookups();
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -346,6 +343,15 @@ struct Context {
         if (budget == 0 || (usage < budget && bytes <= budget - usage)) return type;
         const auto host = HostMemoryType(mask);
         if (!host) return type;
+        if (cacheReclaim != nullptr) {
+            const auto wanted = bytes + (usage > budget ? usage - budget : 0u);
+            const auto released = cacheReclaim(wanted, true);
+            if (released >= wanted) return type;
+            if (released != 0) {
+                memoryProperties2(physical, &properties);
+                if (reported.heapUsage[heap] < reported.heapBudget[heap] && bytes <= reported.heapBudget[heap] - reported.heapUsage[heap]) return type;
+            }
+        }
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
         const auto count = placements.fetch_add(1) + 1;
         const auto total = placedBytes.fetch_add(bytes) + bytes;

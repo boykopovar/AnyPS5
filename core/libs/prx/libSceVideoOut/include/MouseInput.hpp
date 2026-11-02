@@ -16,6 +16,7 @@ private:
 
     bool focused = true;
     bool captured = false;
+    bool suspended = false;
     double scaleX = 1.0;
     double scaleY = 1.0;
     double remainderX = 0.0;

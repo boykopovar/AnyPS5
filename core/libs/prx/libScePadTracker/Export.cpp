@@ -11,8 +11,10 @@ int APS5_VABI scePadTrackerCalibrate() {
     return 0;
 }
 
-int APS5_VABI scePadTrackerGetWorkingMemorySize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI scePadTrackerGetWorkingMemorySize(std::uint32_t* first, std::uint32_t* second) {
+    if (first == nullptr || second == nullptr) return static_cast<int>(0x80c40003);
+    *first = 0x800000;
+    *second = 0x800000;
     return 0;
 }
 

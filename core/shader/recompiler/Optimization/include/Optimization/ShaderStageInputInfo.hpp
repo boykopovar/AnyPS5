@@ -204,8 +204,7 @@ struct ShaderPixelInputInfo {
     bool psIteratesSamples = false;
     PixelPositionLocation psPositionLocation = PixelPositionLocation::Center;
     std::array<std::uint8_t, 32> sampleLocations{};
-    std::uint8_t mergeTarget = 0;
-    std::uint16_t mergeMask = 0;
+    std::vector<TargetMerge> merges;
     std::uint8_t mergeSamples = 1;
     bool mergeDepthStencilWrites = false;
     bool mergeDepthStencilTests = false;

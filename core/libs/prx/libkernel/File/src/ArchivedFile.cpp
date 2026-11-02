@@ -35,6 +35,7 @@ void FillNode(const AppArchiveNode& node, FileStat* sb) {
     sb->st_nlink = node.Directory ? 2 : 1;
     sb->st_size = static_cast<std::int64_t>(node.Size);
     sb->st_blocks = static_cast<std::int64_t>((node.Size + 511) / 512);
+    if (node.Directory) sb->st_blksize = 0x10000;
 }
 
 }
