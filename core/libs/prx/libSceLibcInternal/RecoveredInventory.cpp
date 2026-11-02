@@ -3,10 +3,6 @@
 
 extern "C" {
 
-int APS5_VABI __std_find_last_trivial_2_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __std_minmax_d_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -107,23 +103,11 @@ int APS5_VABI __std_min_1i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __std_find_last_trivial_8_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI __std_min_2u_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI __std_minmax_1i_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_find_last_trivial_1_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI __std_find_last_trivial_4_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

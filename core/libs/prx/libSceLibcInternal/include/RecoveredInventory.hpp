@@ -4,7 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI __std_find_last_trivial_2_nid_postfix();
 int APS5_VABI __std_minmax_d_nid_postfix();
 int APS5_VABI __std_minmax_element_f_nid_postfix();
 int APS5_VABI __std_bitset_to_string_1_nid_postfix();
@@ -30,11 +29,8 @@ int APS5_VABI sceLibcInternalPrimitiveMallocStatsFast_nid_postfix();
 int APS5_VABI __std_atomic_wait_get_remaining_timeout_nid_postfix();
 int APS5_VABI __std_atomic_wait_direct_8_nid_postfix();
 int APS5_VABI __std_min_1i_nid_postfix();
-int APS5_VABI __std_find_last_trivial_8_nid_postfix();
 int APS5_VABI __std_min_2u_nid_postfix();
 int APS5_VABI __std_minmax_1i_nid_postfix();
-int APS5_VABI __std_find_last_trivial_1_nid_postfix();
-int APS5_VABI __std_find_last_trivial_4_nid_postfix();
 int APS5_VABI __std_minmax_8i_nid_postfix();
 int APS5_VABI __std_max_d_nid_postfix();
 int APS5_VABI __std_max_element_f_nid_postfix();
