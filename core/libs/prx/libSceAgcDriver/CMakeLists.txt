@@ -400,6 +400,7 @@ set(agcZlibIncludeDir ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/TraceFile.cpp PROPERTIES
         INCLUDE_DIRECTORIES ${agcZlibIncludeDir}
 )
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
 
 add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${agcDriverSources}
@@ -423,6 +424,10 @@ list(FILTER agcShaderCacheGuardSources EXCLUDE REGEX "^(tests|tools)/")
 add_shader_recompiler(shader_recompiler_agc_driver libc
         GUARD_SOURCES
         ${agcShaderCacheGuardSources}
+)
+
+target_include_directories(libSceAgcDriver INTERFACE
+        $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
 target_link_libraries(libSceAgcDriver PRIVATE
@@ -899,6 +904,22 @@ target_include_directories(agc_compute_pipeline_replay PRIVATE
 target_link_libraries(agc_compute_pipeline_replay PRIVATE libSceAgcDriver libc)
 set_target_properties(agc_compute_pipeline_replay PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_compute_pipeline_replay)
+
+add_library(agc_oracle_support STATIC tools/OracleCodeObject.cpp tools/OracleDispatch.cpp)
+target_include_directories(agc_oracle_support PUBLIC
+        ${LIBS_INCLUDE_DIR}
+        $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+        ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
+)
+target_link_libraries(agc_oracle_support PUBLIC libSceAgcDriver libc)
+set_target_properties(agc_oracle_support PROPERTIES CXX_EXTENSIONS OFF)
+
+add_executable(agc_oracle_runner EXCLUDE_FROM_ALL tools/OracleRunner.cpp)
+target_link_libraries(agc_oracle_runner PRIVATE agc_oracle_support)
+set_target_properties(agc_oracle_runner PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_oracle_runner)
 
 if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS)
     add_test(NAME agc_compute_pipeline_inspection COMMAND ${CMAKE_COMMAND}
