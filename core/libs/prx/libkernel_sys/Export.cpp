@@ -385,7 +385,8 @@ int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id) {
 
 int APS5_VABI sceKernelGetCpumodeGame(int* mode) {
     if (mode == nullptr) throw std::runtime_error("sceKernelGetCpumodeGame: a null output faults on the console");
-    *mode = g_gameCpumode.load(std::memory_order_relaxed);
+    const int val = g_gameCpumode.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(mode, &val, sizeof(val))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
