@@ -3,6 +3,7 @@
 #include "ControlFlow/RequestSerializer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -18,6 +19,7 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <map>
 #include <cstddef>
 #include <cstring>
 #include <chrono>
@@ -28,7 +30,10 @@
 #include <vector>
 #include <future>
 #include <barrier>
+#include <latch>
+#include <semaphore>
 #include <atomic>
+#include <initializer_list>
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
@@ -470,6 +475,180 @@ void AwaitedRegistrationPreparation() {
     Require(waiter.get(), "a submission stopped waiting for an earlier preparation once a later one finished");
     AgcDriver::DriverDetail::AwaitRegistrationPreparation();
     Require(fast.load(std::memory_order_acquire), "the later preparation did not run");
+}
+
+void ReferencedRegistrationPreparation() {
+    using AgcDriver::DriverDetail::ShaderSnapshot;
+    alignas(256) static const std::array<std::uint32_t, 1> boundCode{0xbf810000u};
+    alignas(256) static const std::array<std::uint32_t, 1> unrelatedCode{0xbf810000u};
+    const auto bound = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(boundCode.data()));
+    const auto unrelated = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(unrelatedCode.data()));
+    const auto boundSnapshot = std::make_shared<ShaderSnapshot>(ShaderSnapshot{bound, 0, 0, {boundCode.begin(), boundCode.end()}, {}});
+    const auto unrelatedSnapshot = std::make_shared<ShaderSnapshot>(ShaderSnapshot{unrelated, 0, 0, {unrelatedCode.begin(), unrelatedCode.end()}, {}});
+    AgcDriver::DriverDetail::ShaderRegistry registry;
+    registry[bound].push_back(boundSnapshot);
+    registry[unrelated].push_back(unrelatedSnapshot);
+    const std::vector<std::uint32_t> commands{0xc0027600u, 0x20cu, static_cast<std::uint32_t>(bound >> 8u), static_cast<std::uint32_t>(bound >> 40u)};
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(commands, {}).addresses == std::vector<std::uint64_t>{bound}, "a compute program bound with SET_SH_REG was not found in the submission");
+    const std::vector<std::uint32_t> indirect{0xc0036300u, 0, 0, 0, 2};
+    const std::map<std::size_t, std::vector<std::uint32_t>> lists{{0, {0xc8u, static_cast<std::uint32_t>(unrelated >> 8u), 0xc9u, static_cast<std::uint32_t>(unrelated >> 40u)}}};
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(indirect, lists).addresses == std::vector<std::uint64_t>{unrelated}, "a vertex program bound through an indirect register list was not found in the submission");
+    const std::vector<std::uint32_t> lowOnly{0xc0017600u, 0x008u, static_cast<std::uint32_t>(bound >> 8u)};
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(lowOnly, {}).addresses.empty(), "a program address without its high register was resolved");
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(lowOnly, {}).complete, "a program address without its high register was reported as fully scanned");
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(commands, {}).complete, "a program address written as a pair was reported as not fully scanned");
+    const auto workers = std::max(2u, std::thread::hardware_concurrency() / 2u);
+    std::barrier started(static_cast<std::ptrdiff_t>(workers + 1u));
+    std::counting_semaphore<> release(0);
+    std::latch finished(static_cast<std::ptrdiff_t>(workers));
+    for (unsigned index = 0; index < workers; ++index) {
+        AgcDriver::DriverDetail::SubmitRegistrationPreparation([&] {
+            started.arrive_and_wait();
+            release.acquire();
+            finished.count_down();
+        });
+    }
+    started.arrive_and_wait();
+    const auto pending = [](const std::shared_ptr<ShaderSnapshot>& snapshot) {
+        std::lock_guard lock(snapshot->prepared->mutex);
+        return snapshot->prepared->pending;
+    };
+    const auto settle = [](const std::shared_ptr<ShaderSnapshot>& snapshot) {
+        {
+            std::lock_guard lock(snapshot->prepared->mutex);
+            snapshot->prepared->pending = false;
+        }
+        snapshot->prepared->settled.notify_all();
+    };
+    boundSnapshot->prepared->pending = true;
+    unrelatedSnapshot->prepared->pending = true;
+    std::atomic<unsigned> order{0};
+    std::atomic<unsigned> boundOrder{~0u};
+    std::atomic<unsigned> unrelatedOrder{~0u};
+    std::counting_semaphore<> unrelatedGate(0);
+    AgcDriver::DriverDetail::SubmitRegistrationPreparation([unrelatedSnapshot, settle, &order, &unrelatedOrder, &unrelatedGate] {
+        unrelatedOrder.store(order.fetch_add(1u));
+        static_cast<void>(unrelatedGate.try_acquire_for(std::chrono::seconds(5)));
+        settle(unrelatedSnapshot);
+    }, unrelatedSnapshot->prepared.get());
+    AgcDriver::DriverDetail::SubmitRegistrationPreparation([boundSnapshot, settle, &order, &boundOrder] {
+        boundOrder.store(order.fetch_add(1u));
+        settle(boundSnapshot);
+    }, boundSnapshot->prepared.get());
+    auto releaser = std::async(std::launch::async, [&] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!boundSnapshot->prepared->demanded.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        release.release();
+    });
+    AgcDriver::DriverDetail::AwaitReferencedPreparations(registry, AgcDriver::DriverDetail::ReferencedPrograms(commands, {}).addresses);
+    const bool boundPending = pending(boundSnapshot);
+    const bool unrelatedPending = pending(unrelatedSnapshot);
+    const auto boundRank = boundOrder.load();
+    unrelatedGate.release();
+    releaser.get();
+    release.release(static_cast<std::ptrdiff_t>(workers - 1u));
+    const std::array<std::uint64_t, 1> unrelatedAddress{unrelated};
+    AgcDriver::DriverDetail::AwaitReferencedPreparations(registry, unrelatedAddress);
+    const bool unrelatedSettled = !pending(unrelatedSnapshot);
+    finished.wait();
+    Require(!boundPending, "a submission did not wait for the preparation of a program its commands bind");
+    Require(boundRank == 0u, "the queued preparation of a bound program was not moved ahead of unrelated queued work");
+    Require(unrelatedPending, "a preparation of a program the commands do not bind held the submission back");
+    Require(unrelatedSettled && unrelatedOrder.load() == 1u, "a submission binding the queued program did not wait for its preparation");
+}
+
+std::chrono::milliseconds SubmitBehindSlowPreparation(std::vector<std::uint32_t>& commands, bool& preparationDone) {
+    std::atomic<bool> ran{false};
+    AgcDriver::DriverDetail::SubmitRegistrationPreparation([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        ran.store(true, std::memory_order_release);
+    });
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    const auto began = std::chrono::steady_clock::now();
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "a submission behind a slow preparation failed");
+    const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
+    preparationDone = ran.load(std::memory_order_acquire);
+    AgcDriverWaitIdle_nid_postfix();
+    while (!ran.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    return waited;
+}
+
+void UnprovenProgramsAtSubmit() {
+    alignas(256) static const std::array<std::uint32_t, 1> code{0xbf810000u};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(code.data()));
+    const auto low = static_cast<std::uint32_t>(address >> 8u);
+    const auto high = static_cast<std::uint32_t>(address >> 40u);
+    const std::vector<std::uint32_t> lowOnly{0xc0017600u, 0x20cu, low};
+    const std::vector<std::uint32_t> highOnly{0xc0017600u, 0x20du, high};
+    const std::vector<std::uint32_t> pair{0xc0027600u, 0x20cu, low, high};
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(lowOnly, {}).complete, "a low address register alone was reported as fully scanned");
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(highOnly, {}).complete, "a high address register alone was reported as fully scanned");
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(pair, {}).complete, "a register pair was reported as not fully scanned");
+    const std::vector<std::uint32_t> split{0xc0017600u, 0x20cu, low, 0xc0017600u, 0x20du, high};
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(split, {}).complete, "a register pair written by two packets was reported as not fully scanned");
+    std::vector<std::uint32_t> commands = lowOnly;
+    bool done = false;
+    auto waited = SubmitBehindSlowPreparation(commands, done);
+    std::cout << "unproven low-only submit waited " << waited.count() << " ms\n";
+    Require(done, "a submission writing half of a program address did not wait for the queued preparations");
+    commands = highOnly;
+    waited = SubmitBehindSlowPreparation(commands, done);
+    std::cout << "unproven high-only submit waited " << waited.count() << " ms\n";
+    Require(done, "a submission writing the other half of a program address did not wait for the queued preparations");
+    alignas(4) static std::array<std::uint32_t, 3> buffer{};
+    std::ranges::copy(lowOnly, buffer.begin());
+    const auto target = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(buffer.data()));
+    commands = {0xc0023f00u, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(target >> 32u) & 0xffffu, static_cast<std::uint32_t>(buffer.size())};
+    waited = SubmitBehindSlowPreparation(commands, done);
+    std::cout << "unproven low-only submit through an indirect buffer waited " << waited.count() << " ms\n";
+    Require(done, "a submission writing half of a program address inside an indirect buffer did not wait for the queued preparations");
+    const std::vector<std::uint32_t> dispatch{0xc0031500u, 0, 0, 0, 0};
+    const std::vector<std::uint32_t> draw{0xc0012d00u, 0, 0};
+    const auto joined = [](std::initializer_list<const std::vector<std::uint32_t>*> parts) {
+        std::vector<std::uint32_t> all;
+        for (const auto* part : parts) all.insert(all.end(), part->begin(), part->end());
+        return all;
+    };
+    const std::vector<std::uint32_t> graphicsPair{0xc0027600u, 0x008u, low, high};
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(dispatch, {}).complete, "a dispatch that binds no program in its submission was reported as fully scanned");
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(joined({&pair, &dispatch}), {}).complete, "a dispatch after its program pair was reported as not fully scanned");
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(joined({&dispatch, &pair}), {}).complete, "a dispatch before its program pair was reported as fully scanned");
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(draw, {}).complete, "a draw that binds no program in its submission was reported as fully scanned");
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(joined({&graphicsPair, &draw}), {}).complete, "a draw after a graphics program pair was reported as not fully scanned");
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(joined({&pair, &draw}), {}).complete, "a draw after only a compute program pair was reported as fully scanned");
+    const std::vector<std::uint32_t> indirectList{0xc0036300u, 0, 0, 0, 1};
+    const std::map<std::size_t, std::vector<std::uint32_t>> invalidList{{0, {0xffffffffu, 0}}};
+    const std::map<std::size_t, std::vector<std::uint32_t>> validList{{0, {0x20cu, low}}};
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(indirectList, invalidList).complete, "an indirect register list the worker reads again was reported as fully scanned");
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(indirectList, validList).addresses.empty(), "a lone indirect register was resolved to a program");
+    const std::vector<std::uint32_t> predicatedPair{0xc0027601u, 0x20cu, low, high};
+    const std::vector<std::uint32_t> conditionalRange{0xc0032200u, 0, 0, 0, 4};
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(predicatedPair, {}).complete, "a predicated program pair was reported as fully scanned");
+    Require(!AgcDriver::DriverDetail::ReferencedPrograms(joined({&conditionalRange, &pair}), {}).complete, "a program pair inside a conditional execution range was reported as fully scanned");
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(joined({&conditionalRange, &pair}), {}).addresses.empty(), "a program pair inside a conditional execution range was resolved to a program");
+    const std::vector<std::uint32_t> unrelatedWrite{0xc0017600u, 0x2e0u, 1};
+    const std::vector<std::uint32_t> shortRange{0xc0032200u, 0, 0, 0, 3};
+    Require(AgcDriver::DriverDetail::ReferencedPrograms(joined({&shortRange, &unrelatedWrite, &pair}), {}).complete, "a pair after a conditional execution range holding another register was reported as not fully scanned");
+    alignas(4) static std::array<std::uint32_t, 4> rewound{0xc0005900u, 0, 0xc0001000u, 0};
+    {
+        std::atomic<bool> ran{false};
+        AgcDriver::DriverDetail::SubmitRegistrationPreparation([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            ran.store(true, std::memory_order_release);
+        });
+        Packet packet{rewound.data(), static_cast<std::uint32_t>(rewound.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "a submission ending in a REWIND failed");
+        const bool rewindWaited = ran.load(std::memory_order_acquire);
+        std::atomic_ref<std::uint32_t>(rewound[1]).store(0x80000000u, std::memory_order_release);
+        AgcDriverWaitIdle_nid_postfix();
+        while (!ran.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Require(rewindWaited, "a submission ending in a REWIND did not wait for the queued preparations, though its tail is not scanned");
+    }
+    commands = pair;
+    waited = SubmitBehindSlowPreparation(commands, done);
+    std::cout << "proven pair submit waited " << waited.count() << " ms\n";
+    Require(!done, "a submission writing a whole program address waited for an unrelated preparation");
 }
 
 void PendingRegistrationPreparation(AgcDriver::VulkanDevice& device) {
@@ -1701,12 +1880,14 @@ int main(int argc, char** argv) {
         PendingRegistrationPreparation(*device);
         PendingPreparationOutsideTransactionLock();
         AwaitedRegistrationPreparation();
+        ReferencedRegistrationPreparation();
         Require(argc != 2 || std::string_view(argv[1]) != "--fail-before-registration", "injected failure before registration");
         PrepareMultisampledStorage(*device);
         device.reset();
         SharedCodeHeaders();
         RelocatedHeaders();
         CommittedAbis();
+        UnprovenProgramsAtSubmit();
         RegistrationWithoutSpecials();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";
