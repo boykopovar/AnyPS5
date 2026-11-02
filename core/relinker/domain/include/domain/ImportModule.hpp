@@ -4,6 +4,7 @@
 #include <domain/Types.hpp>
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -29,7 +30,7 @@ inline std::string ImportModuleName(std::string name) {
     return name;
 }
 
-inline std::string DeclaredImportModule(const std::string& symbol, const std::map<std::uint64_t, std::string>& modules) {
+inline std::string DeclaredImportModule(const std::string& symbol, const std::map<std::uint64_t, std::string>& modules, std::optional<std::uint64_t> ownModule = std::nullopt) {
     if (modules.empty()) return {};
     const auto first = symbol.find('#');
     if (first == std::string::npos) return {};
@@ -45,7 +46,10 @@ inline std::string DeclaredImportModule(const std::string& symbol, const std::ma
         id = id * 64u + digit;
     }
     const auto module = modules.find(id);
-    if (module == modules.end()) throw RelinkerException("Unknown import module ID: " + symbol);
+    if (module == modules.end()) {
+        if (ownModule == id) return {};
+        throw RelinkerException("Unknown import module ID: " + symbol);
+    }
     auto name = module->second;
     if (name.empty() || name.find_first_of("/\\:$\r\n") != std::string::npos)
         throw RelinkerException("Invalid import module name: " + name);
@@ -53,8 +57,8 @@ inline std::string DeclaredImportModule(const std::string& symbol, const std::ma
 }
 
 inline std::string ImportModule(const std::string& symbol, const std::map<std::uint64_t, std::string>& modules,
-    std::span<const std::string> dependencies = {}) {
-    auto name = DeclaredImportModule(symbol, modules);
+    std::span<const std::string> dependencies = {}, std::optional<std::uint64_t> ownModule = std::nullopt) {
+    auto name = DeclaredImportModule(symbol, modules, ownModule);
     if (name.empty()) return {};
     if (ModuleSuffix(name).empty()) name += ".prx";
     if (std::find(dependencies.begin(), dependencies.end(), name) != dependencies.end()) return name;
