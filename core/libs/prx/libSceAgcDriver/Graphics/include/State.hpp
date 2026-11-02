@@ -79,6 +79,7 @@ struct ColorTarget {
     std::uint32_t layers = 1;
     std::uint32_t exportIndex = 0;
     bool uintExport = false;
+    bool volume = false;
     std::uint32_t pipeBankXor = 0;
     std::uint32_t samples = 1;
     std::uint32_t coverageSamples = 1;
@@ -86,6 +87,10 @@ struct ColorTarget {
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
     std::uint16_t partialWriteMask = 0;
+
+    std::uint64_t MemoryAddress() const {
+        return volume && tileMode != ColorTileMode::Linear ? surfaceAddress : address;
+    }
 };
 
 struct DepthTarget {
@@ -141,6 +146,8 @@ struct State {
     std::uint32_t reversedBlend = 0;
     VkExtent2D renderExtent;
     std::uint32_t renderLayers = 1;
+    std::uint32_t meshLayerBase = 0;
+    std::uint32_t meshLayerCount = 0xffffffffu;
     std::uint32_t layerExports = 0;
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;
