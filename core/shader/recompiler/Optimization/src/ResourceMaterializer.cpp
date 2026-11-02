@@ -707,13 +707,19 @@ public:
         for (const auto& image : plan.info.images) {
             if (image.table != NoTable) {
                 count = std::max(count, image.table + 1u);
-                if (image.source < plan.descriptorSources.size() && plan.descriptorSources[image.source].tableColumn.has_value() && plan.descriptorSources[image.source].tableColumn->indirect) hasIndirect = true;
+                if (image.source < plan.descriptorSources.size() && plan.descriptorSources[image.source].tableColumn.has_value()) {
+                    const auto& column = *plan.descriptorSources[image.source].tableColumn;
+                    hasIndirect |= column.indirect || plan.descriptorSources.at(column.heapSource).tableColumn.has_value();
+                }
             }
         }
         for (const auto& sampler : plan.info.samplers) {
             if (sampler.table != NoTable) {
                 count = std::max(count, sampler.table + 1u);
-                if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value() && plan.descriptorSources[sampler.source].tableColumn->indirect) hasIndirect = true;
+                if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value()) {
+                    const auto& column = *plan.descriptorSources[sampler.source].tableColumn;
+                    hasIndirect |= column.indirect || plan.descriptorSources.at(column.heapSource).tableColumn.has_value();
+                }
             }
         }
         if (count == 0u) {
@@ -726,6 +732,8 @@ public:
         const bool checkEpoch = (count > 1u || hasIndirect) && runtime.descriptorScope != nullptr;
         bool completed = false;
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            parentKeysRemaining = ImageTableAbi::MaxParentKeys;
+            nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
             if (attempt != 0u) {
                 columns.clear();
                 pages.clear();
@@ -1783,8 +1791,8 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
         const auto decoded = decodeBufferDescriptor(snapshot.buffers.at(i));
         if (decoded.Type() != 0u) {
             const auto& words = snapshot.buffers.at(i).dwords;
-            char detail[64];
-            std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x)", i, words[0], words[1], words[2], words[3]);
+            char detail[96];
+            std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x) first used at pc 0x%x", i, words[0], words[1], words[2], words[3], buffer.firstUsePc);
             throw std::runtime_error(std::string("buffer descriptor uses an unsupported type") + detail);
         }
         if (plan.stage != IrShaderStage::Compute && decoded.AddTid()) throw std::runtime_error("buffer ADD_TID is only valid for compute shaders");
