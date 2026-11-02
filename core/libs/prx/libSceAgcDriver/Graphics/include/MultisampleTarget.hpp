@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
+#include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <array>
 #include <cstddef>
@@ -47,6 +48,8 @@ public:
     void NoteFill(std::uint64_t fillAddress, std::size_t fillBytes, std::uint32_t pattern);
     std::optional<std::uint32_t> TakeFill();
     void Discard();
+    std::optional<std::uint32_t> Pending() const { return filled; }
+    const std::string& Refusal() const { return refusal; }
 
 private:
     std::uint64_t address = 0;
@@ -54,6 +57,20 @@ private:
     std::optional<std::uint32_t> filled;
     std::string refusal;
 };
+
+enum class MultisampleColorContent { Unknown, Fill, FastClear, Clear, Drawn };
+
+struct MultisampleColorAlias {
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    std::uint32_t samples = 0;
+    MultisampleColorContent newest = MultisampleColorContent::Unknown;
+    std::optional<VkClearColorValue> value;
+    std::optional<std::uint8_t> byte;
+};
+
+std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes);
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target);
 std::size_t MultisampledDccBytes(const ColorTarget& target);
@@ -81,8 +98,12 @@ bool MultisampledColorFillAbsorbs(std::uint64_t address, std::size_t bytes, std:
 void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Context& context, const GuestTextureResource& resource, VkComponentMapping components);
 void ClearMultisampleTargets(VkDevice device);
+std::uint64_t MultisampleTargetRangeGeneration();
+std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
+    VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::uint64_t& generation);
 void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
+void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes);
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);

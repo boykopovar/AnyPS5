@@ -363,6 +363,28 @@ class CheckMainSyncGitTests(CheckMainSyncFixture):
         self.assertNotIn("Traceback", stderr.getvalue())
 
 
+class CheckMainSyncJsonTests(CheckMainSyncFixture):
+    def test_json_reports_real_git_state_and_preserves_exit_status(self):
+        import json
+        self.branch("feature")
+        self.repo.write("shared.txt", "feature\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        clean = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        data = json.loads(clean.stdout)
+        self.assertEqual((data["ahead"], data["behind"], data["conflicts"], data["shared"], data["pulls"]), (1, 0, [], [], {}))
+        self.repo.write("shared.txt", "main\n")
+        self.repo.commit("main edit (#70003)")
+        conflict = run_tool(self.repo.path, "--head", "feature", "--json")
+        self.assertEqual(conflict.returncode, 1, conflict.stderr)
+        data = json.loads(conflict.stdout)
+        self.assertEqual((data["ahead"], data["behind"], data["conflicts"], data["shared"]), (1, 1, ["shared.txt"], ["shared.txt"]))
+        self.assertEqual(set(data["pulls"]), {"70003"})
+        strict = run_tool(self.repo.path, "--head", data["mergebase"], "--json", "--strict")
+        self.assertEqual(strict.returncode, 1, strict.stderr)
+        self.assertEqual(json.loads(strict.stdout)["conflicts"], [])
+
 
 
 if __name__ == "__main__":

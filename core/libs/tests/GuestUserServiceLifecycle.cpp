@@ -30,6 +30,41 @@ int InitializeWithPriority(int priority) {
     return sceUserServiceInitialize(&param);
 }
 
+void TestInitialUserLogout() {
+    SceUserServiceEvent event{};
+    UserServiceLoginUserIdList list{};
+    int initial = -1;
+    Require(sceUserServiceGetInitialUser(&initial) == USER_SERVICE_OK && initial == USER_SERVICE_INITIAL_USER_ID);
+
+    UserServiceSetUserConnected_nid_postfix(0, false);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_USER_ID_INVALID);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(0, false);
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(0, false);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_USER_ID_INVALID);
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+}
+
 void TestThreadPriority() {
     for (int priority : {0, 0xFF, 0x300, -1}) {
         Require(InitializeWithPriority(priority) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -110,6 +145,7 @@ int main() {
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
     Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 2);
 
+    TestInitialUserLogout();
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 
     TestThreadPriority();

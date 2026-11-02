@@ -1,0 +1,28 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceGnmDriverForNeoModeUnknown__plus_RaJBCVJZVM_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown__minus_bNK8kTFf6s_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_1TRGZJsC5Y4_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_2T1zOhnddFQ_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_5R1E24FRI4w_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_6a3_plus_Twrkogk_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_7LTGukH_plus_M1A_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_8_plus_itHHi1ea0_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_HEOIaxbuVTA_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_KKsYtugjKLw_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_MLr_plus_Fyrxf_plus_8_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_QP7vDGU0xDQ_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_QWuQed5Mus4_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_R3TYO7Tdv5o_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_UGePHM7rmgA_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_epUMKkeaze8_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_gQNwGezNDgE_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_sKhoi2ectC0_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_ut57TBmRQN0_nid_no_patch();
+int APS5_VABI libSceGnmDriverForNeoModeUnknown_v7QcBXR48L8_nid_no_patch();
+
+}

@@ -38,7 +38,18 @@ def git(*args):
         for index in range(separator + 1, len(args)):
             pathspec = args[index]
             if pathspec.startswith(("../", "..\\")):
-                absolute = (cwd / pathspec).resolve()
+                absolute = cwd / pathspec
+                try:
+                    absolute = absolute.resolve()
+                except RuntimeError as error:
+                    raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
+                except OSError as error:
+                    raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
+                if absolute.is_symlink():
+                    try:
+                        absolute.stat()
+                    except OSError as error:
+                        raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
                 try:
                     args[index] = absolute.relative_to(Path(root)).as_posix()
                 except ValueError:
@@ -94,7 +105,7 @@ def page(url):
     return (out, "") if blank is None else (out[:blank.start()], out[blank.end():])
 
 
-def json_pages(out):
+def decode_pages(out):
     decoder = json.JSONDecoder()
     offset = 0
     pages = []
@@ -108,6 +119,37 @@ def json_pages(out):
             raise ValueError("gh api returned a non-array page")
         pages.append(found)
     return pages
+
+
+def repair_escapes(text):
+    repaired = []
+    offset = 0
+    while offset < len(text):
+        character = text[offset]
+        if character != "\\":
+            repaired.append(character)
+            offset += 1
+            continue
+        following = text[offset + 1:offset + 2]
+        if following in ('"', "\\", "/", "b", "f", "n", "r", "t"):
+            repaired.append(text[offset:offset + 2])
+            offset += 2
+        elif following == "u" and re.fullmatch(r"[0-9a-fA-F]{4}", text[offset + 2:offset + 6]):
+            repaired.append(text[offset:offset + 6])
+            offset += 6
+        else:
+            repaired.append("\\\\")
+            offset += 1
+    return "".join(repaired)
+
+
+def json_pages(out):
+    try:
+        return decode_pages(out)
+    except json.JSONDecodeError as error:
+        if "escape" not in error.msg:
+            raise
+    return decode_pages(repair_escapes(out))
 
 
 def open_prs(base):
@@ -504,9 +546,16 @@ def report(rows, blob, main_exports=None):
     if main_exports:
         if confirmed:
             lines.append("")
-        lines.append("Exports introduced here that are already present in `main`:")
+        lines.append("Exports with a name or library/NID already present in `main`:")
         lines.append("")
-        lines.append(f"- {cell(main_exports)}")
+        for name, finding in sorted(main_exports.items()):
+            same_key = finding.get("same_key", set())
+            other_libraries = finding.get("other_libraries", set())
+            if same_key:
+                details = ", ".join(f"{library} ({nid})" for library, nid in sorted(same_key))
+                lines.append(f"- {code_span(name)} (same library/NID already present: {details})")
+            if other_libraries:
+                lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
         if confirmed:
             lines.append("")
@@ -529,14 +578,48 @@ def write_reports(out, rows, blob, main_exports=None):
         (out / f"{number}.md").write_text(report(found, blob, main_exports.get(number)), encoding="utf-8")
 
 
+def unverified_overlaps(rows):
+    return {number: set(found["uncompared"]) for number, found in rows.items() if found.get("uncompared")}
+
+
 def main_export_findings(prs, current_exports):
+    by_name = {}
+    for (library, _nid), names in current_exports.items():
+        for name in names:
+            canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+            by_name.setdefault(canonical, set()).add(library)
+
     findings = {}
     for number, pr in prs.items():
-        candidates = set(pr.get("added_exports", {})) - set(pr.get("removed_exports", {}))
-        names = set()
-        for key in candidates & set(current_exports):
-            names.update(pr["added_exports"][key])
-            names.update(current_exports[key])
+        added = pr.get("added_exports", {})
+        removed = pr.get("removed_exports", {})
+        moved = {}
+        for (library, nid), removed_from in removed.items():
+            for name in removed_from:
+                canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                moved.setdefault(canonical, set()).add(library)
+        for (library, _nid), added_to in added.items():
+            for name in added_to:
+                canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                moved.get(canonical, set()).discard(library)
+        names = {}
+        for library, nid in added:
+            added_names = {
+                NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                for name in added[(library, nid)]
+            }
+            removed_names = {
+                NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                for name in removed.get((library, nid), ())
+            }
+            for canonical in added_names:
+                finding = names.setdefault(canonical, {"same_key": set(), "other_libraries": set()})
+                if (library, nid) in current_exports and (library, nid) not in removed:
+                    finding["same_key"].add((library, nid))
+                if canonical not in removed_names:
+                    finding["other_libraries"].update(by_name.get(canonical, set()) - {library} - moved.get(canonical, set()))
+                if not finding["same_key"] and not finding["other_libraries"]:
+                    names.pop(canonical)
         if names:
             findings[number] = names
     return findings
@@ -591,6 +674,12 @@ def main(argv=None):
         raise SystemExit(f"pr_overlap: {error}")
     if args.branch:
         print(report(rows[0], blob, main_exports.get(0)) or "No overlap with open pull requests.", end="")
+        unresolved = unverified_overlaps(rows[0])
+        if unresolved:
+            for number, files in sorted(unresolved.items()):
+                progress(f"cannot confirm overlap with PR {number}: {', '.join(sorted(files))}")
+            progress("overlap check failed closed; manually compare every reported PR branch before opening this one")
+            return 2
         return 0
     write_reports(args.out, rows, blob, main_exports)
     return 0

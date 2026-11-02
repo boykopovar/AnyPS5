@@ -10,6 +10,7 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
+#include "prx/libSceHttp2/Transport.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
@@ -34,6 +35,8 @@
 #include <future>
 #include <map>
 #include <mutex>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -51,12 +54,45 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
+
+std::string GzipPayload() {
+    std::string payload(70000, '\0');
+    for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<char>((i * 31 + 7) & 0xff);
+    return payload;
+}
+
+std::string StoredGzip(const std::string& payload) {
+    static const unsigned char header[] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff};
+    std::string body(reinterpret_cast<const char*>(header), sizeof(header));
+    std::size_t offset = 0;
+    while (offset < payload.size()) {
+        const std::size_t count = std::min<std::size_t>(payload.size() - offset, 65535);
+        body.push_back(static_cast<char>(offset + count == payload.size() ? 1 : 0));
+        body.push_back(static_cast<char>(count & 0xff));
+        body.push_back(static_cast<char>((count >> 8) & 0xff));
+        body.push_back(static_cast<char>(~count & 0xff));
+        body.push_back(static_cast<char>((~count >> 8) & 0xff));
+        body.append(payload, offset, count);
+        offset += count;
+    }
+    std::uint32_t crc = 0xffffffffu;
+    for (const unsigned char byte : payload) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+    }
+    crc = ~crc;
+    const std::uint32_t size = static_cast<std::uint32_t>(payload.size());
+    for (int shift = 0; shift < 32; shift += 8) body.push_back(static_cast<char>((crc >> shift) & 0xff));
+    for (int shift = 0; shift < 32; shift += 8) body.push_back(static_cast<char>((size >> shift) & 0xff));
+    return body;
+}
 
 class Server {
 public:
-    explicit Server(Mode mode) : mode(mode) {
+    explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302)
+        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus) {
         mbedtls_net_init(&listener);
         mbedtls_entropy_init(&entropy);
         mbedtls_ctr_drbg_init(&random);
@@ -117,6 +153,9 @@ public:
     bool IsEarly() const { return mode >= Mode::EarlyFinal; }
 private:
     const Mode mode;
+    const std::string location;
+    const int redirectStatus;
+    unsigned accepted = 0;
     mbedtls_net_context listener;
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context random;
@@ -136,6 +175,8 @@ private:
     std::size_t offset = 0;
     bool responded = false;
     bool ended = false;
+    bool splitSent = false;
+    bool splitResumed = false;
 
     void Stage(int value) {
         { std::lock_guard lock(mutex); stage = value; }
@@ -175,7 +216,12 @@ private:
         std::uint32_t* flags, nghttp2_data_source*, void* data) {
         auto& server = *static_cast<Server*>(data);
         if (server.mode == Mode::StallBody || server.mode == Mode::EarlyResetIncomplete) return NGHTTP2_ERR_DEFERRED;
+        if (server.mode == Mode::GzipSplit && server.splitSent && !server.splitResumed) return NGHTTP2_ERR_DEFERRED;
         size = std::min(size, server.body.size() - server.offset);
+        if (server.mode == Mode::GzipSplit && !server.splitSent) {
+            size = std::min<std::size_t>(size, 8);
+            server.splitSent = true;
+        }
         if (size) std::memcpy(bytes, server.body.data() + server.offset, size);
         server.offset += size;
         if (server.offset == server.body.size()) *flags |= NGHTTP2_DATA_FLAG_EOF;
@@ -188,18 +234,37 @@ private:
         if (mode == Mode::StallHeaders) { Stage(2); Stall(); return; }
         if (mode == Mode::Reset) { Require(nghttp2_submit_rst_stream(session, 0, stream, NGHTTP2_REFUSED_STREAM) == 0, "server reset"); return; }
         body = (mode == Mode::Large || mode == Mode::EarlyLarge) ? std::string(200000, 'x') : "response body";
-        std::string status = IsEarly() ? "413" : mode == Mode::NotFound ? "404" : mode == Mode::Redirect ? "302" : mode == Mode::Auth ? "401" : "200";
+        const bool redirect = mode == Mode::Redirect || mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || (mode == Mode::RedirectOnce && accepted == 1);
+        std::string status = IsEarly() ? "413" : mode == Mode::NotFound ? "404" : redirect ? std::to_string(redirectStatus) : mode == Mode::Auth ? "401" : "200";
         if (mode == Mode::EarlyEmpty) body.clear();
         auto length = std::to_string(body.size());
-        if (mode == Mode::Head) body.clear();
+        const auto requestMethod = headers.find(":method");
+        if (mode == Mode::Head || (requestMethod != headers.end() && requestMethod->second == "HEAD")) body.clear();
         if (mode == Mode::Truncate) body = "short";
+        if (mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || mode == Mode::Gzip || mode == Mode::GzipSplit || mode == Mode::GzipTruncated || mode == Mode::GzipChecksum || mode == Mode::GzipConcat) {
+            static const unsigned char compressed[] = {
+                0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x2b, 0x4a, 0x2d, 0x2e, 0xc8, 0xcf,
+                0x2b, 0x4e, 0x55, 0x48, 0xca, 0x4f, 0xa9, 0x04, 0x00, 0x36, 0x76, 0x8b, 0x0c, 0x0d, 0x00, 0x00, 0x00,
+            };
+            body.assign(reinterpret_cast<const char*>(compressed), sizeof(compressed));
+            if (mode == Mode::GzipTruncated) body.resize(body.size() - 4);
+            if (mode == Mode::GzipChecksum) body[body.size() - 8] ^= 0xff;
+            if (mode == Mode::GzipConcat) { const std::string member = body; body += member; }
+            length = std::to_string(body.size());
+        }
+        if (mode == Mode::GzipRedirectEmpty) { body.clear(); length = "0"; }
+        if (mode == Mode::GzipLarge) {
+            body = StoredGzip(GzipPayload());
+            length = std::to_string(body.size());
+        }
         if (mode == Mode::Informational) {
             nghttp2_nv early{reinterpret_cast<std::uint8_t*>(const_cast<char*>(":status")), reinterpret_cast<std::uint8_t*>(const_cast<char*>("103")), 7, 3, 0};
             Require(nghttp2_submit_headers(session, 0, stream, nullptr, &early, 1, nullptr) == 0, "server informational response");
         }
         std::vector<std::pair<std::string, std::string>> fields{{":status", status}, {"x-loopback", "yes"}};
         if (mode != Mode::NoLength) fields.emplace_back("content-length", length);
-        if (mode == Mode::Redirect) fields.emplace_back("location", "/another");
+        if (redirect) fields.emplace_back("location", location);
+        if (mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || mode == Mode::Gzip || mode == Mode::GzipSplit || mode == Mode::GzipTruncated || mode == Mode::GzipChecksum || mode == Mode::GzipConcat || mode == Mode::GzipLarge) fields.emplace_back("content-encoding", "gzip");
         std::vector<nghttp2_nv> response;
         for (auto& [name, value] : fields) response.push_back({reinterpret_cast<std::uint8_t*>(name.data()), reinterpret_cast<std::uint8_t*>(value.data()), name.size(), value.size(), 0});
         nghttp2_data_provider2 provider{};
@@ -208,6 +273,26 @@ private:
     }
 
     void Serve() {
+        const unsigned connections = mode == Mode::RedirectOnce ? 2 : 1;
+        while (accepted < connections) {
+            for (;;) {
+                const int ready = mbedtls_net_poll(&listener, MBEDTLS_NET_POLL_READ, 20);
+                Require(ready >= 0, "server accept poll");
+                if (ready) break;
+                std::lock_guard lock(mutex);
+                if (released) return;
+            }
+            headers.clear();
+            upload.clear();
+            body.clear();
+            offset = 0;
+            responded = ended = false;
+            ++accepted;
+            ServeConnection();
+        }
+    }
+
+    void ServeConnection() {
         mbedtls_net_context client;
         mbedtls_net_init(&client);
         mbedtls_ssl_context ssl;
@@ -258,6 +343,12 @@ private:
                 }
                 if (!sent) break;
             }
+            if (mode == Mode::GzipSplit && splitSent && !splitResumed) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                Require(nghttp2_session_resume_data(session, 1) == 0, "resume split gzip body");
+                splitResumed = true;
+                continue;
+            }
             if (IsEarly() && responded && sent) {
                 Stage(2);
                 if (!resetSent && (mode == Mode::EarlyReset || mode == Mode::EarlyResetIncomplete)) {
@@ -301,6 +392,188 @@ struct Client {
     ~Client() { if (context > 0) Require(sceHttp2Term(context) == 0, "client term"); }
 };
 
+struct RedirectObservation {
+    int calls = 0;
+    int request = 0;
+    int status = 0;
+    int result = 0;
+    std::string method, location;
+    const char* replacement = nullptr;
+    bool nullMethod = false;
+    bool removeRequest = false;
+    bool throwException = false;
+};
+
+int APS5_VABI RedirectCallback(int request, int status, const char** method, const char* location, void* argument) {
+    auto& observed = *static_cast<RedirectObservation*>(argument);
+    ++observed.calls;
+    observed.request = request;
+    observed.status = status;
+    observed.method = *method;
+    observed.location = location;
+    if (observed.replacement || observed.nullMethod) *method = observed.replacement;
+    if (observed.removeRequest) Require(sceHttp2DeleteRequest(request) == 0, "delete from redirect callback");
+    if (observed.throwException) throw std::runtime_error("redirect callback failure");
+    return observed.result;
+}
+
+void Response(Client& client, int expectedStatus) {
+    int status = 0;
+    Require(sceHttp2GetStatusCode(client.request, &status) == 0 && status == expectedStatus, "redirect response status");
+    std::string received;
+    std::array<char, 64> buffer;
+    for (;;) {
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        Require(count >= 0, "redirect response read");
+        if (!count) break;
+        received.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    Require(received == "response body", "redirect preserves final response body");
+}
+
+void RedirectPolicies(int ssl) {
+    for (int policy = 0; policy < 6; ++policy) {
+        Server server(Mode::Redirect, policy == 4 ? "" : "/another");
+        Client client(ssl);
+        RedirectObservation original, changed;
+        original.result = policy == 5 ? 7 : -1;
+        if (policy == 0) Require(sceHttp2SetRedirectCallback(client.tmpl, RedirectCallback, &original) == 0, "template redirect callback");
+        client.Create(server.Url());
+        if (policy == 0) Require(sceHttp2SetRedirectCallback(client.tmpl, RedirectCallback, &changed) == 0, "template callback mutation");
+        else Require(sceHttp2SetRedirectCallback(client.request, RedirectCallback, &original) == 0, "request redirect callback");
+        if (policy == 2) Require(sceHttp2SetAutoRedirect(client.request, 0) == 0, "manual redirects omit callback");
+        if (policy == 3) {
+            Require(sceHttp2SetRedirectCallback(client.request, nullptr, &changed) == 0, "clear callback with argument");
+            Require(sceHttp2SetAutoRedirect(client.request, 0) == 0, "manual cleared callback");
+        }
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "redirect refusal response");
+        Response(client, 302);
+        server.Join();
+        const int expectedCalls = policy < 2 || policy == 5 ? 1 : 0;
+        Require(original.calls == expectedCalls && changed.calls == 0, "callback inheritance and policy");
+        if (expectedCalls) Require(original.request == client.request && original.status == 302 && original.method == "GET" && original.location == "/another", "redirect callback arguments");
+    }
+}
+
+void RedirectFollow(int ssl, int status, const char* replacement = nullptr, bool clearCallback = false, bool schemeRelative = false) {
+    const bool head = replacement && std::string_view(replacement) == "HEAD";
+    Server target(head ? Mode::Head : Mode::Normal);
+    std::string destination = target.Url();
+    if (schemeRelative) destination.erase(0, 6);
+    Server redirect(Mode::Redirect, destination, status);
+    Client client(ssl, 1);
+    RedirectObservation observed;
+    observed.replacement = replacement;
+    Require(sceHttp2SetRedirectCallback(client.tmpl, RedirectCallback, &observed) == 0, "inherited follow callback");
+    for (const auto* name : {"authorization", "proxy-authorization", "cookie", "origin", "referer"})
+        Require(sceHttp2AddRequestHeader(client.tmpl, name, "origin-only", 0) == 0, "origin header");
+    Require(sceHttp2AddRequestHeader(client.tmpl, "content-type", "application/octet-stream", 0) == 0, "body metadata");
+    Require(sceHttp2AddRequestHeader(client.tmpl, "x-retained", "yes", 0) == 0, "retained header");
+    const std::string body = "upload bytes";
+    client.Create(redirect.Url(), "POST", body.size());
+    if (clearCallback) Require(sceHttp2SetRedirectCallback(client.request, nullptr, &observed) == 0, "clear inherited callback");
+    Require(sceHttp2SendRequest(client.request, body.data(), body.size()) == 0, "follow redirect");
+    if (head) {
+        int result = 0;
+        Require(sceHttp2GetStatusCode(client.request, &result) == 0 && result == 200, "redirect HEAD status");
+        char byte;
+        Require(sceHttp2ReadData(client.request, &byte, 1) == 0, "redirect HEAD has no response body");
+    } else Response(client, 200);
+    redirect.Join();
+    target.Join();
+    const bool retrieve = status == 301 || status == 302 || status == 303;
+    const std::string method = replacement ? replacement : retrieve ? "GET" : "POST";
+    Require(target.Headers().find(":method")->second == method, "redirect request method");
+    Require(target.Headers().find(":path")->second == "/path?query=yes", "redirect fragment removed");
+    Require(target.Upload() == (method == "GET" || method == "HEAD" ? "" : body), "redirect upload policy");
+    Require(target.Headers().count("content-type") == (method == "GET" || method == "HEAD" ? 0u : 1u), "redirect body headers");
+    for (const auto* name : {"authorization", "proxy-authorization", "cookie", "origin", "referer"})
+        Require(target.Headers().count(name) == 0, "origin headers excluded at a new origin");
+    Require(target.Headers().count("x-retained") == 1, "ordinary header retained");
+    Require(target.Headers().find("content-length")->second == std::to_string(target.Upload().size()), "redirect wire content length");
+    Require(observed.calls == (clearCallback ? 0 : 1), "follow callback count");
+    if (!clearCallback) Require(observed.request == client.request && observed.status == status && observed.method == (retrieve ? "GET" : "POST") && observed.location == destination, "follow callback arguments");
+}
+
+void RelativeRedirects(int ssl) {
+    for (const auto& [reference, expected] : std::vector<std::pair<const char*, const char*>>{
+        {"another", "/another"}, {"../another", "/another"}, {"/a/b/../c/.", "/a/c/"},
+        {"?next=1", "/path?next=1"}, {"../a//b?x=/../z", "/a//b?x=/../z"},
+        {"../../../../c", "/c"}, {".", "/"}, {"..", "/"}, {"./a/./b/../../c", "/c"},
+        {"/a/%2e%2e/b", "/a/%2e%2e/b"}, {"g?y/./x", "/g?y/./x"}, {"#tag", "/path?query=yes"}}) {
+        Server server(Mode::RedirectOnce, reference, 307);
+        Client client(ssl, 1);
+        Require(sceHttp2AddRequestHeader(client.tmpl, "authorization", "same-origin", 0) == 0, "same origin authorization");
+        client.Create(server.Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "relative redirect");
+        Response(client, 200);
+        server.Join();
+        Require(server.Headers().find(":path")->second == expected, "resolved relative reference");
+        Require(server.Headers().count("authorization") == 1, "same origin retains authorization");
+    }
+}
+
+void RedirectRequestMethods(int ssl) {
+    for (const auto& [method, status] : std::vector<std::pair<const char*, int>>{{"PUT", 301}, {"PUT", 303}, {"GET", 307}, {"HEAD", 303}}) {
+        const bool head = std::string_view(method) == "HEAD";
+        Server target(head ? Mode::Head : Mode::Normal);
+        Server redirect(Mode::Redirect, target.Url(), status);
+        Client client(ssl, 1);
+        const std::string body = head ? "" : "retained data";
+        client.Create(redirect.Url(), method, body.size());
+        Require(sceHttp2SendRequest(client.request, body.data(), body.size()) == 0, "redirect method semantics");
+        if (head) {
+            int result = 0;
+            char byte;
+            Require(sceHttp2GetStatusCode(client.request, &result) == 0 && result == 200, "HEAD redirected status");
+            Require(sceHttp2ReadData(client.request, &byte, 1) == 0, "HEAD redirected body");
+        } else Response(client, 200);
+        redirect.Join();
+        target.Join();
+        Require(target.Headers().find(":method")->second == (status == 303 && !head ? "GET" : method), "redirect preserves or rewrites method");
+        Require(target.Upload() == (status == 303 && !head ? "" : body), "redirect preserves or drops data");
+    }
+}
+
+void GzipRedirect(int ssl) {
+    for (const auto mode : {Mode::Normal, Mode::Gzip}) {
+        Server target(mode);
+        Server redirect(mode == Mode::Normal ? Mode::GzipRedirectEmpty : Mode::GzipRedirectBody, target.Url());
+        Client client(ssl, 1);
+        Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "gzip redirect option");
+        client.Create(redirect.Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "gzip redirect send");
+        Response(client, 200);
+        redirect.Join();
+        target.Join();
+    }
+}
+
+void RedirectFailures(int ssl) {
+    for (int mode = 0; mode < 4; ++mode) {
+        Server server(Mode::Redirect, "/another");
+        Client client(ssl);
+        RedirectObservation observed;
+        observed.nullMethod = mode == 0;
+        observed.replacement = mode == 1 ? "bad method" : nullptr;
+        observed.removeRequest = mode == 2;
+        observed.throwException = mode == 3;
+        client.Create(server.Url());
+        Require(sceHttp2SetRedirectCallback(client.request, RedirectCallback, &observed) == 0, "failing redirect callback");
+        Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "unsupported redirect remains explicit");
+        server.Join();
+        Require(observed.calls == 1, "failure callback delivered once");
+        if (observed.removeRequest) Require(sceHttp2DeleteRequest(client.request) == static_cast<int>(0x817b1100), "callback deletion persists");
+    }
+    std::vector<std::unique_ptr<Server>> chain;
+    for (int index = 0; index < 7; ++index)
+        chain.push_back(std::make_unique<Server>(Mode::Redirect, chain.empty() ? "/unused" : chain.back()->Url()));
+    Client client(ssl, 1);
+    client.Create(chain.back()->Url());
+    Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "bounded redirects");
+    for (auto& server : chain) server->Join();
+}
+
 void Success(int ssl, Mode mode, bool disableCa = false) {
     std::fprintf(stderr, "HTTP2 success scenario %d\n", static_cast<int>(mode));
     Server server(mode);
@@ -308,6 +581,7 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     if (disableCa) Require(sceHttp2SslDisableOption(client.tmpl, 0x20) == 0, "disable known CA check");
     if (mode == Mode::Normal && !disableCa) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify localhost certificate name");
     Require(sceHttp2AddRequestHeader(client.tmpl, "X-Inherited", "original", 0) == 0, "template header");
+    Require(sceHttp2SetResolveRetry(client.tmpl, 2) == 0, "resolve retries");
     const std::string upload = mode == Mode::Large ? std::string(150000, 'u') : std::string{};
     client.Create(server.Url(mode == Mode::Normal && !disableCa ? "localhost" : "127.0.0.1"), mode == Mode::Head ? "HEAD" : upload.empty() ? "GET" : "POST", upload.size());
     Require(sceHttp2AddRequestHeader(client.tmpl, "X-Inherited", "changed", 0) == 0, "template mutation");
@@ -351,6 +625,94 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     Require(Throws([&] { sceHttp2GetAllResponseHeaders(client.request, &rawHeaders, &rawSize); }) &&
         rawHeaders == reinterpret_cast<char*>(std::uintptr_t{1}) && rawSize == 987, "unknown header serialization leaves outputs untouched");
     Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "unsupported reuse throws");
+}
+
+void Gzip(int ssl) {
+    std::fprintf(stderr, "HTTP2 gzip scenario\n");
+    for (const int enabled : {1, 0}) {
+        Server server(Mode::Gzip);
+        Client client(ssl);
+        Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, enabled) == 0, "gzip option");
+        client.Create(server.Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "gzip send");
+        int kind = -1;
+        std::uint64_t length = 0;
+        Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "gzip length");
+        std::array<char, 64> buffer{};
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        if (enabled) {
+            Require(kind == 0 && length == 13 && count == 13 && std::string(buffer.data(), 13) == "response body", "gzip inflated body");
+        } else {
+            Require(kind == 0 && length == 33 && count == 33 && static_cast<unsigned char>(buffer[0]) == 0x1f &&
+                static_cast<unsigned char>(buffer[1]) == 0x8b, "gzip passthrough body");
+        }
+        server.Join();
+    }
+}
+
+void GzipSplit(int ssl) {
+    std::fprintf(stderr, "HTTP2 gzip split scenario\n");
+    Server server(Mode::GzipSplit);
+    Client client(ssl);
+    Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "gzip split option");
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "gzip split send");
+    std::string body;
+    std::array<char, 3> buffer;
+    while (body.size() < 12) {
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        Require(count > 0 && count <= static_cast<int>(buffer.size()), "gzip split read count");
+        body.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    int kind = -1;
+    std::uint64_t length = 0;
+    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "gzip split length");
+    Require(kind == 0 && length == 13, "gzip split inflated length");
+    for (;;) {
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        Require(count >= 0 && count <= static_cast<int>(buffer.size()), "gzip split read count");
+        if (!count) break;
+        body.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    Require(body == "response body", "gzip split inflated body");
+    server.Join();
+}
+
+void GzipLarge(int ssl) {
+    std::fprintf(stderr, "HTTP2 gzip large scenario\n");
+    Server server(Mode::GzipLarge);
+    Client client(ssl);
+    Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "gzip large option");
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "gzip large send");
+    int kind = -1;
+    std::uint64_t length = 0;
+    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0, "gzip large length");
+    Require(kind == 0 && length == 70000, "gzip large inflated length");
+    std::string body;
+    std::array<char, 317> buffer;
+    for (;;) {
+        const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+        Require(count >= 0 && count <= static_cast<int>(buffer.size()), "gzip large read count");
+        if (!count) break;
+        body.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    Require(body == GzipPayload(), "gzip large inflated body");
+    server.Join();
+}
+
+void GzipFailure(int ssl, Mode mode, const char* message) {
+    std::fprintf(stderr, "HTTP2 gzip failure scenario %d\n", static_cast<int>(mode));
+    Server server(mode);
+    Client client(ssl);
+    Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 1) == 0, "gzip failure option");
+    client.Create(server.Url());
+    Require(Throws([&] {
+        sceHttp2SendRequest(client.request, nullptr, 0);
+        std::array<char, 64> buffer;
+        sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+    }), message);
+    server.Join();
 }
 
 void Failure(int ssl, Mode mode, bool verifyName = false) {
@@ -480,6 +842,43 @@ void Refused(int ssl) {
     Require(sceHttp2GetStatusCode(client.request, &status) == static_cast<int>(0x8041013d) && status == 123, "failed status untouched");
 }
 
+std::atomic<int> lookups{0};
+std::atomic<int> failedLookups{0};
+
+int CountedLookup(const char*) {
+    return ++lookups <= failedLookups.load() ? -1 : 0;
+}
+
+void Retries(int ssl) {
+    std::fprintf(stderr, "HTTP2 resolve retry scenarios\n");
+    Http2SetLookupHook_nid_no_patch(CountedLookup);
+    {
+        Server server(Mode::Normal);
+        Client client(ssl);
+        Require(sceHttp2SetResolveRetry(client.tmpl, 2) == 0, "two resolve retries");
+        client.Create(server.Url());
+        lookups = 0;
+        failedLookups = 2;
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "a lookup that fails twice succeeds on its second retry");
+        Require(lookups == 3, "two failed lookups and the third one were made");
+        std::array<char, 64> buffer;
+        std::string body;
+        for (int count; (count = sceHttp2ReadData(client.request, buffer.data(), buffer.size())) > 0;) body.append(buffer.data(), static_cast<std::size_t>(count));
+        Require(body == "response body", "body after retried lookups");
+        server.Join();
+    }
+    for (const int retry : {0, 1}) {
+        Client client(ssl);
+        Require(sceHttp2SetResolveRetry(client.tmpl, retry) == 0, "resolve retry count");
+        client.Create("https://127.0.0.1:1/");
+        lookups = 0;
+        failedLookups = 100;
+        Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "every lookup failing fails the request");
+        Require(lookups == retry + 1, "a request makes its retry count plus one lookups before failing");
+    }
+    Http2SetLookupHook_nid_no_patch(nullptr);
+}
+
 void Capacity(int ssl) {
     Server server(Mode::StallBody);
     Client client(ssl, 1);
@@ -544,10 +943,27 @@ int main(int argc, char** argv) {
     } else if (argc == 2 && std::string_view(argv[1]) == "--dns-first") {
         FirstNetworkRequest(ssl);
 #endif
+    } else if (argc == 2 && std::string_view(argv[1]) == "--redirects") {
+        GzipRedirect(ssl);
+        RedirectPolicies(ssl);
+        for (const int status : {301, 302, 303, 307, 308}) RedirectFollow(ssl, status);
+        RedirectFollow(ssl, 302, "PATCH");
+        RedirectFollow(ssl, 303, "HEAD");
+        RedirectFollow(ssl, 307, nullptr, true);
+        RedirectFollow(ssl, 308, nullptr, false, true);
+        RedirectRequestMethods(ssl);
+        RelativeRedirects(ssl);
+        RedirectFailures(ssl);
     } else {
         Require(argc == 1, "test arguments");
         for (const auto mode : {Mode::Normal, Mode::Large, Mode::NoLength, Mode::Head, Mode::NotFound, Mode::Redirect, Mode::Auth, Mode::Informational}) Success(ssl, mode);
-        for (const auto mode : {Mode::NoAlpn, Mode::Reset, Mode::Truncate, Mode::Redirect, Mode::Auth}) Failure(ssl, mode);
+        Gzip(ssl);
+        GzipSplit(ssl);
+        GzipLarge(ssl);
+        GzipFailure(ssl, Mode::GzipTruncated, "truncated gzip throws");
+        GzipFailure(ssl, Mode::GzipChecksum, "gzip checksum mismatch throws");
+        GzipFailure(ssl, Mode::GzipConcat, "concatenated gzip members throw");
+        for (const auto mode : {Mode::NoAlpn, Mode::Reset, Mode::Truncate, Mode::Auth}) Failure(ssl, mode);
         Failure(ssl, Mode::Normal, true);
         for (const auto mode : {Mode::StallHandshake, Mode::StallHeaders, Mode::StallBody, Mode::StallUpload}) {
             Deadline(ssl, mode, false);
@@ -556,6 +972,7 @@ int main(int argc, char** argv) {
         }
         Refused(ssl);
         Capacity(ssl);
+        Retries(ssl);
         const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
         Require(untrusted > 0, "untrusted SSL context");
         Failure(untrusted, Mode::Normal);
