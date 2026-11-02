@@ -1,36 +1,48 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoNativeExtEssential/include/InventoryExports.hpp"
 #include "prx/libSceVideoNativeExtEssential/include/Api.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+std::atomic<bool> g_initialized{false};
+}
+
 extern "C" {
 
 int APS5_VABI sceVideoNativeExtEssential_CreateDecInstance() {
+    if (!g_initialized.load()) {
+        NotImplemented_nid_no_patch(__func__);
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVideoNativeExtEssential_DestroyDecInstance() {
+    if (!g_initialized.load()) {
+        NotImplemented_nid_no_patch(__func__);
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVideoNativeExtEssential_Finalize() {
-    NotImplemented_nid_no_patch(__func__);
+    bool expected = true;
+    g_initialized.compare_exchange_strong(expected, false);
     return 0;
 }
 
 int APS5_VABI sceVideoNativeExtEssential_Initialize() {
-    NotImplemented_nid_no_patch(__func__);
+    bool expected = false;
+    g_initialized.compare_exchange_strong(expected, true);
     return 0;
 }
 
 int APS5_VABI sceVideoNativeExtEssential_IsInit() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return g_initialized.load() ? 1 : 0;
 }
 
 }
