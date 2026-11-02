@@ -1222,8 +1222,12 @@ void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands) {
     }
 }
 
-void TeardownCheckpointMarkers() noexcept {
+void ResetCheckpointSnapshots() noexcept {
     AgcDriver::SubmissionSnapshots::DeviceSnapshots().Reset();
+}
+
+void TeardownCheckpointMarkers() noexcept {
+    ResetCheckpointSnapshots();
     auto& state = CheckpointMarkerState();
     if (state.device == VK_NULL_HANDLE) return;
     try {
@@ -2353,6 +2357,12 @@ void Recorder::NoteDrawTraceToken(std::uint64_t token) noexcept {
     } catch (...) {
         AgcDriver::CaptureTrace::Log("draw-token-note-failed token=%llu", static_cast<unsigned long long>(token));
     }
+}
+
+void Recorder::NoteFaultToken(AgcDriver::FaultToken token) noexcept {
+    if (token == 0 || open == nullptr) return;
+    if (open->firstToken == 0) open->firstToken = token;
+    open->lastToken = token;
 }
 
 bool Recorder::gpuSampleCounter() {
@@ -3859,8 +3869,9 @@ void Recorder::Submit() {
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
     if (CheckpointMarkersEnabled() && batch->queue == 0 && batch->predictedSerial != 0) {
+        Require(batch->predictedSerial == serial, "Recorder::Submit submit serial mismatch");
         try {
-            if (const auto snapshot = GuestBufferMemory::TrySnapshotAddressSpace(); snapshot.has_value()) AgcDriver::SubmissionSnapshots::DeviceSnapshots().NoteSubmit(batch->predictedSerial, snapshot->first, snapshot->second);
+            if (const auto snapshot = GuestBufferMemory::TrySnapshotAddressSpace(); snapshot.has_value()) AgcDriver::SubmissionSnapshots::DeviceSnapshots().NoteSubmit(serial, snapshot->first, snapshot->second, AgcDriver::SubmitBracket{serial, CompletedThrough(), batch->firstToken, batch->lastToken});
         } catch (...) {
         }
     }

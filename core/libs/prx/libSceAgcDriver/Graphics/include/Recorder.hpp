@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
@@ -226,6 +227,7 @@ public:
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
     void NoteDrawTraceToken(std::uint64_t token) noexcept;
+    void NoteFaultToken(AgcDriver::FaultToken token) noexcept;
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
@@ -594,6 +596,8 @@ private:
         // Submission number (1-based): identifies a batch after its allocation may have been reused.
         std::uint64_t serial = 0;
         std::uint64_t predictedSerial = 0;
+        AgcDriver::FaultToken firstToken = 0;
+        AgcDriver::FaultToken lastToken = 0;
         std::uint64_t traceId = 0;
         bool submitted = false;
         // The GpuMutex queue tag of the thread that opened the batch, and when it was submitted

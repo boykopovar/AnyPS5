@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -103,6 +104,60 @@ inline std::vector<std::string> DeviceFaultBatchLines(VkDeviceFaultAddressTypeEX
     return DeviceFaultRangeLines(type, address, precision, *found->ranges, found->submitSerial, found->spaceSerial);
 }
 
+inline constexpr std::uint32_t DeviceFaultBracketTokensListed = 8;
+inline constexpr std::uint32_t DeviceFaultMaxInfos = 64;
+
+inline void DeviceFaultAppendStage(char* line, std::size_t size, std::uint32_t stage) noexcept {
+    const std::size_t used = strnlen(line, size);
+    if (used + 1 >= size) return;
+    if (stage == static_cast<std::uint32_t>(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)) std::snprintf(line + used, size - used, " observed at bottom-of-pipe");
+    else std::snprintf(line + used, size - used, " at stage 0x%x", static_cast<unsigned>(stage));
+}
+
+inline std::vector<std::string> DeviceFaultBracketLines(const SubmitBracket& bracket, const FaultTokenRing& ring) noexcept {
+    std::vector<std::string> lines;
+    try {
+        if (bracket.submitSerial == 0) return lines;
+        char line[256];
+        std::snprintf(line, sizeof(line), "[device-fault] bracket: last completed %llu, in flight %llu, first not started %llu", static_cast<unsigned long long>(bracket.lastCompleted), static_cast<unsigned long long>(bracket.submitSerial), static_cast<unsigned long long>(bracket.submitSerial + 1));
+        lines.emplace_back(line);
+        if (bracket.firstToken == 0) return lines;
+        if (bracket.lastToken < bracket.firstToken) return lines;
+        const std::uint64_t tokens = static_cast<std::uint64_t>(bracket.lastToken) - static_cast<std::uint64_t>(bracket.firstToken) + 1;
+        const std::uint64_t listed = tokens < DeviceFaultBracketTokensListed ? tokens : DeviceFaultBracketTokensListed;
+        for (std::uint64_t i = 0; i < listed; ++i) {
+            const FaultToken token = static_cast<FaultToken>(static_cast<std::uint64_t>(bracket.firstToken) + i);
+            const FaultTokenEntry* entry = ring.Find(token);
+            if (entry == nullptr) {
+                std::snprintf(line, sizeof(line), "[device-fault] unknown token %u in batch %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(bracket.submitSerial));
+                lines.emplace_back(line);
+                continue;
+            }
+            const std::size_t descLength = strnlen(entry->desc, sizeof(entry->desc));
+            if (descLength == 0) std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu: program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId));
+            else std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu: program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId), static_cast<int>(descLength), entry->desc);
+            lines.emplace_back(line);
+        }
+        if (tokens > listed) {
+            std::snprintf(line, sizeof(line), "[device-fault] %llu more bracket tokens", static_cast<unsigned long long>(tokens - listed));
+            lines.emplace_back(line);
+        }
+    } catch (...) {
+    }
+    return lines;
+}
+
+inline std::vector<std::string> DeviceFaultBatchLines(VkDeviceFaultAddressTypeEXT type, std::uint64_t address, std::uint64_t precision, std::uint64_t submitSerial, const SubmissionSnapshots& snapshots, const SubmitBracket& bracket, const FaultTokenRing& ring) noexcept {
+    std::vector<std::string> lines;
+    try {
+        lines = DeviceFaultBatchLines(type, address, precision, submitSerial, snapshots);
+        const auto window = DeviceFaultBracketLines(bracket, ring);
+        lines.insert(lines.end(), window.begin(), window.end());
+    } catch (...) {
+    }
+    return lines;
+}
+
 inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDeviceFaultInfoEXT faultInfo, VkQueue queue, PFN_vkGetQueueCheckpointDataNV checkpointData, std::uint64_t submitSerial = 0, const SubmissionSnapshots* snapshots = nullptr) {
     std::vector<std::string> lines;
     char line[VK_MAX_DESCRIPTION_SIZE + 128];
@@ -150,6 +205,80 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
     for (const auto& vendor : vendors) {
         std::snprintf(line, sizeof(line), "[device-fault] vendor: %s (code 0x%llx, data 0x%llx)", DeviceFaultText(vendor.description).c_str(), static_cast<unsigned long long>(vendor.vendorFaultCode), static_cast<unsigned long long>(vendor.vendorFaultData));
         lines.emplace_back(line);
+    }
+    return lines;
+}
+
+inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDeviceFaultInfoEXT faultInfo, VkQueue queue, PFN_vkGetQueueCheckpointDataNV checkpointData, std::uint64_t submitSerial, const SubmissionSnapshots* snapshots, const SubmitBracket& bracket, const FaultTokenRing& ring) noexcept {
+    std::vector<std::string> lines;
+    try {
+        const auto window = DeviceFaultBracketLines(bracket, ring);
+        lines.insert(lines.end(), window.begin(), window.end());
+        std::vector<VkCheckpointDataNV> points;
+        if (checkpointData != nullptr && queue != VK_NULL_HANDLE) {
+            std::uint32_t count = 0;
+            checkpointData(queue, &count, nullptr);
+            if (count > DeviceFaultMaxInfos) count = DeviceFaultMaxInfos;
+            points.assign(count, VkCheckpointDataNV{VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV});
+            if (count != 0) checkpointData(queue, &count, points.data());
+            points.resize(count);
+            if (points.empty()) lines.emplace_back("[device-fault] no checkpoint reached");
+            char checkpoint[256];
+            for (const auto& point : points) {
+                const FaultToken token = static_cast<FaultToken>(reinterpret_cast<std::uintptr_t>(point.pCheckpointMarker));
+                const FaultTokenEntry* entry = ring.Find(token);
+                if (entry == nullptr) {
+                    std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: unknown token %u", static_cast<unsigned>(token));
+                } else {
+                    const std::size_t descLength = strnlen(entry->desc, sizeof(entry->desc));
+                    if (descLength == 0) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId));
+                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId), static_cast<int>(descLength), entry->desc);
+                }
+                DeviceFaultAppendStage(checkpoint, sizeof(checkpoint), point.stage);
+                lines.emplace_back(checkpoint);
+            }
+        }
+        if (faultInfo == nullptr || device == VK_NULL_HANDLE) {
+            if (points.empty()) lines.emplace_back("[device-fault] no device-side fault data; CPU-side bracket only");
+            return lines;
+        }
+        char line[VK_MAX_DESCRIPTION_SIZE + 128];
+        VkDeviceFaultCountsEXT counts{VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
+        if (faultInfo(device, &counts, nullptr) != VK_SUCCESS) {
+            lines.emplace_back("[device-fault] vkGetDeviceFaultInfoEXT reported nothing");
+            return lines;
+        }
+        if (counts.addressInfoCount > DeviceFaultMaxInfos) counts.addressInfoCount = DeviceFaultMaxInfos;
+        if (counts.vendorInfoCount > DeviceFaultMaxInfos) counts.vendorInfoCount = DeviceFaultMaxInfos;
+        std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+        std::vector<VkDeviceFaultVendorInfoEXT> vendors(counts.vendorInfoCount);
+        counts.vendorBinarySize = 0;
+        VkDeviceFaultInfoEXT info{VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT};
+        info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
+        info.pVendorInfos = vendors.empty() ? nullptr : vendors.data();
+        const auto result = faultInfo(device, &counts, &info);
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+            lines.emplace_back("[device-fault] vkGetDeviceFaultInfoEXT reported nothing");
+            return lines;
+        }
+        addresses.resize(std::min<std::size_t>(addresses.size(), counts.addressInfoCount));
+        vendors.resize(std::min<std::size_t>(vendors.size(), counts.vendorInfoCount));
+        std::snprintf(line, sizeof(line), "[device-fault] result %d: %s", static_cast<int>(result), DeviceFaultText(info.description).c_str());
+        lines.emplace_back(line);
+        for (const auto& address : addresses) {
+            std::snprintf(line, sizeof(line), "[device-fault] %s at 0x%llx (precision 0x%llx)", DeviceFaultAddressKind(address.addressType), static_cast<unsigned long long>(address.reportedAddress), static_cast<unsigned long long>(address.addressPrecision));
+            lines.emplace_back(line);
+            if (snapshots != nullptr) {
+                const auto correlated = DeviceFaultBatchLines(address.addressType, address.reportedAddress, address.addressPrecision, submitSerial, *snapshots);
+                lines.insert(lines.end(), correlated.begin(), correlated.end());
+            }
+        }
+        for (const auto& vendor : vendors) {
+            std::snprintf(line, sizeof(line), "[device-fault] vendor: %s (code 0x%llx, data 0x%llx)", DeviceFaultText(vendor.description).c_str(), static_cast<unsigned long long>(vendor.vendorFaultCode), static_cast<unsigned long long>(vendor.vendorFaultData));
+            lines.emplace_back(line);
+        }
+        if (addresses.empty() && points.empty()) lines.emplace_back("[device-fault] no device-side fault data; CPU-side bracket only");
+    } catch (...) {
     }
     return lines;
 }

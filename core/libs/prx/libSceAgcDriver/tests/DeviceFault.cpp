@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -57,6 +58,29 @@ VKAPI_ATTR void VKAPI_CALL MockCheckpointData(VkQueue, std::uint32_t* count, VkC
         data[i].stage = i == 0 ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
         data[i].pCheckpointMarker = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10000ull + i * 0x100ull));
     }
+}
+
+AgcDriver::FaultToken checkpointToken = 0;
+
+VKAPI_ATTR void VKAPI_CALL MockTokenCheckpointData(VkQueue, std::uint32_t* count, VkCheckpointDataNV* data) {
+    if (data == nullptr) {
+        *count = 1;
+        return;
+    }
+    Require(*count == 1, "the token checkpoint array has the wrong size");
+    Require(data[0].sType == VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV, "token checkpoint entries were not initialised");
+    data[0].stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    data[0].pCheckpointMarker = reinterpret_cast<void*>(static_cast<std::uintptr_t>(checkpointToken));
+}
+
+void ClaimBracketToken(AgcDriver::FaultTokenRing& ring, AgcDriver::FaultToken token, std::uint64_t serial, std::uint64_t program, std::uint64_t variant, const char* desc) {
+    AgcDriver::FaultTokenEntry* slot = ring.Mutable(token);
+    Require(slot != nullptr, "the claimed token has no slot");
+    slot->submitSerial = serial;
+    slot->programAddress = program;
+    slot->variantId = variant;
+    std::snprintf(slot->desc, sizeof(slot->desc), "%s", desc);
+    std::atomic_ref<AgcDriver::FaultToken>(slot->token).store(token, std::memory_order_release);
 }
 
 VkDevice FakeDevice() {
@@ -258,6 +282,82 @@ void BatchSerialMismatch() {
     Require(hit.size() == 1 && hit[0] == "[device-fault] write invalid at 0x12abc (precision 0x100) in guest range [0x12000, 0x13000) read write (batch 7, space 3)", "the batch snapshot was not correlated");
 }
 
+void BracketWindow() {
+    AgcDriver::SubmissionSnapshots snapshots;
+    snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken token = ring.Claim();
+    Require(token != 0, "the claimed token is invalid");
+    ClaimBracketToken(ring, token, 7, 0x12000ull, 9, "draw main");
+    const AgcDriver::SubmitBracket bracket{7, 5, token, token};
+    const auto lines = AgcDriver::DeviceFaultBatchLines(VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT, 0x12abcull, 0x100ull, 7, snapshots, bracket, ring);
+    Require(lines.size() == 3, "a bracket window does not report the owner, the window and the token");
+    Require(lines[0] == "[device-fault] write invalid at 0x12abc (precision 0x100) in guest range [0x12000, 0x13000) read write (batch 7, space 3)", "the batch snapshot was not correlated");
+    Require(lines[1] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the serial window changed");
+    char expected[256];
+    std::snprintf(expected, sizeof(expected), "[device-fault] token %u in batch 7: program 0x12000 variant 9 draw main", static_cast<unsigned>(token));
+    Require(lines[2] == expected, "the token line changed");
+}
+
+void BracketTokenMiss() {
+    AgcDriver::SubmissionSnapshots snapshots;
+    snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::SubmitBracket bracket{7, 5, 0x0FFFFFFFu, 0x0FFFFFFFu};
+    const auto lines = AgcDriver::DeviceFaultBatchLines(VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT, 0x12abcull, 0x100ull, 7, snapshots, bracket, ring);
+    Require(lines.size() == 3, "a token miss does not report the owner, the window and the miss");
+    Require(lines[0] == "[device-fault] write invalid at 0x12abc (precision 0x100) in guest range [0x12000, 0x13000) read write (batch 7, space 3)", "the batch snapshot was not correlated");
+    Require(lines[1] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the serial window changed");
+    char expected[256];
+    std::snprintf(expected, sizeof(expected), "[device-fault] unknown token %u in batch 7", 0x0FFFFFFFu);
+    Require(lines[2] == expected, "a token miss was not reported");
+}
+
+void BracketSerialMismatch() {
+    AgcDriver::SubmissionSnapshots snapshots;
+    snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::SubmitBracket bracket{8, 5, 0, 0};
+    const auto lines = AgcDriver::DeviceFaultBatchLines(VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT, 0x12abcull, 0x100ull, 8, snapshots, bracket, ring);
+    Require(lines.size() == 2, "a serial mismatch does not report the miss and the window");
+    Require(lines[0] == "[device-fault] no guest snapshot for batch 8", "a serial without a snapshot was correlated");
+    Require(lines[1] == "[device-fault] bracket: last completed 5, in flight 8, first not started 9", "the mismatch window changed");
+}
+
+void FaultResultZero() {
+    faultCalls = 0;
+    faultFails = false;
+    faultDataResult = VK_SUCCESS;
+    faultDataAddressCount = 0;
+    faultDataVendorBinarySize = 0;
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::SubmitBracket bracket{7, 5, 0, 0};
+    const auto lines = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring);
+    Require(faultCalls == 2, "a result-zero fault info was not queried for counts and then for data");
+    Require(lines.size() == 4, "a result-zero fault does not report the window, the result, the vendor and the missing device data");
+    Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the result-zero window changed");
+    Require(lines[1] == "[device-fault] result 0: page fault", "a zero result was not reported");
+    Require(lines[2] == "[device-fault] vendor: " + std::string(VK_MAX_DESCRIPTION_SIZE, 'v') + " (code 0x77, data 0x88)", "the vendor line changed");
+    Require(lines[3] == "[device-fault] no device-side fault data; CPU-side bracket only", "missing device-side data was not reported");
+    faultDataAddressCount = 2;
+}
+
+void TokenCheckpoint() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken token = ring.Claim();
+    Require(token != 0, "the checkpoint token is invalid");
+    ClaimBracketToken(ring, token, 7, 0x12000ull, 9, "draw main");
+    checkpointToken = token;
+    const AgcDriver::SubmitBracket bracket{7, 5, 0, 0};
+    const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockTokenCheckpointData, 0, nullptr, bracket, ring);
+    Require(lines.size() == 2, "a token checkpoint does not report the window and the checkpoint");
+    Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the checkpoint window changed");
+    char expected[256];
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: token %u batch 7 program 0x12000 variant 9 draw main observed at bottom-of-pipe", static_cast<unsigned>(token));
+    Require(lines[1] == expected, "the token checkpoint line changed");
+    checkpointToken = 0;
+}
+
 void FaultIncomplete() {
     faultCalls = 0;
     faultFails = false;
@@ -315,6 +415,11 @@ int main() {
         FaultRangeStraddle();
         FaultRangeMiss();
         BatchSerialMismatch();
+        BracketWindow();
+        BracketTokenMiss();
+        BracketSerialMismatch();
+        FaultResultZero();
+        TokenCheckpoint();
         BufferMarkers();
         BufferMarkersWrap();
     } catch (const std::exception& error) {
