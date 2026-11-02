@@ -307,6 +307,18 @@ class ReleasePackageTests(unittest.TestCase):
         (self.build / "CMakeCache.txt").write_bytes(b"\xef\xbb\xbfCMAKE_CXX_COMPILER:STRING=" + compiler.as_posix().encode("utf-8") + b"\n")
         self.assertEqual(package_release.windows_runtime(self.build), compiler.parent)
 
+    def test_windows_runtime_finds_a_bare_compiler_name_on_path(self):
+        compiler = self.root / "custom toolchain" / "bin" / "g++.exe"
+        (self.build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:UNINITIALIZED=g++\n", encoding="utf-8")
+        with patch.object(package_release.shutil, "which", return_value=str(compiler)) as which:
+            self.assertEqual(package_release.windows_runtime(self.build), compiler.parent)
+        which.assert_called_once_with("g++")
+        with patch.object(package_release.shutil, "which", return_value=os.path.join(".", "g++.exe")):
+            self.assertEqual(package_release.windows_runtime(self.build), Path.cwd())
+        with patch.object(package_release.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "not on PATH"):
+                package_release.windows_runtime(self.build)
+
     def test_tracy_runtime_decodes_cmake_cache_with_utf8_bom(self):
         client = self.build / "core/libs/libs/libTracyClient.dll"
         client.write_bytes(b"client")
@@ -869,6 +881,29 @@ class ReleaseNotesTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "distinct files"):
                         prepare_release_notes.prepare_notes(*paths)
                     self.assertEqual([path.read_bytes() for path in paths], previous)
+
+    def test_symlink_loop_output_is_reported_without_traceback(self):
+        notes = json.dumps({"body": "release notes"})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "notes.json"
+            source.write_text(notes, encoding="utf-8")
+            loop = root / "body.md"
+            try:
+                loop.symlink_to(loop.name)
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(f"symbolic links unavailable: {error}")
+            full = root / "full.md"
+            with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+                prepare_release_notes.prepare_notes(source, loop, full)
+            result = subprocess.run(
+                [sys.executable, str(Path(prepare_release_notes.__file__)),
+                 "--input", str(source), "--body", str(loop), "--full", str(full)],
+                capture_output=True, text=True, encoding="utf-8", timeout=20)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("symbolic link loop", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
 
 
     def test_short_notes_are_unchanged_including_unicode_at_limit(self):
