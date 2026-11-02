@@ -238,7 +238,7 @@ void testQueries() {
     check(!trophyData(other, 12).unlocked && unlockedTrophies(other) == 0, "another user sees the unlocks");
     check(read("_trophy/268435456_0.txt").find("12 ") != std::string::npos, "the unlock was not stored in the title folder");
     check(throws([] { NpTrophy2AddUnlockListener_nid_no_patch(nullptr, nullptr); }), "a null listener was added");
-    check(throws([listener] { NpTrophy2RemoveUnlockListener_nid_no_patch(listener); }), "a removed listener was removed again");
+    check(!throws([listener] { NpTrophy2RemoveUnlockListener_nid_no_patch(listener); }), "removing a listener twice threw across the C ABI");
     check(sceNpTrophy2DestroyContext(context) == 0 && sceNpTrophy2DestroyContext(other) == 0, "contexts were not destroyed");
 }
 
