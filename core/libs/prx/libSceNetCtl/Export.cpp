@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNetCtl/include/InventoryExports.hpp"
 #include "prx/libSceNetCtl/include/NetCtl.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -116,6 +118,7 @@ static std::mutex g_callbackLock;
 static CallbackSlot g_callbacks[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksV6[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksNpToolkit[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksForLib[MAX_CALLBACKS] = {};
 
 static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCallback func, void* arg, int* cid) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
@@ -822,6 +825,15 @@ static NetCtlNatInfo DiscoverNatInfo(in_addr localAddress) {
     return result;
 }
 
+extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host)) return false;
+    *address = host.address.s_addr;
+    *netmask = host.netmask.s_addr;
+    *mtu = host.mtu;
+    return true;
+}
+
 static void WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
     std::memcpy(info->opaque, &value, sizeof(value));
 }
@@ -869,28 +881,41 @@ static void HostTraffic(std::uint64_t& sent, std::uint64_t& received) {
 #endif
 }
 
-static int CheckCallbacks(CallbackSlot (&callbacks)[MAX_CALLBACKS]) {
+static int CheckCallbacks(CallbackSlot (&callbacks)[MAX_CALLBACKS], bool includeV6 = false) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
-    if (!HasCallback(callbacks)) return 0;
-    const int event = HostHasAddress(AF_UNSPEC) ? NET_CTL_EVENT_IPOBTAINED : NET_CTL_EVENT_DISCONNECTED;
-    CallbackSlot due[MAX_CALLBACKS];
+    const bool primary = HasCallback(callbacks);
+    const bool ipv6 = includeV6 && HasCallback(g_callbacksV6);
+    if (!primary && !ipv6) return 0;
+    const int primaryEvent = primary ? (HostHasAddress(AF_UNSPEC) ? NET_CTL_EVENT_IPOBTAINED : NET_CTL_EVENT_DISCONNECTED) : 0;
+    const int ipv6Event = ipv6 ? (HostHasAddress(AF_INET6) ? NET_CTL_EVENT_IPOBTAINED : NET_CTL_EVENT_DISCONNECTED) : 0;
+    struct Delivery {
+        CallbackSlot callback;
+        int event;
+    };
+    Delivery due[2 * MAX_CALLBACKS];
     int count = 0;
     {
         std::lock_guard lock(g_callbackLock);
-        for (auto& slot : callbacks) {
-            if (!slot.func || slot.lastEvent == event) continue;
-            slot.lastEvent = event;
-            due[count++] = slot;
-        }
+        const auto collect = [&](CallbackSlot (&slots)[MAX_CALLBACKS], int event) {
+            if (event == 0) return;
+            for (auto& slot : slots) {
+                if (!slot.func || slot.lastEvent == event) continue;
+                slot.lastEvent = event;
+                due[count++] = {slot, event};
+            }
+        };
+        collect(callbacks, primaryEvent);
+        if (includeV6) collect(g_callbacksV6, ipv6Event);
     }
-    for (int index = 0; index < count; ++index) due[index].func(event, due[index].arg);
+    for (int index = 0; index < count; ++index)
+        due[index].callback.func(due[index].event, due[index].callback.arg);
     return 0;
 }
 
 extern "C" {
 
 int APS5_VABI sceNetCtlCheckCallback(void) {
-    return CheckCallbacks(g_callbacks);
+    return CheckCallbacks(g_callbacks, true);
 }
 
 int APS5_VABI sceNetCtlGetIfStat(NetCtlIfStat* stat) {
@@ -1032,8 +1057,7 @@ int APS5_VABI sceNetCtlRegisterCallbackIpcInt(NetCtlCallback callback, void* arg
 }
 
 int APS5_VABI sceNetCtlRegisterCallbackForLibIpcInt(NetCtlCallback callback, void* argument, int* callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterCallback(g_callbacksForLib, callback, argument, callbackId);
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int callbackId) {
@@ -1045,8 +1069,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackIpcInt(int callbackId) {
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForLibIpcInt(int callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return UnregisterCallback(g_callbacksForLib, callbackId);
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
@@ -1054,8 +1077,7 @@ int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForLibIpcInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CheckCallbacks(g_callbacksForLib);
 }
 
 int APS5_VABI sceNetCtlClearEventIpcInt(int event) {
@@ -1357,5 +1379,106 @@ int APS5_VABI sceNetCtlGetWifiInfoIpcInt(NetCtlWifiInfo* info) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI sceInetStatInit() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceInetStatTerm() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNetConnSwitcherStop() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI libSceNetCtlUnknown_09YMz3Vp5us_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("09YMz3Vp5us", libSceNetCtlUnknown_09YMz3Vp5us_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_1PGApDf96ao_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1PGApDf96ao", libSceNetCtlUnknown_1PGApDf96ao_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_1mrTXfVGn_plus_g_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("1mrTXfVGn+g", libSceNetCtlUnknown_1mrTXfVGn_plus_g_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_2Ny2lzU3o9w_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("2Ny2lzU3o9w", libSceNetCtlUnknown_2Ny2lzU3o9w_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_3cNKxJXXYYk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3cNKxJXXYYk", libSceNetCtlUnknown_3cNKxJXXYYk_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_AIu_minus_tRC_minus_mSM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("AIu-tRC-mSM", libSceNetCtlUnknown_AIu_minus_tRC_minus_mSM_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_BSERkV_minus_a9e8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("BSERkV-a9e8", libSceNetCtlUnknown_BSERkV_minus_a9e8_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_FwX_plus_Js8qXNA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FwX+Js8qXNA", libSceNetCtlUnknown_FwX_plus_Js8qXNA_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_I14Npt_minus_awQg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("I14Npt-awQg", libSceNetCtlUnknown_I14Npt_minus_awQg_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_KUdWtCC6w_minus_0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KUdWtCC6w-0", libSceNetCtlUnknown_KUdWtCC6w_minus_0_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_QnQ4RBu546Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("QnQ4RBu546Y", libSceNetCtlUnknown_QnQ4RBu546Y_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_e5_minus_Xj0wEzbI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("e5-Xj0wEzbI", libSceNetCtlUnknown_e5_minus_Xj0wEzbI_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_lScJhO3Rnpk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lScJhO3Rnpk", libSceNetCtlUnknown_lScJhO3Rnpk_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_mfWDyuk_minus_M0I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mfWDyuk-M0I", libSceNetCtlUnknown_mfWDyuk_minus_M0I_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_on7RqSRy8pU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("on7RqSRy8pU", libSceNetCtlUnknown_on7RqSRy8pU_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_sngJX5nUjVM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sngJX5nUjVM", libSceNetCtlUnknown_sngJX5nUjVM_nid_no_patch);
+
+int APS5_VABI libSceNetCtlUnknown_wVXoAlD7Fsg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wVXoAlD7Fsg", libSceNetCtlUnknown_wVXoAlD7Fsg_nid_no_patch);
 
 }

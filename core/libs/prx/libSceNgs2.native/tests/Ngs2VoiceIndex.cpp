@@ -35,13 +35,16 @@ uintptr_t CreateSingleVoiceRack(uintptr_t system, std::uint32_t rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER:
             option.sampler.max_channel_works = 1;
             option.sampler.max_waveform_blocks = 1;
+            option.sampler.num_peak_meter_blocks = 8;
             break;
         case SCE_NGS2_RACK_ID_SUBMIXER:
             option.submixer.max_channels = 2;
+            option.submixer.num_peak_meter_blocks = 8;
             option.submixer.max_inputs = 1;
             break;
         case SCE_NGS2_RACK_ID_MASTERING:
             option.mastering.max_channels = 2;
+            option.mastering.num_peak_meter_blocks = 8;
             break;
         default:
             option.reverb.max_channels = 2;

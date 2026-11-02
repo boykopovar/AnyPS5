@@ -34,6 +34,11 @@ static void RequireInvalidArguments() {
         if (attr >= 0x100 && attr <= 0x102) continue;
         Require(sceKernelCreateSema(&rejected, "rejected", attr, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     }
+    for (const std::uint32_t attr : {0x100u, 0x101u, 0x102u}) {
+        KernelSema accepted = nullptr;
+        Require(sceKernelCreateSema(&accepted, "accepted", attr, 0, 1, nullptr) == SCE_OK);
+        Require(sceKernelDeleteSema(accepted) == SCE_OK);
+    }
     for (const std::uint32_t attr : {0x1000u, 0x10000u, 0x80000000u, 0xffffffffu})
         Require(sceKernelCreateSema(&rejected, "rejected", attr, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(rejected == nullptr);

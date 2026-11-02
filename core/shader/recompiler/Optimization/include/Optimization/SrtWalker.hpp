@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <utility>
@@ -61,6 +62,9 @@ inline void StoreStamp(const SrtGuestWords& words, const SrtWriteStamp& stamp) {
 using SrtMemoryStamper = SrtWriteStamp (*)(void* userData, std::uint64_t address, std::uint64_t bytes);
 using SrtMemoryUnchanged = bool (*)(void* userData, std::uint64_t address, std::uint64_t bytes, const SrtWriteStamp& stamp);
 using SrtMemorySupplier = bool (*)(void* userData, const std::shared_ptr<const SrtGuestWords>& words);
+inline constexpr std::size_t SrtDescriptorForceSync = std::numeric_limits<std::size_t>::max();
+inline constexpr std::size_t SrtDescriptorEndForceSync = std::numeric_limits<std::size_t>::max() - 1u;
+using SrtDescriptorScope = std::uint64_t (*)(void* userData, std::size_t bytes);
 
 // The guest addresses a walk dereferenced (Detail::Evaluator::EvaluateRawRead): the leaf read of
 // each pure flat slot (IrResourcePlan::pureFlatSlots) as (flat offset, address), set by the
@@ -87,6 +91,20 @@ struct SrtRuntime {
     SrtMemoryUnchanged unchangedSince = nullptr;
     SrtMemorySupplier supplyWords = nullptr;
     SrtUserDataUse* userDataUse = nullptr;
+    SrtDescriptorScope descriptorScope = nullptr;
+};
+
+struct SrtForceSyncScope {
+    const SrtRuntime& runtime;
+    bool active = false;
+    SrtForceSyncScope(const SrtRuntime& runtime, bool enable) : runtime(runtime), active(enable && runtime.descriptorScope != nullptr) {
+        if (active) static_cast<void>(runtime.descriptorScope(runtime.userContext, SrtDescriptorForceSync));
+    }
+    ~SrtForceSyncScope() {
+        if (active) static_cast<void>(runtime.descriptorScope(runtime.userContext, SrtDescriptorEndForceSync));
+    }
+    SrtForceSyncScope(const SrtForceSyncScope&) = delete;
+    SrtForceSyncScope& operator=(const SrtForceSyncScope&) = delete;
 };
 
 enum class RuntimeValueType {

@@ -25,6 +25,14 @@
 #include <cwchar>
 #endif
 
+#include "RelinkerRevision.hpp"
+
+#if defined(_WIN32) && defined(__MINGW32__)
+extern "C" {
+int _dowildcard = 0;
+}
+#endif
+
 namespace {
 
 struct ConvertedExecutable {
@@ -126,11 +134,12 @@ bool SameOutputFile(const std::filesystem::path& first, const std::filesystem::p
 }
 
 bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second,
-                           std::filesystem::path& firstPath, std::filesystem::path& secondPath) {
+                           std::filesystem::path& firstPath, std::filesystem::path& secondPath, const bool probeAliases) {
     if (firstPath.empty()) firstPath = std::filesystem::weakly_canonical(first);
     if (secondPath.empty()) secondPath = std::filesystem::weakly_canonical(second);
     if (firstPath == secondPath) return true;
     if (std::filesystem::exists(first) && std::filesystem::exists(second)) return SameOutputFile(first, second);
+    if (!probeAliases) return false;
 #ifdef _WIN32
     const auto firstName = firstPath.filename().native();
     const auto secondName = secondPath.filename().native();
@@ -264,6 +273,11 @@ int Run(const int argc, char* argv[]) {
         return 0;
     }
 
+    if (args.showVersion) {
+        std::cout << "relinker " << ANYPS5_RELINKER_REVISION << '\n';
+        return 0;
+    }
+
     Cli::ConsoleProgress progress(std::cout);
     try {
         if (!args.verifyPatchesPath.empty()) return RunVerifyPatches(args);
@@ -276,7 +290,14 @@ int Run(const int argc, char* argv[]) {
             throw Domain::RelinkerException("Executable output would overwrite the input executable");
         if (Io::NativePath(args.outputPath).filename().empty() || std::filesystem::is_directory(Io::NativePath(args.outputPath)))
             throw Domain::RelinkerException("Executable output is a directory: " + args.outputPath);
-        const std::string absPath = Io::Utf8Path(std::filesystem::absolute(Io::NativePath(args.outputPath)));
+        const auto requestedOutput = Io::NativePath(args.outputPath);
+#ifdef _WIN32
+        const auto& nativeOutput = requestedOutput.native();
+        const bool extendedOutput = nativeOutput.starts_with(L"\\\\?\\") || nativeOutput.starts_with(L"\\\\.\\");
+#else
+        const bool extendedOutput = false;
+#endif
+        const std::string absPath = Io::Utf8Path(extendedOutput ? requestedOutput : std::filesystem::absolute(requestedOutput));
 
         struct ExtraExecutable {
             std::string Argument;
@@ -412,9 +433,20 @@ int Run(const int argc, char* argv[]) {
             for (std::size_t previous = 0; previous < index; ++previous) {
                 const auto& first = outputPaths[index];
                 const auto& second = outputPaths[previous];
-                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous]))
+                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous], !args.dryRun))
                     throw Domain::RelinkerException("Output paths collide: " + Io::Utf8Path(first) + " and " + Io::Utf8Path(second));
             }
+        }
+
+        if (args.dryRun) {
+            progress.Finish();
+            std::cout << "\nDry run complete\n"
+                      << "Converted executables: " << executables.size() << '\n'
+                      << "Converted modules: " << guestArtifacts.size() << '\n'
+                      << "External prx references: " << executables.front().Result.RegistryEntries.size() << '\n';
+            for (const auto& path : outputPaths) std::cout << "Would write: " << Io::Utf8Path(path) << '\n';
+            std::cout << "No output files were written. Destination write access and aliases of absent files were not checked.\n";
+            return 0;
         }
 
         if (args.windowsDiagnostics) fileWriter.Write("windows-diagnostics-imports.txt", executables.front().Diagnostics);
