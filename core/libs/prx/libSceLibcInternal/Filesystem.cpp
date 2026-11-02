@@ -1,6 +1,27 @@
 #include "prx/libc/include/GuestFilesystemPrimitives.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+int LinkStatType(const char* path, int* perms, int* error) {
+    GuestFilesystem::GuestErrno() = 0;
+    FileStat status{};
+    int type;
+    if (lstat_nid_postfix(path, &status) == 0) {
+        GuestFilesystem::GuestErrno() = 0;
+        if (perms) *perms = status.st_mode & GuestFilesystem::PermissionBits;
+        type = GuestFilesystem::TypeOfMode(status.st_mode);
+    } else {
+        const int code = GuestFilesystem::GuestErrno();
+        type = code == GuestFilesystem::NoSuchFile || code == GuestFilesystem::NotDirectory || code == GuestFilesystem::Invalid || code == GuestFilesystem::NameTooLong
+            ? GuestFilesystem::TypeNotFound : GuestFilesystem::TypeNone;
+    }
+    if (error) *error = GuestFilesystem::GuestErrno();
+    return type;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(const char* path, int* perms, int* error) {
@@ -8,7 +29,7 @@ int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(const char* p
 }
 
 int APS5_VABI _ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(const char* path, int* perms, int* error) {
-    return GuestFilesystem::StatType(path, perms, error);
+    return LinkStatType(path, perms, error);
 }
 
 std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error) {
