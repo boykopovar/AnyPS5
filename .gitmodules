@@ -76,3 +76,6 @@
 [submodule "3rdparty/quickjs"]
 	path = 3rdparty/quickjs
 	url = https://github.com/quickjs-ng/quickjs.git
+[submodule "3rdparty/sqlite"]
+	path = 3rdparty/sqlite
+	url = https://github.com/litalidev/sqlite.amalgamation.git

@@ -1,0 +1,22 @@
+include(${CMAKE_SOURCE_DIR}/cmake/Sqlite.cmake)
+
+add_library(libSceNKWebKitRequirements SHARED EXCLUDE_FROM_ALL Export.cpp Sqlite.cpp)
+target_include_directories(libSceNKWebKitRequirements PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNKWebKitRequirements)
+target_link_libraries(libSceNKWebKitRequirements PRIVATE sqlite3)
+if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libSceNKWebKitRequirements PRIVATE LINKER:--exclude-libs,ALL)
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_nk_req_sqlite_tests tests/Sqlite.cpp)
+    target_include_directories(guest_nk_req_sqlite_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_nk_req_sqlite_tests PRIVATE libSceNKWebKitRequirements sqlite3 libc)
+    configure_windows_unwind(guest_nk_req_sqlite_tests)
+    add_test(NAME guest_nk_req_sqlite COMMAND guest_nk_req_sqlite_tests)
+    set_tests_properties(guest_nk_req_sqlite PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_nk_req_sqlite PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKitRequirements>")
+    endif()
+endif()
