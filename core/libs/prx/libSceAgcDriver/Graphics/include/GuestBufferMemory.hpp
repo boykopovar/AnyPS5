@@ -280,6 +280,7 @@ struct MirrorStats {
     std::uint64_t heapChecks = 0;
     std::uint64_t sparseBinds = 0;
     std::uint64_t evictions = 0;
+    std::uint64_t rangeMirrors = 0;
 };
 MirrorStats MirrorCounters();
 std::uint64_t SnapshotMismatches();

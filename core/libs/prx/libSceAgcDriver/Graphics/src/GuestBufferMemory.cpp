@@ -3513,6 +3513,15 @@ std::shared_ptr<ImageMirror> findMirror(const Context& context, std::uint64_t be
     return mirror;
 }
 
+std::shared_ptr<const GuestAllocations::Range> fixedImageRange(std::uint64_t begin, std::uint64_t end) {
+    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    auto found = std::upper_bound(lease.begin(), lease.end(), begin, [](std::uint64_t address, const auto& range) { return address < range->address; });
+    if (found == lease.begin()) return nullptr;
+    const auto& range = *--found;
+    if (!range->readable || range->writable || range->releasable || end > range->address + range->bytes) return nullptr;
+    return range;
+}
+
 void sweepMirrors(std::uint64_t neededBytes, std::uint64_t protectAddress) {
     ReferenceStorage::Shared().ReleaseIdle();
     const bool released = releaseExpiredJoinedHeaps();
@@ -3943,7 +3952,10 @@ MirrorStats MirrorCounters() {
     auto& state = Mirrors();
     std::lock_guard lock(state.mutex);
     MirrorStats stats{0, state.heapBytes, state.rebuilds, state.blocksCopied, state.heapRefills, state.sweeps, state.heapChecks, state.sparseBinds, state.evictions};
-    for (const auto& [base, mirror] : state.entries) stats.heapMirrors += mirror->heap ? 1 : 0;
+    for (const auto& [base, mirror] : state.entries) {
+        stats.heapMirrors += mirror->heap ? 1 : 0;
+        stats.rangeMirrors += mirror->heap ? 0 : 1;
+    }
     return stats;
 }
 
@@ -6024,6 +6036,14 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
         // before the imports: the image can never be imported, and the import fallback would acquire
         // a registry lease for it on nearly every descriptor upload.
         auto mirror = findMirror(context, region.begin, region.end);
+        if (mirror == nullptr) {
+            const auto range = fixedImageRange(region.begin, region.end);
+            if (range != nullptr && (region.begin - range->address) % context.limits.minStorageBufferOffsetAlignment == 0) {
+                std::vector<RefreshBlock> unused;
+                mirror = acquireMirror(context, range, unused, false);
+                if (mirror != nullptr) sweepMirrors();
+            }
+        }
         if (mirror == nullptr || (region.begin - mirror->base) % context.limits.minStorageBufferOffsetAlignment != 0) continue;
         // A read-only mirror's bytes never change while its Range exists; a writable one is
         // refreshed by UploadFinish (the refresh may wait for recorded work). Either is confirmed

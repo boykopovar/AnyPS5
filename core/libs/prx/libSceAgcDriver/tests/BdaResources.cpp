@@ -31,6 +31,7 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <dlfcn.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -211,6 +212,103 @@ void importCrossingTests(const Context& context, const BdaTestAccess& access) {
     registry(false);
     Require(HostImportFor(importing, first, half) == nullptr && !HostImportCovers(importing, second, half), "the host imports outlived their ranges");
     ::operator delete(block, std::align_val_t{half});
+}
+
+constexpr auto FixedImageConstants = [] {
+    std::array<std::uint8_t, 64> bytes{};
+    for (auto& value : bytes) value = 0x5c;
+    return bytes;
+}();
+
+std::array<std::uint8_t, 64> WritableImageBytes = FixedImageConstants;
+
+const void* testImageBase(const void* inside) {
+#ifdef _WIN32
+    static_cast<void>(inside);
+    return GetModuleHandleW(nullptr);
+#else
+    Dl_info info{};
+    Require(dladdr(inside, &info) != 0 && info.dli_fbase != nullptr, "cannot locate the test image");
+    return info.dli_fbase;
+#endif
+}
+
+void fixedReadOnlyRangeMirrorTests(const Context& context, const BdaTestAccess& access) {
+    auto copying = context;
+    copying.hostImportAlignment = 0;
+    copying.limits.minStorageBufferOffsetAlignment = 1;
+    const auto upload = [&](const Context& uploading, std::uintptr_t address, std::size_t bytes, bool expectDirect, std::uint64_t expectMirrors, const char* failure) {
+        const auto before = MirrorCounters().rangeMirrors;
+        GuestBufferMemory leased(uploading);
+        leased.AddReadable(address, bytes);
+        leased.Upload(false);
+        Require(leased.DirectRegions().has_value() == expectDirect, failure);
+        Require(MirrorCounters().rangeMirrors == before + expectMirrors, failure);
+        std::uint32_t adjustment = 0;
+        const auto view = leased.Descriptor(address, bytes, adjustment);
+        const auto data = access.bytes(view.buffer);
+        Require(view.offset + adjustment + bytes <= data.size() && data[view.offset + adjustment] == std::byte{0x5c} && data[view.offset + adjustment + bytes - 1] == std::byte{0x5c}, "a guest buffer inside a registered range is not served with the range's bytes");
+        leased.WriteBack();
+    };
+    const auto* image = testImageBase(FixedImageConstants.data());
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsRegisterImage_nid_postfix(mutation, image);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    const auto constants = reinterpret_cast<std::uintptr_t>(FixedImageConstants.data());
+    upload(copying, constants, 64, true, 1, "a guest buffer inside the main image's read-only pages is copied instead of mirrored");
+    {
+#ifdef _WIN32
+        const auto* inOther = reinterpret_cast<const void*>(&GetTickCount);
+        HMODULE module = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCWSTR>(inOther), &module);
+        const void* other = module;
+#else
+        const auto* inOther = reinterpret_cast<const void*>(&std::malloc);
+        const void* other = testImageBase(inOther);
+#endif
+        Require(other != nullptr && other != image, "cannot locate a second image");
+        const auto registerImage = [](const void* module, bool add) {
+            auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+            if (add) GuestAllocations::GuestAllocationsRegisterImage_nid_postfix(mutation, module);
+            else GuestAllocations::GuestAllocationsUnregisterImage_nid_postfix(mutation, module);
+            GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+        };
+        registerImage(image, false);
+        registerImage(other, true);
+        const auto before = MirrorCounters().rangeMirrors;
+        GuestBufferMemory leased(copying);
+        leased.AddReadable(reinterpret_cast<std::uintptr_t>(inOther), 16);
+        leased.Upload(false);
+        Require(MirrorCounters().rangeMirrors == before, "the fixed mirror of an unloaded image is kept when another image gets one");
+        leased.WriteBack();
+        registerImage(other, false);
+        registerImage(image, true);
+    }
+    ClearImageMirrors(copying.device);
+    upload(copying, reinterpret_cast<std::uintptr_t>(WritableImageBytes.data()), 64, false, 0, "a guest buffer inside the main image's writable pages is mirrored as a fixed range");
+    ClearImageMirrors(copying.device);
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsUnregisterImage_nid_postfix(mutation, image);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    constexpr std::size_t page = 4096;
+    void* block = ::operator new(page, std::align_val_t{page});
+    std::memset(block, 0x5c, page);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, page, true, false, false);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+    upload(copying, reinterpret_cast<std::uintptr_t>(block), 64, false, 0, "a guest buffer inside a releasable read-only allocation is mirrored as a fixed range");
+    registry(false);
+    ClearSnapshotCopies(copying.device);
+    ::operator delete(block, std::align_val_t{page});
+    std::cout << "a guest buffer inside the main image's read-only pages is bound through a fixed mirror; one in the image's writable pages or in a releasable allocation is copied\n";
 }
 
 void importSpanTests(const Context& context) {
@@ -4806,6 +4904,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         if (dropped.enabled) Require(dropped.waiterDrops == after.waiterDrops + 1 && LeaseCounters().cacheDrops == dropped.waiterDrops, "the free did not drop the cached address space");
     }
     importCrossingTests(context, access);
+    fixedReadOnlyRangeMirrorTests(context, access);
     addressTableKeyTests();
     snapshotTableTests(context, access);
     importSpanTests(context);
