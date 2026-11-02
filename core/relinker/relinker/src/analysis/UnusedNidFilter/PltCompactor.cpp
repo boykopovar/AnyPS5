@@ -7,6 +7,12 @@
 namespace Relinker::UnusedNidFilter {
 
 CompactedPlt CompactPlt(const std::vector<NidReference>& originalReferences, const std::vector<NidReference>& keptReferences, const std::vector<std::uint8_t>& text, VirtualAddress textVaddr, FileByteOffset textOffset, FileByteOffset tableOffset) {
+    if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
+        throw RelinkerException("Text section range exceeds the address space");
+    }
+    if (text.size() > std::numeric_limits<FileByteOffset>::max() - textOffset) {
+        throw RelinkerException("Strict filter: PLT patch offset overflow", textOffset);
+    }
     CompactedPlt result;
     result.References = keptReferences;
     std::unordered_map<VirtualAddress, std::uint32_t> originalSlots;

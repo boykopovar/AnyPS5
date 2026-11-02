@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_compile_budget_tests tests/CompileBudget.cpp)
+    target_include_directories(agc_compile_budget_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_compile_budget_tests PRIVATE libc)
+    configure_windows_unwind(agc_compile_budget_tests)
+    add_test(NAME agc_compile_budget COMMAND agc_compile_budget_tests)
+    set_tests_properties(agc_compile_budget PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_compile_budget PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
