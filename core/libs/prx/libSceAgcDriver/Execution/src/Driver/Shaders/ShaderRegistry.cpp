@@ -89,7 +89,6 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
         auto& pipeline = DrawPipeline::Queue0();
         if (pipeline.Busy() && pipeline.Overlaps(first, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
     };
-    GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     static std::mutex cacheMutex;
     static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
     static std::size_t cacheBytes = 0;
@@ -110,6 +109,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
             return cached;
         }
     }
+    GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     constexpr std::size_t limit = 1024 * 1024;
     const auto ranges = GuestMemory::CommittedRanges(address, limit);
     std::uint64_t end = address;
@@ -124,7 +124,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
         snapshot.code.resize(std::min(available, std::max<std::size_t>(64, previous * 2)));
         drain(address + previous * sizeof(std::uint32_t), (snapshot.code.size() - previous) * sizeof(std::uint32_t));
         GuestMemory::Read(address + previous * sizeof(std::uint32_t),
-            std::as_writable_bytes(std::span(snapshot.code).subspan(previous)), alignof(std::uint32_t));
+            std::as_writable_bytes(std::span(snapshot.code.Mutable()).subspan(previous)), alignof(std::uint32_t));
         try {
             const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(snapshot.code);
             if (const auto tail = ShaderRecompiler::FindUserDataTail(decoded, 0u, 106u)) snapshot.userDataTailRegister = tail->userDataRegister;
@@ -563,6 +563,10 @@ ShaderPreparationTransaction::~ShaderPreparationTransaction() {
 
 PreparedShaderState& ShaderPreparationTransaction::Edit(const ShaderSnapshot& snapshot) {
     require(!committed, "shader preparation transaction is already committed");
+    if (!root->lock.owns_lock()) {
+        std::unique_lock prepared(snapshot.prepared->mutex);
+        AwaitRegisteredPreparation(*snapshot.prepared, prepared);
+    }
     root->Hold();
     auto& changes = root->changes;
     const auto found = changes.find(snapshot.prepared.get());
@@ -577,6 +581,10 @@ PreparedShaderState& ShaderPreparationTransaction::Edit(const ShaderSnapshot& sn
 
 const PreparedShaderState& ShaderPreparationTransaction::Read(const ShaderSnapshot& snapshot) const {
     require(!committed, "shader preparation transaction is already committed");
+    if (!root->lock.owns_lock()) {
+        std::unique_lock prepared(snapshot.prepared->mutex);
+        AwaitRegisteredPreparation(*snapshot.prepared, prepared);
+    }
     root->Hold();
     auto& changes = root->changes;
     const auto found = changes.find(snapshot.prepared.get());
@@ -961,7 +969,15 @@ ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, con
     return PreparedRectangle(front, vertexId, fragmentId);
 }
 
+struct UserDataCallSites {
+    ShaderRecompiler::RdnaProgram program;
+    std::vector<ShaderRecompiler::UserDataCall> calls;
+    std::vector<ShaderRecompiler::TableCall> tableCalls;
+};
+
 namespace {
+
+constexpr std::size_t UserDataLinksPerProgram = 8u;
 
 std::vector<std::uint32_t> LinkGraphicsUserDataTail(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot) {
     using Stage = ShaderRecompiler::ShaderStage;
@@ -979,13 +995,13 @@ std::string hexText(std::uint64_t value) {
     return text;
 }
 
-std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister) {
+std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister, bool allowGetpc = false) {
     constexpr std::uint64_t page = 4096u;
     constexpr std::size_t limitWords = 1024u * 1024u / 4u;
     if (address % 4u != 0u) throw std::runtime_error("its callee address " + hexText(address) + " is not dword aligned");
     std::vector<std::uint32_t> words;
     const auto finish = [&] {
-        const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister);
+        const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister, allowGetpc);
         if (length) words.resize(*length);
         return length.has_value();
     };
@@ -1036,24 +1052,72 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
     }
     if (targets.size() > limitCallees) throw std::runtime_error("its call table holds " + std::to_string(targets.size()) + " distinct targets; at most " + std::to_string(limitCallees) + " are linked");
     std::vector<ShaderRecompiler::TableCallee> callees;
-    for (const auto target : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister)});
+    for (const auto target : targets) callees.push_back({target, ReadUserDataCallee(target, call.linkRegister, true)});
     return callees;
 }
 
-ShaderRecompiler::LinkedCalls LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request) {
+std::shared_ptr<const ShaderRecompiler::LinkedCalls> LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request, const ShaderSnapshot& snapshot, std::size_t codeOffset) {
     const bool gcnVertex = ShaderRecompiler::GcnGuestShaders() && request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
-    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return {};
+    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return nullptr;
     const auto code = request.shader.code;
-    if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return {};
-    const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+    if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return nullptr;
     const ShaderRecompiler::SwappcInfo swappc{false, request.context.userDataBaseRegister, static_cast<std::uint32_t>(request.context.userData.size()), request.context.waveSize};
-    const auto calls = ShaderRecompiler::FindUserDataCalls(program, swappc);
-    const auto tableCalls = ShaderRecompiler::FindTableCalls(program, swappc);
-    if (calls.empty() && tableCalls.empty()) return {};
+    const auto addressOf = [&](const ShaderRecompiler::UserDataCall& call) {
+        const auto slot = call.userDataRegister - swappc.userDataBaseRegister;
+        return static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
+    };
+    const auto sameProgram = [&](const PreparedShaderState::UserDataLink& link) {
+        return link.codeOffset == codeOffset && link.userDataBaseRegister == swappc.userDataBaseRegister && link.userDataCount == swappc.userDataCount && link.waveSize == swappc.waveSize;
+    };
+    std::vector<std::uint32_t> current;
+    const auto unchanged = [&](const PreparedShaderState::UserDataLink& link) {
+        for (std::size_t index = 0; index < link.callees.size(); ++index) {
+            const auto address = addressOf(link.sites->calls[index]);
+            const auto& words = link.code[index];
+            if (address != link.callees[index] || !GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), words.size() * 4u)) return false;
+            current.resize(words.size());
+            GuestMemory::Read(address, std::as_writable_bytes(std::span(current)));
+            if (current != words) return false;
+        }
+        return true;
+    };
+    auto& prepared = *snapshot.prepared;
+    std::vector<PreparedShaderState::UserDataLink> candidates;
+    {
+        std::lock_guard lock(prepared.mutex);
+        std::copy_if(prepared.userDataLinks.begin(), prepared.userDataLinks.end(), std::back_inserter(candidates), sameProgram);
+    }
+    std::shared_ptr<const UserDataCallSites> sites;
+    for (auto candidate = candidates.rbegin(); candidate != candidates.rend(); ++candidate) {
+        sites = candidate->sites;
+        if (candidate->linked != nullptr && unchanged(*candidate)) return candidate->linked;
+    }
+    if (sites == nullptr) {
+        auto found = std::make_shared<UserDataCallSites>();
+        found->program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+        found->calls = ShaderRecompiler::FindUserDataCalls(found->program, swappc);
+        found->tableCalls = ShaderRecompiler::FindTableCalls(found->program, swappc);
+        sites = std::move(found);
+    }
+    const auto& program = sites->program;
+    const auto& calls = sites->calls;
+    const auto& tableCalls = sites->tableCalls;
+    PreparedShaderState::UserDataLink link{codeOffset, swappc.userDataBaseRegister, swappc.userDataCount, swappc.waveSize, sites, {}, {}, nullptr};
+    const auto remember = [&] {
+        std::lock_guard lock(prepared.mutex);
+        auto& links = prepared.userDataLinks;
+        if (link.linked == nullptr && std::any_of(links.begin(), links.end(), sameProgram)) return;
+        if (std::count_if(links.begin(), links.end(), sameProgram) >= static_cast<std::ptrdiff_t>(UserDataLinksPerProgram)) links.erase(std::find_if(links.begin(), links.end(), sameProgram));
+        links.push_back(link);
+    };
+    if (calls.empty() && tableCalls.empty()) {
+        link.linked = std::make_shared<const ShaderRecompiler::LinkedCalls>();
+        remember();
+        return link.linked;
+    }
     std::vector<std::vector<std::uint32_t>> callees;
     for (const auto& call : calls) {
-        const auto slot = call.userDataRegister - swappc.userDataBaseRegister;
-        const auto address = static_cast<std::uint64_t>(request.context.userData[slot]) | static_cast<std::uint64_t>(request.context.userData[slot + 1u]) << 32u;
+        const auto address = addressOf(call);
         try {
             callees.push_back(ReadUserDataCallee(address, call.linkRegister));
         } catch (const std::exception& error) {
@@ -1069,7 +1133,16 @@ ShaderRecompiler::LinkedCalls LinkUserDataCallees(const ShaderRecompiler::Recomp
             throw std::runtime_error("AGC driver: compute shader " + hexText(request.shader.codeAddress) + " calls a target loaded from a table at program counter " + hexText(call.programCounter) + ", but " + error.what());
         }
     }
-    return ShaderRecompiler::LinkCalls(program, calls, callees, tableCalls, tableCallees);
+    auto linked = std::make_shared<const ShaderRecompiler::LinkedCalls>(ShaderRecompiler::LinkCalls(program, calls, callees, tableCalls, tableCallees));
+    if (!tableCalls.empty()) {
+        remember();
+        return linked;
+    }
+    for (const auto& call : calls) link.callees.push_back(addressOf(call));
+    link.code = std::move(callees);
+    link.linked = linked;
+    remember();
+    return linked;
 }
 
 }
@@ -1078,8 +1151,10 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
-    auto linked = LinkUserDataCallees(request);
-    if (linked.code.empty()) linked.code = LinkGraphicsUserDataTail(request, snapshot);
+    const auto shared = LinkUserDataCallees(request, snapshot, codeOffset);
+    ShaderRecompiler::LinkedCalls tail;
+    if (shared == nullptr || shared->code.empty()) tail.code = LinkGraphicsUserDataTail(request, snapshot);
+    const auto& linked = shared != nullptr && tail.code.empty() ? *shared : tail;
     auto source = request;
     if (!linked.code.empty()) {
         source.shader.code = linked.code;
@@ -1130,7 +1205,8 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
 }
 namespace {
 
-std::optional<ShaderRecompiler::ShaderFloatMode> DecodeFloatMode(const Registers& registers, std::uint8_t type) {
+template<typename TRegisters>
+std::optional<ShaderRecompiler::ShaderFloatMode> DecodeFloatMode(const TRegisters& registers, std::uint8_t type) {
     std::uint32_t rsrc1;
     std::uint32_t fp16OverflowBit;
     switch (type) {
@@ -1178,7 +1254,7 @@ Shader ReadHeader(const ShaderSnapshot& snapshot) {
     return header;
 }
 
-RegisteredShaderState DecodeRegisteredState(const ShaderSnapshot& snapshot, RegisteredShaderState state = {{}, InitialContextRegisters(), {{0x24a, 0}, {0x24b, 0}}}) {
+DecodedShaderState DecodeRegisteredState(const ShaderSnapshot& snapshot, DecodedShaderState state = {{}, InitialContextRegisters(), {{0x24a, 0}, {0x24b, 0}}}) {
     const auto header = ReadHeader(snapshot);
     for (const auto reg : ReadHeaderArray(snapshot, header.sh_registers, header.num_sh_registers)) {
         state.shader.insert_or_assign(reg.offset, reg.value);
@@ -1426,9 +1502,9 @@ PreparedAtUse PrepareDeferredAbis(const ShaderSnapshot& snapshot, std::unique_lo
         const auto device = abi.device.lock();
         if (device == nullptr || snapshot.registeredState == nullptr) continue;
         QueueState state{};
-        state.shader = snapshot.registeredState->shader;
-        state.context = snapshot.registeredState->context;
-        state.userConfig = snapshot.registeredState->userConfig;
+        state.shader = snapshot.registeredState->shader.Expand();
+        state.context = snapshot.registeredState->context.Expand();
+        state.userConfig = snapshot.registeredState->userConfig.Expand();
         for (const auto& [offset, value] : abi.context) state.context[offset] = value;
         for (const auto& [offset, value] : abi.primitive) state.userConfig[offset] = value;
         try {
@@ -2134,9 +2210,9 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     }
     require(snapshot->registeredState != nullptr, "registered shader state is missing");
     QueueState state{};
-    state.shader = snapshot->registeredState->shader;
-    state.context = snapshot->registeredState->context;
-    state.userConfig = snapshot->registeredState->userConfig;
+    state.shader = snapshot->registeredState->shader.Expand();
+    state.context = snapshot->registeredState->context.Expand();
+    state.userConfig = snapshot->registeredState->userConfig.Expand();
     for (const auto reg : context) state.context[reg.offset] = reg.value;
     for (const auto reg : primitive) state.userConfig[reg.offset] = reg.value;
     const auto localDevice = device.Load();
@@ -2387,9 +2463,9 @@ ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device) {
     nullRegisteredState.context.insert_or_assign(0x1b4u, 0x2u);
     null.registeredState = std::make_shared<const RegisteredShaderState>(std::move(nullRegisteredState));
     QueueState nullState{};
-    nullState.shader = null.registeredState->shader;
-    nullState.context = null.registeredState->context;
-    nullState.userConfig = null.registeredState->userConfig;
+    nullState.shader = null.registeredState->shader.Expand();
+    nullState.context = null.registeredState->context.Expand();
+    nullState.userConfig = null.registeredState->userConfig.Expand();
     null.prepared->entries = PrepareRegistered(null, device, nullState, true);
     return null;
 }
@@ -2436,7 +2512,7 @@ void Driver::RegisterShader(const Shader* shader) {
     require(!RawGraphicsDrawnIn(reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(code) + fields.shader_size), "a shader was registered over a graphics program that was drawn without registration");
     ShaderSnapshot snapshot{reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(shader), fields.type, {}, {}};
     snapshot.code.resize(fields.shader_size / sizeof(std::uint32_t));
-    std::memcpy(snapshot.code.data(), code, fields.shader_size);
+    std::memcpy(snapshot.code.Mutable().data(), code, fields.shader_size);
     snapshot.header.resize(fields.header_size);
     std::memcpy(snapshot.header.data(), static_cast<const void*>(shader), fields.header_size);
 
@@ -2471,7 +2547,9 @@ void Driver::RegisterShader(const Shader* shader) {
         if (shaders != nullptr) {
             if (const auto found = shaders->find(snapshot.codeAddress); found != shaders->end()) {
                 for (const auto& current : found->second) {
-                    if (current->registeredState == nullptr || current->type != snapshot.type || current->code != snapshot.code || *current->registeredState != *snapshot.registeredState) continue;
+                    if (current->code != snapshot.code) continue;
+                    snapshot.code = current->code;
+                    if (current->registeredState == nullptr || current->type != snapshot.type || *current->registeredState != *snapshot.registeredState) continue;
                     snapshot.registeredState = current->registeredState;
                     break;
                 }
@@ -2479,9 +2557,9 @@ void Driver::RegisterShader(const Shader* shader) {
         }
     }
     QueueState registered{};
-    registered.shader = snapshot.registeredState->shader;
-    registered.context = snapshot.registeredState->context;
-    registered.userConfig = snapshot.registeredState->userConfig;
+    registered.shader = snapshot.registeredState->shader.Expand();
+    registered.context = snapshot.registeredState->context.Expand();
+    registered.userConfig = snapshot.registeredState->userConfig.Expand();
     std::shared_ptr<RegisteredPreparation> preparation;
     if (LazyShaderPreparation()) {
         static_cast<void>(PlanRegistered(snapshot, *localDevice, registered, true, &snapshot.prepared->deferred));
