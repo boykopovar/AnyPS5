@@ -306,6 +306,31 @@ void StagingChunkTests(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void PartialBlockTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t Neighbor = StoreBlock + Threads * sizeof(std::uint32_t);
+    constexpr std::uint32_t Shift = Threads / 2;
+    GuestHeap read(false);
+    GuestHeap written(true);
+    const OutputBlock output;
+    for (std::uint32_t thread = 0; thread * ThreadStride < Block; ++thread) read.Store(thread * ThreadStride, Pattern(thread));
+    written.Store(Neighbor, 0x66u);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    Dispatch(device, read, written, output);
+    CheckStores(written, "partial block, first dispatch");
+    Require(written.Load(Neighbor) == 0x66u, "resident heap mirror: the write-back of a partly GPU-written block changed a guest word the shader never stored to (" + Hex(written.Load(Neighbor)) + ")");
+    written.Store(StoreBlock, 0x99u);
+    written.Store(Neighbor + sizeof(std::uint32_t), 0x55u);
+    Dispatch(device, read, written, output);
+    CheckStores(written, "partial block, after CPU writes into the GPU-written block");
+    Require(written.Load(Neighbor) == 0x66u && written.Load(Neighbor + sizeof(std::uint32_t)) == 0x55u, "resident heap mirror: CPU writes next to GPU stores in one block were lost: " + Hex(written.Load(Neighbor)) + " " + Hex(written.Load(Neighbor + sizeof(std::uint32_t))));
+    Copy(device, written.Address() + StoreBlock + Shift * sizeof(std::uint32_t), output);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        const auto word = thread + Shift;
+        const auto expected = word < Threads ? word * 4u : word == Threads ? 0x66u : word == Threads + 1 ? 0x55u : 0u;
+        Require(output.Data()[thread] == expected, "resident heap mirror: a GPU read of a block holding GPU stores and CPU writes read " + Hex(output.Data()[thread]) + " at word " + std::to_string(word) + ", expected " + Hex(expected));
+    }
+}
+
 struct DeviceHeapFull {
     DeviceHeapFull() { AgcDriver::Graphics::SetDeviceHeapFullForTests(true); }
     ~DeviceHeapFull() { AgcDriver::Graphics::SetDeviceHeapFullForTests(false); }
@@ -597,6 +622,7 @@ int main() {
         if (sparse) {
             ResidentTests(*device);
             StagingChunkTests(*device);
+            PartialBlockTests(*device);
             ReusedAddressTests(*device);
             JoinedImportTests(*device);
         } else {
