@@ -2489,6 +2489,35 @@ void verifySharedPlanBudget() {
     require(reloadedFirst == reloadedSecond && encodedPlan(*reloadedFirst) == encoded, "shared plan budget: the reloaded sources do not share the plan they held before");
 }
 
+void verifyQueuedPlanWrite() {
+    auto fixture = planFixtures().front();
+    fixture.waveSize = 32u;
+    fixture.code.insert(fixture.code.begin(), 0xbf800003u);
+    fixture.codeAddress += 0x40000u;
+    SetResourcePlanBudget(0u);
+    ShaderDiskCache::Flush();
+    const auto filler = GetResourcePlan(planFixtures().front().Request(true));
+    constexpr std::uint32_t fillers = 4096u;
+    const auto writesBefore = ShaderDiskCache::Totals().planWrites;
+    for (std::uint32_t index = 0; index < fillers; ++index) ShaderDiskCache::StorePlan(std::vector<std::byte>(16u, std::byte{0x5a}), filler);
+    static_cast<void>(GetResourcePlan(fixture.Request(true)));
+    const auto beforeTrim = ResourcePlanTotals();
+    SetResourcePlanBudget(1u);
+    const auto trimmed = ShaderDiskCache::Totals();
+    require(trimmed.planWrites < writesBefore + fillers + 1u, "queued plan write: the writer emptied its queue before the trim, so the plan's write was not pending");
+    auto held = GetResourcePlan(fixture.Request(true));
+    require(ShaderDiskCache::Totals().planMisses == trimmed.planMisses && ResourcePlanTotals().reloads == beforeTrim.reloads, "queued plan write: a plan whose disk write was still queued was evicted and missed on its next use");
+    SetResourcePlanBudget(0u);
+    held.reset();
+    ShaderDiskCache::Flush();
+    SetResourcePlanBudget(1u);
+    SetResourcePlanBudget(0u);
+    const auto beforeReload = ShaderDiskCache::Totals();
+    static_cast<void>(GetResourcePlan(fixture.Request(true)));
+    const auto afterReload = ShaderDiskCache::Totals();
+    require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "queued plan write: the plan evicted after its write finished did not reload as a disk cache hit");
+}
+
 void verifyPlanKey() {
     auto fixtures = planFixtures();
     auto& fixture = fixtures[1];
@@ -2786,6 +2815,7 @@ int main(int argc, char** argv) {
         verifySpecializationLiveness();
         verifyPlanBudget();
         verifySharedPlanBudget();
+        verifyQueuedPlanWrite();
         ShaderRecompiler::ShaderDiskCache::Flush();
         removeCacheDirectory(directory);
         std::cout << "shader disk cache tests passed\n";
