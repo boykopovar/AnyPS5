@@ -154,6 +154,30 @@ static void CheckSigsetjmp() {
     SetBlockedMask(0);
 }
 
+static int LongjumpBack(int value, std::uint32_t maskAtSet, std::uint32_t maskAtJump) {
+    std::uint64_t buffer[12]{};
+    volatile int jumped = 0;
+    SetBlockedMask(maskAtSet);
+    const int result = setjmp_nid_postfix(buffer);
+    if (jumped == 0) {
+        Require(result == 0);
+        Require(BufferWord(buffer, 72) == maskAtSet);
+        Require(BufferWord(buffer, 88) == 1);
+        jumped = 1;
+        SetBlockedMask(maskAtJump);
+        longjmp_nid_postfix(buffer, value);
+    }
+    return result;
+}
+
+static void CheckLongjmp() {
+    Require(LongjumpBack(0, 0x5u, 0x30u) == 1);
+    Require(BlockedMask() == 0x5u);
+    Require(LongjumpBack(7, 0x80000009u, 0u) == 7);
+    Require(BlockedMask() == 0x80000009u);
+    SetBlockedMask(0);
+}
+
 static void CheckInvalidHow() {
     SetBlockedMask(0x5u);
     const GuestSignalSet blocked{{0x30u, 0, 0, 0}};
@@ -175,6 +199,7 @@ static void CheckInvalidHow() {
 int main() {
     CheckSigsetjmp();
     CheckSiglongjmp();
+    CheckLongjmp();
     CheckInvalidHow();
     static constexpr int Untouched = 5;
     GuestSignalSet set{{0x12345678u, 0x9abcdef0u, 0xffffffffu, 1u}};

@@ -5,10 +5,14 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <cstdlib>
 #include <cerrno>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
@@ -16,11 +20,10 @@ namespace Cli {
 
 int Autorun(const std::string& absPath, bool toWindows) {
     if (!toWindows) {
-        std::filesystem::permissions(Io::NativePath(absPath),
-            std::filesystem::perms::owner_exec |
-            std::filesystem::perms::group_exec |
-            std::filesystem::perms::others_exec,
-            std::filesystem::perm_options::add);
+        const auto path = Io::NativePath(absPath);
+        constexpr auto executable = std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
+        if ((std::filesystem::status(path).permissions() & executable) != executable)
+            std::filesystem::permissions(path, executable, std::filesystem::perm_options::add);
     }
 
     int rawCode = 0;
@@ -69,8 +72,11 @@ int Autorun(const std::string& absPath, bool toWindows) {
     std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << exitCode << '\n';
 #endif
 
-    std::cout << "\nPress Enter to exit...\n";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    const char* noPause = std::getenv("ANYPS5_AUTORUN_NO_PAUSE");
+    if (!noPause || std::string_view(noPause) != "1") {
+        std::cout << "\nPress Enter to exit...\n";
+        std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
+    }
 
     return exitCode;
 }

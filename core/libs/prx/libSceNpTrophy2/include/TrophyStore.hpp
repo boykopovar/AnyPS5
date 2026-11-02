@@ -67,6 +67,7 @@ public:
     explicit StatStore(std::filesystem::path directory);
 
     void Set(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId, std::uint64_t value);
+    std::uint64_t Raise(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId, std::uint64_t value);
     std::optional<std::uint64_t> Value(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId);
     std::map<std::uint64_t, std::uint64_t> Values(std::int32_t userId, std::uint32_t serviceLabel);
     std::filesystem::path RecordPath(std::int32_t userId, std::uint32_t serviceLabel) const;

@@ -173,6 +173,13 @@ int main() {
     known.tm_year = 9000;
     text[0] = 'x';
     Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    for (const int year : {INT_MAX, INT_MAX - 1899, INT_MIN}) {
+        known.tm_year = year;
+        text[0] = 'x';
+        Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+        text[0] = 'x';
+        Require(asctime_s_nid_postfix(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    }
     known.tm_year = 70;
     known.tm_mday = 32;
     text[0] = 'x';

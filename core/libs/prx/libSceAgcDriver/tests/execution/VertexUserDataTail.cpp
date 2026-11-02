@@ -125,7 +125,7 @@ void ControlStateDraws(std::vector<std::uint32_t> prefix) {
     CheckBranchColors(activeExec, emptyExec, "EXEC");
 }
 
-void VertexTailDraws() {
+void VertexTailDraws(bool cullDistance) {
     std::vector<std::uint32_t> prefix{
         0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
         0x7e060280u, 0x7e0802f2u, 0xbe8c03ffu, 0x3f800000u, 0xbf060c0cu,
@@ -142,8 +142,12 @@ void VertexTailDraws() {
     alignas(256) const std::array<std::uint32_t, 7> clipContinuation{0xbf840005u, 0x7e08020cu, 0xf80000cfu, 0x04030201u, 0xf80008dfu, 0x01010101u, 0xbf810000u};
     const auto clipped = Check(prefix, clipContinuation, 0x00400001u, clipContinuation.size());
     Require(clipped != original && std::count(clipped.begin(), clipped.end(), Kept) > kept, "a clip distance exported by the continuation did not clip the triangle");
-    const auto culled = Check(prefix, clipContinuation, 0x00400100u, clipContinuation.size());
-    Require(culled == original, "a mixed-sign cull distance discarded the triangle");
+    if (cullDistance) {
+        const auto culled = Check(prefix, clipContinuation, 0x00400100u, clipContinuation.size());
+        Require(culled == original, "a mixed-sign cull distance discarded the triangle");
+    } else {
+        std::puts("cull distance draw skipped, the device has no shaderCullDistance");
+    }
     ControlStateDraws(prefix);
 }
 
@@ -151,11 +155,13 @@ void VertexTailDraws() {
 
 int main() {
     try {
+        bool cullDistance = false;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            cullDistance = TargetHasCapability(device->Target(), spv::CapabilityCullDistance);
         }
-        VertexTailDraws();
+        VertexTailDraws(cullDistance);
         AgcDriverShutdown_nid_postfix();
         std::puts("vertex user-data tail tests passed");
         return 0;

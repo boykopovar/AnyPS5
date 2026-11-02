@@ -8,6 +8,7 @@ struct BgftInitParam {
 };
 
 struct BgftProgress;
+struct BgftTaskInfo;
 
 struct BgftStorageTaskParam {
     std::uint32_t value0;
@@ -47,10 +48,10 @@ int APS5_VABI sceBgftServiceDownloadStopTask(int32_t taskId);
 int APS5_VABI sceBgftServiceIntDownloadFindActiveGameAndGameAcTask(const char* contentId, int32_t* taskId);
 int APS5_VABI sceBgftServiceIntDownloadFindActiveTask(const char* contentId, int32_t subType, int32_t* taskId);
 int APS5_VABI sceBgftServiceIntDownloadGetGameAndGameAcProgress(const char* contentId, BgftProgress* progress);
-int APS5_VABI sceBgftServiceIntDownloadGetPatchProgress();
+int APS5_VABI sceBgftServiceIntDownloadGetPatchProgress(const char* contentId, BgftProgress* progress);
 int APS5_VABI sceBgftServiceIntDownloadGetPlayGoProgress(const char* contentId, BgftProgress* progress);
 int APS5_VABI sceBgftServiceIntDownloadGetProgress(int32_t taskId, BgftProgress* progress);
-int APS5_VABI sceBgftServiceIntDownloadGetTaskInfo();
+int APS5_VABI sceBgftServiceIntDownloadGetTaskInfo(int32_t taskId, BgftTaskInfo* taskInfo);
 int APS5_VABI sceBgftServiceIntDownloadPauseTask(int32_t taskId);
 int APS5_VABI sceBgftServiceIntDownloadRegisterTaskByStorageEx(const BgftStorageTaskParam* params, int32_t* taskId);
 int APS5_VABI sceBgftServiceIntDownloadResumeTask(int32_t taskId);

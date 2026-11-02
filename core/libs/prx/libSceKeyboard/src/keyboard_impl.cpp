@@ -175,17 +175,15 @@ int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledStat
     {
         std::lock_guard lock(keyboardMutex);
         if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+        if (keyCode < 4 || keyCode > 231) return KEYBOARD_ERROR_INVALID_ARG;
         if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
     }
     if (charData == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
     if (arrange != KEYBOARD_ARRANGEMENT_101 && arrange != KEYBOARD_ARRANGEMENT_106) return KEYBOARD_ERROR_INVALID_ARG;
-    if (arrange == KEYBOARD_ARRANGEMENT_106 && (ledState & KEYBOARD_LED_KANA) != 0) {
-        NotImplemented_nid_no_patch(__func__);
-        return KEYBOARD_ERROR_INVALID_ARG;
-    }
     *charData = {};
-    charData->char_code = character(arrange == KEYBOARD_ARRANGEMENT_106, ledState, modifierKey, keyCode);
-    charData->processed = charData->char_code != 0;
+    const std::uint16_t converted = character(arrange == KEYBOARD_ARRANGEMENT_106, ledState, modifierKey, keyCode);
+    charData->char_code = converted != 0 ? converted : keyCode;
+    charData->processed = converted != 0;
     charData->length = charData->processed ? 1 : 0;
     return KEYBOARD_OK;
 }

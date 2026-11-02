@@ -134,6 +134,20 @@ void EscapeStrings() {
     Check(output == "\"a\\\"b\\\\c\\u000a\\u00e9\"", "string escaping is not valid JSON");
 }
 
+void Utf8Strings() {
+    std::string output;
+    TraceFormat::AppendString(output, "Ghost of Y\xc5\x8dtei \xe2\x84\xa2 \xf0\x9f\x8e\xae");
+    Check(output == "\"Ghost of Y\xc5\x8dtei \xe2\x84\xa2 \xf0\x9f\x8e\xae\"", "a UTF-8 title was not written as its own characters");
+    output.clear();
+    TraceFormat::AppendString(output, "\xc0\xaf\xed\xa0\x80\xf4\x90\x80\x80\xe2\x84\x7f\xc5");
+    Check(output == "\"\\u00c0\\u00af\\u00ed\\u00a0\\u0080\\u00f4\\u0090\\u0080\\u0080\\u00e2\\u0084\\u007f\\u00c5\"", "a byte outside a valid UTF-8 sequence was not escaped");
+    AgcDriver::TraceSummary summary;
+    summary.title = AgcDriver::TraceTitle{"PPSA26344", "Ghost of Y\xc5\x8dtei", "01.000.000"};
+    const auto origin = Clock::now();
+    const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16)};
+    Check(TraceFormat::Summary(summary, {}, presents).find("\"title\":\"Ghost of Y\xc5\x8dtei\"") != std::string::npos, "the summary line did not keep a UTF-8 title");
+}
+
 void EventsShape() {
     const auto origin = Clock::now();
     const std::vector<TraceThread::Slice> slices{
@@ -499,9 +513,27 @@ void ReplaceGzipFile() {
     try { AgcDriver::TraceFile::ReplaceGzip(path, "{\"third\":3}\n"); } catch (const std::exception&) { writeFailed = true; }
     const auto keptAfterWrite = ReadGzip(path);
 #endif
+#ifdef __linux__
+    bool fullFailed = false;
+    bool fullLeft = false;
+    if (std::filesystem::exists("/dev/full")) {
+        const auto fullPath = directory / "aps5-bench-full.json.gz";
+        auto fullTemporary = fullPath;
+        fullTemporary += ".tmp";
+        std::filesystem::create_symlink("/dev/full", fullTemporary);
+        try { AgcDriver::TraceFile::ReplaceGzip(fullPath, "{\"full\":1}\n"); } catch (const std::exception&) { fullFailed = true; }
+        std::error_code linkError;
+        fullLeft = std::filesystem::symlink_status(fullTemporary, linkError).type() != std::filesystem::file_type::not_found;
+    } else {
+        fullFailed = true;
+    }
+#endif
     std::filesystem::remove_all(directory);
     Check(failed && blockedKept && !temporaryLeft, "a replace that could not move its file over the destination did not fail cleanly or left its temporary file");
     Check(kept == "{\"second\":2}\n", "a failed replace of another file damaged the benchmark file");
+#ifdef __linux__
+    Check(fullFailed && !fullLeft, "a replace whose write failed left its temporary file behind");
+#endif
 #ifndef _WIN32
     Check(writeFailed && keptAfterWrite == "{\"second\":2}\n", "a failed rewrite damaged the previous benchmark file");
 #endif
@@ -576,6 +608,7 @@ int main() {
         FullBufferEvents();
         FoldShortSlices();
         EscapeStrings();
+        Utf8Strings();
         EventsShape();
         BatchIds();
         SummaryFields();

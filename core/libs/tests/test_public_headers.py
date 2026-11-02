@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from functools import cache
 from pathlib import Path
 
@@ -15,6 +16,9 @@ SPEC = importlib.util.spec_from_file_location("nid_names", ROOT / "tools/nid_nam
 NIDS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(NIDS)
 DECLARATION = re.compile(r"(?:\bAPS5_VABI\s+|^[ \t]*[A-Za-z_][\w:*&<> \t]*?[ \t]+)(\w+)\s*\([^;{}]*\)\s*(?:noexcept\s*)?;", re.M)
+DATA_DECLARATION = re.compile(
+    r"^[ \t]*extern\s+(?:const\s+)?[A-Za-z_][\w:<>]*(?:\s+(?:const|volatile))?\s+\**\s*(\w+)\s*(?:\[[^;\]\n]*\])?\s*;", re.M
+)
 INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
 TYPE_TOKEN = re.compile(r"\bnamespace\s*([\w:]*)\s*\{|\bextern\s*\{|\b(?:struct|union|class)\s+(\w+)\s*([;{])|\busing\s+(\w+)\s*=|[{}]")
 
@@ -120,7 +124,7 @@ def audit():
             for name in definitions | aliases:
                 if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")):
                     continue
-                exports.setdefault(name, []).append((source, included))
+                exports.setdefault(name, []).append((source, included, name in definitions))
     declarations = {name: [] for name in exports}
     for source in sorted((ROOT / "core").rglob("*")):
         if source.suffix not in {".cpp", ".h", ".hpp"}:
@@ -133,18 +137,24 @@ def audit():
             prefix = match.group()[:match.start(1) - match.start()]
             if re.search(r"\b(?:return|co_return|throw|else|case)\b|&&|\|\|", prefix):
                 continue
-            declarations[match.group(1)].append((resolved, text.count("\n", 0, match.start()) + 1))
+            declarations[match.group(1)].append((resolved, text.count("\n", 0, match.start()) + 1, "function"))
+        for match in DATA_DECLARATION.finditer(text):
+            if match.group(1) in declarations:
+                declarations[match.group(1)].append((resolved, text.count("\n", 0, match.start()) + 1, "data"))
     errors = []
     headers = set(umbrellas)
     for name, definitions in exports.items():
         found = declarations[name]
         if len(found) != 1 or found[0][0].suffix not in {".h", ".hpp"}:
-            locations = ", ".join(f"{path.relative_to(ROOT)}:{line}" for path, line in found)
+            locations = ", ".join(f"{path.relative_to(ROOT)}:{line}" for path, line, _ in found)
             errors.append(f"{name}: expected exactly one header declaration; found {len(found)}: {locations}")
             continue
-        header = found[0][0]
+        header, _, kind = found[0]
+        if kind != "function" and any(is_function for _, _, is_function in definitions):
+            errors.append(f"{name}: function definition requires a function declaration")
+            continue
         headers.add(header)
-        for source, included in definitions:
+        for source, included, _ in definitions:
             if header not in included:
                 errors.append(f"{name}: {header.relative_to(ROOT)} is not included by {source.parent} library umbrella")
     if errors:
@@ -171,12 +181,30 @@ def compile_headers(compiler, compiler_args, groups, workers=4):
 
     def compile_one(group):
         includes = "".join(f'#include "{header.relative_to(LIBS).as_posix()}"\n' for header in group)
-        result = subprocess.run([compiler, *compiler_args, "-std=c++20", *warnings, "-fsyntax-only", "-x", "c++", f"-I{LIBS}", f"-I{ROOT / '3rdparty/freetype/include'}", "-"], input=includes * 2, text=True, capture_output=True)
-        if result.returncode:
-            raise RuntimeError(f"Header compilation failed: {group}\n{result.stdout}{result.stderr}")
+        with tempfile.TemporaryDirectory() as directory:
+            dependencies = Path(directory) / "headers.d"
+            result = subprocess.run([compiler, *compiler_args, "-std=c++20", *warnings, "-fsyntax-only", "-MD", "-MF", str(dependencies), "-MT", "public_headers", "-x", "c++", f"-I{LIBS}", f"-I{ROOT / '3rdparty/freetype/include'}", "-"], input=includes * 2, text=True, capture_output=True)
+            if result.returncode:
+                raise RuntimeError(f"Header compilation failed: {group}\n{result.stdout}{result.stderr}")
+            text = dependencies.read_text(encoding="utf-8").replace("\\\n", "")
+            if not text.startswith("public_headers:"):
+                raise RuntimeError(f"Invalid compiler dependency output: {dependencies}")
+            names = re.findall(r"(?:\\[ \t]|[^\s])+", text.removeprefix("public_headers:"))
+            paths = [Path(re.sub(r"\\([ \t#\\])", r"\1", name).replace("$$", "$")).resolve() for name in names]
+            forbidden = [path for path in paths if path.is_relative_to((ROOT / "3rdparty").resolve())]
+            if forbidden:
+                raise RuntimeError(f"Public headers depend on 3rdparty: {group}\n" + "\n".join(map(str, forbidden)))
 
+    errors = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        list(pool.map(compile_one, groups))
+        futures = [(group, pool.submit(compile_one, group)) for group in groups]
+        for group, future in futures:
+            try:
+                future.result()
+            except Exception as error:
+                errors.append(f"{group}: {error}")
+    if errors:
+        raise RuntimeError(f"{len(errors)} header compilation units failed:\n\n" + "\n\n".join(errors))
 
 
 def main():

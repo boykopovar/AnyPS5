@@ -6,11 +6,6 @@
 
 extern "C" {
 
-int APS5_VABI __tls_get_addr_nid_postfix(void) {
-    NotImplemented_nid_no_patch("vNe1w4diLCs");
-    return 0;
-}
-
 int APS5_VABI physhm_open_nid_postfix(void) {
     NotImplemented_nid_no_patch("physhm_open");
     return 0;
@@ -129,6 +124,11 @@ int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void) {
 }
 
 int APS5_VABI sceKernelGetProcessAbiType() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceKernelProtectDirectMemoryForPID(int64_t offset, size_t len, int prot, int pid) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

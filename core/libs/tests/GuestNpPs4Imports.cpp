@@ -31,17 +31,6 @@ void Require(bool condition, const char* message) {
     }
 }
 
-template <typename TCall>
-void RequireNotImplemented(TCall call, const std::string& name) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == name + " not implemented", "a declared function threw another error");
-        return;
-    }
-    Require(false, "a declared function returned");
-}
-
 void WriteBigEndian(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint64_t value, std::size_t width) {
     for (std::size_t index = 0; index < width; ++index) bytes[at + index] = static_cast<std::uint8_t>(value >> (8u * (width - 1u - index)));
 }
@@ -84,6 +73,11 @@ void CheckTrophyInfo() {
     game.size = sizeof(game) - 8u;
     Require(sceNpTrophyGetGameInfo(context, handle, &game, nullptr) == TrophyInvalidArgument, "game details of a wrong size accepted");
     game.size = sizeof(game);
+    gameData.size = sizeof(gameData) - 8u;
+    Require(sceNpTrophyGetGameInfo(context, handle, nullptr, &gameData) == TrophyInvalidArgument, "game data of a wrong size accepted");
+    Require(sceNpTrophyGetGameInfo(context, handle, &game, &gameData) == TrophyInvalidArgument, "game data of a wrong size accepted with details");
+    Require(sceNpTrophyGetGameInfo(context, -1, &game, &gameData) == TrophyInvalidArgument, "game data of a wrong size accepted with an invalid handle");
+    gameData.size = sizeof(gameData);
     std::memset(game.title, 'x', sizeof(game.title));
     Require(sceNpTrophyGetGameInfo(context, handle, &game, &gameData) == 0, "game info refused");
     Require(game.numTrophies == 3u && game.numGroups == 0u && game.numPlatinum + game.numGold + game.numSilver + game.numBronze == 0u && game.title[0] == '\0', "game details are not the package's three trophies with unknown grades");
@@ -129,15 +123,10 @@ void CheckMatching2() {
     Require(sceNpMatching2Terminate() == 0, "NpMatching2 did not terminate after the SSL form");
 }
 
-void CheckSignaling() {
-    RequireNotImplemented([] { sceNpSignalingDeactivateConnection(); }, "sceNpSignalingDeactivateConnection");
-}
-
 }
 
 int main() {
     CheckTrophyInfo();
     CheckMatching2();
-    CheckSignaling();
     return 0;
 }

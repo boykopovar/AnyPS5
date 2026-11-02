@@ -103,12 +103,48 @@ private:
 
     [[nodiscard]] std::uint64_t _address(const std::size_t index) const { return _ph.MappedAddress + _matches[index].Offset; }
     [[nodiscard]] std::uint64_t _end(const std::size_t index) const { return _address(index) + _matches[index].Length; }
+    [[nodiscard]] static std::int64_t _distance(const std::uint64_t to, const std::uint64_t from) { return static_cast<std::int64_t>(to - from); }
     [[nodiscard]] std::span<const std::uint8_t> _bytes(const std::size_t index) const { return {_seg.data() + _matches[index].Offset, _matches[index].Length}; }
     [[nodiscard]] DecodedInstructionInfo _info(const std::size_t index) const { return _decoder.DecodeInstruction(_seg.data() + _matches[index].Offset, _matches[index].Length); }
 
     [[nodiscard]] bool _entered(const std::uint64_t start, const std::uint64_t end) const {
         const auto hit = _branchTargets.upper_bound(start);
         return hit != _branchTargets.end() && *hit < end;
+    }
+
+    [[nodiscard]] bool _int3(const std::size_t index) const {
+        const auto bytes = _bytes(index);
+        return bytes.size() == 1 && bytes[0] == X64OpcodeConstants::OneByteInt3;
+    }
+
+    [[nodiscard]] bool _padding(const std::size_t index) const {
+        const auto info = _info(index);
+        if (info.IsTwoByteOpcode)
+            return info.Opcode == X64OpcodeConstants::TwoByteNopModRm;
+        if (info.Opcode != X64OpcodeConstants::OneByteNop)
+            return _int3(index);
+        const auto prefixes = _bytes(index).first(info.OpcodeOffset);
+        return (info.RexPrefix & X64OpcodeConstants::RexBBit) == 0 && std::find(prefixes.begin(), prefixes.end(), X64OpcodeConstants::PrefixRep) == prefixes.end();
+    }
+
+    [[nodiscard]] bool _mayBeEntered(const std::size_t index) const {
+        for (auto previous = index; previous > 0; --previous) {
+            if (_end(previous - 1) != _address(previous) || _blocksFollowing(previous - 1))
+                return true;
+            if (!_padding(previous - 1))
+                return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool _enteredWithin(const std::size_t first, const std::size_t last) const {
+        if (_entered(_address(first), _end(last)))
+            return true;
+        for (auto index = first + 1; index <= last; ++index) {
+            if (!_int3(index) && _mayBeEntered(index))
+                return true;
+        }
+        return false;
     }
 
     [[nodiscard]] bool _blocksFollowing(const std::size_t index) const {
@@ -134,7 +170,7 @@ private:
     }
 
     [[nodiscard]] std::optional<Placement> _relocate(const std::size_t index, const std::size_t first, const std::size_t last, const bool allowInPlace = false) const {
-        if (_entered(_address(first), _end(last)))
+        if (_enteredWithin(first, last))
             return std::nullopt;
         StubBodyBuilder body;
         Placement placement;
@@ -161,12 +197,12 @@ private:
         using Amd64OnlySubstitutionTable::kJmpRel32;
         std::size_t head = 0;
         for (auto last = start; last < _matches.size(); ++last) {
-            if (!_movable(last, true) || _entered(_address(start), _end(last)))
+            if (!_movable(last, true) || _enteredWithin(start, last))
                 return std::nullopt;
             if (head == 0 && _end(last) - _address(start) >= kJmpRel32.Size)
                 head = static_cast<std::size_t>(_end(last) - _address(start));
             const auto island = _address(start) + head;
-            const auto reach = static_cast<std::int64_t>(island) - static_cast<std::int64_t>(_address(index) + kShortJumpSize);
+            const auto reach = _distance(island, _address(index) + kShortJumpSize);
             if (head != 0 && (reach < std::numeric_limits<std::int8_t>::min() || reach > std::numeric_limits<std::int8_t>::max()))
                 return std::nullopt;
             if (head != 0 && _end(last) >= island + kJmpRel32.Size) {
@@ -200,9 +236,9 @@ private:
         placement.Sites.push_back(_site(windowStart, head, moved.Finish()));
 
         StubBodyBuilder lowered;
-        lowered.Seek(static_cast<std::int64_t>(store) - static_cast<std::int64_t>(island));
+        lowered.Seek(_distance(store, island));
         _matcher.EmitOutOfLine(lowered, _bytes(index));
-        lowered.JumpTo(static_cast<std::int64_t>(_end(index)) - static_cast<std::int64_t>(island));
+        lowered.JumpTo(_distance(_end(index), island));
         placement.Sites.push_back(_site(island, kJmpRel32.Size, lowered.Finish()));
         placement.ReplacementLength = placement.Sites.back().Body.size();
         placement.Claimed.push_back(index);
@@ -210,7 +246,7 @@ private:
         const auto offset = _matches[index].Offset;
         std::fill_n(_seg.begin() + static_cast<std::ptrdiff_t>(offset), _matches[index].Length, Amd64OnlySubstitutionTable::kTrapFill);
         _seg[offset] = X64OpcodeConstants::OneByteJmpRel8;
-        _seg[offset + 1] = static_cast<std::uint8_t>(static_cast<std::int8_t>(static_cast<std::int64_t>(island) - static_cast<std::int64_t>(store + kShortJumpSize)));
+        _seg[offset + 1] = static_cast<std::uint8_t>(static_cast<std::int8_t>(_distance(island, store + kShortJumpSize)));
         return placement;
     }
 };
@@ -277,15 +313,17 @@ std::set<std::uint64_t> Amd64OnlyConverter::_collectBranchTargets(
     std::set<std::uint64_t> targets;
     for (const auto& match : matches) {
         const auto info = decoder.DecodeInstruction(seg.data() + match.Offset, match.Length);
-        const auto next = static_cast<std::int64_t>(ph.MappedAddress + match.Offset + info.Length);
+        const auto next = ph.MappedAddress + match.Offset + info.Length;
         if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
-            const auto target = next + info.BranchDisp;
-            if (target >= 0 && !pastPrefixes(static_cast<std::uint64_t>(target)))
-                targets.insert(static_cast<std::uint64_t>(target));
+            const auto displacement = static_cast<std::uint64_t>(info.BranchDisp);
+            const auto target = next + displacement;
+            const auto wrapped = info.BranchDisp < 0 ? target > next : target < next;
+            if (!wrapped && !pastPrefixes(target))
+                targets.insert(target);
         } else if (info.HasRipRelativeDisp && info.Opcode == kLea) {
             std::int32_t displacement;
             std::memcpy(&displacement, seg.data() + match.Offset + info.RipRelativeDispOffset, sizeof(displacement));
-            const auto table = static_cast<std::uint64_t>(next + displacement);
+            const auto table = next + static_cast<std::uint64_t>(displacement);
             for (const auto& data : segments) {
                 if (data.Type != kLoadSegment || table < data.MappedAddress || table - data.MappedAddress >= data.FileSize)
                     continue;

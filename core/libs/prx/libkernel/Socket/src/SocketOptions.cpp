@@ -14,6 +14,7 @@
 #endif
 #include "prx/libkernel/Socket/include/SocketError.hpp"
 #include "prx/libkernel/Socket/include/SocketOptions.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -28,6 +29,7 @@ constexpr int GuestDontRoute = 0x10;
 constexpr int GuestBroadcast = 0x20;
 constexpr int GuestLinger = 0x80;
 constexpr int GuestOobInline = 0x100;
+constexpr int GuestAcceptFilter = 0x1000;
 constexpr int GuestNoSigpipe = 0x800;
 constexpr int GuestSendBuffer = 0x1001;
 constexpr int GuestReceiveBuffer = 0x1002;
@@ -49,6 +51,9 @@ constexpr int GuestTcpMaximumSegment = 2;
 constexpr int GuestTcpKeepIdle = 0x100;
 constexpr int GuestTcpKeepInterval = 0x200;
 constexpr int GuestTcpKeepCount = 0x400;
+constexpr int GuestTcpNoPush = 4;
+constexpr int GuestTcpNoOptions = 8;
+constexpr int GuestTcpOption80 = 0x80;
 constexpr int MinimumSegment = 216;
 constexpr unsigned int TicksPerSecond = 1000;
 constexpr unsigned int DefaultKeepIdle = 7200;
@@ -62,11 +67,15 @@ constexpr int GuestIpMulticastLoop = 11;
 constexpr int GuestIpMulticastInterface = 9;
 constexpr int GuestIpAddMembership = 12;
 constexpr int GuestIpDropMembership = 13;
+constexpr int GuestIpReceiveDestination = 7;
+constexpr int GuestIpReceiveInterface = 20;
+constexpr int GuestIpReceiveTimeToLive = 65;
 constexpr std::uint32_t MulticastRequestWithIndex = 12;
 constexpr int ErrorNotSupported = 45;
 constexpr int ErrorAddressInUse = 48;
 constexpr int ErrorAddressNotAvailable = 49;
 
+constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
 constexpr int ErrorNoProtocolOption = 42;
@@ -130,10 +139,32 @@ void EnsureBuffers(SocketOptionState& state, int family, int type) {
     state.receiveLowWater = 1;
 }
 
+int TcpFlagBit(int option) {
+    switch (option) {
+        case GuestTcpNoPush: return 0x1000;
+        case GuestTcpNoOptions: return 0x8;
+        case GuestTcpOption80: return 0x10000;
+        default: return 0;
+    }
+}
+
+int IpReceiveBit(int option) {
+    switch (option) {
+        case GuestIpReceiveDestination: return 1;
+        case GuestIpReceiveInterface: return 2;
+        case GuestIpReceiveTimeToLive: return 4;
+        default: return 0;
+    }
+}
+
+int ReadValue(void* destination, const void* source, std::size_t bytes) {
+    return GuestCopyIn_nid_no_patch(destination, source, bytes) ? 0 : ErrorFault;
+}
+
 int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t size) {
     const std::uint32_t count = output ? std::min(*length, size) : 0;
-    if (count != 0) std::memcpy(output, value, count);
-    *length = count;
+    if (count != 0 && !GuestCopyOut_nid_no_patch(output, value, count)) return ErrorFault;
+    if (!GuestCopyOut_nid_no_patch(length, &count, sizeof(count))) return ErrorFault;
     return 0;
 }
 
@@ -141,10 +172,16 @@ int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t s
 
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length) {
     const auto handle = static_cast<NativeHandle>(native);
+    if (option == GuestAcceptFilter) {
+        bool listening = false;
+        if (type != 2 && !NativeListening(native, listening)) return HostError();
+        if (!listening) return ErrorInvalid;
+        NotImplemented_nid_no_patch("setsockopt: SO_ACCEPTFILTER on a listening socket");
+    }
     if (option == GuestLinger) {
         if (length < sizeof(GuestLingerValue)) return ErrorInvalid;
         GuestLingerValue guest;
-        std::memcpy(&guest, value, sizeof(guest));
+        if (const int fault = ReadValue(&guest, value, sizeof(guest))) return fault;
         if (guest.seconds < 0 || guest.seconds > MaximumLinger) return ErrorDomain;
 #ifdef _WIN32
         linger request{};
@@ -161,7 +198,7 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     if (option == GuestSendTimeout || option == GuestReceiveTimeout) {
         if (length < sizeof(GuestTimeval)) return ErrorInvalid;
         GuestTimeval time;
-        std::memcpy(&time, value, sizeof(time));
+        if (const int fault = ReadValue(&time, value, sizeof(time))) return fault;
         if (time.seconds < 0 || time.microseconds < 0 || time.microseconds >= 1000000) return ErrorDomain;
         (option == GuestSendTimeout ? state.sendTimeout : state.receiveTimeout) = TimeoutOf(time);
         return 0;
@@ -169,7 +206,7 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     if (option == GuestNoSigpipe || option == GuestNonBlocking) {
         if (length < sizeof(int)) return ErrorInvalid;
         int number;
-        std::memcpy(&number, value, sizeof(number));
+        if (const int fault = ReadValue(&number, value, sizeof(number))) return fault;
         if (option == GuestNoSigpipe) {
             state.noSignal = number != 0;
             return 0;
@@ -190,7 +227,7 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     if (native_boolean || buffer || lowWater) {
         if (length < sizeof(int)) return ErrorInvalid;
         int number;
-        std::memcpy(&number, value, sizeof(number));
+        if (const int fault = ReadValue(&number, value, sizeof(number))) return fault;
         if (buffer || lowWater) {
             if (number < 1) return ErrorInvalid;
             EnsureBuffers(state, family, type);
@@ -215,7 +252,7 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     if ((option & (KeptFlags | WriteOnlyFlags)) != 0 && (option & (option - 1)) == 0) {
         if (length < sizeof(int)) return ErrorInvalid;
         int number;
-        std::memcpy(&number, value, sizeof(number));
+        if (const int fault = ReadValue(&number, value, sizeof(number))) return fault;
         if ((option & KeptFlags) == 0) return 0;
         const int flags = number != 0 ? state.keptFlags | option : state.keptFlags & ~option;
         if (option == GuestReuseAddress || option == GuestReusePort) {
@@ -250,6 +287,12 @@ bool NativeListening(std::uintptr_t native, bool& listening) {
 
 int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, void* value, std::uint32_t* length) {
     const auto handle = static_cast<NativeHandle>(native);
+    if (option == GuestAcceptFilter) {
+        bool listening = false;
+        if (type != 2 && !NativeListening(native, listening)) return HostError();
+        if (!listening) return ErrorInvalid;
+        NotImplemented_nid_no_patch("getsockopt: SO_ACCEPTFILTER on a listening socket");
+    }
     if (option == GuestLinger) {
         linger current{};
         socklen_t size = sizeof(current);
@@ -298,18 +341,28 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     return Copy(value, length, &number, sizeof(number));
 }
 
+bool HasPeer(std::uintptr_t native) {
+    sockaddr_storage peer{};
+    socklen_t size = sizeof(peer);
+    return ::getpeername(static_cast<NativeHandle>(native), reinterpret_cast<sockaddr*>(&peer), &size) == 0;
+}
+
 int SetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp, int option, const void* value, std::uint32_t length) {
     if (!tcp) return ErrorInvalid;
     if (option != GuestTcpNoDelay && option != GuestTcpMaximumSegment && option != GuestTcpKeepIdle && option != GuestTcpKeepInterval &&
-        option != GuestTcpKeepCount)
+        option != GuestTcpKeepCount && TcpFlagBit(option) == 0)
         return ErrorNoProtocolOption;
     if (length < sizeof(int)) return ErrorInvalid;
     int number;
-    std::memcpy(&number, value, sizeof(number));
+    if (const int fault = ReadValue(&number, value, sizeof(number))) return fault;
+    if (const int bit = TcpFlagBit(option); bit != 0) {
+        state.tcpFlags = number != 0 ? state.tcpFlags | bit : state.tcpFlags & ~bit;
+        return 0;
+    }
     const auto unsignedNumber = static_cast<unsigned int>(number);
     if (option == GuestTcpMaximumSegment) {
-        if (number <= 0 || number > state.tcpMaximumSegment || number + 40 < MinimumSegment) return ErrorInvalid;
-        state.tcpMaximumSegment = number;
+        if (!HasPeer(native) || number <= 0 || number > state.tcpMaximumSegment || number + 40 < MinimumSegment) return ErrorInvalid;
+        state.tcpMaximumSegment = std::max(number, MinimumSegment);
         return 0;
     }
     if (option == GuestTcpKeepCount) {
@@ -335,6 +388,10 @@ int GetTcpLevelOption(std::uintptr_t native, SocketOptionState& state, bool tcp,
             : (state.tcpKeepCount != 0 ? state.tcpKeepCount : DefaultKeepCount);
         return Copy(value, length, &number, sizeof(number));
     }
+    if (const int bit = TcpFlagBit(option); bit != 0) {
+        const int number = state.tcpFlags & bit;
+        return Copy(value, length, &number, sizeof(number));
+    }
     if (option != GuestTcpNoDelay) return ErrorNoProtocolOption;
     int enabled = 0;
     socklen_t size = sizeof(enabled);
@@ -355,7 +412,7 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
     if (option == GuestIpAddMembership || option == GuestIpDropMembership) {
         if (length < sizeof(ip_mreq)) return ErrorInvalid;
         ip_mreq request{};
-        std::memcpy(&request, value, sizeof(request));
+        if (const int fault = ReadValue(&request, value, sizeof(request))) return fault;
         const auto* group = reinterpret_cast<const unsigned char*>(&request.imr_multiaddr);
         if ((group[0] & 0xf0) != 0xe0) return ErrorInvalid;
         std::uint32_t groupBits;
@@ -383,23 +440,31 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
         if (length < sizeof(in_addr)) return ErrorInvalid;
         in_addr address{};
         if (length == MulticastRequestWithIndex) {
+            unsigned char request[MulticastRequestWithIndex];
+            if (const int fault = ReadValue(request, value, sizeof(request))) return fault;
             std::int32_t index;
-            std::memcpy(&index, static_cast<const unsigned char*>(value) + 8, sizeof(index));
+            std::memcpy(&index, request + 8, sizeof(index));
             if (index != 0) throw std::runtime_error("IP_MULTICAST_IF: an interface index is not supported");
-            const auto* addresses = static_cast<const unsigned char*>(value);
-            if (std::any_of(addresses, addresses + 8, [](unsigned char byte) { return byte != 0; }))
+            if (std::any_of(request, request + 8, [](unsigned char byte) { return byte != 0; }))
                 throw std::runtime_error("IP_MULTICAST_IF: an ip_mreqn with a non-zero address is not supported");
         } else {
-            std::memcpy(&address, value, sizeof(address));
+            if (const int fault = ReadValue(&address, value, sizeof(address))) return fault;
         }
         if (::setsockopt(handle, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<NativeOptionValue>(&address), sizeof(address))) return HostError();
         std::memcpy(&state.multicastInterface, &address, sizeof(address));
         return 0;
     }
+    if (const int bit = IpReceiveBit(option); bit != 0) {
+        if (length < sizeof(int)) return ErrorInvalid;
+        int number;
+        if (const int fault = ReadValue(&number, value, sizeof(number))) return fault;
+        state.ipReceiveOptions = number != 0 ? state.ipReceiveOptions | bit : state.ipReceiveOptions & ~bit;
+        return 0;
+    }
     if (option == GuestIpTimeToLive || option == GuestIpTypeOfService) {
         if (length < sizeof(int)) return ErrorInvalid;
         int number;
-        std::memcpy(&number, value, sizeof(number));
+        if (const int fault = ReadValue(&number, value, sizeof(number))) return fault;
         const int stored = number & 0xff;
         if (option == GuestIpTypeOfService) {
             state.ipTypeOfService = stored;
@@ -413,11 +478,11 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
         unsigned int number;
         if (length == 1) {
             unsigned char byte;
-            std::memcpy(&byte, value, 1);
+            if (const int fault = ReadValue(&byte, value, 1)) return fault;
             number = byte;
         } else {
             if (length < sizeof(number)) return ErrorInvalid;
-            std::memcpy(&number, value, sizeof(number));
+            if (const int fault = ReadValue(&number, value, sizeof(number))) return fault;
             if (option == GuestIpMulticastTimeToLive && number > 255) return ErrorInvalid;
         }
         const int host = option == GuestIpMulticastLoop ? ((number & 0xff) != 0 ? 1 : 0) : static_cast<int>(number);
@@ -438,7 +503,8 @@ int GetIpLevelOption(SocketOptionState& state, bool ipv4, bool datagram, int opt
         return Copy(value, length, &state.multicastInterface, sizeof(state.multicastInterface));
     }
     int number;
-    if (option == GuestIpTimeToLive) number = state.ipTimeToLive;
+    if (const int bit = IpReceiveBit(option); bit != 0) number = (state.ipReceiveOptions & bit) != 0 ? 1 : 0;
+    else if (option == GuestIpTimeToLive) number = state.ipTimeToLive;
     else if (option == GuestIpTypeOfService) number = state.ipTypeOfService;
     else if (option == GuestIpMulticastTimeToLive) number = state.multicastTimeToLive;
     else if (option == GuestIpMulticastLoop) number = state.multicastLoop ? 1 : 0;
@@ -455,7 +521,7 @@ int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void*
     if (option != GuestIpv6Only) return ErrorNoProtocolOption;
     if (length != sizeof(int)) return ErrorInvalid;
     int number;
-    std::memcpy(&number, value, sizeof(number));
+    if (const int fault = ReadValue(&number, value, sizeof(number))) return fault;
     const int enabled = number != 0 ? 1 : 0;
     if (::setsockopt(static_cast<NativeHandle>(native), IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<NativeOptionValue>(&enabled), sizeof(enabled))) return HostError();
     return 0;
@@ -471,4 +537,12 @@ int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value
     return Copy(value, length, &number, sizeof(number));
 }
 
+}
+
+extern "C" int GuestSocketSetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, const void* value, std::uint32_t length) {
+    return GuestSockets::SetIpv6LevelOption(native, ipv6, option, value, length);
+}
+
+extern "C" int GuestSocketGetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length) {
+    return GuestSockets::GetIpv6LevelOption(native, ipv6, option, value, length);
 }

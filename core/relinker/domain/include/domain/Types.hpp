@@ -69,6 +69,7 @@ struct NidReference {
     std::int64_t Addend;
     bool Weak = false;
     bool Function = false;
+    std::uint8_t SymbolType = 0;
 };
 
 struct CallSiteInfo {

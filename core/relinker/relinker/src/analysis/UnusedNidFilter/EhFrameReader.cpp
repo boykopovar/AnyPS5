@@ -35,10 +35,12 @@ public:
             if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize)
                 throw RelinkerException("Strict filter: EH frame header exceeds segment", position);
             if (count > segment.FileSize / 2) throw RelinkerException("Strict filter: invalid EH frame count", position);
+            std::set<std::pair<VirtualAddress, VirtualAddress>> listed;
             for (std::uint64_t index = 0; index < count; ++index) {
                 const auto begin = encoded(position, tableEncoding, segment.MappedAddress);
                 const auto fde = encoded(position, tableEncoding, segment.MappedAddress);
                 if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize) throw RelinkerException("Strict filter: EH frame table exceeds segment", position);
+                if (!listed.emplace(begin, fde).second) continue;
                 auto region = readFde(begin, fde);
                 if (region.End != region.Begin) result.push_back(std::move(region));
             }
@@ -139,6 +141,9 @@ private:
             if ((encoding & 0x08) != 0) {
                 const bool negative = (value >> 63) != 0;
                 if (negative ? base < std::uint64_t{0} - value : value > std::numeric_limits<VirtualAddress>::max() - base)
+                    throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
+            } else if ((encoding & 0x0F) == 2 || (encoding & 0x0F) == 3 || ((encoding & 0x0F) == 4 && (encoding & 0x70) == 0x40)) {
+                if (value > std::numeric_limits<VirtualAddress>::max() - base)
                     throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
             }
             value = base + value;

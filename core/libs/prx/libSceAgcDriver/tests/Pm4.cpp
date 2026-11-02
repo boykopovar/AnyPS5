@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -13,6 +14,7 @@
 #include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -83,6 +85,7 @@ void testCatalog() {
         if (!reason.empty()) expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, std::string(reason).c_str());
     }
     check(values.size() == 56, "reference opcode catalog is incomplete");
+    check(AgcDriver::Pm4::Name(makePacket(0x3a, {0})[0]) == "DRAW_INDEX_MULTI_INST", "opcode 0x3a is not DRAW_INDEX_MULTI_INST");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0xff, {0}), 0); }, "not known");
     check(AgcDriver::Pm4::KnownName(makePacket(0xff, {0})[0]).empty() && AgcDriver::Pm4::Name(makePacket(0xff, {0})[0]) == "UNKNOWN_0xff", "an unknown opcode is named");
     const std::array<std::pair<std::uint32_t, const char*>, 11> custom{{
@@ -106,6 +109,19 @@ void testNopPad() {
     largest[0] = 0xfffe1000u;
     check(AgcDriver::Pm4::PacketWords(largest[0]) == largest.size(), "the largest counted NOP is not sized by its count");
     AgcDriver::Pm4::Validate(largest, 0);
+}
+
+void testWorkloadNopPayloadsIgnored() {
+    AgcDriver::QueueState state;
+    for (const auto& packet : {
+        makePacket(0x10, {1, 0x18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}),
+        makePacket(0x10, {1, 33, 0xffffffffu, 0xfffffffdu, 0, 0, 0, 0, 0, 0, 0}),
+        makePacket(0x10, {1, 0, 0, 0, 0, 0, 0, 0}),
+    }) execute(state, packet);
+    check(state.markers.empty() && state.indexBase == 0 && !state.indexBufferSize && state.indexType == 0 &&
+        state.instanceCount == 1 && state.predication.operation == 0 && state.predication.address == 0 &&
+        state.shader.begin() == state.shader.end() && !state.savedContext && state.constantRam.empty(),
+        "a workload NOP payload reached queue state");
 }
 
 void testRegisters() {
@@ -188,6 +204,7 @@ void testRegisterFile() {
 
 void testContextAndBases() {
     AgcDriver::QueueState state;
+    check(state.context.at(0x1b6) == 0, "the starting context changed SPI_PS_IN_CONTROL");
     check(state.context.contains(0x280) && state.context.at(0x280) == 0x00080008u && state.context.contains(0x281) && state.context.at(0x281) == 0xffff0000u, "initial point context differs from the SDK defaults");
     execute(state, makePacket(0x69, {0x280, 0x00180018u, 0x00400008u}));
     check(state.context.at(0x280) == 0x00180018u && state.context.at(0x281) == 0x00400008u, "explicit point size and limits were not stored");
@@ -195,10 +212,11 @@ void testContextAndBases() {
     execute(state, makePacket(0x12, {0}));
     for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore depth and stencil defaults");
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "CLEAR_STATE did not restore point size and limits");
+    check(state.context.at(0x1b6) == 2u, "CLEAR_STATE did not leave SPI_PS_IN_CONTROL at its clear-state NUM_INTERP of 2");
     execute(state, makePacket(0x69, {0x10, 17}));
     execute(state, makePacket(0x76, {0x20c, 2}));
     execute(state, makePacket(0x10, {3, 0}, 0x68));
-    check(state.context == AgcDriver::InitialContextRegisters() && state.shader.at(0x20c) == 2, "push-clear reset wrong state");
+    check(state.context == AgcDriver::ClearStateContextRegisters() && state.context.at(0x1b6) == 2u && state.shader.at(0x20c) == 2, "push-clear reset wrong state");
     expectFailure([&] { execute(state, makePacket(0x10, {1, 0}, 0x68)); }, "already pushed");
     execute(state, makePacket(0x69, {0x10, 19}));
     execute(state, makePacket(0x69, {0x280, 0x00100010u, 0x00800010u}));
@@ -620,7 +638,10 @@ void testCopies() {
     std::size_t flexibleBefore = 0;
     check(sceKernelAvailableFlexibleMemorySize(&flexibleBefore) == 0, "cannot query flexible memory");
     const auto toGds = makePacket(0x50, {0x60100000 | cachePolicies, low(source.data()), high(source.data()), 0x100, 0, 16});
-    check(!AgcDriver::Pm4::ResolveStore(toGds, state, 64).has_value(), "DMA_DATA to GDS resolved as a memory store");
+    const auto gdsStore = AgcDriver::Pm4::ResolveStore(toGds, state, 64);
+    check(gdsStore.has_value() && gdsStore->address == AgcDriver::Pm4::GdsAddress() + 0x100 && gdsStore->Bytes().size() == 16 && std::memcmp(gdsStore->Bytes().data(), source.data(), 16) == 0, "DMA_DATA to GDS did not resolve as a store at its GDS offset");
+    const auto gdsFill = AgcDriver::Pm4::ResolveStore(makePacket(0x50, {0x40100000, 0x5eed1234, 0, 0x200, 0, 8}), state, 64);
+    check(gdsFill.has_value() && gdsFill->address == AgcDriver::Pm4::GdsAddress() + 0x200 && gdsFill->Bytes().size() == 8 && gdsFill->Bytes()[0] == std::byte{0x34} && gdsFill->Bytes()[7] == std::byte{0x5e}, "an immediate DMA_DATA fill of GDS did not resolve as a store at its GDS offset");
     execute(state, toGds);
     std::size_t flexibleAfter = 0;
     check(sceKernelAvailableFlexibleMemorySize(&flexibleAfter) == 0 && flexibleAfter == flexibleBefore, "the GDS was charged to the flexible memory budget");
@@ -672,6 +693,53 @@ void testTraceRegisterWrites() {
     for (const auto& invalid : {makePacket(0x37, {0x06000000u, 0xc347u, 0u, 1u, 2u}), makePacket(0x37, {0x06010000u, 0xc348u, 0u, 1u}), makePacket(0x37, {0x06010000u, 0xc343u, 1u, 1u})}) {
         expectFailure([&] { execute(state, invalid); }, "register destination outside");
     }
+}
+
+void testTagMarkers() {
+    for (const auto flags : {0u, 1u, 4u}) {
+        const auto tag = makePacket(0x79, {0x342u, 0xc6000005u}, flags);
+        check(AgcDriver::Pm4::IsTagMarker(tag), "a tag write to 0x342 was not a tag marker");
+        AgcDriver::Pm4::Validate(tag, 0x20u);
+        AgcDriver::QueueState state;
+        execute(state, tag);
+        check(!state.userConfig.contains(0x342u), "a tag marker wrote register state");
+    }
+    check(!AgcDriver::Pm4::IsTagMarker(makePacket(0x79, {0x343u, 0xc6000005u}, 4)), "a write to another register was a tag marker");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x79, {0x343u, 0xc6000005u}), 0x20u); }, "graphics packet in compute queue");
+}
+
+void testUserDataWriters() {
+    constexpr std::uint32_t untouched = 0xa5a5a5a5u;
+    const std::uint8_t bytes[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    std::uint32_t commands[16];
+    const auto run = [&](std::uint32_t written, std::initializer_list<std::uint32_t> expected, const char* reason) {
+        check(written == expected.size() && std::equal(expected.begin(), expected.end(), commands) && commands[written] == untouched, reason);
+        AgcDriver::QueueState state;
+        for (std::uint32_t offset = 0; offset < written;) {
+            const auto length = ((commands[offset] >> 16u) & 0x3fffu) + 2u;
+            execute(state, std::vector<std::uint32_t>(commands + offset, commands + offset + length));
+            offset += length;
+        }
+        if (written > 4) check(state.userConfig.at(0x343u) == commands[written - 1], "user data payload did not reach the last user data register");
+    };
+    std::fill(std::begin(commands), std::end(commands), untouched);
+    run(sceAgcDriverUserDataWritePopMarker(commands, 0), {0xc0017904u, 0x342u, 0xc2000000u}, "draw queue pop marker");
+    run(sceAgcDriverUserDataWritePopMarker(commands, 1), {0xc0017900u, 0x342u, 0xc2000000u}, "compute queue pop marker");
+    run(sceAgcDriverUserDataWritePacket(commands, 1, 0x12345678u, bytes, 0), {0xc0017900u, 0x342u, 0x12345678u}, "user data packet without bytes");
+    run(sceAgcDriverUserDataWritePacket(commands, 1, 0x12345678u, nullptr, 9), {0xc0017900u, 0x342u, 0x12345678u}, "user data packet without a source");
+    run(sceAgcDriverUserDataWritePacket(commands, 1, 0x12345678u, bytes, 2), {0xc0027900u, 0x342u, 0x12345678u, 0x00000201u}, "user data packet with an inline dword");
+    std::fill(std::begin(commands), std::end(commands), untouched);
+    run(sceAgcDriverUserDataWritePacket(commands, 1, 0x12345678u, bytes, 9),
+        {0xc0027900u, 0x342u, 0x12345678u, 0x04030201u, 0xc0043700u, 0x06010000u, 0xc343u, 0u, 0x08070605u, 0x00000009u}, "user data packet with a payload");
+    std::fill(std::begin(commands), std::end(commands), untouched);
+    run(sceAgcDriverUserDataWritePushMarker(commands, 0, "frame", 6, 0x11223344u),
+        {0xc0027904u, 0x342u, 0xc1011882u, 0x6d617266u, 0xc0033704u, 0x06010000u, 0xc343u, 0u, 0x00000065u}, "push marker");
+    std::fill(std::begin(commands), std::end(commands), untouched);
+    run(sceAgcDriverUserDataWriteSetMarker(commands, 1, "frame", 6, 0xffffffffu),
+        {0xc0027900u, 0x342u, 0xc0017fffu, 0x6d617266u, 0xc0033700u, 0x06010000u, 0xc343u, 0u, 0x00000065u}, "set marker");
+    std::uint32_t target = 0;
+    AgcDriver::QueueState state;
+    expectFailure([&] { execute(state, makePacket(0x37, {0x500u, low(&target), high(&target), 1u}, 4u)); }, "header flags 0x4");
 }
 
 void testMemoryCopyDecode() {
@@ -821,6 +889,35 @@ void testWriteChangedStoresExactlyTheChangedRuns() {
     for (std::size_t i = 0; i < sizeof(guest); ++i) {
         const auto expected = current[i] != original[i] ? static_cast<std::uint8_t>(current[i]) : static_cast<std::uint8_t>(0xa0u ^ i);
         check(guest[i] == expected, "write-back stored a byte the GPU did not change or missed one it did");
+    }
+}
+
+void testWriteChangedChunksOfEveryDensity() {
+    alignas(64) static std::uint8_t guest[128];
+    constexpr std::size_t Tail = 5;
+    std::vector<std::byte> original(96 + Tail), current(96 + Tail);
+    for (std::size_t i = 0; i < original.size(); ++i) original[i] = current[i] = static_cast<std::byte>(i);
+    const std::array<std::uint32_t, 6> masks = {0x0421u, 0x8421u, 0x8423u, 0xfb7bu, 0x5ad7u, 0xffffu};
+    for (std::size_t chunk = 0; chunk < masks.size(); ++chunk) {
+        for (std::size_t bit = 0; bit < 16; ++bit) {
+            if ((masks[chunk] >> bit) & 1u) current[chunk * 16 + bit] ^= std::byte{0xff};
+        }
+    }
+    current[96] ^= std::byte{0xff};
+    current[99] ^= std::byte{0xff};
+    const auto limit = AgcDriver::GuestMemory::ChangedByteStoreLimit();
+    check(limit == 4u || limit == 16u, "the byte-store limit is neither the masked-store cut-off nor every density");
+    for (const std::size_t offset : {std::size_t{0}, std::size_t{1}}) {
+        const auto size = offset == 0 ? std::size_t{96} : current.size();
+        for (const auto byteStoreLimit : {0u, 4u, 16u, limit}) {
+            for (std::size_t i = 0; i < sizeof(guest); ++i) guest[i] = static_cast<std::uint8_t>(0xa0u ^ i);
+            AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest + offset), std::span(current).first(size), std::span(original).first(size), byteStoreLimit);
+            for (std::size_t i = 0; i < sizeof(guest); ++i) {
+                const bool inside = i >= offset && i - offset < size;
+                const auto expected = inside && current[i - offset] != original[i - offset] ? static_cast<std::uint8_t>(current[i - offset]) : static_cast<std::uint8_t>(0xa0u ^ i);
+                check(guest[i] == expected, "write-back of chunks with 3, 4, 5, 13, 10 and 16 changed bytes, aligned or one byte off with a 5-byte tail, stored a byte the GPU did not change or missed one it did");
+            }
+        }
     }
 }
 
@@ -2010,6 +2107,41 @@ void testWaitRegMem64ZeroHighMaskDrain() {
     check(outstanding == 1, "WAIT_REG_MEM_64 with zero high mask at 4 mod 8 skipped the drain of a pending write to the dword it compares");
 }
 
+void testWaitRegMemMisalignedBehindBusyPipeline() {
+    alignas(8) static std::uint64_t target = 0;
+    alignas(8) static std::uint32_t other = 0;
+    static std::uint32_t done = 0;
+    const auto base = reinterpret_cast<std::uintptr_t>(&target);
+    const auto otherAddr = reinterpret_cast<std::uintptr_t>(&other);
+    const std::vector<std::uint32_t> waits[]{
+        makePacket(0x3c, {0x13, static_cast<std::uint32_t>(base + 1), static_cast<std::uint32_t>((base + 1) >> 32u), 42, 0xffffffffu, 0}),
+        makePacket(0x93, {0x13, static_cast<std::uint32_t>(base + 3), static_cast<std::uint32_t>((base + 3) >> 32u), 42, 0, 0xffffffffu, 0xffffffffu, 0})};
+    for (const auto& wait : waits) {
+        std::atomic_ref<std::uint64_t>(target).store(0);
+        std::atomic_ref<std::uint32_t>(done).store(0);
+        std::atomic<bool> hold{true};
+        std::atomic<bool> started{false};
+        AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([&] {
+            started.store(true);
+            while (hold.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }, { {otherAddr, otherAddr + 4} });
+        while (!started.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const auto opcode = (wait[0] >> 8u) & 0xffu;
+        const auto drainsBefore = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(opcode);
+        auto words = joinPackets({wait, writeWord(done, 1)});
+        submitWords(words, 0);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(opcode) == drainsBefore && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const bool drained = AgcDriver::DriverDetail::DrawPipeline::DrainRequestsByOpcode(opcode) != drainsBefore;
+        std::atomic_ref<std::uint64_t>(target).store(42);
+        hold.store(false);
+        AgcDriverWaitIdle_nid_postfix();
+        waitDrawPipelineIdle();
+        check(drained, "unsatisfied misaligned WAIT_REG_MEM behind a busy draw pipeline did not drain it");
+        check(std::atomic_ref<std::uint32_t>(done).load() == 1, "misaligned WAIT_REG_MEM behind a busy draw pipeline did not finish");
+    }
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "failure") {
@@ -2046,8 +2178,10 @@ int main(int argc, char** argv) {
         }
         testCatalog();
         testNopPad();
+        testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();
         testWriteChangedKeepsUntouchedBytes();
+        testWriteChangedChunksOfEveryDensity();
         testWriteChangedStoresExactlyTheChangedRuns();
         testRegisters();
         testRegisterFile();
@@ -2059,6 +2193,8 @@ int main(int argc, char** argv) {
         testIndexAttributesIndirect();
         testMemory();
         testTraceRegisterWrites();
+        testTagMarkers();
+        testUserDataWriters();
         testCopies();
         testMemoryCopyDecode();
         testMemorySynchronization();
@@ -2086,6 +2222,7 @@ int main(int argc, char** argv) {
         testWaitRegMemMasking();
         testWaitRegMemPipelineDrain();
         testWaitRegMem64ZeroHighMaskDrain();
+        testWaitRegMemMisalignedBehindBusyPipeline();
         LibcRunShutdown_nid_postfix();
         std::puts("PM4 catalog, registers, state, memory, conditional execution and submission tests passed");
         return 0;

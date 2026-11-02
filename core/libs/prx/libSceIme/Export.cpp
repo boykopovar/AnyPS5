@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceIme/include/InventoryExports.hpp"
 #include "prx/libSceIme/include/Api.hpp"
 #include <atomic>
 #include <algorithm>
@@ -13,8 +15,11 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
+#include "prx/libSceIme/include/ImeHostText.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ImeKeyboardView.hpp"
 
 static_assert(sizeof(ImeEditText) == 64);
 static_assert(offsetof(ImeEvent, param) == 8);
@@ -66,13 +71,19 @@ constexpr uint32_t EventPressEnter = 5;
 constexpr uint32_t CaretMoveLeft = 1;
 constexpr uint32_t CaretMoveRight = 2;
 
+struct PendingInput {
+    ImeHostInput input;
+    std::u16string paste;
+};
+
 struct Session {
     Param param{};
     ImeExtKeyboardFilter extKeyboardFilter = nullptr;
     std::u16string text;
     std::uint32_t caret = 0;
     std::deque<ImeEvent> events;
-    std::deque<ImeHostInput> hostInputs;
+    std::deque<PendingInput> hostInputs;
+    ImeComposition composition;
     std::uint64_t id = 0;
     std::uint64_t revision = 0;
 };
@@ -86,6 +97,9 @@ std::set<int32_t> g_openKeyboards;
 std::mutex g_imeMutex;
 std::optional<Session> g_session;
 std::atomic<ImeHostTextSink> g_textSink{nullptr};
+std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
+std::atomic<ImeHostPadSink> g_padSink{nullptr};
+std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
 std::uint64_t g_nextSessionId = 0;
 
 void PanelSize(const Param& param, uint32_t* width, uint32_t* height) {
@@ -266,7 +280,15 @@ std::size_t UnitsAfter(const Session& session) {
     return caret + 1 < session.text.size() && IsHighSurrogate(session.text[caret]) && IsLowSurrogate(session.text[caret + 1]) ? 2 : 1;
 }
 
-std::optional<DeferredFilter> Apply(Session& session, const ImeHostInput& input) {
+std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pending) {
+    const ImeHostInput& input = pending.input;
+    if (input.kind == ImeHostInputKind::Preedit) {
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
+        return std::nullopt;
+    }
+    if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
     switch (input.kind) {
         case ImeHostInputKind::Text: {
             std::size_t size = 0;
@@ -321,6 +343,10 @@ std::optional<DeferredFilter> Apply(Session& session, const ImeHostInput& input)
         case ImeHostInputKind::Escape:
             QueueText(session, EventPressClose, session.caret, 0);
             return std::nullopt;
+        case ImeHostInputKind::Paste:
+            return Insert(session, pending.paste);
+        case ImeHostInputKind::Preedit:
+            return std::nullopt;
     }
     throw std::invalid_argument("IME host input: unknown input kind");
 }
@@ -364,9 +390,18 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     {
         std::lock_guard lock(g_imeMutex);
         if (g_session) {
-            g_session->hostInputs.push_back(input);
+            g_session->hostInputs.push_back({input, {}});
             return;
         }
+    }
+    if (input.kind == ImeHostInputKind::Preedit) {
+        const ImeHostPreeditSink preeditSink = g_preeditSink.load();
+        if (preeditSink == nullptr) return;
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        const std::u16string units = ImeHostText::PreeditUnits(input.text, size);
+        preeditSink(units.data(), units.size(), input.start, input.length);
+        return;
     }
     const ImeHostTextSink sink = g_textSink.load();
     if (sink == nullptr) return;
@@ -379,6 +414,26 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     sink(input.kind, units.data(), units.size());
 }
 
+void ImePublishPaste_nid_postfix(const char* text, std::size_t size) {
+    if (text == nullptr) return;
+    {
+        std::lock_guard lock(g_imeMutex);
+        if (g_session) {
+            std::u16string units = ImeHostText::ClipboardUnits(text, size, (g_session->param.option & OptionMultiline) != 0);
+            if (units.empty()) return;
+            ImeHostInput input;
+            input.kind = ImeHostInputKind::Paste;
+            g_session->hostInputs.push_back({input, std::move(units)});
+            return;
+        }
+    }
+    const ImeHostTextSink sink = g_textSink.load();
+    if (sink == nullptr) return;
+    const std::u16string units = ImeHostText::ClipboardUnits(text, size, false);
+    if (units.empty()) return;
+    sink(ImeHostInputKind::Paste, units.data(), units.size());
+}
+
 bool ImeCapturesKeyboard_nid_postfix() {
     std::lock_guard lock(g_imeMutex);
     return g_session.has_value() || g_textSink.load() != nullptr;
@@ -386,6 +441,31 @@ bool ImeCapturesKeyboard_nid_postfix() {
 
 void ImeSetHostTextSink_nid_no_patch(ImeHostTextSink sink) {
     g_textSink = sink;
+}
+
+void ImeSetHostPreeditSink_nid_no_patch(ImeHostPreeditSink sink) {
+    g_preeditSink = sink;
+}
+
+bool ImeCapturesPad_nid_postfix() {
+    return g_padSink.load() != nullptr;
+}
+
+void ImePublishPad_nid_postfix(const ImeHostPad& pad) {
+    if (const ImeHostPadSink sink = g_padSink.load()) sink(pad);
+}
+
+void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink) {
+    g_padSink = sink;
+}
+
+void ImeSetKeyboardViewProvider_nid_no_patch(ImeKeyboardViewProvider provider) {
+    g_viewProvider = provider;
+}
+
+bool ImeReadKeyboardView_nid_postfix(ImeKeyboardView& view) {
+    const ImeKeyboardViewProvider provider = g_viewProvider.load();
+    return provider != nullptr && provider(view);
 }
 
 int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* extended) {
@@ -462,7 +542,7 @@ int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArr
 }
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {
- if (!param) APS5_INVALID_ARG_EX;
+ if (!param) return ErrorInvalidAddress;
  std::lock_guard lock(g_keyboardMutex);
  if (!g_openKeyboards.insert(user_id).second) return ErrorBusy;
  return 0;
@@ -530,7 +610,7 @@ int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geome
 }
 
 int APS5_VABI sceImeUpdate(EventHandler handler) {
-    if (!handler) APS5_INVALID_ARG_EX;
+    if (!handler) return ErrorInvalidHandler;
     for (;;) {
         ImeEvent event{};
         void* arg = nullptr;
@@ -547,9 +627,9 @@ int APS5_VABI sceImeUpdate(EventHandler handler) {
             std::lock_guard lock(g_imeMutex);
             if (!g_session || g_session->param.handler != handler) return 0;
             if (!g_session->hostInputs.empty()) {
-                const ImeHostInput input = g_session->hostInputs.front();
+                const PendingInput pending = std::move(g_session->hostInputs.front());
                 g_session->hostInputs.pop_front();
-                if (const std::optional<DeferredFilter> deferred = Apply(*g_session, input)) {
+                if (const std::optional<DeferredFilter> deferred = Apply(*g_session, pending)) {
                     runFilter = true;
                     filter = g_session->param.filter;
                     filterText = g_session->text;
@@ -809,5 +889,19 @@ int APS5_VABI InitializeImeModule_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceImeUnknown_NbbzN9GRg_plus_c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NbbzN9GRg+c", libSceImeUnknown_NbbzN9GRg_plus_c_nid_no_patch);
+
+int APS5_VABI libSceImeUnknown_aChMGUoc7QI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aChMGUoc7QI", libSceImeUnknown_aChMGUoc7QI_nid_no_patch);
 
 }
