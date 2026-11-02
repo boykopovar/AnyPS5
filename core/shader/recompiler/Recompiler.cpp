@@ -551,7 +551,7 @@ bool reloadPlan(SourceEntry& source) {
 }
 
 bool evictablePlan(const SourceEntry& source) {
-    return source.plan != nullptr && source.plan.use_count() == 1 && !source.planKey.empty();
+    return source.plan != nullptr && !source.planKey.empty();
 }
 
 void trimResourcePlans(std::uint64_t budget) {
@@ -568,24 +568,41 @@ void trimResourcePlans(std::uint64_t budget) {
             if (auto source = weak.lock()) sources.push_back(std::move(source));
         }
     }
-    struct Candidate {
-        std::uint64_t used;
+    struct Owner {
         SourceEntry* source;
+        std::uint64_t used;
+    };
+    struct Candidate {
+        std::uint64_t used = 0;
+        const IrResourcePlan* plan = nullptr;
+        std::vector<Owner> owners;
     };
     std::vector<Candidate> candidates;
+    std::unordered_map<const IrResourcePlan*, std::size_t> candidateOf;
     for (const auto& source : sources) {
         std::unique_lock lock(source->mutex, std::try_to_lock);
-        if (lock.owns_lock() && evictablePlan(*source)) candidates.push_back({source->planUsed, source.get()});
+        if (!lock.owns_lock() || !evictablePlan(*source)) continue;
+        const auto [found, inserted] = candidateOf.try_emplace(source->plan.get(), candidates.size());
+        if (inserted) candidates.push_back({0, source->plan.get(), {}});
+        auto& candidate = candidates[found->second];
+        candidate.used = std::max(candidate.used, source->planUsed);
+        candidate.owners.push_back({source.get(), source->planUsed});
     }
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) { return left.used < right.used; });
     const auto target = budget / 4u * 3u;
     std::vector<std::shared_ptr<const IrResourcePlan>> released;
     for (const auto& candidate : candidates) {
         if (plans.heldBytes.load(std::memory_order_relaxed) <= target) break;
-        std::unique_lock lock(candidate.source->mutex, std::try_to_lock);
-        if (!lock.owns_lock() || !evictablePlan(*candidate.source) || candidate.source->planUsed != candidate.used) continue;
-        released.push_back(takePlan(*candidate.source));
-        plans.evictions.fetch_add(1, std::memory_order_relaxed);
+        std::vector<std::unique_lock<std::mutex>> locks;
+        locks.reserve(candidate.owners.size());
+        for (const auto& owner : candidate.owners) {
+            std::unique_lock lock(owner.source->mutex, std::try_to_lock);
+            if (!lock.owns_lock() || owner.source->plan.get() != candidate.plan || !evictablePlan(*owner.source) || owner.source->planUsed != owner.used) break;
+            locks.push_back(std::move(lock));
+        }
+        if (locks.size() != candidate.owners.size() || candidate.owners.front().source->plan.use_count() != static_cast<long>(candidate.owners.size())) continue;
+        for (const auto& owner : candidate.owners) released.push_back(takePlan(*owner.source));
+        plans.evictions.fetch_add(candidate.owners.size(), std::memory_order_relaxed);
     }
     plans.trimmedTo.store(plans.heldBytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
 }

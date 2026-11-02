@@ -2450,6 +2450,45 @@ void verifyPlanBudget() {
     require(ResourcePlanBudgetFor(0u) == (2ull << 30u) && ResourcePlanBudgetFor(4ull << 30u) == (1ull << 30u) && ResourcePlanBudgetFor(32ull << 30u) == (4ull << 30u) && ResourcePlanBudgetFor(256ull << 30u) == (8ull << 30u), "plan budget: the default budget is not an eighth of the host memory between 1 and 8 GiB");
 }
 
+void verifySharedPlanBudget() {
+    auto base = planFixtures().front();
+    base.waveSize = 32u;
+    base.codeAddress += 0x30000u;
+    std::vector<PlanFixture> fixtures;
+    for (std::uint32_t index = 0; index < 2u; ++index) {
+        auto fixture = base;
+        fixture.code.insert(fixture.code.begin(), 0xbf800001u + index);
+        fixtures.push_back(std::move(fixture));
+    }
+    const auto planOf = [&](std::size_t index) { return GetResourcePlan(fixtures[index].Request(true)); };
+    SetResourcePlanBudget(0u);
+    const auto encoded = encodedPlan(*planOf(0));
+    require(encodedPlan(*planOf(1)) == encoded, "shared plan budget: the two sources did not build the same plan");
+    ShaderDiskCache::Flush();
+    SetResourcePlanBudget(1u);
+    SetResourcePlanBudget(0u);
+    auto first = planOf(0);
+    auto second = planOf(1);
+    require(first == second, "shared plan budget: the two sources did not receive one shared plan from the disk cache");
+    const auto heldHits = ShaderDiskCache::Totals().planHits;
+    SetResourcePlanBudget(1u);
+    require(planOf(0) == first && planOf(1) == first && ShaderDiskCache::Totals().planHits == heldHits, "shared plan budget: a shared plan that a caller holds was evicted");
+    SetResourcePlanBudget(0u);
+    first.reset();
+    second.reset();
+    const auto beforeTrim = ResourcePlanTotals();
+    SetResourcePlanBudget(1u);
+    const auto afterTrim = ResourcePlanTotals();
+    require(afterTrim.evictions == beforeTrim.evictions + 2u && afterTrim.heldPlans + 2u == beforeTrim.heldPlans, "shared plan budget: a plan shared by two idle sources was not evicted from both");
+    SetResourcePlanBudget(0u);
+    const auto beforeReload = ShaderDiskCache::Totals();
+    const auto reloadedFirst = planOf(0);
+    const auto reloadedSecond = planOf(1);
+    const auto afterReload = ShaderDiskCache::Totals();
+    require(afterReload.planHits == beforeReload.planHits + 2u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites && ResourcePlanTotals().reloads == afterTrim.reloads + 2u, "shared plan budget: the evicted shared plan did not reload from the disk cache without a miss or a write");
+    require(reloadedFirst == reloadedSecond && encodedPlan(*reloadedFirst) == encoded, "shared plan budget: the reloaded sources do not share the plan they held before");
+}
+
 void verifyPlanKey() {
     auto fixtures = planFixtures();
     auto& fixture = fixtures[1];
@@ -2746,6 +2785,7 @@ int main(int argc, char** argv) {
         verifyBuiltinSpecialization();
         verifySpecializationLiveness();
         verifyPlanBudget();
+        verifySharedPlanBudget();
         ShaderRecompiler::ShaderDiskCache::Flush();
         removeCacheDirectory(directory);
         std::cout << "shader disk cache tests passed\n";
