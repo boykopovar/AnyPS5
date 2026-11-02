@@ -2,6 +2,7 @@
 #define ELFPATCHER_DOMAIN_IENTRYSTUBBUILDER_HPP
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace Elfpatcher {
@@ -12,7 +13,8 @@ public:
 
     virtual std::vector<std::uint8_t> BuildEntryStub(
         std::uint64_t stubVaddr,
-        std::uint64_t realEntryVaddr
+        std::uint64_t realEntryVaddr,
+        std::optional<std::uint64_t> mainStackEntrySlotVaddr
     ) const = 0;
 };
 

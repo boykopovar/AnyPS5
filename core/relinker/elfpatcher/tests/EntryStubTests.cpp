@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -23,10 +24,33 @@ bool bytesAt(const std::vector<std::uint8_t>& stub, std::size_t& offset, const s
     return true;
 }
 
+void stubEntersThroughTheMainStackSlot() {
+    constexpr std::uint64_t stubVaddr = 0xb32db98;
+    constexpr std::uint64_t entryVaddr = 0x80;
+    constexpr std::uint64_t slotVaddr = 0xb32d000;
+    const auto stub = Elfpatcher::EntryStubBuilder().BuildEntryStub(stubVaddr, entryVaddr, slotVaddr);
+    std::size_t offset = 0;
+    const auto ripTarget = [&](const std::vector<std::uint8_t>& opcode, const std::string& what) {
+        require(bytesAt(stub, offset, opcode), "the stub does not " + what);
+        std::int32_t rel32 = 0;
+        require(offset + sizeof(rel32) <= stub.size(), "the stub ends inside a displacement");
+        std::memcpy(&rel32, stub.data() + offset, sizeof(rel32));
+        offset += sizeof(rel32);
+        return stubVaddr + offset + static_cast<std::int64_t>(rel32);
+    };
+    require(bytesAt(stub, offset, {0x48, 0x89, 0xe7}), "the stub does not pass the initial stack pointer in rdi");
+    require(bytesAt(stub, offset, {0x48, 0x83, 0xe4, 0xf0}), "the stub does not align the stack to 16 bytes");
+    require(bytesAt(stub, offset, {0x6a, 0x00, 0x6a, 0x00}), "the stub does not push a zero frame record");
+    require(bytesAt(stub, offset, {0x48, 0x89, 0xe5}), "the stub does not point rbp at the zero frame record");
+    require(ripTarget({0x48, 0x8d, 0x35}, "load the entry point into rsi") == entryVaddr, "the stub passes the wrong entry point");
+    require(ripTarget({0xff, 0x15}, "call through the main stack entry slot") == slotVaddr, "the stub calls through the wrong slot");
+    require(bytesAt(stub, offset, {0x0f, 0x0b}) && offset == stub.size(), "the stub does not end with ud2 after the call");
+}
+
 void stubTerminatesTheFrameChain() {
     constexpr std::uint64_t stubVaddr = 0xb32db98;
     constexpr std::uint64_t entryVaddr = 0x80;
-    const auto stub = Elfpatcher::EntryStubBuilder().BuildEntryStub(stubVaddr, entryVaddr);
+    const auto stub = Elfpatcher::EntryStubBuilder().BuildEntryStub(stubVaddr, entryVaddr, std::nullopt);
     std::size_t offset = 0;
     require(bytesAt(stub, offset, {0x48, 0x89, 0xe7}), "the stub does not pass the initial stack pointer in rdi");
     require(bytesAt(stub, offset, {0x48, 0x83, 0xe4, 0xf0}), "the stub does not align the stack to 16 bytes");
@@ -164,7 +188,7 @@ void windowsKernelVariantDependenciesLoadCanonicalKernel() {
 void stubRejectsAnEntryBeyondTheWrapBoundary() {
     bool threw = false;
     try {
-        static_cast<void>(Elfpatcher::EntryStubBuilder().BuildEntryStub(0x1000, 0xFFFFFFFFFFFFF000));
+        static_cast<void>(Elfpatcher::EntryStubBuilder().BuildEntryStub(0x1000, 0xFFFFFFFFFFFFF000, std::nullopt));
     } catch (const Domain::RelinkerException& error) {
         threw = std::string(error.what()).find("rel32") != std::string::npos;
     }
@@ -175,6 +199,7 @@ void stubRejectsAnEntryBeyondTheWrapBoundary() {
 
 int main() {
     try {
+        stubEntersThroughTheMainStackSlot();
         stubTerminatesTheFrameChain();
         stubRejectsAnEntryBeyondTheWrapBoundary();
         windowsStubLoadsTheAllocatorFirst("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
