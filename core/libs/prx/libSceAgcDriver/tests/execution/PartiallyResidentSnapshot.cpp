@@ -983,6 +983,10 @@ std::vector<std::vector<std::uint32_t>> ReferenceSamples(AgcDriver::VulkanDevice
 }
 
 int SampleDecommittedPage() {
+#ifdef _WIN32
+    std::puts("skipped, a 4 KiB page inside a committed slab cannot be decommitted on Windows, where the guest arena does not release part of a 64 KiB host allocation");
+    return Skipped;
+#endif
     const auto device = OpenVulkanTestDevice();
     if (!device) return Skipped;
     const CommittedCase layout{"the volume with a page decommitted in a committed slab"};
