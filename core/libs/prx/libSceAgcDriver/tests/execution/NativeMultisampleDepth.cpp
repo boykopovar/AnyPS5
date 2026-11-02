@@ -1880,8 +1880,10 @@ void CheckAliasedStencil(Context context, std::uint32_t fragments, AliasCase whi
         read(std::nullopt);
         const auto stencilWords = StencilSampleWords(target);
         TargetRefuses([&] { DepthSurfaceView(context, target, true, true); }, stencilAliasRefusal);
+        TargetRefuses([&] { DepthSurfaceViewWithStencilWriteIntent(context, target, true, true, false); }, stencilAliasRefusal);
         TargetRefuses([&] { CachedSampledTexture(context, stencilWords); }, stencilAliasRefusal);
         Require(DepthSurfaceView(context, target) == view && CachedSampledTexture(context, words) == texture, "a depth-only use of a target whose stencil plane is unproven was refused or replaced its view");
+        Require(DepthSurfaceViewWithStencilWriteIntent(context, target, true, false, false) == view, "a depth-only bind of an unproven stencil plane was refused or replaced its view");
         if (!filled) {
             recorder.Sync();
             std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
