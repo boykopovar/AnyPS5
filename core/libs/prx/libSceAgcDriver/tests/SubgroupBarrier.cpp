@@ -147,6 +147,7 @@ void verifyEmittedBarriers() {
 void verifyLdsLockFenceDrivers() {
     for (const auto& item : Cases) {
         require(AgcDriver::LdsLockFencesRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected LDS lock fences only on MoltenVK");
+        require(AgcDriver::LdsAtomicLaneOrderRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected lane-ordered LDS atomic returns only on MoltenVK");
     }
 }
 

@@ -310,6 +310,8 @@ void EmitWriteSharedU32(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitWriteSharedU32x2(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitWriteSharedU32x3(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitWriteSharedU32x4(SpirvValueEmitContext& ctx, const IrValue& inst);
+bool LaneOrderedLdsAtomic(const SpirvEmitterState& state, const IrValue& inst);
+std::uint32_t EmitLaneOrderedSharedAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t (*emit)(SpirvValueEmitContext&, const IrValue&));
 std::uint32_t EmitSharedAtomicFMin32(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitSharedAtomicFMax32(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitSharedAtomicSwap32(SpirvValueEmitContext& ctx, const IrValue& inst);
