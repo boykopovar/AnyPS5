@@ -222,6 +222,8 @@ if(WIN32)
     file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/release-implibs.txt CONTENT "${RELEASE_IMPLIBS}")
 endif()
 
+include(prx/libSceFreeType/PostScriptPrivate.cmake)
+
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/libfvad ${CMAKE_CURRENT_BINARY_DIR}/webrtc-fvad EXCLUDE_FROM_ALL)
