@@ -20,6 +20,7 @@ LIMITATIONS = [
     "skipped, the device lacks VK_EXT_shader_stencil_export",
     "skipped, the device does not import guest memory",
     "skipped, the device imports no host memory",
+    "skipped, the device imports shared memory through host pointers, so no run list was bound",
     "skipped, the device flushes f64 subnormals without DenormPreserve",
     "skipped, the device binds fewer than 8 storage buffers per stage or set",
     "skipped, no usable Vulkan device: ErrorInitializationFailed",
@@ -37,6 +38,10 @@ OTHER = [
     "skipped, flaky",
     "skipped, APS5_RAYTRACING replaces the node",
     "skipped, interpolation modes require",
+    "skipped, the host imports shared memory through host pointers",
+    "skipped, the device imports shared memory successfully; skipped because flaky",
+    "skipped, the device imports shared memory",
+    "skipped, the device imports shared memory through host pointersX",
 ]
 
 
