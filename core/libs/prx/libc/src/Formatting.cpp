@@ -444,6 +444,7 @@ int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPoin
         ~Unlock() { funlockfile_nid_postfix(stream); }
     } unlock{stream};
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
 #ifndef _WIN32
     RejectGuestWideScan(format);
@@ -495,6 +496,7 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
 int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
 #ifdef _WIN32
     std::string buffer;
@@ -538,6 +540,7 @@ int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
 #ifdef _WIN32
     __builtin_sysv_va_list args;
@@ -562,6 +565,7 @@ int APS5_VABI printf_nid_postfix(const char* format, ...) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
+    _Stdout_nid_postfix.Orientation(-1);
     const int result = LibcDetail::PrintWindows(format, args);
     __builtin_sysv_va_end(args);
     return result;
@@ -571,6 +575,7 @@ int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
+    _Stdout_nid_postfix.Orientation(-1);
     const int result = LibcDetail::PrintWindows(format, args);
     __builtin_sysv_va_end(args);
     return result;
@@ -598,6 +603,7 @@ int APS5_VABI printf_nid_postfix(const char* format, ...) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
+    _Stdout_nid_postfix.Orientation(-1);
     const int result = RequiresGuestFormatting(format) ? LibcDetail::PrintWindows(format, args) : std::vfprintf(GuestStandardOutputFile_nid_no_patch(), format, args);
     va_end(args);
     return result;
@@ -607,6 +613,7 @@ int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
+    _Stdout_nid_postfix.Orientation(-1);
     const int result = RequiresGuestFormatting(format) ? LibcDetail::PrintWindows(format, args) : std::vfprintf(GuestStandardOutputFile_nid_no_patch(), format, args);
     va_end(args);
     return result;
@@ -694,8 +701,10 @@ int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) 
 int APS5_VABI vprintf_nid_postfix(const char* str, VaList* c) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
 #ifdef _WIN32
+    _Stdout_nid_postfix.Orientation(-1);
     return LibcDetail::PrintWindows(str, c);
 #else
+    _Stdout_nid_postfix.Orientation(-1);
     if (RequiresGuestFormatting(str)) return LibcDetail::PrintWindows(str, c);
     std::va_list copy;
     va_copy(copy, *reinterpret_cast<std::va_list*>(c));
@@ -752,6 +761,7 @@ static int WriteSecure(FileStream* stream, const char* format, const void* args)
     if (stream == nullptr || format == nullptr || args == nullptr) return -1;
     if (!stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;
     std::string text;
     int count;
@@ -809,6 +819,7 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
+    _Stdout_nid_postfix.Orientation(-1);
     const int result = LibcDetail::PrintWindows(format, args);
     __builtin_sysv_va_end(args);
     return result;
@@ -850,6 +861,7 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
+    _Stdout_nid_postfix.Orientation(-1);
     const int result = RequiresGuestFormatting(format) ? LibcDetail::PrintWindows(format, args) : std::vfprintf(GuestStandardOutputFile_nid_no_patch(), format, args);
     va_end(args);
     return result;
@@ -860,6 +872,7 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
 int APS5_VABI puts_nid_postfix(const char* s) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(&_Stdout_nid_postfix);
+    _Stdout_nid_postfix.Orientation(-1);
     if (!_Stdout_nid_postfix.SwitchToWriting()) return EOF;
     if (std::fputs(s, native) < 0 || std::fputc('\n', native) == EOF) return EOF;
     return 0;
@@ -870,6 +883,7 @@ extern FileStream* __stdinp_nid_postfix;
 int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
 #ifdef _WIN32
     const int result = LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);

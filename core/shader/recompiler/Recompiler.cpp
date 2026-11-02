@@ -265,6 +265,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
     translateOptions.inputInfo = inputInfo;
     translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
+    translateOptions.float64 = supports(spv::CapabilityFloat64);
 
     constexpr InstructionTranslator translator;
 
