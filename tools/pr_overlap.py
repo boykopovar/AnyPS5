@@ -21,6 +21,7 @@ HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))?", re.M)
 MARKER = "<!-- pr-overlap -->"
 FETCH_REFS = 100
 PROGRESS_EVERY = 100
+MAX_REPORT_CHARS = 60000
 _REPO_ROOTS = {}
 
 
@@ -568,7 +569,26 @@ def report(rows, blob, main_exports=None):
         ])
         for number, files in sorted(uncompared.items()):
             lines.append(f"| {pull(blob, number)} | {cell(files)} |")
-    return "\n".join(lines) + "\n"
+    body = "\n".join(lines) + "\n"
+    return body if len(body) <= MAX_REPORT_CHARS else truncated(lines)
+
+
+def truncated(lines):
+    cumulative = []
+    total = 0
+    for index, line in enumerate(lines):
+        if index:
+            total += 1
+        total += len(line)
+        cumulative.append(total)
+    keep = 1
+    for candidate in range(len(lines) - 1, 0, -1):
+        notice = f"_Report truncated: {len(lines) - candidate} more lines omitted._"
+        if cumulative[candidate - 1] + 1 + len(notice) + 1 <= MAX_REPORT_CHARS:
+            keep = candidate
+            break
+    notice = f"_Report truncated: {len(lines) - keep} more lines omitted._"
+    return "\n".join(lines[:keep] + [notice]) + "\n"
 
 
 def write_reports(out, rows, blob, main_exports=None):

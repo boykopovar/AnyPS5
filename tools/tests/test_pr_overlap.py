@@ -409,6 +409,56 @@ class MarkdownCellTests(unittest.TestCase):
             result,
         )
 
+
+class ReportSizeCapTests(unittest.TestCase):
+    def test_empty_report_stays_empty(self):
+        self.assertEqual(pr_overlap.report({}, "https://example.invalid/blob/base"), "")
+
+    def test_small_report_is_byte_identical_to_the_uncapped_output(self):
+        rows = {2: {"added": set(), "conflicts": {"other.cpp": [(1, 1)]}},
+                3: {"added": set(), "uncompared": {"shared.cpp"}}}
+        report = pr_overlap.report(rows, "https://example.invalid/blob/base")
+        self.assertEqual(report, (
+            f"{pr_overlap.MARKER}\n"
+            "Other open pull requests touch the same code. Merging one will break the other, "
+            "or both implement the same thing. If this one builds on them, list them in **Depends on**.\n"
+            "\n"
+            "| Pull request | Conflicting files (lines on `main`) | Same exports | Same new files |\n"
+            "|---|---|---|---|\n"
+            "| [PR 2](https://example.invalid/pull/2) | `other.cpp` [L1](https://example.invalid/blob/base/other.cpp#L1) |  |  |\n"
+            "\n"
+            "Some comparisons could not be completed because a pull request conflicts with the base branch. "
+            "Review these shared files manually before concluding that there is no overlap.\n"
+            "\n"
+            "| Pull request | Shared files not compared |\n"
+            "|---|---|\n"
+            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
+        ))
+        self.assertLessEqual(len(report), pr_overlap.MAX_REPORT_CHARS)
+
+    def test_pathological_report_with_many_overlaps_and_paths_is_capped(self):
+        rows = {
+            number: {
+                "added": {f"new/file{number}_{i}.cpp" for i in range(3)},
+                "conflicts": {f"core/libs/prx/libExample/path_{number}_{i}.cpp": [(1, 1), (10, 20)] for i in range(5)},
+                "exports": {f"sceExample{number}_{i}" for i in range(3)},
+            }
+            for number in range(2, 400)
+        }
+        report = pr_overlap.report(rows, "https://github.com/boykopovar/AnyPS5/blob/deadbeef")
+        self.assertLessEqual(len(report), pr_overlap.MAX_REPORT_CHARS)
+        self.assertTrue(report.startswith(pr_overlap.MARKER))
+        match = re.search(r"_Report truncated: (\d+) more lines omitted\._\n\Z", report)
+        self.assertIsNotNone(match)
+        self.assertGreater(int(match.group(1)), 0)
+        lines = report.split("\n")
+        table_rows = [line for line in lines if line.startswith("|")]
+        self.assertTrue(table_rows)
+        self.assertEqual(table_rows[1], "|---|---|---|---|")
+        pipe_counts = {line.count("|") for line in table_rows}
+        self.assertEqual(pipe_counts, {5})
+
+
 class CommentStateTests(unittest.TestCase):
     def setUp(self):
         if os.name == "nt" or not all(shutil.which(tool) for tool in ("bash", "jq", "sed", "sha256sum")):
