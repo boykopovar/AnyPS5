@@ -19,11 +19,12 @@ void Require(bool condition, const char* message) {
 }
 
 template<typename TAction>
-void RequireThrows(TAction action, const char* message) {
+void RequireInvalidArgument(TAction action, const char* message) {
     try {
         action();
-    } catch (const std::exception&) {
+    } catch (const std::invalid_argument&) {
         return;
+    } catch (const std::exception&) {
     }
     Require(false, message);
 }
@@ -49,10 +50,10 @@ void HostFlags() {
     Require(param->id->hostFlags == 0xffffffffu, "host flags are replaced, not ORed");
     X509_VERIFY_PARAM_set_hostflags_nid_postfix(param, 0);
     Require(param->id->hostFlags == 0 && param->flags == 0 && param->inheritanceFlags == 0, "only the host flags change");
-    RequireThrows([] { X509_VERIFY_PARAM_set_hostflags_nid_postfix(nullptr, 1); }, "null verify parameters");
+    RequireInvalidArgument([] { X509_VERIFY_PARAM_set_hostflags_nid_postfix(nullptr, 1); }, "null verify parameters");
     auto* id = param->id;
     param->id = nullptr;
-    RequireThrows([&] { X509_VERIFY_PARAM_set_hostflags_nid_postfix(param, 1); }, "verify parameters without an identity");
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set_hostflags_nid_postfix(param, 1); }, "verify parameters without an identity");
     param->id = id;
     X509_STORE_free_nid_postfix(store);
 }
@@ -89,9 +90,9 @@ void Ipv6() {
 
 void Unsupported() {
     auto* store = X509_STORE_new_nid_postfix();
-    RequireThrows([&] { X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(store->param, nullptr); }, "null address text");
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(store->param, nullptr); }, "null address text");
     Require(X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(nullptr, "bad") == 0, "a rejected address does not read the verify parameters");
-    RequireThrows([] { X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(nullptr, "1.2.3.4"); }, "null verify parameters");
+    RequireInvalidArgument([] { X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(nullptr, "1.2.3.4"); }, "null verify parameters");
     X509_STORE_free_nid_postfix(store);
 }
 

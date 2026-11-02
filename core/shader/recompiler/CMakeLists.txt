@@ -144,6 +144,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvBufferFormat.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvRuntimeBuffer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvSpecialization.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvSpannedUniformity.cpp
 
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvBufferAccess.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvConstants.cpp
@@ -290,6 +291,7 @@ function(add_shader_recompiler target runtimeTarget)
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass
             SetDebugProbeActive
+            SrtEvaluatingBranch
             ShaderCacheDirectory
             ShaderDiskCache::Shutdown
             ShaderStage
@@ -365,6 +367,23 @@ function(add_shader_recompiler target runtimeTarget)
         target_link_libraries(${target} PRIVATE SPIRV-Tools-opt SPIRV-Tools-static)
     endif()
     target_compile_definitions(${target} PUBLIC ANYPS5_ENABLE_SPIRV_TOOLS=$<BOOL:${ANYPS5_ENABLE_SPIRV_TOOLS}>)
+    if(BUILD_TESTING AND NOT TARGET spanned_uniformity_tests)
+        add_test_executable(spanned_uniformity_tests
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/SpannedUniformityTests.cpp"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvSpannedUniformity.cpp")
+        target_include_directories(spanned_uniformity_tests PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/include"
+            ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR})
+        set_target_properties(spanned_uniformity_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(spanned_uniformity_tests)
+        add_test(NAME spanned_uniformity COMMAND spanned_uniformity_tests)
+        set_tests_properties(spanned_uniformity PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            target_link_libraries(spanned_uniformity_tests PRIVATE libc)
+            set_tests_properties(spanned_uniformity PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
     if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS AND NOT ANYPS5_USE_SYSTEM_DEPS AND NOT TARGET spirv_validator_exit_tests)
         add_test_executable(spirv_validator_exit_tests "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/SpirvValidatorExit.cpp")
         target_link_libraries(spirv_validator_exit_tests PRIVATE SPIRV-Tools-static)
@@ -375,6 +394,20 @@ function(add_shader_recompiler target runtimeTarget)
         if(MINGW)
             target_link_libraries(spirv_validator_exit_tests PRIVATE libc)
             set_tests_properties(spirv_validator_exit PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
+    if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS AND NOT ANYPS5_USE_SYSTEM_DEPS AND NOT TARGET spirv_literal_float_tests)
+        add_test_executable(spirv_literal_float_tests "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/SpirvLiteralFloat.cpp")
+        target_include_directories(spirv_literal_float_tests PRIVATE "${ANYPS5_SPIRV_HEADERS_SOURCE_DIR}/include")
+        target_link_libraries(spirv_literal_float_tests PRIVATE SPIRV-Tools-static)
+        set_target_properties(spirv_literal_float_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(spirv_literal_float_tests)
+        add_test(NAME spirv_literal_float COMMAND spirv_literal_float_tests)
+        set_tests_properties(spirv_literal_float PROPERTIES TIMEOUT 30)
+        if(MINGW)
+            target_link_libraries(spirv_literal_float_tests PRIVATE libc)
+            set_tests_properties(spirv_literal_float PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endif()
