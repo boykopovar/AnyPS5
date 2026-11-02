@@ -221,6 +221,23 @@ private:
         return ballot->Opcode() == IrOpcode::Ballot && ballot->ArgumentCount() == 1u ? ballot : nullptr;
     }
 
+    bool everyLaneWord(const IrValue* word, std::uint32_t half) const {
+        word = word->Resolve();
+        if (const IrValue* ballot = ballotWord(word, half)) return Boolean(ballot->Argument(0), true);
+        if (word->Opcode() != IrOpcode::CompositeExtractU64 || word->ArgumentCount() != 2u || !Immediate(word->Argument(1), half)) return false;
+        const IrValue* wqm = word->Argument(0)->Resolve();
+        if (wqm->Opcode() != IrOpcode::WqmU64 || wqm->ArgumentCount() != 1u) return false;
+        const IrValue* source = wqm->Argument(0)->Resolve();
+        return source->Opcode() == IrOpcode::CompositeConstructU64 && source->ArgumentCount() == 2u && everyLaneWord(source->Argument(0), 0u) && everyLaneWord(source->Argument(1), 1u);
+    }
+
+    bool ballotOfLanes(const IrValue* word, const IrValue* lanes, std::uint32_t half) const {
+        word = word->Resolve();
+        if (const IrValue* ballot = ballotWord(word, half)) return ballot->Argument(0)->Resolve() == lanes;
+        if (word->Opcode() != IrOpcode::BitwiseAnd32 || word->ArgumentCount() != 2u) return false;
+        return (ballotOfLanes(word->Argument(0), lanes, half) && everyLaneWord(word->Argument(1), half)) || (ballotOfLanes(word->Argument(1), lanes, half) && everyLaneWord(word->Argument(0), half));
+    }
+
     bool maskStable(ReplayMask mask, unsigned depth) {
         if (depth > 128u) return false;
         mask = ReplayMask{mask.low->Resolve(), mask.high->Resolve()};
@@ -499,6 +516,19 @@ private:
         value = value->Resolve();
         if (sameValue(value, other)) return true;
         if (value->Type() == IrType::Bool && other->Resolve() == predicate->Resolve() && GuardImplies(program, value, predicate)) return true;
+        for (std::uint32_t half = 0; half < (waveSize == 32u ? 1u : 2u); ++half) {
+            const IrValue* ballot = ballotWord(value, half);
+            if (!ballot) continue;
+            const IrValue* lanes = ballot->Argument(0)->Resolve();
+            if (lanes->Opcode() == IrOpcode::LogicalAnd && lanes->ArgumentCount() == 2u) {
+                const auto inactiveOnly = [&](const IrValue* side) { side = side->Resolve(); return side->Opcode() == IrOpcode::LogicalNot && side->ArgumentCount() == 1u && side->Argument(0)->Resolve() == predicate->Resolve(); };
+                if (inactiveOnly(lanes->Argument(1))) lanes = lanes->Argument(0)->Resolve();
+                else if (inactiveOnly(lanes->Argument(0))) lanes = lanes->Argument(1)->Resolve();
+                else continue;
+            }
+            if (const auto mask = own(lanes); mask && sameValue(half == 0u ? mask->low : mask->high, other)) return true;
+            if (ballotOfLanes(other, lanes, half)) return true;
+        }
         if ((value->Opcode() == IrOpcode::SelectU32 || value->Opcode() == IrOpcode::SelectF32 || value->Opcode() == IrOpcode::SelectU1) && value->ArgumentCount() == 3u && (value->Argument(0)->Resolve() == predicate->Resolve() || GuardImplies(program, value->Argument(0), predicate))) return inactiveEquals(value->Argument(2), other, predicate, region, depth + 1u);
         if (value->IsPhi() && region.contains(value->Parent()) && value->ArgumentCount() != 0u && value->ArgumentCount() == value->PhiBlockCount()) {
             return std::all_of(value->Arguments().begin(), value->Arguments().end(), [&](const IrValue* argument) { return inactiveEquals(argument, other, predicate, region, depth + 1u); });
@@ -609,6 +639,12 @@ private:
         return false;
     }
 
+    bool keepsNothing(const IrBlock* block) const {
+        return std::ranges::none_of(block->Instructions(), [](const IrValue* instruction) {
+            return instruction->Opcode() == IrOpcode::Discard || (instruction->Opcode() == IrOpcode::SetAttribute && !Boolean(instruction->Argument(1), false));
+        });
+    }
+
     bool optionalBody(const IrBlock* branch, const IrBlock* body, const IrBlock* merge, const IrValue* predicate) {
         if (body == merge) return false;
         std::set<const IrBlock*> region;
@@ -617,7 +653,11 @@ private:
             const IrBlock* block = pending.back();
             pending.pop_back();
             if (block == merge || !region.insert(block).second) continue;
-            if (block == branch || region.size() > 64u || program.Metadata().blockInfo[blockIndices.at(block)].terminator.kind == TerminatorKind::Return) return false;
+            if (block == branch || region.size() > 64u) return false;
+            if (program.Metadata().blockInfo[blockIndices.at(block)].terminator.kind == TerminatorKind::Return) {
+                if (!keepsNothing(block)) return false;
+                continue;
+            }
             for (const auto* successor : block->Successors()) pending.push_back(successor);
         }
         for (const auto* block : region) {
@@ -643,7 +683,7 @@ private:
         }
         for (const auto* block : region) {
             for (const auto* instruction : block->Instructions()) {
-                if (instruction->Opcode() == IrOpcode::SetAttribute || instruction->Opcode() == IrOpcode::Discard) return false;
+                if ((instruction->Opcode() == IrOpcode::SetAttribute && !Boolean(instruction->Argument(1), false)) || instruction->Opcode() == IrOpcode::Discard) return false;
                 for (const auto& use : instruction->OperandUses()) {
                     if (region.contains(use.user->Parent()) || merged.contains(use.user) || use.user->Opcode() == IrOpcode::Reference || use.user->Opcode() == IrOpcode::ReferenceU32) continue;
                     return false;
@@ -861,6 +901,61 @@ bool StencilReferenceDefinedForKeptInvocations(const IrProgram& program) {
     };
     for (std::size_t index = 0; index < blocks.size(); ++index) if (reached[index] == 2u) resolve(index);
     return valid;
+}
+
+bool LayerReplaySafe(const IrProgram& program) {
+    if (program.Info().bdaWrites) return false;
+    for (const auto& block : program.Blocks()) {
+        for (const auto* instruction : block->Instructions()) {
+            const auto opcode = instruction->Opcode();
+            if (opcode == IrOpcode::ImageBvhIntersectRay || (BufferAccessOf(opcode) == BufferAccess::Write || BufferAccessOf(opcode) == BufferAccess::Atomic) || AddressOpcodeInfoOf(opcode).access == AddressAccess::Write || AddressOpcodeInfoOf(opcode).access == AddressAccess::Atomic || ImageOpcodeInfoOf(opcode).access == ImageAccess::Write || ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) return false;
+            if (opcode == IrOpcode::UndefU1 || opcode == IrOpcode::UndefU8 || opcode == IrOpcode::UndefU16 || opcode == IrOpcode::UndefU32 || opcode == IrOpcode::UndefU64) return false;
+            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock) return false;
+            if (SharedAccessOf(opcode) != SharedAccess::None) {
+                const auto memory = instruction->Flags<MemoryFlags>().index;
+                if (memory >= program.Resources().memoryInfo.size() || program.Resources().memoryInfo[memory].kind != ResourceKind::Lds) return false;
+                continue;
+            }
+            if (!instruction->MayHaveSideEffects()) continue;
+            switch (opcode) {
+                case IrOpcode::Barrier:
+                case IrOpcode::MeshAllocate:
+                case IrOpcode::Branch:
+                case IrOpcode::BranchConditional:
+                case IrOpcode::Return:
+                case IrOpcode::Unreachable:
+                case IrOpcode::Discard:
+                case IrOpcode::Reference:
+                case IrOpcode::ReferenceU32:
+                case IrOpcode::SetAttribute:
+                case IrOpcode::InterpolateHostP2:
+                case IrOpcode::SetRegister:
+                case IrOpcode::SetThreadBitScalarRegister:
+                case IrOpcode::SetScalarMaskTag:
+                case IrOpcode::SetScalarRegister:
+                case IrOpcode::SetVectorRegister:
+                case IrOpcode::StoreVectorWindow:
+                case IrOpcode::SetGotoVariable:
+                case IrOpcode::SetScc:
+                case IrOpcode::SetExec:
+                case IrOpcode::SetExecLo:
+                case IrOpcode::SetExecHi:
+                case IrOpcode::SetVcc:
+                case IrOpcode::SetVccLo:
+                case IrOpcode::SetVccHi:
+                case IrOpcode::SetM0:
+                case IrOpcode::Waitcnt:
+                case IrOpcode::InstPrefetch:
+                    break;
+                case IrOpcode::Sendmsg:
+                    if (instruction->ArgumentCount() != 0u) return false;
+                    break;
+                default:
+                    return false;
+            }
+        }
+    }
+    return true;
 }
 
 bool StencilReplaySafe(const IrProgram& program) {

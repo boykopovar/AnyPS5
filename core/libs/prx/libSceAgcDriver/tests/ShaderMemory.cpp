@@ -21,7 +21,9 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "SpirvBackend/SpirvEmitter.hpp"
 #include "SavedExecMaskLoop.hpp"
+#include "ShaderDiskCache.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
@@ -437,6 +439,54 @@ void verifySpecializedModuleRelease() {
     require(std::ranges::equal(again.spirv.Words(), words), "specialized module release: a module built again from its key has other words");
     const auto shared = Recompile(pixel);
     require(shared.spirv.data() == again.spirv.data(), "specialized module release: a second result of a live module copied its words");
+}
+
+void verifyLayerSpecializationRelease() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 10> code{
+        0x7e000280u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0x7e080280u,
+        0xf80000cfu, 0x03020100u, 0xf80008d4u, 0x00040000u, 0xbf810000u
+    };
+    const std::array<std::uint32_t, 8> hidden{};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Mesh, 0x10000u, code, 0, {}};
+    request.context.waveSize = 64u;
+    request.context.userData = hidden;
+    request.context.vertex = ShaderVertexStageInfo{};
+    request.context.vertex->paClVsOutCntl = (1u << 18u) | (1u << 21u);
+    request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}, std::nullopt, {}};
+    static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance, spv::CapabilityMeshShadingEXT};
+    static constexpr std::array<std::string_view, 3> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"};
+    request.target = BufferTarget();
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010400u;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+    request.target.maxWorkgroupInvocations = 1024u;
+    request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+    request.target.mesh = MeshTargetLimits{{128u, 1u, 1u}, 128u, 32768u, 256u, 256u, 128u, 32768u, 1u, 1u};
+    request.useCache = true;
+    const std::vector<PipelineSpecializationConstant> expected{
+        {PipelineSpecialization::MeshLayerBase, 0u},
+        {PipelineSpecialization::MeshLayerCount, 0xffffffffu}
+    };
+    SharedSpirv::Weak released;
+    std::uint64_t specializationId = 0;
+    std::vector<std::uint32_t> words;
+    {
+        const auto first = Recompile(request);
+        require(first.specialization == expected, "layer module release: the prepared layer constants were lost");
+        released = first.spirv.Weaken();
+        specializationId = first.specializationId;
+        words = first.spirv.Copy();
+    }
+    require(released.Expired(), "layer module release: the metadata retained unused SPIR-V words");
+    const auto again = Recompile(request);
+    require(again.specialization == expected, "layer module release: rebuilding the words lost the layer constants");
+    require(again.specializationId == specializationId && std::ranges::equal(again.spirv.Words(), words), "layer module release: rebuilding changed the module identity or words");
+    const auto shared = Recompile(request);
+    require(shared.specialization == expected && shared.spirv.data() == again.spirv.data(), "layer module release: a live cache hit lost constants or copied the words");
 }
 
 const std::vector<std::uint32_t>& resultMemoPixelCode() {
@@ -5532,6 +5582,100 @@ void verifyDescriptorPhis() {
     require(planImages(splitReloads(8u)) == 4u, "descriptor Phi: separate reloads of T# dword 7 and dwords 0-6 were not split into their 4 T#s");
     expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a web over more than 512 descriptor tuples was accepted");
     expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "; descriptor web: more than 512 descriptor states", "descriptor Phi: the failure did not name the state limit");
+
+    static constexpr std::array<std::uint32_t, 33> rawCode{
+        0xbe8803ffu, 0x00021000u, 0xbe8903ffu, 0x03c00000u, 0xbe8a03ffu, 0x0000003fu, 0xbe8b03ffu, 0x9000003fu,
+        0xbe8c03ffu, 0x00000000u, 0xbe8d03ffu, 0x00000000u, 0xbe8e03ffu, 0x00000000u, 0xbe8f03ffu, 0x00000000u,
+        0x7e040207u, 0x7d820480u, 0xbe840300u, 0xbe850301u, 0xbf068007u, 0xbf850003u, 0xf40c0202u, 0x06000000u,
+        0xbf8cc07fu, 0x7e000280u, 0x7e020280u, 0xf0000f08u, 0x00020400u, 0xbf8c3f70u, 0xf800180fu, 0x07060504u,
+        0xbf810000u,
+    };
+    constexpr std::array<std::uint32_t, 8> directImage{0x00021000u, 0x03c00000u, 0x0000003fu, 0x9000003fu, 0u, 0u, 0u, 0u};
+    constexpr std::array<std::uint32_t, 8> loadedImage{0x00021080u, 0x03c00000u, 0x0000003fu, 0x9000003fu, 0u, 0u, 0u, 0u};
+    std::array<std::uint32_t, 64> rawMemory{};
+    std::copy(loadedImage.begin(), loadedImage.end(), rawMemory.begin() + 16);
+    std::array<std::uint32_t, 18> rawUserData{};
+    rawUserData[0] = 0x500000u;
+    rawUserData[3] = 0x40u;
+    rawUserData[7] = 1u;
+    const std::array<MemoryRegion, 1> rawRegions{{{0x500000u, std::as_bytes(std::span{rawMemory})}}};
+    ShaderPixelStageInfo rawPixel{};
+    rawPixel.targetOutputMode[0] = 9u;
+    rawPixel.targetExportMapping.fill(0xe4u);
+    RecompileRequest rawRequest{};
+    rawRequest.shader = {ShaderStage::Fragment, 0x240000u, rawCode, 0, {}};
+    rawRequest.context.waveSize = 32u;
+    rawRequest.context.userDataBaseRegister = 0u;
+    rawRequest.context.userData = rawUserData;
+    rawRequest.context.pixel = rawPixel;
+    rawRequest.context.memory = rawRegions;
+    rawRequest.target = BufferTarget();
+    rawRequest.target.vulkanVersion = 0x00401000u;
+    rawRequest.target.spirvVersion = 0x00010300u;
+    rawRequest.target.subgroupSize = 32u;
+    rawRequest.layout.pushConstantSizeBytes = 128u;
+    rawRequest.useCache = false;
+    require(GetResourcePlan(rawRequest)->info.images.size() == 2u, "descriptor Phi: a literal T# and a scalar-address-loaded T# were not split into separate images");
+    RequestMemoryView rawView(rawRequest.context.memory);
+    const auto rawRuntime = rawView.MakeRuntime(rawRequest.context.userData, rawRequest.shader.codeAddress);
+    const auto rawCapture = CaptureResources(rawRequest, rawRuntime);
+    const auto holdsRaw = [&](const std::array<std::uint32_t, 8>& words) {
+        return std::ranges::any_of(rawCapture->snapshot.images, [&](const DescriptorValue& value) { return value.dwords == words; });
+    };
+    require(rawCapture->snapshot.images.size() == 2u && holdsRaw(directImage) && holdsRaw(loadedImage), "descriptor Phi: the capture did not keep both the literal and loaded T#s");
+    for (const auto& source : rawCapture->plan->descriptorSources) {
+        if (source.requiredBlocks.empty()) continue;
+        for (std::uint32_t dword = 0; dword < source.dwordCount; ++dword) {
+            const auto* read = source.dwords[dword]->Resolve();
+            if (read->Opcode() == IrOpcode::LoadAddressU32) require(rawCapture->plan->memoryInfo.at(read->Flags<MemoryFlags>().index).planningOnly, "descriptor Phi: a copied descriptor read remains a GPU memory access");
+        }
+    }
+    require(!Recompile(rawRequest).spirv.empty(), "descriptor Phi: a scalar-address-loaded T# merged with a literal did not recompile");
+    std::vector<std::byte> rawPlanBytes;
+    require(ShaderDiskCache::EncodePlan(*rawCapture->plan, rawPlanBytes), "descriptor Phi: the guarded raw plan did not encode");
+    IrResourcePlan cachedRawPlan;
+    require(ShaderDiskCache::DecodePlan(rawPlanBytes, cachedRawPlan), "descriptor Phi: the guarded raw plan did not decode");
+    const auto guardedSource = std::ranges::find_if(cachedRawPlan.descriptorSources, [](const DescriptorSource& source) { return !source.requiredBlocks.empty(); });
+    require(guardedSource != cachedRawPlan.descriptorSources.end(), "descriptor Phi: the cached plan lost its raw read guard");
+    const auto requiredBlock = guardedSource->requiredBlocks.front();
+    guardedSource->requiredBlocks.front() = static_cast<std::uint32_t>(cachedRawPlan.controlFlow.size());
+    std::vector<std::byte> invalidGuardBytes;
+    require(ShaderDiskCache::EncodePlan(cachedRawPlan, invalidGuardBytes), "descriptor Phi: the invalid guard fixture did not encode");
+    IrResourcePlan invalidGuardPlan;
+    require(!ShaderDiskCache::DecodePlan(invalidGuardBytes, invalidGuardPlan), "descriptor Phi: a cached guard outside control flow was accepted");
+    guardedSource->requiredBlocks.front() = requiredBlock;
+    rawUserData[7] = 0u;
+    for (const auto pointer : {0x500000u, 0x900000u, 0u}) {
+        rawUserData[0] = pointer;
+        const auto skipped = CaptureResources(rawRequest, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress));
+        require(skipped->snapshot.images.size() == 2u, "descriptor Phi: a skipped scalar-address arm lost its planned image");
+        require(skipped->snapshot.nullRootReads == 0u && skipped->snapshot.srtPoison.empty(), "descriptor Phi: an inactive raw read reported a null root or fault");
+        require(std::ranges::any_of(skipped->snapshot.images, [&](const DescriptorValue& value) { return value.dwords == directImage; }), "descriptor Phi: skipping the scalar-address arm lost the literal T#");
+        require(std::ranges::any_of(skipped->snapshot.images, [](const DescriptorValue& value) { return std::ranges::all_of(value.dwords, [](std::uint32_t word) { return word == 0u; }); }), "descriptor Phi: a skipped scalar-address T# was read");
+        ResourceSnapshot cachedSnapshot;
+        ResourceMaterializer{}.Materialize(cachedRawPlan, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress), cachedSnapshot);
+        require(cachedSnapshot.nullRootReads == 0u && cachedSnapshot.srtPoison.empty(), "descriptor Phi: a cached inactive raw read reported a null root or fault");
+        require(std::ranges::equal(cachedSnapshot.images, skipped->snapshot.images, [](const DescriptorValue& first, const DescriptorValue& second) { return first.dwords == second.dwords; }), "descriptor Phi: the decoded plan changed skipped raw reads");
+        std::vector<std::uint32_t> imageSources;
+        for (const auto& image : cachedRawPlan.info.images) imageSources.push_back(image.source);
+        std::vector<DescriptorValue> interpretedImages;
+        std::vector<std::uint32_t> interpretedFlat;
+        std::vector<std::uint8_t> interpretedActive;
+        SrtWalker{}.EvaluateRuntimeSources(cachedRawPlan, imageSources, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress), interpretedImages, interpretedFlat, cachedRawPlan.cleanFlatSlots, interpretedActive);
+        require(std::ranges::equal(interpretedImages, cachedSnapshot.images, [](const DescriptorValue& first, const DescriptorValue& second) { return first.dwords == second.dwords; }), "descriptor Phi: interpreted source queries changed skipped raw reads");
+        require(imageSources == cachedRawPlan.materializationSources, "descriptor Phi: the raw fixture has non-image materialization sources");
+        const auto* tape = Detail::SrtTape::For(cachedRawPlan);
+        require(tape != nullptr, "descriptor Phi: the guarded plan has no SRT tape");
+        std::vector<DescriptorValue> tapeImages;
+        require(tape->Run(cachedRawPlan, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress), tapeImages, interpretedFlat, interpretedActive), "descriptor Phi: the SRT tape refused skipped raw reads");
+        require(std::ranges::equal(tapeImages, interpretedImages, [](const DescriptorValue& first, const DescriptorValue& second) { return first.dwords == second.dwords; }), "descriptor Phi: SRT tape and interpreted raw reads disagree");
+        require(!Recompile(rawRequest).spirv.empty(), "descriptor Phi: an untaken scalar-address arm prevented recompilation");
+    }
+    rawUserData[7] = 1u;
+    rawUserData[0] = 0x900000u;
+    expectFailure([&] { static_cast<void>(CaptureResources(rawRequest, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress))); }, "failed to evaluate runtime sources", "descriptor Phi: a taken unmapped scalar-address T# was accepted");
+    expectFailure([&] { static_cast<void>(Recompile(rawRequest)); }, "failed to evaluate runtime sources", "descriptor Phi: a taken unmapped scalar-address T# recompiled");
+    std::cout << "descriptor Phi: skipped mapped, unmapped and null reads stay null; taken unmapped reads fail\n";
 }
 
 void verifyUniformTableImage() {
@@ -10151,6 +10295,149 @@ void verifySrgbDepthCompareModes() {
     }
 }
 
+void verifyRuntimeImageSwitchDeduplication() {
+    using namespace ShaderRecompiler;
+    const auto emitImageSwitch = [](IrOpcode opcode, bool packed) {
+        const bool read = opcode == IrOpcode::ImageRead;
+        IrProgram program;
+        program.SetWaveSize(32u);
+        program.Resources().stage = IrShaderStage::Compute;
+        program.Resources().srtPlanComplete = true;
+        program.Resources().resourceTrackingComplete = true;
+        program.Metadata().shaderInfoComplete = true;
+        program.Metadata().bindingLayoutComplete = true;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        program.Metadata().blockInfo.emplace_back();
+        auto& zero = program.CreateValue(IrOpcode::Void, IrType::U32);
+        zero.SetImmediateU32(0u);
+        auto& enabled = program.CreateValue(IrOpcode::Void, IrType::Bool);
+        enabled.SetImmediateBool(true);
+        auto& handle = program.CreateValue(IrOpcode::GetImageResource, IrType::ImageResource, 0u);
+        for (std::uint32_t i = 0u; i < 8u; ++i) handle.AddArgument(&zero);
+        block.AppendInstruction(&handle);
+        auto& address = program.CreateValue(IrOpcode::MakeImageAddress, IrType::ImageAddress);
+        for (std::uint32_t i = 0u; i < 13u; ++i) address.AddArgument(&zero);
+        block.AppendInstruction(&address);
+        MemoryInfo memory{};
+        memory.kind = ResourceKind::Image;
+        memory.resource = 0u;
+        memory.imageDimension = packed ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
+        memory.imageAddressComponents = packed ? 3u : 2u;
+        memory.imagePacked = packed;
+        memory.dmask = 0xfu;
+        memory.dataBits = 32u;
+        memory.dataDwords = 4u;
+        memory.componentCount = 4u;
+        program.Resources().memoryInfo.push_back(memory);
+        ImageResource image{};
+        image.resourceClass = read ? ImageResourceClass::Sampled : ImageResourceClass::Storage;
+        image.numericClass = IrTextureNumericClass::Uint;
+        image.dimension = memory.imageDimension;
+        image.packed = packed;
+        image.read = read;
+        image.written = !read;
+        std::vector<ImageResource> modes;
+        if (packed) {
+            modes = ResourceMaterializer::RuntimeImageModes(image);
+            for (const auto& mode : modes) {
+                const auto kind = DescriptorBindingForImage(mode);
+                auto& descriptors = program.Metadata().bindings.descriptors;
+                if (std::ranges::none_of(descriptors, [&](const IrDescriptorBinding& entry) { return entry.kind == kind; })) {
+                    descriptors.push_back({kind, {0u}});
+                }
+            }
+        } else {
+            image.table = 0u;
+            DescriptorSource source{};
+            source.dwordCount = 8u;
+            TableColumn column{};
+            column.stride = 32u;
+            column.heapSource = 1u;
+            source.tableColumn = column;
+            program.Resources().descriptorSources.push_back(source);
+            DescriptorSource heap{};
+            heap.dwordCount = 4u;
+            program.Resources().descriptorSources.push_back(heap);
+            modes = {image, image};
+            modes[1].mipMode = static_cast<ImageMipMode>(2);
+            program.Metadata().bindings.descriptors = {
+                {DescriptorBindingKind::FaultBuffer, {}},
+                {DescriptorBindingKind::ImageTableMap, {}},
+                {DescriptorBindingKind::ImageStorageTable, {}},
+            };
+        }
+        program.Info().images.push_back(image);
+        program.Info().runtimeImageModes.push_back(modes);
+        if (read) {
+            auto& op = program.CreateValue(IrOpcode::ImageRead, IrType::U32x4);
+            op.AddArgument(&handle);
+            op.AddArgument(&address);
+            op.AddArgument(&enabled);
+            block.AppendInstruction(&op);
+        } else {
+            auto& texel = program.CreateValue(IrOpcode::CompositeConstructU32x4, IrType::U32x4);
+            for (std::uint32_t i = 0u; i < 4u; ++i) texel.AddArgument(&zero);
+            block.AppendInstruction(&texel);
+            auto& op = program.CreateValue(IrOpcode::ImageWrite, IrType::Void);
+            op.AddArgument(&handle);
+            op.AddArgument(&address);
+            op.AddArgument(&texel);
+            op.AddArgument(&enabled);
+            block.AppendInstruction(&op);
+        }
+        ShaderComputeInputInfo compute{};
+        compute.threadsNum[0] = 32u;
+        compute.threadsNum[1] = 1u;
+        compute.threadsNum[2] = 1u;
+        compute.hostSubgroupSize = 32u;
+        compute.waveSize = 32u;
+        ShaderStageInputInfo inputs{};
+        inputs.compute = &compute;
+        CompiledBindingLayout bindings{};
+        bindings.layout = program.Metadata().bindings;
+        SpirvTargetOptions target{};
+        target.vulkanVersion = 0x00401000u;
+        target.spirvVersion = 0x00010300u;
+        target.subgroupSize = 32u;
+        const auto words = SpirvEmitter().Emit(program, inputs, bindings, target);
+        std::map<std::uint32_t, std::uint32_t> targets;
+        for (std::size_t cursor = 5u; cursor < words.size(); cursor += words[cursor] >> 16u) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0u && count <= words.size() - cursor, "runtime image switch deduplication: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == spv::OpSwitch) {
+                for (std::size_t at = cursor + 3u; at + 1u < cursor + count; at += 2u) {
+                    targets.emplace(words[at], words[at + 1u]);
+                }
+            }
+        }
+        require(targets.size() == modes.size(), "runtime image switch deduplication: OpSwitch did not cover every runtime image mode");
+        return std::pair{modes, targets};
+    };
+    for (const auto opcode : {IrOpcode::ImageRead, IrOpcode::ImageWrite}) {
+        const auto [modes, targets] = emitImageSwitch(opcode, true);
+        bool deduplicatedCube = false;
+        bool separatedFormats = false;
+        for (std::uint32_t i = 0u; i < modes.size(); ++i) {
+            for (std::uint32_t j = i + 1u; j < modes.size(); ++j) {
+                if (modes[i].dimension == modes[j].dimension && modes[i].numericClass == modes[j].numericClass) {
+                    if (modes[i].packedFormat == modes[j].packedFormat) {
+                        require(targets.at(i) == targets.at(j), "runtime image switch deduplication: packed cube and array modes with identical format were not merged");
+                        deduplicatedCube = true;
+                    } else {
+                        require(targets.at(i) != targets.at(j), "runtime image switch deduplication: distinct packed formats shared an OpSwitch target");
+                        separatedFormats = true;
+                    }
+                }
+            }
+        }
+        require(deduplicatedCube && separatedFormats, "runtime image switch deduplication: packed modes did not exercise both merged and distinct OpSwitch targets");
+    }
+    const auto [mipModes, mipTargets] = emitImageSwitch(IrOpcode::ImageWrite, false);
+    require(mipTargets.at(0u) != mipTargets.at(1u), "runtime image switch deduplication: storage image modes with different mip modes shared an OpSwitch target");
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -10159,6 +10446,11 @@ int main(int argc, char** argv) {
         setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
 #endif
         using namespace ShaderRecompiler;
+        if (argc == 2 && std::string_view(argv[1]) == "--layer-specialization-release") {
+            verifyLayerSpecializationRelease();
+            std::cout << "Layer specialization metadata survives SPIR-V release and rebuild\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {
             verifySpecializedBufferAtomicBindings(true);
             std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
@@ -10272,6 +10564,10 @@ int main(int argc, char** argv) {
             std::cout << "TYPE=0 image descriptor materialization passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--descriptor-phis") {
+            verifyDescriptorPhis();
+            return 0;
+        }
         require(argc == 1, "unknown shader memory test arguments");
         verifyRegisterSources();
         verifyEvaluatedValues();
@@ -10295,6 +10591,7 @@ int main(int argc, char** argv) {
         verifyImageTableKeys();
         verifyImageTables();
         verifySpecializedModuleRelease();
+        verifyLayerSpecializationRelease();
         verifyImageTableRegistration();
         verifyScalarAddressRule();
         verifyPointerImageTable();
@@ -10355,6 +10652,7 @@ int main(int argc, char** argv) {
         verifySamplerTableDeduplication();
         verifyDynamicStorageMipChain();
         verifySrgbDepthCompareModes();
+        verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS

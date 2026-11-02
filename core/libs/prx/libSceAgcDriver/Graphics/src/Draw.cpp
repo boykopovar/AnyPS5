@@ -3137,7 +3137,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         targetViews.push_back(binding.target->View());
     }
     if (state.depth) {
-        targetViews.push_back(DepthSurfaceView(context, *state.depth, state.depthWrite));
+        targetViews.push_back(DepthSurfaceView(context, *state.depth, state.depthWrite, state.stencilTest));
         if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     }
     auto& stencilTarget = prepared.stencilTarget;
@@ -3842,6 +3842,28 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
         return;
     }
+    if (state.stages.mesh && state.layerExports != 0u && state.renderLayers > context.meshLimits.maxMeshOutputLayers && (draw.indirect || (draw.indexCount != 0u && draw.instanceCount != 0u))) {
+        const auto limit = context.meshLimits.maxMeshOutputLayers;
+        Require(limit != 0u && !state.depth, "mesh layer windows require a nonzero output limit and color-only layered rendering");
+        Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->layerReplaySafe; }), "mesh layer windows refuse shaders with guest memory writes, clocks or unproven side effects");
+        if (recipeOut != nullptr) recipeOut->reset();
+        for (std::uint32_t base = 0; base < state.renderLayers;) {
+            auto window = state;
+            window.renderLayers = std::min(limit, state.renderLayers - base);
+            window.meshLayerBase = base;
+            window.meshLayerCount = window.renderLayers;
+            for (auto& color : window.colors) {
+                Require(color.layers == state.renderLayers, "mesh layer window targets have different layer counts");
+                if (color.depth > 1u) color.depthSlice += base;
+                else color.arraySlice += base;
+                color.layers = window.renderLayers;
+            }
+            if (!window.colors.empty()) window.color = window.colors.front();
+            Draw(context, window, draw, shaders, snapshots, nullptr, trace);
+            base += window.renderLayers;
+        }
+        return;
+    }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PreparedDraw prepared(profile);
     prepared.recipeOut = recipeOut;
@@ -3906,7 +3928,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     }
     if (recipe.hasDepth) {
         timer.phase(PhaseSetup);
-        const auto depthView = DepthSurfaceView(context, *state.depth, state.depthWrite);
+        const auto depthView = DepthSurfaceView(context, *state.depth, state.depthWrite, state.stencilTest);
         if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
         timer.phase(PhaseReadTarget);
         if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);

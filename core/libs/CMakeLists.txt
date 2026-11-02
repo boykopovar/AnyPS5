@@ -298,7 +298,10 @@ elseif(TARGET mimalloc)
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
 endif()
 
+include(prx/libSceFreeType/BuildInfo.cmake)
+
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
+include(prx/libSceLibreSsl/ErrorQueue.cmake)
 
 include(prx/libSceLibreSsl/ProtocolSelection.cmake)
 
@@ -475,7 +478,7 @@ if(BUILD_TESTING)
     endif()
     add_test_executable(guest_kernel_sys_tests tests/GuestKernelSys.cpp)
     target_include_directories(guest_kernel_sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_kernel_sys_tests PRIVATE libkernel_sys libSceAmpr libkernel libc)
+    target_link_libraries(guest_kernel_sys_tests PRIVATE libkernel_sys libSceNet libSceAmpr libkernel libc)
     configure_windows_unwind(guest_kernel_sys_tests)
     add_test(NAME guest_kernel_sys COMMAND guest_kernel_sys_tests)
     set_tests_properties(guest_kernel_sys PROPERTIES TIMEOUT 20)
@@ -854,6 +857,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_signin_dialog PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSigninDialog>")
+    endif()
+
+    add_test_executable(guest_audiodec_cpu_tests tests/GuestAudiodecCpu.cpp)
+    target_include_directories(guest_audiodec_cpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_audiodec_cpu_tests PRIVATE libSceAudiodecCpu libc)
+    configure_windows_unwind(guest_audiodec_cpu_tests)
+    add_test(NAME guest_audiodec_cpu COMMAND guest_audiodec_cpu_tests)
+    if(WIN32)
+        set_tests_properties(guest_audiodec_cpu PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodecCpu>")
     endif()
 
     add_test_executable(guest_usb_storage_dialog_tests tests/GuestUsbStorageDialog.cpp)
@@ -1248,6 +1261,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_np_game_intent PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpGameIntent>")
+    endif()
+
+    add_test_executable(guest_sdma_tests tests/GuestSdma.cpp)
+    target_include_directories(guest_sdma_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_sdma_tests PRIVATE libSceSdma libc)
+    configure_windows_unwind(guest_sdma_tests)
+    add_test(NAME guest_sdma COMMAND guest_sdma_tests)
+    if(WIN32)
+        set_tests_properties(guest_sdma PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>")
     endif()
 
     add_test_executable(guest_gnm_neo_shaders_tests tests/GuestGnmNeoShaders.cpp)
