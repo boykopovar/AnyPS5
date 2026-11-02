@@ -41,6 +41,9 @@ void TestWithoutCache() {
     Require(sceHttpCacheSetCacheSharing(1) == 0);
     Require(sceHttpCacheSystemSendStatistics() == 0);
     Require(sceHttpCacheSystemTerm() == 0);
+    Require(sceHttpCacheSystemInit(nullptr) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll(nullptr) == InvalidValue);
+    Require(sceHttpCacheSystemShutdown() == 0);
     Require(sceHttpCacheDebugSetUrl() == 0);
     Require(sceHttpCacheRegisterCacheInfoUrl(nullptr) == InvalidValue);
 }
@@ -405,6 +408,22 @@ void TestRevalidation() {
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
+void TestSystemLifecycle() {
+    Require(sceHttpCacheSystemInit("/data/cache") == 0);
+    Require(sceHttpCacheSystemInit("/data/other") == 0);
+    Require(sceHttpCacheSystemShutdown() == 0);
+    std::string longPath(0x401, 'a');
+    Require(sceHttpCacheSystemInit(longPath.c_str()) == InvalidValue);
+    Require(sceHttpCacheSystemClearAll(longPath.c_str()) == InvalidValue);
+    Exchange exchange{sceHttpCacheInit(0)};
+    Cached(exchange, "http://system/a", {{"Cache-Control", "max-age=60"}}, "body");
+    Require(exchange.Retrieve("http://system/a") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(sceHttpCacheSystemClearAll("/data/cache") == 0);
+    RequireMiss(exchange, "http://system/a");
+    Require(sceHttpCacheTerm(exchange.cache) == 0);
+}
+
 void TestPublicResponses() {
     Exchange exchange{sceHttpCacheInit(0)};
     Require(exchange.Retrieve("http://public/a") == 0 && exchange.result == 0);
@@ -439,6 +458,7 @@ int main() {
     TestStoreAndHit();
     TestLifetimeOrder();
     TestRevalidation();
+    TestSystemLifecycle();
     TestPublicResponses();
     return 0;
 }
