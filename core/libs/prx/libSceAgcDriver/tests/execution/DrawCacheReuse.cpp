@@ -351,8 +351,9 @@ void GraphicsRequestDumps(std::string_view mode) {
             Require(replay.request.shader.stage == expected, "a graphics request lost its shader stage");
             static_cast<void>(ShaderRecompiler::Recompile(replay.request));
             file.close();
-            const auto stamp = std::filesystem::file_time_type::clock::now() - std::chrono::seconds(60);
-            std::filesystem::last_write_time(path, stamp);
+            std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now() - std::chrono::seconds(60));
+            const auto stamp = std::filesystem::last_write_time(path);
+            Require(stamp < std::filesystem::file_time_type::clock::now() - std::chrono::seconds(30), "a captured request could not be backdated");
             draw();
             Require(std::filesystem::last_write_time(path) == stamp, "a repeated draw rewrote a captured request");
         }
