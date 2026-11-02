@@ -353,10 +353,10 @@ WebCore::IntSize APS5_VABI _ZNK7WebCore7IntSize18constrainedBetweenERKS0_S2_(
 }
 
 void APS5_VABI _ZN7WebCore7IntRect5scaleEf(WebCore::IntRect* self, float s) {
-    self->m_location.m_x = static_cast<int>(self->m_location.m_x * s);
-    self->m_location.m_y = static_cast<int>(self->m_location.m_y * s);
-    self->m_size.m_width = static_cast<int>(self->m_size.m_width * s);
-    self->m_size.m_height = static_cast<int>(self->m_size.m_height * s);
+    self->m_location.m_x = WebCore::ClampToInteger(self->m_location.m_x * s);
+    self->m_location.m_y = WebCore::ClampToInteger(self->m_location.m_y * s);
+    self->m_size.m_width = WebCore::ClampToInteger(self->m_size.m_width * s);
+    self->m_size.m_height = WebCore::ClampToInteger(self->m_size.m_height * s);
 }
 
 void APS5_VABI _ZN7WebCore7IntRect5uniteERKS0_(WebCore::IntRect* self, const WebCore::IntRect& other) {
