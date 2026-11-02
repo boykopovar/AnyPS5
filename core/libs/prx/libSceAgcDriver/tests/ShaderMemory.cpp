@@ -4844,7 +4844,7 @@ std::vector<std::uint32_t> ImageLimitCode(std::uint32_t tableImages, std::uint32
     return code;
 }
 
-void verifyImageLimits() {
+void verifyImageLimits(std::string_view part) {
     using namespace ShaderRecompiler;
     static TableTexture textures[4];
     alignas(4096) static ImageLimitGuest guest;
@@ -4868,53 +4868,58 @@ void verifyImageLimits() {
     const auto tableImages = [](const IrResourcePlan& plan) {
         return static_cast<std::uint32_t>(std::count_if(plan.info.images.begin(), plan.info.images.end(), [](const ImageResource& image) { return image.table != NoTable; }));
     };
-    for (const auto images : {Capacity / 2u + 1u, Capacity}) {
-        const auto code = ImageLimitCode(images);
-        const auto request = TableRequest(code, userData);
-        std::shared_ptr<const IrResourcePlan> plan;
-        try {
-            plan = GetResourcePlan(request);
-        } catch (const std::runtime_error& error) {
-            throw std::runtime_error("image limits: " + std::to_string(images) + " images were not planned: " + error.what());
+    if (part == "table") {
+        for (const auto images : {Capacity / 2u + 1u, Capacity}) {
+            const auto code = ImageLimitCode(images);
+            const auto request = TableRequest(code, userData);
+            std::shared_ptr<const IrResourcePlan> plan;
+            try {
+                plan = GetResourcePlan(request);
+            } catch (const std::runtime_error& error) {
+                throw std::runtime_error("image limits: " + std::to_string(images) + " images were not planned: " + error.what());
+            }
+            require(plan->info.images.size() == images && tableImages(*plan) == images && plan->info.samplers.size() == 1u && plan->info.sampledPairs.size() == images, ("image limits: " + std::to_string(images) + " images planned as " + std::to_string(plan->info.images.size()) + " images (" + std::to_string(tableImages(*plan)) + " through the table) and " + std::to_string(plan->info.sampledPairs.size()) + " pairs").c_str());
+            const auto compiled = CompileTable(request);
+            const auto* table = TableBinding(*compiled.result, DescriptorRole::ImageTable);
+            require(table != nullptr && table->count == images && table->imageSamplers.size() == images, ("image limits: the image table does not bind the " + std::to_string(images) + " images").c_str());
+            std::vector<bool> bound(images);
+            for (std::uint32_t element = 0; element < images; element++) {
+                const auto image = SamplerLimitImageOf(table->guestDescriptor.data() + element * 8u);
+                require(image < images && !bound[image] && table->imageSamplers[element] == 3u, ("image limits: image table element " + std::to_string(element) + " of " + std::to_string(images) + " does not hold its own image paired with the sampler").c_str());
+                bound[image] = true;
+            }
+            std::cout << "image limits: " << images << " images planned and bound as " << table->count << " image table elements\n";
         }
-        require(plan->info.images.size() == images && tableImages(*plan) == images && plan->info.samplers.size() == 1u && plan->info.sampledPairs.size() == images, ("image limits: " + std::to_string(images) + " images planned as " + std::to_string(plan->info.images.size()) + " images (" + std::to_string(tableImages(*plan)) + " through the table) and " + std::to_string(plan->info.sampledPairs.size()) + " pairs").c_str());
-        const auto compiled = CompileTable(request);
-        const auto* table = TableBinding(*compiled.result, DescriptorRole::ImageTable);
-        require(table != nullptr && table->count == images && table->imageSamplers.size() == images, ("image limits: the image table does not bind the " + std::to_string(images) + " images").c_str());
-        std::vector<bool> bound(images);
-        for (std::uint32_t element = 0; element < images; element++) {
-            const auto image = SamplerLimitImageOf(table->guestDescriptor.data() + element * 8u);
-            require(image < images && !bound[image] && table->imageSamplers[element] == 3u, ("image limits: image table element " + std::to_string(element) + " of " + std::to_string(images) + " does not hold its own image paired with the sampler").c_str());
-            bound[image] = true;
+    }
+    if (part == "mixed") {
+        const auto mixedCode = ImageLimitCode(Capacity / 2u, Capacity / 2u);
+        const auto mixedRequest = TableRequest(mixedCode, userData);
+        const auto mixedPlan = GetResourcePlan(mixedRequest);
+        require(mixedPlan->info.images.size() == Capacity && tableImages(*mixedPlan) == Capacity / 2u, "image limits: 64 table images and 64 direct images were not planned as 128 images");
+        const auto mixed = CompileTable(mixedRequest);
+        const auto* mixedTable = TableBinding(*mixed.result, DescriptorRole::ImageTable);
+        std::uint32_t heapElements = 0u;
+        for (const auto& binding : mixed.result->bindings) {
+            if (binding.kind == DescriptorKind::SampledImage && binding.role == DescriptorRole::GuestImages) heapElements += binding.count;
         }
-        std::cout << "image limits: " << images << " images planned and bound as " << table->count << " image table elements\n";
+        require(mixedTable != nullptr && mixedTable->count == Capacity / 2u && heapElements == Capacity / 2u, "image limits: 64 table images and 64 direct images are not bound as 64 table elements and 64 heap elements");
+        const auto prepared = DescriptorBindingBuilder{}.Prepare(IrBindingLayout{}, mixedPlan->info, IrShaderStage::Compute, mixed.capture->snapshot);
+        std::map<std::uint32_t, std::uint32_t> constants;
+        for (const auto& constant : prepared.specialization) constants[constant.id]++;
+        require(std::ranges::all_of(constants, [](const auto& entry) { return entry.second == 1u; }), "image limits: a specialization constant of the 128 images was emitted twice");
+        std::uint32_t lastDirect = 0u;
+        for (std::uint32_t image = 0; image < Capacity; image++) {
+            if (mixedPlan->info.images[image].table != NoTable) continue;
+            const auto first = PipelineSpecialization::ImageBase + image * PipelineSpecialization::ImageWords;
+            bool complete = first + PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase;
+            for (std::uint32_t word = 0; word < PipelineSpecialization::ImageWords; word++) complete = complete && constants.contains(first + word);
+            require(complete, ("image limits: direct image " + std::to_string(image) + " does not have its image specialization constants").c_str());
+            lastDirect = image;
+        }
+        require(lastDirect == Capacity - 1u, "image limits: the direct images do not follow the table images up to image 127");
+        std::cout << "image limits: 64 table images and 64 direct images bound as 64 table and 64 heap elements; direct image 127 has image specialization constants " << PipelineSpecialization::ImageBase + lastDirect * PipelineSpecialization::ImageWords << " to " << PipelineSpecialization::ImageBase + Capacity * PipelineSpecialization::ImageWords - 1u << '\n';
     }
-    const auto mixedCode = ImageLimitCode(Capacity / 2u, Capacity / 2u);
-    const auto mixedRequest = TableRequest(mixedCode, userData);
-    const auto mixedPlan = GetResourcePlan(mixedRequest);
-    require(mixedPlan->info.images.size() == Capacity && tableImages(*mixedPlan) == Capacity / 2u, "image limits: 64 table images and 64 direct images were not planned as 128 images");
-    const auto mixed = CompileTable(mixedRequest);
-    const auto* mixedTable = TableBinding(*mixed.result, DescriptorRole::ImageTable);
-    std::uint32_t heapElements = 0u;
-    for (const auto& binding : mixed.result->bindings) {
-        if (binding.kind == DescriptorKind::SampledImage && binding.role == DescriptorRole::GuestImages) heapElements += binding.count;
-    }
-    require(mixedTable != nullptr && mixedTable->count == Capacity / 2u && heapElements == Capacity / 2u, "image limits: 64 table images and 64 direct images are not bound as 64 table elements and 64 heap elements");
-    const auto prepared = DescriptorBindingBuilder{}.Prepare(IrBindingLayout{}, mixedPlan->info, IrShaderStage::Compute, mixed.capture->snapshot);
-    std::map<std::uint32_t, std::uint32_t> constants;
-    for (const auto& constant : prepared.specialization) constants[constant.id]++;
-    require(std::ranges::all_of(constants, [](const auto& entry) { return entry.second == 1u; }), "image limits: a specialization constant of the 128 images was emitted twice");
-    std::uint32_t lastDirect = 0u;
-    for (std::uint32_t image = 0; image < Capacity; image++) {
-        if (mixedPlan->info.images[image].table != NoTable) continue;
-        const auto first = PipelineSpecialization::ImageBase + image * PipelineSpecialization::ImageWords;
-        bool complete = first + PipelineSpecialization::ImageWords <= PipelineSpecialization::VertexBase;
-        for (std::uint32_t word = 0; word < PipelineSpecialization::ImageWords; word++) complete = complete && constants.contains(first + word);
-        require(complete, ("image limits: direct image " + std::to_string(image) + " does not have its image specialization constants").c_str());
-        lastDirect = image;
-    }
-    require(lastDirect == Capacity - 1u, "image limits: the direct images do not follow the table images up to image 127");
-    std::cout << "image limits: 64 table images and 64 direct images bound as 64 table and 64 heap elements; direct image 127 has image specialization constants " << PipelineSpecialization::ImageBase + lastDirect * PipelineSpecialization::ImageWords << " to " << PipelineSpecialization::ImageBase + Capacity * PipelineSpecialization::ImageWords - 1u << '\n';
+    if (part != "refusals") return;
     const auto pastCode = ImageLimitCode(Capacity + 1u);
     expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(pastCode, userData))); }, "image resource limit exceeded (129 of 128)", "image limits: 129 images were planned");
     ImageResource image{};
@@ -11133,9 +11138,10 @@ int main(int argc, char** argv) {
             std::cout << "Sampler limits passed\n";
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--image-limits") {
-            verifyImageLimits();
-            std::cout << "Image limits passed\n";
+        for (const std::string_view part : {"table", "mixed", "refusals"}) {
+            if (argc != 2 || std::string_view(argv[1]) != "--image-limits-" + std::string(part)) continue;
+            verifyImageLimits(part);
+            std::cout << "Image limits (" << part << ") passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
