@@ -246,7 +246,7 @@ struct PositionedLock {
 };
 std::mutex g_positionedTableLock;
 std::unordered_map<int, std::shared_ptr<PositionedLock>> g_positionedLocks;
-std::unique_lock<std::mutex> File::LockPositionedTransfer(int descriptor) {
+File::PositionedTransferLock File::LockPositionedTransfer(int descriptor) {
     std::shared_ptr<PositionedLock> entry;
     {
         std::lock_guard table(g_positionedTableLock);
@@ -254,7 +254,7 @@ std::unique_lock<std::mutex> File::LockPositionedTransfer(int descriptor) {
         if (!slot) slot = std::make_shared<PositionedLock>();
         entry = slot;
     }
-    return std::unique_lock<std::mutex>(entry->mutex);
+    return PositionedTransferLock(std::shared_ptr<std::mutex>(entry, &entry->mutex));
 }
 void File::SharePositionedTransfer(int from, int to) {
     std::lock_guard table(g_positionedTableLock);
@@ -653,8 +653,6 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
 
 extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     if (!descriptors) return PosixFailure(GUEST_EFAULT);
-    const GuestArena::HostWrite destination(descriptors, 2 * sizeof(int));
-    if (!destination.Open()) return PosixFailure(GUEST_EFAULT);
     int native[2];
 #ifdef _WIN32
     const int result = ::_pipe(native, 65536, _O_BINARY);
@@ -664,7 +662,11 @@ extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     if (result != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     File::RememberPipe(native[0]);
     File::RememberPipe(native[1]);
-    std::memcpy(descriptors, native, sizeof(native));
+    if (!GuestCopyOut_nid_no_patch(descriptors, native, sizeof(native))) {
+        close_nid_postfix(native[0]);
+        close_nid_postfix(native[1]);
+        return PosixFailure(GUEST_EFAULT);
+    }
     return 0;
 }
 
@@ -675,7 +677,12 @@ static int PathError(const char* path, std::string& copy) {
 
 #ifdef _WIN32
 bool DescriptorIsOpen_nid_no_patch(int descriptor) {
-    return descriptor >= 0 && WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor) == -1 ? -1 : 0; }) == 0;
+    return descriptor >= 0 && WithoutParameterHandler([descriptor] {
+        const auto handle = ::_get_osfhandle(descriptor);
+        if (handle == -1) return -1;
+        DWORD flags = 0;
+        return handle == -2 || GetHandleInformation(reinterpret_cast<HANDLE>(handle), &flags) ? 0 : -1;
+    }) == 0;
 }
 #else
 bool DescriptorIsOpen_nid_no_patch(int descriptor) {
@@ -690,6 +697,8 @@ static std::filesystem::path WithoutTrailingSeparator(const std::filesystem::pat
 static bool HasNonDirectoryPrefix(const std::filesystem::path& native) {
     std::error_code error;
     for (auto prefix = WithoutTrailingSeparator(native).parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
+        const auto link = LinkPrefixState_nid_no_patch(prefix);
+        if (link != LinkPrefix_nid_no_patch::Resolves) return link == LinkPrefix_nid_no_patch::BlockedByFile;
         const auto status = std::filesystem::status(prefix, error);
         if (std::filesystem::exists(status)) return !std::filesystem::is_directory(status);
     }
@@ -829,12 +838,8 @@ int APS5_VABI close_nid_postfix(int d) {
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
-    File::ForgetRandomDevice(d);
-    File::ForgetDescriptor(d);
-    ForgetJitSharedMemory(d);
-    File::ForgetDirectoryDescriptor(d);
+    File::ForgetClosedDescriptor(d);
 #ifdef _WIN32
-    File::ForgetFileLock(d);
     const int shared = File::CloseSharedMemoryDescriptor_nid_no_patch(d);
     if (shared != -2) return shared;
     return WithoutParameterHandler([d] { return ::_close(d); });
@@ -954,7 +959,7 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
 
 int APS5_VABI flock_nid_postfix(int d, int operation) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d)) return PosixFailure(GUEST_EOPNOTSUPP);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EOPNOTSUPP);
     File::RefuseArchivedFile(d, "flock");
 #ifdef _WIN32
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([d] { return ::_get_osfhandle(d); }));
@@ -1212,7 +1217,7 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
 
 int APS5_VABI sceKernelFsync(int fd) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(fd, "fsync");
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);
@@ -1224,7 +1229,7 @@ int APS5_VABI sceKernelFsync(int fd) {
 
 int APS5_VABI sceKernelFdatasync(int fd) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(fd, "fdatasync");
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);

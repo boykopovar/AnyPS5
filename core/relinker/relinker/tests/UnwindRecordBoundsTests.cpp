@@ -352,6 +352,41 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        Domain::ProgramHeader augLoad{}; augLoad.Type = 1; augLoad.MappedAddress = 0x1000; augLoad.FileSize = 128;
+        Domain::ProgramHeader augEh = augLoad; augEh.Type = 0x6474E550; augEh.FileSize = 32;
+        auto unterminatedAugBytes = Fixture();
+        unterminatedAugBytes[73] = 'z';
+        unterminatedAugBytes[74] = 'R';
+        unterminatedAugBytes[75] = 'L';
+        unterminatedAugBytes[76] = 'P';
+        bool unterminatedAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedAugRejected = std::string(error.what()).find("unterminated CIE augmentation") != std::string::npos;
+        }
+        Require(unterminatedAugRejected);
+        auto outOfBoundsAugBytes = Fixture();
+        Io::WriteU32(outOfBoundsAugBytes, 64, 12);
+        outOfBoundsAugBytes[73] = 'z';
+        outOfBoundsAugBytes[74] = 0;
+        outOfBoundsAugBytes[75] = 1;
+        outOfBoundsAugBytes[76] = 0x78;
+        outOfBoundsAugBytes[77] = 16;
+        outOfBoundsAugBytes[78] = 10;
+        bool outOfBoundsAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(outOfBoundsAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            outOfBoundsAugRejected = std::string(error.what()).find("CIE augmentation exceeds record") != std::string::npos;
+        }
+        Require(outOfBoundsAugRejected);
+        auto unterminatedRecordBytes = Fixture();
+        Io::WriteU32(unterminatedRecordBytes, 64, 8);
+        bool unterminatedRecordRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedRecordBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedRecordRejected = std::string(error.what()).find("CIE fields exceed record") != std::string::npos;
+        }
+        Require(unterminatedRecordRejected);
+        std::cout << "33 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

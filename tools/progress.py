@@ -97,7 +97,7 @@ def blank(match):
 
 
 def code(text):
-    return CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", ""))
+    return re.sub(r"\n(?:[ \t]*\n)+", "\n", CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", "")))
 
 def body_end(text, start):
     depth = 0
@@ -691,6 +691,11 @@ def require_distinct_reports(output):
         for other in paths[index + 1:]:
             if other.exists() and path.samefile(other):
                 raise ValueError(f"{path.name} and {other.name} in {output} are the same file")
+    targets = [os.path.normcase(os.path.realpath(path)) for path in paths]
+    for index, target in enumerate(targets):
+        for other in range(index + 1, len(targets)):
+            if targets[other] == target:
+                raise ValueError(f"{paths[index].name} and {paths[other].name} in {output} are the same file")
 
 
 def site_data(libraries, shaders, shader_source):
