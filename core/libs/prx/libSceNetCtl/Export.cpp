@@ -485,6 +485,13 @@ extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers,
     return host.dns.size();
 }
 
+extern "C" bool NetCtlHostIpv4Gateway_nid_no_patch(std::uint32_t* gateway) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host) || host.gateway.s_addr == 0) return false;
+    *gateway = host.gateway.s_addr;
+    return true;
+}
+
 #ifdef _WIN32
 using StunSocket = SOCKET;
 static constexpr StunSocket INVALID_STUN_SOCKET = INVALID_SOCKET;

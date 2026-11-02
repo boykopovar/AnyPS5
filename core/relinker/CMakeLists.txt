@@ -54,6 +54,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
@@ -104,6 +105,11 @@ if(BUILD_TESTING)
     target_link_libraries(andn_lowering_tests PRIVATE relinker_core)
     add_test(NAME andn_lowering COMMAND andn_lowering_tests)
     set_tests_properties(andn_lowering PROPERTIES TIMEOUT 20)
+
+    add_test_executable(bls_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/BlsLoweringTests.cpp)
+    target_link_libraries(bls_lowering_tests PRIVATE relinker_core)
+    add_test(NAME bls_lowering COMMAND bls_lowering_tests)
+    set_tests_properties(bls_lowering PROPERTIES TIMEOUT 20)
 
     add_test_executable(masked_store_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/MaskedStoreLoweringTests.cpp)
     target_link_libraries(masked_store_lowering_tests PRIVATE relinker_core)
@@ -256,6 +262,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
     )
     target_include_directories(amd64_only_windows_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/src/specifics/windows)
     if(BUILD_TESTING)
@@ -545,6 +552,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/BlsLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
@@ -807,6 +815,12 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_absolute_symbols.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_module_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_identity.py $<TARGET_FILE:relinker>)
+        add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
+            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
+        set_property(TEST linux_guest_zero_address_exports APPEND PROPERTY LABELS relinker)
+        set_tests_properties(linux_guest_zero_address_exports PROPERTIES TIMEOUT 30)
+        add_asan_test_options(linux_guest_zero_address_exports verify_asan_link_order=0)
         add_test(NAME guest_unused_import_dependencies COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_unused_import_dependencies.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
@@ -909,6 +923,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_output_collisions.py $<TARGET_FILE:relinker>)
         add_test(NAME secondary_output_collisions COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_secondary_output_collisions.py $<TARGET_FILE:relinker>)
+        foreach(dryRunCase IN ITEMS formats modules patches failures)
+            add_test(NAME dry_run_${dryRunCase} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_dry_run.py $<TARGET_FILE:relinker> ${dryRunCase})
+            set_tests_properties(dry_run_${dryRunCase} PROPERTIES TIMEOUT 20)
+        endforeach()
         add_test(NAME input_file COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_file.py $<TARGET_FILE:relinker>)
         add_test(NAME null_symbol_relocations COMMAND ${Python3_EXECUTABLE}
@@ -925,6 +944,10 @@ if(BUILD_TESTING)
         add_test(NAME long_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_long_paths.py $<TARGET_FILE:relinker>)
         set_tests_properties(long_paths PROPERTIES SKIP_RETURN_CODE 77)
+        if(WIN32)
+            add_test(NAME windows_extended_paths COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_extended_paths.py $<TARGET_FILE:relinker>)
+        endif()
         add_test(NAME string_table_bounds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_string_table_bounds.py $<TARGET_FILE:relinker>)
         add_test(NAME sce_code_extent COMMAND ${Python3_EXECUTABLE}
