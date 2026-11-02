@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -2513,6 +2514,10 @@ void DepthStencilTests() {
         // 260, AMD PAL), so a fill of the words a linear layout would hold covers nothing.
         Require(!HtileFillCovers(0x10000, {16, 16}, 0x10000, 16) && !HtileFillCovers(0x10000, {16, 16}, 0x10000, 264), "a fill of the linear HTILE size of a 16x16 surface misses its pipe-aligned words");
         Require(AgcDriver::Graphics::HtileMetadataBytes({1024, 512}) == 0x8000u && AgcDriver::Graphics::HtileMetadataBytes({1025, 512}) == 0x10000u && AgcDriver::Graphics::HtileMetadataBytes({3840, 2160}) == 20u * 0x8000u, "the HTILE metadata is 32 KiB per 1024x512 block");
+        ShaderRecompiler::SetGcnGuestShaders(true);
+        Require(AgcDriver::Graphics::HtileMetadataBytes({512, 512}) == 0x4000u && AgcDriver::Graphics::HtileMetadataBytes({256, 256}) == 0x4000u && AgcDriver::Graphics::HtileMetadataBytes({2048, 1152}) == 0x30000u && AgcDriver::Graphics::HtileMetadataBytes({4096, 4096}) == 0x100000u, "a PS4 HTILE is 16 KiB per 512x512 block");
+        Require(HtileFillCovers(0x10000, {512, 512}, 0x10000, 0x4000) && !HtileFillCovers(0x10000, {512, 512}, 0x10000, 0x3ffc), "a 16 KiB fill covers the HTILE of a 512x512 PS4 depth target");
+        ShaderRecompiler::SetGcnGuestShaders(false);
     }
     Require(state.renderExtent.width == 4 && state.renderExtent.height == 2, "render extent ignores the depth surface");
     Require(!state.depthTest && !state.depthWrite && state.stencilTest, "depth/stencil enables changed");
@@ -7368,6 +7373,49 @@ void hostImportBudgetTests() {
     Require(HostImportBudget(memory, 16 * GiB) == 8 * GiB, "a host heap past memoryHeapCount limits the import budget");
 }
 
+void unifiedHeapImportBudgetTests() {
+    using AgcDriver::Graphics::HostImportBudgetFor;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    VkPhysicalDeviceMemoryProperties unified{};
+    unified.memoryHeapCount = 1;
+    unified.memoryHeaps[0] = {24 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    unified.memoryTypeCount = 3;
+    unified.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    unified.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+    unified.memoryTypes[2] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, 0};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT report{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    report.heapBudget[0] = 18 * GiB;
+    report.heapUsage[0] = 0;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 12 * GiB, "an idle unified heap lowered the import budget");
+    report.heapUsage[0] = 8 * GiB;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 7936 * MiB, "a unified heap used by other allocations did not lower the import budget");
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 4 * GiB) == 12032 * MiB, "a unified heap counted its own imports as other allocations");
+    report.heapUsage[0] = 17 * GiB;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 0, "a unified heap past its budget left room for imports");
+    Require(HostImportBudgetFor(unified, nullptr, 12 * GiB, 0) == 12 * GiB, "a missing budget report lowered the import budget");
+    auto deviceOnly = unified;
+    deviceOnly.memoryTypeCount = 2;
+    deviceOnly.memoryTypes[1].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    report.heapUsage[0] = 8 * GiB;
+    Require(HostImportBudgetFor(deviceOnly, &report, 12 * GiB, 0) == 12 * GiB, "a heap without host-coherent memory was taken as the host heap");
+
+    VkPhysicalDeviceMemoryProperties discrete{};
+    discrete.memoryHeapCount = 2;
+    discrete.memoryHeaps[0] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    discrete.memoryHeaps[1] = {16 * GiB, 0};
+    discrete.memoryTypeCount = 3;
+    discrete.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    discrete.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0};
+    discrete.memoryTypes[2] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT split{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    split.heapBudget[0] = 6 * GiB;
+    split.heapUsage[0] = 6 * GiB;
+    split.heapBudget[1] = 12 * GiB;
+    split.heapUsage[1] = 0;
+    Require(HostImportBudgetFor(discrete, &split, 20 * GiB, 0) == 10752 * MiB, "a device with a separate host heap used its device-local heap for the import budget");
+}
+
 void tableUpdateAfterBindTests() {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     using namespace AgcDriver::Graphics;
@@ -10396,7 +10444,7 @@ void ProvokingVertexTests() {
     ValidateProvokingVertex(supported, meshDraw, shaders);
     expectFailure([&] { ValidateProvokingVertex(supported, meshDraw, slotShaders); }, "last provoking vertex with explicit per-vertex triangle-strip interpolation is unsupported");
     meshDraw.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
-    expectFailure([&] { ValidateProvokingVertex(supported, meshDraw, flatShaders); }, "last provoking vertex is unsupported for triangle fans assembled for a geometry program");
+    for (const auto& drawn : {std::span<const CompiledShader>{}, std::span<const CompiledShader>(flatShaders), std::span<const CompiledShader>(flatP10Shaders), std::span<const CompiledShader>(smoothShaders), std::span<const CompiledShader>(slotShaders)}) ValidateProvokingVertex(supported, meshDraw, drawn);
     for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN}) {
         auto firstDraw = meshDraw;
         firstDraw.topology = topology;
@@ -12748,6 +12796,18 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         mappedState.colors[0].componentMapping = 0x24;
         BuildPipelineStoreKey(mapped, context, mappedState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
         Require(mapped != original, "the component mapping did not enter the key");
+        auto legacyState = state;
+        legacyState.stages.legacyVertex = true;
+        auto legacyVertex = module(4);
+        legacyVertex.bindings = vertex.bindings;
+        const std::array<CompiledShader, 2> legacyShaders{{{Stage::Vertex, &legacyVertex, 0}, {Stage::Fragment, &fragment, PipelinePushSlotBytes}}};
+        GraphicsPipelineRecipe legacyDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL)), legacyDecoded), "the legacy vertex recipe does not decode");
+        std::vector<std::byte> legacyFlag, legacyKey, legacyReplayed;
+        BuildPipelineStoreKey(legacyFlag, context, legacyState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(legacyKey, context, legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(legacyReplayed, context, legacyDecoded.state, legacyDecoded.vertexInput, layouts.View(), legacyShaders, legacyDecoded.attachmentLayout);
+        Require(legacyFlag == original && legacyKey != original && legacyKey == legacyReplayed, "the legacy vertex selection keyed a pipeline by the state flag instead of by its vertex module");
         std::vector<std::byte> unclamped, clamped, biased;
         auto clampedState = state;
         clampedState.depthBiasClamp = 1.0f;
@@ -13331,6 +13391,7 @@ int main(int argc, char** argv) {
         imageTableTemplateRefreshTests();
         debugBranchTests();
         hostImportBudgetTests();
+        unifiedHeapImportBudgetTests();
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();
