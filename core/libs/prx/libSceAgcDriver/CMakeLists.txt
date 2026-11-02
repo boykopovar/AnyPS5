@@ -915,3 +915,5 @@ if(BUILD_TESTING)
     list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal|agc_pipeline_store_replay_growth)$")
     set_property(TEST ${agcRegisteredTests} APPEND PROPERTY ENVIRONMENT "APS5_NO_PIPELINE_JOURNAL=1")
 endif()
+
+target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)

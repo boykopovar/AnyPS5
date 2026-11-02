@@ -1,4 +1,4 @@
-add_test_executable(agc_host_import_sparse_tests EXCLUDE_FROM_ALL tests/HostImportSparseDmaBuf.cpp)
+add_test_executable(agc_host_import_sparse_tests EXCLUDE_FROM_ALL tests/HostImportSparseDmaBuf.cpp tests/AllocationFailure.cpp)
 target_include_directories(agc_host_import_sparse_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
 target_link_libraries(agc_host_import_sparse_tests PRIVATE libSceAgcDriver libc)
 set_target_properties(agc_host_import_sparse_tests PROPERTIES CXX_EXTENSIONS OFF)
