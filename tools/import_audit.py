@@ -79,10 +79,16 @@ def elf_program_dynamic_symbols(path, data):
     def file_offset(address, size, what):
         for segment in loads:
             _, _, offset, virtual, _, file_size, _, _ = segment
-            if address >= virtual and address - virtual <= file_size and size <= file_size - (address - virtual):
+            if address >= virtual and address - virtual <= file_size:
                 result = offset + address - virtual
-                take(data, result, size, path, what)
-                return result
+                covered = virtual + file_size
+                for following in sorted(loads, key=lambda item: item[3]):
+                    next_offset, next_virtual, next_size = following[2], following[3], following[5]
+                    if next_virtual <= covered and next_offset - next_virtual == offset - virtual:
+                        covered = max(covered, next_virtual + next_size)
+                if address + size <= covered:
+                    take(data, result, size, path, what)
+                    return result
         raise AuditError(f"{path}: {what} address 0x{address:x} is outside file-backed load segments")
 
     dynamic_segments = [segment for segment in segments if segment[0] == 2]
