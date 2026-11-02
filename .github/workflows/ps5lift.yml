@@ -30,3 +30,38 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang-18 lld-18 llvm-18 python3
       - name: Build the runtime
         run: python3 ps5lift/tools/ps5lift.py runtime --triple aarch64-unknown-linux-gnu --output build/runtime --clang /usr/lib/llvm-18/bin/clang --clangxx /usr/lib/llvm-18/bin/clang++
+
+  libraries:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 5G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Install the toolchain, the libraries and lavapipe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build ccache python3 clang-18 lld-18 llvm-18 libx11-dev libxext-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libvulkan1 mesa-vulkan-drivers
+      - uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: lifted-libraries-ccache-${{ github.sha }}
+          restore-keys: lifted-libraries-ccache-
+      - name: Build the runtime
+        run: python3 ps5lift/tools/ps5lift.py runtime --triple aarch64-unknown-linux-gnu --output build/runtime --clang /usr/lib/llvm-18/bin/clang --clangxx /usr/lib/llvm-18/bin/clang++
+      - name: Configure AnyPS5 for a lifted guest
+        run: cmake -S . -B build/anyps5 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DANYPS5_GUEST_LIFTED=ON -DANYPS5_LIFTED_RUNTIME=$PWD/build/runtime/libps5lift_runtime.so -DCMAKE_C_COMPILER=/usr/lib/llvm-18/bin/clang -DCMAKE_CXX_COMPILER=/usr/lib/llvm-18/bin/clang++ -DCMAKE_C_FLAGS=-mcpu=neoverse-v2 -DCMAKE_CXX_FLAGS=-mcpu=neoverse-v2
+      - name: Build and run the tests that pass in a lifted build
+        run: python3 ps5lift/tools/lifted_tests.py --build build/anyps5 --jobs 4
+      - if: always()
+        run: ccache --show-stats
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: lifted-libraries-ccache-${{ github.sha }}
