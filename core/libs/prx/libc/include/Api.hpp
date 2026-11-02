@@ -727,6 +727,8 @@ float APS5_VABI _FSinh_nid_postfix(float x, float y);
 float APS5_VABI _FCosh_nid_postfix(float x, float y);
 short APS5_VABI _FDtest_nid_postfix(const float* value);
 short APS5_VABI _Dtest_nid_postfix(const double* value);
+short APS5_VABI _FDsign_nid_postfix(float value);
+short APS5_VABI _Dsign_nid_postfix(double value);
 int APS5_VABI __isnanf_nid_postfix(float x);
 int APS5_VABI isnanf_nid_postfix(float x);
 int APS5_VABI isnan_nid_postfix(double x);
@@ -1012,6 +1014,7 @@ void APS5_VABI bcopy_nid_postfix(const void* source, void* destination, size_t c
 void* APS5_VABI memcpy_nid_postfix(void* dest, const void* src, size_t n);
 void* APS5_VABI memmove_nid_postfix(void* dest, const void* src, size_t n);
 int APS5_VABI memcmp_nid_postfix(const void* s1, const void* s2, size_t n);
+int APS5_VABI timingsafe_bcmp_nid_postfix(const void* b1, const void* b2, size_t n);
 int APS5_VABI timingsafe_memcmp_nid_postfix(const void* b1, const void* b2, size_t len);
 const void* APS5_VABI memchr_nid_postfix(const void* s, int c, size_t n);
 void* APS5_VABI memrchr_nid_postfix(const void* s, int c, size_t n);

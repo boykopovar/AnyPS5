@@ -28,6 +28,7 @@
 namespace AgcDriver::Graphics {
 
 class Buffer;
+class DeviceBuffer;
 
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
@@ -64,6 +65,23 @@ public:
     // destination access mask.
     void MarkCovered(VkAccessFlags access);
     void MarkShaderReadsCovered() { MarkCovered(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT); }
+    static bool DispatchOverlapEnabled();
+    static void SetDispatchOrder(std::uint32_t queueKey, bool unordered);
+    static std::uint32_t TakeDispatchOrder(bool& unordered);
+    static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
+    using RunAccess = std::array<std::uint64_t, 3>;
+    static std::uint32_t PeekUnorderedDispatch();
+    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
+    void DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses);
+    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess);
+    void OpenBatch() { ensureOpen(); }
+    bool RunOpen() const { return open != nullptr && open->deferredDispatchQueue != 0; }
+    void AfterRun(std::function<void(Recorder&)> work);
+    bool CloseRunOwing(const void* owner);
+    struct OverlapStatistics {
+        std::uint64_t deferred, overlapped, flushed;
+    };
+    static OverlapStatistics OverlapCounts();
     struct DrawPassStart {
         VkCommandBuffer commands = VK_NULL_HANDLE;
         bool continued = false;
@@ -96,6 +114,9 @@ public:
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
     void KeepThroughHold(std::shared_ptr<void> object);
     void KeepBytes(const void* owner, std::size_t bytes);
+    enum class UploadScratch : std::uint8_t { Tiled = 0, Linear, Count };
+    std::shared_ptr<DeviceBuffer> UploadScratchBuffer(UploadScratch kind, std::size_t bytes);
+    static constexpr VkPipelineStageFlags UploadScratchReuseStages = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     std::size_t OpenKeptBytes() const { return open != nullptr ? open->keptBytes : 0; }
     void FlushDeferredReleases();
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
@@ -186,6 +207,7 @@ public:
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t PendingWriterSerial(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t PendingWriterSerial(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> exceptNotes) const;
+    std::uint64_t PendingLeaseSerial(std::uint64_t address, std::size_t bytes) const;
     // What SyncThrough(address, bytes) would wait for, for the [hooksync] attribution: the newest
     // batch whose noted range overlaps the access (the open batch counts first, with the serial it
     // will get), whether that batch's fence has already signaled (its GPU work is done, so the
@@ -573,6 +595,7 @@ private:
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
         std::unordered_set<const void*> keptOwners;
+        std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
@@ -661,6 +684,10 @@ private:
         } run;
         // See Commands(): the accesses the last recorded command's trailing barrier covers.
         VkAccessFlags coveredAccess = 0;
+        std::uint32_t deferredDispatchQueue = 0;
+        std::vector<const void*> deferredRun;
+        std::vector<RunAccess> runAccess;
+        std::vector<std::function<void(Recorder&)>> afterRun;
         // The hazard tracker's accesses since its last simulated barrier (see NoteAccess).
         struct Tracker {
             struct Range {
@@ -783,6 +810,9 @@ private:
     void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
     // Opens a batch when none is open, without closing a store run (Commands() does both).
     void ensureOpen();
+    void flushDeferredDispatch();
+    bool runConflict(std::span<const RunAccess> accesses) const;
+    bool joinsRun(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) const;
     void dropStaleHoldKept();
     // Records the run's pending store (vkCmdUpdateBuffer), if any.
     void flushPendingStore();
