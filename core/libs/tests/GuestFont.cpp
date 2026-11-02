@@ -193,6 +193,16 @@ static void CheckWritingDoesNotOwnCharacters(const FontMemory* memory, FontHandl
     FontString string = create();
     FontWriting first{};
     Require(sceFontWritingInit(&first, string, characters) == SCE_FONT_OK);
+    FontWritingMetrics metrics{1.0f, 2.0f, {3.0f, 4.0f, 5.0f, 6.0f}};
+    const auto metricsAreZero = [&] {
+        return metrics.advanceX == 0.0f && metrics.advanceY == 0.0f && metrics.Extent.top == 0.0f && metrics.Extent.bottom == 0.0f && metrics.Extent.left == 0.0f && metrics.Extent.right == 0.0f;
+    };
+    Require(sceFontWritingGetRenderMetrics(nullptr, &metrics) == SCE_FONT_ERROR_INVALID_PARAMETER && metricsAreZero());
+    Require(sceFontWritingGetRenderMetrics(&first, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingGetRenderMetrics(&first, &metrics) == SCE_FONT_OK);
+    Require(sceFontWritingSetMaskInvisible(&first, 1) == SCE_FONT_OK);
+    Require(sceFontWritingSetMaskInvisible(&first, 0) == SCE_FONT_OK);
+    Require(sceFontWritingSetMaskInvisible(&first, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
     FontWriting copy;
     std::memcpy(&copy, &first, sizeof(copy));
     Require(steps(&first) == text.size() && steps(&copy) == text.size());
