@@ -20,7 +20,7 @@ int APS5_VABI __sys_dynlib_get_list_for_libdbg_nid_postfix();
 int APS5_VABI __sys_dynlib_load_prx_nid_postfix();
 int APS5_VABI __sys_dynlib_unload_prx_nid_postfix();
 int APS5_VABI __sys_get_proc_type_info_nid_postfix();
-int APS5_VABI __sys_is_development_mode_nid_postfix();
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix();
 int APS5_VABI __sys_kqueueex_nid_postfix();
 int APS5_VABI __sys_namedobj_create_nid_postfix();
 int APS5_VABI __sys_namedobj_delete_nid_postfix();

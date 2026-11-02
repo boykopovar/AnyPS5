@@ -67,8 +67,8 @@ int APS5_VABI __sys_get_proc_type_info_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_is_development_mode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI __sys_is_development_mode_nid_postfix() {
+    return 0;
 }
 
 int APS5_VABI __sys_kqueueex_nid_postfix() {
