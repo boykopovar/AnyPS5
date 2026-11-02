@@ -1,4 +1,5 @@
 #include "prx/libSceAvPlayer/include/Api.hpp"
+#include <cerrno>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -1219,6 +1220,9 @@ void TestWithoutAllocators() {
     AvPlayerInternal* handle = nullptr;
     Check(sceAvPlayerInitEx(&extended, &handle) == 0 && handle != nullptr, "extended init without allocators failed");
     Check(sceAvPlayerInitEx(nullptr, &handle) == InvalidParams, "extended init accepted null data");
+    errno = 71;
+    Check(sceAvPlayerInitEx(&extended, reinterpret_cast<AvPlayerInternal**>(0x10)) == InvalidParams, "extended init rejected unwritable handle");
+    Check(errno == 71, "errno preserved");
     Check(sceAvPlayerClose(handle) == 0, "close failed");
 }
 
