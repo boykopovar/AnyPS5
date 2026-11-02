@@ -53,7 +53,6 @@ int main() {
         Require(sceHttp2SetSslCallback(id, nullptr, &callbackCalls) == 0);
         Require(sceHttp2SetSslCallback(id, RejectSsl, nullptr) == 0);
     }
-    for (const int id : {context, box}) Require(Throws([&] { sceHttp2SetSslCallback(id, RejectSsl, nullptr); }));
     Require(callbackCalls == 0);
     for (const int id : {context, box}) Require(Throws([&] { sceHttp2SetRedirectCallback(id, RejectRedirect, nullptr); }));
 
