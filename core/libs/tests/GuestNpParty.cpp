@@ -11,6 +11,7 @@ constexpr int kAlreadyInitialized = static_cast<int>(0x80552502u);
 constexpr int kNotInitialized = static_cast<int>(0x80552503u);
 constexpr int kInvalidArgument = static_cast<int>(0x80552504u);
 constexpr int kNotInParty = static_cast<int>(0x80552506u);
+constexpr int kHandlerState = static_cast<int>(0x80552511u);
 
 bool check(bool value, const char* message) {
     if (!value) std::fprintf(stderr, "%s\n", message);
@@ -28,7 +29,11 @@ bool uninitializedTests() {
         && check(sceNpPartyGetMembers(out) == kNotInitialized && sceNpPartyGetMembersA(out) == kNotInitialized, "get members before initialize did not fail")
         && check(sceNpPartyGetMemberInfo(1, out) == kNotInitialized && sceNpPartyGetMemberInfoA(1, nullptr) == kNotInitialized, "get member info before initialize did not fail")
         && check(sceNpPartyGetMemberSessionInfo(1, out) == kNotInitialized && sceNpPartyGetMemberVoiceInfo(1, 2, out) == kNotInitialized, "get session or voice info before initialize did not fail")
-        && check(sceNpPartySendBinaryMessage(out) == kNotInitialized && sceNpPartySendBinaryMessage(nullptr) == kNotInitialized, "send before initialize did not fail");
+        && check(sceNpPartySendBinaryMessage(out) == kNotInitialized && sceNpPartySendBinaryMessage(nullptr) == kNotInitialized, "send before initialize did not fail")
+        && check(sceNpPartyGetVoiceChatPriority(nullptr) == kNotInitialized, "get priority before initialize did not fail")
+        && check(sceNpPartySetVoiceChatPriority(1) == kNotInitialized, "set priority before initialize did not fail")
+        && check(sceNpPartyRegisterPrivateHandler(out) == kNotInitialized, "register private handler before initialize did not fail")
+        && check(sceNpPartyUnregisterPrivateHandler() == kNotInitialized, "unregister private handler before initialize did not fail");
     for (std::uint8_t byte : out) ok = ok && check(byte == 0xa5, "a call before initialize wrote its output");
     return ok;
 }
@@ -48,6 +53,7 @@ bool stateTests() {
 bool lifecycleTests() {
     std::uint64_t param[4] = {};
     std::uint64_t handlers[8] = {};
+    handlers[1] = 1;
     return check(sceNpPartyTerminate() == kNotInitialized, "terminate before initialize did not fail")
         && check(sceNpPartyCheckCallback() == kNotInitialized, "check callback before initialize did not fail")
         && check(sceNpPartyRegisterHandlerA(handlers, nullptr) == kNotInitialized, "register handler before initialize did not fail")
@@ -56,14 +62,33 @@ bool lifecycleTests() {
         && check(sceNpPartyInitialize(param) == 0, "initialize failed")
         && check(sceNpPartyInitialize(param) == kAlreadyInitialized, "a second initialize did not fail")
         && check(sceNpPartyRegisterHandlerA(nullptr, nullptr) == kInvalidArgument, "null handlers were not refused")
+        && check(sceNpPartyRegisterPrivateHandler(handlers) == kHandlerState, "a private handler without a public handler was accepted")
+        && check(sceNpPartyUnregisterPrivateHandler() == kHandlerState, "unregister without a public handler did not fail")
         && check(sceNpPartyRegisterHandlerA(handlers, param) == 0, "register handler failed")
         && check(sceNpPartyRegisterHandler(nullptr, nullptr) == kInvalidArgument, "null plain handlers were not refused")
         && check(sceNpPartyRegisterHandler(handlers, param) == 0, "the plain register handler failed")
+        && check(sceNpPartyRegisterHandlerA(handlers, param) == kHandlerState, "a second A registration did not fail")
+        && check(sceNpPartyRegisterPrivateHandler(handlers) == 0, "register private handler failed")
+        && check(sceNpPartyUnregisterPrivateHandler() == 0, "unregister private handler failed")
+        && check(sceNpPartyUnregisterPrivateHandler() == kHandlerState, "a second unregister did not fail")
+        && check(sceNpPartyRegisterPrivateHandler(nullptr) == 0, "a null private handler was not accepted")
+        && check(sceNpPartyUnregisterPrivateHandler() == kHandlerState, "a null private handler was not treated as absent")
         && check(sceNpPartyCheckCallback() == 0, "check callback failed")
         && check(sceNpPartyTerminate() == 0, "terminate failed")
         && check(sceNpPartyTerminate() == kNotInitialized, "a second terminate did not fail")
         && check(sceNpPartyInitialize(param) == 0, "initialize after terminate failed")
         && check(sceNpPartyTerminate() == 0, "terminate after reinitialize failed");
+}
+
+bool priorityTests() {
+    std::uint32_t priority = 0xa5a5a5a5;
+    return check(sceNpPartyGetVoiceChatPriority(nullptr) == kInvalidArgument, "a null priority was not refused")
+        && check(sceNpPartyGetVoiceChatPriority(&priority) == kNotInParty && priority == 0xa5a5a5a5, "get priority did not report NOT_IN_PARTY without writing")
+        && check(sceNpPartySetVoiceChatPriority(0) == kInvalidArgument, "priority 0 was not refused")
+        && check(sceNpPartySetVoiceChatPriority(3) == kInvalidArgument, "priority 3 was not refused")
+        && check(sceNpPartySetVoiceChatPriority(-1) == kInvalidArgument, "priority -1 was not refused")
+        && check(sceNpPartySetVoiceChatPriority(1) == kNotInParty, "priority 1 did not report NOT_IN_PARTY")
+        && check(sceNpPartySetVoiceChatPriority(2) == kNotInParty, "priority 2 did not report NOT_IN_PARTY");
 }
 
 bool notInPartyTests() {
@@ -95,7 +120,7 @@ int main() {
     std::uint64_t param[4] = {};
     if (!uninitializedTests() || !lifecycleTests()) return 1;
     if (!check(sceNpPartyInitialize(param) == 0, "initialize for the state checks failed")) return 1;
-    if (!stateTests() || !notInPartyTests()) return 1;
+    if (!stateTests() || !priorityTests() || !notInPartyTests()) return 1;
     if (!check(sceNpPartyTerminate() == 0, "terminate after the state checks failed") || !uninitializedTests()) return 1;
     std::puts("NpParty tests passed");
     return 0;
