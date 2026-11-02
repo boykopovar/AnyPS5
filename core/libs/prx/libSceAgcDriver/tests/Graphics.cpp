@@ -11906,6 +11906,11 @@ void meshArgumentTests() {
     context.meshLimits.maxMeshWorkGroupCount[2] = 0xffffffffu;
     context.meshLimits.maxMeshWorkGroupTotalCount = 0xffffffffu;
     Require(refused(0xffffffffu, 0xffffffffu), "a product of groups and instances past 64 bits is refused");
+    context.meshWorkGroupXLimit = 65535u;
+    context.meshLimits.maxMeshWorkGroupCount[0] = 0xffffffffu;
+    context.meshLimits.maxMeshWorkGroupCount[2] = 0xffffffffu;
+    context.meshLimits.maxMeshWorkGroupTotalCount = 0xffffffffu;
+    Require(grid(65575, 1, {32788, 1, 2, 32788}), "the AMD proprietary driver keeps mesh workgroup X at the 16-bit layer stride");
 }
 
 void meshLimitTests() {

@@ -1209,7 +1209,8 @@ MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecom
 std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances) {
     const auto& limits = context.meshLimits;
     if (groups == 0 || instances > limits.maxMeshWorkGroupCount[1] || limits.maxMeshWorkGroupCount[0] == 0) return std::nullopt;
-    const auto across = groups <= limits.maxMeshWorkGroupCount[0] ? groups : std::min(limits.maxMeshWorkGroupCount[0], ShaderRecompiler::MeshLayerStrideLimit);
+    const auto xLimit = context.meshWorkGroupXLimit != 0 ? std::min(limits.maxMeshWorkGroupCount[0], context.meshWorkGroupXLimit) : limits.maxMeshWorkGroupCount[0];
+    const auto across = groups <= xLimit ? groups : std::min(xLimit, ShaderRecompiler::MeshLayerStrideLimit);
     const auto layers = (groups - 1u) / across + 1u;
     const auto columns = (groups - 1u) / layers + 1u;
     if (layers > limits.maxMeshWorkGroupCount[2] || (instances != 0 && columns > limits.maxMeshWorkGroupTotalCount / instances / layers)) return std::nullopt;

@@ -4265,6 +4265,7 @@ Graphics::Context VulkanDevice::buildContext() const {
         state->depthClamp,
         state->hostImportAlignment
     };
+    context.meshWorkGroupXLimit = state->driverId == VK_DRIVER_ID_AMD_PROPRIETARY ? 0xffffu : 0u;
     context.pipelineCacheSynchronization = state->pipelineCache ? &state->pipelineCache->Synchronization() : nullptr;
     context.individuallyFreeDescriptorSets = state->individuallyFreeDescriptorSets;
     context.tessellationPipelineCache = state->tessellationPipelineCache;
