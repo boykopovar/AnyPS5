@@ -99,7 +99,7 @@ struct SamplerCase {
     bool atBaseLevel;
 };
 
-constexpr std::array<SamplerCase, 12> Samplers{{
+constexpr std::array<SamplerCase, 18> Samplers{{
     {"bilinear clamp-to-last-texel, point mips, MAX_LOD 0xfff", {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, true, true},
     {"point clamp-to-last-texel, point mips", {0x00008092u, 0x00fff000u, 0x04000000u, 0u}, false, true},
     {"bilinear clamp-to-last-texel, linear mips, MIN_LOD 1, LOD bias 1.5", {0x00008092u, 0x00fff100u, 0x09500180u, 0u}, true, false},
@@ -112,6 +112,12 @@ constexpr std::array<SamplerCase, 12> Samplers{{
     {"point mirror-once-border on X, clamp-to-last-texel on Y, opaque black", {0x00008097u, 0x00fff000u, 0x04000000u, 0x40000000u}, false, true},
     {"bilinear clamp-to-border on X, mirror-once-border on Y, transparent black", {0x000080beu, 0x00fff000u, 0x05500000u, 0u}, true, true},
     {"point mirror on X, mirror-once-border on Y, opaque white", {0x000080b9u, 0x00fff000u, 0x04000000u, 0x80000000u}, false, true},
+    {"bilinear clamp-half-border on X and Y, opaque white", {0x000080a4u, 0x00fff000u, 0x05500000u, 0x80000000u}, true, true},
+    {"point clamp-half-border on X, mirror-once-half-border on Y, opaque white", {0x000080acu, 0x00fff000u, 0x04000000u, 0x80000000u}, false, true},
+    {"bilinear mirror-once-half-border on X, clamp-half-border on Y, transparent black", {0x000080a5u, 0x00fff000u, 0x05500000u, 0u}, true, true},
+    {"point mirror-once-half-border on X, clamp-half-border on Y, opaque black", {0x000080a5u, 0x00fff000u, 0x04000000u, 0x40000000u}, false, true},
+    {"bilinear mirror on X, mirror-once-half-border on Y, opaque black", {0x000080a9u, 0x00fff000u, 0x05500000u, 0x40000000u}, true, true},
+    {"point magnification, bilinear minification, clamp-half-border on X and Y, opaque white", {0x000080a4u, 0x00fff000u, 0x04400000u, 0x80000000u}, false, true},
 }};
 
 struct Coordinate {
@@ -269,17 +275,23 @@ std::array<double, 4> Fetch(const SamplerCase& sampler, std::uint32_t level, std
     std::array<std::int32_t, 2> texel{x, y};
     for (std::uint32_t axis = 0; axis < 2u; ++axis) {
         const auto clamp = ClampMode(sampler, axis);
-        if ((clamp == 1u || clamp == 3u || clamp == 7u) && texel[axis] < 0) texel[axis] = -texel[axis] - 1;
-        if ((clamp == 6u || clamp == 7u) && (texel[axis] < 0 || texel[axis] >= sizes[axis])) return BorderColor(sampler);
+        if (clamp % 2u == 1u && texel[axis] < 0) texel[axis] = -texel[axis] - 1;
+        if ((clamp >= 6u || (clamp >= 4u && sampler.linear)) && (texel[axis] < 0 || texel[axis] >= sizes[axis])) return BorderColor(sampler);
         texel[axis] = std::clamp(texel[axis], 0, sizes[axis] - 1);
     }
     return TexelOf(level, texel[0], texel[1]);
 }
 
+double HalfBorderCoordinate(const SamplerCase& sampler, std::uint32_t axis, double value, std::int32_t size) {
+    const auto clamp = ClampMode(sampler, axis);
+    if (!sampler.linear || (clamp != 4u && clamp != 5u)) return value;
+    return std::clamp(value, clamp == 5u ? -static_cast<double>(size) : 0.0, static_cast<double>(size));
+}
+
 std::array<double, 4> Reference(const SamplerCase& sampler, std::uint32_t level, const Coordinate& coordinate) {
     if (!sampler.linear) return Fetch(sampler, level, static_cast<std::int32_t>(std::floor(coordinate.u)), static_cast<std::int32_t>(std::floor(coordinate.v)));
-    const double u = static_cast<double>(coordinate.u) - 0.5;
-    const double v = static_cast<double>(coordinate.v) - 0.5;
+    const double u = HalfBorderCoordinate(sampler, 0u, coordinate.u, LevelWidth(level)) - 0.5;
+    const double v = HalfBorderCoordinate(sampler, 1u, coordinate.v, LevelHeight(level)) - 0.5;
     const auto i = static_cast<std::int32_t>(std::floor(u));
     const auto j = static_cast<std::int32_t>(std::floor(v));
     const double alpha = u - i;

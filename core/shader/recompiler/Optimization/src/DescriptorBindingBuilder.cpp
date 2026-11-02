@@ -255,10 +255,11 @@ struct UnnormalizedProof {
     std::vector<bool> imagesAtBaseLevel;
     std::vector<bool> samplersIgnoreCoordinates;
     std::vector<std::uint32_t> mirroredAxes;
+    std::vector<std::uint32_t> halfBorderAxes;
 };
 
 UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
-    UnnormalizedProof proof{std::vector<bool>(info.samplers.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.samplers.size()), std::vector<std::uint32_t>(info.samplers.size())};
+    UnnormalizedProof proof{std::vector<bool>(info.samplers.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.samplers.size()), std::vector<std::uint32_t>(info.samplers.size()), std::vector<std::uint32_t>(info.samplers.size())};
     for (std::uint32_t r = 0; r < info.samplers.size(); r++) {
         if (snapshot.samplers.at(r).dwordCount != 4u) fail("sampler descriptor must contain four dwords");
         const auto& sampler = info.samplers[r];
@@ -316,8 +317,10 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
         proof.samplers[r] = true;
         const auto clampX = snapshot.samplers[r].dwords[0] & 7u;
         const auto clampY = (snapshot.samplers[r].dwords[0] >> 3u) & 7u;
-        const auto mirrors = [](std::uint32_t clamp) { return clamp == 1u || clamp == 3u || clamp == 7u; };
+        const auto mirrors = [](std::uint32_t clamp) { return clamp == 1u || clamp == 3u || clamp == 5u || clamp == 7u; };
+        const auto halfBorder = [](std::uint32_t clamp) { return clamp == 4u || clamp == 5u; };
         proof.mirroredAxes[r] = (mirrors(clampX) ? 1u : 0u) | (mirrors(clampY) ? 2u : 0u);
+        proof.halfBorderAxes[r] = (halfBorder(clampX) ? 1u : 0u) | (halfBorder(clampY) ? 2u : 0u);
     }
     for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
         bool exact = proof.images[resource];
@@ -400,7 +403,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
         if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
         if (SamplesBaseLevelIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::UnnormalizedBaseLevelBase + index, unnormalized.samplers[index] ? 1u : 0u});
-        if (MirrorsIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::MirrorUnnormalizedBase + index, unnormalized.mirroredAxes[index]});
+        if (MirrorsIfUnnormalized(info.samplers[index])) {
+            plan.specialization.push_back({PipelineSpecialization::MirrorUnnormalizedBase + index, unnormalized.mirroredAxes[index]});
+            plan.specialization.push_back({PipelineSpecialization::HalfBorderUnnormalizedBase + index, unnormalized.halfBorderAxes[index]});
+        }
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
