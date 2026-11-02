@@ -24,6 +24,13 @@ target_link_libraries(agc_driver_recorder_tests PRIVATE
         libc
 )
 
+if(BUILD_TESTING)
+    add_test(NAME agc_completion_label_wait COMMAND agc_driver_recorder_tests --completion-wait-only)
+    set_tests_properties(agc_completion_label_wait PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_completion_label_wait PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 set_target_properties(agc_driver_recorder_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_recorder_tests)
 
