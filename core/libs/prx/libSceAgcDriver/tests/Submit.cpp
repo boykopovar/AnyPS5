@@ -4,6 +4,7 @@
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -858,6 +859,23 @@ void testHeaderWithoutProgramAddress() {
     AgcDriverRegisterShader_nid_postfix(&header.shader);
 }
 
+void testRegisterList() {
+    using AgcDriver::DriverDetail::RegisterList;
+    const AgcDriver::Registers userConfig{{0x24a, 1}, {0x24b, 2}, {0x25b, 3}};
+    const RegisterList list(userConfig);
+    check(list.size() == 3 && list.Expand() == userConfig, "a register list does not hold its registers' offsets and values");
+    check(list.find(0x24b) != list.end() && list.find(0x24b)->second == 2 && list.find(0x24c) == list.end() && list.find(0x200) == list.end(), "a register list found the wrong register");
+    RegisterList added;
+    added.emplace(0x25b, 3);
+    added.emplace(0x24a, 1);
+    added.emplace(0x24b, 2);
+    added.emplace(0x24a, 9);
+    check(added == list, "a register list is not kept in offset order, or a second emplace replaced a value");
+    AgcDriver::DriverDetail::DecodedShaderState decoded{{{0x08a, 7}}, AgcDriver::InitialContextRegisters(), userConfig};
+    const AgcDriver::DriverDetail::RegisteredShaderState state(decoded);
+    check(state.shader.Expand() == decoded.shader && state.context.Expand() == decoded.context && state.userConfig.Expand() == decoded.userConfig, "a registered state did not keep the decoded registers");
+}
+
 void testRegisteredFloatMode() {
     using AgcDriver::DriverDetail::RegisteredFloatMode;
     using AgcDriver::DriverDetail::ShaderSnapshot;
@@ -1068,8 +1086,13 @@ void testRegisteredFastLaunchWorkgroupVertex() {
     const std::array<ShaderRegister, 6> context{{
         {0x2d5u, 0x00482030u}, {0x1ffu, 32u}, {0x2ceu, 32u}, {0x2d3u, 64u}, {0x29bu, 2u}, {0x2abu, 4u},
     }};
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    const std::array<ShaderRegister, 2> strip{{{0x242u, 6u}, {0x25bu, 0x201u}}};
+    AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, strip);
+    const auto prepared = driver.PreparedEntryHashes(&header.shader);
     const std::array<ShaderRegister, 2> primitive{{{0x242u, 1u}, {0x25bu, 0x201u}}};
     AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+    check(driver.PreparedEntryHashes(&header.shader) == prepared, "a registered fast-launch program resolved with a triangle strip was not prepared as for a point list");
 }
 
 void testWorkerFailure() {
@@ -1221,6 +1244,7 @@ int main(int argc, char** argv) {
         testLabelResetByItsQueueBeforeItLanded();
         testWideLabelPartlyResetByItsQueueBeforeItLanded();
         testSmallCopyBehindPendingSource();
+        testRegisterList();
         testRegisteredFloatMode();
         testDispatchFloatMode();
         testReadOnlyResummarize();
