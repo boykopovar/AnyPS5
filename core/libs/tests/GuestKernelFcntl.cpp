@@ -283,6 +283,13 @@ static void FileFlagsRoundTrip() {
     Require(sceKernelFcntl(file, DuplicateCommand, -1) == SceEinval);
     RequireFailure(fcntl_nid_postfix(file, 99), GuestEinval);
     RequireFailure(fcntl_nid_postfix(file, GetLock, nullptr), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, GetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, SetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, SetLockWait, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, OldGetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, OldSetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(file, OldSetLockWait, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(fcntl_nid_postfix(-1, SetLock, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     GuestLock lock{0, 0, 0, 3, 0, 0};
     Require(fcntl_nid_postfix(file, SetLock, &lock) == 0);
     GuestLock probe{0, 0, 0, 1, 0, 0};

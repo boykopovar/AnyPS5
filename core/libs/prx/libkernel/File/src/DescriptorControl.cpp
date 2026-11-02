@@ -413,14 +413,13 @@ void SetCloseOnExec(int fd, bool value) {
 }
 
 int RecordLock(int fd, int command, std::intptr_t argument) {
-    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const bool old = command <= OldSetLockWait;
     const int current = old ? command + (GetLock - OldGetLock) : command;
     const std::size_t size = old ? OldGuestLockSize : sizeof(GuestLock);
     auto* pointer = reinterpret_cast<void*>(argument);
-    if (pointer == nullptr) return Fail(GuestEfault);
     GuestLock lock{};
-    std::memcpy(&lock, pointer, size);
+    if (!GuestCopyIn_nid_no_patch(&lock, pointer, size)) return Fail(GuestEfault);
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const auto kind = Classify(fd, "fcntl");
     if (!kind || *kind == Kind::Pipe || *kind == Kind::Socket) return Fail(GuestEbadf);
     if (*kind != Kind::File && *kind != Kind::Directory) Unsupported("fcntl", "a record lock", *kind, fd);
