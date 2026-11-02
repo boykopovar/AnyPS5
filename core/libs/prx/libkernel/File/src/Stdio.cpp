@@ -372,11 +372,23 @@ void File::SharePositionedTransfer(int from, int to) {
     if (!source) source = std::make_shared<PositionedLock>();
     g_positionedLocks[to] = source;
 }
+bool File::LimitSharedMemoryWrite_nid_no_patch(int descriptor, std::size_t& size, std::int64_t offset) {
+    if (offset < 0) { errno = EINVAL; return false; }
+    const auto length = ThreadCancel::Native([&] { return WithoutParameterHandler([descriptor] { return ::_filelengthi64(descriptor); }); });
+    if (length < 0) return false;
+    size = offset >= length ? 0 : static_cast<std::size_t>(std::min<std::uint64_t>(size, static_cast<std::uint64_t>(length - offset)));
+    return true;
+}
+
 static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write) {
     if (nbytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
         throw std::runtime_error("NativePositioned: nbytes exceeds platform limit");
     }
     if (write) {
+        if (File::HasFixedSizeWrites(descriptor)) {
+            if (!File::LimitSharedMemoryWrite_nid_no_patch(descriptor, nbytes, offset)) return -1;
+            if (nbytes == 0) return 0;
+        }
         const auto result = File::PwriteSharedMemory_nid_no_patch(descriptor, buf, nbytes, offset);
         if (result != -2) return result;
     }
@@ -448,6 +460,11 @@ static std::int64_t NativeTransferBuffer(int descriptor, void* buf, std::size_t 
         throw std::runtime_error("NativeTransfer: nbytes exceeds platform limit");
     }
     if (write) {
+        if (File::HasFixedSizeWrites(descriptor)) {
+            const auto position = ThreadCancel::Native([&] { return WithoutParameterHandler([descriptor] { return ::_lseeki64(descriptor, 0, SEEK_CUR); }); });
+            if (position < 0 || !File::LimitSharedMemoryWrite_nid_no_patch(descriptor, nbytes, position)) return -1;
+            if (nbytes == 0) return 0;
+        }
         const auto result = File::WriteSharedMemory_nid_no_patch(descriptor, buf, nbytes);
         if (result != -2) return result;
         if (File::Appends(descriptor)) {
@@ -800,7 +817,12 @@ static int PathError(const char* path, std::string& copy) {
 
 #ifdef _WIN32
 bool DescriptorIsOpen_nid_no_patch(int descriptor) {
-    return descriptor >= 0 && WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor) == -1 ? -1 : 0; }) == 0;
+    return descriptor >= 0 && WithoutParameterHandler([descriptor] {
+        const auto handle = ::_get_osfhandle(descriptor);
+        if (handle == -1) return -1;
+        DWORD flags = 0;
+        return handle == -2 || GetHandleInformation(reinterpret_cast<HANDLE>(handle), &flags) ? 0 : -1;
+    }) == 0;
 }
 #else
 bool DescriptorIsOpen_nid_no_patch(int descriptor) {
@@ -1148,7 +1170,7 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
 
 int APS5_VABI flock_nid_postfix(int d, int operation) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d)) return PosixFailure(GUEST_EOPNOTSUPP);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EOPNOTSUPP);
     File::RefuseArchivedFile(d, "flock");
 #ifdef _WIN32
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([d] { return ::_get_osfhandle(d); }));
@@ -1305,6 +1327,10 @@ int64_t APS5_VABI pread_nid_postfix(int d, void* buf, size_t nbytes, int64_t off
 }
 
 int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int d, const void* buf, size_t nbytes, int64_t offset) {
+    return PosixPwrite_nid_no_patch(d, buf, nbytes, offset);
+}
+
+std::int64_t PosixPwrite_nid_no_patch(int d, const void* buf, std::size_t nbytes, std::int64_t offset) {
     return ThreadCancel::IoWrite([&]() -> std::int64_t {
         if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
         if (ExceedsTransferLimit(nbytes)) return PosixFailure(GUEST_EINVAL);
@@ -1431,7 +1457,7 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
 
 int APS5_VABI sceKernelFsync(int fd) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(fd, "fsync");
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);
@@ -1443,7 +1469,7 @@ int APS5_VABI sceKernelFsync(int fd) {
 
 int APS5_VABI sceKernelFdatasync(int fd) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(fd) || IsKqueueDescriptor_nid_no_patch(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(fd, "fdatasync");
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);

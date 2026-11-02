@@ -36,6 +36,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -86,6 +87,7 @@ constexpr int GuestEloop = 62;
 constexpr int GuestEnametoolong = 63;
 constexpr int GuestEnotempty = 66;
 constexpr int GuestEoverflow = 84;
+constexpr std::uint64_t TerminalSetControlling = 0x20007461;
 constexpr int GuestAtFdcwd = -100;
 constexpr int GuestAtRemovedir = 0x800;
 constexpr std::size_t GuestPathMax = 1024;
@@ -243,6 +245,56 @@ bool IsSymbolicLink(const std::filesystem::path& native) {
     std::error_code error;
     return std::filesystem::is_symlink(std::filesystem::symlink_status(native, error));
 #endif
+}
+
+bool ReadSymbolicLinkTarget(const std::filesystem::path& native, std::filesystem::path& target) {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(native.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
+    std::string text;
+    if (!File::WindowsSymbolicLink::Read(native, text, "link")) return false;
+    target = std::filesystem::path(reinterpret_cast<const char8_t*>(text.c_str()));
+    return true;
+#else
+    std::error_code error;
+    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(native, error))) return false;
+    target = std::filesystem::read_symlink(native, error);
+    if (error) throw std::system_error(error, "link: read_symlink");
+    return true;
+#endif
+}
+
+int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast) {
+    constexpr int MaxSymbolicLinks = 32;
+    std::vector<std::filesystem::path> pending;
+    const auto push = [&pending](const std::filesystem::path& path) {
+        const std::vector<std::filesystem::path> parts(path.begin(), path.end());
+        pending.insert(pending.end(), parts.rbegin(), parts.rend());
+    };
+    push(native.relative_path());
+    std::filesystem::path current = native.root_path();
+    int links = 0;
+    while (!pending.empty()) {
+        const auto part = pending.back();
+        pending.pop_back();
+        if (part.empty() || part == ".") continue;
+        if (part == "..") {
+            std::error_code error;
+            if (!std::filesystem::is_directory(current, error)) return 0;
+            current = current.parent_path();
+            continue;
+        }
+        const auto next = current / part;
+        std::filesystem::path target;
+        if ((followLast || !pending.empty()) && ReadSymbolicLinkTarget(next, target)) {
+            if (++links > MaxSymbolicLinks) return GuestEloop;
+            if (target.has_root_path()) current = target.root_path();
+            push(target.relative_path());
+            continue;
+        }
+        current = next;
+    }
+    return 0;
 }
 
 std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
@@ -413,6 +465,10 @@ int APS5_VABI profil_nid_postfix(void* samples, std::size_t size, std::size_t of
 
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
+}
+
+std::int64_t APS5_VABI pwrite_nid_postfix(int d, const void* buf, std::size_t nbytes, std::int64_t offset) {
+    return PosixPwrite_nid_no_patch(d, buf, nbytes, offset);
 }
 
 int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id) {
@@ -738,9 +794,11 @@ int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
     if (const int error = CopyPath(existing, existingCopy)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolvePathError_nid_no_patch(existing, source)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(source, true)) return static_cast<int>(Fail(error));
     if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
     if (const int error = ResolvePathError_nid_no_patch(created, destination)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(destination, false)) return static_cast<int>(Fail(error));
     return LinkNative(source, destination);
 }
 
@@ -760,11 +818,13 @@ int APS5_VABI linkat_nid_postfix(int fd1, const char* path1, int fd2, const char
     if (const int error = CopyPath(path1, copy1)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolveAtPath(fd1, path1, source)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(source, flag != 0)) return static_cast<int>(Fail(error));
     const bool linkItself = flag == 0 && IsSymbolicLink(source);
     if (!linkItself)
         if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(path2, copy2)) return static_cast<int>(Fail(error));
     if (const int error = ResolveAtPath(fd2, path2, destination)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(destination, false)) return static_cast<int>(Fail(error));
     if (linkItself) return LinkSymbolicLinkItself(source, destination);
     return LinkNative(source, destination);
 }
@@ -1304,6 +1364,22 @@ int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* wo
 int APS5_VABI sceKernelGetProcessType(int pid) {
     if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
     return 0;
+}
+
+int APS5_VABI scePthreadMutexIsowned(PthreadMutex* mutex) {
+    const int owned = pthread_mutex_isowned_np_nid_postfix(mutex);
+    return owned == 0 ? 0 : SceKernelError(owned);
+}
+
+int APS5_VABI utrace_nid_postfix(const void* address, std::size_t length) {
+    (void)address;
+    (void)length;
+    return 0;
+}
+
+int APS5_VABI tcsetsid_nid_postfix(int fd, int pid) {
+    if (pid != getsid_nid_postfix(0)) return static_cast<int>(Fail(GuestEinval));
+    return ioctl_nid_postfix(fd, TerminalSetControlling, nullptr);
 }
 
 }

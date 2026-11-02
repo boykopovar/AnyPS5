@@ -916,6 +916,41 @@ StringView ViewWithoutFragment(const URL& url) {
     return Slice(view, 0, std::min(url.queryEnd, view.length));
 }
 
+std::size_t FindUnit(StringView view, char16_t value, unsigned start) {
+    for (unsigned i = start; i < view.length; ++i) {
+        if (Unit(view, i) == value) return i;
+    }
+    return NotFound;
+}
+
+StringView LeftView(StringView view, unsigned length) {
+    return Slice(view, 0, length);
+}
+
+StringView RightView(StringView view, unsigned length) {
+    return Slice(view, view.length - length, length);
+}
+
+String ConcatViews(const StringView* parts, unsigned count) {
+    std::size_t total = 0;
+    bool is8Bit = true;
+    for (unsigned i = 0; i < count; ++i) {
+        total += parts[i].length;
+        is8Bit &= parts[i].is8Bit;
+    }
+    if (total > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    void* data;
+    auto* impl = NewImpl(static_cast<unsigned>(total), is8Bit, data);
+    unsigned offset = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        for (unsigned j = 0; j < parts[i].length; ++j, ++offset) {
+            if (is8Bit) static_cast<unsigned char*>(data)[offset] = static_cast<unsigned char>(Unit(parts[i], j));
+            else static_cast<char16_t*>(data)[offset] = Unit(parts[i], j);
+        }
+    }
+    return String(impl);
+}
+
 }  // namespace
 
 extern "C" {
@@ -1020,6 +1055,22 @@ bool APS5_VABI _ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE(StringView view)
     if (view.length < 5) return false;
     if ((Unit(view, 0) | 32) != 'h' || (Unit(view, 1) | 32) != 't' || (Unit(view, 2) | 32) != 't' || (Unit(view, 3) | 32) != 'p') return false;
     return Unit(view, 4) == ':' || ((Unit(view, 4) | 32) == 's' && view.length >= 6 && Unit(view, 5) == ':');
+}
+
+String APS5_VABI _ZN3WTF19mimeTypeFromDataURLENS_10StringViewE(StringView dataURL) {
+    auto index = FindUnit(dataURL, u';', 5);
+    if (index == NotFound) index = FindUnit(dataURL, u',', 5);
+    if (index == NotFound) return String(EmptyImpl());
+    if (index == 5) return String(CopyImpl({"text/plain", 10, true}));
+    return String(ConvertCase(Slice(dataURL, 5, static_cast<unsigned>(index - 5)), true));
+}
+
+String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self, unsigned length) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    if (view.length <= length) return String(Retain(url.impl));
+    const StringView parts[] = {LeftView(view, length / 2 - 1), {"...", 3, true}, RightView(view, length / 2 - 2)};
+    return ConcatViews(parts, 3);
 }
 
 }

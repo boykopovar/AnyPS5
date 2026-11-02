@@ -21,6 +21,7 @@
 #include <list>
 #include <mutex>
 #include <spirv/unified1/spirv.hpp>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
@@ -67,6 +68,12 @@ void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipel
     std::vector<VkPipelineExecutablePropertiesKHR> properties(count, {VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR});
     Check(getProperties(context.device, &pipelineInfo, &count, properties.data()), "vkGetPipelineExecutablePropertiesKHR");
     properties.resize(count);
+    std::string report;
+    const auto append = [&report](const char* format, auto... values) {
+        std::array<char, 1024> line{};
+        std::snprintf(line.data(), line.size(), format, values...);
+        report += line.data();
+    };
     for (std::uint32_t index = 0; index < properties.size(); ++index) {
         VkPipelineExecutableInfoKHR executable{VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR};
         executable.pipeline = pipeline;
@@ -77,28 +84,27 @@ void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipel
         Check(getStatistics(context.device, &executable, &count, statistics.data()), "vkGetPipelineExecutableStatisticsKHR");
         statistics.resize(count);
         const auto& property = properties[index];
-        std::fprintf(stderr, "[pipeline-stats] executable=%u stages=0x%x subgroup=%u name=%s\n", index, property.stages, property.subgroupSize, property.name);
+        append("[pipeline-stats] executable=%u stages=0x%x subgroup=%u name=%s\n", index, property.stages, property.subgroupSize, property.name);
         for (const auto& statistic : statistics) {
-            std::fprintf(stderr, "[pipeline-stats] executable=%u %s=", index, statistic.name);
             switch (statistic.format) {
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:
-                std::fprintf(stderr, "%s", statistic.value.b32 ? "true" : "false");
+                append("[pipeline-stats] executable=%u %s=%s (%s)\n", index, statistic.name, statistic.value.b32 ? "true" : "false", statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:
-                std::fprintf(stderr, "%lld", static_cast<long long>(statistic.value.i64));
+                append("[pipeline-stats] executable=%u %s=%lld (%s)\n", index, statistic.name, static_cast<long long>(statistic.value.i64), statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:
-                std::fprintf(stderr, "%llu", static_cast<unsigned long long>(statistic.value.u64));
+                append("[pipeline-stats] executable=%u %s=%llu (%s)\n", index, statistic.name, static_cast<unsigned long long>(statistic.value.u64), statistic.description);
                 break;
             case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:
-                std::fprintf(stderr, "%.17g", statistic.value.f64);
+                append("[pipeline-stats] executable=%u %s=%.17g (%s)\n", index, statistic.name, statistic.value.f64, statistic.description);
                 break;
             default:
                 throw std::runtime_error("unsupported pipeline statistic format");
             }
-            std::fprintf(stderr, " (%s)\n", statistic.description);
         }
     }
+    std::fputs(report.c_str(), stderr);
 }
 
 bool HasStencil(VkFormat format) {

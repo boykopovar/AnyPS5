@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -111,6 +112,7 @@ static std::int64_t Write(std::size_t size) {
     if (state->api == "write") return write_nid_postfix(state->file, bytes, size);
     if (state->api == "writev") return writev_nid_postfix(state->file, vectors, 2);
     if (state->api == "pwrite") return pwrite_nid_disambig1_nid_postfix(state->file, bytes, size, 0);
+    if (state->api == "pwrite_sys") return pwrite_nid_postfix(state->file, bytes, size, 0);
     if (state->api == "pwritev") return pwritev_nid_postfix(state->file, vectors, 2, 0);
     return sceKernelWrite(state->file, bytes, size);
 }

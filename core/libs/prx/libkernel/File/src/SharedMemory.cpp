@@ -5,6 +5,7 @@
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 #include <cerrno>
@@ -1094,7 +1095,12 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int m
     }
     if (accessMode == SCE_KERNEL_O_RDONLY) return Fail(GuestInvalid);
     const int descriptor = CreateAnonymousFile();
-    if (descriptor >= 0) return descriptor;
+    if (descriptor >= 0) {
+#ifdef _WIN32
+        File::RememberDescriptor(descriptor, flags, true);
+#endif
+        return descriptor;
+    }
     const int error = errno;
     if (const int guest = GuestError(error)) return Fail(guest);
     throw std::runtime_error("shm_open: creating the host anonymous file failed, errno=" + std::to_string(error));

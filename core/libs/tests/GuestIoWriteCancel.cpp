@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
@@ -95,6 +96,7 @@ static void* APS5_VABI Writer(void* opaque) {
     else if (state.api == "writev") state.result = writev_nid_postfix(state.output, vectors, 2);
     else if (state.api == "writev_alias") state.result = _writev_nid_postfix(state.output, vectors, 2);
     else if (state.api == "pwrite") state.result = pwrite_nid_disambig1_nid_postfix(state.output, state.bytes.data(), size, 1);
+    else if (state.api == "pwrite_sys") state.result = pwrite_nid_postfix(state.output, state.bytes.data(), size, 1);
     else if (state.api == "pwritev") state.result = pwritev_nid_postfix(state.output, vectors, 2, 1);
     else if (state.api == "send") state.result = send_nid_postfix(state.output, state.bytes.data(), size, flags);
     else if (state.api == "sendto") state.result = sendto_nid_postfix(state.output, state.bytes.data(), size, flags, nullptr, 0);
