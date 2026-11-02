@@ -5,6 +5,7 @@ import gzip
 import html
 import json
 import math
+import os
 import sys
 import zlib
 from pathlib import Path
@@ -15,6 +16,9 @@ thread, the largest slices per frame, the longest waits, the largest GPU batches
 recorded them (when the trace carries batch ids) and, with --stacks, the hottest functions of an
 APS5_SAMPLE_WORKER collapsed-stack file. The summary line is read from aps5-summary.jsonl next to the trace
 unless --summary names another file.
+
+Buffer-full markers report lost events even without a summary. Slice-based timings, waits and batch
+inventories then describe retained events only; untraced time is not evidence of idle time.
 
 A summary file written by APS5_TRACE_SUMMARY_EVERY (aps5-summary.jsonl, or any .jsonl) is digested as a table with
 one row per interval and a text sparkline of the frame p99 and of the GPU busy time per present; the lines of
@@ -64,6 +68,7 @@ class Trace:
         self.presents = []
         self.folded = collections.defaultdict(float)
         self.batched = []
+        self.losses = []
         if not isinstance(document, (list, dict)):
             raise ValueError("trace must be an event array or object")
         events = document if isinstance(document, list) else document.get("traceEvents", [])
@@ -97,6 +102,14 @@ class Trace:
                     self.batched.append((tid, ts, dur, name, batch))
             elif phase == "i" and event.get("name") == "present":
                 self.presents.append((_event_number(event, "ts", index), _event_args(event, index).get("present")))
+            elif phase == "i" and event.get("name") == "trace buffer full":
+                tid = _event_tid(event, index)
+                ts = _event_number(event, "ts", index)
+                lost = _event_args(event, index).get("events_lost")
+                if isinstance(lost, bool) or not isinstance(lost, int) or lost < 0:
+                    raise ValueError(f"trace event {index}: args.events_lost must be a nonnegative integer")
+                if lost:
+                    self.losses.append((tid, ts, lost))
             elif phase == "C":
                 tid = _event_tid(event, index)
                 self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
@@ -113,7 +126,7 @@ class Trace:
                 stack.append(entry)
 
     def select_threads(self, names):
-        available = self.threads.keys() | self.slices.keys() | self.folded.keys()
+        available = self.threads.keys() | self.slices.keys() | self.folded.keys() | {tid for tid, _, _ in self.losses}
         unknown = set(names) - {self.name(tid) for tid in available}
         if unknown:
             raise ValueError("unknown thread: " + ", ".join(sorted(unknown)))
@@ -122,6 +135,7 @@ class Trace:
         self.slices = {tid: slices for tid, slices in self.slices.items() if tid in selected}
         self.folded = {tid: value for tid, value in self.folded.items() if tid in selected}
         self.batched = [entry for entry in self.batched if entry[0] in selected]
+        self.losses = [entry for entry in self.losses if entry[0] in selected]
 
     def name(self, tid):
         return self.threads.get(tid, f"tid {tid}")
@@ -144,7 +158,23 @@ def load_trace(path):
         return Trace(document)
 
 
-def load_summary_lines(path, numbered=False):
+def resolve_summary_path(path):
+    path = Path(path)
+    try:
+        resolved = Path(os.path.realpath(path))
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise ValueError(f"{path}: summary file is a symbolic link loop: {error}") from error
+        raise ValueError(f"{path}: summary file is a symbolic link loop")
+    return resolved
+
+
+def load_summary_lines(path, numbered=False, label=None):
+    display = label if label is not None else path
     records = []
     for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
         if not line.strip():
@@ -152,20 +182,25 @@ def load_summary_lines(path, numbered=False):
         try:
             record = json.loads(line)
         except json.JSONDecodeError as error:
-            raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+            raise ValueError(f"{display}:{number}: invalid JSON: {error.msg}") from error
         except RecursionError as error:
-            raise ValueError(f"{path}:{number}: JSON nesting is too deep") from error
+            raise ValueError(f"{display}:{number}: JSON nesting is too deep") from error
         if not isinstance(record, dict):
-            raise ValueError(f"{path}:{number}: summary record must be an object")
+            raise ValueError(f"{display}:{number}: summary record must be an object")
         records.append((number, record) if numbered else record)
     return records
 
 
 def load_summary(path, trace_path):
-    candidate = Path(path) if path else Path(trace_path).with_name("aps5-summary.jsonl")
-    if not candidate.exists():
-        return None
-    lines = load_summary_lines(candidate)
+    if path:
+        candidate = resolve_summary_path(path)
+    else:
+        hint = Path(trace_path).with_name("aps5-summary.jsonl")
+        if not hint.exists() and not hint.is_symlink():
+            return None
+        candidate = resolve_summary_path(hint)
+    label = Path(path) if path else hint
+    lines = load_summary_lines(candidate, label=label)
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
@@ -226,6 +261,10 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
     span_us = frames[-1][2] - frames[0][1] if frames else 0.0
     count = max(len(frames), 1)
     result = {"summary": summary, "frames": len(frames), "window_ms": span_us / 1000.0}
+    if trace.losses or (summary and summary.get("trace_dropped")):
+        result["trace_incomplete"] = True
+        result["event_loss"] = [{"thread": trace.name(tid), "at_ms": ts / 1000.0, "events_lost": lost}
+                                for tid, ts, lost in trace.losses]
 
     slowest = []
     for index, begin, end, present in sorted(frames, key=lambda frame: frame[1] - frame[2])[:worst]:
@@ -344,6 +383,10 @@ def markdown(result):
         lines.append("```")
     else:
         lines.append(f"{result['frames']} frames over {result['window_ms']:.1f} ms (no summary line found)")
+    if result.get("trace_incomplete"):
+        lines += ["", "**Incomplete trace:** recorded data was lost. Slice-based timings, waits and batch inventories cover retained events only; missing slices are not idle time. Summary statistics are reported separately."]
+        for loss in result["event_loss"]:
+            lines.append(f"- {table_cell(loss['thread'])}: {loss['events_lost']} events lost; buffer full at {loss['at_ms']:.1f} ms")
     lines.append("")
     lines.append("**Slowest frames** (largest slices inside each, inclusive)")
     lines.append("")
@@ -506,8 +549,13 @@ def main(arguments=None):
     parser.add_argument("--top", type=nonnegative_integer, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
-    if options.summary and not Path(options.summary).is_file():
-        parser.error(f"summary file not found: {options.summary}")
+    if options.summary:
+        try:
+            summary_path = resolve_summary_path(options.summary)
+        except ValueError as error:
+            parser.error(str(error))
+        if not summary_path.is_file():
+            parser.error(f"summary file not found: {options.summary}")
     if options.thread and options.trace.endswith(".jsonl"):
         parser.error("--thread requires an event trace, not interval summaries")
     if options.stacks and options.trace.endswith(".jsonl"):

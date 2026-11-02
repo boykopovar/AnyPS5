@@ -476,6 +476,21 @@ if(BUILD_TESTING)
         add_test(NAME nid_elf_layout COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_elf_layout.py $<TARGET_FILE:nid_patcher>)
     endif()
+    add_test_executable(guest_kernel_sys_pwrite_tests tests/GuestKernelSysPwrite.cpp
+        nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(guest_kernel_sys_pwrite_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_link_libraries(guest_kernel_sys_pwrite_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_custom_target(guest_kernel_sys_pwrite_libraries DEPENDS
+        ${PATCHED_DIR}/libkernel_sys.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_kernel_sys_pwrite_tests guest_kernel_sys_pwrite_libraries)
+    configure_windows_unwind(guest_kernel_sys_pwrite_tests)
+    if(MINGW)
+        target_compile_options(guest_kernel_sys_pwrite_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(guest_kernel_sys_pwrite_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME guest_kernel_sys_pwrite COMMAND guest_kernel_sys_pwrite_tests ${UNPATCHED_DIR} unpatched)
+    add_test(NAME guest_kernel_sys_pwrite_patched COMMAND guest_kernel_sys_pwrite_tests ${PATCHED_DIR} patched)
+    set_tests_properties(guest_kernel_sys_pwrite guest_kernel_sys_pwrite_patched PROPERTIES TIMEOUT 20)
     add_test_executable(guest_kernel_sys_tests tests/GuestKernelSys.cpp)
     target_include_directories(guest_kernel_sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_tests PRIVATE libkernel_sys libSceNet libSceAmpr libkernel libc)
@@ -687,6 +702,13 @@ if(BUILD_TESTING)
     endif()
 
     if(WIN32)
+        add_test_executable(windows_crash_thread_name_tests tests/WindowsCrashThreadName.cpp)
+        add_dependencies(windows_crash_thread_name_tests libc)
+        configure_host_test_executable(windows_crash_thread_name_tests)
+        add_test(NAME windows_crash_thread_name COMMAND windows_crash_thread_name_tests $<TARGET_FILE:libc>)
+        set_tests_properties(windows_crash_thread_name PROPERTIES TIMEOUT 20
+            PASS_REGULAR_EXPRESSION "on thread [0-9]+ 'a+Z'[^~]*thread [0-9]+ 'c+Y':"
+            FAIL_REGULAR_EXPRESSION "Zb|Yd|did not fault")
         add_test_executable(windows_crash_text_tests tests/WindowsCrashText.cpp)
         add_dependencies(windows_crash_text_tests libc)
         if(MINGW)
@@ -696,6 +718,13 @@ if(BUILD_TESTING)
         set_tests_properties(windows_crash_text PROPERTIES TIMEOUT 20
             PASS_REGULAR_EXPRESSION "faulting[^~]*FATAL: unhandled exception 0xc0000005[^~]*  \\[r12\\] \"allocation failed in the heap\"[\r\n]+  \\[r13\\] u\"LowLevelFatalError \\[File:Unknown\\] \\[Line: 42\\] Out of memory\"[\r\n]+  \\[r14\\] \"PAGE END\"[.][.][.]"
             FAIL_REGULAR_EXPRESSION "\\[rbx\\] u?\"|did not fault")
+        add_test_executable(windows_integer_overflow_report_tests tests/WindowsIntegerOverflowReport.cpp)
+        add_dependencies(windows_integer_overflow_report_tests libc)
+        configure_host_test_executable(windows_integer_overflow_report_tests)
+        add_test(NAME windows_integer_overflow_report COMMAND windows_integer_overflow_report_tests $<TARGET_FILE:libc>)
+        set_tests_properties(windows_integer_overflow_report PROPERTIES TIMEOUT 20
+            PASS_REGULAR_EXPRESSION "dividing[^~]*FATAL: unhandled exception 0xc0000095"
+            FAIL_REGULAR_EXPRESSION "did not fault")
     endif()
 
     add_test_executable(guest_voice_port_attr_tests tests/GuestVoicePortAttr.cpp)

@@ -87,6 +87,11 @@ static std::int64_t NativeWrite(int fd, const void* buf, std::size_t n) {
     }
     const auto positioned = File::IoPositionedTransfer(fd);
     if (!positioned) return -1;
+    if (File::HasFixedSizeWrites(fd)) {
+        const auto position = ThreadCancel::Native([&] { return ::_lseeki64(fd, 0, SEEK_CUR); });
+        if (position < 0 || !File::LimitSharedMemoryWrite_nid_no_patch(fd, n, position)) return -1;
+        if (n == 0) return 0;
+    }
     const auto shared = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
     if (shared != -2) return shared;
     if (File::Appends(fd)) {
@@ -400,6 +405,7 @@ int APS5_VABI sceKernelClose(int d) {
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     if (File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
+    if (IsKqueueDescriptor_nid_no_patch(d)) return nbytes == 0 ? 0 : SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Read(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -420,6 +426,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
+    if (IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Write(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -449,7 +456,7 @@ static bool SeekOverflows(int d, std::int64_t offset, int whence) {
 }
 
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
-    if (GuestSockets::IsOpen(d)) return SCE_KERNEL_ERROR_ESPIPE;
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_ESPIPE;
     if (whence < 0 || whence > 2) {
         throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
     }
