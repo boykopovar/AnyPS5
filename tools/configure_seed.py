@@ -9,15 +9,20 @@ from pathlib import Path
 
 CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_)|CHECK_TYPE_SIZE: )")
 ENTRY = re.compile(r"^([^#/:][^:]*):([A-Z]+)=(.*)$")
+QUOTED_ENTRY = re.compile(r'^"(.*)":([A-Z]+)=(.*)$')
+QUOTED_DELIMITER = re.compile(r'":[A-Z]+=')
 
 
 def checks(cache):
     found, doc = {}, []
-    for line in Path(cache).read_text(encoding="utf-8-sig").splitlines():
+    for line in Path(cache).read_text(encoding="utf-8-sig").split("\n"):
         if line.startswith("//"):
             doc.append(line)
             continue
-        match = ENTRY.match(line)
+        if QUOTED_ENTRY.match(line) and len(QUOTED_DELIMITER.findall(line)) > 1:
+            match = None
+        else:
+            match = QUOTED_ENTRY.match(line) or ENTRY.match(line)
         if match and match.group(2) == "INTERNAL" and doc and CHECK.match(doc[0]):
             help_text = "".join("\n" + line[4:] if line.startswith("//\\n") else line[2:] for line in doc)
             found[match.group(1)] = (match.group(3), help_text)
@@ -35,8 +40,11 @@ def quote(value):
 
 
 def write_seed(path, text):
-    destination = path.resolve()
-    metadata = destination.stat() if destination.exists() else None
+    destination = Path(os.path.realpath(path))
+    try:
+        metadata = destination.stat()
+    except FileNotFoundError:
+        metadata = None
     if metadata is not None and os.name == "nt" and metadata.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
         raise PermissionError(f"Seed output is read-only: {path}")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +75,7 @@ def main(argv=None):
                         help="omit matching check names after inclusion; patterns are case-sensitive")
     args = parser.parse_args(argv)
     cache, seed = Path(args.cache), Path(args.seed)
-    if cache.resolve() == seed.resolve() or (cache.exists() and seed.exists() and cache.samefile(seed)):
+    if os.path.realpath(cache) == os.path.realpath(seed) or (cache.exists() and seed.exists() and cache.samefile(seed)):
         parser.error("seed output would overwrite the input cache")
     try:
         results = checks(cache)

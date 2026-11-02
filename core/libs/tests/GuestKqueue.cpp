@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -131,6 +132,46 @@ template <typename TCall> static std::string ThrownMessage(TCall call) {
     return {};
 }
 
+static void BadPointersFaultAndBatchesFill() {
+    constexpr int fault = 14;
+    const int kq = kqueue_nid_postfix();
+    for (std::uintptr_t ident = 100; ident < 112; ++ident) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    KernelEvent events[16]{};
+    Require(Poll(kq, events, 16) == 12);
+    std::uint32_t seen = 0;
+    for (int i = 0; i < 12; ++i) seen |= 1u << (events[i].ident - 100);
+    Require(seen == 0xfff);
+    std::vector<KernelEvent> many(100);
+    Require(Poll(kq, many.data(), 100) == 12);
+    Require(Poll(kq, events, 9) == 9);
+    Require(Poll(kq, events, 5) == 5);
+    auto* unmapped = reinterpret_cast<KernelEvent*>(std::uintptr_t{0x10});
+    const KernelTimespec zero{0, 0};
+    RequireFailure(kevent_nid_postfix(kq, unmapped, 1, nullptr, 0, nullptr), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, 16, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, unmapped, 16, &zero), fault);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<KernelEvent*>(page);
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, readOnly, 16, &zero), fault);
+    Require(readOnly[0].ident == 0 && readOnly[0].filter == 0);
+    const KernelEvent bad = Change(200, EvfiltUser, 0, NoteTrigger);
+    RequireFailure(kevent_nid_postfix(kq, &bad, 1, readOnly, 1, &zero), fault);
+    Require(Poll(kq, events, INT_MAX) == 12);
+    for (std::uintptr_t ident = 1000; ident < 2030; ++ident) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    std::vector<KernelEvent> plenty(2000);
+    Require(Poll(kq, plenty.data(), 2000) == 1024);
+    for (std::uintptr_t ident = 1000; ident < 2030; ++ident) Require(Apply(kq, Change(ident, EvfiltUser, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void CreateAndClose() {
     const int kq = kqueue_nid_postfix();
     Require(kq >= 0 && kq < FirstSocket);
@@ -146,6 +187,30 @@ static void CreateAndClose() {
     Require(pipe_nid_postfix(pipe) == 0);
     RequireFailure(Poll(pipe[0], &event, 1), GuestEbadf);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+}
+
+static void SocketReplacesDescriptor() {
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd | EvOneshot, 0, 1, &marker)) == 0);
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(dup2_nid_postfix(pair[0], kq) == kq);
+    KernelEvent event{};
+    RequireFailure(Wait(kq, &event, 1), GuestEbadf);
+    Require(close_nid_postfix(kq) == 0);
+    const int watcher = kqueue_nid_postfix();
+    int pipe[2];
+    Require(pipe_nid_postfix(pipe) == 0);
+    Require(write_nid_postfix(pipe[1], "x", 1) == 1);
+    Require(Apply(watcher, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvAdd)) == 0);
+    Require(Poll(watcher, &event, 1) == 1);
+    Require(dup2_nid_postfix(pair[1], pipe[0]) == pipe[0]);
+    Require(Poll(watcher, &event, 1) == 0);
+    RequireFailure(Apply(watcher, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltRead, EvDelete)), GuestEnoent);
+    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(watcher) == 0);
 }
 
 static void Timers() {
@@ -1584,6 +1649,7 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    SocketReplacesDescriptor();
     Timers();
     TimerReadd();
     UnsupportedFilters();
@@ -1628,5 +1694,6 @@ int main(int argc, char** argv) {
     DeniedParentWatch();
 #endif
     Timeout();
+    BadPointersFaultAndBatchesFill();
     return 0;
 }
