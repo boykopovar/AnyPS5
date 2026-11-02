@@ -15,7 +15,9 @@ static constexpr int SCE_NP_MATCHING2_ERROR_INVALID_CONTEXT_ID = static_cast<int
 static constexpr int SCE_NET_ERROR_RESOLVER_ETIMEDOUT = static_cast<int>(0x804101E2);
 static constexpr std::int32_t SCE_NP_SIGNALING_CONN_STATUS_INACTIVE = 0;
 static constexpr int MAX_CONTEXTS = 10;
+static constexpr std::uint16_t CONTEXT_A_FLAG = 0x100;
 static constexpr std::uint64_t CREATE_CONTEXT_PARAMETER_SIZE = 0x28;
+static constexpr std::uint64_t CREATE_CONTEXT_PARAMETER_A_SIZE = 0x10;
 
 namespace {
 
@@ -23,6 +25,7 @@ static_assert(offsetof(NpMatching2InitializeParameter, size) == 0x20);
 static_assert(sizeof(NpMatching2InitializeParameter) == 0x30);
 
 static_assert(sizeof(NpMatching2CreateContextParameter) == CREATE_CONTEXT_PARAMETER_SIZE);
+static_assert(sizeof(NpMatching2CreateContextParameterA) == CREATE_CONTEXT_PARAMETER_A_SIZE);
 
 std::mutex matching2Mutex;
 bool matching2Initialized = false;
@@ -32,6 +35,18 @@ int nextContextId = 1;
 int CheckContext(std::uint16_t ctxId) {
     if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     return contexts.contains(ctxId) ? 0 : SCE_NP_MATCHING2_ERROR_INVALID_CONTEXT_ID;
+}
+
+int AllocateContext(std::uint16_t* ctxId, std::uint16_t flag) {
+    for (int tried = 0; tried < MAX_CONTEXTS; ++tried) {
+        const auto candidate = static_cast<std::uint16_t>((nextContextId - 1 + tried) % MAX_CONTEXTS + 1);
+        if (contexts.contains(candidate) || contexts.contains(candidate | CONTEXT_A_FLAG)) continue;
+        contexts.insert(candidate | flag);
+        nextContextId = candidate % MAX_CONTEXTS + 1;
+        *ctxId = candidate | flag;
+        return 0;
+    }
+    return SCE_NP_MATCHING2_ERROR_CONTEXT_MAX;
 }
 
 }
@@ -56,15 +71,7 @@ int APS5_VABI sceNpMatching2CreateContext(const NpMatching2CreateContextParamete
     std::lock_guard lock(matching2Mutex);
     if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     if (!param || param->size != CREATE_CONTEXT_PARAMETER_SIZE || !ctxId) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
-    for (int tried = 0; tried < MAX_CONTEXTS; ++tried) {
-        const auto candidate = static_cast<std::uint16_t>((nextContextId - 1 + tried) % MAX_CONTEXTS + 1);
-        if (contexts.contains(candidate)) continue;
-        contexts.insert(candidate);
-        nextContextId = candidate % MAX_CONTEXTS + 1;
-        *ctxId = candidate;
-        return 0;
-    }
-    return SCE_NP_MATCHING2_ERROR_CONTEXT_MAX;
+    return AllocateContext(ctxId, 0);
 }
 
 int APS5_VABI sceNpMatching2CreateJoinRoom() {
@@ -222,9 +229,11 @@ int APS5_VABI sceNpMatching2AbortContextStart(std::uint16_t ctxId) {
     return matching2Initialized ? 0 : SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
 }
 
-int APS5_VABI sceNpMatching2CreateContextA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpMatching2CreateContextA(const NpMatching2CreateContextParameterA* param, std::uint16_t* ctxId) {
+    std::lock_guard lock(matching2Mutex);
+    if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
+    if (!param || param->size != CREATE_CONTEXT_PARAMETER_A_SIZE || !ctxId) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
+    return AllocateContext(ctxId, CONTEXT_A_FLAG);
 }
 
 int APS5_VABI sceNpMatching2CreateContextInternal(void) {
@@ -317,14 +326,18 @@ int APS5_VABI sceNpMatching2LeaveLobby(void) {
     return 0;
 }
 
-int APS5_VABI sceNpMatching2RegisterLobbyEventCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpMatching2RegisterLobbyEventCallback(std::uint16_t ctxId, void* callback, void* userdata) {
+    (void)callback;
+    (void)userdata;
+    std::lock_guard lock(matching2Mutex);
+    return CheckContext(ctxId);
 }
 
-int APS5_VABI sceNpMatching2RegisterLobbyMessageCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpMatching2RegisterLobbyMessageCallback(std::uint16_t ctxId, void* callback, void* userdata) {
+    (void)callback;
+    (void)userdata;
+    std::lock_guard lock(matching2Mutex);
+    return CheckContext(ctxId);
 }
 
 int APS5_VABI sceNpMatching2RegisterManualUdpSignalingCallback(void) {
