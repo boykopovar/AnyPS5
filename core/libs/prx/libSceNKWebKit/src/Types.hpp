@@ -101,4 +101,15 @@ public:
     bool valid = false;
 };
 
+class SecurityOrigin final : public ObjectOf<ObjectType::SecurityOrigin> {
+public:
+    SecurityOrigin() = default;
+    SecurityOrigin(std::string protocol, std::string host, int port)
+        : protocol(std::move(protocol)), host(std::move(host)), port(port) {}
+
+    std::string protocol;
+    std::string host;
+    int port = 0;
+};
+
 }  // namespace NKWebKit

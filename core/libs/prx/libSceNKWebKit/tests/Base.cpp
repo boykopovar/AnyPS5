@@ -360,6 +360,67 @@ static void TestCertificateInfo() {
     Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
 }
 
+static void TestSecurityOrigin() {
+    Require(WKSecurityOriginGetTypeID() == 18);
+
+    auto* protoStr = WKStringCreateWithUTF8CString("https");
+    auto* hostStr = WKStringCreateWithUTF8CString("example.com");
+    auto* origin = WKSecurityOriginCreate(protoStr, hostStr, 8080);
+    WKRelease(protoStr);
+    WKRelease(hostStr);
+
+    Require(origin != nullptr);
+    Require(WKSecurityOriginGetPort(origin) == 8080);
+
+    auto* copiedProto = WKSecurityOriginCopyProtocol(origin);
+    Require(WKStringIsEqualToUTF8CString(copiedProto, "https"));
+    WKRelease(copiedProto);
+
+    auto* copiedHost = WKSecurityOriginCopyHost(origin);
+    Require(WKStringIsEqualToUTF8CString(copiedHost, "example.com"));
+    WKRelease(copiedHost);
+
+    auto* strRep = WKSecurityOriginCopyToString(origin);
+    Require(WKStringIsEqualToUTF8CString(strRep, "https://example.com:8080"));
+    WKRelease(strRep);
+
+    auto* dbId = WKSecurityOriginCopyDatabaseIdentifier(origin);
+    Require(WKStringIsEqualToUTF8CString(dbId, "https_example.com_8080"));
+    WKRelease(dbId);
+
+    WKRelease(origin);
+
+    auto* urlStr = WKStringCreateWithUTF8CString("http://webkit.org/path");
+    auto* originFromStr = WKSecurityOriginCreateFromString(urlStr);
+    WKRelease(urlStr);
+    Require(originFromStr != nullptr);
+    Require(WKSecurityOriginGetPort(originFromStr) == 0);
+
+    auto* originProto = WKSecurityOriginCopyProtocol(originFromStr);
+    Require(WKStringIsEqualToUTF8CString(originProto, "http"));
+    WKRelease(originProto);
+
+    auto* originHost = WKSecurityOriginCopyHost(originFromStr);
+    Require(WKStringIsEqualToUTF8CString(originHost, "webkit.org"));
+    WKRelease(originHost);
+    WKRelease(originFromStr);
+
+    auto* dbStr = WKStringCreateWithUTF8CString("http_ps5.playstation.net_443");
+    auto* originFromDb = WKSecurityOriginCreateFromDatabaseIdentifier(dbStr);
+    WKRelease(dbStr);
+    Require(originFromDb != nullptr);
+    Require(WKSecurityOriginGetPort(originFromDb) == 443);
+
+    auto* dbProto = WKSecurityOriginCopyProtocol(originFromDb);
+    Require(WKStringIsEqualToUTF8CString(dbProto, "http"));
+    WKRelease(dbProto);
+
+    auto* dbHost = WKSecurityOriginCopyHost(originFromDb);
+    Require(WKStringIsEqualToUTF8CString(dbHost, "ps5.playstation.net"));
+    WKRelease(dbHost);
+    WKRelease(originFromDb);
+}
+
 int main() {
     TestTypeIDs();
     TestRetainRelease();
@@ -374,6 +435,7 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestCertificateInfo();
+    TestSecurityOrigin();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }
