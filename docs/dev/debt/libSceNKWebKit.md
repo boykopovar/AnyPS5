@@ -19,6 +19,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Out-of-line colors](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColor.cpp) (libSceNKWebKit) - `WebCore::Color` operations on an out-of-line value (extended color spaces in [Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h)) throw; only inline 8-bit sRGBA values are handled.
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
 - [WebCore::ResourceResponseBase](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponse.cpp) (libSceNKWebKit) - the object layout in [ResourceResponseAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponseAbi.hpp) comes from [ResourceResponseBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceResponseBase.h) and is not checked against the PS5 module: `URL` at 0, four `AtomString` and the 64-bit expected length up to offset 80, then a 32-byte `HTTPHeaderMap` (two vectors of inline capacity 0 as in [HTTPHeaderMap.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPHeaderMap.h)). Only these fields are modelled because `std::optional<CertificateInfo>` follows the `Box<NetworkLoadMetrics>` and the size of the PS5 `CertificateInfo` is unknown, so the offsets of `m_httpStatusCode`, `m_isNull`, `m_initLevel`, `m_type`, `m_source` and the flags are not established. The getters (`url`, `mimeType`, `expectedContentLength`, `textEncodingName`, `httpStatusText`, `httpVersion`, `httpHeaderFields`, `isInHTTPFamily`) skip `lazyInit` because the curl [ResourceResponse.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/curl/ResourceResponse.h) has no `platformLazyInit`; the PS5 `ResourceResponse` is not known to match. `isInHTTPFamily` reads the valid bit of `URL::bits` and the scheme text, not the cached `m_protocolIsInHTTPFamily` bit, whose position is unknown. The 30 other exports (`ResourceResponseBase` constructors, `setURL`, `setType`, `setExpectedContentLength`, `setHTTPStatusCode`, `httpStatusCode`, `source`, `isSuccessful`, `isRedirection`, `isHTTP09`, `isAttachment*`, `suggestedFilename`, `sanitize*`, `syntheticRedirectResponse`, `cacheControlContains*`, `hasCacheValidatorFields`, `lazyInit`, `httpHeaderField*`, `addHTTPHeaderField*`, `setHTTPHeaderField*`) still throw `NotImplemented_nid_no_patch`: they write `m_isNull`, read fields after `CertificateInfo`, or need `HTTPHeaderMap`, `CertificateInfo`, `Vector` or `ResourceResponse` layouts.
+- [WebCore::ResourceRequestBase](../../../core/libs/prx/libSceNKWebKit/src/ResourceRequest.cpp) (libSceNKWebKit) - the object layout in [ResourceRequestAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/ResourceRequestAbi.hpp) comes from [ResourceRequestBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceRequestBase.h) and [HTTPHeaderMap.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPHeaderMap.h) (`HTTPHeaderMap` is 128 bytes because `CommonHeadersVector` has 6 inline slots) and is not checked against the PS5 module. The accessors and setters for the URL, the first-party URL, the HTTP method, the timeout, the cache policy, the priority, the same-site and top-site flags and the default timeout throw when `m_resourceRequestUpdated` is false because `ResourceRequest::doUpdateResourceRequest` of the PS5 network backend is unknown. The default timeout starts at 0 as in the non-iOS branch of [ResourceRequestBase.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceRequestBase.cpp). The 33 exports that read or write `HTTPHeaderMap`, `Vector<String>`, `FormData` or a `ResourceRequest` copy (`isolatedCopy`, `setAsIsolatedCopy`, `equal`, `removeCredentials`, `partitionName`, `isConditional`, `makeUnconditional`, `hasUpload`, `httpBody`, the `httpHeaderField*`, `addHTTPHeaderField*`, `setHTTPHeaderField*`, referrer, origin, user-agent, content-type and cache-partition accessors) still throw `NotImplemented_nid_no_patch`: they need the `WTF::Vector`, `HTTPHeaderMap` and `FormData` layouts.
 
 ### Known export names; ABI prototypes unverified
 
@@ -3566,13 +3567,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore19MediaResourceLoaderD1Ev` | `QEppJQAXTjk` |
 | `_ZN7WebCore19MediaResourceLoaderD2Ev` | `TiTaYOe80UY` |
 | `_ZN7WebCore19ProtectionSpaceBase7compareERKNS_15ProtectionSpaceES3_` | `6ePLnfc4Qgo` |
-| `_ZN7WebCore19ResourceRequestBase11setPriorityENS_20ResourceLoadPriorityE` | `Ns8YtHWBLyk` |
 | `_ZN7WebCore19ResourceRequestBase12clearPurposeEv` | `gwVFNCkuOQk` |
-| `_ZN7WebCore19ResourceRequestBase12setIsTopSiteEb` | `Cyb-5L6XKbo` |
 | `_ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE` | `1ULaJ4WPLtI` |
-| `_ZN7WebCore19ResourceRequestBase13setHTTPMethodERKN3WTF6StringE` | `5wTstW4Gvks` |
-| `_ZN7WebCore19ResourceRequestBase13setIsSameSiteEb` | `0qAqkGzBFMY` |
-| `_ZN7WebCore19ResourceRequestBase14setCachePolicyENS_26ResourceRequestCachePolicyE` | `xsDEHCFMIlw` |
 | `_ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv` | `OrPeJ6qQgw4` |
 | `_ZN7WebCore19ResourceRequestBase15setHTTPReferrerERKN3WTF6StringE` | `wLP4k8D3hWw` |
 | `_ZN7WebCore19ResourceRequestBase16setHTTPUserAgentERKN3WTF6StringE` | `0NE9SkyhX-s` |
@@ -3588,14 +3584,10 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE` | `cJokY6wAIvA` |
 | `_ZN7WebCore19ResourceRequestBase20clearHTTPContentTypeEv` | `EID1OUoD76g` |
 | `_ZN7WebCore19ResourceRequestBase22clearHTTPAuthorizationEv` | `SBn5gEySZK4` |
-| `_ZN7WebCore19ResourceRequestBase22defaultTimeoutIntervalEv` | `i1VFpGXSPos` |
-| `_ZN7WebCore19ResourceRequestBase23setFirstPartyForCookiesERKN3WTF3URLE` | `op7lZfbflp4` |
-| `_ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd` | `sTTKtmcsvyg` |
 | `_ZN7WebCore19ResourceRequestBase30addHTTPHeaderFieldIfNotPresentENS_14HTTPHeaderNameERKN3WTF6StringE` | `zi-eyYOv8Yw` |
 | `_ZN7WebCore19ResourceRequestBase37setExistingHTTPReferrerToOriginStringEv` | `3hl+3pWsRNY` |
 | `_ZN7WebCore19ResourceRequestBase50setResponseContentDispositionEncodingFallbackArrayERKN3WTF6StringES4_S4_` | `XMPmjIgxBPc` |
 | `_ZN7WebCore19ResourceRequestBase5equalERKNS_15ResourceRequestES3_` | `-swGGmA0SP8` |
-| `_ZN7WebCore19ResourceRequestBase6setURLERKN3WTF3URLE` | `MUMPpV8t3bg` |
 | `_ZN7WebCore19StorageQuotaManager20resetQuotaForTestingEv` | `HngLT8ghSjc` |
 | `_ZN7WebCore19StorageQuotaManager24requestSpaceOnMainThreadEmON3WTF17CompletionHandlerIFvNS0_8DecisionEEEE` | `P9Tm-o0KYfo` |
 | `_ZN7WebCore19StorageQuotaManager30requestSpaceOnBackgroundThreadEm` | `z3CYZN32+ow` |
@@ -6694,27 +6686,17 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK7WebCore19ProtectionSpaceBase15isPasswordBasedEv` | `14QqltFJ+xk` |
 | `_ZNK7WebCore19ProtectionSpaceBase26receivesCredentialSecurelyEv` | `r5QyX8BvB2c` |
 | `_ZNK7WebCore19ProtectionSpaceBase7isProxyEv` | `tHkyOSFwdIc` |
-| `_ZNK7WebCore19ResourceRequestBase10httpMethodEv` | `jZRyJ1VcPnA` |
 | `_ZNK7WebCore19ResourceRequestBase10httpOriginEv` | `lPNr2mEWUBU` |
-| `_ZNK7WebCore19ResourceRequestBase10isSameSiteEv` | `kOKDFcsjZrA` |
-| `_ZNK7WebCore19ResourceRequestBase11cachePolicyEv` | `KKNE1wLaEEk` |
 | `_ZNK7WebCore19ResourceRequestBase12httpReferrerEv` | `+vdnJZRFUEg` |
 | `_ZNK7WebCore19ResourceRequestBase12isolatedCopyEv` | `FnhAa5JKqhE` |
 | `_ZNK7WebCore19ResourceRequestBase13httpUserAgentEv` | `ydppzeaHCGY` |
 | `_ZNK7WebCore19ResourceRequestBase13isConditionalEv` | `tPMgXN+Gp0w` |
 | `_ZNK7WebCore19ResourceRequestBase15httpContentTypeEv` | `igDJIsdI3AA` |
 | `_ZNK7WebCore19ResourceRequestBase15httpHeaderFieldENS_14HTTPHeaderNameE` | `lsBWl8HgZSs` |
-| `_ZNK7WebCore19ResourceRequestBase15timeoutIntervalEv` | `coeYWTjevFM` |
 | `_ZNK7WebCore19ResourceRequestBase16httpHeaderFieldsEv` | `3Yr1O6r-8ms` |
 | `_ZNK7WebCore19ResourceRequestBase18hasHTTPHeaderFieldENS_14HTTPHeaderNameE` | `hr4I-u22P2w` |
-| `_ZNK7WebCore19ResourceRequestBase20firstPartyForCookiesEv` | `k6hVHTe+PaY` |
-| `_ZNK7WebCore19ResourceRequestBase3urlEv` | `rrh3-CBqrZQ` |
-| `_ZNK7WebCore19ResourceRequestBase6isNullEv` | `feRK21LbWio` |
-| `_ZNK7WebCore19ResourceRequestBase7isEmptyEv` | `ryUXM2DuqT4` |
 | `_ZNK7WebCore19ResourceRequestBase8httpBodyEv` | `pLh4waaqW7c` |
-| `_ZNK7WebCore19ResourceRequestBase8priorityEv` | `1LiSfUnDEpM` |
 | `_ZNK7WebCore19ResourceRequestBase9hasUploadEv` | `9aGME3ZvhCY` |
-| `_ZNK7WebCore19ResourceRequestBase9isTopSiteEv` | `IAjYih7HkWE` |
 | `_ZNK7WebCore19UIEventWithKeyState16getModifierStateERKN3WTF6StringE` | `QSE-2TsMW0M` |
 | `_ZNK7WebCore20CachedResourceLoader11isPreloadedERKN3WTF6StringE` | `27EhhOjbt+4` |
 | `_ZNK7WebCore20DeprecatedCSSOMValue12cssValueTypeEv` | `Gu4NynMMIE4` |
