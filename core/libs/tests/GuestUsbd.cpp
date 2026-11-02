@@ -437,6 +437,15 @@ void CheckTransferFillers() {
     Require(Throws([] { sceUsbdFillBulkTransfer(nullptr, nullptr, 0, nullptr, 0, nullptr, nullptr, 0); }), "filling a null bulk transfer did not throw");
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0, 0, 0, 0, 0); }), "filling a null control setup did not throw");
     Require(Throws([] { sceUsbdGetIsoPacketBuffer(nullptr, 0); }), "the packet buffer of a null transfer did not throw");
+    Require(Throws([&] { sceUsbdFillIsoTransfer(transfer, &device, 0x83, data, 64, 4, &MarkDone, &user, 0); }), "an iso fill beyond the allocated packets did not throw");
+    auto* small = sceUsbdAllocTransfer(1);
+    Require(small != nullptr, "transfer allocation failed");
+    Require(Throws([&] { sceUsbdFillIsoTransfer(small, &device, 0x83, data, 64, 2, &MarkDone, &user, 0); }), "an iso fill beyond a one packet transfer did not throw");
+    sceUsbdFillIsoTransfer(small, &device, 0x83, data, 16, 1, &MarkDone, &user, 0);
+    small->numIsoPackets = 2;
+    Require(sceUsbdGetIsoPacketBuffer(small, 0) == nullptr, "the packet buffer of a count above the allocation was returned");
+    Require(sceUsbdSubmitTransfer(small) == invalidArgument, "a submit above the allocated packet count was accepted");
+    sceUsbdFreeTransfer(small);
     sceUsbdFreeTransfer(transfer);
 }
 
