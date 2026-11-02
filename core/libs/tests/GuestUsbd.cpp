@@ -437,6 +437,13 @@ void CheckTransferFillers() {
     Require(Throws([] { sceUsbdFillBulkTransfer(nullptr, nullptr, 0, nullptr, 0, nullptr, nullptr, 0); }), "filling a null bulk transfer did not throw");
     Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0, 0, 0, 0, 0); }), "filling a null control setup did not throw");
     Require(Throws([] { sceUsbdGetIsoPacketBuffer(nullptr, 0); }), "the packet buffer of a null transfer did not throw");
+    auto* bulk = sceUsbdAllocTransfer(0);
+    Require(bulk != nullptr, "transfer allocation failed");
+    sceUsbdFillBulkTransfer(bulk, &device, 0x02, nullptr, 16, &MarkDone, &user, 0);
+    Require(sceUsbdSubmitTransfer(bulk) == invalidArgument, "a submit with a null buffer and a length was accepted");
+    sceUsbdFillBulkTransfer(bulk, &device, 0x02, data, -1, &MarkDone, &user, 0);
+    Require(sceUsbdSubmitTransfer(bulk) == invalidArgument, "a submit with a negative length was accepted");
+    sceUsbdFreeTransfer(bulk);
     Require(Throws([&] { sceUsbdFillIsoTransfer(transfer, &device, 0x83, data, 64, 4, &MarkDone, &user, 0); }), "an iso fill beyond the allocated packets did not throw");
     auto* small = sceUsbdAllocTransfer(1);
     Require(small != nullptr, "transfer allocation failed");
