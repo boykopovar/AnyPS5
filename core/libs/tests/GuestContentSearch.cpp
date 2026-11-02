@@ -49,7 +49,11 @@ int main() {
     std::int64_t size = -1;
     std::int64_t updateId = -1;
     std::int32_t metadataId = -1;
+    std::int32_t applicationIndex = -1;
 
+    Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetMyApplicationIndex(&applicationIndex) == ErrorNotInitialized);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, &updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetTotalContentSize(&columnSet, 1, &size, &updateId) == ErrorNotInitialized);
@@ -92,8 +96,28 @@ int main() {
     updateId = -1;
     Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 93, &count, infos, &updateId) == ErrorLimitTooBig);
     Require(count == -1 && updateId == -1);
+    updateId = -1;
+    Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == 0 && updateId == 0);
+    applicationIndex = -1;
+    Require(sceContentSearchGetMyApplicationIndex(&applicationIndex) == 0 && applicationIndex == 0);
+    count = -1;
+    updateId = -1;
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == 0);
+    Require(count == 0 && updateId == 0);
+    count = -1;
+    updateId = -1;
+    Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0, &count, &updateId) == 0);
+    Require(count == 0 && updateId == 0);
+    count = -1;
+    updateId = -1;
 
     Require(sceContentSearchGetContentLastUpdateId(nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetApplicationLastUpdateId(nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetMyApplicationIndex(nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, nullptr, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, nullptr) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 0, &count, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 0, &orderBy, 1, &count, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, nullptr, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetTotalContentSize(nullptr, 1, &size, &updateId) == ErrorInvalidArgument);
@@ -113,6 +137,7 @@ int main() {
     ContentSearchContentColumn unknownColumn{8, 0, &photo, 2};
     ContentSearchContentColumnSet unknownColumnSet{&unknownColumn, 1, 2};
     Require(Throws([&] { sceContentSearchGetNumOfContent(&unknownColumnSet, 1, &count, &updateId); }));
+    Require(Throws([&] { sceContentSearchGetNumOfApplication(&unknownColumnSet, 1, &orderBy, 1, &count, &updateId); }));
     ContentSearchContentColumn missingValue{3, 0, nullptr, 2};
     ContentSearchContentColumnSet missingValueSet{&missingValue, 1, 2};
     Require(Throws([&] { sceContentSearchGetTotalContentSize(&missingValueSet, 1, &size, &updateId); }));
@@ -121,6 +146,7 @@ int main() {
     Require(Throws([&] { sceContentSearchSearchContent(&unknownOperatorSet, 1, &orderBy, 1, 0, 2, &count, infos, &updateId); }));
     ContentSearchContentOrderByCondition unknownSort{3, 0};
     Require(Throws([&] { sceContentSearchSearchContent(&columnSet, 1, &unknownSort, 1, 0, 2, &count, infos, &updateId); }));
+    Require(Throws([&] { sceContentSearchGetNumOfApplication(&columnSet, 1, &unknownSort, 1, &count, &updateId); }));
     Require(count == -1 && updateId == -1);
     Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 0, nullptr, nullptr, nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 93, nullptr, nullptr, nullptr) == ErrorLimitTooBig);
@@ -141,6 +167,9 @@ int main() {
     Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 2, &count, infos, &updateId) == ErrorNotInitialized);
     Require(sceContentSearchCloseMetadata(1) == ErrorNotInitialized);
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetApplicationLastUpdateId(&updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetMyApplicationIndex(&applicationIndex) == ErrorNotInitialized);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, &updateId) == ErrorNotInitialized);
     Require(updateId == -1);
     constexpr int binderResult = static_cast<int>(0x809D000F);
     Require(sceContentBinderInitialize() == binderResult);
@@ -152,8 +181,5 @@ int main() {
     Require(sceContentBinderEnd() == binderResult);
     Require(sceContentBinderTerminate() == binderResult);
 
-    Require(ThrowsRuntimeError([] { sceContentSearchGetApplicationLastUpdateId(); }));
-    Require(ThrowsRuntimeError([] { sceContentSearchGetMyApplicationIndex(); }));
-    Require(ThrowsRuntimeError([] { sceContentSearchGetNumOfApplication(); }));
     Require(ThrowsRuntimeError([] { sceContentSearchSearchApplication(); }));
 }
