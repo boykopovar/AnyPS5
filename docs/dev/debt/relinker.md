@@ -2,6 +2,8 @@
 
 ### Functional
 
+- `--to-rosetta` rejects an unaligned 256-bit VMOVUPS, VMOVUPD or VMOVDQU store with 32-bit addressing through a base or index register ([wide-store decoder](../../../core/relinker/codegen/src/x86/WideStoreOperands.cpp)). Splitting such a store by adding 16 to its displacement can wrap the upper half at 4 GiB even when the displacement is zero. Computing the effective address once and preserving its full-width extent is not implemented; the rejection also covers runtime addresses that would not wrap. Absolute and EIP-relative forms keep their existing handling. No affected title or Rosetta execution of this case has been verified.
+
 - Execution of a title using [MULX lowering](../../../core/relinker/codegen/src/x86/MulxLowering.cpp) under Rosetta and precise fault delivery inside its spill sequence have not been verified. The lowering test passes under Rosetta on an M5 with macOS 26.2. The Rosetta host observations below predate this lowering for MULX. The stub uses 192 bytes below RSP, leaving the 128-byte red zone intact; direct RSP references to its spill slots throw, while aliases through other registers are not detected. A 64-bit stack-relative displacement that exceeds signed disp32 after reserving the spill frame throws.
 
 - [Packed relative relocations](../../../core/relinker/relinker/src/parsing/RelrRelocations.cpp) require the table to fit in one file-backed PT_LOAD segment and each 8-byte storage unit to fit in one load segment. Units spanning load segments, overlapping RELR units and overlaps with RELA relocations are rejected; relocation composition is not implemented.
