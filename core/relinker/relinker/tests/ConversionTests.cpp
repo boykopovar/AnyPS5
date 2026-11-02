@@ -283,7 +283,7 @@ void scanning() {
         Io::WriteU64(wrappingImage, 0x128, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         const auto roots = Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, controlDataHeader});
-        require(roots == std::set<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
+        require(roots == std::vector<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
         Io::WriteU64(wrappingImage, 0x3c0, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         Io::WriteU64(wrappingImage, 0x3c0, 0x2008);
@@ -310,8 +310,8 @@ void branchAcrossSignedBoundary() {
     header.MemorySize = header.FileSize;
     Io::WriteU64(image, 24, 0x8000000000000000);
     const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
-    require(instructions.contains(0x8000000000000000), "Lost the entry above the signed boundary");
-    require(instructions.contains(0x7ffffffffffffff0), "Lost the branch target below the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x8000000000000000ull), "Lost the entry above the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
 }
 
 class FailingProgress final : public Domain::IProgress {
