@@ -19,6 +19,8 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostReportSources.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostReportVulkan.hpp"
+#include "prx/libSceAgcDriver/Execution/include/BdaAtomics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/RasterOrderGroup.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp"
@@ -139,6 +141,8 @@ DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> famili
 }
 
 namespace {
+
+std::uint64_t fillCompletionSyncs = 0;
 
 void check(VkResult result, const char* operation) {
     if (result == VK_ERROR_DEVICE_LOST) Graphics::ReportDeviceLost();
@@ -1177,6 +1181,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     APS5_LOG_OUT("VulkanDevice constructor window=%p", static_cast<const void*>(window));
 #ifdef _WIN32
     state->library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+    state->library = SDL_LoadObject("libvulkan.1.dylib");
 #else
     state->library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -1217,9 +1223,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             instanceExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
             state->swapchainColorSpaces = true;
         }
-        create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
-        create.ppEnabledExtensionNames = instanceExtensions.data();
     }
+#ifdef __APPLE__
+    instanceExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    create.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
+    create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
+    create.ppEnabledExtensionNames = instanceExtensions.empty() ? nullptr : instanceExtensions.data();
     const VkResult instanceResult = state->InstanceFunction<PFN_vkCreateInstance>("vkCreateInstance")(&create, nullptr, &state->instance);
     if (instanceResult == VK_ERROR_INCOMPATIBLE_DRIVER) throw VulkanUnavailable("vkCreateInstance: Vulkan result " + std::to_string(instanceResult));
     check(instanceResult, "vkCreateInstance");
@@ -1696,6 +1706,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (state->nonSeamlessCubeMap) deviceExtensions.push_back(VK_EXT_NON_SEAMLESS_CUBE_MAP_EXTENSION_NAME);
     }
     nonSeamlessCubeFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NON_SEAMLESS_CUBE_MAP_FEATURES_EXT};
+    VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
+    const bool portabilitySubset = hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+    if (portabilitySubset) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        deviceExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+    }
     nonSeamlessCubeFeatures.nonSeamlessCubeMap = VK_TRUE;
     VkPhysicalDeviceCoverageReductionModeFeaturesNV coverageReductionFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COVERAGE_REDUCTION_MODE_FEATURES_NV};
     if (hasExtension(VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME) && hasExtension(VK_NV_COVERAGE_REDUCTION_MODE_EXTENSION_NAME)) {
@@ -1984,6 +2001,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         nonSeamlessCubeFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &nonSeamlessCubeFeatures;
     }
+    if (portabilitySubset) {
+        portabilityFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
+        deviceInfo.pNext = &portabilityFeatures;
+    }
     if (!state->mixedAttachmentSamples && (state->mergedCoverageSampleCounts != 0 || state->truncatedCoverageSampleCounts != 0)) {
         coverageReductionFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
         deviceInfo.pNext = &coverageReductionFeatures;
@@ -2069,10 +2090,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         byteFeatures.pNext = &subgroupSizeFeatures;
         APS5_LOG_OUT("Wave32 programs run on subgroups of %u: compute %d, mesh %d", 32u, state->computeWave32, state->meshWave32);
     }
-    if (std::getenv("APS5_SPANNED_WAVE") != nullptr) {
-        state->spannedWaves = state->computeFullSubgroups;
-        APS5_LOG_OUT("APS5_SPANNED_WAVE: single-wave wave64 compute spans two full 32-lane subgroups: %d", state->spannedWaves);
-    }
+    state->spannedWaves = state->computeFullSubgroups && std::getenv("APS5_NO_SPANNED_WAVE") == nullptr;
+    APS5_LOG_OUT("single-wave wave64 compute spans two full 32-lane subgroups: %d", state->spannedWaves);
     timelineFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
     timelineFeatures.timelineSemaphore = VK_TRUE;
     if (state->timelineSemaphores) {
@@ -2495,7 +2514,7 @@ void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>&
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    static_cast<void>(Graphics::StorageTexture::FlushAllPendingUntil("idle", stop));
+    static_cast<void>(Graphics::StorageTexture::FlushAllPendingUntil("idle", stop, state->device));
     SubmitRecorded(reapFirst);
 }
 
@@ -2572,7 +2591,7 @@ bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) c
 
 int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst) {
     static const bool storeAtLabel = Graphics::StorageTexture::StoreAtLabelRequested(std::getenv("APS5_STORE_AT_LABEL"));
-    if (storeAtLabel) Graphics::StorageTexture::FlushAllPending("label");
+    if (storeAtLabel) Graphics::StorageTexture::FlushAllPending("label", state->device);
     if (queue == 0) static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("label"));
     Graphics::StorageTexture::StoreReadbackBeforeLabel("readback before label");
     if (!state->recorder || bytes.empty() || bytes.size() > 65536 || address % 4 != 0 || bytes.size() % 4 != 0) return 4;
@@ -2722,7 +2741,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     // rest) on a [fill-sync] line; Driver.cpp's [fill] line counts the fills and their bytes.
     // `labelSynced` counts syncs taken because a completion label was pending: over the range for
     // a small fill, anywhere at all for a larger one.
-    static std::uint64_t fills = 0, synced = 0, labelSynced = 0, ordered = 0;
+    static std::uint64_t fills = 0, synced = 0, ordered = 0;
     static double syncedMs = 0;
     // The [fill-sync] line's phases (APS5_PROFILE_DRAW): decide (the reap, the import lookup and
     // the pending-write tests up to the record), record (barriers and the fill or its doubling
@@ -2746,8 +2765,8 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
         if (!sync && Graphics::Recorder::PendingCompletionLabels() != 0) {
             // A label the CPU will store after a completion must not be overwritten by the fill:
             // only a label inside the filled range matters, whatever the range's size.
-            sync = recorder.PendingLabelIn(address, bytes);
-            if (sync) ++labelSynced;
+            sync = recorder.CompletionLabelIn(address, bytes);
+            if (sync) ++fillCompletionSyncs;
         }
         if (sync) {
             ++synced;
@@ -2767,7 +2786,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
         const auto now = std::chrono::steady_clock::now();
         if (now - lastReport > std::chrono::seconds(10)) {
             lastReport = now;
-            AgcDriver::ProfilePrint_nid_no_patch("[fill-sync] fills (cumulative): %llu synced (%llu with a completion label pending) waited %.0f ms, %llu ordered by barrier, %llu with no pending write; phases ms: decide %.0f record %.0f notes %.0f; %llu uniform, %llu pattern (%llu doubling steps in place; pattern buffers reused %llu, made %llu)\n", static_cast<unsigned long long>(synced), static_cast<unsigned long long>(labelSynced), syncedMs, static_cast<unsigned long long>(ordered), static_cast<unsigned long long>(fills - synced - ordered), decideMs, recordMs, notesMs, static_cast<unsigned long long>(uniformFills), static_cast<unsigned long long>(patternFills), static_cast<unsigned long long>(doublingSteps), static_cast<unsigned long long>(patternBuffersReused), static_cast<unsigned long long>(patternBuffersMade));
+            AgcDriver::ProfilePrint_nid_no_patch("[fill-sync] fills (cumulative): %llu synced (%llu with a completion label pending) waited %.0f ms, %llu ordered by barrier, %llu with no pending write; phases ms: decide %.0f record %.0f notes %.0f; %llu uniform, %llu pattern (%llu doubling steps in place; pattern buffers reused %llu, made %llu)\n", static_cast<unsigned long long>(synced), static_cast<unsigned long long>(fillCompletionSyncs), syncedMs, static_cast<unsigned long long>(ordered), static_cast<unsigned long long>(fills - synced - ordered), decideMs, recordMs, notesMs, static_cast<unsigned long long>(uniformFills), static_cast<unsigned long long>(patternFills), static_cast<unsigned long long>(doublingSteps), static_cast<unsigned long long>(patternBuffersReused), static_cast<unsigned long long>(patternBuffersMade));
         }
     }
     auto phaseStart = fillStart;
@@ -3536,7 +3555,7 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const Displ
         }
     }
     static const bool storeAtFlip = Graphics::StorageTexture::StoreAtFlipRequested(std::getenv("APS5_STORE_AT_FLIP"));
-    if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip");
+    if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip", state->device);
     else Graphics::StorageTexture::FlushDumpSelected("flip");
     auto& dumps = Dumps();
     const bool passthrough = state->surfaceColorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
@@ -3981,6 +4000,8 @@ std::size_t VulkanDevice::FlipInFlight() {
     return count;
 }
 
+std::uint64_t VulkanDevice::FillCompletionSyncCount() { return fillCompletionSyncs; }
+
 VulkanDevice::PresentStatistics VulkanDevice::PresentCounts() {
     return presentCounters;
 }
@@ -4056,8 +4077,8 @@ void VulkanDevice::QueuePresent() {
     std::unique_lock presentQueueLock(state->presentQueueMutex, std::defer_lock);
     if (state->presentQueue != VK_NULL_HANDLE) presentQueueLock.lock();
     const auto presented = state->DeviceFunction<PFN_vkQueuePresentKHR>("vkQueuePresentKHR")(state->presentQueue != VK_NULL_HANDLE ? state->presentQueue : state->queue, &present);
-    if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR) state->extent = {0, 0};
-    else check(presented, "vkQueuePresentKHR");
+    if (presented == VK_ERROR_OUT_OF_DATE_KHR) state->extent = {0, 0};
+    else if (presented != VK_SUBOPTIMAL_KHR) check(presented, "vkQueuePresentKHR");
     timing.Mark("queue_present");
     APS5_LOG_OUT_DEBUG("vkQueuePresentKHR queued imageIndex=%u", index);
 }
@@ -4078,6 +4099,14 @@ std::string VulkanDevice::DeviceName() const {
 
 std::string VulkanDevice::DriverInfo() const {
     return state->driverInfo.empty() ? std::to_string(state->properties.driverVersion) : state->driverInfo;
+}
+
+bool VulkanDevice::BdaAtomicsUsable() const {
+    return AgcDriver::BdaAtomicsUsable(state->driverId);
+}
+
+bool VulkanDevice::RasterOrderGroupUsable() const {
+    return AgcDriver::RasterOrderGroupUsable(state->driverId);
 }
 
 bool VulkanDevice::CalibrateClock(double& gpuNs, std::chrono::steady_clock::time_point& cpu) const {
@@ -5263,8 +5292,18 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
     static_cast<void>(Graphics::StorageTexture::StoreDrawnLinearTouching("dispatch access", touches, resources.HoldsLease()));
+    bool unordered = false;
+    const auto overlapQueue = Graphics::Recorder::TakeDispatchOrder(unordered);
+    const auto* groupLimit = state->properties.limits.maxComputeWorkGroupCount;
+    const bool overlapCapable = overlapQueue != 0 && Graphics::Recorder::DispatchOverlapEnabled() && arguments == 0 && argumentImport == nullptr && record.threadGroup == std::array<std::uint32_t, 3>{} && record.shader->program->workgroupMemoryDwords == 0 && state->checkpointMarker == nullptr && state->bufferMarker == nullptr && record.x <= groupLimit[0] && record.y <= groupLimit[1] && record.z <= groupLimit[2] && !resources.HasHostGpuCopies();
+    std::vector<Graphics::Recorder::RunAccess> runAccesses;
+    if (overlapCapable) resources.RunAccesses(runAccesses);
     VkAccessFlags covered = 0;
-    const auto commands = recorder.Commands(&covered);
+    bool overlapped = false;
+    const std::array<const void*, 2> runOwners{record.resources.get(), resources.MemoryOwner()};
+    const auto commands = overlapCapable && unordered ? recorder.OverlapCommands(overlapQueue, runOwners, runAccesses, &covered, overlapped) : recorder.Commands(&covered);
+    constexpr VkAccessFlags runLeadingCovered = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    if (overlapCapable && !overlapped && (covered & runLeadingCovered) != runLeadingCovered) covered = 0;
     recordStep(PhaseRecordCommands);
     recorder.Keep(record.objects);
     if (record.resources != nullptr) record.resources->KeepStorageImageBytes(recorder);
@@ -5331,12 +5370,19 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     // Results of earlier recorded work are visible to this dispatch, its own to everything after.
     constexpr VkAccessFlags shaderAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    if ((covered & shaderAccess) == shaderAccess && barrierElision) {
+    if (overlapped) {
+        if (record.refreshed) {
+            Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT);
+            Graphics::Recorder::CountBarriers(CommandClass::TemplateDataRefresh);
+        }
+    } else if ((covered & shaderAccess) == shaderAccess && barrierElision) {
         ++d.preBarriersSkipped;
         Graphics::Recorder::CountMerged(CommandClass::DispatchLeading);
     } else {
         const auto timing = recorder.BeginGpuTiming(CommandClass::DispatchLeading);
-        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        const VkPipelineStageFlags leadingStages = overlapCapable ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        const VkAccessFlags leadingAccess = overlapCapable ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT : VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, leadingStages, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, leadingAccess);
         Graphics::Recorder::CountBarriers(CommandClass::DispatchLeading);
         recorder.EndGpuTiming(timing);
         ++d.preBarriersRecorded;
@@ -5404,12 +5450,17 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     recorder.EndGpuTiming(gpuTiming);
     if (marker != 0) state->bufferMarker(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, state->markerBuffer, sizeof(std::uint32_t), marker);
-    const auto trailingTiming = recorder.BeginGpuTiming(CommandClass::DispatchTrailing);
-    constexpr VkAccessFlags dispatchedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
-    Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, dispatchedAccess);
-    Graphics::Recorder::CountBarriers(CommandClass::DispatchTrailing);
-    recorder.EndGpuTiming(trailingTiming);
-    recorder.MarkCovered(dispatchedAccess);
+    if (overlapCapable) {
+        recorder.DeferDispatchBarrier(overlapQueue, runOwners, runAccesses);
+        resources.CopyBacksAfterRun(record.resources);
+    } else {
+        const auto trailingTiming = recorder.BeginGpuTiming(CommandClass::DispatchTrailing);
+        constexpr VkAccessFlags dispatchedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
+        Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, dispatchedAccess);
+        Graphics::Recorder::CountBarriers(CommandClass::DispatchTrailing);
+        recorder.EndGpuTiming(trailingTiming);
+        recorder.MarkCovered(dispatchedAccess);
+    }
     recordStep(PhaseRecordBind);
     if (record.htileClear.has_value()) Graphics::ArmHtileDepthClear(record.htileClear->first, record.htileClear->second);
     resources.MarkGpuWrites(recorder);
