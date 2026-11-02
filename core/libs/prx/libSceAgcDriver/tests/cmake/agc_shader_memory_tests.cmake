@@ -44,7 +44,7 @@ if(BUILD_TESTING)
     set_tests_properties(agc_shader_device_runtime_address_columns PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
     set_tests_properties(agc_shader_table_trailer PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_driver_image_table_vouched_lookups COMMAND agc_driver_image_table_cache_bounds_tests --vouched-lookups)
-    set_tests_properties(agc_driver_image_table_vouched_lookups PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_WRITE_WATCH_IMPORTS=watch" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+    set_tests_properties(agc_driver_image_table_vouched_lookups PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_WRITE_WATCH_IMPORTS=watch;APS5_NO_SPANNED_WAVE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
     agc_add_env_test(agc_driver_image_table_atomics agc_driver_image_table_cache_bounds_tests
             ARGS --atomic-table ENV ANYPS5_NO_SHADER_CACHE=1 TIMEOUT 60)
     agc_add_env_test(agc_driver_image_table_atomics_gpu_heap agc_driver_image_table_cache_bounds_tests
