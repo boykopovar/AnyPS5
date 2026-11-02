@@ -48,6 +48,9 @@ static void Exercise(int descriptor) {
     RequireOption(descriptor, 1);
     std::uint32_t length = sizeof(enabled);
     int output = 0;
+    Require(sceNetGetsockopt(descriptor, 41, 27, &output, nullptr) == static_cast<int>(0x80410116u) && *sceNetErrnoLoc() == 22);
+    Require(sceNetGetsockopt(-1, 41, 27, &output, &length) == static_cast<int>(0x80410109u) && *sceNetErrnoLoc() == 9);
+    Require(sceNetSetsockopt(-1, 41, 27, &enabled, sizeof(enabled)) == static_cast<int>(0x80410109u) && *sceNetErrnoLoc() == 9);
     Require(sceNetGetsockopt(descriptor, 41, 28, &output, &length) == static_cast<int>(0x8041012au) && *sceNetErrnoLoc() == 42);
     Require(sceNetSetsockopt(descriptor, 41, 28, &enabled, sizeof(enabled)) == static_cast<int>(0x8041012au) && *sceNetErrnoLoc() == 42);
 }

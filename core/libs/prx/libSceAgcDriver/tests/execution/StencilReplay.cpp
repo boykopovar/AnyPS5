@@ -83,7 +83,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
 
 ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl) {
     const AgcDriver::Registers context{
-        {0x1b3, 0x700u}, {0x1b4, 0x700u}, {0x1b6, 0u}, {0x1c5, 9u}, {0x203, shaderControl},
+        {0x003, 0u}, {0x0b4, 0u}, {0x0b5, 0x3f800000u}, {0x1b3, 0x700u}, {0x1b4, 0x700u}, {0x1b6, 0u}, {0x1c5, 9u}, {0x203, shaderControl},
     };
     return AgcDriver::Graphics::DecodePixelStageInfo(context, {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u});
 }
