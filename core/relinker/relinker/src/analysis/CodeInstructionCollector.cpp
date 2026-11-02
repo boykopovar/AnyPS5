@@ -10,16 +10,20 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <iterator>
 #include <limits>
 #include <map>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace Relinker {
 
@@ -39,6 +43,126 @@ public:
         return result;
     }
 };
+
+constexpr std::uint16_t RegisterBit(const unsigned index) { return static_cast<std::uint16_t>(1u << index); }
+
+bool UsedAsCodeAddress(const std::uint8_t* code, const std::size_t available, const std::size_t begin, const unsigned computed) {
+    constexpr std::uint16_t arguments = RegisterBit(7) | RegisterBit(6) | RegisterBit(2) | RegisterBit(1) | RegisterBit(8) | RegisterBit(9);
+    constexpr std::uint16_t preserved = RegisterBit(3) | RegisterBit(5) | RegisterBit(12) | RegisterBit(13) | RegisterBit(14) | RegisterBit(15);
+    constexpr std::array<std::uint8_t, 17> groups{0x80, 0x81, 0x82, 0x83, 0x8f, 0xc0, 0xc1, 0xc6, 0xc7, 0xd0, 0xd1, 0xd2, 0xd3, 0xf6, 0xf7, 0xfe, 0xff};
+    const Codegen::X64InstructionDecoder decoder;
+    std::vector<std::tuple<std::size_t, std::uint16_t, int>> pending{{begin, RegisterBit(computed), 0}};
+    std::set<std::pair<std::size_t, std::uint16_t>> visited;
+    const auto follow = [&](std::size_t position, std::uint16_t tracked, int count) {
+        for (; count < 64 && position < available; ++count) {
+            if (!visited.emplace(position, tracked).second || visited.size() > 256) return false;
+            Codegen::DecodedInstructionInfo info;
+            try {
+                info = decoder.DecodeInstruction(code + position, available - position);
+            } catch (const Codegen::CodegenException&) {
+                return false;
+            }
+            const auto* bytes = code + position;
+            position += info.Length;
+            const auto start = info.OpcodeOffset;
+            if (start >= info.Length) return false;
+            if (bytes[start] == 0xc4 || bytes[start] == 0xc5 || bytes[start] == 0x62 || (bytes[start] == 0x8f && start + 1 < info.Length && (bytes[start + 1] & 0x38) != 0)) return false;
+            const auto op = info.Opcode;
+            const bool twoByte = info.IsTwoByteOpcode;
+            const auto rex = info.RexPrefix;
+            using enum Codegen::ControlFlowKind;
+            if (!info.HasModRm) {
+                const auto low = static_cast<unsigned>((op & 7) | ((rex & 1) << 3));
+                if (!twoByte && op >= 0x50 && op <= 0x57) {
+                    if (tracked & RegisterBit(low)) return true;
+                    continue;
+                }
+                if (!twoByte && ((op >= 0x58 && op <= 0x5f) || (op >= 0xb8 && op <= 0xbf))) {
+                    tracked &= static_cast<std::uint16_t>(~RegisterBit(low));
+                    if (tracked == 0) return false;
+                    continue;
+                }
+                if ((!twoByte && ((op >= 0x90 && op <= 0x97) || (op >= 0xb0 && op <= 0xb7))) || (twoByte && op >= 0xc8 && op <= 0xcf))
+                    if (tracked & (RegisterBit(low) | RegisterBit(0))) return false;
+                if (info.FlowKind == UnconditionalJump && info.HasBranchTarget) {
+                    const auto target = static_cast<std::int64_t>(position) + info.BranchDisp;
+                    if (target < 0) return false;
+                    position = static_cast<std::size_t>(target);
+                    continue;
+                }
+                if (info.FlowKind == ConditionalBranch) {
+                    const auto target = static_cast<std::int64_t>(position) + info.BranchDisp;
+                    if (info.HasBranchTarget && target >= 0) pending.emplace_back(static_cast<std::size_t>(target), tracked, count + 1);
+                    continue;
+                }
+                if (info.FlowKind == Call && (tracked & arguments) == 0) {
+                    tracked &= preserved;
+                    if (tracked == 0) return false;
+                    continue;
+                }
+                if (info.FlowKind == Call || info.FlowKind == UnconditionalJump) return (tracked & arguments) != 0;
+                if (info.FlowKind == Return) return (tracked & RegisterBit(0)) != 0;
+                if (info.FlowKind != Sequential) return false;
+                continue;
+            }
+            const auto modrm = info.ModRmByte;
+            const auto mod = modrm >> 6;
+            const auto reg = static_cast<unsigned>(((modrm >> 3) & 7) | ((rex & 4) << 1));
+            const auto rm = static_cast<unsigned>((modrm & 7) | ((rex & 1) << 3));
+            std::uint16_t memory = 0;
+            if (mod != 3) {
+                const auto modrmPosition = start + (twoByte ? (op == 0x38 || op == 0x3a ? 3 : 2) : 1);
+                if ((modrm & 7) == 4 && modrmPosition + 1 < info.Length) {
+                    const auto sib = bytes[modrmPosition + 1];
+                    const auto index = static_cast<unsigned>(((sib >> 3) & 7) | ((rex & 2) << 2));
+                    if (index != 4) memory |= RegisterBit(index);
+                    if ((sib & 7) != 5 || mod != 0) memory |= RegisterBit((sib & 7) | ((rex & 1) << 3));
+                } else if ((modrm & 7) != 5 || mod != 0) {
+                    memory |= RegisterBit(rm);
+                }
+            }
+            if (memory & tracked) return false;
+            if (!twoByte && op == 0xff && (info.ModRmRegField == 2 || info.ModRmRegField == 4)) {
+                if ((mod == 3 && (tracked & RegisterBit(rm))) || (tracked & arguments)) return true;
+                if (info.ModRmRegField == 4) return false;
+                tracked &= preserved;
+                if (tracked == 0) return false;
+                continue;
+            }
+            if (twoByte || (op >= 0xd8 && op <= 0xdf)) continue;
+            const bool group = std::find(groups.begin(), groups.end(), op) != groups.end();
+            const bool reads = op == 0x84 || op == 0x85 || (op >= 0x38 && op <= 0x3b) || ((op == 0x80 || op == 0x81 || op == 0x83) && info.ModRmRegField == 7) || ((op == 0xf6 || op == 0xf7) && info.ModRmRegField < 2);
+            if (op == 0x89 && (tracked & RegisterBit(reg))) {
+                if (mod != 3) return true;
+                tracked |= RegisterBit(rm);
+                continue;
+            }
+            if (op == 0x89 && mod == 3) {
+                tracked &= static_cast<std::uint16_t>(~RegisterBit(rm));
+                if (tracked == 0) return false;
+                continue;
+            }
+            if ((op == 0x8b || op == 0x8d) && !(mod == 3 && (tracked & RegisterBit(rm)))) {
+                tracked &= static_cast<std::uint16_t>(~RegisterBit(reg));
+                if (tracked == 0) return false;
+                continue;
+            }
+            if (op == 0x8b) {
+                tracked |= RegisterBit(reg);
+                continue;
+            }
+            if (!reads && ((mod == 3 && (tracked & RegisterBit(rm))) || (!group && (tracked & RegisterBit(reg))))) return false;
+            if (info.FlowKind != Sequential && info.FlowKind != ConditionalBranch) return false;
+        }
+        return false;
+    };
+    while (!pending.empty()) {
+        const auto [position, tracked, count] = pending.back();
+        pending.pop_back();
+        if (follow(position, tracked, count)) return true;
+    }
+    return false;
+}
 
 }
 
@@ -205,10 +329,19 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         if (run.AbsoluteFsAccess || (address % 16 == 0 && nearSceFunctionEnd(address) && run.Transfer)) addRoot(address);
         else dataTargets.insert(address);
     };
+    const auto inFunction = [&](std::uint64_t address) { const auto after = functions.upper_bound(address); return after != functions.begin() && address < std::prev(after)->second; };
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
         if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
         const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
-        addPointerRoot(address + info.Length + static_cast<std::int64_t>(displacement));
+        const auto target = address + info.Length + static_cast<std::int64_t>(displacement);
+        if (!sceFunctions.empty() || functions.empty() || !isCode(target) || inTable(target) || inFunction(target)) {
+            addPointerRoot(target);
+            return;
+        }
+        const auto following = codeAt(address);
+        const auto computed = static_cast<unsigned>(((info.ModRmByte >> 3) & 7) | ((info.RexPrefix & 4) << 1));
+        if (UsedAsCodeAddress(following.data(), following.size(), info.Length, computed)) addRoot(target);
+        else dataTargets.insert(target);
     };
     const auto addFunction = [&](std::uint64_t begin, std::uint64_t size, bool symbolAlias) {
         if (size == 0) return;
@@ -528,7 +661,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
             auto& reached = sectionReachable[i];
             if (reached.empty()) reached.resize(header.FileSize);
-            for (const auto address : UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable)) {
+            for (const auto address : UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty() && functions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable)) {
                 if (!decodedInstructions.insert(address).second) continue;
                 instructions.insert(address);
                 const auto offset = address - header.MappedAddress;
