@@ -7,6 +7,7 @@
 #include "prx/libc/include/RenameDot.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/AppArchive.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -19,12 +20,15 @@
 #include "prx/libkernel/File/include/HostStreams.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "SceTypes.hpp"
 
 #include <cerrno>
 #include <cstdarg>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -70,8 +74,10 @@ static int NativeRead(int fd, void* buf, std::size_t n) {
         errno = EISDIR;
         return -1;
     }
-    const auto positioned = File::LockPositionedTransfer(fd);
-    const int result = ::_read(fd, buf, static_cast<unsigned int>(n));
+    const auto positioned = File::IoPositionedTransfer(fd);
+    if (!positioned) return -1;
+    const int result = ThreadCancel::Native([&] { return ::_read(fd, buf, static_cast<unsigned int>(n)); });
+    if (result < 0 && _doserrno == ERROR_OPERATION_ABORTED) errno = EINTR;
     if (result < 0 && _doserrno == ERROR_NO_DATA) errno = EAGAIN;
     return result;
 }
@@ -154,7 +160,7 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
     return result == -2 ? ::lseek(fd, static_cast<off_t>(offset), whence) : result;
 }
 static std::int64_t NativeRead(int fd, void* buf, std::size_t n) {
-    return ::read(fd, buf, n);
+    return ThreadCancel::Native([&] { return ::read(fd, buf, n); });
 }
 static std::int64_t NativeWrite(int fd, const void* buf, std::size_t n) {
     const auto result = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
@@ -292,6 +298,45 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
     return fd;
 }
 
+void File::ForgetClosedDescriptor(int descriptor) {
+    File::ForgetRandomDevice(descriptor);
+    File::ForgetDescriptor(descriptor);
+    ForgetJitSharedMemory(descriptor);
+#ifdef _WIN32
+    File::ForgetFileLock(descriptor);
+#endif
+    File::ForgetDirectoryDescriptor(descriptor);
+}
+
+namespace {
+
+void* BeginClosingStreamDescriptor(int descriptor) {
+    EqueueDescriptorClosed(descriptor);
+#ifdef _WIN32
+    auto positioned = std::make_unique<File::PositionedTransferLock>(File::LockPositionedTransfer(descriptor));
+    File::ForgetClosedDescriptor(descriptor);
+    return positioned.release();
+#else
+    File::ForgetClosedDescriptor(descriptor);
+    return nullptr;
+#endif
+}
+
+void EndClosingStreamDescriptor(void* closing) {
+    delete static_cast<File::PositionedTransferLock*>(closing);
+}
+
+struct ClosedDescriptorRegistration {
+    ClosedDescriptorRegistration() { LibcRegisterClosedDescriptors_nid_no_patch(&BeginClosingStreamDescriptor, &EndClosingStreamDescriptor); }
+    ~ClosedDescriptorRegistration() { LibcRegisterClosedDescriptors_nid_no_patch(nullptr, nullptr); }
+    ClosedDescriptorRegistration(const ClosedDescriptorRegistration&) = delete;
+    ClosedDescriptorRegistration& operator=(const ClosedDescriptorRegistration&) = delete;
+};
+
+const ClosedDescriptorRegistration g_closedDescriptorRegistration;
+
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
@@ -333,6 +378,7 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
 
 int APS5_VABI sceKernelClose(int d) {
     if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EPERM;
+    const GuestDescriptorAccess descriptorLock(d, GuestDescriptorAccess::Mode::Close);
     int socketError = 0;
     if (KernelCloseSocket_nid_no_patch(d, &socketError)) return socketError == 0 ? 0 : SceKernelError(socketError);
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
@@ -340,13 +386,7 @@ int APS5_VABI sceKernelClose(int d) {
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
-    File::ForgetRandomDevice(d);
-    File::ForgetDescriptor(d);
-    ForgetJitSharedMemory(d);
-#ifdef _WIN32
-    File::ForgetFileLock(d);
-#endif
-    File::ForgetDirectoryDescriptor(d);
+    File::ForgetClosedDescriptor(d);
     if (NativeClose(d) != 0) {
         if (errno == EBADF) return SCE_KERNEL_ERROR_EBADF;
         throw std::runtime_error(std::string(__func__) + ": close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));

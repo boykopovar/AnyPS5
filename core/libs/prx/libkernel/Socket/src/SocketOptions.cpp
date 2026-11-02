@@ -214,7 +214,7 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
         }
 #ifdef _WIN32
         unsigned long enabled = number != 0;
-        if (ioctlsocket(handle, FIONBIO, &enabled)) return HostError();
+        if (!state.transportNonblocking && ioctlsocket(handle, FIONBIO, &enabled)) return HostError();
 #else
         int enabled = number != 0;
         if (::ioctl(handle, FIONBIO, &enabled)) return HostError();
