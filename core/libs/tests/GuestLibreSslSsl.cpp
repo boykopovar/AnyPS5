@@ -21,7 +21,9 @@ struct TestSsl {
     void* rbio;
     void* wbio;
     void* bbio;
-    unsigned char beforeSession[88];
+    unsigned char beforeParam[24];
+    void* param;
+    unsigned char beforeSession[56];
     void* session;
     unsigned char beforeCtx[16];
     void* ctx;
@@ -32,6 +34,7 @@ struct TestSsl {
 
 static_assert(sizeof(TestSslInternal) == 432 && offsetof(TestSslInternal, rwstate) == 156 && offsetof(TestSslInternal, shutdown) == 168);
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, session) == 128 && offsetof(TestSsl, ctx) == 152);
+static_assert(offsetof(TestSsl, param) == 64);
 static_assert(offsetof(TestSsl, verifyResult) == 160 && offsetof(TestSsl, internal) == 224);
 
 static const LibreSslSsl* Ssl(const TestSsl* ssl) {
@@ -134,6 +137,17 @@ static void TestWant() {
     Require(SSL_want_nid_postfix(Ssl(&ssl)) == 3);
 }
 
+static void TestGet0Param() {
+    int param = 0;
+    int context = 0;
+    TestSsl ssl {};
+    RequireThrows([] { SSL_get0_param_nid_postfix(nullptr); });
+    Require(SSL_get0_param_nid_postfix(Ssl(&ssl)) == nullptr);
+    ssl.param = &param;
+    ssl.ctx = &context;
+    Require(SSL_get0_param_nid_postfix(Ssl(&ssl)) == &param);
+}
+
 int main() {
     TestGetSslCtx();
     TestGetRbio();
@@ -142,5 +156,6 @@ int main() {
     TestVerifyResult();
     TestGetShutdown();
     TestWant();
+    TestGet0Param();
     return 0;
 }
