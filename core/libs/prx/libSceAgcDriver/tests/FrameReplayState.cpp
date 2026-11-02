@@ -412,6 +412,7 @@ void testShaderBlockHole(const std::filesystem::path& directory) {
     constexpr std::size_t Page = 4096;
     auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * Block, Block));
     check(block != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaRelease_nid_postfix(block, 2 * Block);
     auto* tail = block + 8 * Page;
     for (const auto& [piece, bytes] : {std::pair{block, 7 * Page}, std::pair{tail, Block - 8 * Page}}) {
         GuestArena::GuestArenaCommit_nid_postfix(piece, bytes, 0x04, bytes);
