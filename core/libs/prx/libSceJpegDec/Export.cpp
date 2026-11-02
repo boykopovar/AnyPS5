@@ -70,11 +70,14 @@ struct Context {
 
 static_assert(sizeof(Context) + HANDLE_ALIGNMENT - 1 <= MEMORY_OVERHEAD);
 
-std::int32_t validateCreateParam(const JpegDecCreateParam* param) {
+std::int32_t validateCreateParam(const JpegDecCreateParam* param, JpegDecCreateParam* outParam = nullptr) {
     if (!param) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    if (param->this_size != sizeof(JpegDecCreateParam)) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
-    if (param->attribute != ATTRIBUTE_CSC_ORDINARY && param->attribute != ATTRIBUTE_CSC_FULL) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
-    if (param->max_image_width == 0 || param->max_image_width > 65535) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+    JpegDecCreateParam local{};
+    if (!GuestCopyIn_nid_no_patch(&local, param, sizeof(local))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    if (local.this_size != sizeof(JpegDecCreateParam)) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
+    if (local.attribute != ATTRIBUTE_CSC_ORDINARY && local.attribute != ATTRIBUTE_CSC_FULL) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+    if (local.max_image_width == 0 || local.max_image_width > 65535) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+    if (outParam) *outParam = local;
     return 0;
 }
 
@@ -95,7 +98,9 @@ Context* toContext(void* handle) {
     const auto address = reinterpret_cast<std::uintptr_t>(handle);
     if (address == 0 || address % HANDLE_ALIGNMENT != 0) return nullptr;
     auto* context = reinterpret_cast<Context*>(handle);
-    return context->self == context ? context : nullptr;
+    Context selfCheck{};
+    if (!GuestCopyIn_nid_no_patch(&selfCheck, context, sizeof(selfCheck))) return nullptr;
+    return selfCheck.self == context ? context : nullptr;
 }
 
 bool fillImageInfo(const Decoder::Jpeg::Header& header, std::uint32_t downScale, JpegDecImageInfo* info) {
@@ -223,7 +228,11 @@ std::int32_t writeImage(const Decoder::Jpeg::Header& header, std::span<const std
         }
     }
 
-    if (imageInfo) fillImageInfo(header, downScale, imageInfo);
+    if (imageInfo) {
+        JpegDecImageInfo localInfo{};
+        fillImageInfo(header, downScale, &localInfo);
+        if (!GuestCopyOut_nid_no_patch(imageInfo, &localInfo, sizeof(localInfo))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    }
     if (outputWidth > MAX_PACKED_DIMENSION || outputHeight > MAX_PACKED_DIMENSION) return 0;
     return static_cast<std::int32_t>(outputWidth << 16 | outputHeight);
 }
@@ -341,7 +350,9 @@ std::int32_t parseStream(const Context* context, const JpegDecInputControlParam*
     if (stream.status < 0) return stream.status;
     if (!stream.header) return SCE_JPEG_DEC_ERROR_DECODE_ERROR;
     stream.downScale = param->down_scale;
-    if (!fillImageInfo(*stream.header, stream.downScale, imageInfo)) return SCE_JPEG_DEC_ERROR_COEFFICIENT_MEMORY;
+    JpegDecImageInfo localInfo{};
+    if (!fillImageInfo(*stream.header, stream.downScale, &localInfo)) return SCE_JPEG_DEC_ERROR_COEFFICIENT_MEMORY;
+    if (!GuestCopyOut_nid_no_patch(imageInfo, &localInfo, sizeof(localInfo))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     return 0;
 }
 
@@ -384,20 +395,24 @@ std::int32_t decodeStream(const Context* context, const JpegDecInputControlParam
 extern "C" {
 
 int32_t APS5_VABI sceJpegDecCreate(const JpegDecCreateParam* param, void* memoryAddress, uint32_t memorySize, void** handle) {
-    const std::int32_t result = validateCreateParam(param);
+    JpegDecCreateParam localParam{};
+    const std::int32_t result = validateCreateParam(param, &localParam);
     if (result != 0) return result;
     if (!memoryAddress) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    if (memorySize < workMemorySize(*param)) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
+    if (memorySize < workMemorySize(localParam)) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
     if (!handle) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     const auto address = reinterpret_cast<std::uintptr_t>(memoryAddress);
     const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
     auto* context = new (reinterpret_cast<void*>(aligned)) Context{};
     context->self = context;
-    context->attribute = param->attribute;
-    context->maxImageWidth = (param->max_image_width + 31) & ~std::uint32_t{31};
-    context->rowBufferCapacity = (context->maxImageWidth + 16) * (param->attribute == ATTRIBUTE_CSC_ORDINARY ? 24 : 80);
+    context->attribute = localParam.attribute;
+    context->maxImageWidth = (localParam.max_image_width + 31) & ~std::uint32_t{31};
+    context->rowBufferCapacity = (context->maxImageWidth + 16) * (localParam.attribute == ATTRIBUTE_CSC_ORDINARY ? 24 : 80);
     forgetStream(context);
-    *handle = context;
+    if (!GuestCopyOut_nid_no_patch(handle, &context, sizeof(context))) {
+        context->self = nullptr;
+        return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    }
     return 0;
 }
 
@@ -405,20 +420,22 @@ int32_t APS5_VABI sceJpegDecDecode(void* handle, const JpegDecDecodeParam* param
     const Context* context = toContext(handle);
     if (!context) return SCE_JPEG_DEC_ERROR_INVALID_HANDLE;
     if (!param) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    if (!param->jpeg_mem_addr || !param->image_mem_addr) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    if ((reinterpret_cast<std::uintptr_t>(param->image_mem_addr) & 3) != 0 && (param->pixel_format == 0 || param->pixel_format == 1 || param->pixel_format == 9 || param->pixel_format == 10)) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    if (param->jpeg_mem_size == 0 || param->image_mem_size == 0) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
-    if (!validDecodeOptions(param->decode_mode, param->down_scale)) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
-    if (param->pixel_format != 0 && param->pixel_format != 1 && param->pixel_format != 9 && param->pixel_format != 10 && param->pixel_format != 11) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
-    if (param->alpha_value > 255) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
-    requireDecodeMode(__func__, param->decode_mode);
-    if (param->pixel_format != PIXEL_FORMAT_R8G8B8A8 && param->pixel_format != PIXEL_FORMAT_B8G8R8A8) throw std::runtime_error("sceJpegDecDecode: pixel format is not implemented");
+    JpegDecDecodeParam localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    if (!localParam.jpeg_mem_addr || !localParam.image_mem_addr) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    if ((reinterpret_cast<std::uintptr_t>(localParam.image_mem_addr) & 3) != 0 && (localParam.pixel_format == 0 || localParam.pixel_format == 1 || localParam.pixel_format == 9 || localParam.pixel_format == 10)) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    if (localParam.jpeg_mem_size == 0 || localParam.image_mem_size == 0) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
+    if (!validDecodeOptions(localParam.decode_mode, localParam.down_scale)) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+    if (localParam.pixel_format != 0 && localParam.pixel_format != 1 && localParam.pixel_format != 9 && localParam.pixel_format != 10 && localParam.pixel_format != 11) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+    if (localParam.alpha_value > 255) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+    requireDecodeMode(__func__, localParam.decode_mode);
+    if (localParam.pixel_format != PIXEL_FORMAT_R8G8B8A8 && localParam.pixel_format != PIXEL_FORMAT_B8G8R8A8) throw std::runtime_error("sceJpegDecDecode: pixel format is not implemented");
 
-    const std::span<const std::uint8_t> jpeg = toBytes(param->jpeg_mem_addr, param->jpeg_mem_size);
+    const std::span<const std::uint8_t> jpeg = toBytes(localParam.jpeg_mem_addr, localParam.jpeg_mem_size);
     const std::optional<Decoder::Jpeg::Header> header = Decoder::Jpeg::ParseHeader(jpeg);
     if (!header) return SCE_JPEG_DEC_ERROR_INVALID_DATA;
-    const DecodeTarget target{param->image_mem_addr, param->image_mem_size, param->coefficient_mem_addr, param->coefficient_mem_size,
-                              param->down_scale, param->pixel_format, param->alpha_value, param->image_pitch};
+    const DecodeTarget target{localParam.image_mem_addr, localParam.image_mem_size, localParam.coefficient_mem_addr, localParam.coefficient_mem_size,
+                              localParam.down_scale, localParam.pixel_format, localParam.alpha_value, localParam.image_pitch};
     const std::int32_t checked = checkTarget(*context, *header, target);
     if (checked != 0) return checked;
     return writeImage(*header, jpeg, target, imageInfo);
@@ -434,31 +451,39 @@ int32_t APS5_VABI sceJpegDecDelete(void* handle) {
 
 int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam* param, JpegDecImageInfo* imageInfo) {
     if (!param) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    if (!param->jpeg_mem_addr) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    if (param->jpeg_mem_size == 0) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
-    if (!validDecodeOptions(param->decode_mode, param->down_scale)) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+    JpegDecParseParam localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    if (!localParam.jpeg_mem_addr) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    if (localParam.jpeg_mem_size == 0) return SCE_JPEG_DEC_ERROR_INVALID_SIZE;
+    if (!validDecodeOptions(localParam.decode_mode, localParam.down_scale)) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     if (!imageInfo) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    requireDecodeMode(__func__, param->decode_mode);
-    const std::uint32_t downScale = param->down_scale;
-    const std::optional<Decoder::Jpeg::Header> header = Decoder::Jpeg::ParseHeader(toBytes(param->jpeg_mem_addr, param->jpeg_mem_size));
+    requireDecodeMode(__func__, localParam.decode_mode);
+    const std::uint32_t downScale = localParam.down_scale;
+    const std::optional<Decoder::Jpeg::Header> header = Decoder::Jpeg::ParseHeader(toBytes(localParam.jpeg_mem_addr, localParam.jpeg_mem_size));
     if (!header) return SCE_JPEG_DEC_ERROR_INVALID_DATA;
-    if (!fillImageInfo(*header, downScale, imageInfo)) return SCE_JPEG_DEC_ERROR_COEFFICIENT_MEMORY;
+    JpegDecImageInfo localInfo{};
+    if (!fillImageInfo(*header, downScale, &localInfo)) return SCE_JPEG_DEC_ERROR_COEFFICIENT_MEMORY;
+    if (!GuestCopyOut_nid_no_patch(imageInfo, &localInfo, sizeof(localInfo))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int32_t APS5_VABI sceJpegDecQueryMemorySize(const JpegDecCreateParam* param) {
-    const std::int32_t result = validateCreateParam(param);
+    JpegDecCreateParam localParam{};
+    const std::int32_t result = validateCreateParam(param, &localParam);
     if (result != 0) return result;
-    return static_cast<std::int32_t>(workMemorySize(*param));
+    return static_cast<std::int32_t>(workMemorySize(localParam));
 }
 
 int32_t APS5_VABI sceJpegDecDecodeWithInputControl(void* handle, const JpegDecInputControlParam* param, JpegDecImageInfo* imageInfo) {
     const Context* context = toContext(handle);
     if (!context) return SCE_JPEG_DEC_ERROR_INVALID_HANDLE;
-    if (!param || !param->input) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
-    const std::uint16_t operation = param->operation & ~std::uint16_t{1};
-    if ((operation != OPERATION_PARSE && operation != OPERATION_DECODE) || param->reserved != 0) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
-    return operation == OPERATION_PARSE ? parseStream(context, param, imageInfo) : decodeStream(context, param);
+    if (!param) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    JpegDecInputControlParam localParam{};
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    if (!localParam.input) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
+    const std::uint16_t operation = localParam.operation & ~std::uint16_t{1};
+    if ((operation != OPERATION_PARSE && operation != OPERATION_DECODE) || localParam.reserved != 0) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
+    return operation == OPERATION_PARSE ? parseStream(context, &localParam, imageInfo) : decodeStream(context, &localParam);
 }
 
 }
