@@ -665,6 +665,14 @@ std::uint64_t HeapStagesTaken() {
     return heapStages().load();
 }
 
+std::uint64_t HeapRingHitsVerified() {
+    return verifyCounts().ring.load();
+}
+
+std::uint64_t HeapRingHitsDiffering() {
+    return verifyCounts().ringDiffer.load();
+}
+
 std::shared_ptr<const ShaderRecompiler::RecompileResult> PatchedHeapResult(const ShaderRecompiler::RecompileResult& shared,
                                                                            const ShaderRecompiler::HeapStageWords& words) {
     auto result = std::make_shared<ShaderRecompiler::RecompileResult>(shared);

@@ -13,7 +13,9 @@
 #include "spirv-tools/libspirv.hpp"
 #endif
 
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <sstream>
@@ -52,21 +54,87 @@ bool g_waveLdsMemoryBarriers = false;
 bool g_deviceScopeLdsMemoryBarriers = false;
 bool g_ldsLockFences = false;
 bool g_gpuHeap = false;
+bool g_noGpuHeap = false;
+bool g_hasHeapDataUniformDwords = false;
+std::uint32_t g_heapDataUniformDwords = 0;
+
+constexpr std::uint32_t DefaultHeapDataUniformDwords = 16384u;
+
+struct HeapProfileSelection {
+    const char* source;
+    bool heap;
+};
+
+HeapProfileSelection SelectHeapProfile(ShaderRecompiler::SpirvTarget& target) {
+    HeapProfileSelection selection{"captured", target.gpuResolvedImages || target.descriptorMemory};
+    if (g_noGpuHeap) {
+        target.gpuResolvedImages = false;
+        target.descriptorMemory = false;
+        target.heapDataUniformDwords = 0u;
+        selection = {"override", false};
+    }
+    if (g_gpuHeap) {
+        target.gpuResolvedImages = true;
+        target.descriptorMemory = true;
+        if (!g_hasHeapDataUniformDwords) target.heapDataUniformDwords = DefaultHeapDataUniformDwords;
+        selection = {"override", true};
+    }
+    if (g_hasHeapDataUniformDwords) {
+        target.heapDataUniformDwords = g_heapDataUniformDwords;
+        selection.source = "override";
+    }
+    return selection;
+}
 bool g_code = false;
+
+bool ParseHeapDataUniformDwords(int index, int argc, char** argv, std::uint32_t& result) {
+    char* end = nullptr;
+    const auto value = index + 1 < argc ? std::strtoull(argv[index + 1], &end, 10) : 0ull;
+    if (index + 1 >= argc || end == argv[index + 1] || *end != '\0' || value > UINT32_MAX) return false;
+    result = static_cast<std::uint32_t>(value);
+    return true;
+}
+
+bool HeapFlagsConflict(int argc, char** argv) {
+    bool gpuHeap = false;
+    bool noGpuHeap = false;
+    std::uint32_t dwords = 0;
+    for (int i = 1; i < argc; ++i) {
+        const std::string argument = argv[i];
+        if (argument == "--gpu-heap") gpuHeap = true;
+        else if (argument == "--no-gpu-heap") noGpuHeap = true;
+        else if (argument == "--heap-data-uniform-dwords") ParseHeapDataUniformDwords(i, argc, argv, dwords);
+    }
+    if (gpuHeap && noGpuHeap) {
+        std::fprintf(stderr, "--gpu-heap and --no-gpu-heap conflict\n");
+        return true;
+    }
+    if (noGpuHeap && dwords != 0u) {
+        std::fprintf(stderr, "--no-gpu-heap conflicts with --heap-data-uniform-dwords %u: the limit needs a heap profile\n", dwords);
+        return true;
+    }
+    return false;
+}
 
 bool Replay(const char* path) {
     auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(path));
-    if (g_maintenance8) request.request.target.nonConstantImageOffsets = true;
-    if (g_robust2) request.request.target.robustBufferAccess2 = true;
-    if (g_waveLdsMemoryBarriers) request.request.target.waveLdsMemoryBarriers = true;
-    if (g_deviceScopeLdsMemoryBarriers) request.request.target.deviceScopeLdsMemoryBarriers = true;
-    if (g_ldsLockFences) request.request.target.ldsLockFences = true;
-    if (g_gpuHeap) {
-        request.request.target.gpuResolvedImages = true;
-        request.request.target.descriptorMemory = true;
-        request.request.target.heapDataUniformDwords = 16384u;
-    }
+    std::string forced;
+    const auto force = [&](bool enabled, bool& field, const char* name) {
+        if (!enabled) return;
+        if (!forced.empty()) forced += ", ";
+        forced += field ? std::string(name) + " (already captured)" : name;
+        field = true;
+    };
+    auto& target = request.request.target;
+    force(g_maintenance8, target.nonConstantImageOffsets, "maintenance8");
+    force(g_robust2, target.robustBufferAccess2, "robust2");
+    force(g_waveLdsMemoryBarriers, target.waveLdsMemoryBarriers, "wave-lds-memory-barriers");
+    force(g_deviceScopeLdsMemoryBarriers, target.deviceScopeLdsMemoryBarriers, "device-scope-lds-memory-barriers");
+    force(g_ldsLockFences, target.ldsLockFences, "lds-lock-fences");
+    const auto heapProfile = SelectHeapProfile(request.request.target);
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
+    std::printf("  heap profile (%s): %s, gpuResolvedImages %d, descriptorMemory %d, data uniform dwords %u\n", heapProfile.source, heapProfile.heap ? "heap" : "no heap", request.request.target.gpuResolvedImages, request.request.target.descriptorMemory, request.request.target.heapDataUniformDwords);
+    if (!forced.empty()) std::printf("  target flags forced on: %s\n", forced.c_str());
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
         std::printf("  compute: threads %ux%ux%u, lds %u dwords, group ids %d%d%d, tg size %d, thread id components %u\n", compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], compute.ldsSizeDwords, compute.groupIdEnable[0], compute.groupIdEnable[1], compute.groupIdEnable[2], compute.tgSizeEnable, compute.threadIdComponentCount);
@@ -195,9 +263,10 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--gpu-heap] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--gpu-heap] [--no-gpu-heap] [--heap-data-uniform-dwords N] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n  a request replays with the heap profile it was captured with; --gpu-heap forces the heap profile (gpuResolvedImages, descriptorMemory, and 16384 data uniform dwords unless --heap-data-uniform-dwords is given, replacing a captured limit), --no-gpu-heap forces it off, --heap-data-uniform-dwords N forces the limit (0 selects ring-address reads); --gpu-heap with --no-gpu-heap, and --no-gpu-heap with a nonzero limit, exit 2\n  --maintenance8, --robust2, --wave-lds-memory-barriers, --device-scope-lds-memory-barriers and --lds-lock-fences force their target flag on over the captured value and are listed on a 'target flags forced on' line\n");
         return 2;
     }
+    if (HeapFlagsConflict(argc, argv)) return 2;
     int failures = 0;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--gcn") {
@@ -222,6 +291,19 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--gpu-heap") {
             g_gpuHeap = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--no-gpu-heap") {
+            g_noGpuHeap = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--heap-data-uniform-dwords") {
+            if (!ParseHeapDataUniformDwords(i, argc, argv, g_heapDataUniformDwords)) {
+                std::fprintf(stderr, "--heap-data-uniform-dwords needs an unsigned 32-bit number\n");
+                return 2;
+            }
+            g_hasHeapDataUniformDwords = true;
+            ++i;
             continue;
         }
         if (std::string(argv[i]) == "--robust2") {
