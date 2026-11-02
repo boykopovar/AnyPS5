@@ -19,6 +19,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -255,10 +256,28 @@ private:
         return true;
     }
 
-    std::uint32_t InternSource(const DescriptorSource& descriptor) {
+    std::uint32_t InternSource(DescriptorSource descriptor) {
+        if (!m_readOrigins.empty()) {
+            std::vector<const IrValue*> pending(descriptor.dwords.begin(), descriptor.dwords.begin() + descriptor.dwordCount);
+            std::unordered_set<const IrValue*> visited;
+            const auto& order = m_program.BlockOrder();
+            while (!pending.empty()) {
+                const IrValue* value = pending.back()->Resolve();
+                pending.pop_back();
+                if (!visited.insert(value).second) continue;
+                if (const auto origin = m_readOrigins.find(value); origin != m_readOrigins.end()) {
+                    const auto block = std::ranges::find(order, origin->second);
+                    if (block == order.end()) fail("copied descriptor read has no resource control-flow block");
+                    descriptor.requiredBlocks.push_back(static_cast<std::uint32_t>(block - order.begin()));
+                }
+                for (const IrValue* argument : value->Arguments()) pending.push_back(argument);
+            }
+            std::ranges::sort(descriptor.requiredBlocks);
+            descriptor.requiredBlocks.erase(std::unique(descriptor.requiredBlocks.begin(), descriptor.requiredBlocks.end()), descriptor.requiredBlocks.end());
+        }
         for (std::uint32_t candidate = 0; candidate < m_sources.size(); candidate++) {
             const auto& current = m_sources[candidate];
-            if (current.dwordCount != descriptor.dwordCount || current.tableColumn != descriptor.tableColumn) {
+            if (current.dwordCount != descriptor.dwordCount || current.tableColumn != descriptor.tableColumn || current.requiredBlocks != descriptor.requiredBlocks) {
                 continue;
             }
             bool same = true;
@@ -299,6 +318,7 @@ private:
         const auto& order = m_program.BlockOrder();
         const auto& info = m_program.Metadata().blockInfo;
         if (order.empty() || order.size() != info.size()) {
+            if (std::ranges::any_of(m_sources, [](const DescriptorSource& source) { return !source.requiredBlocks.empty(); })) fail("copied descriptor reads require resource control flow");
             return;
         }
         std::unordered_map<const IrBlock*, std::uint32_t> indexOf;
@@ -360,7 +380,7 @@ private:
                 reachedFlat[slot] = 1u;
             }
         }
-        bool guarded = false;
+        bool guarded = std::ranges::any_of(m_sources, [](const DescriptorSource& source) { return !source.requiredBlocks.empty(); });
         for (const auto& block : controlFlow) {
             for (const auto source : block.sources) {
                 guarded = guarded || reached[source] == 0u;
@@ -1133,18 +1153,75 @@ private:
     }
 
     IrValue* EmitCopy(const IrValue& original, std::span<IrValue* const> arguments, IrValue& position) {
+        if (Detail::IsRawRead(m_program.Resources(), original)) {
+            auto flags = original.Flags<MemoryFlags>();
+            auto memory = m_program.Resources().memoryInfo[flags.index];
+            memory.planningOnly = true;
+            flags.index = static_cast<std::uint32_t>(m_program.Resources().memoryInfo.size());
+            m_program.Resources().memoryInfo.push_back(memory);
+            std::uint64_t rawFlags = 0;
+            std::memcpy(&rawFlags, &flags, sizeof(flags));
+            IrValue* copy = EmitBefore(position, original.Opcode(), original.Type(), arguments, rawFlags);
+            const auto origin = m_readOrigins.find(&original);
+            m_readOrigins.emplace(copy, origin != m_readOrigins.end() ? origin->second : original.Parent());
+            return copy;
+        }
         return EmitBefore(position, original.Opcode(), original.Type(), arguments, original.Flags<std::uint64_t>());
     }
 
-    IrValue* Rematerialize(IrValue* value, IrValue& position, bool emit, std::uint32_t depth) {
+    bool Dominates(const IrBlock* definition, const IrBlock* use) const {
+        const auto& order = m_program.BlockOrder();
+        if (definition == nullptr || use == nullptr || order.empty() ||
+            std::ranges::find(order, definition) == order.end() || std::ranges::find(order, use) == order.end()) return false;
+        if (definition == use) return true;
+        std::vector<const IrBlock*> pending{order.front()};
+        std::unordered_set<const IrBlock*> visited;
+        while (!pending.empty()) {
+            const IrBlock* block = pending.back();
+            pending.pop_back();
+            if (!visited.insert(block).second || block == definition) continue;
+            if (block == use) return false;
+            for (const IrBlock* successor : block->Successors()) pending.push_back(successor);
+        }
+        return true;
+    }
+
+    bool AvailableBefore(const IrValue& definition, const IrValue& position) const {
+        if (definition.Parent() == nullptr || position.Parent() == nullptr || &definition == &position) return false;
+        if (definition.Parent() != position.Parent()) return Dominates(definition.Parent(), position.Parent());
+        for (const IrValue* instruction : definition.Parent()->Instructions()) {
+            if (instruction == &definition) return true;
+            if (instruction == &position) return false;
+        }
+        return false;
+    }
+
+    bool RegisterOnlyOffset(IrValue* value, std::uint32_t depth) const {
+        value = value->Resolve();
+        if (value->HasImmediate()) return true;
+        if (value->IsPhi()) {
+            IrValue* invariant = ResolveInvariantPhi(m_program.Resources(), value);
+            return invariant != nullptr && !invariant->IsPhi() && RegisterOnlyOffset(invariant, depth);
+        }
+        if (value->Opcode() == IrOpcode::GetUserData) return value->ArgumentCount() == 1u;
+        if (depth == 0u || !Detail::IsRuntimeUniformOp(value->Opcode())) return false;
+        for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
+            if (!RegisterOnlyOffset(value->Argument(index), depth - 1u)) return false;
+        }
+        return true;
+    }
+
+    IrValue* Rematerialize(IrValue* value, IrValue& position, bool emit, std::uint32_t depth, bool pointerOperand = false) {
         value = value->Resolve();
         if (value->HasImmediate()) {
             return value;
         }
         if (value->IsPhi()) {
             IrValue* invariant = ResolveInvariantPhi(m_program.Resources(), value);
-            return invariant == nullptr || invariant->IsPhi() ? nullptr : Rematerialize(invariant, position, emit, depth);
+            if (invariant == nullptr) return pointerOperand && AvailableBefore(*value, position) ? value : nullptr;
+            return invariant->IsPhi() ? nullptr : Rematerialize(invariant, position, emit, depth, pointerOperand);
         }
+        if (pointerOperand && Detail::IsRawRead(m_program.Resources(), *value) && AvailableBefore(*value, position)) return value;
         if (depth == 0u) {
             return nullptr;
         }
@@ -1152,12 +1229,16 @@ private:
         const bool register_ = op == IrOpcode::GetUserData;
         const bool argumentless = (op == IrOpcode::GetShaderBase || op == IrOpcode::GetSrtResource) && value->ArgumentCount() == 0u;
         const bool srtRead = op == IrOpcode::ReadConst && value->ArgumentCount() == 2u && value->Argument(0)->Resolve()->Opcode() == IrOpcode::GetSrtResource && value->Argument(1)->Resolve()->HasImmediate();
-        if (!register_ && !argumentless && !srtRead && !Detail::IsRuntimeUniformOp(op)) {
+        std::uint32_t memoryIndex = 0u;
+        const bool rawRead = op == IrOpcode::LoadAddressU32 && ScalarAddressMemory(*value, memoryIndex) != nullptr &&
+            RegisterOnlyOffset(value->Argument(1), phiSearchDepth);
+        const bool sourceHandle = op == IrOpcode::GetAddressResource && value->ArgumentCount() == 2u;
+        if (!register_ && !argumentless && !srtRead && !rawRead && !sourceHandle && !Detail::IsRuntimeUniformOp(op)) {
             return nullptr;
         }
         std::vector<IrValue*> arguments;
         for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
-            IrValue* argument = register_ ? value->Argument(index) : Rematerialize(value->Argument(index), position, emit, depth - 1u);
+            IrValue* argument = register_ ? value->Argument(index) : Rematerialize(value->Argument(index), position, emit, depth - 1u, pointerOperand || (rawRead && index == 0u));
             if (argument == nullptr) {
                 return nullptr;
             }
@@ -2420,6 +2501,7 @@ private:
     ShaderInfo m_info;
     IrBuilder m_builder;
     std::vector<DescriptorSource> m_sources;
+    std::unordered_map<const IrValue*, const IrBlock*> m_readOrigins;
     std::vector<std::vector<std::uint32_t>> m_blockSources;
     std::vector<std::vector<std::uint32_t>> m_blockImages;
     std::uint32_t m_currentBlock = std::numeric_limits<std::uint32_t>::max();
