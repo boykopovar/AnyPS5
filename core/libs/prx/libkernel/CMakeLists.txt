@@ -2067,6 +2067,10 @@ if(BUILD_TESTING)
         add_test(NAME guest_flexible_memory_${flexibleMemoryName}_from_flexible COMMAND guest_flexible_memory_budget_tests ${flexibleMemoryName}
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_flexible_memory_${flexibleMemoryName})
         set_tests_properties(guest_flexible_memory_${flexibleMemoryName}_from_flexible PROPERTIES ENVIRONMENT "APS5_DIRECT_MEMORY_FROM_FLEXIBLE=1")
+        if(WIN32)
+            set_tests_properties(guest_flexible_memory_${flexibleMemoryName}_from_flexible PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
     endforeach()
     add_test_executable(guest_system_flexible_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemFlexibleMemory.cpp)
     target_include_directories(guest_system_flexible_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
