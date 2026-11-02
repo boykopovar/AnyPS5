@@ -230,7 +230,7 @@ std::uint32_t directWordIndex(SpirvEmitterState& state, const MemoryResourceAcce
     return EmitAddU32(state, relative, base);
 }
 
-std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t bits, std::uint32_t enable = 0u) {
+std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t bits, std::uint32_t enable = 0u, std::uint32_t boundedEnable = 0u) {
     if (context.Memory(instruction).gpuDescriptor) return EmitBdaRead(context, instruction, address, bits);
     auto& state = context.state;
     const auto access = directAccess(context, instruction, false, !context.Memory(instruction).coherent);
@@ -240,6 +240,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, TypeU32(state), unaligned, next, index);
     const bool exact = state.exactRobustLoads && LoadsSelectable(state, access);
+    if (!exact && boundedEnable != 0u) enable = boundedEnable;
     const auto bounds = exact ? 0u : EmitMemoryElementInBounds(state, access, last);
     const auto inBounds = exact ? 0u : (enable != 0u ? both(state, enable, bounds) : bounds);
     const auto load = [&](std::uint32_t word) {
@@ -1017,7 +1018,13 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     const auto byte = EmitAndConstant(state, address, ~3u);
     const auto offset = Unary(state, spv::OpUConvert, u64, byte);
     const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
-    if (!context.Memory(instruction).gpuDescriptor) return readBuffer(context, instruction, byte, 32u, inBounds);
+    if (!context.Memory(instruction).gpuDescriptor) {
+        const auto first = PipelineSpecialization::BufferBase + context.Memory(instruction).resource * PipelineSpecialization::BufferWords;
+        const auto misalignment = state.module.SpecializationConstant(TypeU32(state), first + 3u, 0u);
+        const auto tail = state.module.SpecializationConstant(TypeU32(state), first + 2u, 0u);
+        const auto whole = both(state, equal(state, misalignment, ConstantU32(state, 0u)), equal(state, tail, ConstantU32(state, 0u)));
+        return readBuffer(context, instruction, byte, 32u, inBounds, Select(state, TypeBool(state), whole, noCarry, inBounds));
+    }
     return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
 }
 
