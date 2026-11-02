@@ -277,6 +277,7 @@ function(add_shader_recompiler target runtimeTarget)
             ReadWholeFile
             Recompile
             RecompileCacheKey::ContextHash
+            RecompileCacheKey::SealFeatureDigest
             RecompileResult
             PrepareShader
             GetPreparedCode
