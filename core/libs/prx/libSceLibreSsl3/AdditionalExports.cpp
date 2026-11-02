@@ -422,10 +422,6 @@ int APS5_VABI X509_new_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI RSA_get0_factors_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_get0_verified_chain_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -532,10 +528,6 @@ int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix() {
 }
 
 int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI RSA_get0_crt_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
