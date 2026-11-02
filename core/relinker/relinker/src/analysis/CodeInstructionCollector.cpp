@@ -3,6 +3,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/parsing/RelrRelocations.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
@@ -353,6 +354,13 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             }
         }
     };
+    std::vector<Domain::DynamicTag> relrTags;
+    for (const auto tag : {35, 36, 37})
+        if (tags.contains(tag)) relrTags.push_back({tag, tags.at(tag)});
+    for (const auto& [slot, target] : ReadRelrRelocations(bytes, headers, relrTags)) {
+        pointers.Values.emplace(slot, target);
+        addPointerRoot(target);
+    }
     readRelocations(relaOffset, relaSize, false);
     readRelocations(pltOffset, pltSize, true);
     for (const auto& [addressTag, sizeTag] : {std::pair{25u, 27u}, std::pair{26u, 28u}, std::pair{32u, 33u}}) {
