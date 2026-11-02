@@ -93,7 +93,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     for (const auto unsupported : {15u, 16u, 17u, 18u, 19u, 22u}) {
         if (tags.contains(unsupported)) fail("Unsupported dynamic tag " + std::to_string(unsupported));
     }
-    if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull)) != 0) fail("Unsupported guest dynamic flags");
+    if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull | 16ull)) != 0) fail("Unsupported guest dynamic flags");
     image.Symbolic = tags.contains(30) && (tags.at(30) & 2ull) != 0;
     const auto mapped = [&](std::uint64_t address, std::uint64_t size, std::uint32_t flags) {
         for (const auto& header : image.Headers) {
