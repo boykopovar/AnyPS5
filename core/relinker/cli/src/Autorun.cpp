@@ -5,10 +5,14 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <cstdlib>
 #include <cerrno>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
@@ -68,8 +72,11 @@ int Autorun(const std::string& absPath, bool toWindows) {
     std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << exitCode << '\n';
 #endif
 
-    std::cout << "\nPress Enter to exit...\n";
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    const char* noPause = std::getenv("ANYPS5_AUTORUN_NO_PAUSE");
+    if (!noPause || std::string_view(noPause) != "1") {
+        std::cout << "\nPress Enter to exit...\n";
+        std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
+    }
 
     return exitCode;
 }

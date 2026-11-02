@@ -100,9 +100,9 @@ const char* PlainWhat(const ExceptionObject* object) {
     if (std::strcmp(name, "St9exception") == 0) return "std::exception";
     if (std::strcmp(name, "St8bad_cast") == 0) return "std::bad_cast";
     if (std::strcmp(name, "St10bad_typeid") == 0) return "std::bad_typeid";
-    if (std::strcmp(name, "St9bad_alloc") == 0) return "std::bad_alloc";
-    if (std::strcmp(name, "St20bad_array_new_length") == 0) return "std::bad_array_new_length";
-    if (std::strcmp(name, "St17bad_function_call") == 0) return "std::bad_function_call";
+    if (std::strcmp(name, "St9bad_alloc") == 0) return "bad allocation";
+    if (std::strcmp(name, "St20bad_array_new_length") == 0) return "bad allocation";
+    if (std::strcmp(name, "St17bad_function_call") == 0) return "bad function call";
     if (std::strcmp(name, "St12bad_weak_ptr") == 0) return "bad_weak_ptr";
     if (std::strcmp(name, "St18bad_variant_access") == 0) return "bad_variant_access";
     if (std::strcmp(name, "St19bad_optional_access") == 0) return "bad_optional_access";
@@ -551,6 +551,7 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
 [[noreturn]] void APS5_VABI __cxa_bad_cast_nid_postfix() { LibcException::ThrowPlain(_ZTVSt8bad_cast_nid_postfix); }
 [[noreturn]] void APS5_VABI __cxa_bad_typeid_nid_postfix() { LibcException::ThrowPlain(_ZTVSt10bad_typeid_nid_postfix); }
 [[noreturn]] void APS5_VABI __cxa_throw_bad_array_new_length_nid_postfix() { LibcException::ThrowPlain(_ZTVSt20bad_array_new_length_nid_postfix); }
+[[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(const LibcException::ExceptionObject*) { LibcException::ThrowPlain(_ZTVSt20bad_array_new_length_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt9bad_alloc_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt12out_of_range_nid_postfix, message); }
 [[noreturn]] void APS5_VABI _ZSt14_Xlength_errorPKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt12length_error_nid_postfix, message); }

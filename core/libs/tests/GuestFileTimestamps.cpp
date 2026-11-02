@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -132,6 +133,16 @@ int main() {
     CheckTimes(path, fd, first);
     const KernelTimeval second[2]{{1000000002, 1}, {1000000003, 999999}};
     Require(futimes_nid_postfix(fd, second) == 0, "futimes on read-only descriptor");
+    CheckTimes(path, fd, second);
+    const auto* unmapped = reinterpret_cast<const KernelTimeval*>(std::uintptr_t{0x10});
+    for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {
+        *__error_nid_postfix() = 0;
+        Require(update(path.c_str(), unmapped) == -1 && *__error_nid_postfix() == 14, "unreadable times fault in utimes and lutimes");
+    }
+    *__error_nid_postfix() = 0;
+    Require(futimes_nid_postfix(fd, unmapped) == -1 && *__error_nid_postfix() == 14, "unreadable times fault in futimes");
+    Require(sceKernelUtimes_nid_postfix(path.c_str(), unmapped) == static_cast<int>(0x8002000eu), "unreadable times fault in sceKernelUtimes");
+    Require(sceKernelFutimes(fd, unmapped) == static_cast<int>(0x8002000eu), "unreadable times fault in sceKernelFutimes");
     CheckTimes(path, fd, second);
     Require(sceKernelUtimes_nid_postfix(path.c_str(), first) == 0, "sceKernelUtimes fractional timestamp");
     CheckTimes(path, fd, first);
