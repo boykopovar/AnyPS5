@@ -165,6 +165,9 @@ struct DeviceImageUse {
 
     bool operator==(const DeviceImageUse& other) const = default;
 };
+inline bool MirrorsIfUnnormalized(const SamplerResource& sampler) {
+    return sampler.table == NoTable && !sampler.depthCompare && sampler.uses != 0u && ((sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u || SamplesBaseLevelIfUnnormalized(sampler));
+}
 
 struct SampledResourcePair {
     std::uint32_t image = 0;
