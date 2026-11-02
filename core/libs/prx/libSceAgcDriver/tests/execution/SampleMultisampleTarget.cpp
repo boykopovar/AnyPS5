@@ -1397,7 +1397,10 @@ int main(int argc, char** argv) {
             recipeReused = true;
             CheckBufferRefused([&] {
                 AgcDriver::VulkanDevice::IndirectOutcome outcome{};
-                device->DispatchRecipe(warm, 1, 1, 1, 0, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome);
+                if (device->DispatchRecipe(warm, 1, 1, 1, 0, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome) == AgcDriver::RecipeOutcome::Rebuild) {
+                    std::puts("native buffer recipe requested rebuild; checking the ordinary dispatch refusal");
+                    device->Dispatch(warm, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()));
+                }
                 device->WaitIdle();
             }, "recipe dispatch", missing);
         }
