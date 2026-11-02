@@ -342,6 +342,25 @@ void TestFloatErrors() {
     *__error_nid_postfix() = 0;
     const double largeDown = _Stodx_nid_postfix("0x1p1023", &end, -400, &error);
     Require(std::isfinite(largeDown) && largeDown > 0 && error == 0 && *__error_nid_postfix() == 0, "_Stodx hexadecimal large value scaled down stays finite");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stodx_nid_postfix("-0x1p0", &end, 1, &error) == -10.0 && error == 0 && *__error_nid_postfix() == 0, "_Stodx scaled negative hex preserves sign");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stofx_nid_postfix("-0x1p0", &end, 1, &error) == -10.0f && error == 0 && *__error_nid_postfix() == 0, "_Stofx scaled negative hex preserves sign");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stodx_nid_postfix("0x0.3p0", &end, 1, &error) == 1.875 && error == 0 && *__error_nid_postfix() == 0, "_Stodx fractional hex mantissa with positive scale");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stofx_nid_postfix("0x0.3p0", &end, 1, &error) == 1.875f && error == 0 && *__error_nid_postfix() == 0, "_Stofx fractional hex mantissa with positive scale");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    Require(_Stodx_nid_postfix("-0x0.3p0", &end, 1, &error) == -1.875 && error == 0 && *__error_nid_postfix() == 0, "_Stodx negative fractional hex mantissa with positive scale");
+    error = 99;
+    *__error_nid_postfix() = 0;
+    const double negSubnormal = _Stodx_nid_postfix("-0x1p-1075", &end, 1, &error);
+    Require(negSubnormal < 0 && negSubnormal > -1e-308 && error == 0 && *__error_nid_postfix() == 0, "_Stodx negative subnormal rescue preserves sign");
 }
 
 void TestScaledNan() {
