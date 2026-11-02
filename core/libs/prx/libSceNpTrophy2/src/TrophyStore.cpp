@@ -243,6 +243,10 @@ bool RecordUnlock(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t 
 }
 
 extern "C" bool NpTrophy2RecordUnlock_nid_no_patch(std::int32_t userId, std::uint32_t serviceLabel, std::int32_t trophyId) {
+    if (trophyId < 0) {
+        std::fprintf(stderr, "[trophy] ignored the unlock of trophy %d for user %d: trophy ids are not negative\n", trophyId, userId);
+        return false;
+    }
     if (const auto* package = NpTrophy2::Package(serviceLabel)) {
         if (const auto refusal = NpTrophy2::PostedUnlockRefusal(*package, trophyId)) {
             std::fprintf(stderr, "[trophy] ignored the posted unlock of trophy %d for user %d: %s\n", trophyId, userId, refusal->c_str());
