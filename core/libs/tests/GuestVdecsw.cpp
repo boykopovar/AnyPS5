@@ -326,6 +326,15 @@ void testRejectedUnitDoesNotBlockQueue() {
     check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == units[0].data(), "a valid unit after a rejected one was not decoded");
 }
 
+void testOversizedUnitIsRejectedBeforeCopy() {
+    Session session;
+    const std::array<std::uint8_t, 4> small{0x00, 0x00, 0x00, 0x01};
+    const SceVideodec2::InputData oversized{sizeof(SceVideodec2::InputData), small.data(), std::uint64_t{std::numeric_limits<int>::max()} + 1, 1, 0, 0};
+    check(throws([&] { sceVdecswSetDecodeInput(session.decoder, &oversized); }), "an access unit larger than int was accepted");
+    InputResult result{sizeof(InputResult)};
+    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "an oversized access unit was queued");
+}
+
 void testSyncWrappers() {
     Session session;
     InputResult idle{sizeof(InputResult)};
@@ -544,6 +553,7 @@ int main() {
         testHevcMain10();
         testWithoutOutput();
         testRejectedUnitDoesNotBlockQueue();
+        testOversizedUnitIsRejectedBeforeCopy();
         testSyncWrappers();
         testVp9PictureInfo();
         testVp9PictureInfoOfAvcPicture();
