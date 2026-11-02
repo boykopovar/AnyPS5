@@ -1,0 +1,47 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI _ZN15AbstractStorage13YoutubeFolder6RemoveEb();
+int APS5_VABI _ZN15AbstractStorage13YoutubeFolderD0Ev();
+int APS5_VABI _ZN15AbstractStorage13YoutubeFolderD1Ev();
+int APS5_VABI _ZN15AbstractStorage13YoutubeFolderD2Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent11SetMetadataEPN23sceMetadataReaderWriter8MetadataE();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent13ParseMetadataEPN23sceMetadataReaderWriter8MetadataES3_();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent4OpenEit();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent4ReadEPvlPl();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent5CloseEv();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent5FlushEv();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent5WriteEPKvlPl();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent6RemoveEv();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent8SeekByteEliPl();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContent8SeekTimeElPl();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContentD0Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContentD1Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeContentD2Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeService13SearchStorageEv();
+int APS5_VABI _ZN15AbstractStorage14YoutubeService4StopEv();
+int APS5_VABI _ZN15AbstractStorage14YoutubeService5StartEv();
+int APS5_VABI _ZN15AbstractStorage14YoutubeServiceC1Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeServiceC2Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeServiceD0Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeServiceD1Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeServiceD2Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeStorage14GetStorageSizeEPlS1_S1_();
+int APS5_VABI _ZN15AbstractStorage14YoutubeStorageD0Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeStorageD1Ev();
+int APS5_VABI _ZN15AbstractStorage14YoutubeStorageD2Ev();
+int APS5_VABI _ZNK15AbstractStorage13YoutubeFolder10GetServiceEv();
+int APS5_VABI _ZNK15AbstractStorage13YoutubeFolder13GetCapabilityEv();
+int APS5_VABI _ZNK15AbstractStorage13YoutubeFolder7GetStatEPNS_4StatE();
+int APS5_VABI _ZNK15AbstractStorage14YoutubeContent10GetServiceEv();
+int APS5_VABI _ZNK15AbstractStorage14YoutubeContent13GetCapabilityEv();
+int APS5_VABI _ZNK15AbstractStorage14YoutubeContent7GetStatEPNS_4StatE();
+int APS5_VABI _ZNK15AbstractStorage14YoutubeService14GetServiceTypeEv();
+int APS5_VABI _ZNK15AbstractStorage14YoutubeStorage10GetServiceEv();
+int APS5_VABI _ZNK15AbstractStorage14YoutubeStorage13GetCapabilityEv();
+int APS5_VABI _ZNK15AbstractStorage14YoutubeStorage7GetStatEPNS_4StatE();
+
+}
