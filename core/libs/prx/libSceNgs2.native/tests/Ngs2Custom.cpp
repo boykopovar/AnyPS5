@@ -471,6 +471,9 @@ static void TestCustomFilter() {
     auto past = filter;
     past.header = {sizeof(past), 0, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER | 1};
     Require(sceNgs2VoiceControl(voice, &past.header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+    auto shortFilter = filter;
+    shortFilter.header = {16, 0, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER};
+    Require(sceNgs2VoiceControl(voice, &shortFilter.header) == SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE);
     Patch(voice, master);
     Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
 
