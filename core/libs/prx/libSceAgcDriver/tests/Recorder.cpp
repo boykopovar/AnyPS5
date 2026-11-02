@@ -511,6 +511,8 @@ public:
             enabled.shaderStorageImageWriteWithoutFormat = supported.shaderStorageImageWriteWithoutFormat;
             enabled.shaderStorageImageMultisample = supported.shaderStorageImageMultisample;
             context.storageImageMultisample = supported.shaderStorageImageMultisample == VK_TRUE;
+            enabled.textureCompressionBC = supported.textureCompressionBC;
+            context.textureCompressionBC = supported.textureCompressionBC == VK_TRUE;
             context.singlePassStorage = supported.shaderStorageImageReadWithoutFormat == VK_TRUE && supported.shaderStorageImageWriteWithoutFormat == VK_TRUE;
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
@@ -10777,6 +10779,53 @@ bool snapshotReadIntoStagingTests(const Device& device, Recorder& recorder) {
     ClearCachedTextures(context.device);
     Require(spare(0, 0), "clearing the texture caches left spare snapshot vectors");
     {
+        const auto keyedSurface = [&](std::uint8_t key) -> Surface& {
+            auto& surface = allocate(compareBytes + unit);
+            std::memset(surface.data, 0x10, compareBytes);
+            std::memset(surface.data + compareBytes, key, unit);
+            return surface;
+        };
+        const auto keyedWords = [&](const Surface& surface) {
+            auto words = linearTextureWords(surface.Address(), 256, 256, 56);
+            const auto keys = surface.Address() + compareBytes;
+            words[6] = (1u << 21u) | (static_cast<std::uint32_t>((keys >> 8u) & 0xffu) << 24u);
+            words[7] = static_cast<std::uint32_t>(keys >> 16u);
+            const auto resource = DecodeTextureResource(words);
+            Require(resource.dccAddress == keys && DescribeSurface(resource).guestBytes == compareBytes, "the staging snapshot surface with DCC keys does not name its keys or does not take " + std::to_string(compareBytes) + " bytes");
+            return words;
+        };
+        const auto clearKeys = [&](const std::array<std::uint32_t, 8>& words) { return TextureClearKeys(DecodeTextureResource(words), compareBytes); };
+        const auto clearedOnGpu = [&](const std::array<std::uint32_t, 8>& words, const std::string& what) {
+            const auto before = SampledTexturesCleared();
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            const auto texture = CachedSampledTexture(cacheContext, words);
+            Require(texture != nullptr && !texture->ViewsStorageImage() && SampledTexturesCleared() == before + 1, "the " + what + " 8_8_8_8 surface was not cleared on the GPU");
+            expectRed(program.Red(texture->View(), texture->Layout(), 0.0f), 1.0f, ("the " + what + " surface cleared on the GPU did not sample its 1111 clear").c_str());
+        };
+        auto& kept = keyedSurface(0xff);
+        const auto words = keyedWords(kept);
+        Require(clearKeys(words) == DccKeys::Uncompressed, "the 0xff keys of the 256 KiB staging snapshot surface do not read uncompressed");
+        const auto before = SampledTexturesCleared();
+        static_cast<void>(lookup(words, "uncompressed 256 KiB"));
+        Require(SampledTexturesCleared() == before && spare(0, 0), "the uncompressed 256 KiB surface was cleared on the GPU or parked its snapshot vector, so it kept no vector for a GPU clear to replace");
+        std::memset(kept.data + compareBytes, 0xc0, unit);
+        Require(clearKeys(words) == DccKeys::Clear1111, "the 0xc0 keys of the 256 KiB staging snapshot surface do not read a 1111 clear");
+        clearedOnGpu(words, "fast-cleared 256 KiB");
+        Require(spare(1, compareBytes), "the GPU clear that replaced a kept " + std::to_string(compareBytes) + "-byte snapshot did not park its vector in the spare pool");
+        for (std::uint64_t present = 0; present < SpareSnapshotPresents; ++present) Recorder::CountPresent();
+        const auto fresh = keyedWords(keyedSurface(0xc0));
+        Require(clearKeys(fresh) == DccKeys::Clear1111, "the 0xc0 keys of the new 256 KiB staging snapshot surface do not read a 1111 clear");
+        clearedOnGpu(fresh, "new fast-cleared 256 KiB");
+        Require(spare(1, compareBytes), "the new fast-cleared surface cleared on the GPU took the spare snapshot vector of its size");
+        Recorder::CountPresent();
+        auto& expiry = allocate(unit);
+        std::memset(expiry.data, 0x30, unit);
+        static_cast<void>(lookup(linearTextureWords(expiry.Address(), 128, 128, 56), "64 KiB uncompressed"));
+        Require(spare(0, 0), "the new fast-cleared surface cleared on the GPU took the spare snapshot vector of its size and parked it again, so it outlived " + std::to_string(SpareSnapshotPresents) + " presents without a use");
+        std::cout << "fast-cleared surface cleared on the GPU parks the snapshot vector it replaces and leaves the spare snapshot pool alone: passed\n";
+    }
+    ClearCachedTextures(context.device);
+    {
         auto& surface = allocate(std::size_t{512} * 512 * 4);
         const auto words = linearTextureWords(surface.Address(), 512, 512, 56);
         const auto geometry = DescribeSurface(DecodeTextureResource(words));
@@ -10822,17 +10871,26 @@ bool snapshotReadIntoStagingTests(const Device& device, Recorder& recorder) {
         mark(surface.data + geometry.mips[0].tiledOffset, geometry.mips[0], 0x40);
         dropped("partially committed", threeLevels(surface.Address()), {0x40, 0x00, 0x10});
     }
+    if (!context.textureCompressionBC) {
+        std::cout << "BC compressed textures unavailable: dropped snapshots beside a spare snapshot vector not tested\n";
+        return true;
+    }
     constexpr std::size_t bigBytes = std::size_t{512} * 512 * 4;
+    constexpr std::uint32_t bc5Unorm = 177;
     const auto fastCleared = [&](const std::string& what) {
         auto& keyed = allocate(bigBytes + unit);
         std::memset(keyed.data, 0x10, bigBytes);
         std::memset(keyed.data + bigBytes, 0, unit);
-        auto keyedWords = linearTextureWords(keyed.Address(), 512, 512, 56);
+        auto keyedWords = linearTextureWords(keyed.Address(), 1024, 1024, bc5Unorm);
         const auto keys = keyed.Address() + bigBytes;
         keyedWords[6] = (1u << 21u) | (static_cast<std::uint32_t>((keys >> 8u) & 0xffu) << 24u);
         keyedWords[7] = static_cast<std::uint32_t>(keys >> 16u);
-        Require(DecodeTextureResource(keyedWords).dccAddress == keys, "the " + what + " staging snapshot surface does not name its keys");
+        const auto resource = DecodeTextureResource(keyedWords);
+        Require(resource.dccAddress == keys && DescribeSurface(resource).guestBytes == bigBytes, "the " + what + " staging snapshot surface does not name its keys or is not a BC5 surface of " + std::to_string(bigBytes) + " bytes");
+        Require(TextureClearKeys(resource, bigBytes) == DccKeys::Clear0000, "the zero keys of the " + what + " BC5 surface do not read a 0000 clear");
+        const auto clearedOnGpu = SampledTexturesCleared();
         const auto cleared = lookup(keyedWords, what);
+        Require(SampledTexturesCleared() == clearedOnGpu, "the " + what + " BC5 surface was cleared on the GPU, so it kept no snapshot vector to park");
         Require(spare(1, bigBytes), "the dropped snapshot of the " + what + " surface did not park its vector in the spare pool");
         expectRed(program.Red(cleared->View(), cleared->Layout(), 0.0f), 0.0f, ("the snapshot of the " + what + " surface did not read its clear").c_str());
     };
