@@ -209,6 +209,26 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
         Require(access.descriptorPoolCount() == pools, "a full descriptor pool whose batches completed must be reset and reused, not joined by a new pool");
     }
 
+    {
+        DeviceFunctions table{};
+        table.updateDescriptorSets = context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets");
+        table.allocateDescriptorSets = context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets");
+        table.cmdBindPipeline = context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
+        table.cmdBindDescriptorSets = context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets");
+        table.cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
+        table.cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
+        auto tabled = context;
+        tabled.functions = &table;
+        TextureDetiler cached(tabled);
+        cached.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40, layout, 0);
+        const auto before = DeviceProcLookups();
+        cached.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 20, destination, 40, layout, 0);
+        const auto lookups = DeviceProcLookups() - before;
+        Require(lookups == 0, "a detile dispatch looked up " + std::to_string(lookups) + " Vulkan functions by name while the device's function table holds them");
+        const auto tabledCapture = access.lastDispatch();
+        Require(tabledCapture.groupsX == 3 && tabledCapture.groupsY == 2 && tabledCapture.groupsZ == 1, "a detile dispatch through the device's function table recorded the wrong group counts");
+    }
+
     reject([&] { detiler.Dispatch(VK_NULL_HANDLE, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, 0); }, "active command buffer");
     reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, VK_NULL_HANDLE, 0, destination, 0, layout, 0); }, "source and destination buffers");
     reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, VK_NULL_HANDLE, 0, layout, 0); }, "source and destination buffers");

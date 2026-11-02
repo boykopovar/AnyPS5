@@ -151,6 +151,17 @@ class TraceDigestTests(unittest.TestCase):
                             trace_digest.load_intervals(path)
                     self.assertTrue(str(raised.exception).startswith(f"{path}:3: invalid JSON: "), str(raised.exception))
 
+    def test_cli_reports_a_summary_line_without_the_window_duration(self):
+        summary = self.trace.with_name("aps5-summary.jsonl")
+        record = dict(SUMMARY, window={"spec": "frames 600:3"})
+        summary.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertTrue(result.stderr.startswith("FAIL: the summary line has no 'ms' field"), result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_cli_rejects_invalid_summary_records_without_partial_output(self):
         summary = self.trace.with_name("aps5-summary.jsonl")
         explicit = summary.with_name("explicit-\u03a9.jsonl")
@@ -344,6 +355,14 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(thread["folded_ms_per_frame"], 1.5)
         self.assertEqual(thread["untraced_ms_per_frame"], 0)
 
+    def test_presents_sharing_a_timestamp_keep_their_order_even_without_a_present_number(self):
+        trace = trace_digest.Trace([
+            {"name": "present", "ph": "i", "ts": 100, "pid": 7, "tid": 2, "s": "g", "args": {"present": 1}},
+            {"name": "present", "ph": "i", "ts": 100, "pid": 7, "tid": 2, "s": "g", "args": {}},
+            {"name": "present", "ph": "i", "ts": 50, "pid": 7, "tid": 2, "s": "g", "args": {"present": 3}},
+        ])
+        self.assertEqual(trace.presents, [(50, 3), (100, 1), (100, None)])
+
     def test_trace_accepts_event_array_and_empty_document(self):
         trace_from_array = trace_digest.Trace(EVENTS)
         self.assertEqual(len(trace_from_array.presents), 3)
@@ -467,6 +486,29 @@ class TraceDigestTests(unittest.TestCase):
         self.assertAlmostEqual(largest[("Driver.Packet", "queue worker 0x0")], 16.0)
         self.assertAlmostEqual(largest[("Driver.Present", "presenter")], 16.0)
         self.assertAlmostEqual(largest[("Driver.Present.inflight_wait", "presenter")], 14.5)
+
+    def test_persistent_peaks_merge_a_plateau_into_one_stall(self):
+        peaks = trace_digest.persistent_peaks([10, 10, 40, 41, 40, 10, 30, 10, 10, 25, 10])
+        self.assertEqual(peaks, [(3, 31), (6, 20), (9, 15)])
+
+    def test_persistent_peaks_measure_a_shoulder_against_the_saddle(self):
+        self.assertEqual(trace_digest.persistent_peaks([10, 50, 30, 45, 10]), [(1, 40), (3, 15)])
+
+    def test_persistent_peaks_ignore_flat_and_empty_series(self):
+        self.assertEqual(trace_digest.persistent_peaks([]), [])
+        self.assertEqual(trace_digest.persistent_peaks([5]), [])
+        self.assertEqual(trace_digest.persistent_peaks([5, 5, 5]), [])
+        self.assertEqual(trace_digest.persistent_peaks([1, 2, 3]), [(2, 2)])
+
+    def test_persistent_peaks_of_equal_peaks_are_both_reported(self):
+        self.assertEqual(trace_digest.persistent_peaks([9, 20, 9, 20, 9]), [(1, 11), (3, 11)])
+
+    def test_persistent_spikes_in_digest(self):
+        spikes = self.result()["persistent_spikes"]
+        self.assertEqual([spike["present"] for spike in spikes], [601])
+        self.assertAlmostEqual(spikes[0]["ms"], 20.0)
+        self.assertAlmostEqual(spikes[0]["at_ms"], 10.0)
+        self.assertAlmostEqual(spikes[0]["persistence_ms"], 10.0)
 
     def test_markdown_thread_names_cannot_split_table_cells_or_rows(self):
         name = "worker|<gpu>\nrow & more"
@@ -727,6 +769,7 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(result["slowest_frames"], [])
         self.assertEqual(result["top_slices_ms_per_frame"], [])
         self.assertEqual(result["longest_waits"], [])
+        self.assertEqual(result["persistent_spikes"], [])
 
 
     def test_command_line_markdown_and_json(self):
@@ -734,7 +777,7 @@ class TraceDigestTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(trace_digest.main([str(self.trace), "--stacks", str(self.stacks)]), 0)
         text = output.getvalue()
-        for heading in ("**Slowest frames**", "**Threads**", "**Largest slices**", "**Longest waits**", "**Worker stacks**"):
+        for heading in ("**Slowest frames**", "**Persistent spikes**", "**Threads**", "**Largest slices**", "**Longest waits**", "**Worker stacks**"):
             self.assertIn(heading, text)
         self.assertLess(len(text.encode("utf-8")), 5000)
         output = io.StringIO()
@@ -775,6 +818,19 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual([(entry[3], entry[4]) for entry in trace.slices[1]],
                          [(0, False), (1, True), (0, False)])
 
+    def test_interval_input_rejects_stack_samples(self):
+        path = Path(self.directory.name) / "intervals.jsonl"
+        path.write_text("", encoding="utf-8")
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run(
+                    [sys.executable, trace_digest.__file__, str(path), "--stacks", str(self.stacks), *output],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("--stacks requires an event trace, not interval summaries", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_missing_summary_file_is_an_error(self):
         missing = Path(self.directory.name) / "missing.jsonl"
         error = io.StringIO()
@@ -783,6 +839,21 @@ class TraceDigestTests(unittest.TestCase):
                 trace_digest.main([str(self.trace), "--summary", str(missing)])
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("summary file not found", error.getvalue())
+
+    def test_interval_input_rejects_capture_summary(self):
+        path = Path(self.directory.name) / "intervals.jsonl"
+        path.write_text("", encoding="utf-8")
+        summary = Path(self.directory.name) / "capture.jsonl"
+        summary.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run(
+                    [sys.executable, trace_digest.__file__, str(path), "--summary", str(summary), *output],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("--summary requires an event trace, not interval summaries", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
 
     def test_thread_filter_keeps_frame_bounds_and_capture_summary(self):
         command = [sys.executable, trace_digest.__file__, str(self.trace)]
