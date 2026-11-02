@@ -99,6 +99,7 @@ class FileStream {
     bool guestError = false;
     bool randomDevice = false;
     bool directory = false;
+    std::atomic<int> _orientation{0};
     char16_t lowSurrogate = 0;
     unsigned pushedBack = 0;
 
@@ -129,6 +130,13 @@ public:
         return _handle != nullptr;
     }
 
+    int Orientation(int mode) {
+        if (mode == 0) return _orientation.load(std::memory_order_relaxed);
+        int expected = 0;
+        _orientation.compare_exchange_strong(expected, mode > 0 ? 1 : -1, std::memory_order_relaxed);
+        return _orientation.load(std::memory_order_relaxed);
+    }
+
     bool IsDynamic() const {
         return _dynamic;
     }
@@ -139,6 +147,7 @@ public:
     }
 
     void Detach() {
+        _orientation.store(0, std::memory_order_relaxed);
         _handle = nullptr;
         _guest.flags = 0;
         _guest.descriptor = -1;
@@ -211,6 +220,7 @@ public:
         _guest = {};
         guestError = false;
         randomDevice = false;
+        _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
 #ifdef _WIN32
@@ -422,6 +432,7 @@ public:
         _handle = nullptr;
         _guest.flags = 0;
         _guest.descriptor = -1;
+        _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
         return result;

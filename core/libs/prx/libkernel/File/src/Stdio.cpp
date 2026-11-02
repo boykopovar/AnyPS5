@@ -653,8 +653,6 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
 
 extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     if (!descriptors) return PosixFailure(GUEST_EFAULT);
-    const GuestArena::HostWrite destination(descriptors, 2 * sizeof(int));
-    if (!destination.Open()) return PosixFailure(GUEST_EFAULT);
     int native[2];
 #ifdef _WIN32
     const int result = ::_pipe(native, 65536, _O_BINARY);
@@ -664,7 +662,11 @@ extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     if (result != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     File::RememberPipe(native[0]);
     File::RememberPipe(native[1]);
-    std::memcpy(descriptors, native, sizeof(native));
+    if (!GuestCopyOut_nid_no_patch(descriptors, native, sizeof(native))) {
+        close_nid_postfix(native[0]);
+        close_nid_postfix(native[1]);
+        return PosixFailure(GUEST_EFAULT);
+    }
     return 0;
 }
 
@@ -690,6 +692,8 @@ static std::filesystem::path WithoutTrailingSeparator(const std::filesystem::pat
 static bool HasNonDirectoryPrefix(const std::filesystem::path& native) {
     std::error_code error;
     for (auto prefix = WithoutTrailingSeparator(native).parent_path(); prefix.has_relative_path(); prefix = prefix.parent_path()) {
+        const auto link = LinkPrefixState_nid_no_patch(prefix);
+        if (link != LinkPrefix_nid_no_patch::Resolves) return link == LinkPrefix_nid_no_patch::BlockedByFile;
         const auto status = std::filesystem::status(prefix, error);
         if (std::filesystem::exists(status)) return !std::filesystem::is_directory(status);
     }
