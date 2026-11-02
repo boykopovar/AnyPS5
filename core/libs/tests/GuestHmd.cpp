@@ -42,6 +42,7 @@ void CheckDisconnected() {
     Require(sceHmdInternalGetDeviceStatus(&status) == 0, "status query failed");
     Require(status == Hmd::DeviceStatus::NotDetected, "headset reported connected");
     Require(sceHmdInternalGetDeviceStatus(nullptr) == Hmd::ParameterNull, "null status");
+    Require(sceHmdInternalGetDeviceStatus(reinterpret_cast<Hmd::DeviceStatus*>(static_cast<std::uintptr_t>(0x10))) == Hmd::ParameterNull, "unwritable status");
     Require(sceHmdInternalMmapIsConnect() == 0, "connection reported present");
     Require(!sceHmdInternalIsGameVr2d(), "game reported in VR2D without a headset");
     Require(!sceHmdInternalIsMiniAppVr2d(), "mini app reported in VR2D without a headset");
@@ -205,6 +206,7 @@ int main() {
         expected.userId = -1;
         Require(std::memcmp(&info, &expected, sizeof(info)) == 0, "incorrect absent-device output");
         Require(sceHmdGetDeviceInformation(nullptr) == Hmd::ParameterNull, "null device query");
+        Require(sceHmdGetDeviceInformation(reinterpret_cast<Hmd::DeviceInformation*>(static_cast<std::uintptr_t>(0x10))) == Hmd::ParameterNull, "unwritable device query");
 
         Require(sceHmdOpen(-1, 0, 0, nullptr) == Hmd::ParameterInvalid, "invalid user");
         Require(sceHmdOpen(0xff, 0, 0, nullptr) == Hmd::ParameterInvalid, "system user");
