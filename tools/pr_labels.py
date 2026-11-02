@@ -146,7 +146,10 @@ def main(argv=None):
     which.add_argument("--pr", type=int, help="label one pull request")
     which.add_argument("--all", action="store_true", help="label every open pull request")
     parser.add_argument("--dry-run", action="store_true", help="print the planned changes and write nothing")
+    parser.add_argument("--json", action="store_true", help="emit a dry-run plan as JSON")
     args = parser.parse_args(argv)
+    if args.json and not args.dry_run:
+        parser.error("--json requires --dry-run")
     try:
         repo = repository()
         if args.pr is not None:
@@ -157,19 +160,27 @@ def main(argv=None):
         parser.error((error.stderr or str(error)).strip())
     except (ValueError, RecursionError) as error:
         parser.error(f"cannot read pull requests: {error}")
-    failed = []
+    failed, plans = [], []
     for pr in prs:
         try:
             add, remove, post = process(repo, pr, args.dry_run, comment=args.pr is not None)
         except subprocess.CalledProcessError as error:
             failed.append(pr["number"])
+            plans.append({"number": pr["number"], "error": (error.stderr or str(error)).strip()})
             print(f"cannot label #{pr['number']}: {(error.stderr or '').strip()}", file=sys.stderr)
+            continue
+        plans.append({"number": pr["number"], "add": sorted(add), "remove": sorted(remove),
+                      "comment_marker": MARKER if post else None})
+        if args.json:
             continue
         if add or remove or post:
             plan = [f"+{label}" for label in sorted(add)] + [f"-{label}" for label in sorted(remove)] + (["comment"] if post else [])
             print(f"{'would change' if args.dry_run else 'changed'} #{pr['number']}: {' '.join(plan)}")
             if args.all and not args.dry_run:
                 time.sleep(WRITE_PAUSE)
+    if args.json:
+        print(json.dumps({"repository": repo, "plans": plans, "failed": failed}, sort_keys=True))
+        return int(bool(failed))
     if failed:
         sys.exit(f"{len(failed)} pull requests not labeled: {', '.join(f'#{number}' for number in failed)}")
     return 0
