@@ -146,6 +146,23 @@ struct Run {
 
 }
 
+std::uint64_t ReadAroundRanges(std::uint64_t address, std::span<std::byte> bytes, std::span<const std::pair<std::uint64_t, std::uint64_t>> skipped, GuestRead read) {
+    auto cursor = address;
+    const auto end = address + bytes.size();
+    std::uint64_t zeroed = 0;
+    for (const auto& [begin, size] : skipped) {
+        const auto skip = std::max(begin, cursor);
+        const auto stop = std::min(begin + size, end);
+        if (stop <= skip) continue;
+        read(cursor, bytes.subspan(static_cast<std::size_t>(cursor - address), static_cast<std::size_t>(skip - cursor)));
+        std::memset(bytes.data() + (skip - address), 0, static_cast<std::size_t>(stop - skip));
+        zeroed += stop - skip;
+        cursor = stop;
+    }
+    read(cursor, bytes.subspan(static_cast<std::size_t>(cursor - address)));
+    return zeroed;
+}
+
 bool AllZero(std::span<const std::byte> bytes) {
     constexpr std::size_t Word = sizeof(std::uint64_t);
     std::size_t at = 0;

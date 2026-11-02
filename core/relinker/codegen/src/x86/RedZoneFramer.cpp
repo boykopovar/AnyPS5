@@ -134,7 +134,15 @@ bool vexGeneralUsesRsp(const std::uint8_t* code, const Insn& insn, const std::ui
 MemoryUse memoryUse(const std::uint8_t* code, const Insn& insn) {
     MemoryUse use;
     const auto& info = insn.Info;
-    if (!info.HasModRm || info.ModRmOffset == 0 || info.ModRmOffset >= insn.Length) return use;
+    if (!info.HasModRm) {
+        const auto op = info.Opcode;
+        if ((info.RexPrefix & 1) == 0
+            && ((!info.IsTwoByteOpcode && (op == 0x54 || op == 0x5c || op == 0x94 || op == 0xbc || (op == 0xb4 && info.RexPrefix != 0)))
+                || (info.IsTwoByteOpcode && op == 0xcc)))
+            use.UsesRsp = use.RegisterRsp = true;
+        return use;
+    }
+    if (info.ModRmOffset == 0 || info.ModRmOffset >= insn.Length) return use;
     bool r = false;
     bool x = false;
     bool b = false;

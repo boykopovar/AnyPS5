@@ -67,6 +67,8 @@ void TestDisableState() {
     Require(sceScreenShotIsDisabled(-1, &value) == ErrorArgument && value == 7, "id -1 is rejected");
     Require(sceScreenShotIsDisabled(0, nullptr) == ErrorArgument, "null result is rejected");
     Require(sceScreenShotDisableNotification() == 0 && sceScreenShotEnableNotification() == 0, "notification toggles");
+    Require(sceScreenShotIsDisabled(1, &value) == 0 && value == 0, "positive id 1 is accepted");
+    Require(sceScreenShotIsDisabled(2, &value) == 0 && value == 0, "positive id 2 is accepted");
 }
 
 void TestOverlay(bool large) {

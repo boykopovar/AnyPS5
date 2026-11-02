@@ -68,6 +68,10 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".procpar", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
+    if (!hasProcessParameters) {
+        sections.push_back({".procpar", nextRva, SectionRead | 0x40u, std::vector<std::uint8_t>(8)});
+        nextRva = AlignRva(nextRva + sections.back().Data.size());
+    }
     for (const auto& header : originalHeaders) {
         if (header.Type != 0x6474e550) continue;
         std::vector<std::uint8_t> metadata(4);

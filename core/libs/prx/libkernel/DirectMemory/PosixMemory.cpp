@@ -47,6 +47,7 @@ constexpr int GuestAdviceProtect = 10;
 constexpr int GuestLockCurrent = 0x1;
 constexpr int GuestLockFuture = 0x2;
 constexpr int GuestDefinedProtection = 0x3F7;
+constexpr std::uintptr_t GuestUserAddressStart = PS5_PAGE_SIZE;
 constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
 constexpr int GuestAlignedSuper = 0x1000000;
 constexpr std::size_t SuperpageSize = std::size_t{1} << 21;
@@ -205,10 +206,12 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) && !RegularFile(mappingDescriptor)) return failed(GuestNotSupported);
 #elif defined(_WIN32)
     const int mappingDescriptor = descriptor;
-    if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) {
+    {
         const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(mappingDescriptor);
         if (handle == INVALID_HANDLE_VALUE) return failed(GuestBadDescriptor);
-        if (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK) return failed(GuestNotSupported);
+        if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) &&
+            (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK))
+            return failed(GuestNotSupported);
         const int accessMode = DescriptorAccess(handle, mappingDescriptor);
         if (accessMode < 0) return failed(GuestBadDescriptor);
         if ((protection & 1) != 0 && accessMode == 1) return failed(GuestAccess);
@@ -343,6 +346,15 @@ int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice)
     if (advice < 0 || advice > GuestAdviceCore || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
         SetError(GuestInvalid);
         return -1;
+    }
+    return 0;
+}
+
+int APS5_VABI posix_madvise_nid_postfix(void* address, std::size_t length, int advice) {
+    if (advice == GuestAdviceProtect) return 0;
+    const auto start = reinterpret_cast<std::uintptr_t>(address);
+    if (advice < 0 || advice > GuestAdviceCore || start < GuestUserAddressStart || start > GuestUserAddressEnd || length > GuestUserAddressEnd - start) {
+        return GuestInvalid;
     }
     return 0;
 }

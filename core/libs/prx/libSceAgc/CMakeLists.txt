@@ -60,12 +60,6 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
 target_include_directories(libSceAgc PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libc)
 
-option(APS5_AGC_CREATE_LOG "Logging sceAgcCreateShader Ok status" ON)
-
-target_compile_definitions(libSceAgc PRIVATE
-        APS5_AGC_CREATE_LOG=$<BOOL:${APS5_AGC_CREATE_LOG}>
-)
-
 foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
     string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
 endforeach()
@@ -97,6 +91,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(agc_rewind_patch_tests EXCLUDE_FROM_ALL tests/RewindPatch.cpp)
+target_include_directories(agc_rewind_patch_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_rewind_patch_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_rewind_patch_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_rewind_patch_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_rewind_patch COMMAND agc_rewind_patch_tests)
+    if(WIN32)
+        set_tests_properties(agc_rewind_patch PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(agc_draw_index_multi_instanced_tests EXCLUDE_FROM_ALL tests/DrawIndexMultiInstanced.cpp)
 target_include_directories(agc_draw_index_multi_instanced_tests PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(agc_draw_index_multi_instanced_tests PRIVATE libSceAgc libc)
@@ -106,6 +113,32 @@ if(BUILD_TESTING)
     add_test(NAME agc_draw_index_multi_instanced COMMAND agc_draw_index_multi_instanced_tests)
     if(WIN32)
         set_tests_properties(agc_draw_index_multi_instanced PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_atomic_mem_tests EXCLUDE_FROM_ALL tests/AtomicMem.cpp)
+target_include_directories(agc_atomic_mem_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_atomic_mem_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_atomic_mem_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_atomic_mem_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_atomic_mem COMMAND agc_atomic_mem_tests)
+    if(WIN32)
+        set_tests_properties(agc_atomic_mem PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_copy_data_tests EXCLUDE_FROM_ALL tests/CopyData.cpp)
+target_include_directories(agc_copy_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_copy_data_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_copy_data_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_copy_data_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_copy_data COMMAND agc_copy_data_tests)
+    if(WIN32)
+        set_tests_properties(agc_copy_data PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -421,6 +454,7 @@ add_test_executable(agc_dma_data_tests EXCLUDE_FROM_ALL
         Command/src/Memory.cpp
         Acb/src/Memory.cpp
         DcbFlow/src/Memory.cpp
+        Patch/src/Dma.cpp
 )
 target_include_directories(agc_dma_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(agc_dma_data_tests PRIVATE libSceAgcDriver libc)
@@ -511,6 +545,24 @@ if(BUILD_TESTING)
     set_tests_properties(agc_shader_helpers PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(agc_shader_helpers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_create_shader_tests EXCLUDE_FROM_ALL
+        tests/CreateShader.cpp
+        Shader/src/CreateShader.cpp
+        Shader/src/ShaderUtils.cpp
+)
+target_include_directories(agc_create_shader_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_create_shader_tests PRIVATE libc libSceAgcDriver)
+configure_windows_unwind(agc_create_shader_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_create_shader_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME agc_create_shader COMMAND agc_create_shader_tests)
+    set_tests_properties(agc_create_shader PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_create_shader PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

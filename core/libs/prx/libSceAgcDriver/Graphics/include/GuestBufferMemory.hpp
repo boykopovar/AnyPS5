@@ -183,9 +183,11 @@ struct HostImportsProof {
     VkDevice device = VK_NULL_HANDLE;
     std::uint64_t epoch = 0;
     std::uint64_t refreshedGeneration = 0;
+    std::uint64_t inserted = 0;
 };
 // Whether the table still matches `proof` (one lock); false for an empty or stale proof.
 bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof);
+bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
 
@@ -254,6 +256,7 @@ struct MirrorStats {
     std::uint64_t sweeps = 0;
     std::uint64_t heapChecks = 0;
     std::uint64_t sparseBinds = 0;
+    std::uint64_t evictions = 0;
 };
 MirrorStats MirrorCounters();
 std::uint64_t SnapshotMismatches();
@@ -321,11 +324,16 @@ public:
     void AllowDeviceStaging() { stagingAllowed = true; }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
+    bool HoldsMirror(const std::shared_ptr<ImageMirror>& mirror) const;
+    bool EvictMirror(const std::shared_ptr<ImageMirror>& mirror);
+    bool WasEvicted(std::uint64_t address) const;
+    void RecordEvicted(std::uint64_t address);
     // Records the copy-in of every staged region anew for another use of this upload (a resource
     // cache hit, from ShaderResources::Revalidate, under GuestMemory::GpuMutex, once the imports
     // were confirmed unchanged): the previous use's copy-back left the shadow behind, and the next
     // RecordCopyBacks copies it back again. Nothing to do without staged regions.
     void RecordStagingCopies(Recorder& recorder);
+    bool StagingDecisionsCurrent() const;
     void AddSnapshot(const GuestMemorySnapshot& snapshot);
     // Upload is the two stages below back to back. UploadPrepare needs no device lock: it merges the
     // regions, binds the image mirrors and host imports that already serve them (an import pointer is
@@ -336,7 +344,7 @@ public:
     // and the recorder's pending-write note stays closed.
     void Upload(bool addressable);
     void UploadPrepare(bool addressable);
-    void UploadFinish(bool addressable);
+    void UploadFinish(bool addressable, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt);
     VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
     static std::uint64_t ViewBytes(std::uint64_t bytes, std::uint32_t adjustment);
     std::vector<ShaderRecompiler::BdaAbi::Range> AddressRanges() const;
@@ -457,6 +465,7 @@ private:
         // path it would take without staging, in both upload stages.
         bool unstaged = false;
         bool overlay = false;
+        bool adaptiveInPlace = false;
     };
 
     // How [begin, end) lies against the space's base regions.
@@ -502,6 +511,8 @@ private:
     // written element inside, and an atomic element or a size within the written-shadow window.
     // Independent of the import, so UploadPrepare and UploadFinish decide alike.
     bool stagingEligible(const Region& region, bool addressable) const;
+    bool stagingWanted(const Region& region, bool addressable) const;
+    bool adaptiveInPlace(const Region& region, bool use) const;
     bool overlayCandidate(const Region& inside, bool readOnly) const;
     void resolveOverlays();
     bool bindableInPlace(std::uint64_t offset, bool addressable) const;
@@ -533,6 +544,7 @@ private:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> servedInsideBase;
     std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;
     std::vector<std::pair<std::uint64_t, std::shared_ptr<Buffer>>> heapReadbacks;
+    std::vector<std::uint64_t> evictedRanges;
     // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;
     bool uploaded = false;

@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -18,11 +19,17 @@ namespace {
 
 namespace {
 
+constexpr std::int32_t ioError = static_cast<std::int32_t>(0x80240001);
 constexpr std::int32_t invalidArgument = static_cast<std::int32_t>(0x80240002);
 constexpr std::int32_t noDevice = static_cast<std::int32_t>(0x80240004);
 constexpr std::int32_t notFound = static_cast<std::int32_t>(0x80240005);
 constexpr std::int32_t otherError = static_cast<std::int32_t>(0x802400FF);
 constexpr std::uint8_t absentEndpoint = 0x70;
+
+struct InterruptEndpoint {
+    std::uint8_t address;
+    std::int32_t length;
+};
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -141,10 +148,11 @@ void Device() {
     std::uint8_t interruptAddress = 0;
     std::uint16_t interruptMax = 0;
     std::uint8_t interruptInterface = 0;
+    std::vector<InterruptEndpoint> interruptEndpoints;
     if (interfaceArray == nullptr) {
         Require(false, "the active config descriptor has no interface array");
     }
-    for (std::uint8_t index = 0; index < interfaces && interruptAddress == 0; ++index) {
+    for (std::uint8_t index = 0; index < interfaces; ++index) {
         const std::uint8_t* alternate = *reinterpret_cast<const std::uint8_t* const*>(interfaceArray + index * 16);
         if (alternate == nullptr) continue;
         const std::uint8_t* endpoints = *reinterpret_cast<const std::uint8_t* const*>(alternate + 16);
@@ -152,8 +160,11 @@ void Device() {
         for (std::uint8_t endpoint = 0; endpoint < alternate[4]; ++endpoint) {
             const std::uint8_t* item = endpoints + endpoint * 32;
             if ((item[2] & 0x80) != 0 && (item[3] & 3) == 3) {
+                const auto maxPacket = static_cast<std::uint16_t>(item[4] | item[5] << 8);
+                interruptEndpoints.push_back({item[2], (maxPacket & 0x7FF) * (1 + ((maxPacket >> 11) & 3))});
+                if (interruptAddress != 0) continue;
                 interruptAddress = item[2];
-                interruptMax = static_cast<std::uint16_t>(item[4] | item[5] << 8);
+                interruptMax = maxPacket;
                 interruptInterface = alternate[2];
             }
         }
@@ -193,13 +204,35 @@ void Device() {
     Pump(done);
     Require(done == 1 && transfer->status == 0 && transfer->actualLength == 18, "asynchronous control transfer did not complete");
     Require(std::memcmp(setup + 8, descriptor, 18) == 0, "asynchronous device descriptor differs from the cached one");
+    const UsbdTimeval slice{0, 200};
+    std::vector<std::uint8_t> blink;
+    const InterruptEndpoint* raced = nullptr;
+    for (const auto& endpoint : interruptEndpoints) {
+        std::atomic<bool> notified{false};
+        blink.assign(static_cast<std::size_t>(endpoint.length), 0);
+        sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), handle, endpoint.address, blink.data(), endpoint.length, &MarkDoneThenSignal, &notified, 0);
+        const std::int32_t submitted = sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
+        if (submitted != 0) {
+            std::printf("interrupt endpoint 0x%02x refused a transfer: %d\n", endpoint.address, submitted);
+            Require(submitted == ioError, "a refused interrupt transfer did not report the host's I/O error");
+            Require(sceUsbdCancelTransfer(reinterpret_cast<UsbdTransfer*>(transfer)) == notFound, "a refused interrupt transfer stayed in flight");
+            continue;
+        }
+        const std::int32_t cancelled = sceUsbdCancelTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
+        Require(cancelled == 0 || cancelled == notFound, "cancelling an in-flight interrupt transfer failed");
+        while (!notified.load(std::memory_order_acquire)) Require(sceUsbdHandleEventsTimeout(&slice) == 0, "event handling failed while an interrupt transfer was cancelled");
+        Require(transfer->status == 0 || transfer->status == 3, "a cancelled interrupt transfer neither completed nor reported the cancellation");
+        raced = &endpoint;
+        break;
+    }
+    Require(raced != nullptr, "no interrupt IN endpoint accepted a transfer");
+    std::printf("cancel race on interrupt endpoint 0x%02x\n", raced->address);
     bool broken = false;
     {
-        const UsbdTimeval slice{0, 200};
         for (int round = 0; round < 300 && !broken; ++round) {
             std::atomic<bool> notified{false};
-            std::uint8_t blink[64] = {};
-            sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), handle, interruptAddress, blink, interruptMax, &MarkDoneThenSignal, &notified, 0);
+            blink.assign(static_cast<std::size_t>(raced->length), 0);
+            sceUsbdFillInterruptTransfer(reinterpret_cast<UsbdTransfer*>(transfer), handle, raced->address, blink.data(), raced->length, &MarkDoneThenSignal, &notified, 0);
 
             const int submitResult = sceUsbdSubmitTransfer(reinterpret_cast<UsbdTransfer*>(transfer));
             if (submitResult != 0) {

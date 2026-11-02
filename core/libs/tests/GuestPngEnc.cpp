@@ -41,7 +41,9 @@ int main() {
     Require(scePngEncQueryMemorySize(&bad) == invalidSize);
     std::vector<std::uint64_t> memory((memorySize + 7) / 8);
     void* handle = nullptr;
+    Require(scePngEncCreate(nullptr, memory.data(), memorySize, &handle) == invalidAddr);
     Require(scePngEncCreate(&create, nullptr, memorySize, &handle) == invalidAddr);
+    Require(scePngEncCreate(&create, memory.data(), memorySize, nullptr) == invalidAddr);
     Require(scePngEncCreate(&create, memory.data(), memorySize - 1, &handle) == invalidSize);
     Require(scePngEncCreate(&create, memory.data(), memorySize, &handle) == 0 && reinterpret_cast<std::uintptr_t>(handle) % 16 == 0);
 
@@ -134,6 +136,7 @@ int main() {
     encode.png_mem_size = static_cast<std::uint32_t>(png.size());
 
     PngEncEncodeParam invalid = encode;
+    Require(scePngEncEncode(nullptr, &encode, nullptr) == invalidHandle);
     Require(scePngEncEncode(handle, nullptr, nullptr) == invalidAddr);
     invalid.image_mem_addr = nullptr;
     Require(scePngEncEncode(handle, &invalid, nullptr) == invalidAddr);
@@ -153,6 +156,12 @@ int main() {
     invalid = encode;
     invalid.image_mem_size = pitch * (height - 1) + width * 4;
     Require(scePngEncEncode(handle, &invalid, nullptr) == invalidParam);
+    invalid = encode;
+    invalid.png_mem_addr = nullptr;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidAddr);
+    invalid = encode;
+    invalid.image_mem_size = 0;
+    Require(scePngEncEncode(handle, &invalid, nullptr) == invalidSize);
     invalid = encode;
     invalid.png_mem_size = 0;
     Require(scePngEncEncode(handle, &invalid, nullptr) == invalidSize);

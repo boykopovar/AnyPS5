@@ -38,6 +38,8 @@ def compile_timeline(document, sequence, repeat=1, gap_ms=200):
         names = event["buttons"]
         if not isinstance(names, list) or not all(isinstance(name, str) and name in BUTTONS for name in names):
             raise ValueError(f"{prefix}.buttons must be a list of known button names")
+        if len(set(names)) != len(names):
+            raise ValueError(f"{prefix}.buttons must not contain duplicate button names")
         if "release" in names and len(names) != 1:
             raise ValueError(f"{prefix}: release cannot be combined with another button")
         buttons = 0
@@ -84,12 +86,16 @@ def main():
     parser.add_argument("--gap-ms", type=int, default=200)
     args = parser.parse_args()
     try:
-        if args.timeline.resolve() == args.path.resolve() or (args.path.exists() and os.path.samefile(args.timeline, args.path)):
+        if os.path.realpath(args.timeline) == os.path.realpath(args.path) or (args.path.exists() and os.path.samefile(args.timeline, args.path)):
             raise ValueError("the command file must be separate from the timeline JSON")
+        if args.path.is_dir():
+            raise ValueError(f"{args.path} is a directory")
+        if not args.path.parent.is_dir():
+            raise ValueError(f"directory does not exist: {args.path.parent}")
         document = json.loads(args.timeline.read_text(encoding="utf-8"))
         text = compile_timeline(document, next_sequence(args.path), args.repeat, args.gap_ms)
         queue_timeline(args.path, text)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         parser.exit(2, f"pad_timeline: {error}\n")
     print(f"Queued {len(text.splitlines()) - 1} timed events in {args.path}")
 

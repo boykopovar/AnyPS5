@@ -170,6 +170,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
         const char16_t conversion = *format;
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
+        if (!secure && conversion < 0x80) length = LibcDetail::ApplicableLength(length, static_cast<char>(conversion));
         const bool integerLength = length.empty() || length == "h" || length == "hh" || length == "l" || length == "ll" ||
             length == "j" || length == "z" || length == "t";
         if (conversion == u'd' || conversion == u'i') {

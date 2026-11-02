@@ -43,11 +43,14 @@ struct SpirvTargetOptions {
     bool largePixelFunctionLdsBuffer = false;
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool ldsLockFences = false;
+    bool meshWindowBuffer = false;
 };
 
 struct SpirvEmitInfo {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
+    bool meshWindowBuffer = false;
 };
 
 struct SpannedWaveUnsupported : std::runtime_error {
