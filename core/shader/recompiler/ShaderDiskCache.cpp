@@ -109,8 +109,8 @@ static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update Enc
 static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
-static_assert(sizeof(DescriptorSource) == 192, "DescriptorSource changed: update the plan encoder");
-static_assert(sizeof(TableColumn) == 112, "TableColumn changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 224, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(TableColumn) == 144, "TableColumn changed: update the plan encoder");
 static_assert(sizeof(KeyDomain) == 16, "KeyDomain changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 104, "ResourceBlock changed: update the plan encoder");
 static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
@@ -150,7 +150,7 @@ static_assert(fieldCount<IrResourcePlan>() == 24, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 18, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 22, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 5, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -1150,6 +1150,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         out.Value(column.maxKey);
         out.Value(column.sampler);
         out.Value(column.address);
+        out.Value(column.buffer);
         out.List(column.keyDomains, [](Writer& domains, const KeyDomain& domain) {
             domains.Value(domain.source);
             domains.Value(domain.offset);
@@ -1164,10 +1165,23 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
             hops.Value(hop.offset);
             hops.Value(hop.immediate);
         });
+        out.List(column.pointerChases, [](Writer& chases, const PointerChase& chase) {
+            chases.Value(chase.offset);
+            chases.Value(chase.immediate);
+            chases.Value(chase.readOffset);
+            chases.Value(chase.readImmediate);
+            for (const auto& edit : chase.edits) {
+                chases.Value(edit.shift);
+                chases.Value(edit.mask);
+                chases.Value(edit.bits);
+            }
+        });
+        out.Value(column.pointerChaseDepth);
         out.Value(column.foldedAddend);
         out.Value(column.foldedCarry);
         out.Value(column.selected);
         out.Value(column.selection);
+        out.Value(column.pointerKeyed);
     });
     writer.List(plan.controlFlow, [&](Writer& out, const ResourceBlock& block) {
         out.Value(valueIndex(block.condition));
@@ -1299,7 +1313,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         value.SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
     }
     reader.List(plan.memoryInfo, 79, decodeMemoryInfo);
-    reader.List(plan.descriptorSources, 72, [&](Reader& in, DescriptorSource& source) {
+    reader.List(plan.descriptorSources, 74, [&](Reader& in, DescriptorSource& source) {
         for (auto& dword : source.dwords) dword = valueAt(in.Get<std::uint32_t>());
         in.Value(source.dwordCount);
         const bool table = in.Get<bool>();
@@ -1312,6 +1326,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         in.Value(column.maxKey);
         in.Value(column.sampler);
         in.Value(column.address);
+        in.Value(column.buffer);
         in.List(column.keyDomains, 13, [](Reader& domains, KeyDomain& domain) {
             domains.Value(domain.source);
             domains.Value(domain.offset);
@@ -1326,10 +1341,23 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             hops.Value(hop.offset);
             hops.Value(hop.immediate);
         });
+        in.List(column.pointerChases, 64, [](Reader& chases, PointerChase& chase) {
+            chases.Value(chase.offset);
+            chases.Value(chase.immediate);
+            chases.Value(chase.readOffset);
+            chases.Value(chase.readImmediate);
+            for (auto& edit : chase.edits) {
+                chases.Value(edit.shift);
+                chases.Value(edit.mask);
+                chases.Value(edit.bits);
+            }
+        });
+        in.Value(column.pointerChaseDepth);
         in.Value(column.foldedAddend);
         in.Value(column.foldedCarry);
         in.Value(column.selected);
         in.Value(column.selection);
+        in.Value(column.pointerKeyed);
         source.tableColumn = table ? std::optional(std::move(column)) : std::nullopt;
     });
     reader.List(plan.controlFlow, 36, [&](Reader& in, ResourceBlock& block) {
@@ -1364,6 +1392,16 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     const auto knownSource = [&](std::uint32_t source) { return source < plan.descriptorSources.size(); };
     if (!std::ranges::all_of(plan.materializationSources, knownSource)) return false;
     if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return source.dwordCount <= source.dwords.size() && (!source.tableColumn.has_value() || (knownSource(source.tableColumn->heapSource) && (!source.tableColumn->selected || knownSource(source.tableColumn->selection)) && std::ranges::all_of(source.tableColumn->keyDomains, [&](const KeyDomain& domain) { return knownSource(domain.source); }))); })) return false;
+    for (const auto& source : plan.descriptorSources) {
+        if (!source.tableColumn.has_value()) continue;
+        const auto& column = *source.tableColumn;
+        if (column.buffer && (column.sampler || column.dwordCount != 4u)) return false;
+        const auto& parent = plan.descriptorSources[column.heapSource].tableColumn;
+        if (parent.has_value() && (column.buffer || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
+        if (column.pointerKeyed && (!column.indirect || column.buffer || parent.has_value())) return false;
+        if (column.pointerChases.empty() != (column.pointerChaseDepth == 0u) || column.pointerChaseDepth > MaxPointerChaseDepth || (column.pointerChaseDepth != 0u && !column.pointerKeyed)) return false;
+        if (std::ranges::any_of(column.pointerChases, [](const PointerChase& chase) { return std::ranges::any_of(chase.edits, [](const DescriptorWordEdit& edit) { return edit.shift > 31u; }); })) return false;
+    }
     if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
     if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;
     if (!std::ranges::all_of(plan.info.samplers, [&](const SamplerResource& sampler) { return knownSource(sampler.source); })) return false;
