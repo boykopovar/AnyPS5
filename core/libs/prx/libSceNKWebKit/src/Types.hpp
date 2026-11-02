@@ -101,4 +101,15 @@ public:
     bool valid = false;
 };
 
+class NavigationData final : public ObjectOf<ObjectType::NavigationData> {
+public:
+    NavigationData() = default;
+    NavigationData(Retained<String> title, std::optional<std::string> url, std::optional<std::string> originalRequestURL)
+        : title(std::move(title)), url(std::move(url)), originalRequestURL(std::move(originalRequestURL)) {}
+
+    Retained<String> title;
+    std::optional<std::string> url;
+    std::optional<std::string> originalRequestURL;
+};
+
 }  // namespace NKWebKit
