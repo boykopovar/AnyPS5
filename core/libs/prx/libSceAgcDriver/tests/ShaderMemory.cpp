@@ -7036,7 +7036,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTMAAAA=", "new requests did not use serialization version 51");
+    require(requestPrefix(encoded, 8u) == "NVNQQTQAAAA=", "new requests did not use serialization version 52");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -7157,7 +7157,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTQAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTUAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -7278,12 +7278,13 @@ void verifyDepthExportClamp() {
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
             "depth export: a version 49 request lost the bounds or the version 45 target tail");
         auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 51u, "depth export: a depth exporting request did not use serialization version 51");
+        require(bytes.size() > 8u && bytes[4] == 52u, "depth export: a depth exporting request did not use serialization version 52");
         static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
         const auto found = std::search(bytes.begin(), bytes.end(), boundBytes.begin(), boundBytes.end());
         require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
             "depth export: the clamp bounds were not written exactly once");
         bytes.erase(found, found + boundBytes.size());
+        bytes.resize(bytes.size() - 12u);
         bytes.pop_back();
         for (const std::uint8_t legacyVersion : {48u, 47u, 46u}) {
             if (legacyVersion == 47u) bytes.pop_back();
@@ -7304,12 +7305,13 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
             auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 51u, "a two-sample dithered request did not use serialization version 51");
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 52u, "a two-sample dithered request did not use serialization version 52");
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
                 require(bounds != ditheredBytes.end(), "a two-sample dithered depth exporting request lacks the clamp bounds");
                 ditheredBytes.erase(bounds, bounds + boundBytes.size());
             }
+            ditheredBytes.resize(ditheredBytes.size() - 12u);
             ditheredBytes.pop_back();
             ditheredBytes[4] = 48u;
             const auto main48 = RequestSerializer{}.Deserialize(encodeBase64(ditheredBytes));
@@ -7467,7 +7469,7 @@ void verifyVertexInfoVersion19() {
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
         bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
-        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 4u);
+        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 4u - 12u);
         return bytes;
     };
     auto version42 = version43Bytes(plainPixel);
@@ -7629,9 +7631,10 @@ void verifyDepthRemapRequests() {
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
     constexpr std::size_t pointTailBytes = 13u;
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 15u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 15 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 8 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 8 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag and the tessellation evaluation subgroup flag of a vertex request");
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 27u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 27 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 20 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 20 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the heap profile and the other keyed target flags of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
+        legacyBytes.resize(legacyBytes.size() - 12u);
         legacyBytes.resize(legacyBytes.size() - sizeof(std::uint32_t));
         legacyBytes.pop_back();
         legacyBytes.pop_back();
@@ -7645,6 +7648,7 @@ void verifyDepthRemapRequests() {
         require(serializer.Serialize(legacy.request) == plain, ("a version " + std::to_string(legacyVersion) + " vertex request misread the fields before the depth remap").c_str());
     }
     auto version35 = remappedBytes;
+    version35.resize(version35.size() - 12u);
     version35.resize(version35.size() - sizeof(std::uint32_t));
     version35.pop_back();
     version35.pop_back();
@@ -7698,8 +7702,8 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 56u + pointTailBytes && legacy[4] == 51u, "a merged hull request did not use serialization version 51");
-    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 3u - pointTailBytes);
+    require(legacy.size() > 56u + pointTailBytes && legacy[4] == 52u, "a merged hull request did not use serialization version 52");
+    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 3u - pointTailBytes - 12u);
     legacy.pop_back();
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
