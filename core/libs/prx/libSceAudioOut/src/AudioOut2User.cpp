@@ -26,6 +26,11 @@ int APS5_VABI sceAudioOut2UserCreate(uint32_t user_id, AudioOut2UserHandle* hand
     return 0;
 }
 
+int APS5_VABI sceAudioOut2UserCreateEx(uint32_t userId, const void* param, AudioOut2UserHandle* handle) {
+    (void)param;
+    return sceAudioOut2UserCreate(userId, handle);
+}
+
 int APS5_VABI sceAudioOut2UserDestroy(AudioOut2UserHandle handle) {
     std::lock_guard lock(g_usersLock);
     g_users.erase(handle);

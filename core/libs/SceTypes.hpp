@@ -533,6 +533,12 @@ struct AudioOut2ContextParam {
     std::uint32_t reserved[10];
 };
 
+struct AudioOut2ContextParamEx {
+    AudioOut2ContextParam base;
+    std::uint32_t ex_flags;
+    std::uint32_t reserved[7];
+};
+
 struct AudioOut2PortParam {
     std::uint16_t port_type;
     std::uint16_t pad;
@@ -541,6 +547,12 @@ struct AudioOut2PortParam {
     std::uint32_t flags;
     AudioOut2UserHandle user_handle;
     std::uint32_t reserved[10];
+};
+
+struct AudioOut2PortParamEx {
+    AudioOut2PortParam base;
+    std::uint32_t ex_flags;
+    std::uint32_t reserved[7];
 };
 
 struct AudioOut2Attribute {
@@ -561,10 +573,22 @@ struct AudioOut2PortState {
     std::uint64_t reserved[6];
 };
 
+struct AudioOut2PortStateEx {
+    AudioOut2PortState base;
+    std::uint32_t ex_flags;
+    std::uint32_t reserved[7];
+};
+
 struct AudioOut2SystemState {
     float loudness;
     std::uint32_t pad;
     std::uint64_t reserved[7];
+};
+
+struct AudioOut2SystemStateEx {
+    AudioOut2SystemState base;
+    std::uint32_t ex_flags;
+    std::uint32_t reserved[7];
 };
 
 struct AudioOut2Position { float x; float y; float z; };

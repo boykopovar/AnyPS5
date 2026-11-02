@@ -32,6 +32,18 @@ int APS5_VABI sceAudioOut2GetSystemState(AudioOut2SystemState* state) {
     return 0;
 }
 
+int APS5_VABI sceAudioOut2GetSystemStateEx(AudioOut2SystemStateEx* state) {
+    if (!state) return static_cast<int>(0x80260502);
+    std::memset(state, 0, sizeof(*state));
+    state->base.loudness = 0.0f;
+    return 0;
+}
+
+int APS5_VABI sceAudioOut2Terminate(void) {
+    AudioOut2ResetInitialized_nid_no_patch();
+    return 0;
+}
+
 int APS5_VABI sceAudioOut2SetSystemDebugState(const AudioOut2SystemDebugStateParam* param) {
     constexpr int ErrorInvalidPointer = static_cast<int>(0x8026800C);
     constexpr std::uint32_t DebugStateIdLoudness = 1;

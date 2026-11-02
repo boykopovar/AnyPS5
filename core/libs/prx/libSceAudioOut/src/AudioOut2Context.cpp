@@ -487,4 +487,12 @@ int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const
     return 0;
 }
 
+int APS5_VABI sceAudioOut2ContextBedWrite(AudioOut2ContextHandle ctx, const void* bedData, size_t size) {
+    auto* context = AudioOut2FindContext(ctx);
+    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!bedData && size != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    AUDIOOUT2_TRACE("t=%.3f ContextBedWrite ctx %p: data=%p size=%zu\n", AudioOut2TraceSeconds(), static_cast<void*>(context), bedData, size);
+    return 0;
+}
+
 }

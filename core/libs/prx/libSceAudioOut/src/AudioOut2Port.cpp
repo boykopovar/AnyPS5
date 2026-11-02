@@ -254,6 +254,10 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceAudioOut2PortCreateEx(AudioOut2ContextHandle ctx, const AudioOut2PortParamEx* params, AudioOut2PortHandle* port) {
+    return sceAudioOut2PortCreate(ctx, reinterpret_cast<const AudioOut2PortParam*>(params), port);
+}
+
 int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle port) try {
     const AudioOutCall call;
     std::lock_guard lock(g_portsLock);
@@ -310,6 +314,31 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
         }
         const auto traces = entry->attributeTraces++;
         if (traces < ATTRIBUTE_TRACE_FULL || traces % ATTRIBUTE_TRACE_EVERY == 0) TraceAttribute(port, *entry, attribute, verdict);
+    }
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceAudioOut2PortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num, uint32_t flags) {
+    (void)flags;
+    return sceAudioOut2PortSetAttributes(port, attributes, num);
+}
+
+int APS5_VABI sceAudioOut2PortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num) try {
+    const AudioOutCall call;
+    std::lock_guard lock(g_portsLock);
+    auto* entry = FromHandle(port);
+    if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!attributes && num != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    for (uint32_t index = 0; index < num; index++) {
+        auto& attribute = attributes[index];
+        if (attribute.value == nullptr) continue;
+        if (attribute.attribute_id == ATTRIBUTE_DATA && attribute.value_size >= sizeof(entry->data)) {
+            std::memcpy(const_cast<void*>(attribute.value), &entry->data, sizeof(entry->data));
+        } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && attribute.value_size >= entry->channels * sizeof(float)) {
+            std::memcpy(const_cast<void*>(attribute.value), entry->volume, entry->channels * sizeof(float));
+        }
     }
     return 0;
 } catch (const ProcessShutdown&) {

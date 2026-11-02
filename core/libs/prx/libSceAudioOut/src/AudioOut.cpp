@@ -441,6 +441,10 @@ void AudioOut2MarkInitialized_nid_no_patch() {
     g_audioOut2Initialized.store(true);
 }
 
+void AudioOut2ResetInitialized_nid_no_patch() {
+    g_audioOut2Initialized.store(false);
+}
+
 extern "C" {
 
 int APS5_VABI sceAudioOut2Initialize(void) {

@@ -141,4 +141,15 @@ int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t fl
     return 0;
 }
 
+int APS5_VABI sceAudioOut2GetAmbisonicsEncodeCoefficients(uint32_t order, const AudioOut2Position* direction, float* coefficients, uint32_t numCoefficients) {
+    if (direction == nullptr || coefficients == nullptr) APS5_INVALID_ARG_EX;
+    if (order > MaxAmbisonicsOrder) APS5_INVALID_ARG_EX;
+    const uint32_t required = (order + 1) * (order + 1);
+    if (numCoefficients != required) APS5_INVALID_ARG_EX;
+    for (uint32_t acn = 0; acn < required; ++acn) {
+        coefficients[acn] = Sn3d(acn, *direction);
+    }
+    return 0;
+}
+
 }

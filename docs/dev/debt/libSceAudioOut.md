@@ -57,13 +57,6 @@
 | Name | NID |
 | --- | --- |
 | `sceAudioOut2GetSystemDebugState` | `1kUphng3rOk` |
-| `sceAudioOut2LoContextCreateEx` | `o+Ol1OcMbBo` |
-| `sceAudioOut2LoContextGetAttributes` | `Nb3DK8hNqeY` |
-| `sceAudioOut2LoContextQueryMemoryEx` | `+8fuZ1rh4PA` |
-| `sceAudioOut2LoPortCreateEx` | `eD21Kabealg` |
-| `sceAudioOut2LoPortGetAttributes` | `45qxRgFYZZg` |
-| `sceAudioOut2LoPortSetAttributesEx` | `3o6lDIe0iY0` |
-| `sceAudioOut2PortSetAttributesEx` | `11yhLGUG49M` |
 | `sceAudioOut2SetHrtfIdForCronos` | `PA3AjhcS+w4` |
 | `sceAudioOut2SetSpeakerInfo` | `-Bn3G37Q1qU` |
 | `sceAudioOut2SetTvCorrectionInfo` | `slskcaPR5u0` |
@@ -96,7 +89,6 @@
 - [sceAudioOut2GetSpeakerInfo](../../../core/libs/prx/libSceAudioOut/src/AudioOut2SpeakerArray.cpp) (libSceAudioOut) - The speaker info reports type 0 with available bits `0x3`, the front left speaker at +30 degrees and the front right one at -30, and -360 for the azimuth and elevation of every other slot. On that console the type followed the HDMI device type and the available bits its channels: type 0 with the device set to TV, 1 to AV amplifier and 2 to sound bar, which [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Audio/AudioOut2.cs) names television, AV receiver and sound bar (3 is headphones there), and available bits `0x3` for 2 channels and `0x3F` for 5.1 (centre at 0, surround pair at +110 and -110, -360 for the LFE).
 - [sceAudioOut2GetSpeakerInfo](../../../core/libs/prx/libSceAudioOut/src/AudioOut2SpeakerArray.cpp) (libSceAudioOut) - The front pair and the empty slots read the same in every setting; 7.1 on the AV amplifier reported 2 channels on that console's HDMI chain. The host output is always reported as a stereo television here. The console also refuses flag 1 below a per-process libkernel value whose source is unidentified; BunnyFl measured the boundary between `0x14FFFFF` and `0x1500000`, and it is not modelled here. ASTRO BOT and ASTRO's PLAYROOM reportedly stop on an assertion that depends on these values (#4317), but which field matters has not been isolated
 - [sceAudioOut2InitializeEx and sceAudioOut2LoInit repeats](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp) (libSceAudioOut) - a repeated `sceAudioOut2InitializeEx` or `sceAudioOut2LoInit` returns 0, and either one after `sceAudioOut2Initialize` or `sceAudioOutInit` returns 0 too; the console was not measured for these two. On PS5 firmware 13.60 a repeated `sceAudioOut2Initialize` returns `0x80268004` and a repeated `sceAudioOutInit` `0x8026000e`, and `sceAudioOutInit` after `sceAudioOut2Initialize` still returns 0, which AnyPS5 follows.
-- [sceAudioOut2UserCreateEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutOpenEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutSetSystemDebugState](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
@@ -157,21 +149,15 @@
 - [sceAudioOut2MbusSetCaesarParam](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2MbusSetSparkParam](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2AllAudioMainToHeadphoneForDiag](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOut2LoPortGetStateEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2ReportRegisterHandler](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2ReportUnregisterHandler](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2GetTvCorrectionInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2GetIpcHandle](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOut2GetSystemStateEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2SetDebugHeadphoneMode](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2DebugStateCtrl](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOut2ContextBedWrite](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOut2PortCreateEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2InitializeEx](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp) (libSceAudioOut) - the PS5 13.60 module (0x2a640) stores its 32-bit argument and runs `sceAudioOut2Initialize`; the argument's meaning is unknown and it is ignored
-- [sceAudioOut2Terminate](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2PortRegister](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2PortUnregister](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOut2GetAmbisonicsEncodeCoefficients](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOut2GetHrtfIdForCronos](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 
 ### Functional
@@ -187,3 +173,5 @@
 - [sceAudioOut2ContextGetQueueLevel](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) with an SDL device counts the grains that `sceAudioOut2ContextAdvance` completed and no push has consumed as queued, together with the pushed grains beyond the 40 ms cushion, up to `queue_depth`. Whether the console counts them is unknown. Pushes that fill the cushion leave the level at 0, so a title that renders as many grains as the level leaves room for and pushes them on another thread rendered a full queue again after each of those pushes: PPSA23226's Wwise sink passes the available count to the sound engine as the number of frames to render, advances once per frame and pushes on a separate thread, and exceeded 16 completed grains. Counted, the completed grains keep such a title at most `queue_depth` grains ahead of its pushes.
 - [sceAudioOut2LoInit, sceAudioOut2LoContext* and sceAudioOut2LoPort* calls](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp) (libSceAudioOut) have no low-latency path: each forwards to its `sceAudioOut2` counterpart (`sceAudioOut2LoInit` only marks initialized), so grain and queue depth are the context's `num_grains` and `queue_depth`, and playback keeps the 40 ms cushion. [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Audio/AudioOut2.cs#L489-L545) only says each call takes the same handles and parameter blocks as its counterpart and drives the low-latency clock with a shallow queue and a small grain ([docs](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/docs/audio.md#L662-L668)). Unverified: the console's grain and depth limits, its error for a handle of the other service (accepted here) and what `sceAudioOut2LoInit` returns when repeated (0 here).
 - [sceAudioOutSysGetHdmiMonitorInfo](../../../core/libs/prx/libSceAudioOut/src/AudioOut.cpp) - native validation requires a non-null buffer and exactly 384 bytes, then accepts types 1 and 16. Mapped pointer/size/type errors are 0x80260004/06/0C. The host still zeroes type 1 output and throws for type 16: native monitor descriptors and system audio settings are unavailable. Driver initialization failures and service errors are not represented.
+- [sceAudioOut2 extended surface and low-latency ports](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Port.cpp) (libSceAudioOut) - `sceAudioOut2PortCreateEx`, `sceAudioOut2PortSetAttributesEx`, `sceAudioOut2PortGetAttributes`, `sceAudioOut2LoPortCreateEx`, `sceAudioOut2LoPortSetAttributesEx`, `sceAudioOut2LoPortGetAttributes`, and `sceAudioOut2LoPortGetStateEx` validate handles, parameters, and attribute arrays, propagating PCM and volume attributes. Extended parameters and low-latency state copy base attributes while hardware-specific ioctls and driver timing remain deferred.
+- [sceAudioOut2 system and context extensions](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp) (libSceAudioOut) - `sceAudioOut2UserCreateEx` forwards to user creation, `sceAudioOut2LoContextCreateEx` and `sceAudioOut2LoContextQueryMemoryEx` wrap context initialization, `sceAudioOut2GetSystemStateEx` reports zeroed state, `sceAudioOut2ContextBedWrite` validates handles and traces bed buffers, `sceAudioOut2GetAmbisonicsEncodeCoefficients` computes SN3D spherical harmonic gains up to order 5, and `sceAudioOut2Terminate` resets the initialized state.

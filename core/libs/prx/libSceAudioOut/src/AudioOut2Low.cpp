@@ -20,8 +20,16 @@ int APS5_VABI sceAudioOut2LoContextQueryMemory(const AudioOut2ContextParam* para
     return sceAudioOut2ContextQueryMemory(params, memory_size);
 }
 
+int APS5_VABI sceAudioOut2LoContextQueryMemoryEx(const AudioOut2ContextParamEx* params, size_t* memory_size) {
+    return sceAudioOut2ContextQueryMemory(reinterpret_cast<const AudioOut2ContextParam*>(params), memory_size);
+}
+
 int APS5_VABI sceAudioOut2LoContextCreate(const AudioOut2ContextParam* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx) {
     return sceAudioOut2ContextCreate(params, buffer, buffer_size, ctx);
+}
+
+int APS5_VABI sceAudioOut2LoContextCreateEx(const AudioOut2ContextParamEx* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx) {
+    return sceAudioOut2ContextCreate(reinterpret_cast<const AudioOut2ContextParam*>(params), buffer, buffer_size, ctx);
 }
 
 int APS5_VABI sceAudioOut2LoContextDestroy(AudioOut2ContextHandle ctx) {
@@ -30,6 +38,13 @@ int APS5_VABI sceAudioOut2LoContextDestroy(AudioOut2ContextHandle ctx) {
 
 int APS5_VABI sceAudioOut2LoContextSetAttributes(AudioOut2ContextHandle ctx, const AudioOut2Attribute* attributes, uint32_t num) {
     return sceAudioOut2ContextSetAttributes(ctx, attributes, num);
+}
+
+int APS5_VABI sceAudioOut2LoContextGetAttributes(AudioOut2ContextHandle ctx, AudioOut2Attribute* attributes, uint32_t num) {
+    auto* context = AudioOut2FindContext(ctx);
+    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!attributes && num != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 int APS5_VABI sceAudioOut2LoContextAdvance(AudioOut2ContextHandle ctx) {
@@ -48,6 +63,10 @@ int APS5_VABI sceAudioOut2LoPortCreate(AudioOut2ContextHandle ctx, const AudioOu
     return sceAudioOut2PortCreate(ctx, params, port);
 }
 
+int APS5_VABI sceAudioOut2LoPortCreateEx(AudioOut2ContextHandle ctx, const AudioOut2PortParamEx* params, AudioOut2PortHandle* port) {
+    return sceAudioOut2PortCreateEx(ctx, params, port);
+}
+
 int APS5_VABI sceAudioOut2LoPortDestroy(AudioOut2PortHandle port) {
     return sceAudioOut2PortDestroy(port);
 }
@@ -56,8 +75,20 @@ int APS5_VABI sceAudioOut2LoPortSetAttributes(AudioOut2PortHandle port, const Au
     return sceAudioOut2PortSetAttributes(port, attributes, num);
 }
 
+int APS5_VABI sceAudioOut2LoPortSetAttributesEx(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num, uint32_t flags) {
+    return sceAudioOut2PortSetAttributesEx(port, attributes, num, flags);
+}
+
 int APS5_VABI sceAudioOut2LoPortGetState(AudioOut2PortHandle port, AudioOut2PortState* state) {
     return sceAudioOut2PortGetState(port, state);
+}
+
+int APS5_VABI sceAudioOut2LoPortGetStateEx(AudioOut2PortHandle port, AudioOut2PortStateEx* state) {
+    return sceAudioOut2PortGetState(port, reinterpret_cast<AudioOut2PortState*>(state));
+}
+
+int APS5_VABI sceAudioOut2LoPortGetAttributes(AudioOut2PortHandle port, AudioOut2Attribute* attributes, uint32_t num) {
+    return sceAudioOut2PortGetAttributes(port, attributes, num);
 }
 
 }
