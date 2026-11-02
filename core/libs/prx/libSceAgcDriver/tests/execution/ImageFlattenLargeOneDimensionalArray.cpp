@@ -30,7 +30,8 @@ constexpr std::size_t StorageAlignment = 65536;
 
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
 alignas(256) std::array<float, Threads * 8> Output{};
-alignas(StorageAlignment) std::array<std::uint8_t, StorageBytes> Storage{};
+std::array<std::uint8_t, StorageBytes + StorageAlignment - 1> StorageRaw{};
+const std::span<std::uint8_t> Storage{reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(StorageRaw.data()) + StorageAlignment - 1) & ~(StorageAlignment - 1)), StorageBytes};
 
 alignas(256) constexpr std::array<std::uint32_t, 13> LoadCode{
     0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf0001f20, 0x00020a04, 0x34020085,
