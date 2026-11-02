@@ -110,7 +110,10 @@ class Build:
     def test_commands(self, names):
         found, visited, pending = collections.defaultdict(set), set(), [Path(self.path)]
         while pending:
-            directory = pending.pop().resolve()
+            try:
+                directory = pending.pop().resolve()
+            except RuntimeError:
+                continue
             file = directory / "CTestTestfile.cmake"
             if directory in visited or not file.is_file():
                 continue
