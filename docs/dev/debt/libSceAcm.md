@@ -6,6 +6,8 @@
 
 ### Unknown function info
 
+- [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) returning SCE_ACM_ERROR_BAD_POINTER from sceAcmContextCreate, sceAcmBatchStartBuffer and sceAcmBatchStartBuffers when an output pointer is unmapped or unwritable is a defensive host-protection fallback; console behavior for unwritable memory has not been measured.
+
 - [Additional ACM exports](../../../core/libs/prx/libSceAcm/Export.cpp) - the eleven name/NID pairs below are defined exports in the [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceacm-a3566cc281.jsonl). Their ABIs and behaviour are unknown. Parameterless `int` declarations are import-resolution placeholders, not established signatures; every call throws `NotImplemented_nid_no_patch`. No audio-chain, reverb or telemetry behaviour is implemented.
 
 | Name | NID |
