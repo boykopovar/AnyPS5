@@ -455,6 +455,11 @@ struct RetiredImport {
     ImportNode node;
 };
 
+bool holdsRangeOver(const HostImport& entry, std::uint64_t begin, std::uint64_t end) {
+    const auto over = [&](const std::shared_ptr<const GuestAllocations::Range>& range) { return range != nullptr && range->address < end && begin < range->address + range->bytes; };
+    return (entry.base < end && begin < entry.base + entry.bytes) || over(entry.range) || std::any_of(entry.ranges.begin(), entry.ranges.end(), over);
+}
+
 const GuestAllocations::Range* containingRange(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end);
 bool runCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end);
 bool joinedCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end);
@@ -490,7 +495,7 @@ bool releaseParkedImports(HostImports& state, std::uint64_t begin, std::uint64_t
         for (auto device = state.parked.begin(); device != state.parked.end();) {
             auto& list = device->second;
             for (auto it = list.begin(); it != list.end();) {
-                if ((*it)->node.mapped().base < end && begin < (*it)->node.mapped().base + (*it)->node.mapped().bytes) {
+                if (holdsRangeOver((*it)->node.mapped(), begin, end)) {
                     released.push_back(std::move(*it));
                     it = list.erase(it);
                 } else {
@@ -510,7 +515,7 @@ bool releaseSettleRetired(HostImports& state, std::uint64_t begin, std::uint64_t
         std::lock_guard lock(state.mutex);
         for (auto& [device, settle] : state.settles) {
             for (auto& batch : settle.batches) {
-                const bool overlaps = std::any_of(batch.retired.begin(), batch.retired.end(), [&](const std::shared_ptr<RetiredImport>& holder) { return holder->node.mapped().base < end && begin < holder->node.mapped().base + holder->node.mapped().bytes; });
+                const bool overlaps = std::any_of(batch.retired.begin(), batch.retired.end(), [&](const std::shared_ptr<RetiredImport>& holder) { return holdsRangeOver(holder->node.mapped(), begin, end); });
                 if (!overlaps) continue;
                 if (settleBatchRunning(settle, device, batch)) {
                     ++state.settleUnmapWaits;
@@ -3563,8 +3568,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
         {
             std::lock_guard importsLock(imports.mutex);
             for (auto it = imports.imports.begin(); it != imports.imports.end();) {
-                const auto base = it->first;
-                if (base >= end || address >= base + it->second.bytes) {
+                if (!holdsRangeOver(it->second, address, end)) {
                     ++it;
                     continue;
                 }
@@ -3612,7 +3616,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
         {
             std::lock_guard importsLock(imports.mutex);
             for (const auto& [base, entry] : imports.imports) {
-                if (base < end && address < base + entry.bytes) {
+                if (holdsRangeOver(entry, address, end)) {
                     overlapsImport = true;
                     break;
                 }
@@ -3629,8 +3633,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
             {
                 std::lock_guard importsLock(imports.mutex);
                 for (auto it = imports.imports.begin(); it != imports.imports.end();) {
-                    const auto base = it->first;
-                    if (base >= end || address >= base + it->second.bytes) {
+                    if (!holdsRangeOver(it->second, address, end)) {
                         ++it;
                         continue;
                     }
