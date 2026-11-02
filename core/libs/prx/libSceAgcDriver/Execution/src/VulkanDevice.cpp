@@ -475,6 +475,7 @@ struct VulkanDevice::State {
     bool maintenance8 = false;
     bool maintenance5 = false;
     bool pipelineBinaries = false;
+    bool pipelineBinaryExtension = false;
     bool fillModeNonSolid = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
@@ -1774,7 +1775,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
     }
     VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5Features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
-    const bool wantPipelineBinaries = hasExtension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) && std::getenv("APS5_NO_PIPELINE_BINARIES") == nullptr && !ShaderRecompiler::ShaderCacheDirectory().empty() &&
+    state->pipelineBinaryExtension = hasExtension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
+    const bool wantPipelineBinaries = state->pipelineBinaryExtension && std::getenv("APS5_NO_PIPELINE_BINARIES") == nullptr && !ShaderRecompiler::ShaderCacheDirectory().empty() &&
         Graphics::PipelineBinaryStore::LayersCompatible(selected, state->InstanceFunction<PFN_vkEnumerateDeviceLayerProperties>("vkEnumerateDeviceLayerProperties"));
     constexpr std::array<const char*, 4> maintenanceExtensions{VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME};
     if ((state->graphicsPipelineLibrary || wantPipelineBinaries) && std::all_of(maintenanceExtensions.begin(), maintenanceExtensions.end(), hasExtension)) {
@@ -4131,6 +4133,11 @@ std::string VulkanDevice::DeviceName() const {
 
 std::string VulkanDevice::DriverInfo() const {
     return state->driverInfo.empty() ? std::to_string(state->properties.driverVersion) : state->driverInfo;
+}
+
+VulkanDevice::PipelineBinaryStatus VulkanDevice::PipelineBinariesStatus() const {
+    if (!state->pipelineBinaryExtension) return PipelineBinaryStatus::Unavailable;
+    return state->pipelineBinaryStore != nullptr && state->pipelineBinaryStore->IsReady() ? PipelineBinaryStatus::Ready : PipelineBinaryStatus::Disabled;
 }
 
 bool VulkanDevice::BdaAtomicsUsable() const {

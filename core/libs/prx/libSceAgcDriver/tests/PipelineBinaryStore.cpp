@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <random>
 #include <thread>
 #include <vector>
@@ -30,6 +31,8 @@ std::uint8_t global = 1;
 std::uintptr_t next = 1;
 std::map<VkPipelineBinaryKHR, std::uint8_t> binaries;
 std::function<void()> duringCapture;
+std::function<void(const VkPipelineCreateInfoKHR*, VkPipelineBinaryKeyKHR*)> keyOutput;
+unsigned keyQueries = 0;
 
 void Check(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
@@ -103,9 +106,13 @@ void LayerCompatibilityTests() {
     Check(!PipelineBinaryStore::LayersCompatible(physical, nullptr), "missing layer enumerator was accepted");
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL Key(VkDevice, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR* key) {
+VKAPI_ATTR VkResult VKAPI_CALL Key(VkDevice device, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR* key) {
+    Check(device == reinterpret_cast<VkDevice>(1), "key query lost the device");
+    if (keyQueries++ == 0) Check(info == nullptr, "first key query must have null create-info");
+    Check(key->sType == VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR && key->pNext == nullptr && key->keySize == 0, "key query output was not initialized");
     key->keySize = 1;
     key->key[0] = info == nullptr ? global : pipelineKey;
+    if (keyOutput) keyOutput(info, key);
     return VK_SUCCESS;
 }
 
@@ -205,7 +212,7 @@ void Environment(const char* name, const char* value) {
 
 }
 
-int main() try {
+int main(int argc, char** argv) try {
     LayerCompatibilityTests();
     const auto root = std::filesystem::temp_directory_path() / ("aps5-binary-test-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root);
@@ -231,6 +238,39 @@ int main() try {
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, reinterpret_cast<VkShaderModule>(1), "main", nullptr};
     info.layout = reinterpret_cast<VkPipelineLayout>(1);
+    if (argc > 1) {
+        const std::string mode = argv[1];
+        const bool perPipeline = mode.starts_with("--pipeline-");
+        alignas(PipelineBinaryStore) std::byte storage[sizeof(PipelineBinaryStore)];
+        keyOutput = [&](const VkPipelineCreateInfoKHR* query, VkPipelineBinaryKeyKHR* output) {
+            if ((query != nullptr) != perPipeline) return;
+            if (mode.ends_with("zero")) output->keySize = 0;
+            else if (mode.ends_with("oversized")) output->keySize = 33;
+            else if (mode.ends_with("maximum")) output->keySize = VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR;
+            else if (mode.ends_with("stype")) output->sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+            else if (mode.ends_with("pnext")) output->pNext = output;
+            else if (mode == "--global-guard") {
+                const auto address = reinterpret_cast<std::uintptr_t>(output);
+                const auto begin = reinterpret_cast<std::uintptr_t>(storage);
+                Check(address < begin || address >= begin + sizeof(storage), "global key output aliases the store instead of scratch");
+                auto& scratch = *reinterpret_cast<PipelineBinaryKeyOutput*>(output);
+                scratch.guard[0] = 0;
+                scratch.guard.back() = 0;
+            } else Check(false, "unknown key query test");
+        };
+        const auto destroy = [](PipelineBinaryStore* store) { std::destroy_at(store); };
+        std::unique_ptr<PipelineBinaryStore, decltype(destroy)> tested(std::construct_at(reinterpret_cast<PipelineBinaryStore*>(storage), context, properties), destroy);
+        const auto key = tested->Key(info, spirv, layout);
+        const bool maximum = mode.ends_with("maximum");
+        Check(maximum ? !key.empty() : key.empty(), maximum ? "maximum key was rejected" : "unusable key was accepted");
+        if (!perPipeline && !maximum) {
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            tested->CreateComputePipeline(info, spirv, layout, &pipeline);
+            Check(pipeline != VK_NULL_HANDLE && legacyCreates == 1 && captures == 0, "rejected global key did not use the driver pipeline cache");
+        }
+        std::printf("PASS %s: %u initialized key queries; %s\n", argv[1], keyQueries, maximum ? "maximum key accepted" : "unusable key rejected");
+        return 0;
+    }
     PipelineBinaryStore store(context, properties);
     const auto key = store.Key(info, spirv, layout);
     Check(!key.empty() && store.Key(info, spirv, layout) == key, "unstable recipe key");

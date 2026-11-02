@@ -2,15 +2,22 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_PIPELINEBINARYSTORE_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <array>
 #include <filesystem>
 #include <span>
 
 namespace AgcDriver::Graphics {
 
+struct alignas(64) PipelineBinaryKeyOutput {
+    VkPipelineBinaryKeyKHR key{VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR};
+    std::array<std::uint8_t, 64> guard;
+};
+
 class PipelineBinaryStore {
 public:
     static bool LayersCompatible(VkPhysicalDevice physical, PFN_vkEnumerateDeviceLayerProperties enumerate);
     PipelineBinaryStore(const Context& context, const VkPhysicalDeviceProperties& properties);
+    bool IsReady() const { return !directory.empty(); }
     std::vector<std::byte> Key(const VkComputePipelineCreateInfo& info, std::span<const std::uint32_t> spirv, std::span<const std::uint32_t> layout) const;
     void CreateComputePipeline(const VkComputePipelineCreateInfo& info, std::span<const std::uint32_t> spirv, std::span<const std::uint32_t> layout, VkPipeline* pipeline) const;
 

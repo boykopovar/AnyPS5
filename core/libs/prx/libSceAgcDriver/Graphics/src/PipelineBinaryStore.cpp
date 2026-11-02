@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -36,6 +37,18 @@ void bytes(std::vector<std::byte>& output, std::span<const std::byte> value) {
 
 bool validKey(const VkPipelineBinaryKeyKHR& key) {
     return key.keySize != 0 && key.keySize <= VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR;
+}
+
+const char* queryKey(PFN_vkGetPipelineKeyKHR getKey, VkDevice device, const VkPipelineCreateInfoKHR* info, VkPipelineBinaryKeyKHR& key, VkResult& result) {
+    auto output = std::make_unique<PipelineBinaryKeyOutput>();
+    output->guard.fill(0xa5);
+    result = getKey(device, info, &output->key);
+    if (result != VK_SUCCESS) return "result";
+    if (!std::ranges::all_of(output->guard, [](auto byte) { return byte == 0xa5; })) return "output overrun";
+    if (output->key.sType != VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR || output->key.pNext != nullptr) return "header";
+    if (!validKey(output->key)) return "size";
+    key = output->key;
+    return nullptr;
 }
 
 void binaryKey(std::vector<std::byte>& output, const VkPipelineBinaryKeyKHR& key) {
@@ -124,7 +137,11 @@ PipelineBinaryStore::PipelineBinaryStore(const Context& context, const VkPhysica
     getData = reinterpret_cast<PFN_vkGetPipelineBinaryDataKHR>(context.deviceProc(context.device, "vkGetPipelineBinaryDataKHR"));
     releaseData = reinterpret_cast<PFN_vkReleaseCapturedPipelineDataKHR>(context.deviceProc(context.device, "vkReleaseCapturedPipelineDataKHR"));
     if (getKey == nullptr || createBinaries == nullptr || destroyBinary == nullptr || getData == nullptr || releaseData == nullptr) return;
-    if (getKey(context.device, nullptr, &globalKey) != VK_SUCCESS || !validKey(globalKey)) return;
+    VkResult result = VK_SUCCESS;
+    if (const auto* reason = queryKey(getKey, context.device, nullptr, globalKey, result)) {
+        std::fprintf(stderr, "[pipeline-binary] disabled: unusable global key (result=%d, %s); using the driver pipeline cache\n", static_cast<int>(result), reason);
+        return;
+    }
     directory = root / "driver" / "binaries";
 }
 
@@ -139,7 +156,8 @@ std::vector<std::byte> PipelineBinaryStore::Key(const VkComputePipelineCreateInf
     }
     VkPipelineCreateInfoKHR pipelineInfo{VK_STRUCTURE_TYPE_PIPELINE_CREATE_INFO_KHR, const_cast<VkComputePipelineCreateInfo*>(&info)};
     VkPipelineBinaryKeyKHR pipelineKey{VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR};
-    if (getKey(context.device, &pipelineInfo, &pipelineKey) != VK_SUCCESS || !validKey(pipelineKey)) return {};
+    VkResult result = VK_SUCCESS;
+    if (queryKey(getKey, context.device, &pipelineInfo, pipelineKey, result) != nullptr) return {};
     std::vector<std::byte> key;
     number(key, 1);
     number(key, properties.vendorID);
