@@ -954,7 +954,6 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     });
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);
-    if (preparedImageModes) ResourceMaterializer::PrepareImageModes(info);
     reader.List(info.samplers, 21, [](Reader& in, SamplerResource& sampler) {
         in.Value(sampler.source);
         in.Value(sampler.firstUsePc);
@@ -999,6 +998,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.rasterPrimitive);
     reader.Value(info.layerExported);
     reader.Value(info.smoothOffsetBarycentrics);
+    if (preparedImageModes) ResourceMaterializer::PrepareImageModes(info);
 }
 
 void encodeInfo(Writer& writer, const CompiledShaderInfo& compiled) {

@@ -440,6 +440,13 @@ public:
     }
 };
 
+void ApplyResourcePlanInfo(IrProgram& program, const ShaderInfo& info) {
+    auto& target = program.Info();
+    target.maxImageArrayLayers = info.maxImageArrayLayers;
+    target.images = info.images;
+    target.runtimeImageModes = info.runtimeImageModes;
+}
+
 struct ResourceProgram {
     explicit ResourceProgram(const RecompileRequest& request, ShaderPreparationContext* preparation = nullptr, bool reclaim = true) : program(std::make_unique<IrProgram>(PrepareResourceProgram(request, preparation))) {
         const auto clearRegisterState = [](const auto& storage) {
@@ -453,8 +460,9 @@ struct ResourceProgram {
         clearRegisterState(program->Blocks());
         clearRegisterState(program->Resources().blockStorage);
         if (reclaim) program->ReclaimUnusedValues();
+        program->Resources().info.maxImageArrayLayers = request.target.maxImageArrayLayers;
         plan = std::make_shared<const IrResourcePlan>(ResourceMaterializer{}.ExtractPlan(*program));
-        program->Info() = plan->info;
+        ApplyResourcePlanInfo(*program, plan->info);
     }
 
     std::unique_ptr<IrProgram> program;
@@ -605,6 +613,7 @@ auto recordEmissionFailure(std::exception_ptr* emissionFailure, TStep&& step) ->
 
 void prepareInterface(const RecompileRequest& request, IrProgram& program) {
     const auto inputInfo = RequestInputInfo(request);
+    program.Info().maxImageArrayLayers = request.target.maxImageArrayLayers;
     constexpr DeadCodeEliminator deadCodeEliminator;
     constexpr ResourceMaterializer resourceMaterializer;
     const bool nativeSampleOffsets = request.target.nonConstantImageOffsets && std::find(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end(), spv::CapabilityImageGatherExtended) != request.target.supportedCapabilities.end();
@@ -622,7 +631,6 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
     deadCodeEliminator.Eliminate(program);
 
     constexpr ShaderInfoCollector shaderInfoCollector;
-    program.Info().maxImageArrayLayers = request.target.maxImageArrayLayers;
     shaderInfoCollector.Collect(program, inputInfo);
 }
 
@@ -1434,7 +1442,7 @@ struct PreparedInterface {
             preparation.interfaceProgram = std::move(program);
         }
         auto& program = *preparation.interfaceProgram;
-        if (source.plan != nullptr) program.Info() = source.plan->info;
+        if (source.plan != nullptr) ApplyResourcePlanInfo(program, source.plan->info);
         return recordEmissionFailure(emissionFailure, [&] {
             auto variant = emitVariant(request, program);
             variant.info = program.CompiledInfo();
@@ -1512,7 +1520,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
                 if (layoutPair && preparation != nullptr) return CountedCompile([&] { return PreparedInterface::Compile(source, request, *preparation, &emissionFailure); });
                 auto program = source.program != nullptr ? std::move(*source.program) : PrepareResourceProgram(request, preparation);
                 source.program.reset();
-                if (source.plan != nullptr) program.Info() = source.plan->info;
+                if (source.plan != nullptr) ApplyResourcePlanInfo(program, source.plan->info);
                 return CountedCompile([&] { return compileVariant(request, std::move(program), &emissionFailure); });
             }();
             attachSubstitutes(compiled);
@@ -1551,8 +1559,9 @@ RecompileResult recompileOnce(const RecompileRequest& request) {
     constexpr ResourceMaterializer materializer;
     if (!request.useCache) {
         auto program = PrepareResourceProgram(request);
+        program.Resources().info.maxImageArrayLayers = request.target.maxImageArrayLayers;
         const auto plan = materializer.ExtractPlan(program);
-        program.Info() = plan.info;
+        ApplyResourcePlanInfo(program, plan.info);
         materializer.Materialize(plan, runtime, snapshot);
         const auto variant = CountedCompile([&] { return compileVariant(request, std::move(program)); });
         return materializeResult(variant, request, snapshot);
