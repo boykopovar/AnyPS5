@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 import urllib.request
+from base64 import b64encode
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -15,7 +16,6 @@ DB_URL = ("https://raw.githubusercontent.com/zecoxao/sce_symbols"
           "/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv")
 DEFAULT_CACHE = Path(tempfile.gettempdir()) / "anyps5-nid-db" / "aerolib.csv"
 
-CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-"
 SUFFIX = bytes([0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1,
                 0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30])
 CPP_TOKEN = re.compile(
@@ -31,16 +31,7 @@ ASM_FUNCTION_MACROS = {"APS5_ASM_FUNCTION", "APS5_SIGNAL_ASM_FUNCTION"}
 
 def compute_nid(symbol):
     digest = hashlib.sha1(symbol.encode() + SUFFIX).digest()
-    rev = bytes(digest[7 - i] for i in range(8))
-    out = []
-    for i in range(0, 6, 3):
-        triple = (rev[i] << 16) | (rev[i + 1] << 8) | rev[i + 2]
-        out += [CHARSET[(triple >> 18) & 63], CHARSET[(triple >> 12) & 63],
-                CHARSET[(triple >> 6) & 63], CHARSET[triple & 63]]
-    tail = (rev[6] << 16) | (rev[7] << 8)
-    out += [CHARSET[(tail >> 18) & 63], CHARSET[(tail >> 12) & 63],
-            CHARSET[(tail >> 6) & 63]]
-    return "".join(out)
+    return b64encode(digest[:8][::-1], altchars=b"+-").decode("ascii").rstrip("=")
 
 
 def strip_nid_postfix(name):
@@ -145,6 +136,23 @@ def collect_real_names():
     return names
 
 
+def source_locations(nids):
+    matches = []
+    for path in source_files(PRX):
+        text = path.read_text(encoding="utf-8")
+        exports = set(source_aliases(text))
+        names = [match.group(1) for match in source_definitions(text)]
+        names.extend(source_assembly_definitions(text))
+        for name in names:
+            canonical = strip_nid_postfix(name)
+            if not canonical.endswith(("_nid_no_patch", "_nid_no_patch_cut")):
+                exports.add((compute_nid(canonical), name))
+        for nid, name in sorted(exports):
+            if nid in nids:
+                matches.append({"nid": nid, "name": name, "path": path.relative_to(ROOT).as_posix()})
+    return matches
+
+
 def option_name(argument, options):
     if not argument.startswith("-") or argument == "-":
         return None
@@ -202,6 +210,8 @@ def main(argv=None):
                         help="compute NIDs for these symbol names")
     parser.add_argument("--from-file", action="append", default=[], metavar="PATH",
                         help="append symbol names from a UTF-8 file, one nonempty line per name; repeat or use - for stdin")
+    parser.add_argument("--where", action="store_true",
+                        help="find source exports matching requested NIDs or symbol names")
     parser.add_argument("--json", action="store_true",
                         help="emit machine-readable JSON")
     options = [option for action in parser._actions for option in action.option_strings]
@@ -213,6 +223,28 @@ def main(argv=None):
         parser.error("--name/--symbol cannot be combined with --nid")
     if requested_nids and "--from-file" in requested_options:
         parser.error("--from-file cannot be combined with --nid")
+    if args.where:
+        if not requested_options & {"--nid", "--name", "--symbol", "--from-file"}:
+            parser.error("--where requires --nid, --name, or --from-file")
+        try:
+            names = [*(args.name or []), *(name for path in args.from_file for name in symbol_file(path))]
+            nids = {nid.split("#", 1)[0] for nid in args.nid or []}
+            nids.update(compute_nid(name) for name in names)
+            if not nids:
+                parser.error("--where requires at least one NID or symbol name")
+            for nid in nids:
+                if re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) is None:
+                    parser.error(f"invalid NID {nid!r}: expected 11 characters from A-Z, a-z, 0-9, + or -")
+            rows = source_locations(nids)
+        except (OSError, UnicodeError) as error:
+            parser.error(str(error))
+        if args.json:
+            print(json.dumps({"locations": rows}, indent=1))
+        else:
+            print("%-12s %-40s %s" % ("NID", "SOURCE NAME", "PATH"))
+            for row in rows:
+                print("%-12s %-40s %s" % (row["nid"], row["name"], row["path"]))
+        return 0
     if requested_options & {"--name", "--symbol", "--from-file"}:
         try:
             names = [*(args.name or []), *(name for path in args.from_file for name in symbol_file(path))]

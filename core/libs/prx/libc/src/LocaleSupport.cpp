@@ -100,15 +100,6 @@ void ValidateCharacterRange(const char* first, const char* last, const char* fun
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
 }
 
-void* AllocateStringStorage(std::size_t bytes) {
-    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
-    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
-    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
-    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
-    reinterpret_cast<void**>(aligned)[-1] = raw;
-    return reinterpret_cast<void*>(aligned);
-}
-
 void APS5_VABI DestroyCollate(GuestLocale::Facet*) {}
 
 void APS5_VABI DeleteCollate(GuestLocale::Facet* self) {
@@ -148,7 +139,7 @@ GuestLocale::String* APS5_VABI CollateTransform(GuestLocale::String* result, con
     std::size_t capacity = GuestStringInlineCapacity;
     if (length > GuestStringInlineCapacity) {
         capacity = length | GuestStringCapacityMask;
-        data = static_cast<char*>(AllocateStringStorage(capacity + 1));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, first, length);
     data[length] = 0;
@@ -203,7 +194,7 @@ GuestLocale::String* APS5_VABI WideCollateTransform(GuestLocale::String* result,
     std::size_t capacity = GuestWideInlineCapacity;
     if (length > GuestWideInlineCapacity) {
         capacity = length | GuestWideInlineCapacity;
-        data = static_cast<char*>(AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
     }
     if (length != 0) std::memcpy(data, characters, bytes);
     data[bytes] = 0;
@@ -257,7 +248,7 @@ GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const 
     std::size_t capacity = GuestStringInlineCapacity;
     if (length > GuestStringInlineCapacity) {
         capacity = length | GuestStringCapacityMask;
-        data = static_cast<char*>(AllocateStringStorage(capacity + 1));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, source, length);
     data[length] = 0;
@@ -570,6 +561,25 @@ int ConvertCharacter(int value, bool upper) {
 
 }
 
+void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
+    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
+    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
+    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
+    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
+    reinterpret_cast<void**>(aligned)[-1] = raw;
+    return reinterpret_cast<void*>(aligned);
+}
+
+void GuestLocale::ReleaseStringStorage(String& string) {
+    if (string.capacity > GuestStringInlineCapacity) {
+        void* storage = string.pointer;
+        if (string.capacity + 1 >= GuestStringLargeAllocation) storage = static_cast<void**>(storage)[-1];
+        _ZdlPv_nid_postfix(storage);
+    }
+    string = {};
+    string.capacity = GuestStringInlineCapacity;
+}
+
 extern "C" {
 
 int APS5_VABI isupper_nid_postfix(int c) { return ClassifyCharacter(c, 0x02); }
@@ -774,6 +784,19 @@ void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(GuestLocale::LocinfoStorage* sel
 
 void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self) {
     if (self == nullptr) throw std::invalid_argument("_Locinfo destructor: null object");
+}
+
+void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(GuestLocale::SceV2Locinfo* self, const char* localeName) {
+    if (self == nullptr) throw std::invalid_argument("_Locinfo: null object");
+    self->name = setlocale_nid_postfix(0x3f, nullptr);
+    if (localeName == nullptr || (*localeName != 0 && std::strcmp(localeName, "C") != 0))
+        _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix("bad locale name");
+    self->classicName = self->name;
+}
+
+void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(GuestLocale::SceV2Locinfo* self) {
+    if (self == nullptr) throw std::invalid_argument("_Locinfo destructor: null object");
+    if (self->name != nullptr) setlocale_nid_postfix(0x3f, self->name);
 }
 
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, mbstate_t* st) {

@@ -66,7 +66,8 @@ int main() {
     Require(sceNpMatching2Initialize(nullptr) == InvalidArgument, "sceNpMatching2Initialize", "a null parameter did not return INVALID_ARGUMENT");
     init.size = 0x10;
     Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "an invalid parameter size did not return INVALID_ARGUMENT");
-
+    init.size = 0x20;
+    Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "an invalid size was taken");
     init.size = 0x30;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initialization failed");
     Require(sceNpMatching2Initialize(&init) == AlreadyInitialized, "sceNpMatching2Initialize", "initializing when already initialized did not return ALREADY_INITIALIZED");
@@ -134,6 +135,10 @@ int main() {
     Require(sceNpMatching2CreateContext(&create, &created) == 0 && created == 1, "sceNpMatching2Terminate", "termination did not restart the context ids at 1");
     Require(sceNpMatching2Terminate() == 0, "sceNpMatching2Terminate", "the second termination failed");
     Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "the third termination did not return NOT_INITIALIZED");
+    Require(sceNpMatching2ContextStart(1, 0) == NotInitialized, "sceNpMatching2ContextStart", "a call after termination did not return NOT_INITIALIZED");
+    Require(sceNpMatching2ContextStop(1) == NotInitialized, "sceNpMatching2ContextStop", "a call after termination did not return NOT_INITIALIZED");
+    Require(sceNpMatching2RegisterContextCallback(nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterContextCallback", "a call after termination did not return NOT_INITIALIZED");
+    Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call after termination did not return NOT_INITIALIZED");
 
     if (failures != 0) return 1;
     std::puts("NpMatching2 offline tests passed");

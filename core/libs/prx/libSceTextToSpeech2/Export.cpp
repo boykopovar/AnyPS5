@@ -50,4 +50,28 @@ int APS5_VABI sceTextToSpeech2Terminate() {
     return SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
+int APS5_VABI sceTextToSpeech2ConvertTextInt() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceTextToSpeech2GetAudioInt() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceTextToSpeech2InitializeInt() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceTextToSpeech2OpenInt() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceTextToSpeech2RegisterTextConversionItem() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceTextToSpeech2SynthesizeInt() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
