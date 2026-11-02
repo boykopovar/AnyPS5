@@ -1,6 +1,8 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
+#include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -96,6 +98,81 @@ void DuplicateKeyRejection() {
     _ZN6icu_6817UCharsTrieBuilderD1Ev_nid_postfix(builder);
 }
 
+void AddWords(UCharsTrieBuilder* builder, std::initializer_list<const char16_t*> words) {
+    std::int32_t value = 0;
+    for (const auto* word : words) {
+        alignas(8) unsigned char strRaw[64];
+        auto* s = reinterpret_cast<UnicodeString*>(strRaw);
+        _ZN6icu_6813UnicodeStringC1EPKDs_nid_postfix(s, word);
+        std::int32_t status = 0;
+        _ZN6icu_6817UCharsTrieBuilder3addERKNS_13UnicodeStringEiR10UErrorCode_nid_postfix(builder, s, ++value, &status);
+        Check(status == 0);
+        _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(s);
+    }
+}
+
+void FailedGrowthStaysFailed() {
+    std::int32_t status = 0;
+    alignas(8) unsigned char raw[128];
+    auto* builder = reinterpret_cast<UCharsTrieBuilder*>(raw);
+    _ZN6icu_6817UCharsTrieBuilderC1ER10UErrorCode_nid_postfix(builder, &status);
+    AddWords(builder, {u"ab"});
+    alignas(8) unsigned char outStrRaw[64]{};
+    auto* outStr = reinterpret_cast<UnicodeString*>(outStrRaw);
+    outStr->storage.stack.lengthAndFlags = 2;
+    _ZN6icu_6817UCharsTrieBuilder18buildUnicodeStringE22UStringTrieBuildOptionRNS_13UnicodeStringER10UErrorCode_nid_postfix(builder, 0, outStr, &status);
+    Check(status == 0);
+    const auto length = builder->ucharsLength;
+    Check(length > 0);
+    Check(_ZN6icu_6817UCharsTrieBuilder14ensureCapacityEi_nid_postfix(builder, std::numeric_limits<std::int32_t>::max()) == 0);
+    Check(builder->uchars == nullptr);
+    Check(_ZN6icu_6817UCharsTrieBuilder14ensureCapacityEi_nid_postfix(builder, 1) == 0);
+    Check(_ZN6icu_6817UCharsTrieBuilder5writeEi_nid_postfix(builder, u'x') == length);
+    Check(builder->uchars == nullptr);
+    _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(outStr);
+    _ZN6icu_6817UCharsTrieBuilderD1Ev_nid_postfix(builder);
+}
+
+void OverflowingWriteFails() {
+    std::int32_t status = 0;
+    alignas(8) unsigned char raw[128];
+    auto* builder = reinterpret_cast<UCharsTrieBuilder*>(raw);
+    _ZN6icu_6817UCharsTrieBuilderC1ER10UErrorCode_nid_postfix(builder, &status);
+    AddWords(builder, {u"ab"});
+    alignas(8) unsigned char outStrRaw[64]{};
+    auto* outStr = reinterpret_cast<UnicodeString*>(outStrRaw);
+    outStr->storage.stack.lengthAndFlags = 2;
+    _ZN6icu_6817UCharsTrieBuilder18buildUnicodeStringE22UStringTrieBuildOptionRNS_13UnicodeStringER10UErrorCode_nid_postfix(builder, 0, outStr, &status);
+    Check(status == 0);
+    const auto length = builder->ucharsLength;
+    const char16_t unit = u'x';
+    Check(_ZN6icu_6817UCharsTrieBuilder5writeEPKDsi_nid_postfix(builder, &unit, std::numeric_limits<std::int32_t>::max()) == length);
+    Check(builder->uchars == nullptr);
+    _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(outStr);
+    _ZN6icu_6817UCharsTrieBuilderD1Ev_nid_postfix(builder);
+}
+
+void ElementIndexesAreChecked() {
+    std::int32_t status = 0;
+    alignas(8) unsigned char raw[128];
+    auto* builder = reinterpret_cast<UCharsTrieBuilder*>(raw);
+    _ZN6icu_6817UCharsTrieBuilderC1ER10UErrorCode_nid_postfix(builder, &status);
+    AddWords(builder, {u"abc", u"abd", u"x"});
+    Check(_ZNK6icu_6817UCharsTrieBuilder21getLimitOfLinearMatchEiii_nid_postfix(builder, 0, 1, 0) == 2);
+    Check(_ZNK6icu_6817UCharsTrieBuilder17countElementUnitsEiii_nid_postfix(builder, 0, 2, 2) == 2);
+    Check(_ZNK6icu_6817UCharsTrieBuilder26indexOfElementWithNextUnitEiiDs_nid_postfix(builder, 0, 0, u'a') == 2);
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder21getLimitOfLinearMatchEiii_nid_postfix(builder, 0, 3, 0); });
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder21getLimitOfLinearMatchEiii_nid_postfix(builder, -1, 1, 0); });
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder21getLimitOfLinearMatchEiii_nid_postfix(builder, 0, 2, 1); });
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder17countElementUnitsEiii_nid_postfix(builder, 0, 4, 0); });
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder17countElementUnitsEiii_nid_postfix(builder, 0, 3, 1); });
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder23skipElementsBySomeUnitsEiii_nid_postfix(builder, 2, 0, 1); });
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder26indexOfElementWithNextUnitEiiDs_nid_postfix(builder, 2, 0, u'x'); });
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder14getElementUnitEii_nid_postfix(builder, 2, 1); });
+    Invalid([&] { _ZNK6icu_6817UCharsTrieBuilder21createLinearMatchNodeEiiiPNS_17StringTrieBuilder4NodeE_nid_postfix(builder, 0, 1, 3, nullptr); });
+    _ZN6icu_6817UCharsTrieBuilderD1Ev_nid_postfix(builder);
+}
+
 void NullChecks() {
     Invalid([] { _ZN6icu_6817UCharsTrieBuilderC1ER10UErrorCode_nid_postfix(nullptr, nullptr); });
     Invalid([] { _ZN6icu_6817StringTrieBuilderC2Ev_nid_postfix(nullptr); });
@@ -109,5 +186,8 @@ int main() {
     BasicTrieBuild();
     DuplicateKeyRejection();
     NullChecks();
+    FailedGrowthStaysFailed();
+    OverflowingWriteFails();
+    ElementIndexesAreChecked();
     return 0;
 }

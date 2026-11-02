@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <stdexcept>
 
@@ -20,6 +21,27 @@ template<typename TValue> TValue& Require(TValue* value) {
 const void* RequirePointer(const void* pointer) {
     if (!pointer) throw std::invalid_argument("TrieBuilder: null pointer");
     return pointer;
+}
+
+const char16_t* ElementString(const UCharsTrieBuilder& builder, std::int32_t i) {
+    if (i < 0 || i >= builder.elementsLength) throw std::invalid_argument("TrieBuilder: element index out of range");
+    return builder.strings.Buffer() + builder.elements[i].stringOffset;
+}
+
+const char16_t* ElementUnits(const UCharsTrieBuilder& builder, std::int32_t i, std::int32_t unitIndex, std::int32_t length) {
+    const auto* string = ElementString(builder, i);
+    if (unitIndex < 0 || length < 0 || unitIndex > string[0] - length) throw std::invalid_argument("TrieBuilder: element unit index out of range");
+    return string + 1 + unitIndex;
+}
+
+char16_t ElementUnit(const UCharsTrieBuilder& builder, std::int32_t i, std::int32_t unitIndex) {
+    return *ElementUnits(builder, i, unitIndex, 1);
+}
+
+void DropUChars(UCharsTrieBuilder& builder) {
+    Icu::Abi::Free_nid_no_patch(builder.uchars);
+    builder.uchars = nullptr;
+    builder.ucharsCapacity = 0;
 }
 
 void APS5_VABI Abstract_nid_no_patch() { throw std::invalid_argument("TrieBuilder: abstract method"); }
@@ -947,20 +969,20 @@ Icu::Abi::UnicodeString* APS5_VABI _ZN6icu_6817UCharsTrieBuilder18buildUnicodeSt
 
 std::int8_t APS5_VABI _ZN6icu_6817UCharsTrieBuilder14ensureCapacityEi_nid_postfix(UCharsTrieBuilder* self, std::int32_t length) {
     auto& b = Require(self);
-    if (!b.uchars && b.ucharsCapacity > 0) return 0;
+    if (!b.uchars) return 0;
     if (length > b.ucharsCapacity) {
-        std::int32_t newCapacity = b.ucharsCapacity == 0 ? 1024 : b.ucharsCapacity;
+        std::int64_t newCapacity = std::max<std::int32_t>(b.ucharsCapacity, 1);
         do {
             newCapacity *= 2;
         } while (newCapacity <= length);
-        auto* newUChars = static_cast<char16_t*>(Icu::Abi::Allocate_nid_no_patch(newCapacity * sizeof(char16_t)));
+        auto* newUChars = newCapacity <= std::numeric_limits<std::int32_t>::max()
+            ? static_cast<char16_t*>(Icu::Abi::Allocate_nid_no_patch(static_cast<std::size_t>(newCapacity) * sizeof(char16_t)))
+            : nullptr;
         if (!newUChars) {
-            Icu::Abi::Free_nid_no_patch(b.uchars);
-            b.uchars = nullptr;
-            b.ucharsCapacity = 0;
+            DropUChars(b);
             return 0;
         }
-        if (b.uchars && b.ucharsLength > 0) {
+        if (b.ucharsLength > 0) {
             std::memcpy(
                 newUChars + (newCapacity - b.ucharsLength),
                 b.uchars + (b.ucharsCapacity - b.ucharsLength),
@@ -969,13 +991,17 @@ std::int8_t APS5_VABI _ZN6icu_6817UCharsTrieBuilder14ensureCapacityEi_nid_postfi
         }
         Icu::Abi::Free_nid_no_patch(b.uchars);
         b.uchars = newUChars;
-        b.ucharsCapacity = newCapacity;
+        b.ucharsCapacity = static_cast<std::int32_t>(newCapacity);
     }
     return 1;
 }
 
 std::int32_t APS5_VABI _ZN6icu_6817UCharsTrieBuilder5writeEi_nid_postfix(UCharsTrieBuilder* self, std::int32_t unit) {
     auto& b = Require(self);
+    if (b.ucharsLength == std::numeric_limits<std::int32_t>::max()) {
+        DropUChars(b);
+        return b.ucharsLength;
+    }
     std::int32_t newLength = b.ucharsLength + 1;
     if (_ZN6icu_6817UCharsTrieBuilder14ensureCapacityEi_nid_postfix(self, newLength)) {
         b.ucharsLength = newLength;
@@ -987,6 +1013,10 @@ std::int32_t APS5_VABI _ZN6icu_6817UCharsTrieBuilder5writeEi_nid_postfix(UCharsT
 std::int32_t APS5_VABI _ZN6icu_6817UCharsTrieBuilder5writeEPKDsi_nid_postfix(UCharsTrieBuilder* self, const char16_t* s, std::int32_t length) {
     auto& b = Require(self);
     if (length < 0) throw std::invalid_argument("TrieBuilder: negative length");
+    if (length > std::numeric_limits<std::int32_t>::max() - b.ucharsLength) {
+        DropUChars(b);
+        return b.ucharsLength;
+    }
     std::int32_t newLength = b.ucharsLength + length;
     if (_ZN6icu_6817UCharsTrieBuilder14ensureCapacityEi_nid_postfix(self, newLength)) {
         b.ucharsLength = newLength;
@@ -997,8 +1027,7 @@ std::int32_t APS5_VABI _ZN6icu_6817UCharsTrieBuilder5writeEPKDsi_nid_postfix(UCh
 
 std::int32_t APS5_VABI _ZN6icu_6817UCharsTrieBuilder17writeElementUnitsEiii_nid_postfix(UCharsTrieBuilder* self, std::int32_t i, std::int32_t unitIndex, std::int32_t length) {
     auto& b = Require(self);
-    const auto* buf = b.strings.Buffer();
-    return _ZN6icu_6817UCharsTrieBuilder5writeEPKDsi_nid_postfix(self, buf + b.elements[i].stringOffset + 1 + unitIndex, length);
+    return _ZN6icu_6817UCharsTrieBuilder5writeEPKDsi_nid_postfix(self, ElementUnits(b, i, unitIndex, length), length);
 }
 
 std::int32_t APS5_VABI _ZN6icu_6817UCharsTrieBuilder18writeValueAndFinalEia_nid_postfix(UCharsTrieBuilder* self, std::int32_t i, std::int8_t isFinal) {
@@ -1081,15 +1110,11 @@ std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder17getMinLinearMatchEv_nid_p
 }
 
 std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder22getElementStringLengthEi_nid_postfix(const UCharsTrieBuilder* self, std::int32_t i) {
-    const auto& b = Require(self);
-    if (i < 0 || i >= b.elementsLength) throw std::invalid_argument("TrieBuilder: element index out of range");
-    return b.strings.Buffer()[b.elements[i].stringOffset];
+    return ElementString(Require(self), i)[0];
 }
 
 char16_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder14getElementUnitEii_nid_postfix(const UCharsTrieBuilder* self, std::int32_t i, std::int32_t unitIndex) {
-    const auto& b = Require(self);
-    if (i < 0 || i >= b.elementsLength) throw std::invalid_argument("TrieBuilder: element index out of range");
-    return b.strings.Buffer()[b.elements[i].stringOffset + 1 + unitIndex];
+    return ElementUnit(Require(self), i, unitIndex);
 }
 
 std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder15getElementValueEi_nid_postfix(const UCharsTrieBuilder* self, std::int32_t i) {
@@ -1100,22 +1125,22 @@ std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder15getElementValueEi_nid_pos
 
 std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder21getLimitOfLinearMatchEiii_nid_postfix(const UCharsTrieBuilder* self, std::int32_t first, std::int32_t last, std::int32_t unitIndex) {
     const auto& b = Require(self);
-    const auto* buf = b.strings.Buffer();
-    std::int32_t firstOff = b.elements[first].stringOffset;
-    std::int32_t lastOff = b.elements[last].stringOffset;
-    std::int32_t minLen = buf[firstOff];
-    while (++unitIndex < minLen && buf[firstOff + 1 + unitIndex] == buf[lastOff + 1 + unitIndex]) {}
+    const auto* firstString = ElementString(b, first);
+    const auto* lastString = ElementString(b, last);
+    const std::int32_t minLength = std::min<std::int32_t>(firstString[0], lastString[0]);
+    if (unitIndex < 0 || unitIndex >= minLength) throw std::invalid_argument("TrieBuilder: element unit index out of range");
+    while (++unitIndex < minLength && firstString[1 + unitIndex] == lastString[1 + unitIndex]) {}
     return unitIndex;
 }
 
 std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder17countElementUnitsEiii_nid_postfix(const UCharsTrieBuilder* self, std::int32_t start, std::int32_t limit, std::int32_t unitIndex) {
     const auto& b = Require(self);
-    const auto* buf = b.strings.Buffer();
+    if (start < 0 || start >= limit || limit > b.elementsLength) throw std::invalid_argument("TrieBuilder: element range out of range");
     std::int32_t length = 0;
     std::int32_t i = start;
     do {
-        char16_t unit = buf[b.elements[i++].stringOffset + 1 + unitIndex];
-        while (i < limit && unit == buf[b.elements[i].stringOffset + 1 + unitIndex]) {
+        char16_t unit = ElementUnit(b, i++, unitIndex);
+        while (i < limit && unit == ElementUnit(b, i, unitIndex)) {
             ++i;
         }
         ++length;
@@ -1125,10 +1150,9 @@ std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder17countElementUnitsEiii_nid
 
 std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder23skipElementsBySomeUnitsEiii_nid_postfix(const UCharsTrieBuilder* self, std::int32_t i, std::int32_t unitIndex, std::int32_t count) {
     const auto& b = Require(self);
-    const auto* buf = b.strings.Buffer();
     do {
-        char16_t unit = buf[b.elements[i++].stringOffset + 1 + unitIndex];
-        while (unit == buf[b.elements[i].stringOffset + 1 + unitIndex]) {
+        char16_t unit = ElementUnit(b, i++, unitIndex);
+        while (unit == ElementUnit(b, i, unitIndex)) {
             ++i;
         }
     } while (--count > 0);
@@ -1137,8 +1161,7 @@ std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder23skipElementsBySomeUnitsEi
 
 std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder26indexOfElementWithNextUnitEiiDs_nid_postfix(const UCharsTrieBuilder* self, std::int32_t i, std::int32_t unitIndex, char16_t unit) {
     const auto& b = Require(self);
-    const auto* buf = b.strings.Buffer();
-    while (unit == buf[b.elements[i].stringOffset + 1 + unitIndex]) {
+    while (unit == ElementUnit(b, i, unitIndex)) {
         ++i;
     }
     return i;
@@ -1150,10 +1173,7 @@ std::int32_t APS5_VABI _ZNK6icu_6817UCharsTrieBuilder31getMaxBranchLinearSubNode
 }
 
 void* APS5_VABI _ZNK6icu_6817UCharsTrieBuilder21createLinearMatchNodeEiiiPNS_17StringTrieBuilder4NodeE_nid_postfix(const UCharsTrieBuilder* self, std::int32_t i, std::int32_t unitIndex, std::int32_t length, void* nextNode) {
-    const auto& b = Require(self);
-    const auto* buf = b.strings.Buffer();
-    const char16_t* units = buf + b.elements[i].stringOffset + 1 + unitIndex;
-    return new (std::nothrow) UCTLinearMatchNode(units, length, static_cast<Node*>(nextNode));
+    return new (std::nothrow) UCTLinearMatchNode(ElementUnits(Require(self), i, unitIndex, length), length, static_cast<Node*>(nextNode));
 }
 
 }
