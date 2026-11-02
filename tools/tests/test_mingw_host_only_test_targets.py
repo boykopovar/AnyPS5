@@ -316,6 +316,75 @@ class HostOnlyTargets(unittest.TestCase):
             ["first_tests", "second_tests"],
         )
 
+    def graph(self, closures, path=None):
+        tests = {
+            Path(output).stem: {"registered": ["core/libs/CMakeLists.txt"], "arguments": [], "sets": [], "requires": [],
+                                "depends": [], "target": output}
+            for output in closures
+        }
+        path = path or Path(self.temporary.name) / "test-graph.json"
+        path.write_text(json.dumps({"tests": tests, "closures": closures}), encoding="utf-8")
+        return path
+
+    def graph_selections(self, changed, graph):
+        build_dir = Path(self.temporary.name) / "build"
+        if not build_dir.exists():
+            first = self.target("first_tests")
+            second = self.target("second_tests", source="core/libs/tests/Second.cpp")
+            self.fixture([first, second])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        return build_mingw_host_only_tests.host_only_test_targets(source_root, targets, changed, graph)
+
+    def closures(self):
+        return {
+            "tests/first_tests.exe": ["core/libs/tests/HostOnly.cpp", "core/libs/tests/Shared.hpp",
+                                      "core/libs/prx/libFirst/src/First.cpp"],
+            "tests/second_tests.exe": ["core/libs/tests/Second.cpp", "core/libs/prx/libSecond/include/Second.hpp"],
+        }
+
+    def test_graph_narrows_a_header_change_to_the_tests_that_include_it(self):
+        graph = self.graph(self.closures())
+        self.assertEqual(self.graph_selections(["core/libs/tests/Shared.hpp"], graph), ["first_tests"])
+        self.assertEqual(self.graph_selections(["core/libs/prx/libSecond/include/Second.hpp"], graph), ["second_tests"])
+
+    def test_graph_narrows_a_library_cmake_change_to_the_tests_built_from_its_directory(self):
+        graph = self.graph(self.closures())
+        self.assertEqual(self.graph_selections(["core/libs/prx/libFirst/CMakeLists.txt"], graph), ["first_tests"])
+
+    def test_graph_selection_keeps_a_directly_changed_test_source(self):
+        graph = self.graph(self.closures())
+        self.assertEqual(
+            self.graph_selections(["core/libs/tests/Shared.hpp", "core/libs/tests/Second.cpp"], graph),
+            ["first_tests", "second_tests"],
+        )
+
+    def test_graph_matches_executables_without_regard_to_case(self):
+        closures = {"Tests/First_Tests.EXE": ["core/libs/tests/Shared.hpp"]}
+        self.assertEqual(self.graph_selections(["core/libs/tests/Shared.hpp"], self.graph(closures)), ["first_tests"])
+
+    def test_header_missing_from_the_graph_selects_every_host_target(self):
+        graph = self.graph(self.closures())
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            selected = self.graph_selections(["core/libs/tests/New.hpp"], graph)
+        self.assertEqual(selected, ["first_tests", "second_tests"])
+        self.assertIn("core/libs/tests/New.hpp is not in the graph", output.getvalue())
+
+    def test_missing_or_invalid_graph_selects_every_host_target(self):
+        missing = Path(self.temporary.name) / "absent.json"
+        invalid = Path(self.temporary.name) / "invalid.json"
+        invalid.write_text("{\"tests\": []}", encoding="utf-8")
+        for graph in (None, missing, invalid):
+            with self.subTest(graph=graph), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(self.graph_selections(["core/libs/tests/Shared.hpp"], graph),
+                                 ["first_tests", "second_tests"])
+
+    def test_build_wide_changes_ignore_the_graph(self):
+        graph = self.graph(self.closures())
+        for changed in (["core/libs/CMakeLists.txt"], ["CMakeLists.txt"], ["tools/select_tests.py"],
+                        [".github/workflows/build.yml"], ["core/libs/tests/Shared.hpp", "CMakeLists.txt"]):
+            with self.subTest(changed=changed), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(self.graph_selections(changed, graph), ["first_tests", "second_tests"])
+
     def test_fails_when_cmake_did_not_write_a_file_api_index(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "no CMake File API index"):
@@ -427,6 +496,15 @@ class WindowsPullRequestGateTests(unittest.TestCase):
                      "'tools/select_tests.py'", "'tools/configure_seed.py'"):
             with self.subTest(item=item):
                 self.assertIn(item, gate)
+
+    def test_windows_pull_request_steps_read_the_test_graph_of_main(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
+        windows = workflow.split("\n  windows:\n", 1)[1].split("\n  edge-watch:", 1)[0]
+        restore = windows.split("path: test-graph.json", 1)[0].rsplit("- if: ", 1)[1]
+        self.assertIn("github.event_name == 'pull_request'", restore)
+        for script in ("build_mingw_host_only_tests.py", "build_changed_guest_tests.py"):
+            with self.subTest(script=script):
+                self.assertIn(f"python tools/{script} build changed.txt --graph test-graph.json", windows)
 
 
 if __name__ == "__main__":

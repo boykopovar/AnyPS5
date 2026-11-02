@@ -6,6 +6,17 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import select_tests
+
+HEADER_SUFFIXES = (".h", ".hpp", ".hh", ".inl")
+BROAD_CHANGES = {
+    "CMakeLists.txt",
+    ".github/workflows/build.yml",
+    "tools/build_mingw_host_only_tests.py",
+    "tools/select_tests.py",
+}
+
 
 def object_document(value, path, name):
     if not isinstance(value, dict):
@@ -158,7 +169,73 @@ def source_relative_path(source_root, source):
         return None
 
 
-def host_only_test_targets(source_root, targets, changed_paths=None):
+def graph_resolvable(path):
+    return path.startswith("core/libs/") and (path.endswith(HEADER_SUFFIXES) or Path(path).name == "CMakeLists.txt")
+
+
+def artifact_key(path):
+    return Path(path).as_posix().casefold()
+
+
+def graph_selected_targets(graph_path, targets, changed):
+    if graph_path is None or not Path(graph_path).is_file():
+        return None
+    try:
+        graph = select_tests.load_graph(graph_path)
+    except (OSError, ValueError) as error:
+        print(f"test graph not used: {error}")
+        return None
+    tests = graph["tests"].values()
+    known = set().union(*graph["closures"].values(), *(test["arguments"] for test in tests),
+                        *(test["registered"] for test in tests))
+    unknown = sorted(path for path in changed if path.endswith(HEADER_SUFFIXES) and path not in known)
+    if unknown:
+        print(f"test graph not used: {unknown[0]} is not in the graph")
+        return None
+    picked, full = select_tests.select(graph, sorted(changed))
+    if picked is None:
+        print(f"test graph not used: {full[0]} changes every test")
+        return None
+    outputs = {artifact_key(graph["tests"][name]["target"]) for name in picked if graph["tests"][name]["target"]}
+    return {
+        target["name"]
+        for target in targets.values()
+        for artifact in target.get("artifacts", [])
+        if artifact_key(artifact.get("path", "")) in outputs
+    }
+
+
+def changed_source_targets(source_root, targets, selected, changed):
+    changed_source = {
+        relative
+        for target in targets.values()
+        if target.get("name") in selected
+        for item in target.get("sources", []) if not item.get("isGenerated")
+        for relative in [source_relative_path(source_root, source_root / item["path"])]
+        if relative is not None
+    }
+    matched_sources = changed & changed_source
+    return [
+        target["name"] for target in targets.values()
+        if target.get("name") in selected
+        and any(
+            source_relative_path(source_root, source_root / item["path"]) in matched_sources
+            for item in target.get("sources", []) if not item.get("isGenerated")
+        )
+    ]
+
+
+def narrow_broad_change(selected, broad_changes, source_root, targets, changed, graph_path):
+    if any(path in broad_changes for path in changed):
+        return selected
+    resolved = graph_selected_targets(graph_path, targets, changed)
+    if resolved is None:
+        return selected
+    direct = set(changed_source_targets(source_root, targets, selected, changed))
+    return [name for name in selected if name in resolved or name in direct]
+
+
+def host_only_test_targets(source_root, targets, changed_paths=None, graph_path=None):
     selected = []
     for target in targets.values():
         if target.get("type") != "EXECUTABLE":
@@ -178,34 +255,9 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
     if changed_paths is None:
         return selected
     changed = {Path(path).as_posix() for path in changed_paths if path}
-    broad_change = any(
-        path in {"CMakeLists.txt", ".github/workflows/build.yml", "tools/build_mingw_host_only_tests.py"}
-        or path.startswith("core/libs/") and (
-            path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
-        )
-        for path in changed
-    )
-    if broad_change:
-        return selected
-    changed_source = {
-        relative
-        for target in targets.values()
-        if target.get("name") in selected
-        for item in target.get("sources", []) if not item.get("isGenerated")
-        for relative in [source_relative_path(source_root, source_root / item["path"])]
-        if relative is not None
-    }
-    matched_sources = changed & changed_source
-    if matched_sources:
-        return [
-            target["name"] for target in targets.values()
-            if target.get("name") in selected
-            and any(
-                source_relative_path(source_root, source_root / item["path"]) in matched_sources
-                for item in target.get("sources", []) if not item.get("isGenerated")
-            )
-        ]
-    return []
+    if any(path in BROAD_CHANGES or graph_resolvable(path) for path in changed):
+        return narrow_broad_change(selected, BROAD_CHANGES, source_root, targets, changed, graph_path)
+    return changed_source_targets(source_root, targets, selected, changed)
 
 
 def main(argv=None):
@@ -213,11 +265,12 @@ def main(argv=None):
     parser.add_argument("build_dir", type=Path)
     parser.add_argument("changed_paths", nargs="?", type=Path)
     parser.add_argument("--list-only", action="store_true")
+    parser.add_argument("--graph", type=Path, help="test graph of main; narrows header and CMakeLists.txt changes")
     args = parser.parse_args(argv)
     try:
         source_root, targets = read_reply(Path(os.path.realpath(args.build_dir)))
         changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
-        selected = host_only_test_targets(source_root, targets, changed_paths)
+        selected = host_only_test_targets(source_root, targets, changed_paths, args.graph)
         if not selected:
             print("No changed host-only core/libs test executables require a link check")
             return 0

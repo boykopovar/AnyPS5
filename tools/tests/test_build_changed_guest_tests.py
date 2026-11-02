@@ -92,6 +92,45 @@ class GuestTestTargets(unittest.TestCase):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
 
+    def graph_selections(self, changed, closures):
+        graph = Path(self.temporary.name) / "test-graph.json"
+        tests = {Path(output).stem: {"registered": [], "arguments": [], "sets": [], "requires": [], "depends": [],
+                                     "target": output} for output in closures}
+        graph.write_text(json.dumps({"tests": tests, "closures": closures}), encoding="utf-8")
+        build_dir = Path(self.temporary.name) / "build"
+        if not build_dir.exists():
+            guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
+            guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
+            self.fixture([guest_a, guest_b])
+        source_root, targets = build_changed_guest_tests.host_only.read_reply(build_dir.resolve())
+        with contextlib.redirect_stdout(io.StringIO()):
+            return build_changed_guest_tests.guest_test_targets(source_root, targets, changed, graph)
+
+    def test_graph_narrows_a_header_change_to_the_guest_tests_that_include_it(self):
+        closures = {"tests/guest_a_tests.exe": ["core/libs/tests/GuestA.cpp"],
+                    "tests/guest_b_tests.exe": ["core/libs/tests/GuestB.cpp", "core/libs/prx/libScePad/include/Pad.hpp"]}
+        self.assertEqual(self.graph_selections(["core/libs/prx/libScePad/include/Pad.hpp"], closures), ["guest_b_tests"])
+
+    def test_graph_selects_no_guest_test_when_no_test_includes_a_known_header(self):
+        closures = {"tests/guest_a_tests.exe": ["core/libs/tests/GuestA.cpp"],
+                    "tests/guest_b_tests.exe": ["core/libs/tests/GuestB.cpp"],
+                    "tests/host_tests.exe": ["core/libs/prx/libScePad/include/Pad.hpp"]}
+        self.assertEqual(self.graph_selections(["core/libs/prx/libScePad/include/Pad.hpp"], closures), [])
+
+    def test_graph_falls_back_to_every_guest_test_for_a_header_it_does_not_know(self):
+        closures = {"tests/guest_a_tests.exe": ["core/libs/tests/GuestA.cpp"],
+                    "tests/guest_b_tests.exe": ["core/libs/tests/GuestB.cpp"]}
+        self.assertEqual(self.graph_selections(["core/libs/prx/libScePad/include/Pad.hpp"], closures),
+                         ["guest_a_tests", "guest_b_tests"])
+
+    def test_build_wide_changes_ignore_the_graph(self):
+        closures = {"tests/guest_a_tests.exe": ["core/libs/tests/GuestA.cpp", "core/libs/prx/libScePad/include/Pad.hpp"],
+                    "tests/guest_b_tests.exe": ["core/libs/tests/GuestB.cpp"]}
+        for path in ("tools/build_changed_guest_tests.py", "tools/select_tests.py", "core/libs/CMakeLists.txt"):
+            with self.subTest(path=path):
+                self.assertEqual(self.graph_selections(["core/libs/prx/libScePad/include/Pad.hpp", path], closures),
+                                 ["guest_a_tests", "guest_b_tests"])
+
 
 class OwnerResolution(unittest.TestCase):
     def test_resolves_the_executable_not_a_test_argument(self):
