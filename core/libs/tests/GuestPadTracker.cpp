@@ -18,6 +18,8 @@ int main() {
     std::array<std::uint32_t, 2> second{kFill, kFill};
 
     Require(scePadTrackerGetWorkingMemorySize(nullptr, nullptr) == kErrInvalidArg);
+    Require(scePadTrackerGetWorkingMemorySize(reinterpret_cast<std::uint32_t*>(0x10), second.data()) == kErrInvalidArg);
+    Require(scePadTrackerGetWorkingMemorySize(first.data(), reinterpret_cast<std::uint32_t*>(0x10)) == kErrInvalidArg);
     Require(scePadTrackerGetWorkingMemorySize(first.data(), nullptr) == kErrInvalidArg);
     Require(scePadTrackerGetWorkingMemorySize(nullptr, second.data()) == kErrInvalidArg);
     Require(first[0] == kFill && first[1] == kFill && second[0] == kFill && second[1] == kFill);
