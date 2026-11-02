@@ -96,10 +96,6 @@ int APS5_VABI cairo_scaled_font_destroy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_pattern_reference() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_scaled_font_get_font_options() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -125,10 +121,6 @@ int APS5_VABI cairo_surface_write_to_png_stream() {
 }
 
 int APS5_VABI cairo_restore() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_pattern_set_extend() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -233,10 +225,6 @@ int APS5_VABI cairo_scaled_font_text_extents() {
 }
 
 int APS5_VABI cairo_has_current_point() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_pattern_create_linear() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -428,23 +416,11 @@ int APS5_VABI cairo_get_dash_count() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_pattern_destroy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_pattern_set_matrix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_surface_set_user_data() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI cairo_set_dash() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_pattern_set_filter() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -564,10 +540,6 @@ int APS5_VABI cairo_scaled_font_create() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_pattern_create_radial() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_surface_get_content() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -593,10 +565,6 @@ int APS5_VABI cairo_device_destroy() {
 }
 
 int APS5_VABI cairo_image_surface_create_for_data() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_pattern_add_color_stop_rgba() {
     NotImplemented_nid_no_patch(__func__);
 }
 

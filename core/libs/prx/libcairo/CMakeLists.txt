@@ -1,4 +1,4 @@
-add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp)
+add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Patterns.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libcairo)
 
@@ -11,6 +11,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_cairo_matrix PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_cairo_matrix PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
+    endif()
+    add_test_executable(guest_cairo_patterns_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoPatterns.cpp)
+    target_include_directories(guest_cairo_patterns_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_patterns_tests PRIVATE libcairo libc)
+    configure_windows_unwind(guest_cairo_patterns_tests)
+    add_test(NAME guest_cairo_patterns COMMAND guest_cairo_patterns_tests)
+    set_tests_properties(guest_cairo_patterns PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_patterns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
     endif()
 endif()
