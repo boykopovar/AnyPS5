@@ -1762,6 +1762,16 @@ static int VectorPushBackString(IntrusivePtr* self, const CommonString* element)
     body->size += 1;
     return 0;
 }
+
+static_assert(sizeof(CommonIterator) == 0x10 && offsetof(CommonIterator, element) == 0x08);
+
+static CommonString* StringVectorElements(const IntrusivePtr* self, const bool end, const char* function) {
+    const auto* body = static_cast<const VectorBody*>(self->object);
+    if (body == nullptr) return nullptr;
+    if (body->magic != VectorBodyMagic || body->elementKind != 2) NotImplemented_nid_no_patch(function);
+    auto* elements = static_cast<CommonString*>(body->elements);
+    return end && body->size != 0 ? elements + body->size : elements;
+}
 // --------------------------------------------------------------------------
 // SessionManager2V1 and extra Common symbols, from a title dump whose modules lack
 // libSceNpCppWebApi.prx.
@@ -3968,9 +3978,9 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13
     AssignIntrusivePtr(self, source, 0x30, __func__);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEppEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEppEv(CommonIterator* self) {
+    self->element = static_cast<CommonString*>(self->element) + 1;
+    return self;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEC1Ev(IntrusivePtr* self) {
@@ -3991,9 +4001,8 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEE3getE
     return self->object;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(const CommonIterator* self, const CommonIterator* other) {
+    return self->element != other->element;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
@@ -4004,9 +4013,10 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6Stri
     return self->object;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(CommonIterator* iterator, const IntrusivePtr* self) {
+    iterator->referenceCount = 0;
+    iterator->element = StringVectorElements(self, true, __func__);
+    return iterator;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqEPKc(const CommonString* self, const char* other) {
@@ -4021,9 +4031,10 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponse
     return TransactionNotStarted;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self) {
+    iterator->referenceCount = 0;
+    iterator->element = StringVectorElements(self, false, __func__);
+    return iterator;
 }
 
 
@@ -4031,9 +4042,8 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6Stri
     return self->object;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEdeEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEdeEv(const CommonIterator* self) {
+    return static_cast<CommonString*>(self->element);
 }
 
 // --------------------------------------------------------------------------
@@ -6022,6 +6032,27 @@ std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1
 }
 
 
+static constexpr int StringInvalidArgument = static_cast<int>(0x80553503);
+static constexpr int StringOutOfMemory = static_cast<int>(0x80553504);
+
+static void ResetString(CommonString* self) {
+    std::free(self->buffer);
+    self->buffer = nullptr;
+    self->bufferSize = 0;
+}
+
+static int AssignString(CommonString* self, const char* text) {
+    if (text == nullptr) return StringInvalidArgument;
+    const std::size_t length = std::strlen(text) + 1;
+    char* buffer = static_cast<char*>(std::malloc(length));
+    if (buffer == nullptr) return StringOutOfMemory;
+    std::memcpy(buffer, text, length);
+    std::free(self->buffer);
+    self->buffer = buffer;
+    self->bufferSize = length;
+    return 0;
+}
+
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(CommonString* self, void* libContext) {
     self->referenceCount = 0;
     self->buffer = nullptr;
@@ -6029,10 +6060,62 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(CommonStr
     self->libContext = libContext;
 }
 
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringC1Ev(CommonString* self) {
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(self, nullptr);
+}
+
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringD1Ev(CommonString* self) {
-    std::free(self->buffer);
-    self->buffer = nullptr;
-    self->bufferSize = 0;
+    ResetString(self);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringD2Ev(CommonString* self) {
+    ResetString(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String8copyFromEPKc(CommonString* self, const char* text) {
+    return AssignString(self, text);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String8copyFromERKS3_(CommonString* self, const CommonString* source) {
+    const bool hadContext = self->libContext != nullptr;
+    if (!hadContext) self->libContext = source->libContext;
+    if (source->bufferSize == 0) {
+        ResetString(self);
+        return 0;
+    }
+    const int result = AssignString(self, source->buffer != nullptr ? source->buffer : "");
+    if (!hadContext && result != 0) self->libContext = nullptr;
+    return result;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6String5clearEv(CommonString* self) {
+    ResetString(self);
+}
+
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String4sizeEv(const CommonString* self) {
+    return self->buffer != nullptr ? static_cast<std::uint64_t>(std::strlen(self->buffer)) : 0;
+}
+
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String6lengthEv(const CommonString* self) {
+    return self->buffer != nullptr ? static_cast<std::uint64_t>(std::strlen(self->buffer)) : 0;
+}
+
+bool APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqERKS3_(const CommonString* self, const CommonString* other) {
+    const char* left = self->buffer != nullptr ? self->buffer : "";
+    const char* right = other->buffer != nullptr ? other->buffer : "";
+    return std::strncmp(left, right, std::strlen(left) + 1) == 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6String10setContextEPNS2_10LibContextE(CommonString* self, void* libContext) {
+    self->libContext = libContext;
+}
+
+std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6String21intrusive_ptr_add_refEPS3_(CommonString* self) {
+    return std::atomic_ref<std::int32_t>(self->referenceCount).fetch_add(1) + 1;
+}
+
+std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6String21intrusive_ptr_sub_refEPS3_(CommonString* self) {
+    return std::atomic_ref<std::int32_t>(self->referenceCount).fetch_sub(1);
 }
 
 const char* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5c_strEv(const CommonString* self) {
@@ -6040,24 +6123,24 @@ const char* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5c_strEv(const CommonSt
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String6appendEPKc(CommonString* self, const char* text) {
-    if (text == nullptr) return 0;
+    if (text == nullptr) return StringInvalidArgument;
+    if (*text == '\0') return 0;
+    const std::size_t oldLength = self->buffer != nullptr && self->bufferSize != 0
+        ? static_cast<std::size_t>(self->bufferSize - 1) : 0;
     const std::size_t textLength = std::strlen(text);
-    const std::size_t oldLength = self->buffer != nullptr ? std::strlen(self->buffer) : 0;
-    const std::size_t needed = oldLength + textLength + 1;
-    if (needed > self->bufferSize) {
-        std::size_t capacity = self->bufferSize != 0 ? static_cast<std::size_t>(self->bufferSize) : 16;
-        while (capacity < needed) capacity *= 2;
-        char* buffer = static_cast<char*>(std::malloc(capacity));
-        if (buffer == nullptr) return -1;
-        if (oldLength != 0) std::memcpy(buffer, self->buffer, oldLength);
-        std::memmove(buffer + oldLength, text, textLength + 1);
-        std::free(self->buffer);
-        self->buffer = buffer;
-        self->bufferSize = capacity;
-        return 0;
-    }
-    std::memmove(self->buffer + oldLength, text, textLength + 1);
+    const std::size_t newSize = oldLength + textLength + 1;
+    char* buffer = static_cast<char*>(std::malloc(newSize));
+    if (buffer == nullptr) return StringOutOfMemory;
+    if (oldLength != 0) std::memcpy(buffer, self->buffer, oldLength);
+    std::memcpy(buffer + oldLength, text, textLength + 1);
+    std::free(self->buffer);
+    self->buffer = buffer;
+    self->bufferSize = newSize;
     return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String6appendERKS3_(CommonString* self, const CommonString* source) {
+    return _ZN3sce2Np9CppWebApi6Common6String6appendEPKc(self, source->buffer != nullptr ? source->buffer : "");
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEED1Ev(IntrusivePtr* self) {
