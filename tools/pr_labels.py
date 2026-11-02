@@ -14,6 +14,8 @@ UNBLOCKS = re.compile(r'Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ x
 TITLE_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{4}\d{5}(?!\d)")
 NONE = re.compile(r"[-*_ \t\r\n]*none\b", re.I)
 PERF = re.compile(r"perf(\(|!?:)")
+PERF_SCOPE = re.compile(r"perf\(([^)]*)\)")
+UNCAPTURED_SCOPES = {"build", "ci", "tools"}
 FENCE = re.compile(r"(?:```|~~~)[^\r\n]*\r?\n(.*?)(?:```|~~~)", re.S)
 MARKER = "<!-- pr-labels-perf -->"
 UNBLOCKS_LABEL = "unblocks title"
@@ -47,6 +49,11 @@ def is_perf(title):
     return bool(PERF.match(title or ""))
 
 
+def needs_capture(title):
+    scope = PERF_SCOPE.match(title or "")
+    return is_perf(title) and not (scope and scope.group(1).strip().lower() in UNCAPTURED_SCOPES)
+
+
 def has_numbers(body):
     body = strip_comments(body)
     candidates = [line.strip() for line in body.splitlines()] + [block.strip() for block in FENCE.findall(body)]
@@ -69,7 +76,7 @@ def labels_for(pr):
         wanted.add(UNBLOCKS_LABEL)
     if is_perf(pr["title"]):
         wanted.add(PERF_LABEL)
-        if not has_numbers(pr["body"]):
+        if needs_capture(pr["title"]) and not has_numbers(pr["body"]):
             wanted.add(MISSING_LABEL)
     current = set(pr["labels"])
     return wanted - current, (MANAGED & current) - wanted
