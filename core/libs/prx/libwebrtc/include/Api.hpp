@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libwebrtc/include/AudioDecoder.hpp"
+#include "prx/libwebrtc/include/AudioReceiveStreamStats.hpp"
 #include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
 #include "prx/libwebrtc/include/AudioEncoder.hpp"
 #include "prx/libwebrtc/include/AudioFrame.hpp"
@@ -292,7 +293,7 @@ int APS5_VABI _ZN7cricket16CreateVideoCodecERKN6webrtc14SdpVideoFormatE_nid_post
 int APS5_VABI _ZN6webrtc13PacketOptionsC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc13PacketOptionsD1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface5StatsD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface5StatsD1Ev_nid_postfix(WebRtcAudioReceiveStreamStats* self);
 int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10AudioState6ConfigC1Ev_nid_postfix(void);
