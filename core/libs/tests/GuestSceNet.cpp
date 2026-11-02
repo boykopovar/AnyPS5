@@ -359,6 +359,129 @@ static void CheckIfName() {
     Require(missing != nullptr && missing[0] == '\0' && *sceNetErrnoLoc() == 22);
 }
 
+static void CheckExForwards() {
+    const int internal = sceNetSocketInternal("internal", 2, 2, 17);
+    Require(internal >= 0);
+    const int enabled = 1;
+    Require(sceNetSetsockoptEx(internal, 0xffff, 0x4, &enabled, sizeof(enabled)) == 0);
+    int option = 0;
+    std::uint32_t optionSize = sizeof(option);
+    Require(sceNetGetsockoptEx(internal, 0xffff, 0x4, &option, &optionSize) == 0);
+    int publicOption = 0;
+    std::uint32_t publicSize = sizeof(publicOption);
+    Require(sceNetGetsockopt(internal, 0xffff, 0x4, &publicOption, &publicSize) == 0);
+    Require(option == publicOption && option != 0 && optionSize == publicSize);
+    const KernelTimeval timeout{0, 250000};
+    Require(sceNetSetsockoptEx(internal, 0xffff, 0x1006, &timeout, sizeof(timeout)) == 0);
+    KernelTimeval read{};
+    std::uint32_t readSize = sizeof(read);
+    Require(sceNetGetsockoptEx(internal, 0xffff, 0x1006, &read, &readSize) == 0);
+    Require(readSize == sizeof(read) && read.tv_sec == 0 && read.tv_usec == 250000);
+    Require(sceNetSocketClose(internal) == 0);
+    for (const int closed : {internal, -1}) {
+        optionSize = sizeof(option);
+        const int ex = sceNetGetsockoptEx(closed, 0xffff, 0x4, &option, &optionSize);
+        const int exError = *sceNetErrnoLoc();
+        Require(ex < 0 && ex == sceNetGetsockopt(closed, 0xffff, 0x4, &option, &optionSize) && exError == *sceNetErrnoLoc());
+        const int set = sceNetSetsockoptEx(closed, 0xffff, 0x4, &enabled, sizeof(enabled));
+        const int setError = *sceNetErrnoLoc();
+        Require(set < 0 && set == sceNetSetsockopt(closed, 0xffff, 0x4, &enabled, sizeof(enabled)) && setError == *sceNetErrnoLoc());
+    }
+    for (const auto& [family, type] : {std::pair{1, 2}, std::pair{2, 9}}) {
+        const int internalResult = sceNetSocketInternal(nullptr, family, type, 0);
+        const int internalError = *sceNetErrnoLoc();
+        Require(internalResult < 0 && internalResult == sceNetSocket(nullptr, family, type, 0) && internalError == *sceNetErrnoLoc());
+    }
+}
+
+static void CheckSysctl() {
+    const std::array<int, 2> pageSize{6, 7};
+    int kernelValue = 0;
+    std::size_t kernelSize = sizeof(kernelValue);
+    Require(sysctl_nid_postfix(pageSize.data(), 2, &kernelValue, &kernelSize, nullptr, 0) == 0);
+    int netValue = 0;
+    std::size_t netSize = sizeof(netValue);
+    Require(sceNetSysctl(pageSize.data(), 2, &netValue, &netSize, nullptr, 0) == 0);
+    Require(netValue == kernelValue && netSize == kernelSize && netValue > 0);
+    std::size_t probe = 0;
+    Require(sceNetSysctl(pageSize.data(), 2, nullptr, &probe, nullptr, 0) == 0 && probe == sizeof(int));
+    Require(Failed(sceNetSysctl(pageSize.data(), 1, &netValue, &netSize, nullptr, 0), 22));
+    Require(Failed(sceNetSysctl(nullptr, 2, &netValue, &netSize, nullptr, 0), 14));
+    Require(Failed(sceNetSysctl(pageSize.data(), 2, &netValue, &netSize, &netValue, sizeof(netValue)), 1));
+    std::uint8_t truncated = 0;
+    std::size_t truncatedSize = sizeof(truncated);
+    Require(Failed(sceNetSysctl(pageSize.data(), 2, &truncated, &truncatedSize, nullptr, 0), 12) && truncatedSize == sizeof(truncated));
+}
+
+static void CheckScopeIdText() {
+    std::array<std::uint8_t, 16> plain{};
+    Require(sceNetInetPton(28, "fe80::1", plain.data()) == 1);
+    std::array<std::uint8_t, 16> address{};
+    std::uint32_t scope = 0;
+    Require(sceNetInetPtonWithScopeId(28, "fe80::1%lo0", address.data(), &scope) == 1 && scope != 0 && address == plain);
+    std::array<char, 32> text{};
+    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), text.size(), scope) == text.data());
+    Require(std::strcmp(text.data(), "fe80::1%lo0") == 0);
+    text.fill('x');
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), 11, scope) == nullptr && *sceNetErrnoLoc() == 28 && text[0] == 'x');
+    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), 12, scope) == text.data() && std::strcmp(text.data(), "fe80::1%lo0") == 0);
+    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), text.size(), 0) == text.data() && std::strcmp(text.data(), "fe80::1") == 0);
+    for (const char* rejected : {"fe80::1%2", "ff02::1%4294967295", "fe80::1%", "fe80::1%eth9", "fe80::g%lo0", "1.2.3.4%lo0"}) {
+        address.fill(0xa5);
+        scope = 0xa5a5a5a5u;
+        Require(sceNetInetPtonWithScopeId(28, rejected, address.data(), &scope) == 0);
+        Require(scope == 0xa5a5a5a5u && address[0] == 0xa5 && address[15] == 0xa5);
+    }
+    address.fill(0xa5);
+    Require(sceNetInetPtonWithScopeId(28, "fe80::1", address.data(), nullptr) == 1 && address == plain);
+    address.fill(0xa5);
+    Require(sceNetInetPtonWithScopeId(28, "fe80::1%lo0", address.data(), nullptr) == 0 && address[0] == 0xa5 && address[15] == 0xa5);
+    Require(Failed(sceNetInetPtonWithScopeId(2, "fe80::1", address.data(), &scope), 47));
+    Require(Failed(sceNetInetPtonWithScopeId(28, nullptr, address.data(), &scope), 22));
+    bool threw = false;
+    try {
+        sceNetInetPtonWithScopeId(28, "fe80::1", nullptr, &scope);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetNtopWithScopeId(28, nullptr, text.data(), text.size(), 0) == nullptr && *sceNetErrnoLoc() == 28);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetNtopWithScopeId(28, plain.data(), nullptr, 32, 0) == nullptr && *sceNetErrnoLoc() == 28);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetNtopWithScopeId(2, plain.data(), text.data(), text.size(), 0) == nullptr && *sceNetErrnoLoc() == 47);
+}
+
+static void CheckDefaultRoute() {
+    std::uint32_t gateway = 0xa5a5a5a5u;
+    Require(sceNetTerm() == 0);
+    Require(Failed(sceNetConfigGetDefaultRoute(&gateway), 200) && gateway == 0xa5a5a5a5u);
+    Require(Failed(sceNetConfigGetDefaultRoute(nullptr), 200));
+    Require(sceNetInit_nid_postfix() == 0);
+    NetCtlInfo info{};
+    const int result = sceNetCtlGetInfo(16, &info);
+    const char* route = reinterpret_cast<const char*>(info.opaque);
+    if (result != 0 || std::strcmp(route, "0.0.0.0") == 0) {
+        Require(result == 0 || result == static_cast<int>(0x80412108));
+        Require(sceNetConfigGetDefaultRoute(&gateway) == static_cast<int>(0x8041130Cu) && gateway == 0xa5a5a5a5u);
+        Require(sceNetConfigGetDefaultRoute(nullptr) == static_cast<int>(0x8041130Cu));
+        return;
+    }
+    Require(sceNetConfigGetDefaultRoute(&gateway) == 1);
+    std::array<char, 16> text{};
+    Require(sceNetInetNtop(2, &gateway, text.data(), text.size()) == text.data());
+    Require(std::strcmp(text.data(), route) == 0);
+    bool threw = false;
+    try {
+        sceNetConfigGetDefaultRoute(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void CheckRandom() {
     Require(Failed(sceNetGetRandom(nullptr), 22));
     std::array<std::uint32_t, 8> values{};
@@ -1955,6 +2078,20 @@ static void CheckSockInfo() {
     Require(sceNetGetsockname(client, clientAddress.data(), &size) == 0 && size == 16);
     RequireSockInfo(client, 1, 1, clientAddress, listening);
     RequireSockInfo(accepted, 1, 1, listening, clientAddress);
+    const char queued[] = "queued";
+    constexpr auto queuedLength = static_cast<std::int32_t>(sizeof(queued));
+    Require(sceNetSend(client, queued, sizeof(queued), 0) == queuedLength);
+    std::array<std::uint8_t, 0xa0> pending{};
+    std::int32_t pendingLength = 0;
+    for (int attempt = 0; attempt < 500 && pendingLength != queuedLength; ++attempt) {
+        Require(sceNetGetSockInfo(accepted, pending.data(), 1, 0) == 1);
+        std::memcpy(&pendingLength, pending.data() + 0x2c, sizeof(pendingLength));
+        if (pendingLength != queuedLength) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    Require(pendingLength == queuedLength);
+    char drained[sizeof(queued)] = {};
+    Require(sceNetRecv(accepted, drained, sizeof(drained), 0) == queuedLength && std::memcmp(drained, queued, sizeof(queued)) == 0);
+    RequireSockInfo(accepted, 1, 1, listening, clientAddress);
     Require(sceNetConnect(datagram, listening.data(), listening.size()) == 0);
     RequireSockInfo(datagram, 2, 1, datagramAddress, listening);
     const int nonblocking = 1;
@@ -2243,6 +2380,9 @@ int main() {
     CheckPoolErrors();
     CheckStatisticsInfo();
     CheckIfName();
+    CheckExForwards();
+    CheckSysctl();
+    CheckScopeIdText();
     CheckRandom();
     CheckByteOrderConversion();
     CheckNetMemory();
@@ -2697,6 +2837,7 @@ int main() {
     Require(sceNetCtlGetState(&state) == 0);
     Require(state == 0 || state == 3);
     Require(sceNetCtlGetIfStat(nullptr) == static_cast<int>(0x80412107));
+    CheckDefaultRoute();
     {
         const char* counterPath = "guest_sce_net_byte_counter.txt";
         std::FILE* counter = std::fopen(counterPath, "w");

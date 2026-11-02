@@ -107,7 +107,7 @@ static void CheckZone(const char* zone) {
     Require(setenv_nid_postfix("TZ", zone, 1) == 0, "Could not set the time zone");
     tzset_nid_postfix();
 
-    constexpr std::array<Converter, 2> converters{libc_mktime_nid_postfix, mktime_nid_postfix};
+    constexpr std::array<Converter, 3> converters{libc_mktime_nid_postfix, mktime_nid_postfix, timelocal_nid_postfix};
     constexpr std::array<std::int64_t, 8> timers{-86401, -2, -1, 0, 1, 59, 60, 86400};
     for (auto convert : converters) {
         for (const auto timer : timers) {
@@ -161,6 +161,45 @@ static void CheckGmtimeRoundTrip() {
     }
 }
 
+static void CheckTimelocalDst() {
+    Require(setenv_nid_postfix("TZ", "EST5EDT", 1) == 0, "Could not set EST5EDT zone");
+    tzset_nid_postfix();
+
+    constexpr std::int64_t summerTimer = 995198400;
+    GuestTm summer{};
+    Require(localtime_s_nid_postfix(&summerTimer, &summer) == &summer, "Local conversion failed");
+    Require(summer.tm_isdst == 1, "Summer isdst was not 1 under EST5EDT");
+
+    GuestTm forMktime = summer;
+    forMktime.tm_isdst = 0;
+    const std::int64_t mktimeResult = mktime_nid_postfix(&forMktime);
+
+    GuestTm forTimelocal = summer;
+    forTimelocal.tm_isdst = 0;
+    const std::int64_t timelocalResult = timelocal_nid_postfix(&forTimelocal);
+
+    Require(mktimeResult != -1 && timelocalResult != -1, "Conversion failed");
+    Require(timelocalResult == summerTimer, "timelocal did not determine DST with tm_isdst=-1");
+#ifndef _WIN32
+    Require(mktimeResult == summerTimer + 3600, "mktime did not respect forced standard time tm_isdst=0");
+#endif
+    Require(forTimelocal.tm_isdst == 1, "timelocal normalized tm_isdst was not 1 in summer DST");
+
+    GuestTm failure{};
+    failure.tm_year = std::numeric_limits<int>::max();
+    failure.tm_mon = std::numeric_limits<int>::max();
+    failure.tm_mday = 1;
+    failure.tm_wday = 4;
+    failure.tm_yday = 12;
+    failure.tm_isdst = 5;
+
+    GuestTm expectedFailure = failure;
+    expectedFailure.tm_isdst = -1;
+
+    Require(timelocal_nid_postfix(&failure) == -1, "timelocal accepted unrepresentable date");
+    Require(Equal(failure, expectedFailure), "timelocal failure modified fields other than tm_isdst");
+}
+
 int main() {
     CheckWritesStayInside();
     CheckGmtimeRoundTrip();
@@ -172,4 +211,5 @@ int main() {
     CheckEquivalentFutureCalendars("America/New_York");
     CheckEquivalentFutureCalendars("Pacific/Kiritimati");
 #endif
+    CheckTimelocalDst();
 }
