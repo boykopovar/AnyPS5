@@ -307,6 +307,12 @@ void* APS5_VABI memset_nid_postfix(void* s, int c, size_t n) {
     return std::memset(s, c, n);
 }
 
+void* APS5_VABI memset_explicit_nid_postfix(void* destination, int value, size_t count) {
+    auto* bytes = static_cast<volatile unsigned char*>(destination);
+    for (size_t index = 0; index < count; ++index) bytes[index] = static_cast<unsigned char>(value);
+    return destination;
+}
+
 void APS5_VABI bzero_nid_postfix(void* destination, size_t count) {
     std::memset(destination, 0, count);
 }
@@ -576,7 +582,7 @@ int APS5_VABI strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) 
 }
 
 int APS5_VABI bcmp_nid_postfix(const void* s1, const void* s2, size_t n) {
-    return std::memcmp(s1, s2, n);
+    return n != 0 && std::memcmp(s1, s2, n) != 0 ? 1 : 0;
 }
 
 size_t APS5_VABI strspn_nid_postfix(const char* s, const char* accept) {
@@ -829,7 +835,7 @@ char16_t* APS5_VABI wmemset_nid_postfix(char16_t* s, char16_t c, size_t n) {
 }
 
 double APS5_VABI wcstod_nid_postfix(const char16_t* str, char16_t** endptr) {
-    return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<double>(text, end, std::strtod); });
+    return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return strtod_nid_postfix(text, end); });
 }
 
 float APS5_VABI wcstof_nid_postfix(const char16_t* str, char16_t** endptr) {
