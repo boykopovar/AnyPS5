@@ -22,7 +22,6 @@ int APS5_VABI FcPatternAddDouble();
 int APS5_VABI FcPatternDuplicate();
 int APS5_VABI FcFontMatch();
 int APS5_VABI FcPatternFilter();
-int APS5_VABI FcConfigCreate();
 int APS5_VABI FcPatternGetFTFace();
 int APS5_VABI FcPatternEqual();
 int APS5_VABI FcCharSetSubtractCount();
@@ -33,7 +32,6 @@ int APS5_VABI FcCharSetMerge();
 int APS5_VABI FcPatternGetCharSet();
 int APS5_VABI FcCharSetDestroy();
 int APS5_VABI FcPatternDel();
-int APS5_VABI FcConfigDestroy();
 int APS5_VABI FcPatternReference();
 int APS5_VABI FcObjectSetDestroy();
 int APS5_VABI FcPatternGet();
@@ -55,7 +53,6 @@ int APS5_VABI FcPatternAddLangSet();
 int APS5_VABI FcFontSetDestroy();
 int APS5_VABI FcPatternGetLangSet();
 int APS5_VABI FcPatternCreate();
-int APS5_VABI FcConfigReference();
 int APS5_VABI FcPatternFormat();
 
 }

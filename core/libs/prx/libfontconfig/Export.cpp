@@ -1,4 +1,5 @@
 #include "prx/libfontconfig/include/InventoryExports.hpp"
+#include "prx/libfontconfig/include/Config.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 
@@ -76,10 +77,6 @@ int APS5_VABI FcPatternFilter() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcConfigCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcPatternGetFTFace() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -117,10 +114,6 @@ int APS5_VABI FcCharSetDestroy() {
 }
 
 int APS5_VABI FcPatternDel() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcConfigDestroy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -205,10 +198,6 @@ int APS5_VABI FcPatternGetLangSet() {
 }
 
 int APS5_VABI FcPatternCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcConfigReference() {
     NotImplemented_nid_no_patch(__func__);
 }
 

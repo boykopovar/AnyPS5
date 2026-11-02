@@ -1,0 +1,13 @@
+add_library(libfontconfig SHARED EXCLUDE_FROM_ALL Export.cpp Config.cpp)
+target_include_directories(libfontconfig PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libfontconfig)
+
+if(BUILD_TESTING)
+    find_package(Threads REQUIRED)
+    add_test_executable(guest_fontconfig_config_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontconfigConfig.cpp Config.cpp)
+    target_include_directories(guest_fontconfig_config_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fontconfig_config_tests PRIVATE Threads::Threads)
+    configure_windows_unwind(guest_fontconfig_config_tests)
+    add_test(NAME guest_fontconfig_config COMMAND guest_fontconfig_config_tests)
+    set_tests_properties(guest_fontconfig_config PROPERTIES TIMEOUT 20)
+endif()
