@@ -1,3 +1,4 @@
+#include "prx/libSceBgft/include/LegacyExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceBgft/include/InventoryExports.hpp"
 #include "prx/libSceBgft/include/Api.hpp"
@@ -476,5 +477,19 @@ int APS5_VABI libSceBgftUnknown_tBOVSvi9EjY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("tBOVSvi9EjY", libSceBgftUnknown_tBOVSvi9EjY_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI bgftLegacyUnknown_fuesi13BbWE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fuesi13BbWE", bgftLegacyUnknown_fuesi13BbWE_nid_no_patch);
+
+int APS5_VABI bgftLegacyUnknown_tmiwomV8oXU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tmiwomV8oXU", bgftLegacyUnknown_tmiwomV8oXU_nid_no_patch);
 
 }
