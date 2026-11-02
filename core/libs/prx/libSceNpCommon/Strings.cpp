@@ -475,6 +475,7 @@ int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
 }
 
 int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength) {
+    if (src == nullptr && maxLength == 0) return CopyToBuffer(dst, size, "", 0);
     return CopyToBuffer(dst, size, src, strnlen(src, maxLength));
 }
 
