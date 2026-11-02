@@ -1819,6 +1819,64 @@ static void CheckCoshfMsunBoundaries() {
     Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x7fc12345u))) == 0x7fc12345u);
 }
 
+struct MeasuredScaledSine {
+    float x;
+    float y;
+    std::uint32_t bits;
+};
+
+constexpr MeasuredScaledSine MeasuredScaledSines[] = {
+    {0x1.c34368p-1f, 0x1.fffffep+127f, 0x7f7fffffu},
+    {0x1p+3f, 0x1.5af1d8p+66f, 0x65fc7f3bu},
+    {0x1p+3f, 0x1p-140f, 0x000ba800u},
+    {0x1p+3f, 0x1p-149f, 0x00000800u},
+    {0x1.4p+3f, 0x1p-140f, 0x00560000u},
+    {0x1.4p+3f, 0x1p-149f, 0x00002000u},
+    {0x1.4p+4f, 0x1p-140f, 0x07678000u},
+    {0x1.4p+4f, 0x1p-149f, 0x03000000u},
+    {0x1.9p+5f, 0x1p-140f, 0x1d0c8000u},
+    {0x1.9p+5f, 0x1p-149f, 0x18800000u},
+    {0x1.6p+6f, 0x1p-140f, 0x38788000u},
+    {0x1.6p+6f, 0x1p-149f, 0x34000000u},
+    {0x1.68p+6f, 0x1p-140f, 0x39e58000u},
+    {0x1.68p+6f, 0x1p-149f, 0x35800000u},
+    {0x1.9p+6f, 0x1.16c2p-133f, 0x44a80180u},
+    {0x1.9p+6f, 0x1p-140f, 0x411a4000u},
+    {0x1.9p+6f, 0x1p-149f, 0x3c800000u},
+    {0x1.2cp+7f, 0x1p-140f, 0x65298000u},
+    {0x1.2cp+7f, 0x1p-149f, 0x60800000u},
+    {0x1.68p+7f, 0x1p-140f, 0x7ace0000u},
+    {0x1.68p+7f, 0x1p-149f, 0x76800000u},
+    {0x1.74e9c2p+7f, 0x1p-140f, 0x7f800000u},
+    {0x1.74e9c4p+7f, 0x1p-140f, 0x7f800000u},
+    {0x1.74e9c6p+7f, 0x1p-140f, 0x7f800000u},
+    {0x1.7cp+7f, 0x1p-149f, 0x7d800000u},
+    {0x1.8163c8p+7f, 0x1p-149f, 0x7f800000u},
+    {0x1.8163cap+7f, 0x1p-149f, 0x7f800000u},
+    {0x1.8163ccp+7f, 0x1p-149f, 0x7f800000u},
+};
+
+static void CheckScaledSineBits() {
+    const struct {
+        float x;
+        float y;
+        float expected;
+    } cases[] = {
+        {-0x1.004c8ep-15f, 3.0f, -0x1.8072d4p-14f},
+        {0x1.1c89aep-18f, 3.0f, 0x1.aace84p-17f},
+        {-0x1.6a06eap-2f, 3.0f, -0x1.153648p+0f},
+        {-0x1.99be9p-2f, 2.0f, -0x1.a4c436p-1f},
+        {0x1.913af8p-1f, 0.5f, 0x1.bb939ep-2f},
+        {0x1p+2f, 1.0f, 0x1.b4a37ep+4f},
+        {0x1.1d374cp+2f, 0.5f, 0x1.58b1e6p+4f},
+        {-0x1.b81f22p+4f, 0.5f, -0x1.9b9826p+37f},
+        {0x1.b265fep+5f, 3.0f, 0x1.e56528p+78f},
+        {0x1.64dcc6p+6f, 0.5f, 0x1.a3072p+126f},
+    };
+    for (const auto& test : cases)
+        Require(std::bit_cast<std::uint32_t>(_FSinh_nid_postfix(test.x, test.y)) == std::bit_cast<std::uint32_t>(test.expected));
+}
+
 static void CheckScaledHyperbolic() {
     const int rounding = std::fegetround();
     Require(std::fesetround(FE_TONEAREST) == 0);
@@ -1828,14 +1886,20 @@ static void CheckScaledHyperbolic() {
         const char* name = sine ? "_FSinh" : "_FCosh";
         const auto checkValue = [&](float x, float y) {
             const long double value = sine ? std::sinh(static_cast<long double>(x)) : std::cosh(static_cast<long double>(x));
-            const float expected = static_cast<float>(value * static_cast<long double>(y));
+            float expected = static_cast<float>(value * static_cast<long double>(y));
+            bool exact = expected == 0.0f || std::isinf(expected);
+            for (const auto& measured : MeasuredScaledSines) {
+                if (sine && measured.x == std::fabs(x) && measured.y == std::fabs(y)) {
+                    expected = std::bit_cast<float>(measured.bits | (std::signbit(x) != std::signbit(y) ? 0x80000000u : 0u));
+                    exact = true;
+                }
+            }
             std::feclearexcept(FE_ALL_EXCEPT);
             errno = 12345;
             const float result = function(x, y);
             const auto actualBits = std::bit_cast<std::uint32_t>(result);
             const auto expectedBits = std::bit_cast<std::uint32_t>(expected);
             const auto distance = actualBits > expectedBits ? actualBits - expectedBits : expectedBits - actualBits;
-            const bool exact = expected == 0.0f || std::isinf(expected);
             if ((exact ? actualBits != expectedBits : !std::isfinite(result) || distance > 2) ||
                 (std::isfinite(expected) && (std::fetestexcept(FE_OVERFLOW | FE_INVALID) != 0 || errno != 12345))) {
                 std::fprintf(stderr, "%s(%a, %a): got %08x, expected %08x, errno %d, flags %x\n",
@@ -2840,6 +2904,7 @@ int main() {
     CheckCoshfMsunBoundaries();
     CheckExp2fConsoleBits();
     CheckScaledHyperbolic();
+    CheckScaledSineBits();
     CheckSinhf();
     CheckAtanhf();
     CheckLogfConsoleBits();
