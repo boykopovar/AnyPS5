@@ -33,6 +33,7 @@ constexpr std::uint64_t kOffsetPastEnd = kImageSize + 0x1000;
 constexpr std::uint64_t kOffsetBeforeEnd = kImageSize - 16;
 constexpr std::size_t kRelaEntry = kCodeOffset + 0x700;
 constexpr std::uint64_t kRelativeEntryInfo = 8;
+constexpr std::uint32_t kPtSceDynlibData = 0x61000000;
 
 struct OutputMode {
     std::string Flag;
@@ -99,6 +100,18 @@ int main(const int argc, char** argv) {
         for (const auto& mode : OutputModes()) {
             RunAndRequireAccepted(binary, ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0), mode, "an empty relocation table in the file");
             RunAndRequireAccepted(binary, ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, kRelaEntry, 0), mode, "an empty DT_OS_RELA table in the file");
+
+            {
+                auto image = ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, 0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x718, 1);
+                RunAndRequireAccepted(binary, image, mode, "a DT_OS_RELA table inside PT_SCE_DYNLIBDATA");
+            }
+
+            {
+                auto image = ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, 0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x700, 1);
+                RunAndRequireRejected(binary, image, mode, "a DT_OS_RELA table outside PT_SCE_DYNLIBDATA", "outside PT_SCE_DYNLIBDATA");
+            }
 
             {
                 Bytes image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 24);

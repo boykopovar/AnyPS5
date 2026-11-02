@@ -100,6 +100,7 @@ RelinkResult RelinkerPipeline::Relink() {
     }
 
     FileByteOffset sceTableBase = 0;
+    ByteCount sceTableSize = 0;
     bool hasSceDynlibData = false;
     for (const auto& ph : programHeaders) {
         if (ph.Type != PT_SCE_DYNLIBDATA)
@@ -108,6 +109,7 @@ RelinkResult RelinkerPipeline::Relink() {
             throw RelinkerException("Multiple PT_SCE_DYNLIBDATA segments", ph.Offset);
         hasSceDynlibData = true;
         sceTableBase = ph.Offset;
+        sceTableSize = ph.FileSize;
     }
 
     std::vector<DynamicTag> dynTags;
@@ -212,6 +214,12 @@ RelinkResult RelinkerPipeline::Relink() {
         return hasTag(osTag) ? getTagValue(osTag) : getTagValue(sysvTag);
     };
 
+    auto validateSceTableRange = [&](const std::int64_t osTag, const FileByteOffset offset, const ByteCount size, const char* name) {
+        if (!hasSceDynlibData || !hasTag(osTag)) return;
+        if (offset < sceTableBase || offset - sceTableBase > sceTableSize || size > sceTableSize - (offset - sceTableBase))
+            throw RelinkerException(std::string(name) + " is outside PT_SCE_DYNLIBDATA", offset);
+    };
+
     const bool hasPltRelocations = hasTag(DT_OS_PLTRELSZ) || hasTag(DT_PLTRELSZ)
         || hasTag(DT_OS_PLTREL) || hasTag(DT_PLTREL)
         || hasTag(DT_OS_JMPREL) || hasTag(DT_JMPREL);
@@ -223,6 +231,7 @@ RelinkResult RelinkerPipeline::Relink() {
 
     const FileByteOffset dynStrTabOffset = readAsOffset(DT_OS_STRTAB, DT_STRTAB, "DT_STRTAB");
     const ByteCount dynStrTabSize = readAsSize(DT_OS_STRSZ, DT_STRSZ, "DT_STRSZ");
+    validateSceTableRange(DT_OS_STRTAB, dynStrTabOffset, dynStrTabSize, "Dynamic string table");
 
     const FileByteOffset dynSymTabOffset = readAsOffset(DT_OS_SYMTAB, DT_SYMTAB, "DT_SYMTAB");
     constexpr std::size_t symEntSize = 24;
@@ -241,6 +250,7 @@ RelinkResult RelinkerPipeline::Relink() {
         dynJmpRelOffset = readAsOffset(DT_OS_JMPREL, DT_JMPREL, "DT_JMPREL");
         if (gotSize % 24 != 0)
             throw RelinkerException("Invalid DT_PLTRELSZ value: " + std::to_string(gotSize) + " bytes; expected a multiple of 24 bytes");
+        validateSceTableRange(DT_OS_JMPREL, dynJmpRelOffset, gotSize, "Jump relocation table");
     }
     const ByteCount dynJmpRelSize = gotSize;
 
@@ -254,6 +264,7 @@ RelinkResult RelinkerPipeline::Relink() {
     if (hasRelaTable) {
         dynRelaOffset = readAsOffset(DT_OS_RELA, DT_RELA, "DT_RELA");
         dynRelaSize = readAsSize(DT_OS_RELASZ, DT_RELASZ, "DT_RELASZ");
+        validateSceTableRange(DT_OS_RELA, dynRelaOffset, dynRelaSize, "Relocation table");
     }
     constexpr std::size_t relaEntSize = 24;
     if (hasRelaTable || hasTag(DT_OS_RELAENT) || hasTag(DT_RELAENT)) {
@@ -276,6 +287,7 @@ RelinkResult RelinkerPipeline::Relink() {
     const auto relrRelocations = ReadRelrRelocations(raw, programHeaders, dynTags);
     const std::optional<ByteCount> dynSymTabSize = hasTag(DT_OS_SYMTABSZ)
         ? std::optional<ByteCount>(getTagValue(DT_OS_SYMTABSZ)) : std::nullopt;
+    validateSceTableRange(DT_OS_SYMTAB, dynSymTabOffset, dynSymTabSize.value_or(0), "Dynamic symbol table");
 
     if (dynStrTabOffset > raw.size() || dynStrTabSize > raw.size() - dynStrTabOffset)
         throw RelinkerException("Dynamic string table is out of bounds", dynStrTabOffset);
