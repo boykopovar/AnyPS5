@@ -287,7 +287,7 @@ if(BUILD_TESTING)
                     set(conventions_wrapped_declarations_name conventions_wrapped_declarations_${conventions_wrapped_declarations_class}_${CMAKE_MATCH_1})
                 endif()
                 add_test(NAME ${conventions_wrapped_declarations_name} COMMAND ${Python3_EXECUTABLE}
-                    "${conventions_wrapped_declarations_source}" "${conventions_wrapped_declarations_class}.${CMAKE_MATCH_1}")
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py "${conventions_wrapped_declarations_class}.${CMAKE_MATCH_1}")
                 set_tests_properties(${conventions_wrapped_declarations_name} PROPERTIES TIMEOUT 20)
             endif()
         endforeach()
