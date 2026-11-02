@@ -4,6 +4,7 @@
 #include "prx/libwebrtc/include/AudioDecoder.hpp"
 #include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
 #include "prx/libwebrtc/include/AudioEncoder.hpp"
+#include "prx/libwebrtc/include/AudioSendStreamStats.hpp"
 #include "prx/libwebrtc/include/AudioFrame.hpp"
 #include "prx/libwebrtc/include/ExpFilter.hpp"
 #include "prx/libwebrtc/include/IpAddress.hpp"
@@ -297,7 +298,7 @@ int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigC1Ev_nid_postfix(voi
 int APS5_VABI _ZN6webrtc27AudioReceiveStreamInterface6ConfigD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10AudioState6ConfigC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10AudioState6ConfigD1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc15AudioSendStream5StatsD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc15AudioSendStream5StatsD1Ev_nid_postfix(WebRtcAudioSendStreamStats* self);
 int APS5_VABI _ZN6webrtc15AudioSendStream6ConfigC1EPNS_9TransportE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc15AudioSendStream6ConfigD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc15AudioSendStream6Config13SendCodecSpecC1EiRKNS_14SdpAudioFormatE_nid_postfix(void);
