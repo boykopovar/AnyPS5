@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <condition_variable>
 #include <cstring>
+#include <cerrno>
 #include <mutex>
 #include <memory>
 #include <stdexcept>
@@ -186,6 +187,11 @@ extern "C" {
 
 std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const SystemOptions* options, AudioPropagationSystemMemory* outMemory) {
     if (!options || !outMemory) return ErrorNullPointer;
+    AudioPropagationSystemMemory localMemory{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(outMemory, &localMemory, sizeof(localMemory));
+    errno = savedErrno;
+    if (!copied) return ErrorNullPointer;
     if (outMemory->desc.id != SystemMemoryId || outMemory->desc.size != SystemMemorySize) return static_cast<std::int32_t>(0x8A700007);
     outMemory->p_cpu_mem = nullptr;
     outMemory->size_cpu_mem = 0;
