@@ -69,7 +69,7 @@ std::u16string toUtf16(const std::string& text) {
 
 }
 
-WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports) const {
+WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports, const std::set<std::string>& executableExports) const {
     if (!imports.empty() && libraries.empty())
         throw Domain::RelinkerException("ELF imports have no DT_NEEDED libraries");
     const auto path = normalizeRunPath(runPath);
@@ -238,6 +238,19 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         if (unmatched.contains(stem(libraries[index]))) imported[index] = true;
     }
 
+    std::vector<bool> executableProviders(libraries.size());
+    for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
+        if (!Domain::ModuleSuffix(libraries[index]).empty()) continue;
+        bool requested = false;
+        bool exported = true;
+        for (const auto& import : imports) {
+            if (Domain::NeededLibraryName(import.Library) != libraries[index]) continue;
+            requested = true;
+            exported = exported && executableExports.contains(import.Name);
+        }
+        executableProviders[index] = requested && exported;
+    }
+
     std::optional<std::size_t> traceProvider;
     std::map<std::string, std::uint32_t> traceLibraries;
     std::uint32_t traceSymbol = 0;
@@ -265,6 +278,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto loadFailed = addString(" -> FAILED\n");
     const auto failedModule = addString("Failed to load module: ");
     const auto skippedModule = addString(" -> not found; nothing is imported from it, continuing without it\n");
+    const auto executableModule = addString(" -> not found; the executable exports every symbol imported from it, resolving them there\n");
     const auto errorPrefix = addString("GetLastError: ");
     const auto moduleNotFoundHint = addString("hint: the module or one of its dependent DLLs was not found; a self-built libs/ also needs libgcc_s_seh-1.dll, libstdc++-6.dll and libwinpthread-1.dll from the toolchain's mingw64/bin next to it\n");
     const auto messageSeparator = addString(" - ");
@@ -295,6 +309,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     errors.push_back("FAIL: cannot make the executable directory the current directory\n");
     const auto traceError = errors.size();
     errors.push_back("FAIL: libc.prx does not export TraceImport_nid_no_patch\n");
+    const auto imageHandleError = errors.size();
+    errors.push_back("FAIL: cannot obtain the executable image handle\n");
     std::vector<std::uint32_t> errorRvas;
     for (const auto& error : errors)
         errorRvas.push_back(addString(error));
@@ -637,7 +653,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 
         std::vector<std::size_t> missingOptional;
         std::optional<std::size_t> probeFailed;
-        if (index >= guestModules.size() && !imported[index]) {
+        const auto probeMissingFile = [&] {
             code.Emit({0x48, 0x89, 0xf1});
             call("GetFileAttributesW");
             code.Emit({0x83, 0xf8, 0xff});
@@ -649,13 +665,15 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             missingOptional.push_back(code.Branch({0x0f, 0x84}));
             probeFailed = code.Branch({0xe9});
             code.PatchBranch(exists, code.GetRva());
-        }
+        };
+        if (index >= guestModules.size() && !imported[index]) probeMissingFile();
 
         code.Emit({0x48, 0x89, 0xf1, 0x31, 0xd2, 0x41, 0xb8, 0, 0x11, 0, 0});
         call("LoadLibraryExW");
         code.Emit({0x48, 0x85, 0xc0});
         const auto loadSucceeded = code.Branch({0x0f, 0x85});
         captureLastError();
+        if (executableProviders[index]) probeMissingFile();
         if (dependencyDiagnostics) {
             writeString(loadFailed, true);
         }
@@ -684,7 +702,13 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         if (!missingOptional.empty()) {
             const auto next = code.Branch({0xe9});
             for (const auto branch : missingOptional) code.PatchBranch(branch, code.GetRva());
-            if (dependencyDiagnostics) writeString(skippedModule, true);
+            if (executableProviders[index]) {
+                code.Emit({0x31, 0xc9});
+                call("GetModuleHandleW");
+                requireNonzero(imageHandleError, 0xc0000135u);
+                code.Rip({0x48, 0x89, 0x05}, CheckedRva(handles + index * 8));
+            }
+            if (dependencyDiagnostics) writeString(executableProviders[index] ? executableModule : skippedModule, true);
             code.PatchBranch(next, code.GetRva());
         }
     }

@@ -38,7 +38,7 @@ PeDirectory WindowsExportBuilder::Build(const std::map<std::string, std::uint32_
     return directory;
 }
 
-PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSection& dynamic, const WindowsLoadImage& image, const std::vector<Domain::ProgramHeader>& headers, const std::uint32_t tlsIndex, std::vector<std::uint32_t>& relocations, const std::string& name, std::vector<PeSection>& sections, std::uint32_t& nextRva) const {
+PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSection& dynamic, const WindowsLoadImage& image, const std::vector<Domain::ProgramHeader>& headers, const std::uint32_t tlsIndex, std::vector<std::uint32_t>& relocations, const std::string& name, std::vector<PeSection>& sections, std::uint32_t& nextRva, std::set<std::string>& exportedNames) const {
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
     std::map<std::string, Relinker::GuestSymbol> symbols;
     std::map<std::string, std::uint32_t> exports;
@@ -74,6 +74,7 @@ PeDirectory WindowsExportBuilder::BuildExecutable(const Domain::SysVDynamicSecti
             rva = image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1));
         }
         exports.emplace(symbolName, rva);
+        exportedNames.insert(symbolName);
     }
     if (!tlsExports.Data.empty()) {
         nextRva = AlignRva(nextRva + tlsExports.Data.size());

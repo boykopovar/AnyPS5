@@ -82,7 +82,8 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     }
     std::uint32_t tlsIndex = 0;
     directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, &tlsIndex, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message);
-    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsIndex, relocations.BaseRelocations, outputName, sections, nextRva);
+    std::set<std::string> executableExports;
+    directories[0] = WindowsExportBuilder().BuildExecutable(dynamicSection, image, originalHeaders, tlsIndex, relocations.BaseRelocations, outputName, sections, nextRva, executableExports);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
     const WindowsImportBuilder importBuilder;
@@ -105,7 +106,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     if (dependencyDiagnostics)
         for (const auto& import : relocations.Imports) diagnostics += import.Name + '\n';
     report(8500);
-    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports);
+    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports, executableExports);
     report(9000);
     directories[3] = entry.ExceptionDirectory;
     const auto entryRva = entry.Code.Rva;

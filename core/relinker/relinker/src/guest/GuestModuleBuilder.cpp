@@ -217,6 +217,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     };
     const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
+    const auto executableExports = windows ? std::set<std::string>{} : ExportedNames(dynamic);
+    std::map<std::string, bool> importsExportedByExecutable;
+    const auto noteHostImport = [&](const std::string& library, const std::string& symbol) {
+        if (!Domain::ModuleSuffix(library).empty()) return;
+        const auto found = importsExportedByExecutable.emplace(library, true).first;
+        found->second = found->second && executableExports.contains(symbol);
+    };
     std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
     std::vector<bool> executableReferences(executableModules.size());
     std::set<std::size_t> executableProviders;
@@ -238,8 +245,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         const auto end = std::find(start, dynamic.DynStrData.end(), 0);
         if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated executable symbol name");
         const std::string name(start, end);
-        if (declaresHost(executableModules[offset / 24])) continue;
         const std::string base = name.substr(0, name.find('#'));
+        if (declaresHost(executableModules[offset / 24])) {
+            if (executableReferences[offset / 24]) noteHostImport(executableModules[offset / 24], base);
+            continue;
+        }
         const auto shared = sharedExports.find(base);
         std::size_t needed = 0;
         if (shared != sharedExports.end()) {
@@ -282,6 +292,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             const auto& symbol = images[index].Symbols[symbolIndex];
             if (symbol.Section != 0 || symbol.Name.empty()) continue;
             if (declaresHost(symbol.Library)) {
+                if (referencedSymbols.contains(symbolIndex)) noteHostImport(symbol.Library, symbol.Name);
                 systemImports[index].insert(symbolIndex);
                 continue;
             }
@@ -336,7 +347,6 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         return directory == "." ? std::string("app0") : "app0/" + directory;
     };
     if (!windows) {
-        const auto executableExports = macos ? std::set<std::string>{} : ExportedNames(dynamic);
         for (std::size_t module = 0; module < images.size(); ++module) {
             auto& image = images[module];
             for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
@@ -362,8 +372,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::vector<std::vector<std::string>> moduleHostLibraries(images.size());
     std::set<std::string> uniqueHosts;
     const auto hostLibrary = [&](const std::string& name) { return windows || macos ? name : Domain::NeededLibraryName(name); };
+    const auto loadsHost = [&](const std::string& name) {
+        if (findGuest(name) != guestNames.end()) return false;
+        const auto imports = importsExportedByExecutable.find(name);
+        return imports == importsExportedByExecutable.end() || !imports->second;
+    };
     const auto addHost = [&](const std::string& name, const bool startup) {
-        if (findGuest(name) != guestNames.end()) return;
+        if (!loadsHost(name)) return;
         if (name.empty() || name.find_first_of("/\\:$") != std::string::npos) throw Domain::RelinkerException("Invalid host dependency: " + name);
         if (const auto host = hostLibrary(name); startup && uniqueHosts.insert(host).second) hostLibraries.push_back(host);
     };
@@ -372,7 +387,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         auto& hosts = moduleHostLibraries[index];
         for (const auto& dependency : images[index].Dependencies) {
             addHost(dependency, windows || !deferred(index));
-            if (findGuest(dependency) == guestNames.end()) hosts.push_back(hostLibrary(dependency));
+            if (loadsHost(dependency)) hosts.push_back(hostLibrary(dependency));
         }
         if (!windows && !macos && images[index].HasInit) {
             if (std::find(hosts.begin(), hosts.end(), "libkernel.prx") == hosts.end()) hosts.push_back("libkernel.prx");
@@ -493,7 +508,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         dynamic.GuestModules.push_back(std::move(runtime));
         std::vector<std::string> neededLibraries;
         for (const auto& name : image.Dependencies)
-            if (findGuest(name) == guestNames.end()) neededLibraries.push_back(hostLibrary(name));
+            if (loadsHost(name)) neededLibraries.push_back(hostLibrary(name));
         artifacts.push_back({target, std::move(output), std::move(imports), image.SourcePath, std::move(neededLibraries)});
         progress.Report({Domain::ProgressStage::Modules, Io::Utf8Path(image.SourcePath), artifacts.size(), order.size()});
     }

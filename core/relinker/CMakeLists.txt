@@ -630,6 +630,9 @@ if(BUILD_TESTING)
         add_test(NAME windows_executable_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_executable_exports.py $<TARGET_FILE:relinker>)
         set_tests_properties(windows_executable_exports PROPERTIES TIMEOUT 20)
+        add_test(NAME executable_module_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_module_imports.py $<TARGET_FILE:relinker>)
+        set_tests_properties(executable_module_imports PROPERTIES TIMEOUT 30)
         add_test(NAME windows_fixed_base COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_fixed_base.py $<TARGET_FILE:relinker>)
         set_tests_properties(windows_fixed_base PROPERTIES TIMEOUT 20)
