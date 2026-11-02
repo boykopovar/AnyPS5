@@ -2,6 +2,10 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
@@ -68,6 +72,55 @@ struct CaptureProfile {
 };
 
 constexpr std::uint64_t WordWaitNanoseconds = 50000;
+
+std::uint64_t imageViewGeneration(void*) {
+    return GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+}
+
+bool normalizeImageView(void*, std::uint32_t maxArrayLayers, std::array<std::uint32_t, 8>& descriptor, ShaderRecompiler::SrtImageViewIdentity& identity) {
+    identity.generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    if (((descriptor[3] >> 28u) & 0xfu) != 12u) return false;
+    const auto resource = Graphics::DecodeTextureResource(descriptor);
+    identity.address = resource.baseAddress;
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(resource.baseAddress), false);
+    if (range != nullptr) {
+        identity.hasRange = true;
+        identity.readable = range->readable;
+        identity.writable = range->writable;
+        identity.gpu = range->gpu;
+        identity.rangeAddress = range->address;
+        identity.rangeBytes = range->bytes;
+        identity.allocationAddress = range->allocationAddress;
+        identity.allocationBytes = range->allocationBytes;
+        identity.backingSerial = range->backingSerial;
+    }
+    if (maxArrayLayers == 0u || resource.dimension != Graphics::TextureDimension::k1DArray || range == nullptr) return false;
+    const auto rawCount = resource.depthOrLastArray >= resource.baseArray ? resource.depthOrLastArray - resource.baseArray + 1u : 0u;
+    const auto geometry = Graphics::DescribeSurface(resource);
+    if (geometry.layerBytes == 0u || geometry.thick || geometry.layers != resource.depthOrLastArray + 1u) return false;
+    if (const auto xorMode = Graphics::XorSwizzleMode(resource.tileMode); xorMode != 0u) {
+        const auto* equation = Graphics::FindTextureSwizzleEquation(xorMode, Graphics::BytesPerElement(resource.format));
+        if (equation == nullptr || std::any_of(equation->bits.begin(), equation->bits.end(), [](std::uint32_t bit) { return (bit & 0xff000000u) != 0u; })) return false;
+    }
+    if (!range->readable || !range->gpu || range->bytes == 0u || range->address > std::numeric_limits<std::uint64_t>::max() - range->bytes || range->allocationAddress > std::numeric_limits<std::uint64_t>::max() - range->allocationBytes) return false;
+    const auto rangeEnd = range->address + range->bytes;
+    const auto allocationEnd = range->allocationAddress + range->allocationBytes;
+    if (resource.baseAddress < range->address || resource.baseAddress > rangeEnd || range->address < range->allocationAddress || rangeEnd > allocationEnd) return false;
+    const auto offset = resource.baseAddress - range->address;
+    if (offset % geometry.layerBytes != 0u) return false;
+    const auto coveredBytes = rangeEnd - resource.baseAddress;
+    if (coveredBytes % geometry.layerBytes != 0u) return false;
+    const auto completeSlices = coveredBytes / geometry.layerBytes;
+    if (completeSlices <= resource.baseArray) return false;
+    if (rawCount <= maxArrayLayers) return false;
+    const auto available = completeSlices - resource.baseArray;
+    const auto effectiveCount = std::min<std::uint64_t>(rawCount, available);
+    if (effectiveCount == 0u || effectiveCount == rawCount) return false;
+    const auto lastArray = static_cast<std::uint64_t>(resource.baseArray) + effectiveCount - 1u;
+    if (lastArray > 0x1fffu) return false;
+    descriptor[4] = (descriptor[4] & ~0x1fffu) | static_cast<std::uint32_t>(lastArray);
+    return true;
+}
 
 bool WordwisePages() {
     static const bool wordwise = std::getenv("APS5_NO_WORDWISE_CAPTURE") == nullptr;
@@ -750,6 +803,8 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.unchangedSince = &unchangedSince;
     runtime.supplyWords = &supplyWords;
     runtime.descriptorScope = &descriptorScope;
+    runtime.normalizeImageView = &normalizeImageView;
+    runtime.imageViewGeneration = &imageViewGeneration;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
