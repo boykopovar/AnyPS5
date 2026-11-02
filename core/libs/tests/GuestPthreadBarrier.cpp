@@ -133,6 +133,7 @@ int main() {
     }
 
     PthreadBarrierPrivate* single = nullptr;
+    Require(pthread_barrier_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
     Require(pthread_barrierattr_init_nid_postfix(&attr) == 0);
     Require(pthread_barrier_init_nid_postfix(&single, &attr, 1) == 0);
     Require(pthread_barrier_wait_nid_postfix(&single) == BARRIER_SERIAL_THREAD);
