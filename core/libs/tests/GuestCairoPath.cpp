@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(cairo_copy_path(nullptr)), CairoPath*>);
@@ -42,6 +43,11 @@ void CheckBasicPathAndCurrentPoint() {
         path = cairo_copy_path(context);
         assert(path && path->status == 0 && path->num_data == 4);
         assert(path->data[0].header.type == 0 && path->data[2].header.type == 1);
+        cairo_path_destroy(path);
+
+        cairo_line_to(context, 5, 6); // Duplicate terminal line is canonicalized.
+        path = cairo_copy_path(context);
+        assert(path && path->status == 0 && path->num_data == 4);
         cairo_path_destroy(path);
 
         cairo_close_path(context);
@@ -119,6 +125,37 @@ void CheckQuantizationTransformsAndAppend() {
     cairo_path_destroy(original);
     cairo_destroy(another);
     cairo_destroy(context);
+
+    surface = cairo_image_surface_create(0, 8, 8);
+    context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    cairo_move_to(context, std::numeric_limits<double>::quiet_NaN(), 1);
+    CairoPath* path = cairo_copy_path(context);
+    assert(path && path->num_data == 2);
+    Near(path->data[1].point.x, 0);
+    cairo_path_destroy(path);
+    cairo_move_to(context, std::numeric_limits<double>::infinity(), 1);
+    path = cairo_copy_path(context);
+    Near(path->data[1].point.x, 8388606.0 - 1.0 / 256.0);
+    cairo_path_destroy(path);
+    cairo_destroy(context);
+
+    surface = cairo_image_surface_create(0, 8, 8);
+    context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    cairo_move_to(context, 1, 2);
+    cairo_curve_to(context, 1, 2, 1, 2, 1, 2);
+    path = cairo_copy_path(context);
+    assert(path && path->num_data == 4 && path->data[2].header.type == 1);
+    cairo_path_destroy(path);
+    cairo_new_path(context);
+    cairo_move_to(context, 1, 2);
+    cairo_curve_to(context, 2, 3, 2, 3, 2, 3);
+    cairo_curve_to(context, 2, 3, 2, 3, 2, 3);
+    path = cairo_copy_path(context);
+    assert(path && path->num_data == 6 && path->data[2].header.type == 2);
+    cairo_path_destroy(path);
+    cairo_destroy(context);
 }
 
 void CheckErrorAndSaveSemantics() {
@@ -136,6 +173,10 @@ void CheckErrorAndSaveSemantics() {
     corrupt[0].header = {2, 2}; // Curve requires four path data words.
     CairoPath wrong{0, corrupt, 2};
     cairo_append_path(context, &wrong); // Sticky invalid path data.
+    double x = 42, y = 24;
+    cairo_get_current_point(context, &x, &y);
+    Near(x, 0);
+    Near(y, 0);
     cairo_path_destroy(cairo_copy_path(context));
     cairo_destroy(context);
 
@@ -145,6 +186,31 @@ void CheckErrorAndSaveSemantics() {
     cairo_path_destroy(path);
     cairo_destroy(nil);
     cairo_path_destroy(nullptr);
+
+    surface = cairo_image_surface_create(0, 1, 1);
+    context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    CairoPathData extended[3]{};
+    extended[0].header = {0, 3};
+    extended[1].point = {1, 2};
+    extended[2].point = {3, 4}; // Native accepts unused padding words.
+    CairoPath padded{0, extended, 3};
+    cairo_append_path(context, &padded);
+    path = cairo_copy_path(context);
+    assert(path && path->status == 0 && path->num_data == 2);
+    Near(path->data[1].point.x, 1);
+    cairo_path_destroy(path);
+    cairo_destroy(context);
+
+    surface = cairo_image_surface_create(0, 1, 1);
+    context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    CairoPath alreadyFailed{5, nullptr, 3};
+    cairo_append_path(context, &alreadyFailed); // Propagate path status before examining data.
+    path = cairo_copy_path(context);
+    assert(path && path->status == 5);
+    cairo_path_destroy(path);
+    cairo_destroy(context);
 }
 
 } // namespace

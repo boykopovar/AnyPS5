@@ -135,7 +135,12 @@ bool Record(ContextStorage* state, const PathEntry& entry) {
 
 double Fixed(double coordinate) {
     // Cairo stores path coordinates as signed 24.8 fixed-point device values.
-    return std::nearbyint(coordinate * 256.0) / 256.0;
+    // The native fixed-point converter maps NaN to zero and saturates infinities
+    // and out-of-range inputs at its safe representable path-coordinate limits.
+    if (std::isnan(coordinate)) return 0;
+    constexpr double kMinimum = -8388606.0;
+    constexpr double kMaximum = 8388606.0 - 1.0 / 256.0;
+    return std::nearbyint(std::clamp(coordinate, kMinimum, kMaximum) * 256.0) / 256.0;
 }
 
 void DevicePoint(const CairoMatrix& matrix, double& x, double& y) {
@@ -162,6 +167,17 @@ void AppendLine(ContextStorage* state, double x, double y) {
     if (!state->hasCurrent) {
         AppendMove(state, x, y);
         return;
+    }
+    // Multiple consecutive line segments ending at the same device point
+    // collapse into one public path record in native Cairo.
+    if (state->path && !state->path->empty()) {
+        const auto& previous = state->path->back();
+        const bool matchingLine = previous.type == 1 &&
+                                  previous.points[0] == x && previous.points[1] == y;
+        const bool matchingCurve = previous.type == 2 &&
+                                   previous.points[4] == x && previous.points[5] == y;
+        if (matchingLine || matchingCurve)
+            return;
     }
     PathEntry command{};
     command.type = 1;
@@ -482,6 +498,14 @@ void APS5_VABI cairo_curve_to(CairoContext* context, double x1, double y1,
     DevicePoint(state->matrix, x2, y2);
     DevicePoint(state->matrix, x3, y3);
     if (!state->hasCurrent && !AppendMove(state, x1, y1)) return;
+    // A cubic whose control points and endpoint all coincide with the current
+    // point is emitted as a zero-length line, or coalesced with the preceding
+    // non-move segment. Match native Cairo's fixed-path canonicalization.
+    if (state->currentX == x1 && state->currentY == y1 &&
+        x1 == x2 && y1 == y2 && x2 == x3 && y2 == y3) {
+        AppendLine(state, x3, y3);
+        return;
+    }
     PathEntry command{};
     command.type = 2;
     command.points[0] = x1;
@@ -512,8 +536,8 @@ int APS5_VABI cairo_has_current_point(CairoContext* context) {
 
 void APS5_VABI cairo_get_current_point(CairoContext* context, double* x, double* y) {
     auto* state = Valid(context);
-    if (!state || !x || !y) return;
-    if (!state->hasCurrent) {
+    if (!x || !y) return;
+    if (!state || !state->hasCurrent) {
         *x = *y = 0;
         return;
     }
@@ -569,19 +593,19 @@ CairoPath* APS5_VABI cairo_copy_path(CairoContext* context) {
 void APS5_VABI cairo_append_path(CairoContext* context, const CairoPath* path) {
     auto* state = Valid(context);
     if (!state) return;
-    if (!path || path->num_data < 0 || (path->num_data > 0 && !path->data)) {
-        state->status = kNullPointer;
+    if (path && path->status != kSuccess) {
+        state->status = path->status;
         return;
     }
-    if (path->status != kSuccess) {
-        state->status = path->status;
+    if (!path || path->num_data < 0 || (path->num_data > 0 && !path->data)) {
+        state->status = kNullPointer;
         return;
     }
     for (int i = 0; i < path->num_data && state->status == kSuccess;) {
         const auto header = path->data[i].header;
         const int expected = header.type == 2 ? 4 : header.type == 3 ? 1 :
                              (header.type == 0 || header.type == 1) ? 2 : 0;
-        if (!expected || header.length != expected || expected > path->num_data - i) {
+        if (!expected || header.length < expected || header.length > path->num_data - i) {
             state->status = kInvalidPathData;
             return;
         }
@@ -596,7 +620,7 @@ void APS5_VABI cairo_append_path(CairoContext* context, const CairoPath* path) {
                            element[3].point.x, element[3].point.y);
         else
             cairo_close_path(context);
-        i += expected;
+        i += header.length;
     }
 }
 
