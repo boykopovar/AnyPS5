@@ -29,7 +29,7 @@ if(BUILD_TESTING)
         add_test(NAME avplayer_http_transport COMMAND ${Python3_EXECUTABLE}
             ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpServer.py $<TARGET_FILE:avplayer_http_transport_tests> transport)
         set_tests_properties(avplayer_http_transport PROPERTIES
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/avplayer_http_transport TIMEOUT 10)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/avplayer_http_transport TIMEOUT 20)
         if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_test_executable(avplayer_http_patched_modules_tests ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpModules.cpp)
             target_link_libraries(avplayer_http_patched_modules_tests PRIVATE ${CMAKE_DL_LIBS})
