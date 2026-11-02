@@ -1,4 +1,4 @@
-add_library(libSceIcu SHARED EXCLUDE_FROM_ALL ConstrainedFieldPosition.cpp ErrorName.cpp Export.cpp Invariant.cpp Numeric.cpp Set.cpp Unescape.cpp Tokenize.cpp Version.cpp)
+add_library(libSceIcu SHARED EXCLUDE_FROM_ALL ConstrainedFieldPosition.cpp ErrorName.cpp Export.cpp Invariant.cpp Numeric.cpp Set.cpp Tokenize.cpp Unescape.cpp Version.cpp)
 target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceIcu)
 target_sources(libSceIcu PRIVATE ConverterCallbacks.cpp)
