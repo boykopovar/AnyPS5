@@ -1,9 +1,12 @@
 #include "prx/libSceNpParty/libSceNpParty.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -73,11 +76,61 @@ bool lifecycleTests() {
         && check(sceNpPartyUnregisterPrivateHandler() == kHandlerState, "a second unregister did not fail")
         && check(sceNpPartyRegisterPrivateHandler(nullptr) == 0, "a null private handler was not accepted")
         && check(sceNpPartyUnregisterPrivateHandler() == kHandlerState, "a null private handler was not treated as absent")
+        && check(sceNpPartyRegisterPrivateHandler(handlers) == 0, "a non-null private handler was not accepted")
+        && check(sceNpPartyUnregisterPrivateHandler() == 0, "unregister of a non-null private handler failed")
         && check(sceNpPartyCheckCallback() == 0, "check callback failed")
+        && check(sceNpPartyRegisterPrivateHandler(handlers) == 0, "private handler before terminate failed")
         && check(sceNpPartyTerminate() == 0, "terminate failed")
         && check(sceNpPartyTerminate() == kNotInitialized, "a second terminate did not fail")
         && check(sceNpPartyInitialize(param) == 0, "initialize after terminate failed")
+        && check(sceNpPartyRegisterPrivateHandler(handlers) == kHandlerState, "a private handler survived reinitialize")
+        && check(sceNpPartyUnregisterPrivateHandler() == kHandlerState, "private handler state survived reinitialize")
+        && check(sceNpPartyRegisterHandlerA(handlers, param) == 0, "a fresh A registration after reinitialize failed")
+        && check(sceNpPartyRegisterPrivateHandler(handlers) == 0, "private handler after a fresh registration failed")
         && check(sceNpPartyTerminate() == 0, "terminate after reinitialize failed");
+}
+
+bool handlerContentionTests() {
+    std::uint64_t param[4] = {};
+    std::uint64_t handlers[8] = {};
+    handlers[1] = 1;
+    bool ok = true;
+    for (int round = 0; round < 16; ++round) {
+        ok = check(sceNpPartyInitialize(param) == 0, "contention initialize failed") && ok;
+        std::atomic<bool> go{false};
+        std::atomic<int> succeeded{0};
+        std::atomic<int> rejected{0};
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 8; ++i) {
+            threads.emplace_back([&] {
+                while (!go.load()) std::this_thread::yield();
+                const int result = sceNpPartyRegisterHandlerA(handlers, nullptr);
+                if (result == 0) ++succeeded;
+                if (result == kHandlerState) ++rejected;
+            });
+        }
+        go.store(true);
+        for (auto& thread : threads) thread.join();
+        ok = check(succeeded.load() == 1 && rejected.load() == 7, "only one concurrent A registration must succeed") && ok;
+        ok = check(sceNpPartyRegisterPrivateHandler(handlers) == 0, "private handler before unregister contention failed") && ok;
+        succeeded.store(0);
+        rejected.store(0);
+        go.store(false);
+        threads.clear();
+        for (int i = 0; i < 8; ++i) {
+            threads.emplace_back([&] {
+                while (!go.load()) std::this_thread::yield();
+                const int result = sceNpPartyUnregisterPrivateHandler();
+                if (result == 0) ++succeeded;
+                if (result == kHandlerState) ++rejected;
+            });
+        }
+        go.store(true);
+        for (auto& thread : threads) thread.join();
+        ok = check(succeeded.load() == 1 && rejected.load() == 7, "only one concurrent private unregister must succeed") && ok;
+        ok = check(sceNpPartyTerminate() == 0, "contention terminate failed") && ok;
+    }
+    return ok;
 }
 
 bool priorityTests() {
@@ -118,7 +171,7 @@ bool notInPartyTests() {
 
 int main() {
     std::uint64_t param[4] = {};
-    if (!uninitializedTests() || !lifecycleTests()) return 1;
+    if (!uninitializedTests() || !lifecycleTests() || !handlerContentionTests()) return 1;
     if (!check(sceNpPartyInitialize(param) == 0, "initialize for the state checks failed")) return 1;
     if (!stateTests() || !priorityTests() || !notInPartyTests()) return 1;
     if (!check(sceNpPartyTerminate() == 0, "terminate after the state checks failed") || !uninitializedTests()) return 1;
