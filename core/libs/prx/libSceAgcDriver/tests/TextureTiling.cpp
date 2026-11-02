@@ -725,4 +725,26 @@ void RunTextureTilingTests() {
         cube.dimension = TextureDimension::kCube;
         reject([&] { static_cast<void>(ArrayLayerWindow(cube, 2048)); }, "not a 1D or 2D array");
     }
+    {
+        GuestTextureResource array{};
+        array.baseAddress = 0x100000;
+        array.width = 256;
+        array.height = 1;
+        array.depthOrLastArray = 5119;
+        array.baseArray = 0;
+        array.mipCount = 1;
+        array.allocatedMipCount = 1;
+        array.dimension = TextureDimension::k1DArray;
+        array.tileMode = TextureTileMode::kLinear;
+        array.format = 1;
+        const auto layerBytes = DescribeSurface(array).layerBytes;
+        auto flat = array;
+        FlattenLargeOneDimensionalArray(flat);
+        Require(flat.dimension == TextureDimension::k2D && flat.width == 256 && flat.height == 5120 && flat.depthOrLastArray == 0 && flat.baseArray == 0 && flat.baseAddress == array.baseAddress, "a 1D array past maxImageArrayLayers flattens to a 2D image of its layers");
+        auto window = array;
+        window.baseArray = 1000;
+        FlattenLargeOneDimensionalArray(window);
+        Require(window.baseAddress == array.baseAddress + 1000ull * layerBytes && window.height == 4120 && window.depthOrLastArray == 0 && window.baseArray == 0 && window.dimension == TextureDimension::k2D, "a windowed 1D array past maxImageArrayLayers flattens from its first viewed layer");
+    }
+
 }

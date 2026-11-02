@@ -1989,7 +1989,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto& samplers = state.program.Info().samplers;
     const bool tableSampler = imageInfo.needsSampler && memory.sampler < samplers.size() && samplers[memory.sampler].table != NoTable;
     const bool tables = base.table != NoTable || tableSampler;
-    const auto modes = base.table != NoTable ? state.program.Info().runtimeImageModes.at(memory.resource) : ResourceMaterializer::RuntimeImageModes(base);
+    const auto modes = base.table != NoTable ? state.program.Info().runtimeImageModes.at(memory.resource) : ResourceMaterializer::RuntimeImageModes(base, state.program.Info().maxImageArrayLayers);
     std::uint32_t tableSelector = 0u;
     std::uint32_t samplerGuard = 0u;
     if (tables) {
