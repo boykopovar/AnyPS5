@@ -210,6 +210,7 @@ struct SpirvEmitterState {
     std::uint32_t gcnBufferFormatFunction = 0;
     std::uint32_t gdsVariable = 0;
     std::uint32_t gdsLength = 0;
+    std::uint32_t gdsGuestLength = 0;
     std::uint32_t pushConstantVariable = 0;
     std::uint32_t shaderDataStorageVariable = 0;
     std::uint32_t flattenedSrtVariable = 0;

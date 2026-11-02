@@ -1440,9 +1440,9 @@ std::uint32_t AppendConsume(SpirvValueEmitContext& ctx, const IrValue& inst, boo
         const auto waveInGroup = EmitBinaryU32(state, spv::OpUDiv, EmitLocalInvocationIndex(state), ConstantU32(state, guestWave));
         const auto launch = EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, linear, ConstantU32(state, wavesPerGroup)), waveInGroup);
         const auto waves = EmitBinaryU32(state, spv::OpIMul, EmitBinaryU32(state, spv::OpIMul, EmitBinaryU32(state, spv::OpIMul, groups(0u), groups(1u)), groups(2u)), ConstantU32(state, wavesPerGroup));
-        const auto element = [&](std::uint32_t fromEnd) { return EmitMemoryElementPointer(state, access, EmitMemoryElementIndex(state, access, Binary(state, spv::OpISub, TypeU32(state), access.length, ConstantU32(state, fromEnd)))); };
+        const auto element = [&](std::uint32_t metadata) { return EmitMemoryElementPointer(state, access, EmitMemoryElementIndex(state, access, EmitAddU32(state, access.length, ConstantU32(state, metadata)))); };
         const auto next = EmitAddU32(state, launch, ConstantU32(state, 1u));
-        orderedTurn = OrderedTurn{element(2u), element(1u), launch, Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), next, waves), ConstantU32(state, 0u), next), (OrderedFlags(inst) & 2u) != 0u};
+        orderedTurn = OrderedTurn{element(0u), element(1u), launch, Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), next, waves), ConstantU32(state, 0u), next), (OrderedFlags(inst) & 2u) != 0u};
     }
     const auto update = [&]() {
         if (InFunctionStorage(state, mem.kind)) {

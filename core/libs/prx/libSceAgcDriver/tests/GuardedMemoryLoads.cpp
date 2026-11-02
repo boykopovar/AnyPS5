@@ -1,6 +1,7 @@
 #define SPV_ENABLE_UTILITY_CODE
 #include <spirv/unified1/spirv.hpp>
 #undef SPV_ENABLE_UTILITY_CODE
+#include "RuntimeAbi.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
@@ -247,7 +248,7 @@ private:
         case spv::OpLogicalNot: return !argument(3);
         case spv::OpArrayLength:
             require(isGuestPointer(instruction[3]), "unknown array length in access fixture");
-            return 16;
+            return rootName(instruction[3]) == "gds" ? 16 + RuntimeAbi::GdsMetadataDwords : 16;
         case spv::OpLoad:
             require(!isGuestPointer(instruction[3]), "guest data unexpectedly controls a fixture access");
             require(rootName(instruction[3]) == "vsharp" || rootName(instruction[3]).find("subgroup") != std::string::npos, "unknown input to access condition");

@@ -5420,7 +5420,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (record.pushStages != 0) {
         context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, record.pushBytes->data());
     }
-    const auto orderedTurn = record.shader->program->orderedAppend ? resources.guestFillTarget(Pm4::GdsAddress() + Pm4::GdsOrderedTurnOffset, sizeof(std::uint32_t)) : std::nullopt;
+    const auto orderedTurn = record.shader->program->orderedAppend ? std::optional(resources.guestFillTarget(Pm4::GdsAddress() + Pm4::GdsOrderedTurnOffset, sizeof(std::uint32_t))) : std::nullopt;
     const auto resetOrderedTurn = [&] {
         if (!orderedTurn.has_value()) return;
         Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);

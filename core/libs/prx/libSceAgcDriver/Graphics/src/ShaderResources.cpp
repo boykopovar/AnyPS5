@@ -2231,6 +2231,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                     Require(binding.count == 1 && binding.guestDescriptor.empty(), "invalid GDS descriptor contract");
                     const auto gds = Pm4::GdsAddress();
                     guestMemory.AddWritable(gds, Pm4::GdsBindingBytes, true);
+                    guestMemory.AddFillTarget(gds + Pm4::GdsOrderedTurnOffset, sizeof(std::uint32_t));
                     item.allocations.push_back(allocations.size());
                     allocations.push_back({gds, Pm4::GdsBindingBytes, true, nullptr, ShaderRecompiler::DescriptorRole::ShaderData, true});
                 } else {
