@@ -86,7 +86,7 @@ void ThreadLifecycle::RunKeyDtors() {
 extern "C" {
 
 int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor) {
-    if (!key) throw std::runtime_error("scePthreadKeyCreate: null key");
+    if (!key) return SCE_KERNEL_ERROR_EINVAL;
     std::lock_guard lock(g_keyLock);
     for (int index = 0; index < MAX_KEYS; ++index) {
         if (g_keys[index].sequence.load(std::memory_order_relaxed) == FREE_KEY) {
