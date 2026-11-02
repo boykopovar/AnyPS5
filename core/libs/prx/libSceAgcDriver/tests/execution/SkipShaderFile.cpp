@@ -70,7 +70,7 @@ int main() {
     try {
         List(path, "# listed\n" + Hex(First.data()) + "\n");
 #ifdef _WIN32
-        Require(_putenv_s("APS5_SKIP_SHADER_FILE", path.string().c_str()) == 0, "cannot set APS5_SKIP_SHADER_FILE");
+        Require(_wputenv_s(L"APS5_SKIP_SHADER_FILE", path.c_str()) == 0, "cannot set APS5_SKIP_SHADER_FILE");
 #else
         Require(setenv("APS5_SKIP_SHADER_FILE", path.string().c_str(), 1) == 0, "cannot set APS5_SKIP_SHADER_FILE");
 #endif
