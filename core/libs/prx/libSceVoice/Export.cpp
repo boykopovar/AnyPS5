@@ -282,7 +282,8 @@ int APS5_VABI sceVoiceGetPortInfo(uint32_t port_id, VoicePortInfo* info) {
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return VoiceErrorNotInitialized;
-    if (info == nullptr) APS5_INVALID_ARG_EX;
+    if (port_id > 127) return InvalidPort;
+    if (info == nullptr) return InvalidArgument;
     const auto& port = RequirePort(voice, port_id, __func__);
     info->port_type = port.type;
     info->state = PortStateReady;
@@ -320,13 +321,19 @@ int APS5_VABI sceVoiceGetPortAttr(std::uint32_t portId, std::int32_t attr, void*
     if (found == voice.ports.end()) return InvalidPort;
     const auto requiredType = attr == 1003 ? PortOutDevice : PortInDevice;
     if (found->second.type != requiredType) return InvalidArgument;
+    if (attr == 1001) {
+        *static_cast<std::uint8_t*>(value) = 0;
+        return 0;
+    }
     Fail(__func__, "device attribute backend is not implemented");
 }
 
 int APS5_VABI sceVoiceReadFromOPort(uint32_t output_port_id, void* data, uint32_t* size) {
-    if (data == nullptr || size == nullptr) APS5_INVALID_ARG_EX;
     auto& voice = State();
     std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
+    if (output_port_id > 127) return InvalidPort;
+    if (data == nullptr || size == nullptr) return InvalidArgument;
     if (IsInput(RequirePort(voice, output_port_id, __func__).type)) Fail(__func__, "port is not an output port");
     *size = 0;
     return 0;
