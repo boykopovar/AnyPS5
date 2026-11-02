@@ -173,6 +173,73 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
 
+    def test_invalid_existing_timeline_can_be_replaced_after_sequence_exhaustion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            for body in ["", "0 100 16384\n", "0 100 16384\n99 100 64\n",
+                         "0 100 16384\n100 100 64\nextra\n"]:
+                with self.subTest(body=body):
+                    output.write_text(f"APS5_PAD_TIMELINE 1 {2**64 - 1} 2\n{body}", encoding="utf-8")
+                    with mock.patch.object(sys, "argv", ["pad_timeline.py", str(timeline), str(output)]), \
+                            mock.patch.object(pad_input.time, "monotonic_ns", return_value=1), \
+                            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        pad_timeline.main()
+                    self.assertEqual(output.read_text(encoding="utf-8"),
+                                     "APS5_PAD_TIMELINE 1 1 2\n200 100 18432\n500 200 64\n")
+
+    def test_valid_existing_timeline_sequence_exhaustion_preserves_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            original = pad_timeline.compile_timeline(self.document, 2**64 - 1)
+            output.write_text(original, encoding="utf-8")
+            result = self.run_cli(timeline, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("sequence is exhausted", result.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"), original)
+
+    def test_symbolic_link_loops_are_usage_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline = root / "sequence.json"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            loop = root / "loop"
+            try:
+                loop.symlink_to(loop.name)
+            except (OSError, NotImplementedError):
+                self.skipTest("symbolic links are unavailable")
+            for arguments in ((timeline, loop), (loop, root / "command")):
+                with self.subTest(arguments=arguments):
+                    result = self.run_cli(*arguments)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertTrue(result.stderr.startswith("pad_timeline: "), result.stderr)
+                    self.assertTrue(loop.is_symlink())
+                    self.assertFalse((root / "command").exists())
+
+    def test_excessively_nested_timelines_are_usage_errors(self):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                json.loads("[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("JSON decoder accepted every bounded nesting probe")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text("[" * (depth + 128) + "]" * (depth + 128), encoding="utf-8")
+            result = self.run_cli(timeline, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertTrue(result.stderr.startswith("pad_timeline: "), result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertNotIn("must contain version and events", result.stderr)
+            self.assertFalse(output.exists())
+
     def test_output_directory_validation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

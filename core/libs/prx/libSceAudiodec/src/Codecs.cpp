@@ -1,4 +1,5 @@
 #include "prx/libSceAudiodec/src/Codecs.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include "libatrac9.h"
 extern "C" {
@@ -8,7 +9,9 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -28,6 +31,14 @@ void writeSample(float value, std::int32_t wordSize, std::uint8_t* out) {
     std::memcpy(out, &sample, sizeof(sample));
 }
 
+struct PacketDeleter {
+    void operator()(AVPacket* packet) const { av_packet_free(&packet); }
+};
+
+struct FrameDeleter {
+    void operator()(AVFrame* frame) const { av_frame_free(&frame); }
+};
+
 class FfmpegDecoder : public Decoder {
 public:
     FfmpegDecoder(AVCodecID id, std::int32_t wordSize, std::vector<std::uint8_t> extradata = {}) : wordSize(wordSize), extradata(std::move(extradata)), id(id) {
@@ -38,23 +49,22 @@ public:
 
     ~FfmpegDecoder() override { avcodec_free_context(&context); }
 
-    void Reset() override { avcodec_flush_buffers(context); }
+    void Reset() override {
+        if (context) avcodec_flush_buffers(context);
+    }
 
 protected:
     DecodeResult decodePacket(const std::uint8_t* data, std::size_t size, std::uint8_t* pcm, std::size_t pcmSize) {
-        AVPacket* packet = av_packet_alloc();
-        AVFrame* frame = av_frame_alloc();
-        if (!packet || !frame) {
-            av_packet_free(&packet);
-            av_frame_free(&frame);
-            throw std::bad_alloc();
-        }
+        if (!context) return {DecodeStatus::InvalidData};
+        const std::unique_ptr<AVPacket, PacketDeleter> packet(av_packet_alloc());
+        const std::unique_ptr<AVFrame, FrameDeleter> frame(av_frame_alloc());
+        if (!packet || !frame) throw std::bad_alloc();
         packet->data = const_cast<std::uint8_t*>(data);
         packet->size = static_cast<int>(size);
         DecodeResult result{};
         result.consumed = size;
-        if (avcodec_send_packet(context, packet) < 0) result.status = DecodeStatus::InvalidData;
-        while (result.status == DecodeStatus::Ok && avcodec_receive_frame(context, frame) == 0) {
+        if (avcodec_send_packet(context, packet.get()) < 0) result.status = DecodeStatus::InvalidData;
+        while (result.status == DecodeStatus::Ok && avcodec_receive_frame(context, frame.get()) == 0) {
             const auto format = static_cast<AVSampleFormat>(frame->format);
             if (format != AV_SAMPLE_FMT_FLTP && format != AV_SAMPLE_FMT_S16P) throw std::runtime_error("libSceAudiodec: FFmpeg sample format " + std::to_string(frame->format) + " is not converted");
             const auto channels = static_cast<std::size_t>(frame->ch_layout.nb_channels);
@@ -75,17 +85,21 @@ protected:
             result.channels = static_cast<std::uint32_t>(channels);
             result.sampleRate = static_cast<std::uint32_t>(frame->sample_rate);
             result.highEfficiency = context->profile == AV_PROFILE_AAC_HE || context->profile == AV_PROFILE_AAC_HE_V2;
-            av_frame_unref(frame);
+            av_frame_unref(frame.get());
         }
-        av_packet_free(&packet);
-        av_frame_free(&frame);
         return result;
     }
 
-    void reopen(std::vector<std::uint8_t> replacement) {
+    bool tryReopen(std::vector<std::uint8_t> replacement) {
         avcodec_free_context(&context);
         extradata = std::move(replacement);
-        open();
+        try {
+            open();
+            return true;
+        } catch (const std::runtime_error& error) {
+            APS5_LOG_ERR("%s", error.what());
+            return false;
+        }
     }
 
 private:
@@ -99,7 +113,18 @@ private:
             std::memcpy(context->extradata, extradata.data(), extradata.size());
             context->extradata_size = static_cast<int>(extradata.size());
         }
-        if (avcodec_open2(context, codec, nullptr) < 0) throw std::runtime_error("libSceAudiodec: cannot open an FFmpeg decoder");
+        if (const int status = avcodec_open2(context, codec, nullptr); status < 0) {
+            avcodec_free_context(&context);
+            char reason[AV_ERROR_MAX_STRING_SIZE]{};
+            av_strerror(status, reason, sizeof(reason));
+            std::string config;
+            for (const auto byte : extradata) {
+                char hex[4];
+                std::snprintf(hex, sizeof(hex), "%02x", byte);
+                config += hex;
+            }
+            throw std::runtime_error("libSceAudiodec: cannot open the FFmpeg " + std::string(avcodec_get_name(id)) + " decoder" + (config.empty() ? "" : " (config " + config + ")") + ": " + reason);
+        }
     }
 
     std::int32_t wordSize;
@@ -183,14 +208,14 @@ public:
         if (layout.channelConfiguration == 0) {
             if (!layouts.empty()) {
                 layouts.clear();
-                reopen({});
+                if (!tryReopen({})) return {DecodeStatus::InvalidData};
             }
             return decodePacket(data, frameBytes, pcm, pcmSize);
         }
         if (layouts.empty() || layouts.front() != layout) {
             layouts = {layout};
             sbr = highEfficiency ? Sbr::Implicit : Sbr::Absent;
-            reopen(audioSpecificConfig(layout, sbr, 0));
+            if (!tryReopen(audioSpecificConfig(layout, sbr, 0))) return {DecodeStatus::InvalidData};
         }
         DecodeResult result = decodeAccessUnit(data + headerBytes, frameBytes - headerBytes, pcm, pcmSize);
         result.consumed = frameBytes;
@@ -200,18 +225,18 @@ public:
 private:
     DecodeResult decodeAccessUnit(const std::uint8_t* data, std::size_t size, std::uint8_t* pcm, std::size_t pcmSize) {
         for (std::size_t index = 0; index < layouts.size(); ++index) {
-            if (index != 0) reopen(audioSpecificConfig(layouts[index], sbr, 0));
+            if (index != 0 && !tryReopen(audioSpecificConfig(layouts[index], sbr, 0))) continue;
             DecodeResult result = decodePacket(data, size, pcm, pcmSize);
             if (result.status == DecodeStatus::InvalidData) continue;
             layouts = {layouts[index]};
             if (sbr == Sbr::Implicit && layouts.front().channelConfiguration == 1 && result.channels > 1) {
                 sbr = Sbr::WithoutParametricStereo;
-                reopen(audioSpecificConfig(layouts.front(), sbr, result.sampleRate));
+                if (!tryReopen(audioSpecificConfig(layouts.front(), sbr, result.sampleRate))) return {DecodeStatus::InvalidData};
                 result = decodePacket(data, size, pcm, pcmSize);
             }
             return result;
         }
-        if (layouts.size() > 1) reopen(audioSpecificConfig(layouts.front(), sbr, 0));
+        if (layouts.size() > 1) tryReopen(audioSpecificConfig(layouts.front(), sbr, 0));
         return {DecodeStatus::InvalidData};
     }
 

@@ -429,9 +429,10 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             if (instruction.RipDisplacement) {
                 const auto target = static_cast<std::int64_t>(instruction.Rva) + static_cast<std::int64_t>(bytes.size()) + std::bit_cast<std::int32_t>(Io::ReadU32(bytes, *instruction.RipDisplacement));
                 const auto displacement = target - (static_cast<std::int64_t>(code.GetRva()) + static_cast<std::int64_t>(bytes.size()));
-                if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                const bool addressSize32 = Codegen::X64InstructionDecoder{}.DecodeInstruction(bytes.data(), bytes.size()).AddressSize32;
+                if (!addressSize32 && (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max()))
                     throw Domain::RelinkerException("Moved RIP-relative instruction exceeds rel32 range from its TLS stub", access.FileOffset);
-                Io::WriteU32(bytes, *instruction.RipDisplacement, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
+                Io::WriteU32(bytes, *instruction.RipDisplacement, static_cast<std::uint32_t>(displacement));
             }
             if (instruction.BranchTarget) {
                 const auto displacement = static_cast<std::int64_t>(*instruction.BranchTarget) - (static_cast<std::int64_t>(code.GetRva()) + static_cast<std::int64_t>(bytes.size()));
