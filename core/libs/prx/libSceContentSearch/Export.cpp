@@ -200,6 +200,7 @@ int APS5_VABI sceContentSearchGetMyApplicationIndex(std::int32_t* index) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (index == nullptr) return ErrorInvalidArgument;
     *index = 0;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceContentSearchGetNumOfApplication(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::int64_t* numOfApplication, std::int64_t* lastUpdateId) {
