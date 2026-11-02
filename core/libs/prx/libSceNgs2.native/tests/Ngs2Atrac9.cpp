@@ -376,7 +376,7 @@ static void TestParseLoops() {
     }
     const auto file = LoopedFile(100, 700, 0);
     Ngs2WaveformInfo info{};
-    Require(sceNgs2ParseWaveformData(file.data(), 168, &info) == SCE_NGS2_OK);
+    Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK);
     Require(info.block[1].num_repeats == UINT32_MAX);
     const auto system = CreateSystem();
     const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
@@ -743,6 +743,16 @@ static void TestStreamingReplay() {
     }
 }
 
+static void TestDataChunkBeyondBuffer() {
+    const auto file = At9File(48000);
+    Ngs2WaveformInfo info{};
+    Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK && info.data_size == SuperframeBytes);
+    auto truncated = file;
+    Set32(truncated, 4, static_cast<std::uint32_t>(truncated.size() - 8 + 16));
+    Set32(truncated, 96, SuperframeBytes + 16);
+    Require(sceNgs2ParseWaveformData(truncated.data(), truncated.size(), &info) == SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA);
+}
+
 int main() {
     const auto reference = Reference();
     TestSkipAndBlockEnd(reference);
@@ -764,5 +774,6 @@ int main() {
     TestBlockOnEmptyAtrac9Voice();
     TestEmptyAddsCloseLikePcm();
     TestSilenceFlagRejected();
+    TestDataChunkBeyondBuffer();
     return 0;
 }
