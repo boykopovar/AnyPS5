@@ -1268,9 +1268,94 @@ int main() {
 
     passed &= run("an optional wave body may merge a lane's own bit of the predicate's ballot with the skipped predicate", [&] { return optionalPredicateBody(false); });
     passed &= run("an optional wave body cannot merge a value that differs from the skipped predicate on inactive lanes", [&] { return !optionalPredicateBody(true); });
+
+    enum class BodyLanes { OwnBits, SameLanes, SameLanesCovered, OtherLanes };
+    const auto optionalBallotWords = [&](bool keepsActive, BodyLanes shape = BodyLanes::OwnBits) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& real = helperPredicate(b, false);
+        auto& other = pixelPredicate(b);
+        auto [low, high] = b.ballotWords(real);
+        if (shape == BodyLanes::SameLanesCovered) {
+            const auto [everyLow, everyHigh] = b.ballotWords(b.truth());
+            low = &b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {low, everyLow});
+            high = &b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {everyHigh, high});
+        }
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& body = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::Branch;
+        bodyInfo.terminator.trueBlock = merge.Id();
+        b.block = &body;
+        auto& lanes = b.logicalAnd(shape == BodyLanes::OwnBits ? b.threadBit(*low, *high) : shape == BodyLanes::OtherLanes ? other : real, keepsActive ? predicate : b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate}));
+        const auto [takenLow, takenHigh] = b.ballotWords(lanes);
+        b.block = &merge;
+        auto& mergedLow = b.phi(IrType::U32, entry, *low);
+        mergedLow.AddPhiOperand(&body, takenLow);
+        auto& mergedHigh = b.phi(IrType::U32, entry, *high);
+        mergedHigh.AddPhiOperand(&body, takenHigh);
+        exportUnder(b, b.threadBit(mergedLow, mergedHigh), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may merge a ballot of the skipped lanes' own mask bits with that mask", [&] { return optionalBallotWords(false); });
+    passed &= run("an optional wave body cannot merge a ballot that clears inactive lanes' mask bits", [&] { return !optionalBallotWords(true); });
+    passed &= run("an optional wave body may merge a ballot of the same lanes less the body's with the skipped ballot", [&] { return optionalBallotWords(false, BodyLanes::SameLanes); });
+    passed &= run("an optional wave body may merge that ballot with the skipped ballot under a mask of every lane", [&] { return optionalBallotWords(false, BodyLanes::SameLanesCovered); });
+    passed &= run("an optional wave body cannot merge a ballot of the same lanes and the body's with the skipped ballot", [&] { return !optionalBallotWords(true, BodyLanes::SameLanes); });
+    passed &= run("an optional wave body cannot merge a ballot of other lanes with the skipped ballot", [&] { return !optionalBallotWords(false, BodyLanes::OtherLanes); });
     passed &= run("an optional wave body preserves inactive values consumed only within a lane", [&] { return optionalPixelBody(false); });
     passed &= run("an optional wave body cannot change helper coordinates for later implicit samples", [&] { return !optionalPixelBody(true); });
     passed &= run("an optional wave body cannot change helper coordinates for LOD queries", [&] { return !optionalPixelBody(true, IrOpcode::ImageQueryLod); });
+
+    const auto optionalHelperFreeBallot = [&](bool helperLive) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& zero = b.constant(0u);
+        const auto [liveLow, liveHigh] = b.ballotWords(helperPredicate(b, helperLive));
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& body = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::Branch;
+        bodyInfo.terminator.trueBlock = merge.Id();
+        b.block = &body;
+        auto& written = b.select(predicate, b.constant(42u), zero);
+        b.block = &merge;
+        auto& merged = b.phi(IrType::U32, entry, zero);
+        merged.AddPhiOperand(&body, &written);
+        auto& kept = b.logicalAnd(b.threadBit(*liveLow, *liveHigh), b.emit(IrOpcode::INotEqual32, IrType::Bool, {&merged, &zero}));
+        const auto [keptLow, keptHigh] = b.ballotWords(kept);
+        b.keep(*keptLow);
+        exportUnder(b, b.threadBit(*keptLow, *keptHigh), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may merge a value into a ballot whose argument is false on every helper lane", [&] { return optionalHelperFreeBallot(false); });
+    passed &= run("an optional wave body cannot merge a value into a ballot that helper lanes contribute to", [&] { return !optionalHelperFreeBallot(true); });
 
     const auto optionalPixelRegion = [&](bool unmaskedArm) {
         Builder b;
@@ -1326,6 +1411,56 @@ int main() {
 
     passed &= run("an optional wave body spanning several blocks preserves inactive values through its own phis", [&] { return optionalPixelRegion(false); });
     passed &= run("an optional wave body spanning several blocks cannot write an inactive lane on any of its paths", [&] { return !optionalPixelRegion(true); });
+
+    const auto optionalPixelExit = [&](bool exitKeepsLanes) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& zero = b.constant(0u);
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& body = b.newBlock();
+        auto& exit = b.newBlock();
+        auto& rest = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&exit);
+        body.AddBranch(&rest);
+        rest.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        b.block = &body;
+        auto& uniformBit = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&b.emit(IrOpcode::GetUserData, IrType::U32, {}), &zero});
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        bodyInfo.terminator.condition = BranchCondition::SccNonZero;
+        bodyInfo.terminator.trueBlock = exit.Id();
+        bodyInfo.terminator.falseBlock = rest.Id();
+        bodyInfo.condition = &uniformBit;
+        b.program.Metadata().blockInfo[2u].terminator.kind = TerminatorKind::Return;
+        b.program.Metadata().blockInfo[3u].terminator.kind = TerminatorKind::Branch;
+        b.program.Metadata().blockInfo[3u].terminator.trueBlock = merge.Id();
+        b.block = &exit;
+        auto& keepsNone = b.program.CreateValue(IrOpcode::Void, IrType::Bool);
+        keepsNone.SetImmediateBool(false);
+        exportUnder(b, exitKeepsLanes ? b.truth() : keepsNone, true, true);
+        b.block = &rest;
+        auto& restValue = b.select(predicate, b.constant(42u), zero);
+        b.block = &merge;
+        auto& merged = b.phi(IrType::U32, entry, zero);
+        merged.AddPhiOperand(&rest, &restValue);
+        b.keep(merged);
+        exportUnder(b, b.truth(), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may end the wave through an exit that keeps no lane", [&] { return optionalPixelExit(false); });
+    passed &= run("an optional wave body cannot end the wave through an exit that keeps lanes", [&] { return !optionalPixelExit(true); });
 
     const auto nestedOptionalGuard = [&](bool unsafeInner, bool ballotEscape) {
         Builder b;
@@ -1697,7 +1832,47 @@ int main() {
     passed &= run("selects that each reach the rest of the program are settled in steps that grow with the program, not with its square", [&] {
         const auto [small, smallKept] = shaded(500u);
         const auto [large, largeKept] = shaded(4000u);
-        return small.removedSelects == 500u && smallKept == 500u && large.removedSelects == 4000u && largeKept == 4000u && small.steps != 0u && large.steps <= 9u * small.steps;
+        return small.removedSelects == 500u && smallKept == 500u && large.removedSelects == 4000u && largeKept == 4000u && small.steps != 0u && large.steps <= 9u * small.steps && large.steps < 90'000u;
+    });
+
+    passed &= run("layer replay permits local LDS but rejects GDS access", [] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Mesh;
+        MemoryInfo memory{};
+        memory.kind = ResourceKind::Lds;
+        b.program.Resources().memoryInfo.push_back(memory);
+        b.emit(IrOpcode::StoreShared, IrType::Void, {&b.constant(0u), &b.constant(1u)});
+        if (!LayerReplaySafe(b.program)) return false;
+        b.program.Resources().memoryInfo.front().kind = ResourceKind::Gds;
+        return !LayerReplaySafe(b.program);
+    });
+
+    passed &= run("layer replay distinguishes read-only address access from address writes", [] {
+        Builder b;
+        b.program.Info().usesDma = true;
+        auto& address = b.emit(IrOpcode::GetAddressResource, IrType::AddressResource, {});
+        auto& offset = b.constant(0u);
+        auto& active = b.truth();
+        b.emit(IrOpcode::LoadAddressU32, IrType::U32, {&address, &offset, &offset, &active});
+        if (!LayerReplaySafe(b.program)) return false;
+        b.program.Info().bdaWrites = true;
+        if (LayerReplaySafe(b.program)) return false;
+        b.program.Info().bdaWrites = false;
+        b.emit(IrOpcode::StoreAddressU32, IrType::Void, {&address, &offset, &offset, &b.constant(1u), &active});
+        return !LayerReplaySafe(b.program);
+    });
+
+    passed &= run("layer replay rejects guest buffer stores and shader clocks", [] {
+        Builder written;
+        auto& buffer = written.emit(IrOpcode::GetBufferResource, IrType::BufferResource, {});
+        written.emit(IrOpcode::StoreBuffer, IrType::Void, {&buffer, &written.constant(0u), &written.constant(1u)});
+        if (LayerReplaySafe(written.program)) return false;
+        for (const auto opcode : {IrOpcode::ShaderClock, IrOpcode::RealtimeClock}) {
+            Builder clock;
+            clock.emit(opcode, IrType::U64, {});
+            if (LayerReplaySafe(clock.program)) return false;
+        }
+        return true;
     });
 
     return passed ? 0 : 1;

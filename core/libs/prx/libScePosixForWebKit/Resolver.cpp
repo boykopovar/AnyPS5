@@ -281,48 +281,77 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     }
     if (rawQuery && service) return 9;
     if (!Ready()) return 4;
-    addrinfo* native = nullptr;
-    const auto error = ::getaddrinfo(node, service, &nativeHints, &native);
-    if (error) return GuestError(error);
+    std::array<addrinfo, 2> queries{nativeHints, nativeHints};
+    std::size_t queryCount = 1;
+    if (!nativeHints.ai_socktype && !nativeHints.ai_protocol) {
+        queries[0].ai_socktype = SOCK_STREAM;
+        queries[0].ai_protocol = IPPROTO_TCP;
+        queries[1].ai_socktype = SOCK_DGRAM;
+        queries[1].ai_protocol = IPPROTO_UDP;
+        queryCount = 2;
+    } else if (!rawQuery) {
+        if (!queries[0].ai_socktype) {
+            if (nativeHints.ai_protocol == IPPROTO_TCP) queries[0].ai_socktype = SOCK_STREAM;
+            if (nativeHints.ai_protocol == IPPROTO_UDP) queries[0].ai_socktype = SOCK_DGRAM;
+        }
+        if (!queries[0].ai_protocol) {
+            if (nativeHints.ai_socktype == SOCK_STREAM) queries[0].ai_protocol = IPPROTO_TCP;
+            if (nativeHints.ai_socktype == SOCK_DGRAM) queries[0].ai_protocol = IPPROTO_UDP;
+        }
+    }
     GuestResolver::AddressInfo* first = nullptr;
     auto** tail = &first;
     int failure = 0;
-    for (auto* item = native; item; item = item->ai_next) {
-        if (item->ai_family != AF_INET && item->ai_family != AF_INET6) { failure = 5; break; }
-        auto* converted = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
-        if (!converted) { failure = 6; break; }
-        *tail = converted;
-        tail = &converted->next;
-        converted->flags = hints ? hints->flags : 0;
-        converted->family = item->ai_family == AF_INET ? 2 : 28;
-        converted->socketType = rawQuery ? 3 : item->ai_socktype == SOCK_STREAM ? 1 : item->ai_socktype == SOCK_DGRAM ? 2 : 0;
-        converted->protocol = rawQuery ? hints->protocol : item->ai_protocol;
-        converted->addressLength = item->ai_family == AF_INET ? 16 : 28;
-        auto* bytes = static_cast<unsigned char*>(std::calloc(1, converted->addressLength));
-        converted->address = bytes;
-        if (!bytes) { failure = 6; break; }
-        bytes[0] = static_cast<unsigned char>(converted->addressLength);
-        bytes[1] = static_cast<unsigned char>(converted->family);
-        if (item->ai_family == AF_INET) {
-            const auto* v4 = reinterpret_cast<const sockaddr_in*>(item->ai_addr);
-            std::memcpy(bytes + 2, &v4->sin_port, 2);
-            std::memcpy(bytes + 4, &v4->sin_addr, 4);
-        } else {
-            const auto* v6 = reinterpret_cast<const sockaddr_in6*>(item->ai_addr);
-            std::memcpy(bytes + 2, &v6->sin6_port, 2);
-            std::memcpy(bytes + 4, &v6->sin6_flowinfo, 4);
-            std::memcpy(bytes + 8, &v6->sin6_addr, 16);
-            std::memcpy(bytes + 24, &v6->sin6_scope_id, 4);
+    int lookupFailure = 0;
+    for (std::size_t query = 0; query < queryCount; ++query) {
+        addrinfo* native = nullptr;
+        const auto error = ::getaddrinfo(node, service, &queries[query], &native);
+        if (error) {
+            if (error == EAI_SERVICE) { lookupFailure = 9; continue; }
+            failure = GuestError(error);
+            break;
         }
-        if (item->ai_canonname) {
-            const auto size = std::strlen(item->ai_canonname) + 1;
-            converted->canonicalName = static_cast<char*>(std::malloc(size));
-            if (!converted->canonicalName) { failure = 6; break; }
-            std::memcpy(converted->canonicalName, item->ai_canonname, size);
+        for (auto* item = native; item; item = item->ai_next) {
+            if (item->ai_family != AF_INET && item->ai_family != AF_INET6) { failure = 5; break; }
+            const int socketType = rawQuery ? 3 : item->ai_socktype == SOCK_STREAM ? 1 : item->ai_socktype == SOCK_DGRAM ? 2 : 0;
+            if (!socketType) continue;
+            auto* converted = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
+            if (!converted) { failure = 6; break; }
+            *tail = converted;
+            tail = &converted->next;
+            converted->flags = hints ? hints->flags : 0;
+            converted->family = item->ai_family == AF_INET ? 2 : 28;
+            converted->socketType = socketType;
+            converted->protocol = rawQuery ? hints->protocol : item->ai_protocol;
+            converted->addressLength = item->ai_family == AF_INET ? 16 : 28;
+            auto* bytes = static_cast<unsigned char*>(std::calloc(1, converted->addressLength));
+            converted->address = bytes;
+            if (!bytes) { failure = 6; break; }
+            bytes[0] = static_cast<unsigned char>(converted->addressLength);
+            bytes[1] = static_cast<unsigned char>(converted->family);
+            if (item->ai_family == AF_INET) {
+                const auto* v4 = reinterpret_cast<const sockaddr_in*>(item->ai_addr);
+                std::memcpy(bytes + 2, &v4->sin_port, 2);
+                std::memcpy(bytes + 4, &v4->sin_addr, 4);
+            } else {
+                const auto* v6 = reinterpret_cast<const sockaddr_in6*>(item->ai_addr);
+                std::memcpy(bytes + 2, &v6->sin6_port, 2);
+                std::memcpy(bytes + 4, &v6->sin6_flowinfo, 4);
+                std::memcpy(bytes + 8, &v6->sin6_addr, 16);
+                std::memcpy(bytes + 24, &v6->sin6_scope_id, 4);
+            }
+            if (item->ai_canonname) {
+                const auto size = std::strlen(item->ai_canonname) + 1;
+                converted->canonicalName = static_cast<char*>(std::malloc(size));
+                if (!converted->canonicalName) { failure = 6; break; }
+                std::memcpy(converted->canonicalName, item->ai_canonname, size);
+            }
         }
+        ::freeaddrinfo(native);
+        if (failure) break;
     }
-    ::freeaddrinfo(native);
     if (failure) { freeaddrinfo_nid_postfix(first); return failure; }
+    if (!first) return lookupFailure ? lookupFailure : 4;
     *output = first;
     return 0;
 }

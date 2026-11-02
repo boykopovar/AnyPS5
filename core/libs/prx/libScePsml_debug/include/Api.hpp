@@ -127,7 +127,8 @@ std::int32_t APS5_VABI scePsmlMfsr2CreateSharedResources(void** sharedResources,
 std::int32_t APS5_VABI scePsmlMfsr2GetDispatchPackets(void* context, const MfsrCommandBuffer* commandBuffer, const Mfsr2DispatchParam* param);
 std::int32_t APS5_VABI scePsmlMfsr2CreateContext(void** context, const Mfsr2ContextParam* param);
 std::int32_t APS5_VABI scePsmlMfsr2Init();
-int APS5_VABI scePsmlMfsrEnableSpecularAA();
-int APS5_VABI scePsmlMfsrEnableQuality8K();
+int APS5_VABI scePsmlMfsrEnableSpecularAA(std::uint32_t);
+int APS5_VABI scePsmlMfsrEnableQuality8K(std::uint32_t);
+int APS5_VABI scePsmlMfsrEnableLightWeight(std::uint32_t);
 
 }

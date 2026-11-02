@@ -20,6 +20,12 @@ struct NpMatching2CreateContextParameter {
     std::uint64_t size;
 };
 
+struct NpMatching2CreateContextParameterA {
+    std::int32_t userId;
+    std::uint32_t serviceLabel;
+    std::uint64_t size;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpMatching2ContextStart(std::uint16_t ctxId, std::uint64_t timeout);
@@ -52,4 +58,45 @@ int APS5_VABI sceNpMatching2SetUserInfo();
 int APS5_VABI sceNpMatching2SignalingGetConnectionInfo();
 int APS5_VABI sceNpMatching2Terminate(void);
 
+int APS5_VABI sceNpMatching2AbortContextStart(std::uint16_t ctxId);
+int APS5_VABI sceNpMatching2CreateContextA(const NpMatching2CreateContextParameterA* param, std::uint16_t* ctxId);
+int APS5_VABI sceNpMatching2CreateContextInternal();
+int APS5_VABI sceNpMatching2CreateJoinRoomA();
+int APS5_VABI sceNpMatching2GetLobbyInfoList();
+int APS5_VABI sceNpMatching2GetLobbyMemberDataInternal();
+int APS5_VABI sceNpMatching2GetLobbyMemberDataInternalList();
+int APS5_VABI sceNpMatching2GetMemoryInfo();
+int APS5_VABI sceNpMatching2GetRoomJoinedSlotMaskLocal();
+int APS5_VABI sceNpMatching2GetRoomMemberDataExternalList();
+int APS5_VABI sceNpMatching2GetRoomMemberIdListLocal();
+int APS5_VABI sceNpMatching2GetRoomPasswordLocal();
+int APS5_VABI sceNpMatching2GetSignalingOptParamLocal();
+int APS5_VABI sceNpMatching2GetSslMemoryInfo();
+int APS5_VABI sceNpMatching2GetUserInfoListA();
+int APS5_VABI sceNpMatching2GetWorldIdArrayForAllServers();
+int APS5_VABI sceNpMatching2GrantRoomOwner();
+int APS5_VABI sceNpMatching2JoinLobby();
+int APS5_VABI sceNpMatching2JoinRoomA();
+int APS5_VABI sceNpMatching2LeaveLobby();
+int APS5_VABI sceNpMatching2RegisterLobbyEventCallback(std::uint16_t ctxId, void* callback, void* userdata);
+int APS5_VABI sceNpMatching2RegisterLobbyMessageCallback(std::uint16_t ctxId, void* callback, void* userdata);
+int APS5_VABI sceNpMatching2RegisterManualUdpSignalingCallback();
+int APS5_VABI sceNpMatching2SendLobbyChatMessage();
+int APS5_VABI sceNpMatching2SetExtraInitParam();
+int APS5_VABI sceNpMatching2SetLobbyMemberDataInternal();
+int APS5_VABI sceNpMatching2SetRoomDataInternalExt();
+int APS5_VABI sceNpMatching2SetSignalingOptParam();
+int APS5_VABI sceNpMatching2SignalingAbortConnection();
+int APS5_VABI sceNpMatching2SignalingCancelPeerNetInfo();
+int APS5_VABI sceNpMatching2SignalingEnableManualUdpMode();
+int APS5_VABI sceNpMatching2SignalingEstablishConnection();
+int APS5_VABI sceNpMatching2SignalingGetConnectionInfoA();
+int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, std::uint64_t roomId, std::uint16_t memberId, std::int32_t* connStatus, void* peerAddr, std::uint16_t* peerPort);
+int APS5_VABI sceNpMatching2SignalingGetLocalNetInfo();
+int APS5_VABI sceNpMatching2SignalingGetPeerNetInfo();
+int APS5_VABI sceNpMatching2SignalingGetPeerNetInfoResult();
+int APS5_VABI sceNpMatching2SignalingGetPingInfo();
+int APS5_VABI sceNpMatching2SignalingGetPort();
+int APS5_VABI sceNpMatching2SignalingSetPort();
 }
+

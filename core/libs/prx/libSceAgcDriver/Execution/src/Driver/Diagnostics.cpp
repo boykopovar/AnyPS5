@@ -36,7 +36,7 @@ std::optional<std::uint64_t> programAddress(std::string_view word) {
     return address;
 }
 
-void ReloadSkippedShaders(const char* path) {
+void ReloadSkippedShaders(const std::filesystem::path& path) {
     static std::mutex reload;
     static std::filesystem::file_time_type seen{};
     const std::unique_lock lock(reload, std::try_to_lock);
@@ -55,27 +55,34 @@ void ReloadSkippedShaders(const char* path) {
         }
         const auto address = programAddress(word);
         if (!address) {
-            std::fprintf(stderr, "[skip-shader] ignoring '%s' in %s: not a hexadecimal program address\n", word.c_str(), path);
+            std::fprintf(stderr, "[skip-shader] ignoring '%s' in %s: not a hexadecimal program address\n", word.c_str(), path.string().c_str());
             continue;
         }
         if (*address != 0) skippedShaders[count++].store(*address, std::memory_order_relaxed);
     }
     skippedShaderCount.store(count, std::memory_order_release);
-    std::fprintf(stderr, "[skip-shader] %zu programs listed in %s\n", count, path);
+    std::fprintf(stderr, "[skip-shader] %zu programs listed in %s\n", count, path.string().c_str());
 }
 
 }
 
 bool SkippedShader(std::uint64_t address) {
     static const std::uint64_t single = [] { const char* text = std::getenv("APS5_SKIP_SHADER"); return text ? std::strtoull(text, nullptr, 16) : 0ull; }();
-    static const char* const file = std::getenv("APS5_SKIP_SHADER_FILE");
+    static const std::optional<std::filesystem::path> file = [] {
+#ifdef _WIN32
+        const wchar_t* configured = _wgetenv(L"APS5_SKIP_SHADER_FILE");
+#else
+        const char* configured = std::getenv("APS5_SKIP_SHADER_FILE");
+#endif
+        return configured != nullptr ? std::optional<std::filesystem::path>(configured) : std::nullopt;
+    }();
     if (address == 0) return false;
     if (address == single) return true;
-    if (file == nullptr) return false;
+    if (!file) return false;
     static std::atomic<std::chrono::steady_clock::rep> nextCheck{0};
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     auto due = nextCheck.load(std::memory_order_relaxed);
-    if (now.count() >= due && nextCheck.compare_exchange_strong(due, std::chrono::duration_cast<std::chrono::steady_clock::duration>(now + std::chrono::milliseconds(500)).count(), std::memory_order_relaxed)) ReloadSkippedShaders(file);
+    if (now.count() >= due && nextCheck.compare_exchange_strong(due, std::chrono::duration_cast<std::chrono::steady_clock::duration>(now + std::chrono::milliseconds(500)).count(), std::memory_order_relaxed)) ReloadSkippedShaders(*file);
     const auto count = skippedShaderCount.load(std::memory_order_acquire);
     for (std::size_t index = 0; index < count; ++index) {
         if (skippedShaders[index].load(std::memory_order_relaxed) == address) return true;
@@ -88,16 +95,36 @@ bool SkipRefusedDraws() {
     return skip;
 }
 
+namespace {
+
+struct RefusedShaders {
+    std::mutex mutex;
+    std::set<std::uint64_t> reported;
+};
+
+RefusedShaders& refusedShaders() {
+    static RefusedShaders shaders;
+    return shaders;
+}
+
+}
+
 void ReportRefusedDraw(const RefusedDraw& refused) {
-    static std::mutex reportedMutex;
-    static std::set<std::uint64_t> reported;
+    auto& shaders = refusedShaders();
     {
-        std::lock_guard lock(reportedMutex);
-        if (!reported.insert(refused.address).second) return;
+        std::lock_guard lock(shaders.mutex);
+        if (!shaders.reported.insert(refused.address).second) return;
     }
     const std::string_view what = refused.what();
     const auto line = what.substr(0, what.find('\n'));
     std::fprintf(stderr, "[gpu] APS5_SKIP_REFUSED_DRAWS: skipping the draws that use shader 0x%llx: %.*s\n", static_cast<unsigned long long>(refused.address), static_cast<int>(line.size()), line.data());
+}
+
+std::optional<std::size_t> RefusedShaderCount() {
+    if (!SkipRefusedDraws()) return std::nullopt;
+    auto& shaders = refusedShaders();
+    std::lock_guard lock(shaders.mutex);
+    return shaders.reported.size();
 }
 
 void require(bool condition, const char* reason) {

@@ -26,4 +26,16 @@ int APS5_VABI sceSystemLogger2DeliveryTerminate() {
     return 0;
 }
 
+int APS5_VABI sceSystemLogger2DeliveryResume() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2DeliverySuspend() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2DeliveryInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

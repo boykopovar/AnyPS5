@@ -15,6 +15,7 @@ int APS5_VABI MvpHttpPost_nid_postfix(void);
 int APS5_VABI MvpHttpSetCert_nid_postfix(void);
 int APS5_VABI MvpHttpSetRecvTimeout_nid_postfix(void);
 int APS5_VABI MvpHttpSetRedirectCb_nid_postfix(void);
+int APS5_VABI sceAvPlayerStreamingRegisterVprinf();
 int APS5_VABI sceTsCloseFile(void);
 int APS5_VABI sceTsDisableRepresentation(void);
 int APS5_VABI sceTsEnableRepresentation(void);

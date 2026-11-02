@@ -9,7 +9,7 @@ from test_sce_module_code_extent import run_module, sce_module
 
 def tail(opcode, padding):
     routine = b"\x31\xc0\xb0\x3b" + opcode + b"\xc3" if opcode else b"\x31\xc0\x83\xc0\x01\xc3"
-    return b"\x0f\x78\x11\x22\x33\x44" + routine + padding * 4 + b"\x31\xc0\xc3"
+    return b"\x0f\x78\x11\x22\x33\x55" + routine + padding * 4 + b"\x31\xc0\xc3"
 
 
 def run_executable(relinker, work, name, image, flags, expected_error):

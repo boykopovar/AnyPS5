@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -79,6 +80,10 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         auto copyDraw = DepthCopyDraw(queue, *copy);
         return draw(copyDraw, packet, submission, packetOffset, rejected);
     }
+    if (const auto control = Graphics::DecodeDepthRenderControl(queue); control && ((control->control & 0x60u) != 0u || Graphics::DepthSurfaceAt(control->address))) {
+        if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
+        Graphics::NoteDepthRenderControl(*control);
+    }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;
     rejected = Graphics::DepthMaintenanceRejection(queue);
     if (!rejected.empty()) return DrawVerdict::Rejected;
@@ -103,9 +108,8 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
             const auto type = primitive == queue.userConfig.end() ? 0u : primitive->second & 0x3fu;
             const bool strip = type == 3 || type == 5 || type == 6 || type == 21;
             const bool list = type == 1 || type == 2 || type == 4;
-            const auto restartDevice = device.Load();
-            if (!strip && !(list && restartDevice != nullptr && restartDevice->PrimitiveListRestart())) {
-                rejected = "AGC graphics: primitive restart is only supported for strips, and for lists with VK_EXT_primitive_topology_list_restart";
+            if (!strip && !list) {
+                rejected = "AGC graphics: primitive restart is only supported for strips and lists";
                 return DrawVerdict::Rejected;
             }
             if (resetIndex == queue.context.end() || (resetIndex->second & allOnes) != allOnes) {

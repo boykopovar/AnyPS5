@@ -1,4 +1,5 @@
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
+#include <elfpatcher/general/AddressDistance.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
@@ -98,6 +99,14 @@ std::vector<std::uint8_t> RebasedRelocations(const std::vector<std::uint8_t>& ta
     return rebased;
 }
 
+void RequireZeroImportSlotAddends(const std::vector<std::uint8_t>& table) {
+    for (std::size_t entry = 0; entry < table.size(); entry += kRelaEntrySize) {
+        const auto type = static_cast<std::uint32_t>(Io::ReadU64(table, entry + 8));
+        if ((type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT) && Io::ReadU64(table, entry + 16) != 0)
+            throw Domain::RelinkerException("GLOB_DAT/JUMP_SLOT relocation has a nonzero addend", Io::ReadU64(table, entry));
+    }
+}
+
 void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::ProgramHeader& load) {
     if (load.Offset > buf.size() || load.FileSize > buf.size() - load.Offset)
         throw Domain::RelinkerException("PT_LOAD at " + Hex(load.MappedAddress) + " has file bytes outside the input");
@@ -116,7 +125,7 @@ std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, cons
     return type == R_X86_64_PC32 || type == R_X86_64_32 ? 4 : 8;
 }
 
-void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
+std::uint64_t SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
     std::vector<std::size_t> loads;
     for (std::size_t index = 0; index < headers.size(); ++index) {
         if (headers[index].Type == PT_LOAD && headers[index].MemorySize != 0) {
@@ -128,14 +137,49 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
         return headers[left].MappedAddress < headers[right].MappedAddress;
     });
     for (std::size_t position = 1; position < loads.size(); ++position) {
-        const auto& previous = headers[loads[position - 1]];
-        if (headers[loads[position]].MappedAddress - previous.MappedAddress < previous.MemorySize)
-            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", headers[loads[position]].MappedAddress);
+        auto& previous = headers[loads[position - 1]];
+        const auto& current = headers[loads[position]];
+        if (current.MappedAddress - previous.MappedAddress >= previous.MemorySize)
+            continue;
+        const auto previousEnd = previous.MappedAddress + previous.MemorySize;
+        if (current.MappedAddress == previous.MappedAddress || previousEnd > current.MappedAddress + current.MemorySize)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+        if (((previous.Flags | current.Flags) & (PF_W | PF_X)) == (PF_W | PF_X)
+            && current.MappedAddress % kDefaultLoadAlignment != 0)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+        const auto previousFileEnd = previous.MappedAddress + previous.FileSize;
+        const auto currentFileEnd = current.MappedAddress + current.FileSize;
+        const auto compareEnd = std::min(previousEnd, std::max(previousFileEnd, currentFileEnd));
+        for (auto address = current.MappedAddress; address < compareEnd;) {
+            const bool previousBacked = address < previousFileEnd;
+            const bool currentBacked = address < currentFileEnd;
+            auto runEnd = compareEnd;
+            if (previousBacked)
+                runEnd = std::min(runEnd, previousFileEnd);
+            if (currentBacked)
+                runEnd = std::min(runEnd, currentFileEnd);
+            const auto length = static_cast<std::size_t>(runEnd - address);
+            const auto previousAt = static_cast<std::size_t>(previous.Offset + (address - previous.MappedAddress));
+            const auto currentAt = static_cast<std::size_t>(current.Offset + (address - current.MappedAddress));
+            const bool congruent = previousBacked && currentBacked
+                ? std::equal(buf.begin() + previousAt, buf.begin() + previousAt + length, buf.begin() + currentAt)
+                : previousBacked
+                    ? std::all_of(buf.begin() + previousAt, buf.begin() + previousAt + length, [](const std::uint8_t byte) { return byte == 0; })
+                    : std::all_of(buf.begin() + currentAt, buf.begin() + currentAt + length, [](const std::uint8_t byte) { return byte == 0; });
+            if (!congruent)
+                throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+            address = runEnd;
+        }
+        previous.MemorySize = current.MappedAddress - previous.MappedAddress;
+        if (previous.FileSize > previous.MemorySize)
+            previous.FileSize = previous.MemorySize;
     }
+    std::uint64_t lowered = 0;
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
-        if (prefix == 0 || load.FileSize == 0 || load.Offset % kDefaultLoadAlignment != prefix)
+        const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
+        if (load.FileSize == 0 || (congruent && prefix == 0))
             continue;
         const auto pageStart = load.MappedAddress - prefix;
         std::vector<std::uint8_t> image(static_cast<std::size_t>(prefix), 0);
@@ -150,20 +194,22 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
             }
         }
         const auto mapped = load.Offset - prefix;
-        bool differs = false;
+        bool differs = !congruent;
         for (std::size_t index = 0; index < image.size() && !differs; ++index)
             differs = covered[index] && buf[static_cast<std::size_t>(mapped) + index] != image[index];
         if (!differs)
             continue;
-        const auto alignment = std::max<std::uint64_t>(load.Alignment, kDefaultLoadAlignment);
-        while ((buf.size() + prefix) % alignment != load.MappedAddress % alignment)
-            buf.push_back(0);
+        Io::AlignBuffer(buf, static_cast<std::size_t>(kDefaultLoadAlignment));
         buf.insert(buf.end(), image.begin(), image.end());
         const auto offset = static_cast<std::uint64_t>(buf.size());
         buf.resize(static_cast<std::size_t>(offset + load.FileSize));
         std::copy_n(buf.begin() + static_cast<std::ptrdiff_t>(load.Offset), static_cast<std::size_t>(load.FileSize), buf.begin() + static_cast<std::ptrdiff_t>(offset));
         load.Offset = offset;
+        if (load.Alignment > kDefaultLoadAlignment && (load.Alignment & (load.Alignment - 1)) == 0)
+            lowered = std::max(lowered, load.Alignment);
+        load.Alignment = std::min(load.Alignment, kDefaultLoadAlignment);
     }
+    return lowered;
 }
 
 struct TracedImport {
@@ -190,7 +236,7 @@ std::vector<TracedImport> TracedImports(const Domain::SysVDynamicSection& dynSec
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbol = info >> 32;
             const auto target = Io::ReadU64(table, entry);
-            if ((type != R_X86_64_GLOB_DAT && type != R_X86_64_JUMP_SLOT) || symbol == 0 || Io::ReadU64(table, entry + 16) != 0)
+            if ((type != R_X86_64_GLOB_DAT && type != R_X86_64_JUMP_SLOT) || symbol == 0)
                 continue;
             if (type == R_X86_64_GLOB_DAT && !dynSection.FunctionImports.contains(target))
                 continue;
@@ -255,8 +301,8 @@ std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::ui
     std::vector<std::uint8_t> code = {0x52, 0x53, 0x41, 0x54, 0x48, 0x83, 0xec, 0x08};
     const auto rip = [&](std::initializer_list<std::uint8_t> opcode, const std::uint64_t target) {
         code.insert(code.end(), opcode);
-        const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(vaddr + code.size() + 4);
-        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+        std::int64_t displacement = 0;
+        if (!SignedDistance(target, vaddr + code.size() + 4, displacement) || displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Import trace table exceeds rel32 range");
         Io::AppendU32(code, static_cast<std::uint32_t>(displacement));
     };
@@ -275,6 +321,11 @@ std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::ui
     return code;
 }
 
+void RequireBaseAlignment(const std::uint64_t base, const std::uint64_t alignment) {
+    if (alignment > 1 && base % alignment != 0)
+        throw Domain::RelinkerException("Fixed Linux base " + Hex(base) + " is not a multiple of the PT_LOAD alignment " + Hex(alignment));
+}
+
 void RebaseProgramHeaders(std::vector<std::uint8_t>& buf, const std::uint64_t tableOffset, const std::uint16_t entrySize, const std::uint16_t count, const std::uint64_t base) {
     for (std::uint16_t index = 0; index < count; ++index) {
         const auto header = static_cast<std::size_t>(tableOffset + static_cast<std::uint64_t>(index) * entrySize);
@@ -284,9 +335,7 @@ void RebaseProgramHeaders(std::vector<std::uint8_t>& buf, const std::uint64_t ta
         const auto address = Rebased(base, Io::ReadU64(buf, header + kPhdrVaddrOffset), "Program header address");
         const auto physical = Rebased(base, Io::ReadU64(buf, header + kPhdrPaddrOffset), "Program header physical address");
         if (type == PT_LOAD) {
-            const auto alignment = Io::ReadU64(buf, header + kPhdrAlignOffset);
-            if (alignment > 1 && base % alignment != 0)
-                throw Domain::RelinkerException("Fixed Linux base " + Hex(base) + " is not a multiple of the PT_LOAD alignment " + Hex(alignment));
+            RequireBaseAlignment(base, Io::ReadU64(buf, header + kPhdrAlignOffset));
             if (Io::ReadU64(buf, header + kPhdrMemSizeOffset) > kLinuxUserAddressEnd - address)
                 throw Domain::RelinkerException("PT_LOAD at " + Hex(address) + " ends outside the Linux user address space");
         }
@@ -344,9 +393,8 @@ void LinuxElfPatcher::_appendTrampoline(
     const auto inRange = [](const std::int64_t displacement) {
         return displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max();
     };
-    const auto returnDisplacement = static_cast<std::int64_t>(site.Address + site.Length) - static_cast<std::int64_t>(bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size);
-    const auto jumpDisplacement = static_cast<std::int64_t>(bodyVaddr) - static_cast<std::int64_t>(site.Address + kJmpRel32.Size);
-    if (!inRange(returnDisplacement) || !inRange(jumpDisplacement))
+    std::int64_t returnDisplacement = 0, jumpDisplacement = 0;
+    if (!SignedDistance(site.Address + site.Length, bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size, returnDisplacement) || !SignedDistance(bodyVaddr, site.Address + kJmpRel32.Size, jumpDisplacement) || !inRange(returnDisplacement) || !inRange(jumpDisplacement))
         throw Domain::RelinkerException("AMD-only stub exceeds rel32 range", site.Offset);
     _byteWriter->WriteU32(buf, static_cast<std::size_t>(bodyOff + site.ReturnBranchOffset + 1), static_cast<std::uint32_t>(returnDisplacement));
 
@@ -376,6 +424,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         throw Domain::RelinkerException("--trace-imports conflicts with --lazy-binding");
     if (_traceImports && std::find(dynSection.NeededLibraries.begin(), dynSection.NeededLibraries.end(), "libc.prx") == dynSection.NeededLibraries.end())
         throw Domain::RelinkerException("--trace-imports requires libc.prx among the libraries");
+    RequireZeroImportSlotAddends(dynSection.RelaData);
+    RequireZeroImportSlotAddends(dynSection.RelaPltData);
     if (_fixedBase)
         RequireOnlyDependencies(dynSection.DynamicSegmentData);
     RequireLoaded(originalHeaders, Io::ReadU64(sourceElf, kEhdrEntryOffset), 1, PF_X, "e_entry");
@@ -397,8 +447,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     std::vector<std::uint8_t> buf = std::move(sourceElf);
 
     const std::uint32_t type = _fixedBase ? ET_EXEC : ET_DYN;
-    buf[kEhdrOsAbiOffset] = 0;
-    buf[kEhdrAbiVersionOffset] = 0;
+    std::fill_n(buf.begin() + static_cast<std::ptrdiff_t>(kEhdrOsAbiOffset), 9, std::uint8_t{0});
     buf[kEhdrTypeOffset] = static_cast<std::uint8_t>(type & 0xFF);
     buf[kEhdrTypeOffset + 1] = static_cast<std::uint8_t>((type >> 8) & 0xFF);
     _byteWriter->WriteU64(buf, kEhdrShOffOffset, 0);
@@ -580,7 +629,11 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
 
     auto headers = originalHeaders;
-    SeparateSharedLoadPages(buf, headers);
+    if (_fixedBase)
+        for (const auto& header : headers)
+            if (header.Type == PT_LOAD)
+                RequireBaseAlignment(*_fixedBase, header.Alignment);
+    const auto movedLoadAlignment = SeparateSharedLoadPages(buf, headers);
 
     ProgramHeaderLayoutRequest layoutRequest{};
     layoutRequest.PhOff = tableOff;
@@ -594,6 +647,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     layoutRequest.DynamicSegmentSize = dynSegBuf.size();
     layoutRequest.InterpOffset = interpOff;
     layoutRequest.InterpSize = interpSize;
+    layoutRequest.MovedLoadAlignment = movedLoadAlignment;
 
     const std::uint16_t writtenPh = _programHeaderLayoutBuilder->WriteLayout(buf, layoutRequest);
     _byteWriter->WriteU16(buf, kEhdrPhNumOffset, writtenPh);

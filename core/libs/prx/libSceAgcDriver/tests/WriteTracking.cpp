@@ -17,8 +17,11 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -41,6 +44,7 @@ constexpr wchar_t RewatchImportPagesMode[] = L"--rewatch-import-pages";
 constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
 constexpr wchar_t ImportAliasSharedMode[] = L"--import-alias-shared";
 constexpr wchar_t SharedGenerationsMode[] = L"--compared-shared-generations";
+constexpr wchar_t CpuWritePinMode[] = L"--cpu-write-pin";
 #endif
 
 void Require(bool condition, const std::string& message) {
@@ -195,6 +199,50 @@ void CheckStoredOverUsesPageEvidence() {
     Require(after > before, "the page-local CPU write was not collected");
     Require(StoredOver(base, Page, before), "a collected CPU write on a page was not reported as stored over");
     Require(!StoredOver(base + Page, Page, before), "a page-local CPU write made an untouched page in the same block count as stored over");
+}
+
+void CheckRepeatedNeighbourStores() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto boundary = base + 2 * Block - 0x9000;
+    const auto sharedFirst = boundary - (base + Block);
+    const auto neighbourBytes = static_cast<std::size_t>(base + 3 * Block - boundary);
+    std::memset(memory, 0x11, 3 * Block);
+
+    const auto synced = CollectWrites(base, 3 * Block);
+    Require(synced != 0, "the test block is not collected");
+    for (int store = 0; store < 6; ++store) MarkWritten(boundary, neighbourBytes);
+    Require(!StoredOver(base + Block, static_cast<std::size_t>(sharedFirst), synced), "repeated stores of the neighbour's bytes count for the first surface's part of the shared block");
+    Require(StoredAllSince_nid_no_patch(boundary, neighbourBytes, synced), "repeated stores of the neighbour's bytes forget that they covered them");
+
+    const auto pieces = TrackerGeneration();
+    for (int store = 0; store < 3; ++store) MarkWritten(boundary + static_cast<std::uint64_t>(store) * 0x100, 4);
+    MarkWritten(boundary, 0x400);
+    Require(StoredOver(boundary + 0x200, 4, pieces) && !StoredOver(boundary + 0x400, 4, pieces), "a store over earlier pieces of the block answers for other bytes than its own");
+    MarkWritten(boundary + 0x800, 4);
+    MarkWritten(boundary + 0x900, 4);
+    Require(!StoredOver(base + Block, static_cast<std::size_t>(sharedFirst), pieces), "a store over earlier pieces counts for the first surface's part of the shared block");
+
+    void* fresh = AllocateWatched(2 * Block);
+    const auto freshBase = reinterpret_cast<std::uint64_t>(fresh);
+    std::memset(fresh, 0x11, 2 * Block);
+    const auto freshSynced = CollectWrites(freshBase, 2 * Block);
+    const auto neighbour = freshBase + Block - 0x9000;
+    MarkWritten(neighbour, 0x100);
+    const auto secondStored = MarkWritten(neighbour + 0x1000, 0x100);
+    const auto thirdStored = MarkWritten(neighbour + 0x2000, 0x100);
+    MarkWritten(neighbour + 0x3000, 0x100);
+    const auto settled = TrackerGeneration();
+    MarkWritten(neighbour, 0x100);
+    MarkWritten(neighbour, 0x100);
+    MarkWritten(neighbour + 0x5000, 0x100);
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), secondStored), "a full exact ring evicted a newer piece instead of its oldest");
+    Require(StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), freshSynced), "a forgotten store is not taken as a store over the rest of the block");
+
+    const auto partial = TrackerGeneration();
+    MarkWritten(neighbour + 0x5080, 0x100);
+    Require(StoredOver(neighbour + 0x5000, 0x10, settled) && StoredOver(neighbour + 0x5100, 0x10, partial), "a store that overlaps an earlier piece without containing it replaces it");
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), thirdStored), "a store that overlaps without containing evicted a newer piece instead of the oldest");
 }
 
 void CheckStoredAllSince() {
@@ -816,14 +864,16 @@ void CheckRewatchImportTail() {
     constexpr std::size_t bytes = 0xc4000;
     ImportFixture fixture(13 * Block, bytes);
     const auto import = fixture.Base();
+    const bool pastWatched = Watched(import + bytes, 4096);
     UnwatchImport(import, bytes);
+    Require(Watched(import + bytes, 4096) == pastWatched, "unwatching an import ending inside a block changed the page past it");
     PrintPageState("page past a 0xc4000-byte import", fixture.memory + bytes);
     const auto unwatched = UnwatchSerial();
     Rewatch(BlockSpan(import, bytes));
     Require(!Watched(import, bytes) && UnwatchSerial() == unwatched, "the 64 KiB span past the import's committed pages returned to the write watch");
     Rewatch(PageSpan(import, bytes));
     Require(Watched(import, bytes), "a settled import whose size is not a whole block did not return to the write watch");
-    Require(Watched(import + 12 * Block, bytes - 12 * Block) && !Watched(import, bytes + 1) && !Watched(import + bytes - 1, 2) && !Watched(import + bytes, 4096), "rewatching an import ending inside a block did not return exactly its pages");
+    Require(Watched(import + 12 * Block, bytes - 12 * Block) && Watched(import + bytes, 4096) == pastWatched && Watched(import, bytes + 1) == pastWatched, "rewatching an import ending inside a block changed the page past it");
     Require(UnwatchSerial() != unwatched && UntrackedHint(import, bytes) == 0, "a rewatched import still reads as unwatched");
     RequireRewatchedStores(import, bytes);
 }
@@ -834,13 +884,16 @@ void CheckRewatchUnalignedImport() {
     constexpr std::size_t committed = 0xc8000;
     ImportFixture fixture(13 * Block, committed);
     const auto import = fixture.Base() + offset;
+    const bool beforeWatched = Watched(fixture.Base(), offset);
+    const bool pastWatched = Watched(import + bytes, 4096);
     UnwatchImport(import, bytes);
+    Require(Watched(fixture.Base(), offset) == beforeWatched && Watched(import + bytes, 4096) == pastWatched, "unwatching an import inside its blocks changed the pages around it");
     PrintPageState("page past an import at block offset 0x1000", fixture.memory + committed);
     Rewatch(BlockSpan(import, bytes));
     Require(!Watched(import, bytes), "the 64 KiB span past the committed pages around an import returned to the write watch");
     Rewatch(PageSpan(import, bytes));
     Require(Watched(import, bytes), "a settled import that does not start on a block did not return to the write watch");
-    Require(!Watched(fixture.Base(), offset) && !Watched(import + bytes, 4096), "rewatching an import returned pages outside it");
+    Require(Watched(fixture.Base(), offset) == beforeWatched && Watched(import + bytes, 4096) == pastWatched, "rewatching an import changed the pages around it");
     RequireRewatchedStores(import, bytes);
 }
 
@@ -1344,10 +1397,12 @@ std::uint64_t failedCollectBegin = 0;
 std::uint64_t failedCollectEnd = 0;
 std::uint64_t unwatchHookBegin = 0;
 std::uint64_t unwatchHookEnd = 0;
+bool unwatchHookProven = true;
 
 void RecordUnwatch(std::uint64_t address, std::size_t bytes) {
     unwatchHookBegin = address;
     unwatchHookEnd = address + bytes;
+    unwatchHookProven = UnwatchWritesProven();
 }
 
 bool FailFreshCollect(std::uintptr_t address, std::size_t bytes, void (*)(void*, std::uintptr_t, std::uintptr_t), void*) {
@@ -1371,6 +1426,130 @@ void CheckFailedCollectUnwatch() {
     Require(Watched(base, Block) && Watched(base + 2 * Block, Block), "a failed collect unwatched unrelated blocks");
     Require(failedCollectBegin == base + Block && failedCollectEnd == base + 2 * Block, "the failed fresh collect did not cover its block");
     Require(unwatchHookBegin <= base + Block && unwatchHookEnd >= base + 2 * Block, "a failed collect did not run the unwatch hook over its block");
+    Require(!unwatchHookProven, "a failed collect ran the unwatch hook as if the CPU writes to its block were proven");
+}
+
+struct CpuWritePinProbe;
+CpuWritePinProbe* cpuWritePinProbe = nullptr;
+
+struct CpuWritePinProbe {
+    std::uint64_t address;
+    std::uint64_t unrelated;
+    std::atomic<bool> entered{false};
+    std::atomic<bool> waited{false};
+    std::atomic<bool> passed{false};
+    std::atomic<bool> unrelatedPassed{false};
+    std::atomic<bool> failed{false};
+    std::thread mutation;
+    std::thread other;
+
+    void Join() {
+        if (mutation.joinable()) mutation.join();
+        if (other.joinable()) other.join();
+    }
+
+    ~CpuWritePinProbe() {
+        Join();
+        GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(nullptr);
+        cpuWritePinProbe = nullptr;
+    }
+};
+
+bool ObserveCpuWritePin(std::uintptr_t address, std::size_t bytes) {
+    auto& probe = *cpuWritePinProbe;
+    if (address <= probe.address && probe.address < address + bytes) probe.waited.store(true);
+    std::this_thread::yield();
+    return false;
+}
+
+void CheckCpuWritePinDuringStore(std::uint64_t address, std::size_t bytes) {
+    auto& probe = *cpuWritePinProbe;
+    if (address != probe.address || bytes != 4 || probe.entered.exchange(true)) return;
+    const auto attempt = [&](std::uint64_t target, std::atomic<bool>& passed) {
+        try {
+            GuestAllocations::Mutation mutation;
+            mutation.RequireUnpinned(reinterpret_cast<const void*>(target), 4);
+            passed.store(true);
+        } catch (const std::exception&) {
+            probe.failed.store(true);
+        }
+    };
+    probe.mutation = std::thread(attempt, probe.address, std::ref(probe.passed));
+    probe.other = std::thread(attempt, probe.unrelated, std::ref(probe.unrelatedPassed));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while ((!probe.unrelatedPassed.load() || (!probe.waited.load() && !probe.passed.load())) && !probe.failed.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Require(!probe.failed.load(), "the CPU store mutation probe threw");
+    Require(probe.unrelatedPassed.load(), "a CPU store pinned an unrelated registered range");
+    Require(probe.waited.load() && !probe.passed.load(), "a mapping mutation passed its unmap gate during an executing CPU store");
+}
+
+void CheckCpuWritePin() {
+    auto* memory = static_cast<std::byte*>(AllocateWatched(4 * Block));
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    struct Cleanup {
+        std::byte* memory;
+        ~Cleanup() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(memory);
+                mutation.Remove(memory + Block);
+                mutation.Remove(memory + 3 * Block);
+            }
+            GuestArena::GuestArenaReset_nid_postfix(memory, 4 * Block);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
+        }
+    } cleanup{memory};
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory, Block, true, true, true);
+        mutation.Add(memory + Block, Block, true, true, true);
+        mutation.Add(memory + 3 * Block, Block, true, true, true);
+    }
+    const auto check = [&](std::uint64_t begin, std::size_t bytes, std::uint64_t target, std::uint64_t unrelated, bool throws) {
+        CpuWritePinProbe probe{target, unrelated};
+        cpuWritePinProbe = &probe;
+        GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&ObserveCpuWritePin);
+        const std::vector<std::byte> value(bytes, std::byte{0x6a});
+        bool threw = false;
+        try {
+            StoreOwnBytes(begin, bytes, [&] {
+                CheckCpuWritePinDuringStore(probe.address, 4);
+                if (throws) throw std::logic_error("synthetic CPU store refusal");
+                std::memcpy(reinterpret_cast<void*>(begin), value.data(), bytes);
+            });
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        probe.Join();
+        Require(threw == throws, "the CPU store changed its callback exception");
+        Require(probe.entered.load() && probe.waited.load() && probe.passed.load() && probe.unrelatedPassed.load() && !probe.failed.load(), "the CPU store did not release exactly its mapping after the write");
+        if (!throws) Require(std::memcmp(reinterpret_cast<const void*>(begin), value.data(), bytes) == 0, "the pinned CPU store did not reach guest memory");
+    };
+    check(base + 32, 4, base + 32, base + Block, false);
+    check(base, Block, base + 32, base + Block, false);
+    check(base, 3 * Block, base + 32, base + 3 * Block, false);
+    check(base, 3 * Block, base + Block + 32, base + 3 * Block, false);
+    check(base + 32, 4, base + 32, base + Block, true);
+    const std::array<std::byte, 4> value{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+    Write(base, value, 4);
+    const std::array<std::byte, 4> original{};
+    WriteChanged(base + Block, value, original);
+    constexpr std::uint64_t label = 0x123456789abcdef0;
+    AgcDriverStoreGuestLabel_nid_postfix(reinterpret_cast<std::uint64_t*>(memory + 16), label);
+    Require(*reinterpret_cast<const std::uint64_t*>(memory + 16) == label, "a pinned host label store did not reach guest memory");
+    bool refused = false;
+    try {
+        Write(base + 1, value, 4);
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "a misaligned CPU write was accepted");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.RequireUnpinned(memory, 4 * Block);
+    }
+    Require(std::memcmp(memory, value.data(), value.size()) == 0 && std::memcmp(memory + Block, value.data(), value.size()) == 0, "a checked CPU write did not reach guest memory");
+    std::cout << "CPU stores pin both intersecting mappings, exclude adjacent ranges and release pins after success or refusal\n";
 }
 #endif
 
@@ -1616,6 +1795,41 @@ void CheckImportWindowOverUnwatchedBlock() {
     Require(after != 0 && !UnchangedSince(base, Block, after), "a store after an import window over an unwatched block was missed");
 }
 
+void CheckImportWindowAcrossThreads() {
+    constexpr std::size_t blocks = 264;
+    constexpr std::size_t gap = 130;
+    constexpr std::size_t pageBytes = 4096;
+    void* memory = AllocateWatched(blocks * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    auto* plain = static_cast<std::uint8_t*>(memory);
+    std::memset(plain, 0x11, blocks * Block);
+    for (std::size_t page = 0; page < blocks * Block / pageBytes; ++page) {
+        const std::uint64_t mark = (page + 1) * 0x9E3779B97F4A7C15ull;
+        std::memcpy(plain + page * pageBytes, &mark, sizeof(mark));
+    }
+    Unwatch(base + gap * Block, Block);
+    const auto synced = CollectWritesUncached(base, gap * Block);
+    const auto syncedAfter = CollectWritesUncached(base + (gap + 1) * Block, (blocks - gap - 1) * Block);
+    Require(synced != 0 && syncedAfter != 0, "the blocks of a large import window are not collected");
+    constexpr std::array<std::size_t, 4> written{3, 70, 140, 250};
+    Require(ImportWatched(base, blocks * Block, [&] {
+        for (std::size_t page = 0; page < blocks * Block / pageBytes; ++page) {
+            if (page * pageBytes / Block != gap) bytes[page * pageBytes + 0x100] = 0x11;
+        }
+        for (const auto block : written) bytes[block * Block + 0x3100] = 0x22;
+        return true;
+    }), "the large import window import failed");
+    Require(Watched(base, gap * Block) && Watched(base + (gap + 1) * Block, (blocks - gap - 1) * Block) && !Watched(base + gap * Block, Block), "a large import window changed which blocks are watched");
+    const auto since = [&](std::size_t block) { return block < gap ? synced : syncedAfter; };
+    for (std::size_t block = 0; block < blocks; ++block) {
+        if (block == gap) continue;
+        const bool stored = std::find(written.begin(), written.end(), block) != written.end();
+        if (stored) Require(WrittenSince(base + block * Block, Block, since(block)), "a store of new bytes within a large import window was missed in block " + std::to_string(block));
+        else Require(UnchangedSince(base + block * Block, Block, since(block)), "a page a large import window resolved without changing its bytes reads as written in block " + std::to_string(block));
+    }
+}
+
 void CheckImportWindowFootprint() {
 #ifdef __GLIBC__
     constexpr std::size_t bytes = std::size_t{64} << 20;
@@ -1726,6 +1940,106 @@ void CheckUnwatchedImport() {
     static_cast<void>(CollectWritesUncached(base, Block / 2));
     Require(after != 0 && !UnchangedSince(base, Block / 2, after), "a store beside an import that left the watch was missed");
 #endif
+}
+
+struct ImportHookCall {
+    std::uint64_t begin;
+    std::uint64_t end;
+    bool watched;
+    bool proven;
+};
+
+std::vector<ImportHookCall> importHookCalls;
+std::uint64_t importHookProbe = 0;
+
+void RecordImportHook(std::uint64_t address, std::size_t bytes) {
+    importHookCalls.push_back({address, address + bytes, Watched(importHookProbe, Block), UnwatchWritesProven()});
+}
+
+void CheckImportWalkUnwatchHooks() {
+    void* memory = AllocateWatched(4 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 4 * Block);
+    Require(CollectWritesUncached(base, 4 * Block) != 0, "the import walk block is not collected");
+    struct Reset {
+        ~Reset() {
+            SetImportWalkFailureForTest(0);
+            SetUnwatchHook(nullptr);
+        }
+    } reset;
+    SetUnwatchHook(&RecordImportHook);
+    for (const int walk : {1, 2}) {
+        const std::string what = walk == 1 ? "an import that stays watched whose page walk failed before the import" : "an import that stays watched whose page walk failed after the import";
+        const auto imported = base + static_cast<std::uint64_t>(walk - 1) * 2 * Block;
+        Require(Watched(imported, Block), what + ": its block was not watched before the import");
+        importHookCalls.clear();
+        importHookProbe = imported;
+        bool hookedBeforeImport = false;
+        SetImportWalkFailureForTest(walk);
+        Require(ImportWatched(imported, Block, [&] {
+            hookedBeforeImport = !importHookCalls.empty();
+            return true;
+        }), what + ": the import failed");
+        SetImportWalkFailureForTest(0);
+        Require(importHookCalls.size() == 1, what + " did not run the unwatch hook once");
+        const auto& call = importHookCalls.front();
+        Require(call.begin <= imported && imported + Block <= call.end, what + " gave the unwatch hook a range that misses its block");
+        Require(call.watched, what + " ran the unwatch hook after its block left the write watch");
+        Require(!call.proven, what + " ran the unwatch hook as if the CPU writes to its block were proven");
+        Require(hookedBeforeImport == (walk == 1), what + (walk == 1 ? " ran the unwatch hook after the import" : " ran the unwatch hook before the import"));
+        Require(!Watched(imported, Block), what + " left its block watched");
+    }
+    importHookCalls.clear();
+    importHookProbe = base + 3 * Block;
+    Unwatch(base + 3 * Block, Block);
+    Require(importHookCalls.size() == 1 && importHookCalls.front().watched && importHookCalls.front().proven, "Unwatch did not run the unwatch hook once, while watched, with its CPU writes proven");
+}
+
+std::uint64_t collectDuringHookAddress = 0;
+std::size_t collectDuringHookBytes = 0;
+std::size_t collectDuringHookCalls = 0;
+
+void CollectDuringHook(std::uint64_t, std::size_t) {
+    if (collectDuringHookCalls++ == 0) static_cast<void>(CollectWritesUncached(collectDuringHookAddress, collectDuringHookBytes));
+}
+
+void CheckImportWalkHookKeepsLaterWindows() {
+    void* memory = AllocateWatched(4 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, 4 * Block);
+    Unwatch(base + Block, Block);
+    const auto synced = CollectWritesUncached(base + 2 * Block, 2 * Block);
+    Require(synced != 0 && CollectWritesUncached(base, Block) != 0, "the blocks around the unwatched one are not collected");
+    struct Reset {
+        ~Reset() {
+            SetImportWalkFailureForTest(0);
+            SetUnwatchHook(nullptr);
+        }
+    } reset;
+    collectDuringHookAddress = base + 2 * Block;
+    collectDuringHookBytes = 2 * Block;
+    collectDuringHookCalls = 0;
+    SetUnwatchHook(&CollectDuringHook);
+    SetImportWalkFailureForTest(2, base);
+    Require(ImportWatched(base, 4 * Block, [&] {
+        bytes[0x100] = 0x11;
+        bytes[2 * Block + 0x100] = 0x11;
+        bytes[3 * Block + 0x2000] = 0x22;
+        return true;
+    }), "the import whose first span failed its page walk failed");
+    SetImportWalkFailureForTest(0);
+    SetUnwatchHook(nullptr);
+    Require(collectDuringHookCalls == 1, "the span whose page walk failed after the import did not run the unwatch hook once");
+    Require(!Watched(base, Block), "the span whose page walk failed after the import stayed watched");
+    Require(Watched(base + 2 * Block, 2 * Block), "the span whose page walk succeeded left the write watch");
+    const std::array<std::uint64_t, 2> generations{synced, synced};
+    std::array<std::uint8_t, 2> changed{};
+    std::array<std::uint8_t, 2> cpu{};
+    Require(ChangedBlocks(base + 2 * Block, 2 * Block, generations, changed, cpu), "the span after the failed one is not tracked");
+    Require(changed[0] == BlockUnchanged && UnchangedSince(base + 2 * Block, Block, synced), "a collect run by the unwatch hook of an earlier span counted a page the import touched without changing it as a CPU write");
+    Require(cpu[0] == 1, "a page the import touched lost its import window walk to the unwatch hook of an earlier span");
+    Require(changed[1] == BlockWritten && WrittenSince(base + 3 * Block, Block, synced), "a store of new bytes within the import was missed after the unwatch hook of an earlier span");
 }
 
 struct HookCall {
@@ -1999,9 +2313,14 @@ int main() {
             CheckComparedSharingGenerations();
             return 0;
         }
+        if (std::wstring_view(GetCommandLineW()).ends_with(CpuWritePinMode)) {
+            CheckCpuWritePin();
+            return 0;
+        }
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
+        CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
         CheckSharedBlockProofs();
         CheckRepeatedPossibleStores();
@@ -2030,9 +2349,12 @@ int main() {
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();
         CheckImportWindowOverUnwatchedBlock();
+        CheckImportWindowAcrossThreads();
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
         CheckUnwatchedImport();
+        CheckImportWalkUnwatchHooks();
+        CheckImportWalkHookKeepsLaterWindows();
         CheckUnwatchHooks();
         CheckCommittedRanges();
         CheckAdoptLatestEpoch();

@@ -2,7 +2,9 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DIAGNOSTICS_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -21,6 +23,7 @@ public:
 bool SkipRefusedDraws();
 
 void ReportRefusedDraw(const RefusedDraw& refused);
+std::optional<std::size_t> RefusedShaderCount();
 
 void require(bool condition, const char* reason);
 
