@@ -44,7 +44,7 @@ int APS5_VABI ASN1_STRING_set_nid_postfix(Asn1String* string, const void* data, 
     if (data && length > 0 && value.data && value.length > 0 && !(value.flags & BorrowedData)) {
         const auto source = reinterpret_cast<std::uintptr_t>(data);
         const auto old = reinterpret_cast<std::uintptr_t>(value.data);
-        if ((source >= old && source - old < static_cast<std::uintptr_t>(value.length)) ||
+        if ((source >= old && source - old <= static_cast<std::uintptr_t>(value.length)) ||
             (old > source && old - source < static_cast<std::uintptr_t>(length)))
             throw std::invalid_argument("ASN1_STRING_set: source aliases the data being released");
     }
