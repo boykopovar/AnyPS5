@@ -81,7 +81,8 @@ int main() {
         Require(pthread_condattr_setclock_nid_postfix(&attr, clock) == GuestEinval);
         CheckClock(&attr, Monotonic);
     }
-    for (const int invalid : {1, 2, -1}) {
+    for (const int invalid : {1, 2, -1, 100, static_cast<int>(0x7fffffff)}) {
+        Require(scePthreadCondattrSetpshared(&attr, invalid) == SceEinval);
         Require(pthread_condattr_setpshared_nid_postfix(&attr, invalid) == GuestEinval);
         sharing = -1;
         Require(pthread_condattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
