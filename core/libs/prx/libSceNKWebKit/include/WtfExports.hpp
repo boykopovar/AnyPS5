@@ -109,6 +109,7 @@ void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::siz
 bool APS5_VABI _ZN3WTF29equalIgnoringASCIICaseNonNullEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);
 bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const NKWebKit::WtfAbi::URL* a, const NKWebKit::WtfAbi::URL* b);
 unsigned APS5_VABI _ZN3WTF31sixCharacterHashStringToIntegerEPKc(const char* data);
+void APS5_VABI _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(NKWebKit::WtfAbi::URL* self, const NKWebKit::WtfAbi::URL* base, const NKWebKit::WtfAbi::String* relative, const void* encoding);
 void APS5_VABI _ZN3WTF3URL10invalidateEv(NKWebKit::WtfAbi::URL* self);
 double APS5_VABI _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool& isLocalTime);
 void APS5_VABI _ZN3WTF40releaseFastMallocFreeMemoryForThisThreadEv();

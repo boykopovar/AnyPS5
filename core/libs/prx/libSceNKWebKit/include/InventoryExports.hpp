@@ -1916,7 +1916,6 @@ int APS5_VABI _ZN3WTF3URL7setHostENS_10StringViewE();
 int APS5_VABI _ZN3WTF3URL7setPathENS_10StringViewE();
 int APS5_VABI _ZN3WTF3URL7setUserENS_10StringViewE();
 int APS5_VABI _ZN3WTF3URL8setQueryENS_10StringViewE();
-int APS5_VABI _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE();
 int APS5_VABI _ZN3WTF3absERKNS_9MediaTimeE();
 int APS5_VABI _ZN3WTF40clearDefaultPortForProtocolMapForTestingEv();
 int APS5_VABI _ZN3WTF40registerDefaultPortForProtocolForTestingEtRKNS_6StringE();
