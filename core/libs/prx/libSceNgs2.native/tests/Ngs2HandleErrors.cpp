@@ -374,7 +374,7 @@ static void CheckSetGrainSamples() {
         Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
         Require(info.num_grain_samples == grain);
     }
-    for (const std::uint32_t grain : {0u, 513u, 576u, 2048u, 0xffffffffu}) {
+    for (const std::uint32_t grain : {0u, 1u, 8u, 63u, 65u, 511u, 513u, 576u, 2048u, 0xffffffffu}) {
         Status(sceNgs2SystemSetGrainSamples(system, grain), grainError, "an invalid grain was accepted");
         Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
         Require(info.num_grain_samples == 512);
@@ -399,6 +399,38 @@ static void CheckSetSampleRate() {
         Require(info.sample_rate == 192000);
     }
     Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy failed");
+}
+
+static void CheckFftQuerySize() {
+    std::uint64_t size = 0;
+    Require(sceNgs2FftQuerySize(8, 0, &size) == 0 && size == 2112);
+    Require(sceNgs2FftQuerySize(8, 2, &size) == 0 && size == 1088);
+    Require(sceNgs2FftQuerySize(9, 0, &size) == 0 && size == 4160);
+    Require(sceNgs2FftQuerySize(12, 2, &size) == 0 && size == 16448);
+    Require(sceNgs2FftQuerySize(7, 0, &size) == -1);
+    Require(sceNgs2FftQuerySize(13, 0, &size) == -1);
+    Require(sceNgs2FftQuerySize(8, 0, nullptr) == -1);
+}
+
+static void CheckEnumeration() {
+    constexpr int invalidArgument = static_cast<int>(0x804A0053u);
+    constexpr int invalidSystem = static_cast<int>(0x804A0230u);
+    uintptr_t handles[8] = {};
+    Require(sceNgs2SystemEnumHandles(nullptr, 0) >= 0);
+    Require(sceNgs2SystemEnumHandles(nullptr, 1) == invalidArgument);
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    const int systems = sceNgs2SystemEnumHandles(handles, 8);
+    Require(systems >= 1);
+    bool found = false;
+    for (int i = 0; i < systems && i < 8; ++i) found = found || handles[i] == system;
+    Require(found);
+    Require(sceNgs2SystemEnumHandles(nullptr, 0) == systems);
+    Require(sceNgs2SystemEnumRackHandles(system, nullptr, 1) == invalidArgument);
+    Require(sceNgs2SystemEnumRackHandles(0x1234, handles, 8) == invalidSystem);
+    const int racks = sceNgs2SystemEnumRackHandles(system, handles, 8);
+    Require(racks == 1 && handles[0] == rack);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
 int main() {
@@ -441,6 +473,8 @@ int main() {
         CheckResetScheduler();
         CheckSetGrainSamples();
         CheckSetSampleRate();
+        CheckFftQuerySize();
+        CheckEnumeration();
         CheckExportLinked();
         std::cout << "NGS2 PS5 handle errors and validation precedence checked\n";
         return 0;

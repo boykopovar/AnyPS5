@@ -1,5 +1,7 @@
 #include "prx/libSceNpFriendListDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include <cstdint>
 #include <cstdlib>
 
@@ -15,6 +17,35 @@ constexpr int kErrAlreadyInitialized = static_cast<int>(0x80B80004);
 constexpr int kErrNotFinished = static_cast<int>(0x80B80005);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000D);
 constexpr int kResultUserCanceled = 1;
+
+bool PsnNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::PsnFeature).message;
+}
+
+void RequireNotices() {
+    std::uint64_t param = 0;
+    ModalDialogSetPresenter_nid_postfix(true);
+    Require(sceNpFriendListDialogInitialize() == 0);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpFriendListDialogOpenA(&param) == 0);
+    Require(!PsnNoticeShown() && !ModalDialogCapturesInput_nid_postfix());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpFriendListDialogOpenA(nullptr) == kErrArgNull);
+    Require(!PsnNoticeShown());
+    Require(sceNpFriendListDialogOpenA(&param) == 0);
+    Require(PsnNoticeShown());
+
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceNpFriendListDialogTerminate() == 0);
+}
 
 }
 
@@ -75,4 +106,5 @@ int main() {
     Require(sceNpFriendListDialogGetResultA(result) == kErrNotInitialized);
     Require(sceNpFriendListDialogGetStatus() == kStatusNone);
     Require(sceNpFriendListDialogUpdateStatus() == kStatusNone);
+    RequireNotices();
 }
