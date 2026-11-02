@@ -54,13 +54,14 @@ int AddEvent(KernelEqueue eq, std::uint32_t queue, std::uintptr_t ident, void* u
 }
 
 int DeleteEvent(KernelEqueue eq, std::uintptr_t ident, const char* caller) {
-    {
-        std::lock_guard lock(g_mutex);
-        std::erase_if(g_registrations, [&](const Registration& r) { return r.eq == eq && r.ident == ident; });
+    if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
+        throw std::runtime_error(std::string(caller) + ": invalid event queue");
     }
     if (EqueueDeleteEvent_nid_postfix(eq, ident, EvfiltGraphicsCore) != EQUEUE_OK) {
         throw std::runtime_error(std::string(caller) + ": event is not registered");
     }
+    std::lock_guard lock(g_mutex);
+    std::erase_if(g_registrations, [&](const Registration& r) { return r.eq == eq && r.ident == ident; });
     return 0;
 }
 
@@ -85,10 +86,16 @@ bool AgcDriverDeliverEopInterrupt(std::uint32_t queue) {
 extern "C" {
 
 int APS5_VABI sceAgcDriverAddEqEvent(KernelEqueue eq, int id, void* udata) {
+    if (id < 0) {
+        throw std::runtime_error(std::string(__func__) + ": negative event id");
+    }
     return AddEvent(eq, static_cast<std::uint32_t>(id), static_cast<std::uintptr_t>(id), udata, __func__);
 }
 
 int APS5_VABI sceAgcDriverDeleteEqEvent(KernelEqueue eq, int id) {
+    if (id < 0) {
+        throw std::runtime_error(std::string(__func__) + ": negative event id");
+    }
     return DeleteEvent(eq, static_cast<std::uintptr_t>(id), __func__);
 }
 
