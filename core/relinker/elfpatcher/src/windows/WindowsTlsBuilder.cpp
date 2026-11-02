@@ -1,4 +1,5 @@
 #include <elfpatcher/windows/WindowsTlsBuilder.hpp>
+#include <elfpatcher/windows/WindowsGuestGs.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTlsTemplateBuilder.hpp>
@@ -26,6 +27,8 @@ struct MovedInstruction {
     std::optional<std::size_t> RipDisplacement;
     std::optional<std::uint32_t> BranchTarget;
     std::size_t BranchDisplacementOffset = 0;
+    std::size_t OriginalLength = 0;
+    std::uint32_t ReplayRva = 0;
 };
 
 struct TlsAccess {
@@ -45,8 +48,96 @@ struct TlsAccess {
 struct GsTrap {
     std::uint32_t Rva;
     std::size_t Length;
+    std::size_t OriginalLength;
+    Domain::FileByteOffset FileOffset;
     std::optional<Domain::FileByteOffset> Entry;
+    std::vector<MovedInstruction> Moved;
+    std::optional<std::uint32_t> Replay;
 };
+
+std::optional<MovedInstruction> moveGsFollower(const std::uint8_t* bytes, const Codegen::DecodedInstructionInfo& info, std::uint32_t rva) {
+    const auto opcode = info.Opcode;
+    const bool branch = info.HasBranchTarget && !info.HasRipRelativeDisp && !info.TruncatesBranchTarget &&
+        ((info.FlowKind == Codegen::ControlFlowKind::ConditionalBranch && (info.IsTwoByteOpcode ? opcode >= 0x80 && opcode <= 0x8f : opcode >= 0x70 && opcode <= 0x7f)) ||
+         (info.FlowKind == Codegen::ControlFlowKind::UnconditionalJump && !info.IsTwoByteOpcode && (opcode == 0xe9 || opcode == 0xeb)));
+    const bool scalar = info.IsTwoByteOpcode ? (opcode >= 0x40 && opcode <= 0x4f) || (opcode >= 0x90 && opcode <= 0x9f) ||
+        opcode == 0x1f || opcode == 0xaf || opcode == 0xb0 || opcode == 0xb1 || opcode == 0xb6 || opcode == 0xb7 || opcode == 0xbe || opcode == 0xbf || opcode == 0xc0 || opcode == 0xc1 :
+        (opcode <= 0x3d && (opcode & 7) <= 5) || opcode == 0x63 || opcode == 0x69 || opcode == 0x6b ||
+        (opcode >= 0x80 && opcode <= 0x8b && opcode != 0x82) || opcode == 0x8d || (opcode >= 0x90 && opcode <= 0x99) ||
+        opcode == 0xa8 || opcode == 0xa9 || (opcode >= 0xb0 && opcode <= 0xbf) || opcode == 0xc0 || opcode == 0xc1 || opcode == 0xc6 || opcode == 0xc7 ||
+        (opcode >= 0xd0 && opcode <= 0xd3) || opcode == 0xf5 || opcode == 0xf6 || opcode == 0xf7 || opcode == 0xf8 || opcode == 0xf9 || opcode == 0xfc || opcode == 0xfd ||
+        ((opcode == 0xfe || opcode == 0xff) && info.ModRmRegField <= 1);
+    if (info.Length == 0 || info.Length > 15 || info.SegmentPrefix != 0) return std::nullopt;
+    if (!info.IsTwoByteOpcode && (opcode == 0xc6 || opcode == 0xc7) && info.ModRmRegField != 0) return std::nullopt;
+    const auto encoded = bytes[info.OpcodeOffset];
+    if (encoded == 0xc4 || encoded == 0xc5) {
+        if (!info.HasMemoryOperand) return std::nullopt;
+        return MovedInstruction{rva, {bytes, bytes + info.Length}, std::nullopt, std::nullopt, 0, info.Length};
+    }
+    if (encoded == 0x62 || encoded == 0x8f) return std::nullopt;
+    for (std::size_t index = 0; index < info.OpcodeOffset; ++index) {
+        const auto prefix = bytes[index];
+        if (prefix != 0x66 && prefix != 0x67 && !((prefix == 0xf0 || prefix == 0xf2 || prefix == 0xf3) && info.HasMemoryOperand) && !(prefix >= 0x40 && prefix <= 0x4f && index + 1 == info.OpcodeOffset)) return std::nullopt;
+    }
+    if (!branch && ((!scalar && !info.HasMemoryOperand) || info.FlowKind != Codegen::ControlFlowKind::Sequential || (info.HasBranchTarget && !info.HasRipRelativeDisp))) return std::nullopt;
+    if (!info.HasMemoryOperand && !info.IsTwoByteOpcode && (opcode == 0xf6 || opcode == 0xf7) && info.ModRmRegField >= 6) return std::nullopt;
+    MovedInstruction moved{rva, {bytes, bytes + info.Length}, info.HasRipRelativeDisp ? std::optional<std::size_t>(info.RipRelativeDispOffset) : std::nullopt, std::nullopt, 0, info.Length};
+    if (branch) {
+        const auto target = static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(info.Length) + info.BranchDisp;
+        if (target < 0 || target > std::numeric_limits<std::uint32_t>::max()) return std::nullopt;
+        moved.BranchTarget = static_cast<std::uint32_t>(target);
+        moved.Bytes = info.FlowKind == Codegen::ControlFlowKind::ConditionalBranch ? std::vector<std::uint8_t>{0x0f, static_cast<std::uint8_t>(0x80 | (opcode & 15))} : std::vector<std::uint8_t>{0xe9};
+        moved.BranchDisplacementOffset = moved.Bytes.size();
+        moved.Bytes.resize(moved.Bytes.size() + 4);
+    }
+    return moved;
+}
+
+void appendGsFollowers(PeSection& section, const std::vector<GsTrap>& traps) {
+    std::vector<const MovedInstruction*> moved;
+    for (const auto& trap : traps)
+        for (const auto& instruction : trap.Moved) moved.push_back(&instruction);
+    if (moved.empty()) return;
+    section.Data = {'A', 'P', 'S', '5', 'G', 'G', 'M', '1'};
+    section.Data.resize(16 + moved.size() * 64);
+    Io::WriteU32(section.Data, 8, CheckedRva(moved.size()));
+    Io::WriteU32(section.Data, 12, 64);
+    for (std::size_t index = 0; index < moved.size(); ++index) {
+        const auto& instruction = *moved[index];
+        const auto offset = 16 + index * 64;
+        const auto clone = CheckedRva(static_cast<std::uint64_t>(section.Rva) + offset + 16);
+        Io::WriteU32(section.Data, offset, instruction.Rva);
+        if (instruction.ReplayRva != 0) {
+            Io::WriteU32(section.Data, offset + 8, instruction.ReplayRva);
+            continue;
+        }
+        auto bytes = instruction.Bytes;
+        const auto next = CheckedRva(static_cast<std::uint64_t>(instruction.Rva) + instruction.OriginalLength);
+        if (instruction.RipDisplacement) {
+            const auto position = *instruction.RipDisplacement;
+            const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, position));
+            const auto adjusted = static_cast<std::int64_t>(instruction.Rva) - clone + displacement;
+            if (adjusted < std::numeric_limits<std::int32_t>::min() || adjusted > std::numeric_limits<std::int32_t>::max())
+                throw Domain::RelinkerException("Moved guest GS follower RIP displacement is out of range", instruction.Rva);
+            Io::WriteU32(bytes, position, static_cast<std::uint32_t>(adjusted));
+        }
+        if (instruction.BranchTarget) {
+            const auto displacement = static_cast<std::int64_t>(*instruction.BranchTarget) - clone - static_cast<std::int64_t>(bytes.size());
+            if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                throw Domain::RelinkerException("Moved guest GS follower branch is out of range", instruction.Rva);
+            Io::WriteU32(bytes, instruction.BranchDisplacementOffset, static_cast<std::uint32_t>(displacement));
+        }
+        auto resume = next;
+        if (index + 1 < moved.size() && moved[index + 1]->Rva == next)
+            resume = moved[index + 1]->ReplayRva != 0 ? moved[index + 1]->ReplayRva : CheckedRva(static_cast<std::uint64_t>(section.Rva) + offset + 64 + 16);
+        WindowsStubEmitter jump(CheckedRva(static_cast<std::uint64_t>(clone) + bytes.size()));
+        jump.Rip({0xe9}, resume);
+        const auto tail = jump.TakeBytes();
+        bytes.insert(bytes.end(), tail.begin(), tail.end());
+        Io::WriteU32(section.Data, offset + 4, CheckedRva(bytes.size()));
+        std::copy(bytes.begin(), bytes.end(), section.Data.begin() + offset + 16);
+    }
+}
 
 bool isAluReadOpcode(std::uint8_t opcode) {
     return opcode == 0x03 || opcode == 0x0b || opcode == 0x13 || opcode == 0x1b || opcode == 0x23 || opcode == 0x2b || opcode == 0x33 || opcode == 0x3b;
@@ -97,15 +188,22 @@ void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, cons
     throw Domain::RelinkerException("TLS instruction is outside the PE image", access.Rva);
 }
 
-void trapInstruction(std::vector<PeSection>& sections, const std::uint32_t rva, const std::size_t length) {
+void patchGsInstruction(std::vector<PeSection>& sections, const std::uint32_t rva, const std::size_t length, const std::optional<std::uint32_t> target) {
     for (auto& section : sections) {
         if (rva < section.Rva || rva - section.Rva >= section.Data.size())
             continue;
         const auto offset = rva - section.Rva;
         if (length > section.Data.size() - offset)
             throw Domain::RelinkerException("Guest GS instruction crosses a PE section boundary", rva);
-        std::fill_n(section.Data.begin() + offset, length, 0x90);
-        std::copy(std::begin(kStubOpUd2), std::end(kStubOpUd2), section.Data.begin() + offset);
+        if (target) {
+            WindowsStubEmitter jump(rva);
+            jump.Rip({0xe9}, *target);
+            const auto bytes = jump.TakeBytes();
+            std::copy(bytes.begin(), bytes.end(), section.Data.begin() + offset);
+        } else {
+            std::fill_n(section.Data.begin() + offset, length, 0x90);
+            std::copy(std::begin(kStubOpUd2), std::end(kStubOpUd2), section.Data.begin() + offset);
+        }
         return;
     }
     throw Domain::RelinkerException("Guest GS instruction is outside the PE image", rva);
@@ -120,6 +218,8 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
 
     std::vector<TlsAccess> accesses;
     std::vector<GsTrap> gsTraps;
+    std::vector<std::uint32_t> overlappingGs;
+    PeSection gsSection{".ggs", nextRva, SectionRead | SectionExecute | 0x40u, {}};
     std::vector<std::uint32_t> branchTargets;
     std::set<Domain::VirtualAddress> entryRoots;
     const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, [&](auto completed, auto total) { report(7000 * completed / total); }, &entryRoots, message);
@@ -155,10 +255,54 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                     branchTargets.push_back(static_cast<std::uint32_t>(target));
             }
 
-            if (info.SegmentPrefix == 0x65 && !insidePrevious) {
-                if (info.HasMemoryOperand) {
+            const bool gsSelector = info.HasModRm && info.ModRmRegField == 5 && !info.IsTwoByteOpcode && (info.Opcode == 0x8c || info.Opcode == 0x8e);
+            const bool gsStack = info.IsTwoByteOpcode && (info.Opcode == 0xa8 || info.Opcode == 0xa9);
+            const bool gsBaseRegister = info.IsTwoByteOpcode && info.Opcode == 0xae && info.HasModRm && (info.ModRmByte >> 6) == 3 &&
+                (info.ModRmRegField == 1 || info.ModRmRegField == 3) && std::find(bytes, bytes + info.OpcodeOffset, 0xf3) != bytes + info.OpcodeOffset;
+            const bool gsState = gsSelector || gsStack || gsBaseRegister;
+            if (insidePrevious && ((info.SegmentPrefix == 0x65 && info.HasMemoryOperand) || gsState))
+                overlappingGs.push_back(rva);
+            if ((info.SegmentPrefix == 0x65 || gsState) && !insidePrevious) {
+                if (info.HasMemoryOperand || gsState) {
+                    image.RequireNoRelocation(*instruction, info.Length);
                     const auto entry = entryRoots.upper_bound(*instruction);
-                    gsTraps.push_back({rva, info.Length, entry != entryRoots.end() && *entry - *instruction < info.Length ? std::optional<Domain::FileByteOffset>(header.Offset + *entry - header.MappedAddress) : std::nullopt});
+                    const auto previousSize = gsSection.Data.size();
+                    bool replayable = !gsState && WindowsGuestGs::TryAppend(gsSection, rva, bytes, info);
+                    GsTrap trap{rva, info.Length, info.Length, header.Offset + offset, std::nullopt, {}, std::nullopt};
+                    PeSection probe{"", 0, 0, {}};
+                    while (replayable && trap.Length < kJumpSize) {
+                        if (trap.Length >= header.FileSize - offset) { replayable = false; break; }
+                        Codegen::DecodedInstructionInfo next;
+                        try {
+                            next = decoder.DecodeInstruction(bytes + trap.Length, header.FileSize - offset - trap.Length);
+                        } catch (const Domain::RelinkerException&) {
+                            replayable = false;
+                            break;
+                        }
+                        auto moved = moveGsFollower(bytes + trap.Length, next, CheckedRva(static_cast<std::uint64_t>(rva) + trap.Length));
+                        if (!moved || (next.HasMemoryOperand && !WindowsGuestGs::TryAppend(probe, moved->Rva, moved->Bytes.data(), next))) {
+                            replayable = false;
+                            break;
+                        }
+                        trap.Moved.push_back(std::move(*moved));
+                        trap.Length += next.Length;
+                        if (trap.Length < kJumpSize && next.FlowKind != Codegen::ControlFlowKind::Sequential && next.FlowKind != Codegen::ControlFlowKind::ConditionalBranch)
+                            replayable = false;
+                    }
+                    for (const auto& moved : trap.Moved)
+                        if (image.HasRelocation(*instruction + moved.Rva - rva, moved.OriginalLength)) replayable = false;
+                    if (replayable) {
+                        trap.Replay = CheckedRva(static_cast<std::uint64_t>(gsSection.Rva) + gsSection.Data.size() - 64 + 24);
+                    } else {
+                        gsSection.Data.resize(previousSize);
+                        if (previousSize != 0) Io::WriteU32(gsSection.Data, 8, CheckedRva((previousSize - 16) / 64));
+                        trap.Length = info.Length;
+                        trap.Moved.clear();
+                    }
+                    const auto patchLength = trap.Replay && info.Length >= kJumpSize ? kJumpSize : trap.Length;
+                    if (entry != entryRoots.end() && *entry - *instruction < patchLength)
+                        trap.Entry = header.Offset + *entry - header.MappedAddress;
+                    gsTraps.push_back(std::move(trap));
                 }
                 continue;
             }
@@ -231,13 +375,51 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     report(9000);
     std::sort(branchTargets.begin(), branchTargets.end());
     branchTargets.erase(std::unique(branchTargets.begin(), branchTargets.end()), branchTargets.end());
-    for (const auto& [rva, length, entry] : gsTraps) {
-        const auto target = std::upper_bound(branchTargets.begin(), branchTargets.end(), rva);
-        if (target != branchTargets.end() && *target < rva + length)
+    std::vector<std::uint8_t> retained;
+    for (auto& trap : gsTraps) {
+        const auto target = std::upper_bound(branchTargets.begin(), branchTargets.end(), trap.Rva);
+        if (trap.Replay && trap.OriginalLength < kJumpSize &&
+            ((target != branchTargets.end() && *target >= trap.Rva + trap.OriginalLength && *target < trap.Rva + trap.Length) ||
+             (trap.Entry && *trap.Entry - trap.FileOffset >= trap.OriginalLength) ||
+             std::any_of(overlappingGs.begin(), overlappingGs.end(), [&](const auto address) { return address >= trap.Rva && address - trap.Rva < trap.Length; }))) {
+            trap.Replay.reset();
+            trap.Length = trap.OriginalLength;
+            trap.Moved.clear();
+            if (trap.Entry && *trap.Entry - trap.FileOffset >= trap.OriginalLength) trap.Entry.reset();
+        }
+        if (target != branchTargets.end() && *target < trap.Rva + (trap.Replay ? kJumpSize : trap.Length))
             throw Domain::RelinkerException("Branch enters a guest GS instruction", *target);
-        if (entry)
-            throw Domain::RelinkerException("GS trap would overwrite an executable entry point", *entry);
-        trapInstruction(sections, rva, length);
+        if (trap.Entry)
+            throw Domain::RelinkerException("GS trap would overwrite an executable entry point", *trap.Entry);
+        if (!trap.Replay) continue;
+        if (retained.empty()) retained.assign(gsSection.Data.begin(), gsSection.Data.begin() + 16);
+        const auto offset = *trap.Replay - gsSection.Rva - 24;
+        trap.Replay = CheckedRva(static_cast<std::uint64_t>(gsSection.Rva) + retained.size() + 24);
+        retained.insert(retained.end(), gsSection.Data.begin() + offset, gsSection.Data.begin() + offset + 64);
+    }
+    gsSection.Data = std::move(retained);
+    if (!gsSection.Data.empty()) Io::WriteU32(gsSection.Data, 8, CheckedRva((gsSection.Data.size() - 16) / 64));
+    for (auto& trap : gsTraps) {
+        for (auto& moved : trap.Moved) {
+            const auto info = decoder.DecodeInstruction(moved.Bytes.data(), moved.Bytes.size());
+            if (!info.HasMemoryOperand) continue;
+            moved.ReplayRva = CheckedRva(static_cast<std::uint64_t>(gsSection.Rva) + gsSection.Data.size() + 24);
+            if (!WindowsGuestGs::TryAppend(gsSection, moved.Rva, moved.Bytes.data(), info))
+                throw Domain::RelinkerException("Guest GS follower replay preflight disagrees with emission", moved.Rva);
+            gsSection.Data[gsSection.Data.size() - 64 + 14] = 1;
+        }
+    }
+    for (const auto& trap : gsTraps)
+        patchGsInstruction(sections, trap.Rva, trap.Length, trap.Replay);
+    if (!gsSection.Data.empty()) {
+        nextRva = AlignRva(static_cast<std::uint64_t>(nextRva) + gsSection.Data.size());
+        sections.push_back(std::move(gsSection));
+    }
+    PeSection gsFollowers{".ggm", nextRva, SectionRead | SectionExecute | 0x40u, {}};
+    appendGsFollowers(gsFollowers, gsTraps);
+    if (!gsFollowers.Data.empty()) {
+        nextRva = AlignRva(static_cast<std::uint64_t>(nextRva) + gsFollowers.Data.size());
+        sections.push_back(std::move(gsFollowers));
     }
     if (tls == nullptr) {
         if (!accesses.empty())

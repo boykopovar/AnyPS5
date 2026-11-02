@@ -147,6 +147,25 @@ void WindowsLoadImage::WritePointer(const std::uint64_t address, const std::uint
     Io::WriteU64(block.Bytes, offset - block.Offset, value);
 }
 
+void WindowsLoadImage::RecordRelocation(const std::uint64_t address) {
+    GetRva(address, 8);
+    relocationTargets.insert(address);
+}
+
+bool WindowsLoadImage::HasRelocation(const std::uint64_t address, const std::uint64_t size) const {
+    const auto target = relocationTargets.lower_bound(address);
+    return (target != relocationTargets.end() && *target - address < size) ||
+        (target != relocationTargets.begin() && address - *std::prev(target) < 8);
+}
+
+void WindowsLoadImage::RequireNoRelocation(const std::uint64_t address, const std::uint64_t size) const {
+    const auto target = relocationTargets.lower_bound(address);
+    if (target != relocationTargets.end() && *target - address < size)
+        throw Domain::RelinkerException("Relocation overlaps a Windows guest GS instruction", *target);
+    if (target != relocationTargets.begin() && address - *std::prev(target) < 8)
+        throw Domain::RelinkerException("Relocation overlaps a Windows guest GS instruction", *std::prev(target));
+}
+
 void WindowsLoadImage::RequireWritable(const std::uint64_t address, const std::uint64_t size) const {
     const auto offset = GetRva(address, size) - LoadRva;
     for (auto page = offset / SectionAlignment; page <= (offset + size - 1) / SectionAlignment; ++page) {

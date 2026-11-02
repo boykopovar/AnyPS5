@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestGs.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/Module/ModuleArgs.hpp"
 #include <nid/NidCompute.hpp>
@@ -63,6 +64,11 @@ HMODULE LoadWithoutErrorDialog(const std::filesystem::path& path) {
     const auto loaded = LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     const auto error = GetLastError();
     SetThreadErrorMode(mode, nullptr);
+    if (loaded && !GuestGsRegisterImage_nid_no_patch(loaded)) {
+        FreeLibrary(loaded);
+        SetLastError(ERROR_BAD_EXE_FORMAT);
+        return nullptr;
+    }
     SetLastError(error);
     return loaded;
 }
