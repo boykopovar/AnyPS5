@@ -460,6 +460,26 @@ static void CheckSceTryLocks() {
     Require(scePthreadRwlockDestroy(&lock) == SCE_OK);
 }
 
+static void CheckNullPointerValidation() {
+    Require(pthread_rwlock_init_nid_postfix(nullptr, nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlock_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlock_rdlock_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlock_wrlock_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlock_tryrdlock_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlock_trywrlock_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlock_unlock_nid_postfix(nullptr) == GUEST_EINVAL);
+    const KernelTimespec soon = After(20);
+    Require(pthread_rwlock_timedrdlock_nid_postfix(nullptr, &soon) == GUEST_EINVAL);
+    Require(pthread_rwlock_timedrdlock_nid_postfix(nullptr, nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlock_timedwrlock_nid_postfix(nullptr, &soon) == GUEST_EINVAL);
+    Require(pthread_rwlock_timedwrlock_nid_postfix(nullptr, nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlock_reltimedrdlock_np_nid_postfix(nullptr, 1000) == GUEST_EINVAL);
+    Require(pthread_rwlock_reltimedwrlock_np_nid_postfix(nullptr, 1000) == GUEST_EINVAL);
+
+    Require(pthread_rwlockattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_rwlockattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+}
+
 int main() {
     CheckSceAttrLifecycle();
     CheckSceTryLocks();
@@ -587,4 +607,5 @@ int main() {
     CheckWriterHandoff();
     CheckFailedLockAttempts();
     CheckDestroyLifecycle();
+    CheckNullPointerValidation();
 }
