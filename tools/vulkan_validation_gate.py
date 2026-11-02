@@ -185,9 +185,9 @@ def main(argv=None):
         parser.error("--cmake-arg accepts only -D cache definitions")
     report = {"status": "incomplete", "iterations": [], "builds": {},
               "limits": "GPU selection is requested, not independently verified. Only selected command files and explicit --runtime paths are hashed; other dynamic dependencies are not inventoried."}
-    output = args.output.resolve()
     created = False
     try:
+        output = args.output.resolve()
         sources = {side: (Path(values[0]).resolve(), values[1])
                    for side, values in (("baseline", args.baseline), ("candidate", args.candidate))}
         for source, expected in sources.values():
@@ -273,7 +273,7 @@ def main(argv=None):
         save(output, report)
         print(f"{len(names)} tests, {args.repeat} iterations per build; report: {output / 'report.json'}")
         return report["exit_code"]
-    except (GateError, OSError, ValueError, KeyError, ET.ParseError, subprocess.SubprocessError) as error:
+    except (GateError, OSError, RuntimeError, ValueError, KeyError, ET.ParseError, subprocess.SubprocessError) as error:
         report["error"] = str(error)
         report["exit_code"] = 2
         if created:

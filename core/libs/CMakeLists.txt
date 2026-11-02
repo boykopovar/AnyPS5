@@ -160,6 +160,9 @@ set(PATCHED_OUTPUTS ${LIBC_PATCHED})
 foreach(LIB_DIR ${LIBS_DIRS})
     if(IS_DIRECTORY ${LIB_DIR})
         get_filename_component(LIB_NAME ${LIB_DIR} NAME)
+        if((ANYPS5_ENABLE_ASAN OR ANYPS5_ENABLE_TSAN) AND LIB_NAME STREQUAL "libSceAddressSanitizer")
+            continue()
+        endif()
 
         if(EXISTS ${LIB_DIR}/CMakeLists.txt)
             set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -221,6 +224,29 @@ endif()
 
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
+add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/libfvad ${CMAKE_CURRENT_BINARY_DIR}/webrtc-fvad EXCLUDE_FROM_ALL)
+set_target_properties(fvad PROPERTIES C_VISIBILITY_PRESET hidden)
+
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/Vad.cpp)
+target_include_directories(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/libfvad/src)
+target_link_libraries(libwebrtc PRIVATE fvad)
+if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libwebrtc PRIVATE LINKER:--exclude-libs,ALL)
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_vad_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcVad.cpp)
+    target_include_directories(guest_webrtc_vad_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_webrtc_vad_tests PRIVATE libwebrtc fvad)
+    configure_windows_unwind(guest_webrtc_vad_tests)
+    add_test(NAME guest_webrtc_vad COMMAND guest_webrtc_vad_tests)
+    set_tests_properties(guest_webrtc_vad PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_vad PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
+endif()
+
 include(prx/libSceFreeType/PostScriptInfo.cmake)
 
 if(APS5_ENABLE_TRACY)
@@ -272,7 +298,10 @@ elseif(TARGET mimalloc)
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
 endif()
 
+include(prx/libSceFreeType/BuildInfo.cmake)
+
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
+include(prx/libSceLibreSsl/ErrorQueue.cmake)
 
 include(prx/libSceLibreSsl/ProtocolSelection.cmake)
 
@@ -449,7 +478,7 @@ if(BUILD_TESTING)
     endif()
     add_test_executable(guest_kernel_sys_tests tests/GuestKernelSys.cpp)
     target_include_directories(guest_kernel_sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_kernel_sys_tests PRIVATE libkernel_sys libSceAmpr libkernel libc)
+    target_link_libraries(guest_kernel_sys_tests PRIVATE libkernel_sys libSceNet libSceAmpr libkernel libc)
     configure_windows_unwind(guest_kernel_sys_tests)
     add_test(NAME guest_kernel_sys COMMAND guest_kernel_sys_tests)
     set_tests_properties(guest_kernel_sys PROPERTIES TIMEOUT 20)
@@ -509,6 +538,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_playready PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>")
+    endif()
+    add_test_executable(guest_sdec_version_tests tests/GuestSdecVersion.cpp)
+    target_include_directories(guest_sdec_version_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_sdec_version_tests PRIVATE libSceVdecSavc libSceVdecSavc2 libSceVdecShevc libkernel libc)
+    configure_windows_unwind(guest_sdec_version_tests)
+    add_test(NAME guest_sdec_version COMMAND guest_sdec_version_tests)
+    set_tests_properties(guest_sdec_version PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_sdec_version PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecShevc>")
     endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME nid_verneed COMMAND ${Python3_EXECUTABLE}
@@ -818,6 +857,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_signin_dialog PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSigninDialog>")
+    endif()
+
+    add_test_executable(guest_audiodec_cpu_tests tests/GuestAudiodecCpu.cpp)
+    target_include_directories(guest_audiodec_cpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_audiodec_cpu_tests PRIVATE libSceAudiodecCpu libc)
+    configure_windows_unwind(guest_audiodec_cpu_tests)
+    add_test(NAME guest_audiodec_cpu COMMAND guest_audiodec_cpu_tests)
+    if(WIN32)
+        set_tests_properties(guest_audiodec_cpu PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodecCpu>")
     endif()
 
     add_test_executable(guest_usb_storage_dialog_tests tests/GuestUsbStorageDialog.cpp)
@@ -1219,6 +1268,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_np_game_intent PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpGameIntent>")
+    endif()
+
+    add_test_executable(guest_sdma_tests tests/GuestSdma.cpp)
+    target_include_directories(guest_sdma_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_sdma_tests PRIVATE libSceSdma libc)
+    configure_windows_unwind(guest_sdma_tests)
+    add_test(NAME guest_sdma COMMAND guest_sdma_tests)
+    if(WIN32)
+        set_tests_properties(guest_sdma PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>")
     endif()
 
     add_test_executable(guest_gnm_neo_shaders_tests tests/GuestGnmNeoShaders.cpp)
