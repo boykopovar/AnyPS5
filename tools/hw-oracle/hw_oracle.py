@@ -14,7 +14,17 @@ from functools import cache
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CACHE = Path(os.environ.get("HW_ORACLE_CACHE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "anyps5-hw-oracle")
+
+
+def cache_directory(environment):
+    if environment.get("HW_ORACLE_CACHE"):
+        return Path(environment["HW_ORACLE_CACHE"])
+    xdg = environment.get("XDG_CACHE_HOME", "")
+    root = Path(xdg) if xdg and Path(xdg).is_absolute() else Path.home() / ".cache"
+    return root / "anyps5-hw-oracle"
+
+
+CACHE = cache_directory(os.environ)
 ROWS_PER_DISPATCH = 1024
 DEFAULT_LDS = 4096
 MAX_LDS = 65536
