@@ -10,6 +10,7 @@ target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioFrameOpera
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ExpFilter.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/IpAddress.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtcpCommonHeader.cpp)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/CpuFeatures.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Opus.cpp)
 target_link_libraries(libwebrtc PRIVATE opus)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/TaskQueueBase.cpp)
