@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -61,14 +62,11 @@ int APS5_VABI DSA_get0_pqg_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI ERR_load_crypto_strings_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI ERR_load_crypto_strings_nid_postfix() {
 }
 
-int APS5_VABI ERR_peek_last_error_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI ERR_peek_last_error_nid_postfix() {
+    return LibreSslPeekLastError_nid_no_patch();
 }
 
 int APS5_VABI ERR_print_errors_cb_nid_postfix(void) {
