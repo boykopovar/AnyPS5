@@ -89,6 +89,9 @@ void OversizedGrainIsRefused() {
     params.num_grains = 0xFFFFFFFFu;
     Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == errorInvalidArgument, "a grain of 4 GiB frames was not refused");
     Require(context == sentinel, "a refused context creation wrote a handle");
+    params.num_grains = 12001;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == errorInvalidArgument, "a grain past the queue cap was not refused");
+    Require(context == sentinel, "a refused context creation wrote a handle");
 }
 
 }
