@@ -47,8 +47,6 @@ struct Registry {
     std::shared_ptr<const Lease::Ranges> readableLease;
     std::shared_ptr<const Lease::Ranges> allLease;
     std::uint64_t backingSerials = 0;
-    // Ranges a mutation is waiting to see unpinned (RequireUnpinned): new leases leave them out, so the
-    // work that already holds them can drain instead of being replaced by a lease taken meanwhile.
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> retiring;
 };
 
