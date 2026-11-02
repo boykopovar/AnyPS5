@@ -53,6 +53,9 @@ int main() {
 
     Require(sceSslGetCaList(context, nullptr) == invalidValue);
     Require(sceSslFreeCaList(context, nullptr) == invalidArg);
+    SceSsl::CaList emptyList{};
+    Require(sceSslFreeCaList(context, &emptyList) == 0);
+    Require(emptyList.certs == nullptr && emptyList.num == 0);
 
     void* handle = &marker;
     SceSsl::CaList list{&handle, 3};
