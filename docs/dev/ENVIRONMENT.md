@@ -159,6 +159,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_DUMP_DRAW_SLOT1` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` | 0 | hex slot-1 address whose draw's shaders and register state are dumped |
 | `APS5_DUMP_FRAMES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0 | saves the first n presented frames as frame_<index>.bmp |
 | `APS5_DUMP_FRAMES_EVERY` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 1 | dumps every n-th presented frame |
+| `APS5_DUMP_PREPARE_INPUTS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderDiagnostics.cpp` | off | saves inputs before preparation as `shader_<address>.input-<process>-<session>-<n>.prepare.req`, respecting `APS5_DUMP_SHADERS` selection; logs begin after saving and end after successful preparation |
 | `APS5_DUMP_QUEUE` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketExecution.cpp` |  | dumps the first submissions of the queue with this hex id |
 | `APS5_DUMP_REJECTED` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/CommandValidation.cpp` |  | writes a rejected submission to rejected_submission_<n>.bin |
 | `APS5_DUMP_SCALE` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 4 | keeps every n-th pixel in each direction of a dumped frame (1 to 16384; any other value fails) |
@@ -351,6 +352,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_SAMPLER_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | creates a sampler per binding instead of caching them |
 | `APS5_NO_SEPARATE_QUEUED_LABELS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | lets a queued label enter the recorded table and replace a recorded entry of its dword |
 | `APS5_NO_SHAPE_MEMO` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | looks up every draw's resident targets and pipeline anew instead of repeating the ones an earlier draw of the same register shape used |
+| `APS5_NO_SHARED_GDS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp` |  | keeps the GDS in a private guest mapping, which the GPU cannot import, instead of anonymous shared memory on an integrated GPU with host imports; DMA_DATA into the GDS behind GPU writes to it then drains, and DMA_DATA out of it is read on the CPU |
 | `APS5_NO_SINGLE_PASS_COLLECT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | walks the written pages once without clearing them and, when any were written, a second time clearing them, instead of one cleared pass |
 | `APS5_NO_SITE_SAMPLING` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | disables per-site sampling of write evidence |
 | `APS5_NO_SNAPSHOT_CHECK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | skips the live compare that proves a captured snapshot still equals the guest bytes |

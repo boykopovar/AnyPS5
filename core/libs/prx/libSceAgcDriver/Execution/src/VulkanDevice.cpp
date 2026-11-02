@@ -1636,6 +1636,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->drawInputsInPlace = std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") == nullptr && (std::getenv("APS5_DRAW_INPUTS_IN_PLACE") != nullptr || DrawInputsInPlaceUsable(driverProperties.driverID, windows));
         if (!compileOnly) Graphics::SetHostImportWindow(8ull << 20u);
         if (!compileOnly) Graphics::SetHostImportMaxBytes(maintenance3.maxMemoryAllocationSize);
+        if (!compileOnly) Pm4::RequestImportableGds(state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
 #ifdef _WIN32
         // Imported pages are locked; locking is bounded by the process working-set minimum.
         if (const char* value = std::getenv("APS5_WORKING_SET_MIB"); value != nullptr && !compileOnly) {
@@ -2206,12 +2207,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             if (domains(selected, &domainCount, available.data()) != VK_SUCCESS) available.clear();
         }
 #ifdef _WIN32
-        const auto host = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR;
+        const std::array hosts{VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR};
 #else
-        const auto host = VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR;
+        const std::array hosts{VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR, VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR};
 #endif
-        if (std::ranges::find(available, VK_TIME_DOMAIN_DEVICE_KHR) != available.end() && std::ranges::find(available, host) != available.end()) {
-            state->hostTimeDomain = host;
+        const auto host = std::ranges::find_first_of(hosts, available);
+        if (std::ranges::find(available, VK_TIME_DOMAIN_DEVICE_KHR) != available.end() && host != hosts.end()) {
+            state->hostTimeDomain = *host;
             state->calibratedTimestamps = state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>(khr ? "vkGetCalibratedTimestampsKHR" : "vkGetCalibratedTimestampsEXT");
         }
     }
@@ -2260,6 +2262,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     Graphics::PrepareImportWatch(graphicsContext());
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->emptyBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    if (!compileOnly && Pm4::GdsImportable() && Graphics::HostImportFor(graphicsContext(), Pm4::GdsAddress(), Pm4::GdsBytes, Graphics::ImportRequester::Map) == nullptr) Pm4::RejectGdsImport();
     static const bool headlessPipelineCache = std::getenv("APS5_HEADLESS_PIPELINE_CACHE") != nullptr;
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, window != nullptr || compileOnly || headlessPipelineCache);
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
@@ -4127,7 +4130,7 @@ bool VulkanDevice::CalibrateClock(double& gpuNs, std::chrono::steady_clock::time
     const double sinceNs = static_cast<double>(static_cast<std::uint64_t>(counter.QuadPart) - stamps[1]) * 1e9 / static_cast<double>(frequency.QuadPart);
 #else
     timespec monotonic{};
-    clock_gettime(CLOCK_MONOTONIC, &monotonic);
+    clock_gettime(state->hostTimeDomain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR ? CLOCK_MONOTONIC_RAW : CLOCK_MONOTONIC, &monotonic);
     const auto now = std::chrono::steady_clock::now();
     const double sinceNs = static_cast<double>(static_cast<std::uint64_t>(monotonic.tv_sec) * 1000000000ull + static_cast<std::uint64_t>(monotonic.tv_nsec) - stamps[1]);
 #endif
