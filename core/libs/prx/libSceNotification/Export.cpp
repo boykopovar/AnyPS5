@@ -5,7 +5,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/LogMacros.hpp"
 
-#include "prx/libSceNotification/Notification.hpp"
+#include "prx/libSceNotification/include/Api.hpp"
 
 extern "C" {
 
