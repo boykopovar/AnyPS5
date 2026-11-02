@@ -67,9 +67,71 @@ public:
         return 0;
     }
 
+    int setInt(uint32_t key, int32_t value) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        RegEntry entry;
+        entry.type = TypeInt;
+        entry.intVal = value;
+        storeLocked(key, std::move(entry));
+        return 0;
+    }
+
+    int setStr(uint32_t key, const char* inString, size_t stringLength) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        RegEntry entry;
+        entry.type = TypeStr;
+        if (inString != nullptr && stringLength != 0) {
+            entry.strVal.assign(inString, stringLength);
+        }
+        storeLocked(key, std::move(entry));
+        return 0;
+    }
+
+    int setBin(uint32_t key, const void* data, size_t size) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        RegEntry entry;
+        entry.type = TypeBin;
+        if (data != nullptr && size != 0) {
+            const auto* bytes = static_cast<const uint8_t*>(data);
+            entry.binVal.assign(bytes, bytes + size);
+        }
+        storeLocked(key, std::move(entry));
+        return 0;
+    }
+
+    int resetVal(uint32_t key) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (entries_.erase(key) != 0) changed_[key] = 0xff;
+        return 0;
+    }
+
+    int isChange(uint32_t key, uint32_t consumer) {
+        const uint32_t index = consumer - 0x0d010001u;
+        const bool known = (index < 32u && (((0x8000808bu >> index) & 1u) != 0u)) || consumer == 0x0d890080u;
+        if (!known) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = changed_.find(key);
+        if (it == changed_.end()) return 0;
+        const auto mask = static_cast<uint8_t>(consumer);
+        const bool changed = (it->second & mask) != 0;
+        it->second &= static_cast<uint8_t>(~mask);
+        return changed ? 1 : 0;
+    }
+
 private:
+    void storeLocked(uint32_t key, RegEntry&& entry) {
+        const int64_t wideKey = static_cast<int64_t>(key);
+        auto it = entries_.find(wideKey);
+        const bool changed = it == entries_.end() || it->second.type != entry.type ||
+                             it->second.intVal != entry.intVal || it->second.strVal != entry.strVal ||
+                             it->second.binVal != entry.binVal;
+        entries_.insert_or_assign(wideKey, std::move(entry));
+        if (changed) changed_[wideKey] = 0xff;
+    }
+
     std::mutex mutex_;
     std::unordered_map<int64_t, RegEntry> entries_;
+    std::unordered_map<int64_t, uint8_t> changed_;
 };
 
 RegistryStore gStore;
@@ -90,16 +152,13 @@ int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int string
     return gStore.getStr(optionId, outString, stringLength);
 }
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return gStore.setBin(optionId, data, size);
 }
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return gStore.setInt(static_cast<std::uint32_t>(optionId), inInt);
 }
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return gStore.setStr(static_cast<std::uint32_t>(optionId), inStirng, stringLength);
 }
 std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t unk, std::int32_t* data) {
     (void)key;
@@ -119,18 +178,24 @@ int APS5_VABI sceRegMgrCheckIntVal(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrGetBinInitVal(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRegMgrGetBinInitVal(std::uint32_t optionId, void* data, std::size_t size, std::uint32_t unk) {
+    (void)optionId;
+    (void)unk;
+    if (data != nullptr && size != 0) std::memset(data, 0, size);
     return 0;
 }
 
-int APS5_VABI sceRegMgrGetIntInitVal(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRegMgrGetIntInitVal(std::uint32_t optionId, std::int32_t* outInt, std::uint32_t unk) {
+    (void)optionId;
+    (void)unk;
+    if (outInt != nullptr) *outInt = 0;
     return 0;
 }
 
-int APS5_VABI sceRegMgrGetStrInitVal(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRegMgrGetStrInitVal(std::uint32_t optionId, char* outString, std::size_t stringLength, std::uint32_t unk) {
+    (void)optionId;
+    (void)unk;
+    if (outString != nullptr && stringLength != 0) outString[0] = '\0';
     return 0;
 }
 
@@ -139,9 +204,8 @@ int APS5_VABI sceRegMgrGetVersion(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrIsChange(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrIsChange(std::uint32_t optionId, std::uint32_t consumer) {
+    return gStore.isChange(optionId, consumer);
 }
 
 int APS5_VABI sceRegMgrEvtGetCnt(void) {
@@ -154,9 +218,9 @@ int APS5_VABI sceRegMgrEvtGetRegId(void) {
     return 0;
 }
 
-int APS5_VABI sceRegMgrResetVal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrResetVal(std::int32_t optionId, std::int32_t unk) {
+    (void)unk;
+    return gStore.resetVal(static_cast<std::uint32_t>(optionId));
 }
 
 int APS5_VABI sceRegMgrSetInitLevel(void) {
@@ -180,7 +244,6 @@ int APS5_VABI sceRegMgrSrvGetMachineType(void) {
 }
 
 int APS5_VABI sceRegMgrSrvGetQAFforReg(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
