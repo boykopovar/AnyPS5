@@ -7,6 +7,7 @@
 #include "prx/libc/include/RenameDot.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/AppArchive.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -25,6 +26,8 @@
 #include <cerrno>
 #include <cstdarg>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -292,6 +295,45 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
     return fd;
 }
 
+void File::ForgetClosedDescriptor(int descriptor) {
+    File::ForgetRandomDevice(descriptor);
+    File::ForgetDescriptor(descriptor);
+    ForgetJitSharedMemory(descriptor);
+#ifdef _WIN32
+    File::ForgetFileLock(descriptor);
+#endif
+    File::ForgetDirectoryDescriptor(descriptor);
+}
+
+namespace {
+
+void* BeginClosingStreamDescriptor(int descriptor) {
+    EqueueDescriptorClosed(descriptor);
+#ifdef _WIN32
+    auto positioned = std::make_unique<File::PositionedTransferLock>(File::LockPositionedTransfer(descriptor));
+    File::ForgetClosedDescriptor(descriptor);
+    return positioned.release();
+#else
+    File::ForgetClosedDescriptor(descriptor);
+    return nullptr;
+#endif
+}
+
+void EndClosingStreamDescriptor(void* closing) {
+    delete static_cast<File::PositionedTransferLock*>(closing);
+}
+
+struct ClosedDescriptorRegistration {
+    ClosedDescriptorRegistration() { LibcRegisterClosedDescriptors_nid_no_patch(&BeginClosingStreamDescriptor, &EndClosingStreamDescriptor); }
+    ~ClosedDescriptorRegistration() { LibcRegisterClosedDescriptors_nid_no_patch(nullptr, nullptr); }
+    ClosedDescriptorRegistration(const ClosedDescriptorRegistration&) = delete;
+    ClosedDescriptorRegistration& operator=(const ClosedDescriptorRegistration&) = delete;
+};
+
+const ClosedDescriptorRegistration g_closedDescriptorRegistration;
+
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
@@ -340,13 +382,7 @@ int APS5_VABI sceKernelClose(int d) {
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
-    File::ForgetRandomDevice(d);
-    File::ForgetDescriptor(d);
-    ForgetJitSharedMemory(d);
-#ifdef _WIN32
-    File::ForgetFileLock(d);
-#endif
-    File::ForgetDirectoryDescriptor(d);
+    File::ForgetClosedDescriptor(d);
     if (NativeClose(d) != 0) {
         if (errno == EBADF) return SCE_KERNEL_ERROR_EBADF;
         throw std::runtime_error(std::string(__func__) + ": close failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
@@ -356,6 +392,7 @@ int APS5_VABI sceKernelClose(int d) {
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     if (File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
+    if (IsKqueueDescriptor_nid_no_patch(d)) return nbytes == 0 ? 0 : SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Read(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -376,6 +413,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
+    if (IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Write(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -405,7 +443,7 @@ static bool SeekOverflows(int d, std::int64_t offset, int whence) {
 }
 
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
-    if (GuestSockets::IsOpen(d)) return SCE_KERNEL_ERROR_ESPIPE;
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_ESPIPE;
     if (whence < 0 || whence > 2) {
         throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
     }
@@ -431,8 +469,7 @@ static int StatNative(const std::filesystem::path& native, bool directory, FileS
     FileStat archived{};
     if (File::FillArchivedStat(native, &archived)) {
         if (directory && (archived.st_mode & 0170000) != 0040000) return SceErrorFromErrno(GuestEnotdir);
-        if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
-        *sb = archived;
+        if (sb == nullptr || !GuestCopyOut_nid_no_patch(sb, &archived, sizeof(archived))) return SceErrorFromErrno(GuestEfault);
         return 0;
     }
     auto metadataPath = native;
@@ -494,19 +531,22 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     const DWORD linkAttributes = GetFileAttributesW(native.c_str());
     if (linkAttributes != INVALID_FILE_ATTRIBUTES && (linkAttributes & DirectoryLink) == DirectoryLink) directory = true;
 #endif
-    if (directory) {
 #ifdef _WIN32
-        if (native.has_filename()) {
-            WIN32_FIND_DATAW found{};
-            if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
-                FindClose(find);
-                if ((found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
-                    if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
-                    RecordWrittenPath_nid_no_patch(native);
-                    return 0;
-                }
+    if (native.has_filename() && native.filename().native().find_first_of(L"*?<>\"") == std::wstring::npos) {
+        WIN32_FIND_DATAW found{};
+        if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
+            FindClose(find);
+            constexpr DWORD DirectoryLink = FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY;
+            if ((found.dwFileAttributes & DirectoryLink) == DirectoryLink && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
+                if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
+                RecordWrittenPath_nid_no_patch(native);
+                return 0;
             }
         }
+    }
+#endif
+    if (directory) {
+#ifdef _WIN32
         const DWORD attributes = GetFileAttributesW(native.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;
