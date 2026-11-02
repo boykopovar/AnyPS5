@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <limits>
 
 namespace {
 
@@ -96,6 +97,11 @@ struct SamplerCapture {
     VkSamplerCreateFlags flags = 0;
     bool anisotropyEnable = false;
     float maxAnisotropy = 0.0f;
+    float mipLodBias = 0.0f;
+    VkSamplerAddressMode addressModeU = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
+    VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
+    VkSamplerAddressMode addressModeW = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
+    VkSamplerMipmapMode mipmapMode = VK_SAMPLER_MIPMAP_MODE_MAX_ENUM;
 };
 SamplerCapture samplerCapture;
 
@@ -111,6 +117,11 @@ VKAPI_ATTR VkResult VKAPI_CALL captureCreateSampler(VkDevice, const VkSamplerCre
     samplerCapture.flags = info->flags;
     samplerCapture.anisotropyEnable = info->anisotropyEnable == VK_TRUE;
     samplerCapture.maxAnisotropy = info->maxAnisotropy;
+    samplerCapture.mipLodBias = info->mipLodBias;
+    samplerCapture.addressModeU = info->addressModeU;
+    samplerCapture.addressModeV = info->addressModeV;
+    samplerCapture.addressModeW = info->addressModeW;
+    samplerCapture.mipmapMode = info->mipmapMode;
     const auto* reduction = static_cast<const VkSamplerReductionModeCreateInfoEXT*>(info->pNext);
     if (reduction != nullptr && reduction->sType == VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT && reduction->pNext == nullptr) samplerCapture.reductionMode = reduction->reductionMode;
     *sampler = fakeHandle<VkSampler>(0x5a);
@@ -303,6 +314,117 @@ void RunSamplerCacheDegammaTests(const Fields& base) {
     reject([&] { cache.Get(context, words, false); }, "forces sRGB decoding");
 }
 
+void RunSamplerParameterBoundsTests(const Fields& base) {
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 16.0f;
+    context.limits.maxSamplerLodBias = 15.0f;
+    context.samplerAnisotropy = true;
+    context.samplerMirrorClampToEdge = true;
+    context.deviceProc = captureProc;
+
+    const auto valid = DecodeSamplerResource(pack(base));
+
+    for (const auto mode : {VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE}) {
+        auto resource = valid;
+        resource.addressModeU = mode;
+        resource.addressModeV = mode;
+        resource.addressModeW = mode;
+        Require(createSampler(context, resource).created, "valid address mode was rejected");
+    }
+
+    auto badAddressU = valid;
+    badAddressU.addressModeU = static_cast<VkSamplerAddressMode>(99);
+    reject([&] { createSampler(context, badAddressU); }, "invalid address mode");
+
+    auto badAddressV = valid;
+    badAddressV.addressModeV = static_cast<VkSamplerAddressMode>(99);
+    reject([&] { createSampler(context, badAddressV); }, "invalid address mode");
+
+    auto badAddressW = valid;
+    badAddressW.addressModeW = static_cast<VkSamplerAddressMode>(99);
+    reject([&] { createSampler(context, badAddressW); }, "invalid address mode");
+
+    context.samplerMirrorClampToEdge = false;
+    auto badMirrorClamp = valid;
+    badMirrorClamp.addressModeU = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
+    reject([&] { createSampler(context, badMirrorClamp); }, "mirror clamp to edge");
+    context.samplerMirrorClampToEdge = true;
+
+    auto badMipmap = valid;
+    badMipmap.mipmapMode = static_cast<VkSamplerMipmapMode>(99);
+    reject([&] { createSampler(context, badMipmap); }, "invalid mipmap mode");
+
+    auto badMag = valid;
+    badMag.magFilter = static_cast<VkFilter>(99);
+    reject([&] { createSampler(context, badMag); }, "invalid mag filter");
+
+    auto badMin = valid;
+    badMin.minFilter = static_cast<VkFilter>(99);
+    reject([&] { createSampler(context, badMin); }, "invalid min filter");
+
+    auto badLodHigh = valid;
+    badLodHigh.lodBias = 16.0f;
+    reject([&] { createSampler(context, badLodHigh); }, "requests a LOD bias beyond the device limit");
+
+    auto badLodLow = valid;
+    badLodLow.lodBias = -16.0f;
+    reject([&] { createSampler(context, badLodLow); }, "requests a LOD bias beyond the device limit");
+
+    auto nanLod = valid;
+    nanLod.lodBias = std::numeric_limits<float>::quiet_NaN();
+    reject([&] { createSampler(context, nanLod); }, "requests a LOD bias beyond the device limit");
+
+    auto badLodOrder = valid;
+    badLodOrder.minLod = 5.0f;
+    badLodOrder.maxLod = 2.0f;
+    reject([&] { createSampler(context, badLodOrder); }, "minimum LOD past its maximum LOD");
+
+    auto negativeMinLod = valid;
+    negativeMinLod.minLod = -1.0f;
+    reject([&] { createSampler(context, negativeMinLod); }, "minimum LOD past its maximum LOD");
+
+    context.limits.maxSamplerAnisotropy = 4.0f;
+    auto anisoValid = valid;
+    anisoValid.anisotropyEnable = true;
+    anisoValid.maxAnisotropy = 4.0f;
+    const auto createdAniso = createSampler(context, anisoValid);
+    Require(createdAniso.created && createdAniso.anisotropyEnable && createdAniso.maxAnisotropy == 4.0f, "anisotropy 4x was not created properly");
+
+    auto anisoDisabled = valid;
+    anisoDisabled.anisotropyEnable = false;
+    anisoDisabled.maxAnisotropy = 4.0f;
+    const auto createdDisabled = createSampler(context, anisoDisabled);
+    Require(createdDisabled.maxAnisotropy == 1.0f, "disabled anisotropy must clamp to 1.0");
+
+    auto anisoBelowOne = valid;
+    anisoBelowOne.anisotropyEnable = true;
+    anisoBelowOne.maxAnisotropy = 0.5f;
+    reject([&] { createSampler(context, anisoBelowOne); }, "requests an anisotropy ratio below 1.0");
+
+    auto anisoAboveLimit = valid;
+    anisoAboveLimit.anisotropyEnable = true;
+    anisoAboveLimit.maxAnisotropy = 8.0f;
+    reject([&] { createSampler(context, anisoAboveLimit); }, "requests an anisotropy ratio beyond the device limit");
+
+    auto unnormAniso = valid;
+    unnormAniso.unnormalizedCoordinates = true;
+    unnormAniso.anisotropyEnable = true;
+    reject([&] { createSampler(context, unnormAniso); }, "unnormalized coordinates enables anisotropic filtering");
+
+    auto unnormLinearMip = valid;
+    unnormLinearMip.unnormalizedCoordinates = true;
+    unnormLinearMip.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    reject([&] { createSampler(context, unnormLinearMip); }, "unnormalized coordinates uses linear mipmap mode");
+
+    auto unnormRepeat = valid;
+    unnormRepeat.unnormalizedCoordinates = true;
+    unnormRepeat.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    unnormRepeat.minLod = 0.0f;
+    unnormRepeat.maxLod = 0.0f;
+    unnormRepeat.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    reject([&] { createSampler(context, unnormRepeat); }, "unnormalized coordinates uses an unsupported address mode");
+}
+
 }
 
 void RunGuestSamplerResourceTests() {
@@ -488,6 +610,7 @@ void RunGuestSamplerResourceTests() {
 
     RunNonSeamlessCubeTests(base);
     RunSamplerReductionTests(base);
+    RunSamplerParameterBoundsTests(base);
 
     Fields badDegamma = base;
     badDegamma.disableDegamma = true;
