@@ -279,6 +279,14 @@ int GetGpuLoadEmulationModeOfApp(const char* caller, std::int32_t appId) {
 
 std::atomic<bool> SuspendConfirmationDialogEnabled{true};
 
+template<typename TValue>
+bool CopyOutGuest(TValue* destination, const TValue& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 }
 
 extern "C" {
@@ -345,8 +353,9 @@ int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAre
  if (info == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *info = SystemServiceDisplaySafeAreaInfo{};
- info->ratio = 1.0f;
+ SystemServiceDisplaySafeAreaInfo localInfo{};
+ localInfo.ratio = 1.0f;
+ if (!CopyOutGuest(info, localInfo)) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
 }
 
@@ -378,7 +387,8 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  if (status == nullptr) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- *status = SystemServiceStatus{};
+ SystemServiceStatus localStatus{};
+ if (!CopyOutGuest(status, localStatus)) return SYSTEM_SERVICE_ERROR_PARAMETER;
  return SYSTEM_SERVICE_OK;
 }
 
