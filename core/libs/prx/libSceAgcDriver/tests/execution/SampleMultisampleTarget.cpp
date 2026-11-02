@@ -1392,6 +1392,15 @@ void InitialContents(AgcDriver::VulkanDevice& device, bool snapshots = false) {
         }
     }
     if (snapshots) {
+        {
+            Block block(BlockBytes);
+            const auto color = DecodeTarget(block);
+            const auto expected = StoreInitial(block, Samples, 0u, false);
+            const auto loaded = LoadSamples(device, block);
+            Require(loaded == expected, "a cold varying texture lost its initial samples before snapshotting");
+            CheckColorSnapshot(device, color, block, loaded);
+            std::puts("native color snapshot: varying texture first-use baseline retained without a prior draw");
+        }
         Block block(BlockBytes);
         Block metadata(BlockBytes);
         auto color = DecodeTarget(block);
