@@ -1110,7 +1110,8 @@ void APS5_VABI sceNpCalloutTermCtx(NpCalloutContext* context) {
 int APS5_VABI sceNpCalloutStartOnCtx64(NpCalloutContext* context, NpCallout* callout, std::uint64_t usec,
     void (APS5_VABI *handler)(void* arg), void* arg) {
     if (context->initialized == 0) return NP_ERROR_NOT_INITIALIZED;
-    const std::uint64_t deadline = ClockUsec() + usec;
+    const std::uint64_t now = ClockUsec();
+    const std::uint64_t deadline = usec > UINT64_MAX - now ? UINT64_MAX : now + usec;
     sceNpMutexLock(&context->mutex);
 
     for (NpCallout* entry = context->pending; entry != nullptr; entry = entry->next) {
