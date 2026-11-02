@@ -7,6 +7,14 @@
 
 extern "C" {
 
+WebCore::LayoutRect APS5_VABI _ZN7WebCore19enclosingLayoutRectERKNS_9FloatRectE(const WebCore::FloatRect& rect);
+WebCore::AffineTransform APS5_VABI _ZN7WebCore19makeMapBetweenRectsERKNS_9FloatRectES2_(const WebCore::FloatRect& source, const WebCore::FloatRect& destination);
+WebCore::FloatRect APS5_VABI _ZN7WebCore25encloseRectToDevicePixelsERKNS_9FloatRectEf(const WebCore::FloatRect& rect, float scale);
+
+WebCore::IntRect APS5_VABI _ZN7WebCore16enclosingIntRectERKNS_10LayoutRectE(const WebCore::LayoutRect& rect);
+WebCore::IntRect APS5_VABI _ZN7WebCore16enclosingIntRectERKNS_9FloatRectE(const WebCore::FloatRect& rect);
+bool APS5_VABI _ZN7WebCore16findIntersectionERKNS_10FloatPointES2_S2_S2_RS0_(const WebCore::FloatPoint& firstStart, const WebCore::FloatPoint& firstEnd, const WebCore::FloatPoint& secondStart, const WebCore::FloatPoint& secondEnd, WebCore::FloatPoint& intersection);
+
 WebCore::FloatPoint APS5_VABI _ZN7WebCore10FloatPoint15narrowPrecisionEdd(double x, double y);
 void APS5_VABI _ZN7WebCore10FloatPoint9normalizeEv(WebCore::FloatPoint* self);
 void APS5_VABI _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(WebCore::FloatPoint* self, const WebCore::IntPoint& p);

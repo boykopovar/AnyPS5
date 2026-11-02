@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 
 namespace WebCore {
 
@@ -17,24 +16,6 @@ constexpr double kSmallNumber = 1.0e-8;
 
 inline double Deg2Rad(double d) {
     return d * (kPi / 180.0);
-}
-
-int ClampToInteger(float value) {
-    if (value >= static_cast<float>(std::numeric_limits<int>::max())) {
-        return std::numeric_limits<int>::max();
-    }
-    if (!(value > static_cast<float>(std::numeric_limits<int>::min()))) {
-        return std::numeric_limits<int>::min();
-    }
-    return static_cast<int>(value);
-}
-
-IntRect EnclosingIntRect(const FloatRect& rect) {
-    int x = ClampToInteger(std::floor(rect.m_location.m_x));
-    int y = ClampToInteger(std::floor(rect.m_location.m_y));
-    int maxX = ClampToInteger(std::ceil(rect.m_location.m_x + rect.m_size.m_width));
-    int maxY = ClampToInteger(std::ceil(rect.m_location.m_y + rect.m_size.m_height));
-    return IntRect{IntPoint{x, y}, IntSize{maxX - x, maxY - y}};
 }
 
 bool IsAffineIdentityOrTranslation(const AffineTransform& t) {
@@ -275,7 +256,7 @@ WebCore::IntRect APS5_VABI _ZNK7WebCore15AffineTransform7mapRectERKNS_7IntRectE(
         WebCore::FloatSize{static_cast<float>(r.m_size.m_width), static_cast<float>(r.m_size.m_height)}
     };
     WebCore::FloatRect mapped = _ZNK7WebCore15AffineTransform7mapRectERKNS_9FloatRectE(self, fr);
-    return WebCore::EnclosingIntRect(mapped);
+    return _ZN7WebCore16enclosingIntRectERKNS_9FloatRectE(mapped);
 }
 
 WebCore::FloatRect APS5_VABI _ZNK7WebCore15AffineTransform7mapRectERKNS_9FloatRectE(
@@ -559,7 +540,7 @@ WebCore::IntRect APS5_VABI _ZNK7WebCore20TransformationMatrix7mapRectERKNS_7IntR
         WebCore::FloatSize{static_cast<float>(r.m_size.m_width), static_cast<float>(r.m_size.m_height)}
     };
     WebCore::FloatRect mapped = _ZNK7WebCore20TransformationMatrix7mapRectERKNS_9FloatRectE(self, fr);
-    return WebCore::EnclosingIntRect(mapped);
+    return _ZN7WebCore16enclosingIntRectERKNS_9FloatRectE(mapped);
 }
 
 WebCore::FloatRect APS5_VABI _ZNK7WebCore20TransformationMatrix7mapRectERKNS_9FloatRectE(
