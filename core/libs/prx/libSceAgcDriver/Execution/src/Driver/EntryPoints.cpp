@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <mutex>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
@@ -131,7 +132,8 @@ extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
 extern "C" std::uint32_t AgcDriverInstructionWords_nid_postfix(std::span<const std::uint32_t> code, std::uint32_t index) {
     try {
         return ShaderRecompiler::DecodeRdnaInstruction(index * 4u, code, index).wordCount;
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[agc] instruction at word %u of a fused front half cannot be decoded: %s\n", index, error.what());
         return 0;
     }
 }

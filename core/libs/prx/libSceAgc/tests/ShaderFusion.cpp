@@ -332,6 +332,14 @@ void testFrontConstantBuffer() {
     Halves unpatched;
     setFrontConstants(unpatched, 0x44440000u, 2, false);
     expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &unpatched.front, &unpatched.back); });
+    Halves gap;
+    setFrontConstants(gap, 0x66660000u);
+    gap.frontCode[3] = 20u;
+    expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &gap.front, &gap.back); });
+    Halves backConstants;
+    setFrontConstants(backConstants, 0x77770000u);
+    backConstants.back.embedded_constant_buffer_size_dqw = 1;
+    expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &backConstants.front, &backConstants.back); });
     Halves literal;
     setFrontConstants(literal, 0x55550000u);
     literal.frontCode[0] = SMovS0Literal;
