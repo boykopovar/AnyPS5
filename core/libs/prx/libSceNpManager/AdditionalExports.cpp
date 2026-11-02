@@ -801,10 +801,6 @@ int APS5_VABI sceNpPushUnsetNpCommunicationId() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpRegisterGamePresenceCallbackA() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceNpSandboxIntAbortRequest() {
     NotImplemented_nid_no_patch(__func__);
 }
