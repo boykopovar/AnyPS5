@@ -51,7 +51,7 @@ constexpr std::uint32_t TileDepth64KB = 0x18;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type2DArray = 13;
 constexpr std::size_t PlaneBytes = 65536;
-constexpr std::size_t BlockBytes = 11 * PlaneBytes;
+constexpr std::size_t BlockBytes = 15 * PlaneBytes;
 constexpr std::uint32_t RowPasses = 15;
 
 alignas(256) constexpr std::array<std::uint32_t, 9> StoreRowCode{
@@ -241,6 +241,20 @@ void RetireStoresDepthCase(AgcDriver::VulkanDevice& device, const DepthFastClear
     Require(half == stored.level0.size() / sizeof(float), "the retire left " + std::to_string(stored.level0.size() / sizeof(float) - half) + " of the drawn depth plane's texels without the depth drawn on the GPU");
 }
 
+void RetiredSurfaceCase(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, std::uint8_t* plane, std::uint8_t* metadata, bool clearFirst, const std::string& what) {
+    Fill(plane, VK_FORMAT_D32_SFLOAT);
+    std::memset(metadata, 0xff, DepthFastClearHarness::HtileBytes);
+    const auto htile = Address(metadata);
+    static_cast<void>(DepthFastClearHarness::Draw(device, shaders, Plane(plane, VK_FORMAT_D32_SFLOAT, htile), {}));
+    AgcDriver::Graphics::RetireDepthSurfaces(AgcDriver::VulkanDeviceTestAccess::ContextOf(device).device, Address(plane), PlaneBytes);
+    Require(!AgcDriver::Graphics::DepthSurfaceAt(Address(plane)), what + ": the depth surface was not retired");
+    if (clearFirst) AgcDriver::Graphics::NoteHtileDepthClear(htile, DepthFastClearHarness::HtileBytes);
+    StoreRow(device, plane, VK_FORMAT_D32_SFLOAT, 1);
+    Require(AgcDriver::Graphics::StorageTexture::FindPending(Address(plane), PlaneBytes) != nullptr, what + ": the stored row is not pending in a storage image");
+    if (!clearFirst) AgcDriver::Graphics::NoteHtileDepthClear(htile, DepthFastClearHarness::HtileBytes);
+    RequireCount(DepthFastClearHarness::Draw(device, shaders, Plane(plane, VK_FORMAT_D32_SFLOAT, htile), {}), clearFirst ? RowPasses : Covered, what);
+}
+
 }
 
 int main() {
@@ -270,6 +284,8 @@ int main() {
         RequireCount(DepthFastClearHarness::Draw(*device, shaders, depthStencil, {.depthTest = false, .stencilTest = true, .stencil = equalZero}), Covered, "the stencil plane of a new D32S8 depth surface that took a storage write, tested EQUAL to its clear value 0");
         PendingChainCase(*device, shaders, block.Plane(8));
         RetireStoresDepthCase(*device, shaders, block.Plane(9), block.Plane(10));
+        RetiredSurfaceCase(*device, shaders, block.Plane(11), block.Plane(12), true, "a retired D32 surface with HTILE, a depth clear noted on it, then a storage write over its whole plane, bound again");
+        RetiredSurfaceCase(*device, shaders, block.Plane(13), block.Plane(14), false, "a retired D32 surface with HTILE, a storage write over its whole plane, then a depth clear noted on it, bound again");
 
         if (!failures.empty()) {
             std::string text;
