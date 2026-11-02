@@ -32,7 +32,10 @@ int main() {
     const int socket = sceNetSocket("raw-protocol", 2, 3, protocol);
     if (socket < 0) {
         const int error = *sceNetErrnoLoc();
-        if (error == 1 || error == 13) return 77;
+        if (error == 1 || error == 13) {
+            std::fprintf(stderr, "skipped, the runner cannot create a raw socket (errno %d)\n", error);
+            return 77;
+        }
         Require(false);
     }
     CheckProtocol(socket, protocol);
@@ -46,7 +49,10 @@ int main() {
     const int unlisted = sceNetSocket("raw-unlisted-protocol", 2, 3, unlistedProtocol);
     if (unlisted < 0) {
         const int error = *sceNetErrnoLoc();
-        if (error == 1 || error == 13) return 77;
+        if (error == 1 || error == 13) {
+            std::fprintf(stderr, "skipped, the runner cannot create a raw socket (errno %d)\n", error);
+            return 77;
+        }
         Require(false);
     }
     CheckProtocol(unlisted, 0);
