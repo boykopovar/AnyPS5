@@ -199,6 +199,27 @@ static void CheckClassification() {
     Require(_LDsign_nid_postfix(-2.0L) == -32768 && _LDsign_nid_postfix(2.0L) == 0);
 }
 
+static void CheckExpSpecialValues() {
+    Require(exp_nid_postfix(0.0) == 1.0 && exp_nid_postfix(-0.0) == 1.0);
+    Require(exp_nid_postfix(INFINITY) == INFINITY);
+    Require(exp_nid_postfix(-INFINITY) == 0.0 && !std::signbit(exp_nid_postfix(-INFINITY)));
+    Require(std::isnan(exp_nid_postfix(NAN)));
+    Require(std::abs(exp_nid_postfix(1.0) - 2.718281828459045) <= 2.718281828459045 * 1e-15);
+    Require(std::abs(exp_nid_postfix(-1.0) - 0.36787944117144233) <= 0.36787944117144233 * 1e-15);
+    errno = 0;
+    Require(exp_nid_postfix(710.0) == INFINITY && errno == ERANGE);
+    Require(exp_nid_postfix(-746.0) == 0.0);
+
+    Require(expf_nid_postfix(0.0f) == 1.0f && expf_nid_postfix(-0.0f) == 1.0f);
+    Require(expf_nid_postfix(INFINITY) == INFINITY);
+    Require(expf_nid_postfix(-INFINITY) == 0.0f && !std::signbit(expf_nid_postfix(-INFINITY)));
+    Require(std::isnan(expf_nid_postfix(NAN)));
+    Require(std::abs(expf_nid_postfix(1.0f) - 2.7182817f) <= 2.7182817f * 1e-6f);
+    errno = 0;
+    Require(expf_nid_postfix(89.0f) == INFINITY && errno == ERANGE);
+    Require(expf_nid_postfix(-110.0f) == 0.0f);
+}
+
 int main() {
     CheckRoundingAndScaling();
     CheckLogblLroundl();
@@ -209,5 +230,6 @@ int main() {
     CheckRoundingModes();
     CheckRintTiesToEven();
     CheckClassification();
+    CheckExpSpecialValues();
     return 0;
 }
