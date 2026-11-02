@@ -27,6 +27,7 @@ constexpr std::int32_t resultUserCanceled = 1;
 void RequireCanceledResult(std::uint64_t userData, bool clearsReserved) {
     NpCommerceDialogResult result;
     std::memset(&result, 0x33, sizeof(result));
+    Require(sceNpCommerceDialogGetResult(reinterpret_cast<NpCommerceDialogResult*>(0x10)) == static_cast<int>(0x80B8000Au));
     Require(sceNpCommerceDialogGetResult(&result) == resultUserCanceled);
     Require(result.result == resultUserCanceled);
     Require(result.authorized == 0);
