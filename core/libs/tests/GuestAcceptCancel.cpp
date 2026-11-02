@@ -57,6 +57,25 @@ static std::size_t NativeDescriptorCount() {
 #endif
 }
 
+static void CheckNativeDescriptors(std::size_t expected, const char* phase) {
+    const auto actual = NativeDescriptorCount();
+    if (actual == expected) return;
+    std::fprintf(stderr, "%s: native descriptors expected %zu, observed %zu\n", phase, expected, actual);
+    std::exit(1);
+}
+
+static void WarmTransferWait() {
+    const int socket = socket_nid_postfix(2, 2, 0);
+    Require(socket >= 0, "warmup socket");
+    const std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(socket, address.data(), address.size()) == 0, "bind warmup socket");
+    const std::array<std::int64_t, 2> timeout{0, 10000};
+    Require(setsockopt_nid_postfix(socket, 0xffff, 0x1006, timeout.data(), sizeof(timeout)) == 0, "warmup timeout");
+    char byte = 0;
+    Require(recv_nid_postfix(socket, &byte, 1, 0) == -1 && *__error_nid_postfix() == 35, "warmup transfer wait");
+    Require(close_nid_postfix(socket) == 0, "close warmup socket");
+}
+
 struct State {
     int listener = -1;
     int accepted = -1;
@@ -88,14 +107,14 @@ struct State {
 
 static void APS5_VABI Cleanup(void* opaque) {
     auto& state = *static_cast<State*>(opaque);
-    if (state.countDisposal) Require(NativeDescriptorCount() == state.nativeBefore, "accepted native resource survived until cleanup");
+    if (state.countDisposal) CheckNativeDescriptors(state.nativeBefore, "cleanup");
     Require(state.cleanups.fetch_add(1) == 0 && state.destructors.load() == 0, "cleanup ordering/count");
     if (state.accepted >= 0) Require(close_nid_postfix(state.accepted) == 0, "close accepted socket");
 }
 
 static void APS5_VABI Destroy(void* opaque) {
     auto& state = *static_cast<State*>(opaque);
-    if (state.countDisposal) Require(NativeDescriptorCount() == state.nativeBefore, "accepted native resource survived until TSD");
+    if (state.countDisposal) CheckNativeDescriptors(state.nativeBefore, "TSD");
     Require(state.cleanups.load() == 1 && state.destructors.fetch_add(1) == 0, "TSD ordering/count");
 }
 
@@ -141,6 +160,7 @@ static void* APS5_VABI Acceptor(void* opaque) {
             ThreadCancel::IoRestart warmup(false);
             ThreadCancel::IoPoint point(warmup);
         }
+        WarmTransferWait();
         state.nativeBefore = NativeDescriptorCount();
     }
     state.ready.store(true);
