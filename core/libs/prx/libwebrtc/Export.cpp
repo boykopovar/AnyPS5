@@ -172,11 +172,6 @@ int APS5_VABI _ZN6webrtc12RtpExtensionD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc11FileWrapper5CloseEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc26PeerConnectionDependenciesC1EOS0__nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1540,21 +1535,6 @@ int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(void) {
 APS5_EXPORT("3hzqH2yWvjU", libwebrtcUnknown41);
 int APS5_VABI libwebrtcUnknown41(void) {
     NotImplemented_nid_no_patch("3hzqH2yWvjU");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11FileWrapper5FlushEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11FileWrapper5WriteEPKvm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11FileWrapperC1EOS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
