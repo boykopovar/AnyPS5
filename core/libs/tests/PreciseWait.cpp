@@ -5,8 +5,46 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 namespace {
+
+#ifdef __linux__
+bool CheckLinuxTimerSlackBoundaries() {
+    bool passed = false;
+    std::thread worker([&] {
+        if (prctl(PR_SET_TIMERSLACK, 50000UL, 0UL, 0UL, 0UL) != 0) {
+            std::cerr << "Could not initialize timer slack for boundary checks\n";
+            return;
+        }
+        const auto checkWait = [](unsigned long long nanos, bool allowLowSlack, long expectedSlack) {
+            const auto start = PreciseMonotonicNanos();
+            PreciseSleepFromNanosWithSlack(start, nanos, allowLowSlack);
+            if (PreciseMonotonicNanos() < start + nanos) {
+                std::cerr << "Linux boundary wait returned before its deadline\n";
+                return false;
+            }
+            if (prctl(PR_GET_TIMERSLACK, 0UL, 0UL, 0UL, 0UL) != expectedSlack) {
+                std::cerr << "Linux boundary wait changed timer slack unexpectedly\n";
+                return false;
+            }
+            return true;
+        };
+        for (const auto nanos : {0ULL, 1ULL, 14999ULL, 15000ULL}) {
+            if (!checkWait(nanos, true, 50000L)) return;
+        }
+        for (const auto nanos : {15001ULL, 99999ULL, 100000ULL, 100001ULL}) {
+            if (!checkWait(nanos, false, 50000L)) return;
+        }
+        for (const auto nanos : {15001ULL, 99999ULL, 100000ULL, 100001ULL}) {
+            if (!checkWait(nanos, true, 1L)) return;
+        }
+        passed = true;
+    });
+    worker.join();
+    return passed;
+}
+#endif
 
 bool IsRunnerPreempted() {
 #ifdef _WIN32
@@ -168,6 +206,7 @@ int main() {
 #endif
 
 #ifdef __linux__
+    if (!CheckLinuxTimerSlackBoundaries()) return 1;
     if (PreciseLinuxLowTimerSlack() && prctl(PR_GET_TIMERSLACK, 0UL, 0UL, 0UL, 0UL) != 1L) {
         std::cerr << "PreciseLinuxLowTimerSlack did not configure 1ns timer slack\n";
         return 1;
