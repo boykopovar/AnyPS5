@@ -22,7 +22,7 @@ def release_body(notes):
     )
 
 
-def prepare_notes(source, body, full):
+def prepare_notes(source, body, full, check=False):
     paths = (source, body, full)
     for index, first in enumerate(paths):
         for second in paths[index + 1:]:
@@ -40,6 +40,11 @@ def prepare_notes(source, body, full):
     body_text = release_body(notes)
     if len(body_text) > BODY_LIMIT:
         raise ValueError(f"Release notes body exceeds {BODY_LIMIT} characters after removing What's Changed")
+    if check:
+        try:
+            return body.read_bytes() == body_text.encode("utf-8") and full.read_bytes() == notes.encode("utf-8")
+        except FileNotFoundError:
+            return False
     for destination in (body, full):
         try:
             destination.stat()
@@ -76,13 +81,17 @@ def main(argv=None):
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--body", type=Path, required=True)
     parser.add_argument("--full", type=Path, required=True)
+    parser.add_argument("--check", action="store_true", help="fail with status 1 when outputs differ; never create or modify files")
     args = parser.parse_args(argv)
     try:
-        prepare_notes(args.input, args.body, args.full)
+        matched = prepare_notes(args.input, args.body, args.full, args.check)
+        if args.check and not matched:
+            print("Release note outputs are missing or stale", file=sys.stderr)
+            return 1
     except (OSError, ValueError) as error:
         parser.error(str(error))
     return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
