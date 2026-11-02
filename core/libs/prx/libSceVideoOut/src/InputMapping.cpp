@@ -56,7 +56,11 @@ constexpr auto actions = std::array{
     InputAction{"ToggleMouse", Pad::InputControl::ToggleMouse, Pad::PadButton::None},
     InputAction{"ToggleFullscreen", Pad::InputControl::ToggleFullscreen, Pad::PadButton::None},
     InputAction{"TogglePerformanceOverlay", Pad::InputControl::TogglePerformanceOverlay, Pad::PadButton::None},
-    InputAction{"Screenshot", Pad::InputControl::Screenshot, Pad::PadButton::None}
+    InputAction{"Screenshot", Pad::InputControl::Screenshot, Pad::PadButton::None},
+    InputAction{"ShowPadStatus", Pad::InputControl::ShowPadStatus, Pad::PadButton::None},
+    InputAction{"VolumeUp", Pad::InputControl::VolumeUp, Pad::PadButton::None},
+    InputAction{"VolumeDown", Pad::InputControl::VolumeDown, Pad::PadButton::None},
+    InputAction{"ToggleMute", Pad::InputControl::ToggleMute, Pad::PadButton::None}
 };
 
 std::string upper(std::string_view value) {
@@ -121,6 +125,18 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
         if (action.control == Pad::InputControl::Screenshot) {
             throw std::runtime_error("Screenshot can only use a keyboard key");
         }
+        if (action.control == Pad::InputControl::ShowPadStatus) {
+            throw std::runtime_error("ShowPadStatus can only use a keyboard key");
+        }
+        if (action.control == Pad::InputControl::VolumeUp) {
+            throw std::runtime_error("VolumeUp can only use a keyboard key");
+        }
+        if (action.control == Pad::InputControl::VolumeDown) {
+            throw std::runtime_error("VolumeDown can only use a keyboard key");
+        }
+        if (action.control == Pad::InputControl::ToggleMute) {
+            throw std::runtime_error("ToggleMute can only use a keyboard key");
+        }
         return {SDL_SCANCODE_UNKNOWN, parseMouseButton(value), action.control, action.button, 0};
     }
     if (type == "WHEEL") {
@@ -145,7 +161,8 @@ enum class InputSetting {
     MouseDecayMs,
     StickModifierScale,
     KeyboardRampMs,
-    TriggerRampMs
+    TriggerRampMs,
+    MouseControlsRightStick
 };
 
 struct InputSettingName {
@@ -165,7 +182,8 @@ constexpr auto settingNames = std::array{
     InputSettingName{"MouseDecayMs", InputSetting::MouseDecayMs},
     InputSettingName{"StickModifierScale", InputSetting::StickModifierScale},
     InputSettingName{"KeyboardRampMs", InputSetting::KeyboardRampMs},
-    InputSettingName{"TriggerRampMs", InputSetting::TriggerRampMs}
+    InputSettingName{"TriggerRampMs", InputSetting::TriggerRampMs},
+    InputSettingName{"MouseStickTarget", InputSetting::MouseControlsRightStick}
 };
 
 const InputSettingName* findSetting(std::string_view name) {
@@ -212,6 +230,13 @@ double parseNumber(std::string_view value, std::string_view name, double minimum
     return parsed;
 }
 
+int parseStickId(std::string_view value) {
+    const auto normalized = upper(value);
+    if (normalized == "LEFT") return 0;
+    if (normalized == "RIGHT") return 1;
+    throw std::runtime_error("mouse target stick must be LEFT or RIGHT");
+}
+
 void applySetting(Pad::InputSettings& settings, InputSetting setting, std::string_view value) {
     switch (setting) {
         case InputSetting::LeftStickDeadzone: settings.leftStickDeadzonePercent = parseDeadzonePercent(value); break;
@@ -226,6 +251,7 @@ void applySetting(Pad::InputSettings& settings, InputSetting setting, std::strin
         case InputSetting::StickModifierScale: settings.stickModifierScale = parseNumber(value, "stick modifier scale", 0.05, 1.0); break;
         case InputSetting::KeyboardRampMs: settings.keyboardRampMs = parseNumber(value, "keyboard ramp", 0.0, 2000.0); break;
         case InputSetting::TriggerRampMs: settings.triggerRampMs = parseNumber(value, "trigger ramp", 0.0, 2000.0); break;
+        case InputSetting::MouseControlsRightStick: settings.mouseControlsRightStick = (parseStickId(value) == 1); break;
     }
 }
 

@@ -161,6 +161,49 @@ int main() {
     Require(sceFontGetResolutionDpi(nullptr, &hdpi, &vdpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(sceFontGetResolutionDpi(named, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
 
+    FontStyleFrame frame{};
+    std::uint32_t mode = 7;
+    Require(sceFontStyleFrameGetScalePixel(nullptr, &w, &h) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameSetScalePoint(&frame, 10.0f, 20.0f) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameInit(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, &hdpi, &vdpi) == SCE_FONT_OK && hdpi == 72 && vdpi == 72);
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
+    Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_ERROR_UNSET_PARAMETER);
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &w, &h, &mode) == SCE_FONT_ERROR_UNSET_PARAMETER);
+
+    Require(sceFontStyleFrameSetResolutionDpi(&frame, 144, 36) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, &hdpi, &vdpi) == SCE_FONT_OK && hdpi == 144 && vdpi == 36);
+    Require(sceFontStyleFrameSetScalePoint(&frame, 10.0f, 20.0f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_OK && w == 10.0f && h == 20.0f);
+    Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_OK && w == 20.0f && h == 10.0f);
+    Require(sceFontStyleFrameGetScalePixel(&frame, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameSetScalePixel(&frame, 30.0f, 9.0f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetScalePixel(&frame, &w, &h) == SCE_FONT_OK && w == 30.0f && h == 9.0f);
+    Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_OK && w == 15.0f && h == 18.0f);
+    Require(sceFontStyleFrameUnsetScale(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetScalePoint(&frame, &w, &h) == SCE_FONT_ERROR_UNSET_PARAMETER);
+    Require(sceFontStyleFrameSetResolutionDpi(&frame, 0, 0) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetResolutionDpi(&frame, &hdpi, &vdpi) == SCE_FONT_OK && hdpi == 72 && vdpi == 72);
+
+    Require(sceFontStyleFrameSetEffectSlant(&frame, 2.0f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && slant == 1.0f);
+    Require(sceFontStyleFrameSetEffectSlant(&frame, -0.25f) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_OK && slant == -0.25f);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameUnsetEffectSlant(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectSlant(&frame, &slant) == SCE_FONT_ERROR_UNSET_PARAMETER);
+
+    Require(sceFontStyleFrameSetEffectWeight(&frame, 1.5f, 0.96875f, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &w, &h, &mode) == SCE_FONT_ERROR_UNSET_PARAMETER);
+    Require(sceFontStyleFrameSetEffectWeight(&frame, 1.5f, 0.96875f, 0) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &w, &h, &mode) == SCE_FONT_OK && w == 0.04f + 1.0f && h == 0.96875f && mode == 0);
+    Require(sceFontStyleFrameGetEffectWeight(&frame, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontStyleFrameUnsetEffectWeight(&frame) == SCE_FONT_OK);
+    Require(sceFontStyleFrameGetEffectWeight(&frame, &w, &h, &mode) == SCE_FONT_ERROR_UNSET_PARAMETER);
+
     for (FontHandle font : {named, os2, odd}) Require(sceFontCloseFont(font) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);

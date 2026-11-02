@@ -220,31 +220,13 @@ static void ResumesDetachedThreadsWhileTheyExit() {
     Require(scePthreadJoin(resumer, nullptr) == SCE_OK, "joining the resuming thread failed");
 }
 
-#ifdef _WIN32
-static void RefusesRaiseWhileSuspended() {
-    Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(&Handler)) == SCE_OK, "sceKernelInstallExceptionHandler failed");
-    Started started;
-    Pthread thread = nullptr;
-    CreateSuspendedSce(&thread, Record, &started);
-    bool refused = false;
-    try {
-        sceKernelRaiseException(thread, GUEST_SIGUSR1);
-    } catch (const std::runtime_error& error) {
-        refused = std::string(error.what()).find("suspended") != std::string::npos;
-    }
-    Require(refused, "sceKernelRaiseException did not refuse a thread still suspended at creation");
-    Require(pthread_resume_np_nid_postfix(thread) == 0, "pthread_resume_np failed");
-    Require(scePthreadJoin(thread, nullptr) == SCE_OK && started.ran.load(), "joining a resumed thread failed");
-    Require(raised.load() == 0, "the handler ran for a refused raise");
-    Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == SCE_OK, "sceKernelRemoveExceptionHandler failed");
-}
-#else
 static void DefersRaiseUntilResume() {
     Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(&Handler)) == SCE_OK, "sceKernelInstallExceptionHandler failed");
     Started started;
     Pthread thread = nullptr;
     CreateSuspendedSce(&thread, Record, &started);
     Require(sceKernelRaiseException(thread, GUEST_SIGUSR1) == SCE_OK, "sceKernelRaiseException on a suspended thread failed");
+    Require(sceKernelRaiseException(thread, GUEST_SIGUSR1) == SCE_OK, "a second sceKernelRaiseException on a suspended thread failed");
     std::this_thread::sleep_for(SUSPENDED_WINDOW);
     Require(raised.load() == 0, "the handler ran on a thread still suspended at creation");
     Require(pthread_resume_np_nid_postfix(thread) == 0, "pthread_resume_np failed");
@@ -252,7 +234,6 @@ static void DefersRaiseUntilResume() {
     Require(raised.load() == 1 && raisedOn.load() == thread, "the handler did not run on the thread once it was resumed");
     Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == SCE_OK, "sceKernelRemoveExceptionHandler failed");
 }
-#endif
 
 int main() {
     ReportsErrors();
@@ -268,9 +249,5 @@ int main() {
     ReportsCreateSuspendedInAttrGet(pthread_attr_get_np_nid_postfix);
     ReportsCreateSuspendedInAttrGet(scePthreadAttrGet);
     ResumesDetachedThreadsWhileTheyExit();
-#ifdef _WIN32
-    RefusesRaiseWhileSuspended();
-#else
     DefersRaiseUntilResume();
-#endif
 }
