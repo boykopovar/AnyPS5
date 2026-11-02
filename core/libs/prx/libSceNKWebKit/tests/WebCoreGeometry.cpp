@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -555,6 +556,15 @@ static void TestMatrixTransformOperation() {
     Require(AlmostEqual(tm.m_matrix[3][3], 1.0));
 }
 
+static void TestIntRectScaleClamps() {
+    WebCore::IntRect ir{WebCore::IntPoint{1000000000, -1000000000}, WebCore::IntSize{1000000000, 3}};
+    _ZN7WebCore7IntRect5scaleEf(&ir, 10.0f);
+    Require(ir.m_location.m_x == std::numeric_limits<int>::max());
+    Require(ir.m_location.m_y == std::numeric_limits<int>::min());
+    Require(ir.m_size.m_width == std::numeric_limits<int>::max());
+    Require(ir.m_size.m_height == 30);
+}
+
 int main() {
     TestFloatPoint();
     TestFloatSize();
@@ -568,5 +578,6 @@ int main() {
     TestAffineTransform();
     TestTransformationMatrix();
     TestMatrixTransformOperation();
+    TestIntRectScaleClamps();
     return 0;
 }
