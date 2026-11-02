@@ -128,6 +128,14 @@ extern "C" void AgcDriverRegisterShader_nid_postfix(const Shader* shader) try {
     LibcAwaitExit_nid_postfix();
 }
 
+extern "C" std::uint32_t AgcDriverInstructionWords_nid_postfix(std::span<const std::uint32_t> code, std::uint32_t index) {
+    try {
+        return ShaderRecompiler::DecodeRdnaInstruction(index * 4u, code, index).wordCount;
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
 extern "C" void AgcDriverSuspendPoint_nid_postfix() try {
     AgcDriver::SuspendPoint();
 } catch (const ProcessShutdown&) {

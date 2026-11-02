@@ -16,6 +16,7 @@ namespace {
 constexpr std::uint32_t SCodeEnd = 0xbf9f0000u;
 constexpr std::uint32_t SNop = 0xbf800000u;
 constexpr std::uint32_t SGetpcS60 = 0xbebc1f00u;
+constexpr std::uint32_t SMovS0Literal = 0xbe8003ffu;
 constexpr std::uint32_t SAddS60Literal = 0x803c3cffu;
 constexpr std::uint32_t SAddcS61Zero = 0x823d3d80u;
 constexpr std::uint32_t SSetpcS6 = 0xbe802006u;
@@ -331,6 +332,13 @@ void testFrontConstantBuffer() {
     Halves unpatched;
     setFrontConstants(unpatched, 0x44440000u, 2, false);
     expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &unpatched.front, &unpatched.back); });
+    Halves literal;
+    setFrontConstants(literal, 0x55550000u);
+    literal.frontCode[0] = SMovS0Literal;
+    Shader literalFused{};
+    check(sceAgcFuseShaderHalves_0200(&literalFused, &literal.front, &literal.back, scratch.data()) == 0, "fusion refused a front half whose literal looks like s_getpc_b64");
+    const auto* literalMemory = static_cast<const std::uint8_t*>(const_cast<const void*>(literalFused.code));
+    check(word(literalMemory, 0) == SMovS0Literal && word(literalMemory, 1) == SGetpcS60 && word(literalMemory, 3) == 24u, "a literal that looks like s_getpc_b64 was relocated as one");
 }
 
 void testHullHalves() {

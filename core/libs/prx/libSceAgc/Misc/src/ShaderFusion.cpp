@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <span>
 #include <string>
 #include <cstdint>
 #include <cstddef>
@@ -140,7 +141,13 @@ std::vector<std::pair<std::size_t, std::uint32_t>> ConstantLiterals(const char* 
     };
     std::vector<std::pair<std::size_t, std::uint32_t>> literals;
     const std::size_t words = programBytes / 4;
-    for (std::size_t i = 0; i < words; ++i) {
+    const std::span<const std::uint32_t> code(reinterpret_cast<const std::uint32_t*>(bytes), words);
+    const auto length = [&](std::size_t index) -> std::size_t {
+        const auto count = AgcDriverInstructionWords_nid_postfix(code, static_cast<std::uint32_t>(index));
+        if (count == 0) Fail(function, "front half with an embedded constant buffer holds an instruction that cannot be decoded at word " + std::to_string(index));
+        return count;
+    };
+    for (std::size_t i = 0; i < words; i += length(i)) {
         if ((word(i) & SGetpcMask) != SGetpc) continue;
         const auto reg = (word(i) >> 16u) & 0x7fu;
         if (i + 3 >= words || word(i + 1) != (0x80000000u | (reg << 16u) | (reg << 8u) | 0xffu) || word(i + 3) != (0x82000000u | ((reg + 1u) << 16u) | ((reg + 1u) << 8u) | 0x80u)) {
