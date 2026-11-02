@@ -187,37 +187,100 @@ static void CheckRoundTrip() {
 }
 
 static void CheckBufferCapacity() {
-    char buf[16]{};
+    constexpr char kSentinel = '~';
+    std::array<char, 16> buf;
+    auto resetBuf = [&] {
+        buf.fill(kSentinel);
+    };
 
-    Check(l64a_r_nid_postfix(0, buf, 0) == -1);
-    Check(l64a_r_nid_postfix(0, buf, -1) == -1);
-    Check(l64a_r_nid_postfix(0, buf, 1) == 0 && std::strcmp(buf, "") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(0, buf.data(), 0) == -1);
+    Check(buf[0] == kSentinel);
+    Check(l64a_r_nid_postfix(0, buf.data(), -1) == -1);
+    Check(buf[0] == kSentinel);
+    Check(l64a_r_nid_postfix(0, buf.data(), 1) == 0);
+    Check(buf[0] == '\0');
+    Check(buf[1] == kSentinel);
 
-    Check(l64a_r_nid_postfix(1, buf, 0) == -1);
-    Check(l64a_r_nid_postfix(1, buf, 1) == -1 && std::strcmp(buf, "") == 0);
-    Check(l64a_r_nid_postfix(1, buf, 2) == 0 && std::strcmp(buf, "/") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(1, buf.data(), 0) == -1);
+    Check(buf[0] == kSentinel);
+    Check(l64a_r_nid_postfix(1, buf.data(), 1) == -1);
+    Check(buf[0] == '/');
+    Check(buf[1] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(1, buf.data(), 2) == 0);
+    Check(buf[0] == '/');
+    Check(buf[1] == '\0');
+    Check(buf[2] == kSentinel);
 
-    Check(l64a_r_nid_postfix(64, buf, 1) == -1 && std::strcmp(buf, "") == 0);
-    Check(l64a_r_nid_postfix(64, buf, 2) == -1 && std::strcmp(buf, ".") == 0);
-    Check(l64a_r_nid_postfix(64, buf, 3) == 0 && std::strcmp(buf, "./") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(64, buf.data(), 1) == -1);
+    Check(buf[0] == '.');
+    Check(buf[1] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(64, buf.data(), 2) == -1);
+    Check(buf[0] == '.');
+    Check(buf[1] == '/');
+    Check(buf[2] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(64, buf.data(), 3) == 0);
+    Check(std::strcmp(buf.data(), "./") == 0);
+    Check(buf[3] == kSentinel);
 
-    Check(l64a_r_nid_postfix(2001, buf, 2) == -1 && std::strcmp(buf, "F") == 0);
-    Check(l64a_r_nid_postfix(2001, buf, 3) == 0 && std::strcmp(buf, "FT") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(2001, buf.data(), 1) == -1);
+    Check(buf[0] == 'F');
+    Check(buf[1] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(2001, buf.data(), 2) == -1);
+    Check(buf[0] == 'F');
+    Check(buf[1] == 'T');
+    Check(buf[2] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(2001, buf.data(), 3) == 0);
+    Check(std::strcmp(buf.data(), "FT") == 0);
+    Check(buf[3] == kSentinel);
 
-    Check(l64a_r_nid_postfix(3695, buf, 2) == -1 && std::strcmp(buf, "j") == 0);
-    Check(l64a_r_nid_postfix(3695, buf, 3) == 0 && std::strcmp(buf, "jt") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(3695, buf.data(), 1) == -1);
+    Check(buf[0] == 'j');
+    Check(buf[1] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(3695, buf.data(), 2) == -1);
+    Check(buf[0] == 'j');
+    Check(buf[1] == 't');
+    Check(buf[2] == kSentinel);
+    resetBuf();
+    Check(l64a_r_nid_postfix(3695, buf.data(), 3) == 0);
+    Check(std::strcmp(buf.data(), "jt") == 0);
+    Check(buf[3] == kSentinel);
 
     for (int len = -2; len <= 0; ++len) {
-        Check(l64a_r_nid_postfix(-1L, buf, len) == -1);
+        resetBuf();
+        Check(l64a_r_nid_postfix(-1L, buf.data(), len) == -1);
+        Check(buf[0] == kSentinel);
     }
     for (int len = 1; len <= 6; ++len) {
-        Check(l64a_r_nid_postfix(-1L, buf, len) == -1);
-        Check(std::strlen(buf) == static_cast<std::size_t>(len - 1));
-        Check(std::strncmp(buf, "zzzzz1", len - 1) == 0);
+        resetBuf();
+        Check(l64a_r_nid_postfix(-1L, buf.data(), len) == -1);
+        Check(std::strncmp(buf.data(), "zzzzz1", static_cast<std::size_t>(len)) == 0);
+        Check(buf[static_cast<std::size_t>(len)] == kSentinel);
     }
-    Check(l64a_r_nid_postfix(-1L, buf, 7) == 0 && std::strcmp(buf, "zzzzz1") == 0);
-    Check(l64a_r_nid_postfix(-1L, buf, 8) == 0 && std::strcmp(buf, "zzzzz1") == 0);
-    Check(l64a_r_nid_postfix(-1L, buf, 16) == 0 && std::strcmp(buf, "zzzzz1") == 0);
+    resetBuf();
+    Check(l64a_r_nid_postfix(-1L, buf.data(), 7) == 0);
+    Check(std::strcmp(buf.data(), "zzzzz1") == 0);
+    Check(buf[7] == kSentinel);
+
+    resetBuf();
+    Check(l64a_r_nid_postfix(-1L, buf.data(), 8) == 0);
+    Check(std::strcmp(buf.data(), "zzzzz1") == 0);
+    Check(buf[7] == kSentinel);
+
+    resetBuf();
+    Check(l64a_r_nid_postfix(-1L, buf.data(), 16) == 0);
+    Check(std::strcmp(buf.data(), "zzzzz1") == 0);
+    Check(buf[7] == kSentinel);
 
     std::array<char, 16> canaries;
     canaries.fill('#');
