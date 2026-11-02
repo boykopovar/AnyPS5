@@ -14,6 +14,7 @@
 #include "prx/libwebrtc/include/Opus.hpp"
 #include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
+#include "prx/libwebrtc/include/PlatformThread.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -190,9 +191,9 @@ int APS5_VABI _ZN6webrtc12VideoEncoder21RateControlParametersD1Ev_nid_postfix(vo
 int APS5_VABI libwebrtcUnknown24(void);
 int APS5_VABI _ZN3rtc11RaceCheckerC1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown25(void);
-int APS5_VABI _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(void);
-int APS5_VABI _ZN3rtc14PlatformThreadD1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(void);
+WebRtcPlatformThread* APS5_VABI _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(WebRtcPlatformThread* thread, WebRtcPlatformThread* other);
+void APS5_VABI _ZN3rtc14PlatformThreadD1Ev_nid_postfix(WebRtcPlatformThread* thread);
+void APS5_VABI _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(WebRtcPlatformThread* thread);
 int APS5_VABI libwebrtcUnknown26(void);
 int APS5_VABI _ZN6webrtc11field_trial25InitFieldTrialsFromStringEPKc_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown27(void);
