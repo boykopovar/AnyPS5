@@ -197,7 +197,7 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  info->stickInfo.deadZoneLeft = 13;
  info->stickInfo.deadZoneRight = 13;
  info->connectionType = PAD_CONNECTION_TYPE_LOCAL;
- const bool connected = PortOf(handle) != 0 || Pad::IsConnected(0);
+ const bool connected = Pad::IsConnected(PortOf(handle));
  info->connectedCount = connected ? 1 : 0;
  info->connected = connected;
  info->deviceClass = PAD_DEVICE_CLASS_STANDARD;
