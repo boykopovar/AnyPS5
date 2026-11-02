@@ -1,4 +1,6 @@
 #include "prx/libSceInvitationDialog/include/Api.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libSceCommonDialog/include/Api.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -173,6 +175,36 @@ void TestStatusAndPending() {
     Require(sceInvitationDialogGetStatus_nid_postfix() == StatusNone, "status after terminate");
 }
 
+
+bool PsnNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::PsnFeature).message;
+}
+
+void RequireNotices() {
+    const InvitationDialogParam send = MakeParam(ModeSend, nullptr);
+    ModalDialogSetPresenter_nid_postfix(true);
+    Require(sceInvitationDialogInitialize() == 0, "initialize for the notice check");
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceInvitationDialogOpen(&send) == 0, "silent open");
+    Require(!PsnNoticeShown() && !ModalDialogCapturesInput_nid_postfix(), "silent mode showed a notice");
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceInvitationDialogOpen(nullptr) == ArgNull, "null open");
+    Require(!PsnNoticeShown(), "a refused open showed the notice");
+    Require(sceInvitationDialogOpen(&send) == 0, "show open");
+    Require(PsnNoticeShown(), "open did not show the PSN notice");
+
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceInvitationDialogTerminate() == 0, "terminate after the notice check");
+}
+
 }
 
 int main() {
@@ -181,5 +213,6 @@ int main() {
     TestOpenChecks();
     TestCanceled();
     TestStatusAndPending();
+    RequireNotices();
     return 0;
 }
