@@ -7,6 +7,7 @@
 #include "../include/WindowsThreadLocal.hpp"
 #include "../include/Cancel.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -59,6 +60,7 @@ static constexpr int GUEST_EINVAL = 22;
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
 static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
+static constexpr std::uint16_t GUEST_THREAD_FPU_CONTROL = 0x037f;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -758,6 +760,9 @@ static void finishThread(PthreadPrivate* self, void* retval) {
         self->_finished.store(true, std::memory_order_release);
     }
     self->_join_cv.NotifyAll();
+#ifdef _WIN32
+    TimedWait::ReapDeliveryDrain();
+#endif
 }
 
 bool ThreadCancel::Requested() {
@@ -821,6 +826,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     BindHostCpuClock(self);
     TimedWait::BindThreadWaitState(&self->waitCount);
     CurrentGuestState().current = self;
+    asm volatile("fldcw %0" : : "m"(GUEST_THREAD_FPU_CONTROL));
     RegisterStack(self);
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
@@ -956,6 +962,14 @@ struct NativeThreadArgs {
 };
 
 #ifdef _WIN32
+static std::wstring ThreadDescription(const std::string& name) {
+    if (name.empty()) return {};
+    const int length = MultiByteToWideChar(CP_UTF8, 0, name.data(), static_cast<int>(name.size()), nullptr, 0);
+    std::wstring description(static_cast<std::size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, name.data(), static_cast<int>(name.size()), description.data(), length);
+    return description;
+}
+
 static unsigned __stdcall StartNativeThread(void* opaque) {
     std::unique_ptr<NativeThreadArgs> args(static_cast<NativeThreadArgs*>(opaque));
     auto* self = args->guest->self;
@@ -971,8 +985,7 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
         self->threadId = std::this_thread::get_id();
         CurrentGuestState().current = self;
         if (!self->name.empty()) {
-            const std::wstring description(self->name.begin(), self->name.end());
-            SetThreadDescription(GetCurrentThread(), description.c_str());
+            SetThreadDescription(GetCurrentThread(), ThreadDescription(self->name).c_str());
             ApplyJobAffinity(*self, nullptr);
         }
         args->initialized.set_value();
@@ -1412,8 +1425,7 @@ int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     std::lock_guard lock(thread->nameLock);
     thread->name = name;
 #ifdef _WIN32
-    const std::wstring description(thread->name.begin(), thread->name.end());
-    SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), description.c_str());
+    SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), ThreadDescription(thread->name).c_str());
     ApplyJobAffinity(*thread, thread->nativeHandle);
 #endif
     return SCE_OK;

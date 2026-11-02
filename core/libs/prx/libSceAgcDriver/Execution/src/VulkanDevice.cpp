@@ -424,6 +424,7 @@ struct VulkanDevice::State {
     bool shaderTerminateInvocation = false;
     bool fusedExactArithmetic = false;
     bool fragmentBarycentricBuiltins = false;
+    bool hostInterpolationFirst = false;
     bool geometryShader = false;
     bool largePoints = false;
     bool sampleRateShading = false;
@@ -554,6 +555,7 @@ struct VulkanDevice::State {
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
     std::unique_ptr<Graphics::DescriptorCache> descriptorCache;
     std::unique_ptr<Graphics::VertexInputCache> vertexInputs;
+    Graphics::VertexBufferFormats vertexFormats;
     std::unique_ptr<Graphics::SamplerCache> samplerCache;
     Graphics::ResourceCache& resourceCache = Graphics::SharedResourceCache();
     // Recorded dispatches that write a copied buffer (their results reach guest memory by a CPU
@@ -1362,6 +1364,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->individuallyFreeDescriptorSets = driver.driverID == VK_DRIVER_ID_MESA_LLVMPIPE;
         state->fusedExactArithmetic = driver.driverID == VK_DRIVER_ID_MOLTENVK;
         state->tessellationPipelineCache = TessellationPipelineCacheUsable(driver.driverID);
+        state->hostInterpolationFirst = HostInterpolationPreferred(driver.driverID) && std::getenv("APS5_NO_HOST_INTERPOLATION_FIRST") == nullptr;
+        APS5_LOG_OUT("Pixel interpolation driver=%d hostInterpolationFirst=%d", static_cast<int>(driver.driverID), state->hostInterpolationFirst ? 1 : 0);
         state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID);
         state->workgroupScopeFences = WorkgroupScopeFenceUsable(driver.driverID);
         state->ldsLockFences = LdsLockFencesRequired(driver.driverID);
@@ -1633,6 +1637,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->drawInputsInPlace = std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") == nullptr && (std::getenv("APS5_DRAW_INPUTS_IN_PLACE") != nullptr || DrawInputsInPlaceUsable(driverProperties.driverID, windows));
         if (!compileOnly) Graphics::SetHostImportWindow(8ull << 20u);
         if (!compileOnly) Graphics::SetHostImportMaxBytes(maintenance3.maxMemoryAllocationSize);
+        if (!compileOnly) Pm4::RequestImportableGds(state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
 #ifdef _WIN32
         // Imported pages are locked; locking is bounded by the process working-set minimum.
         if (const char* value = std::getenv("APS5_WORKING_SET_MIB"); value != nullptr && !compileOnly) {
@@ -2203,12 +2208,13 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             if (domains(selected, &domainCount, available.data()) != VK_SUCCESS) available.clear();
         }
 #ifdef _WIN32
-        const auto host = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR;
+        const std::array hosts{VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR};
 #else
-        const auto host = VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR;
+        const std::array hosts{VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR, VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR};
 #endif
-        if (std::ranges::find(available, VK_TIME_DOMAIN_DEVICE_KHR) != available.end() && std::ranges::find(available, host) != available.end()) {
-            state->hostTimeDomain = host;
+        const auto host = std::ranges::find_first_of(hosts, available);
+        if (std::ranges::find(available, VK_TIME_DOMAIN_DEVICE_KHR) != available.end() && host != hosts.end()) {
+            state->hostTimeDomain = *host;
             state->calibratedTimestamps = state->DeviceFunction<PFN_vkGetCalibratedTimestampsKHR>(khr ? "vkGetCalibratedTimestampsKHR" : "vkGetCalibratedTimestampsEXT");
         }
     }
@@ -2257,6 +2263,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     Graphics::PrepareImportWatch(graphicsContext());
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->emptyBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    if (!compileOnly && Pm4::GdsImportable() && Graphics::HostImportFor(graphicsContext(), Pm4::GdsAddress(), Pm4::GdsBytes, Graphics::ImportRequester::Map) == nullptr) Pm4::RejectGdsImport();
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, window != nullptr || compileOnly);
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
     state->textureCache = std::make_unique<Graphics::TextureCache>(graphicsContext());
@@ -4123,7 +4130,7 @@ bool VulkanDevice::CalibrateClock(double& gpuNs, std::chrono::steady_clock::time
     const double sinceNs = static_cast<double>(static_cast<std::uint64_t>(counter.QuadPart) - stamps[1]) * 1e9 / static_cast<double>(frequency.QuadPart);
 #else
     timespec monotonic{};
-    clock_gettime(CLOCK_MONOTONIC, &monotonic);
+    clock_gettime(state->hostTimeDomain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR ? CLOCK_MONOTONIC_RAW : CLOCK_MONOTONIC, &monotonic);
     const auto now = std::chrono::steady_clock::now();
     const double sinceNs = static_cast<double>(static_cast<std::uint64_t>(monotonic.tv_sec) * 1000000000ull + static_cast<std::uint64_t>(monotonic.tv_nsec) - stamps[1]);
 #endif
@@ -4151,6 +4158,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     auto target = state->shaderProfile->Target();
     target.float32FlushToZero = state->float32FlushToZero;
     target.fusedExactArithmetic = state->fusedExactArithmetic;
+    target.hostInterpolationFirst = state->hostInterpolationFirst;
     target.float32DenormPreserve = state->float32DenormPreserve;
     return target;
 }
@@ -4182,6 +4190,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.ldsLockFences = state->ldsLockFences;
     target.meshWindowBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_WINDOW_BUFFER") == nullptr;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
+    target.maxImageArrayLayers = limits.maxImageArrayLayers;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;
     target.tessellationEvaluationSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT) != 0;
     if (state->meshShader) {
@@ -4283,6 +4292,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.recorder = state->recorder.get();
     context.descriptorCache = state->descriptorCache.get();
     context.vertexInputs = state->vertexInputs.get();
+    context.vertexFormats = &state->vertexFormats;
     context.samplerCache = state->samplerCache.get();
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;
     context.multiDrawIndirect = state->multiDrawIndirect;
@@ -5049,14 +5059,14 @@ VulkanDevice::PresyncStatistics VulkanDevice::PresyncCounts() {
     return {counters.checked.load(std::memory_order_relaxed), counters.presyncs.load(std::memory_order_relaxed), counters.keyChecks.load(std::memory_order_relaxed), counters.keyWaits.load(std::memory_order_relaxed)};
 }
 
-std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t dispatchThreads, std::uint64_t programAddress, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
+std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t dispatchThreads, std::uint64_t programAddress, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear, const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews) {
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     // APS5_LOCKED_BUILD=1: the whole build under the mutex, as before the split.
     static const bool lockedBuild = std::getenv("APS5_LOCKED_BUILD") != nullptr;
     if (lockedBuild || shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return nullptr;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = std::chrono::steady_clock::now();
-    const Graphics::CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &shader, 0};
+    const Graphics::CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &shader, 0, registeredImageViews};
     const auto context = graphicsContext();
     auto prepared = std::make_shared<PreparedDispatch>();
     prepared->dispatchThreads = dispatchThreads;
@@ -5172,12 +5182,12 @@ std::shared_ptr<RecipeHit> VulkanDevice::PrepareRecipe(const std::shared_ptr<con
     return hit;
 }
 
-void VulkanDevice::Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
-    static_cast<void>(dispatch(shader, x, y, z, 0, snapshots, programAddress, std::move(prepared), recipe, {}, htileClear));
+void VulkanDevice::Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear, const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews) {
+    static_cast<void>(dispatch(shader, x, y, z, 0, snapshots, programAddress, std::move(prepared), recipe, {}, htileClear, registeredImageViews));
 }
 
-VulkanDevice::IndirectOutcome VulkanDevice::DispatchIndirect(const ShaderRecompiler::RecompileResult& shader, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe, const std::array<std::uint32_t, 3>& threadGroup) {
-    return dispatch(shader, 0, 0, 0, arguments, snapshots, programAddress, std::move(prepared), recipe, threadGroup);
+VulkanDevice::IndirectOutcome VulkanDevice::DispatchIndirect(const ShaderRecompiler::RecompileResult& shader, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe, const std::array<std::uint32_t, 3>& threadGroup, const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews) {
+    return dispatch(shader, 0, 0, 0, arguments, snapshots, programAddress, std::move(prepared), recipe, threadGroup, std::nullopt, registeredImageViews);
 }
 
 void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& outcome, char* groupsText) {
@@ -5616,7 +5626,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Grap
     return finish(std::move(objects), nullptr);
 }
 
-VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipeOut, const std::array<std::uint32_t, 3>& threadGroup, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
+VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipeOut, const std::array<std::uint32_t, 3>& threadGroup, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear, const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews) {
     startJournalReplay();
     for (const auto& binding : shader.bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
@@ -5641,7 +5651,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) {
         throw std::runtime_error("Vulkan dispatch: invalid SPIR-V");
     }
-    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0, registeredImageViews}}};
     const auto pushStages = Graphics::PushConstantStages(shaders);
     if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) {
         throw std::runtime_error("Vulkan dispatch: compute push constant range exceeds device limit");

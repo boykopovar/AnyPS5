@@ -269,6 +269,7 @@ function(add_shader_recompiler target runtimeTarget)
             ReadWholeFile
             Recompile
             RecompileCacheKey::ContextHash
+            RecompileCacheKey::SealFeatureDigest
             RecompileResult
             PrepareShader
             GetPreparedCode
@@ -291,6 +292,7 @@ function(add_shader_recompiler target runtimeTarget)
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass
             SetDebugProbeActive
+            SrtEvaluatingBranch
             ShaderCacheDirectory
             ShaderDiskCache::Shutdown
             ShaderStage

@@ -92,6 +92,18 @@ def read_program_headers(path):
 
 
 class UnwrapTest(unittest.TestCase):
+    def test_mapped_segments_at_virtual_address_zero_keep_their_template(self):
+        for kind in (PT_DYNAMIC, PT_TLS):
+            with self.subTest(kind=kind):
+                segments = default_segments()
+                segments[2] = (kind, 4, 0x1234, 0, 0x10, 8)
+                result, output = self.convert(build_container(segments, default_records(), default_payloads()))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                self.assertEqual(headers[2][2], headers[0][2])
+                self.assertEqual(headers[2][5:7], (0x10, 0x10))
+                self.assertEqual(data[headers[2][2]:headers[2][2] + 0x10], pattern(1, 0x10))
+
     def test_unsupported_inner_elf_machines_are_refused(self):
         for machine in (0, 3, 40, 183, 0x3E00, 0xFFFF):
             with self.subTest(machine=machine):
