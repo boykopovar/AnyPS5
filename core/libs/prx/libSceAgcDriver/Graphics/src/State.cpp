@@ -2346,7 +2346,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
         }
     }
     if (volume && color.tileMode != ColorTileMode::Linear) {
-        color.bytes = DescribeSurface(SurfaceForTarget(color)).guestBytes;
+        color.bytes = SurfaceGuestBytes(SurfaceForTarget(color));
         GuestMemory::CheckRange(reinterpret_cast<const void*>(color.surfaceAddress), color.bytes, colorLayout.Alignment(), true);
     }
     return color;
