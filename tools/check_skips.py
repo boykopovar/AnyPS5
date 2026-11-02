@@ -4,7 +4,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports no|flushes|binds fewer)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports no|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space)", re.IGNORECASE)
 
 NO_DISPLAY = re.compile(r"skipped,.*no display", re.IGNORECASE)
 

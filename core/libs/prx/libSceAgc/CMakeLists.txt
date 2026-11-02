@@ -60,12 +60,6 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
 target_include_directories(libSceAgc PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libc)
 
-option(APS5_AGC_CREATE_LOG "Logging sceAgcCreateShader Ok status" ON)
-
-target_compile_definitions(libSceAgc PRIVATE
-        APS5_AGC_CREATE_LOG=$<BOOL:${APS5_AGC_CREATE_LOG}>
-)
-
 foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
     string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
 endforeach()
@@ -132,6 +126,19 @@ if(BUILD_TESTING)
     add_test(NAME agc_atomic_mem COMMAND agc_atomic_mem_tests)
     if(WIN32)
         set_tests_properties(agc_atomic_mem PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_copy_data_tests EXCLUDE_FROM_ALL tests/CopyData.cpp)
+target_include_directories(agc_copy_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_copy_data_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_copy_data_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_copy_data_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_copy_data COMMAND agc_copy_data_tests)
+    if(WIN32)
+        set_tests_properties(agc_copy_data PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

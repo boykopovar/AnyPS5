@@ -29,6 +29,8 @@ LIMITATIONS = [
     "skipped, the device reports 4 lanes",
     "skipped, subgroup size 8",
     "skipped, no display",
+    "skipped, the host has not enough free disk space for a file of more than 2 GiB",
+    "skipped, the host cannot allocate a buffer of more than 2 GiB",
 ]
 
 OTHER = [
