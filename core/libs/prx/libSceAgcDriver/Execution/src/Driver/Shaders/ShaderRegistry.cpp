@@ -60,28 +60,6 @@
 
 namespace AgcDriver::DriverDetail {
 
-std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnostics(const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::ShaderPreparationContext* preparation) {
-    std::exception_ptr failure;
-    std::string dump;
-    try {
-        auto handle = ShaderRecompiler::PrepareShader(request, preparation);
-        return handle;
-    } catch (...) {
-        failure = std::current_exception();
-        try {
-            if (std::getenv("APS5_DUMP_SHADERS") != nullptr) dump = Driver::dumpRequest(request.shader.codeAddress, request, ".prepare");
-        } catch (...) {}
-    }
-    try {
-        std::rethrow_exception(failure);
-    } catch (const std::exception& error) {
-        std::ostringstream where;
-        where << "shader 0x" << std::hex << request.shader.codeAddress << " stage " << static_cast<unsigned>(request.shader.stage);
-        if (!dump.empty()) where << " (" << dump << ")";
-        where << ": ";
-        throw std::runtime_error(where.str() + error.what());
-    }
-}
 
 std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
     const auto drain = [](std::uint64_t first, std::size_t bytes) {

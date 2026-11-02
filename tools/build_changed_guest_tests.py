@@ -20,7 +20,7 @@ BROAD_CHANGES = {
 
 def reaches_libs(changed):
     return any(
-        path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/"))
+        path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/") + host_only.BUILD_WIDE_PREFIXES)
         for path in changed
     )
 
@@ -45,8 +45,8 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     if changed_paths is None:
         return selected
     changed = {Path(path).as_posix() for path in changed_paths if path}
-    broad_change = any(path in BROAD_CHANGES or path.startswith("core/libs/") and (
-        path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
+    broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
+        path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
     ) for path in changed)
     if broad_change:
         return selected
@@ -119,7 +119,7 @@ def run(build_dir, selected, targets_by_name):
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
         with tempfile.TemporaryDirectory(prefix="anyps5-guest-ctest-") as directory:
             selection = Path(directory) / "selected-tests.txt"
-            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()), encoding="ascii")
+            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()) + "\n", encoding="ascii")
             subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
                             "--parallel", "4", "--no-tests=error", "-I", str(selection)], check=True)
     else:
