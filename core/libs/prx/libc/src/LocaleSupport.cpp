@@ -827,6 +827,9 @@ void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLoc
             if (0 < --g_sceV2StandardStreamOpens[self->standardStream]) return;
         }
     }
+    for (auto* node = static_cast<SceV2CallbackNode*>(self->callbackNodes); node != nullptr; node = node->next) {
+        node->callback(0, self, node->id);
+    }
     for (auto* node = static_cast<SceV2StreamNode*>(self->streamNodes); node != nullptr;) {
         auto* next = node->next;
         _ZdlPv_nid_postfix(node);
@@ -835,7 +838,6 @@ void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLoc
     self->streamNodes = nullptr;
     for (auto* node = static_cast<SceV2CallbackNode*>(self->callbackNodes); node != nullptr;) {
         auto* next = node->next;
-        node->callback(0, self, node->id);
         _ZdlPv_nid_postfix(node);
         node = next;
     }

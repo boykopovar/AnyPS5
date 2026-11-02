@@ -35,6 +35,14 @@ int APS5_VABI TestHeapPosixAlign(void** pointer, std::size_t, std::size_t bytes)
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+static int gEraseCalls = 0;
+static bool gEraseSawStreamNodes = false;
+
+void APS5_VABI RecordErase(int, void* self, std::int32_t) {
+    ++gEraseCalls;
+    gEraseSawStreamNodes = reinterpret_cast<GuestLocale::SceV2IosBase*>(self)->streamNodes != nullptr;
+}
+
 int main() {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&TestHeapAllocate);
@@ -91,6 +99,24 @@ int main() {
     Require(classic->standardStream >= 1 && classic->standardStream <= 8);
     _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(classic);
     Require(classic->locale == nullptr);
+
+    {
+        alignas(16) unsigned char storage[sizeof(GuestLocale::SceV2IosBase)]{};
+        auto* stream = reinterpret_cast<GuestLocale::SceV2IosBase*>(storage);
+        auto* streamNode = static_cast<unsigned char*>(std::malloc(0x20));
+        auto* callbackNode = static_cast<unsigned char*>(std::malloc(0x18));
+        Require(streamNode != nullptr && callbackNode != nullptr);
+        std::memset(streamNode, 0, 0x20);
+        std::memset(callbackNode, 0, 0x18);
+        *reinterpret_cast<void**>(callbackNode + 0x10) = reinterpret_cast<void*>(&RecordErase);
+        *reinterpret_cast<std::int32_t*>(callbackNode + 0x08) = 7;
+        stream->streamNodes = streamNode;
+        stream->callbackNodes = callbackNode;
+        _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(stream);
+        Require(gEraseCalls == 1);
+        Require(gEraseSawStreamNodes);
+        Require(stream->streamNodes == nullptr && stream->callbackNodes == nullptr);
+    }
 
     copy->base.vtable->retain(&copy->base);
     Require(copy->base.references == 2);
