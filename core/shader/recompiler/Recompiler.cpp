@@ -1166,6 +1166,17 @@ void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const 
     patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
 }
 
+bool declaresAtomicLockTable(std::span<const std::uint32_t> words) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        if (count == 0u || op == spv::OpFunction) break;
+        if (op == spv::OpDecorate && count == 4u && cursor + 3u < words.size() && words[cursor + 2u] == spv::DecorationSpecId && PipelineSpecialization::IsAtomicLockTable(words[cursor + 3u])) return true;
+        cursor += count;
+    }
+    return false;
+}
+
 RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false, MemoPatch* patch = nullptr, const std::vector<BufferSubstitute>* substituteSnapshot = nullptr) {
     const auto localSubstitutes = substituteSnapshot == nullptr && bufferSubstitutesEnabled() && variant.substitutes != nullptr ? variant.substitutes->Slots() : std::vector<BufferSubstitute>{};
     const auto substitutes = substituteSnapshot != nullptr ? std::span<const BufferSubstitute>(*substituteSnapshot) : std::span<const BufferSubstitute>(localSubstitutes);
@@ -1359,10 +1370,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     if (request.shader.stage == ShaderStage::Compute) {
         for (std::uint32_t component = 0; component < PipelineSpecialization::WorkgroupOffsetWords; ++component) result.specialization.push_back({PipelineSpecialization::WorkgroupOffsetBase + component, 0u});
     }
-    const auto lacks = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) == request.target.supportedCapabilities.end(); };
-    const bool imageAtomicLocks = std::ranges::any_of(variant.info.info.images, [](const ImageResource& image) { return image.atomic64; }) && lacks(spv::CapabilityInt64ImageEXT);
-    const bool bufferAtomicLocks = std::ranges::any_of(variant.info.info.buffers, [](const BufferResource& buffer) { return buffer.atomic; }) && lacks(spv::CapabilityInt64Atomics);
-    if (imageAtomicLocks || bufferAtomicLocks) {
+    if (declaresAtomicLockTable(artifact.spirv.Words())) {
         for (std::uint32_t word = 0; word < PipelineSpecialization::AtomicLockTableWords; ++word) result.specialization.push_back({PipelineSpecialization::AtomicLockTableBase + word, 0u});
     }
     if (!artifact.stencilReferences.empty()) {
