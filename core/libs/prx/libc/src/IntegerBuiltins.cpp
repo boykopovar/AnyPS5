@@ -197,9 +197,31 @@ Int128 APS5_VABI __lshrti3_nid_postfix(Int128 value, int shift) {
     return static_cast<Int128>(static_cast<Uint128>(value) >> shift);
 }
 
+std::uint32_t APS5_VABI stdc_leading_zeros_uc_nid_postfix(std::uint8_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_leading_zeros_us_nid_postfix(std::uint16_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_leading_zeros_ui_nid_postfix(std::uint32_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_leading_zeros_ul_nid_postfix(std::uint64_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_leading_zeros_ull_nid_postfix(std::uint64_t value) { return std::countl_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_uc_nid_postfix(std::uint8_t value) { return std::countr_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_us_nid_postfix(std::uint16_t value) { return std::countr_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_ui_nid_postfix(std::uint32_t value) { return std::countr_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_ul_nid_postfix(std::uint64_t value) { return std::countr_zero(value); }
+std::uint32_t APS5_VABI stdc_trailing_zeros_ull_nid_postfix(std::uint64_t value) { return std::countr_zero(value); }
+
 int APS5_VABI __clzsi2_nid_postfix(std::uint32_t value) { return std::countl_zero(value); }
 int APS5_VABI __clzdi2_nid_postfix(std::uint64_t value) { return value == 0 ? 32 : std::countl_zero(value); }
 int APS5_VABI __clzti2_nid_postfix(Uint128 value) { return value == 0 ? 64 : CountLeadingZeros128(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_uc_nid_postfix(std::uint8_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_us_nid_postfix(std::uint16_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_ui_nid_postfix(std::uint32_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_ul_nid_postfix(std::uint64_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_leading_ones_ull_nid_postfix(std::uint64_t value) { return std::countl_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_uc_nid_postfix(std::uint8_t value) { return std::countr_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_us_nid_postfix(std::uint16_t value) { return std::countr_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_ui_nid_postfix(std::uint32_t value) { return std::countr_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_ul_nid_postfix(std::uint64_t value) { return std::countr_one(value); }
+std::uint32_t APS5_VABI stdc_trailing_ones_ull_nid_postfix(std::uint64_t value) { return std::countr_one(value); }
+
 int APS5_VABI __ctzsi2_nid_postfix(std::uint32_t value) { return std::countr_zero(value); }
 int APS5_VABI __ctzdi2_nid_postfix(std::uint64_t value) { return value == 0 ? 32 : std::countr_zero(value); }
 int APS5_VABI __ctzti2_nid_postfix(Uint128 value) { return value == 0 ? 64 : CountTrailingZeros128(value); }
