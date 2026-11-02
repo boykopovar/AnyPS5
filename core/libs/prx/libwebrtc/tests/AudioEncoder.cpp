@@ -72,6 +72,8 @@ void TestDefaults() {
     Require(!_ZNK6webrtc12AudioEncoder6GetDtxEv_nid_postfix(encoder));
     _ZN6webrtc12AudioEncoder16SetTargetBitrateEi_nid_postfix(encoder, 32000);
     _ZN6webrtc12AudioEncoder26DisableAudioNetworkAdaptorEv_nid_postfix(encoder);
+    _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(encoder, 0.05f);
+    _ZN6webrtc12AudioEncoder28OnReceivedTargetAudioBitrateEi_nid_postfix(encoder, 32000);
     _ZN6webrtc12AudioEncoder13OnReceivedRttEi_nid_postfix(encoder, 120);
     _ZN6webrtc12AudioEncoder18OnReceivedOverheadEm_nid_postfix(encoder, 40);
     _ZN6webrtc12AudioEncoder27SetReceiverFrameLengthRangeEii_nid_postfix(encoder, 20, 120);
