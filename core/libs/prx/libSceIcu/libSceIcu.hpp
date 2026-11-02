@@ -1,5 +1,7 @@
 #pragma once
 #include "prx/libSceIcu/include/LegacyExports.hpp"
+#include "ConstrainedFieldPosition.hpp"
+#include "ErrorName.hpp"
 #include "Invariant.hpp"
 #include "Iterator.hpp"
 #include "prx/libSceIcu/include/InventoryDispatch.hpp"
