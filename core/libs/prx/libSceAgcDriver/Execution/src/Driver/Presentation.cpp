@@ -62,15 +62,20 @@ void Driver::AttachWindow(const PresentationWindow& window) {
     CheckFailure();
     std::unique_lock replacing(deviceReplacement);
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
+    PerformanceTimer timing("Driver.AttachWindow");
     std::lock_guard lock(GuestMemory::GpuMutex());
     if (device) {
         require(device->Window() == nullptr, "a window is already attached to the device");
         device->PrepareForReplacement();
         replacedDevices.push_back(device);
     }
+    timing.Mark("device_replacement");
     device = std::make_shared<VulkanDevice>(&window);
+    timing.Mark("vulkan_device_create");
     const auto mapped = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    device->ImportGuestMemory(GuestAllocations::Mapped(mapped.begin(), mapped.end()), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
+    timing.Mark("guest_mapping_snapshot", mapped.size());
+    const bool imported = device->ImportGuestMemory(GuestAllocations::Mapped(mapped.begin(), mapped.end()), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
+    timing.Mark(imported ? "existing_mappings_imported" : "existing_mappings_deferred", mapped.size());
 }
 
 void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context) {
