@@ -1,4 +1,5 @@
 #include "prx/libSceJpegEnc/include/Api.hpp"
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
@@ -128,6 +129,9 @@ int main() {
     Require(sceJpegEncCreate(&param, unaligned, 0x7FF, &handle) == invalidSize);
     Require(sceJpegEncCreate(&param, unaligned, 0x800, nullptr) == invalidAddr);
     Require(handle == nullptr);
+    errno = 71;
+    Require(sceJpegEncCreate(&param, unaligned, 0x800, reinterpret_cast<void**>(0x10)) == invalidAddr);
+    Require(errno == 71);
 
     Require(sceJpegEncCreate(&param, unaligned, 0x800, &handle) == 0);
     const auto address = reinterpret_cast<std::uintptr_t>(handle);
