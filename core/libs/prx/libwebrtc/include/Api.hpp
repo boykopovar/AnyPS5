@@ -14,6 +14,7 @@
 #include "prx/libwebrtc/include/Opus.hpp"
 #include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
 #include "prx/libwebrtc/include/CpuFeatures.hpp"
+#include "prx/libwebrtc/include/RaceChecker.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -188,7 +189,7 @@ int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc12VideoEncoder11EncoderInfoD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc12VideoEncoder21RateControlParametersD1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown24(void);
-int APS5_VABI _ZN3rtc11RaceCheckerC1Ev_nid_postfix(void);
+void APS5_VABI _ZN3rtc11RaceCheckerC1Ev_nid_postfix(WebRtcRaceChecker* checker);
 int APS5_VABI libwebrtcUnknown25(void);
 int APS5_VABI _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(void);
 int APS5_VABI _ZN3rtc14PlatformThreadD1Ev_nid_postfix(void);
