@@ -16,7 +16,7 @@ Inclui um [relinker](../../core/relinker) que converte o executável para o form
 
 ## Status
 
-[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
+[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![implemented in 7 days](https://boykopovar.github.io/AnyPS5/badge-week.svg)](https://boykopovar.github.io/AnyPS5/history.html)
 
 [![progress map](https://boykopovar.github.io/AnyPS5/progress.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
 
@@ -24,7 +24,7 @@ Inclui um [relinker](../../core/relinker) que converte o executável para o form
 
 <sub>* Bibliotecas do sistema: porcentagem das funções conhecidas pelo projeto até agora (declaradas em [core/libs/prx](../../core/libs/prx)), não de todas as funções de sistema do PS5. O total cresce à medida que mais funções são declaradas.</sub>
 
-Estados não suportados ou inesperados lançam estritamente `std::runtime_error`. O `what()` é impresso no stderr e o processo é encerrado.
+Estados não suportados ou inesperados lançam uma exceção C++, normalmente `std::runtime_error`. Uma exceção que nada captura imprime seu `what()` no stderr e encerra o processo.
 
 O [recompilador de shaders](../../core/shader/recompiler/Recompiler.cpp) produz SPIR-V com sucesso (validado via [Spirv-Tools](../../3rdparty/SPIRV-Tools) quando compilado com `ANYPS5_ENABLE_SPIRV_TOOLS`).
 

@@ -67,8 +67,17 @@ void CheckDiamondAndLoop(Variable variable) {
     auto* pending = pass.Read(variable, &loop);
     Require(pending->IsPhi(), "a read in an unsealed loop header is not a pending phi");
     Require(pass.Read(variable, &loop) == pending, "a repeated read in an unsealed loop header returns another value");
+    auto& reference = program.CreateValue(IrOpcode::Reference, IrType::Void);
+    reference.AddArgument(pending);
+    loop.AppendInstruction(&reference);
+    auto& dependent = program.CreateValue(IrOpcode::Phi, VariableType(variable));
+    dependent.AddPhiOperand(&entry, &first);
+    dependent.AddPhiOperand(&loop, pending);
+    loop.AppendInstruction(&dependent);
     pass.Seal(&loop);
     Require(pass.Read(variable, &loop)->Resolve() == &first, "a loop that does not redefine the value does not read the entry value");
+    Require(reference.Argument(0)->Resolve() == &first, "ordinary use did not keep the phi replacement");
+    Require(dependent.Resolve() == &first, "dependent phi did not simplify after its input");
     Require(pending->Resolve() == &first, "the pending loop phi does not resolve to the entry value");
 }
 

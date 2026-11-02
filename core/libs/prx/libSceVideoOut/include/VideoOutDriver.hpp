@@ -18,13 +18,17 @@
 #include <stdexcept>
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
+#ifndef __EMSCRIPTEN__
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
-#include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include "prx/libSceVideoOut/include/HostHdrProbe.hpp"
+#endif
+#include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
+#ifndef __EMSCRIPTEN__
 #include "SDL.h"
+#endif
 #include "SceTypes.hpp"
 
 static constexpr int VIDEO_OUT_ERROR_INVALID_VALUE = -2144796671;
@@ -92,7 +96,6 @@ static constexpr uint64_t VIDEO_OUT_OUTPUT_MODE_119_88HZ = 0x000000000000000FULL
 
 static constexpr std::uint32_t VIDEO_OUT_DYNAMIC_RANGE_SDR = 1;
 static constexpr std::uint32_t VIDEO_OUT_DYNAMIC_RANGE_HDR = 2;
-static constexpr std::uint64_t VIDEO_OUT_OUTPUT_STATUS_FLAG_HDR = 1;
 
 static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_59_94HZ = 3;
 static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_119_88HZ = 13;
@@ -255,8 +258,10 @@ private:
     std::array<std::shared_ptr<AgcDriver::IVideoOutput>, VIDEO_OUT_NUM_MAX> outputs;
     std::shared_ptr<FlipQueue> flipQueue = std::make_shared<FlipQueue>();
 
+#ifndef __EMSCRIPTEN__
     DisplayWindow window;
     HostHdrProbe hdrProbe;
+#endif
     std::uint64_t hdrGeneration = 0;
     std::atomic<int> displayRefreshRate{0};
     std::atomic<std::uint32_t> displayResolution{VIDEO_OUT_RESOLUTION_1080P};

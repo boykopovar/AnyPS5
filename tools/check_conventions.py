@@ -14,6 +14,7 @@ from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nid_names import CPP_TOKEN, NID_POSTFIX, compute_nid, source_aliases
+import base_ref
 import env_reference
 
 RULES = {
@@ -806,7 +807,7 @@ if __name__ == "__main__":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="check a branch against the contributing rules; errors fail the check")
-    parser.add_argument("--base", default="origin/main", help="branch the pull request targets (default: origin/main)")
+    parser.add_argument("--base", help="branch the pull request targets (default: upstream/main, then origin/main, then main)")
     parser.add_argument("--head", default="HEAD")
     parser.add_argument("--title", help="pull request title to check")
     parser.add_argument("--body", help="file with the pull request description to check")
@@ -826,7 +827,11 @@ if __name__ == "__main__":
             body = Path(args.body).read_text(encoding="utf-8-sig")
         except (OSError, ValueError) as error:
             parser.error(f"--body {args.body}: {error}")
-    check = Check(args.base, args.head)
+    try:
+        base = base_ref.resolve(".", args.base)
+    except ValueError as error:
+        parser.error(str(error))
+    check = Check(base, args.head)
     check.code()
     check.build()
     check.shaders()
