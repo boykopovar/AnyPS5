@@ -1123,8 +1123,8 @@ struct Vop1SdwaRule {
 
 constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VMovB32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
-    {RdnaOpcode::VCvtF32U32, sdwaSelAll(), 0, 0, false},
-    {RdnaOpcode::VCvtF32I32, sdwaSelAll(), 0, 0, false},
+    {RdnaOpcode::VCvtF32U32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
+    {RdnaOpcode::VCvtF32I32, sdwaSelAll(), sdwaSelBytes() | sdwaSelWords(), sdwaSelAll(), false},
     {RdnaOpcode::VCvtF32Ubyte0, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VCvtF32Ubyte1, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VCvtF32Ubyte2, sdwaSelAll(), 0, 0, false},
