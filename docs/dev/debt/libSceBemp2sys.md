@@ -6,7 +6,7 @@
 
 ### Functional
 
-- [bemp2sys_logprintf_getlevel, bemp2sys_logprintf_setfunc, bemp2sys_logprintf_setlevel and bemp2sys_memmanager_set](../../../core/libs/prx/libSceBemp2sys/Export.cpp) - the 11.00 wrappers at `0x5cc0`, `0x5ca0`, `0x5cb0` and `0x5c90` keep a process-global log level, log function pointer and three memory-manager pointers. `setlevel` accepts 0..3 with an unsigned compare, so larger and negative values are ignored; `getlevel` starts at 0. The pointers are stored but have no consumer until the parsers are implemented. The rest of the library keeps throwing.
+- [bemp2sys_logprintf_getlevel, bemp2sys_logprintf_setfunc, bemp2sys_logprintf_setlevel and bemp2sys_memmanager_set](../../../core/libs/prx/libSceBemp2sys/Export.cpp) - the wrappers at `0x5cc0`, `0x5ca0`, `0x5cb0` and `0x5c90` in the 11.00 system module `libSceBemp2sys.sprx` (SHA-256 `d66887aa1cfb464aaeaf1abf471c6dbedcf802edb4349fe6ee9d3d3f00936208`) keep a process-global log level, log function pointer and three memory-manager pointers. `setlevel` accepts 0..3 with an unsigned compare, so larger and negative values are ignored; `getlevel` starts at 0. The pointers are stored but have no consumer until the parsers are implemented. The rest of the library keeps throwing.
 
 ### Additional callable exports
 
