@@ -101,4 +101,31 @@ public:
     bool valid = false;
 };
 
+class RunBeforeUnloadConfirmPanelResultListener final : public ObjectOf<ObjectType::RunBeforeUnloadConfirmPanelResultListener> {
+public:
+    std::function<void(bool)> completionHandler;
+    bool called = false;
+    bool result = false;
+};
+
+class RunJavaScriptAlertResultListener final : public ObjectOf<ObjectType::RunJavaScriptAlertResultListener> {
+public:
+    std::function<void()> completionHandler;
+    bool called = false;
+};
+
+class RunJavaScriptConfirmResultListener final : public ObjectOf<ObjectType::RunJavaScriptConfirmResultListener> {
+public:
+    std::function<void(bool)> completionHandler;
+    bool called = false;
+    bool result = false;
+};
+
+class RunJavaScriptPromptResultListener final : public ObjectOf<ObjectType::RunJavaScriptPromptResultListener> {
+public:
+    std::function<void(const String*)> completionHandler;
+    bool called = false;
+    Retained<String> result;
+};
+
 }  // namespace NKWebKit

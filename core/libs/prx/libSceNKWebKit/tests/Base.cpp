@@ -351,6 +351,70 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestDialogResultListeners() {
+    Require(WKPageRunBeforeUnloadConfirmPanelResultListenerGetTypeID() == 93);
+    Require(WKPageRunJavaScriptAlertResultListenerGetTypeID() == 94);
+    Require(WKPageRunJavaScriptConfirmResultListenerGetTypeID() == 95);
+    Require(WKPageRunJavaScriptPromptResultListenerGetTypeID() == 96);
+
+    {
+        auto alert = NKWebKit::Make<NKWebKit::RunJavaScriptAlertResultListener>();
+        bool handled = false;
+        alert->completionHandler = [&handled]() { handled = true; };
+        const void* ref = alert.Get();
+        WKPageRunJavaScriptAlertResultListenerCall(ref);
+        Require(alert->called);
+        Require(handled);
+    }
+
+    {
+        auto confirm = NKWebKit::Make<NKWebKit::RunJavaScriptConfirmResultListener>();
+        bool callbackVal = false;
+        confirm->completionHandler = [&callbackVal](bool v) { callbackVal = v; };
+        const void* ref = confirm.Get();
+        WKPageRunJavaScriptConfirmResultListenerCall(ref, true);
+        Require(confirm->called);
+        Require(confirm->result);
+        Require(callbackVal);
+    }
+
+    {
+        auto prompt = NKWebKit::Make<NKWebKit::RunJavaScriptPromptResultListener>();
+        std::string callbackStr;
+        prompt->completionHandler = [&callbackStr](const NKWebKit::String* s) {
+            if (s) callbackStr = s->Utf8();
+        };
+        const void* ref = prompt.Get();
+        auto str = NKWebKit::String::FromUtf8("userInput");
+        WKPageRunJavaScriptPromptResultListenerCall(ref, str.Get());
+        Require(prompt->called);
+        Require(prompt->result != nullptr);
+        Require(callbackStr == "userInput");
+
+        WKPageRunJavaScriptPromptResultListenerCall(ref, nullptr);
+        Require(prompt->result == nullptr);
+    }
+
+    {
+        auto beforeUnload = NKWebKit::Make<NKWebKit::RunBeforeUnloadConfirmPanelResultListener>();
+        bool callbackVal = false;
+        beforeUnload->completionHandler = [&callbackVal](bool v) { callbackVal = v; };
+        const void* ref = beforeUnload.Get();
+        WKPageRunBeforeUnloadConfirmPanelResultListenerCall(ref, true);
+        Require(beforeUnload->called);
+        Require(beforeUnload->result);
+        Require(callbackVal);
+    }
+
+    bool threw = false;
+    try {
+        WKPageRunJavaScriptAlertResultListenerCall(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -373,6 +437,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestDialogResultListeners();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
