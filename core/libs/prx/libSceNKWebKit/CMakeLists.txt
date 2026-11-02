@@ -55,6 +55,10 @@ if(BUILD_TESTING)
         target_link_libraries(nkwebkit_${testName}_tests PRIVATE libSceNKWebKit libSceJsc libc)
         configure_windows_unwind(nkwebkit_${testName}_tests)
         add_test(NAME nkwebkit_${testName} COMMAND nkwebkit_${testName}_tests)
+        if(ANYPS5_ENABLE_ASAN AND testName STREQUAL "wtf")
+            set_tests_properties(nkwebkit_${testName} PROPERTIES ENVIRONMENT_MODIFICATION
+                "ASAN_OPTIONS=path_list_append:allocator_may_return_null=1")
+        endif()
         if(WIN32)
             set_tests_properties(nkwebkit_${testName} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKit>")
