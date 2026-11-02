@@ -175,6 +175,11 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["write-watch"], True)
         self.assertEqual(result["calls"], [])
 
+    def test_write_watch_backing_test_runs_the_write_watch_job(self):
+        for path in ("core/libs/tests/WriteWatchBacking.cpp", "core/libs/tests/WriteWatch.cpp"):
+            with self.subTest(path=path):
+                self.assertIs(self.run_gate([], None, files=(path,))["outputs"]["write-watch"], True)
+
     def test_relinker_build_inputs_outside_the_relinker_run_the_relinker(self):
         for path in ("core/libs/nid/src/NidCompute.cpp", "core/libs/nid/src/Sha1.cpp",
                      "core/libs/nid/include/nid/NidCompute.hpp", "core/libs/nid/include/nid/Sha1.hpp",
