@@ -23,8 +23,8 @@ const unsigned char* FirstOffered_nid_no_patch(const unsigned char* peer, std::u
 
 extern "C" int APS5_VABI SSL_select_next_proto_nid_postfix(unsigned char** output, unsigned char* outputLength,
     const unsigned char* peer, std::uint32_t peerLength, const unsigned char* supported, std::uint32_t supportedLength) {
-    if (!output || !outputLength) NotImplemented_nid_no_patch("SSL_select_next_proto: null output");
-    if (!supported || (!peer && peerLength != 0)) NotImplemented_nid_no_patch("SSL_select_next_proto: null protocol list");
+    if (!output || !outputLength) throw std::invalid_argument("SSL_select_next_proto: null output");
+    if (!supported || (!peer && peerLength != 0)) throw std::invalid_argument("SSL_select_next_proto: null protocol list");
     const unsigned char* result = FirstOffered_nid_no_patch(peer, peerLength, supported, supportedLength);
     const int status = result ? Negotiated : NoOverlap;
     if (!result) result = supported;
