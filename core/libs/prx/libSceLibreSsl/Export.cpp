@@ -22,7 +22,18 @@ std::atomic<void*> lockingCallback{nullptr};
 std::atomic<void*> addLockCallback{nullptr};
 std::atomic<void*> threadIdCallback{nullptr};
 
-}
+struct X509Extension {
+    void* object;
+    std::int32_t critical;
+    void* value;
+};
+
+static_assert(sizeof(X509Extension) == 24);
+static_assert(offsetof(X509Extension, object) == 0);
+static_assert(offsetof(X509Extension, critical) == 8);
+static_assert(offsetof(X509Extension, value) == 16);
+
+} // namespace
 
 extern "C" {
 
@@ -449,21 +460,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI ERR_error_string_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ERR_error_string_n_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ERR_free_strings_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_CIPHER_CTX_cleanup_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -475,21 +471,6 @@ int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1362,19 +1343,25 @@ int APS5_VABI X509V3_EXT_print_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension) {
+    if (!extension) return 0;
+    std::int32_t critical;
+    std::memcpy(&critical, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, critical), sizeof(critical));
+    return critical > 0;
 }
 
-int APS5_VABI X509_EXTENSION_get_data_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI X509_EXTENSION_get_data_nid_postfix(const void* extension) {
+    if (!extension) return nullptr;
+    void* value;
+    std::memcpy(&value, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, value), sizeof(value));
+    return value;
 }
 
-int APS5_VABI X509_EXTENSION_get_object_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension) {
+    if (!extension) return nullptr;
+    void* object;
+    std::memcpy(&object, static_cast<const unsigned char*>(extension) + offsetof(X509Extension, object), sizeof(object));
+    return object;
 }
 
 int APS5_VABI X509_NAME_print_ex_nid_postfix(void) {
