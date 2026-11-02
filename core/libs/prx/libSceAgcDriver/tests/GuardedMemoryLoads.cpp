@@ -34,6 +34,7 @@ struct LoadCase {
     IrShaderStage stage = IrShaderStage::Compute;
     bool coherent = true;
     bool written = false;
+    bool atomicLoads = false;
 };
 
 std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool exact = false, bool valid = true) {
@@ -108,6 +109,7 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
     target.subgroupSize = 32;
     target.robustBufferAccess2 = robust;
     target.exactRobustLoads = exact;
+    target.coherentBufferAtomicLoads = test.atomicLoads;
     return SpirvEmitter().Emit(program, inputs, bindings, target);
 }
 
@@ -162,6 +164,15 @@ public:
                 reads.push_back(value(pointer.back()));
                 if (rootName(instruction[3]) == "scratch_dwords") require(pointerStorage(instruction[3]) == spv::StorageClassFunction, "scratch selection accessed non-private storage");
                 if (rootName(instruction[3]).starts_with("buffers")) require(instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
+                if (rootName(instruction[3]).starts_with("buffers")) ++volatileReads;
+            }
+            if (opcode == spv::OpAtomicLoad && isGuestPointer(instruction[3])) {
+                const auto pointer = definition(instruction[3]);
+                require((pointer[0] & 0xffff) == spv::OpAccessChain, "atomic guest read is not an indexed access");
+                require(rootName(instruction[3]).starts_with("buffers"), "atomic guest read is not a buffer read");
+                require(value(instruction[4]) == spv::ScopeDevice && value(instruction[5]) == spv::MemorySemanticsMaskNone, "atomic buffer read is not a relaxed device-scope load");
+                reads.push_back(value(pointer.back()));
+                ++atomicReads;
             }
             if (opcode == spv::OpBranch || opcode == spv::OpBranchConditional) {
                 const auto destination = opcode == spv::OpBranch ? instruction[1] : instruction[value(instruction[1]) ? 2 : 3];
@@ -176,6 +187,9 @@ public:
         }
         throw std::runtime_error("SPIR-V access trace exceeded its bounded instruction budget");
     }
+
+    std::size_t volatileReads = 0;
+    std::size_t atomicReads = 0;
 
 private:
     std::span<const std::uint32_t> definition(std::uint32_t id) const {
@@ -359,6 +373,64 @@ int main() {
         expectReads(test, true, true, 8, {2, 2});
         expectReads(test, true, true, 8, {2, 3}, 64, 1);
         expectReads(test, true, true, 60, {Unreachable, Unreachable}, 64, 1);
+    });
+    run("coherent buffer atomic loads", [] {
+        const LoadCase coherent{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
+        auto atomic = coherent;
+        atomic.atomicLoads = true;
+        const auto count = [](const std::vector<std::uint32_t>& module, spv::Op op) {
+            unsigned found = 0;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) found += (module[offset] & 0xffffu) == op;
+            return found;
+        };
+        const auto volatileLoads = [](const std::vector<std::uint32_t>& module) {
+            unsigned found = 0;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
+                found += (module[offset] & 0xffffu) == spv::OpLoad && (module[offset] >> 16u) >= 5u && (module[offset + 4] & spv::MemoryAccessVolatileMask) != 0u;
+            }
+            return found;
+        };
+        unsigned compared = 0;
+        for (const bool robust : {false, true}) {
+            for (const bool exact : {false, true}) {
+                for (const bool active : {false, true}) {
+                    for (const std::uint32_t offset : {8u, 60u, 64u}) {
+                        for (const std::uint32_t misalignment : {0u, 1u}) {
+                            for (const bool valid : {false, true}) {
+                                const auto reference = emitLoad(coherent, active, offset, 64, false, false, valid);
+                                const auto module = emitLoad(atomic, active, offset, 64, robust, exact, valid);
+                                AccessTrace referenceTrace(reference, misalignment);
+                                AccessTrace trace(module, misalignment);
+                                const auto expected = referenceTrace.Run();
+                                const auto actual = trace.Run();
+                                if (actual != expected) {
+                                    std::string detail = "atomic coherent reads differ at offset " + std::to_string(offset) + " misalignment " + std::to_string(misalignment) + " active " + std::to_string(active) + " valid " + std::to_string(valid) + " robust " + std::to_string(robust) + " exact " + std::to_string(exact) + ":";
+                                    for (const auto index : actual) detail += " " + std::to_string(index);
+                                    detail += "; bounds-checked volatile reads:";
+                                    for (const auto index : expected) detail += " " + std::to_string(index);
+                                    throw std::runtime_error(detail);
+                                }
+                                require(trace.atomicReads == actual.size() && trace.volatileReads == 0, "a coherent buffer read is not an atomic load with the flag");
+                                require(count(module, spv::OpAtomicLoad) != 0 && volatileLoads(module) == 0, "the flag left a volatile buffer load in the module");
+                                require(referenceTrace.atomicReads == 0 && count(reference, spv::OpAtomicLoad) == 0 && volatileLoads(reference) != 0, "a coherent buffer read is atomic without the flag");
+                                ++compared;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        require(compared == 2u * 2u * 2u * 3u * 2u * 2u, "coherent buffer atomic loads: the comparison grid shrank");
+        auto plain = coherent;
+        plain.coherent = false;
+        auto plainAtomic = plain;
+        plainAtomic.atomicLoads = true;
+        for (const bool robust : {false, true}) {
+            for (const bool exact : {false, true}) {
+                require(emitLoad(plainAtomic, true, 8, 64, robust, exact) == emitLoad(plain, true, 8, 64, robust, exact), "the flag changed a buffer load without GLC or DLC");
+                require(count(emitLoad(coherent, true, 8, 64, robust, exact), spv::OpAtomicLoad) == 0, "a coherent buffer load is atomic without the flag");
+            }
+        }
     });
     run("exact robust loads read what the checked variant reads", [] {
         const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
