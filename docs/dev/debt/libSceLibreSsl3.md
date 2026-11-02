@@ -4,7 +4,7 @@
 
 - [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten exports implement only preconnection lifecycle and configuration. TLS handshake, read/write, certificate validation and encrypted transport still throw; callers cannot establish TLS sessions. No PS5 native ABI or error strings have been measured. Signatures and config ownership follow the [LibreSSL libtls API](https://man.openbsd.org/tls_init.3) and [source](https://github.com/libressl/openbsd/tree/master/src/lib/libtls): independent config allocation, refcounts held by client/server contexts, copied key memory zeroized on replacement/free, error pointers and fresh-context close/configure behavior. A server without a certificate fails. Future transport must consume the retained config and implement certificate/SSL context state.
 
-- [libtls memory and protocol settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Six additional exports copy CA/certificate memory, set unvalidated protocol bits, parse LibreSSL protocol tokens (including first-negation defaults and comma/colon separation), and mutate client-certificate and hostname-verification settings. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c) and `tls_keypair.c`. TLS transport, certificate parsing/verification and cipher-list validation are still unimplemented; `tls_config_set_ciphers` continues to throw. PS5 runtime values and guest ownership ABI are unverified.
+- [libtls CA memory and verification settings](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Four additional exports copy owned CA bytes, assign a protocol bitmask, and set client-certificate and hostname-verification flags. They follow [OpenBSD libtls `tls_config.c`](https://github.com/openbsd/src/blob/master/lib/libtls/tls_config.c). TLS transport, certificate parsing and cipher-list validation remain unimplemented; `tls_config_set_cert_mem`, `tls_config_set_ciphers` and `tls_config_parse_protocols` still throw in this branch. Native PS5 ABI and option interoperability are unverified.
 
 - [OpenSSL_version](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - other firmware revisions are unverified. Selectors 0 through 5 follow the public firmware 13.40 measurements in [discussion #8981](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214); unknown selectors follow LibreSSL 4.0.0 and return `not available`. No independent console test was run.
 
@@ -32,13 +32,14 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 159 still-unimplemented callable exports: 149 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The sixteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 161 still-unimplemented callable exports: 151 named and 10 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
 | `EC_KEY_set_asn1_flag` | `++b0FizBrJk` |
 | `BIO_set_init` | `+STC2BUY9vY` |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
+| `tls_config_set_cert_mem` | `+bQfpiUHRVk` |
 | `SSL_SESSION_get_protocol_version` | `0BW+8jTsY54` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
 | `SSL_SESSION_get_timeout` | `0JcHkrKJ9iw` |
@@ -184,6 +185,7 @@
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
 | `PKCS5_PBKDF2_HMAC` | `vnwZHU5FvBQ` |
 | `ASN1_OCTET_STRING_free` | `vo-cv5gnPUA` |
+| `tls_config_parse_protocols` | `vu4FgwGayHY` |
 | `SSL_CTX_set_post_handshake_auth` | `wHdymWL7CbE` |
 | `X509_EXTENSION_free` | `wbJDMMsje6s` |
 | `ASN1_TYPE_free` | `whL1IRBxFZA` |

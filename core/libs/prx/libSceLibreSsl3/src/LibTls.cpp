@@ -13,8 +13,6 @@ struct ConfigStorage {
     std::size_t keyLength = 0;
     std::uint8_t* ca = nullptr;
     std::size_t caLength = 0;
-    std::uint8_t* cert = nullptr;
-    std::size_t certLength = 0;
     std::uint32_t protocols = 24;
     int verifyClient = 0;
     int verifyName = 1;
@@ -70,62 +68,12 @@ void ClearMemory(std::uint8_t*& bytes, std::size_t& length) {
 int SetMemory(std::uint8_t*& destination, std::size_t& destinationLength,
               const std::uint8_t* source, std::size_t length) {
     ClearMemory(destination, destinationLength);
-    if (length && !source) return -1;
-    if (!length) return 0;
+    if (!source || !length) return 0;
     auto* copy = static_cast<std::uint8_t*>(std::malloc(length));
     if (!copy) return -1;
     std::memcpy(copy, source, length);
     destination = copy;
     destinationLength = length;
-    return 0;
-}
-
-bool EqualsAscii(const char* text, std::size_t length, const char* name) {
-    for (std::size_t i = 0; i < length; ++i) {
-        if (!name[i]) return false;
-        const auto c = static_cast<unsigned char>(text[i]);
-        const auto n = static_cast<unsigned char>(name[i]);
-        const auto lower = [](unsigned char value) -> unsigned char {
-            return (value >= 'A' && value <= 'Z') ? static_cast<unsigned char>(value + ('a' - 'A')) : value;
-        };
-        if (lower(c) != lower(n)) return false;
-    }
-    return name[length] == '\0';
-}
-
-int ParseProtocols(std::uint32_t* protocols, const char* text) {
-    if (!protocols) return -1;
-    constexpr std::uint32_t all = (1U << 3) | (1U << 4);
-    if (!text) {
-        *protocols = all;
-        return 0;
-    }
-    std::uint32_t result = 0;
-    const char* start = text;
-    for (;;) {
-        const char* end = start;
-        while (*end && *end != ',' && *end != ':') ++end;
-        const char* word = start;
-        while (word != end && (*word == ' ' || *word == '\t')) ++word;
-        const bool negate = word != end && *word == '!';
-        if (negate) ++word;
-        if (negate && result == 0) result = all;
-        const auto length = static_cast<std::size_t>(end - word);
-        std::uint32_t flags = 0;
-        if (EqualsAscii(word, length, "all") || EqualsAscii(word, length, "legacy") ||
-            EqualsAscii(word, length, "default") || EqualsAscii(word, length, "secure") ||
-            EqualsAscii(word, length, "tlsv1")) flags = all;
-        else if (EqualsAscii(word, length, "tlsv1.0")) flags = 1U << 1;
-        else if (EqualsAscii(word, length, "tlsv1.1")) flags = 1U << 2;
-        else if (EqualsAscii(word, length, "tlsv1.2")) flags = 1U << 3;
-        else if (EqualsAscii(word, length, "tlsv1.3")) flags = 1U << 4;
-        if (!flags) return -1;
-        if (negate) result &= ~flags;
-        else result |= flags;
-        if (!*end) break;
-        start = end + 1;
-    }
-    *protocols = result;
     return 0;
 }
 
@@ -139,7 +87,6 @@ void Release(ConfigStorage* config) {
         return;
     ClearKey(*config);
     ClearMemory(config->ca, config->caLength);
-    ClearMemory(config->cert, config->certLength);
     delete config;
 }
 
@@ -214,8 +161,7 @@ int APS5_VABI tls_configure_nid_postfix(TlsContext* context, TlsConfig* config) 
     Release(state->config);
     state->config = replacement;
     if (state->role == Role::Server) {
-        state->error = replacement->certLength ? "failed to load certificate" :
-                       replacement->keyLength ? "failed to read private key" : "private/public key mismatch";
+        state->error = replacement->keyLength ? "failed to read private key" : "private/public key mismatch";
         return -1;
     }
     return 0;
@@ -238,12 +184,6 @@ int APS5_VABI tls_config_set_ca_mem_nid_postfix(TlsConfig* config, const std::ui
     return SetMemory(storage->ca, storage->caLength, ca, length);
 }
 
-int APS5_VABI tls_config_set_cert_mem_nid_postfix(TlsConfig* config, const std::uint8_t* cert, std::size_t length) {
-    if (!config) return -1;
-    auto* storage = Storage(config);
-    return SetMemory(storage->cert, storage->certLength, cert, length);
-}
-
 int APS5_VABI tls_config_set_protocols_nid_postfix(TlsConfig* config, std::uint32_t protocols) {
     if (!config) return -1;
     Storage(config)->protocols = protocols;
@@ -252,10 +192,6 @@ int APS5_VABI tls_config_set_protocols_nid_postfix(TlsConfig* config, std::uint3
 
 void APS5_VABI tls_config_verify_client_nid_postfix(TlsConfig* config) {
     if (config) Storage(config)->verifyClient = 1;
-}
-
-int APS5_VABI tls_config_parse_protocols_nid_postfix(std::uint32_t* protocols, const char* text) {
-    return ParseProtocols(protocols, text);
 }
 
 void APS5_VABI tls_config_insecure_noverifyname_nid_postfix(TlsConfig* config) {

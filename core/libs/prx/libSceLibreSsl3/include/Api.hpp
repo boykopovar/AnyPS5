@@ -116,6 +116,8 @@ int APS5_VABI HKDF_nid_postfix();
 int APS5_VABI HMAC_CTX_free_nid_postfix();
 int APS5_VABI HMAC_CTX_new_nid_postfix();
 int APS5_VABI OPENSSL_init_ssl_nid_postfix();
+int APS5_VABI tls_config_set_cert_mem_nid_postfix();
+int APS5_VABI tls_config_parse_protocols_nid_postfix();
 int APS5_VABI PEM_read_bio_PUBKEY_nid_postfix();
 int APS5_VABI SSL_CIPHER_get_id_nid_postfix();
 int APS5_VABI SSL_CTX_add1_chain_cert_nid_postfix();
