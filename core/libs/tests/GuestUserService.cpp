@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr int SCE_USER_SERVICE_ERROR_INVALID_USER_ID = USER_SERVICE_ERROR_UNKNOWN_USER;
+
 void Require(bool value) { if (!value) std::abort(); }
 
 void SetLanguage(const char* value) {
@@ -53,6 +55,17 @@ int main() {
     int color = -1;
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserColor(123, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_USER_ID_INVALID, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID - 1, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0x20000000, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_USER_ID_INVALID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID - 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0x20000000, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(color == -1);
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, &color) == USER_SERVICE_OK);
 
     SetLanguage(nullptr);
@@ -95,6 +108,16 @@ int main() {
         Require(sceUserServiceGetKeyboardType(123, &untouched) == USER_SERVICE_ERROR_UNKNOWN_USER && untouched == 0x5A5A);
         Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, &untouched) == USER_SERVICE_OK && untouched == 0);
     }
+#if defined(__linux__)
+    for (const char* name : {"LC_MESSAGES", "LANG", "LANGUAGE"}) Require(::unsetenv(name) == 0);
+    Require(::setenv("LC_ALL", "de_DE.UTF-8", 1) == 0);
+    SetLanguage("auto");
+    std::int32_t german = 0x5A5A;
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &german) == USER_SERVICE_OK && german == keyboardTypeByLanguage[4]);
+    Require(::setenv("LC_ALL", "ja_JP.UTF-8", 1) == 0);
+    german = 0x5A5A;
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &german) == USER_SERVICE_OK && german == keyboardTypeByLanguage[4]);
+#endif
     SetLanguage(nullptr);
     Require(color == 0);
 
@@ -154,7 +177,11 @@ int main() {
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     UserServiceGamePresets presets{};
     presets.difficulty = 0x5a;
-    Require(sceUserServiceGetGamePresets(0, &presets) == USER_SERVICE_ERROR_INVALID_ARGUMENT && presets.difficulty == 0x5a);
+    for (int user_id : absent_users) {
+        Require(sceUserServiceGetGamePresets(user_id, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(presets.difficulty == 0x5a);
+        Require(sceUserServiceGetGamePresets(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    }
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
     std::int32_t accessibilityValue = 0;
     bool threwKeyremap = false;
@@ -176,6 +203,10 @@ int main() {
     char name[32]{};
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserName(123, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetUserName(0x10000004, name, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_USER_ID);
+    Require(sceUserServiceGetUserName(static_cast<int>(0xFFFFFFFFu), name, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_USER_ID);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetUserName(USER_SERVICE_USER_ID_INVALID, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 5) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "Player") == 0);
@@ -209,6 +240,10 @@ int main() {
         Require(value == 0x5a5a5a5a);
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     }
+    presets.difficulty = 0x5a;
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(presets.difficulty == 0x5a);
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 
     UserServiceSetUserConnected_nid_postfix(1, true);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
@@ -232,6 +267,7 @@ int main() {
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_OK);
         Require(value == setting.value);
     }
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
 
     UserServiceSetUserConnected_nid_postfix(1, false);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
@@ -255,4 +291,8 @@ int main() {
         Require(value == 0x5a5a5a5a);
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     }
+    presets.difficulty = 0x5a;
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(presets.difficulty == 0x5a);
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
 }
