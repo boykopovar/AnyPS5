@@ -26,7 +26,7 @@ jobs:
         run: |
           cmake -S core/libs/tests/emscripten -B build-native -DCMAKE_BUILD_TYPE=Release
           cmake --build build-native --parallel 2
-          ctest --test-dir build-native --output-on-failure
+          ctest --test-dir build-native --output-on-failure --no-tests=error
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
@@ -40,4 +40,4 @@ jobs:
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           emcmake cmake -S core/libs/tests/emscripten -B build-portable -DCMAKE_BUILD_TYPE=Release -DANYPS5_NODE="$ANYPS5_TEST_NODE"
           cmake --build build-portable --parallel 2
-          ctest --test-dir build-portable --output-on-failure
+          ctest --test-dir build-portable --output-on-failure --no-tests=error
