@@ -181,7 +181,7 @@ public:
         this->context.bufferPool.reset();
         if (target.dccAddress != 0) metadataValid = std::make_shared<std::atomic<bool>>(true);
         std::shared_ptr<Buffer> initialUpload;
-        const auto initial = guestSamples ? std::optional<VkClearColorValue>{} : knownClear.has_value() ? knownClear : target.dccAddress != 0 || target.cmaskFastClear ? std::optional{initialDccClear(target)} : initialColorContents(target, initialUpload);
+        const auto initial = guestSamples ? std::optional<VkClearColorValue>{} : knownClear.has_value() ? knownClear : target.dccAddress != 0 || target.cmaskFastClear ? std::optional{initialDccClear(target)} : initialColorContents(context, target, initialUpload);
         if (target.dccAddress != 0) cleared = initial;
         const auto samples = static_cast<VkSampleCountFlagBits>(target.samples);
         Require((context.limits.framebufferColorSampleCounts & samples) != 0, "the device cannot render color with the target's sample count");
@@ -221,7 +221,7 @@ public:
             flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
             Require(storageSupports(format, VK_IMAGE_USAGE_STORAGE_BIT, 0u) && storageSupports(target.format, usage | VK_IMAGE_USAGE_STORAGE_BIT, flags), "the device cannot initialize the multisampled color target through its unsigned storage view");
             usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-            if (!initialUpload) initialUpload = guestSampleUpload(target);
+            if (!initialUpload) initialUpload = guestSampleUpload(this->context, target);
         }
         twinFormat = colorTwinFormat(context, target.format);
         if (twinFormat != VK_FORMAT_UNDEFINED) {
@@ -845,7 +845,7 @@ private:
     std::optional<std::uint32_t> paddingFill;
     VkImageView initialView = VK_NULL_HANDLE;
 
-    std::optional<VkClearColorValue> initialColorContents(const ColorTarget& use, std::shared_ptr<Buffer>& initialUpload) {
+    std::optional<VkClearColorValue> initialColorContents(const Context& uploadContext, const ColorTarget& use, std::shared_ptr<Buffer>& initialUpload) {
         Require(use.cmaskAddress == 0, "initial multisample color samples with CMASK require a modeled metadata import");
         Require(use.layers == 1u && use.arraySlice == 0u && use.arrayLastSlice == 0u && use.depth == 1u && use.depthSlice == 0u && use.mipCount == 1u && use.mip == 0u && !use.mipTail, "initial multisample array, volume or mip contents are not implemented");
         Require(FindGuestColorTargetFormat(use.format, use.elementBytes).has_value(), "initial multisample color format or element size is unsupported");
@@ -862,7 +862,7 @@ private:
             if (ClearColorForTexel(use.format, use.elementBytes, pattern, clear)) return clear;
         }
         Require(use.tileMode == ColorTileMode::RenderTarget, "nonuniform initial multisample color tiling is not implemented");
-        initialUpload = guestSampleUpload(use, guestColorBaseline);
+        initialUpload = guestSampleUpload(uploadContext, use, guestColorBaseline);
         return std::nullopt;
     }
 
@@ -885,7 +885,7 @@ private:
         throw std::runtime_error("AGC graphics: guest color no longer matches its initial contents or a known full fill");
     }
 
-    std::shared_ptr<Buffer> guestSampleUpload(const ColorTarget& use, std::span<const std::byte> snapshot = {}) {
+    std::shared_ptr<Buffer> guestSampleUpload(const Context& uploadContext, const ColorTarget& use, std::span<const std::byte> snapshot = {}) {
         Require(use.cmaskAddress == 0 && use.dccAddress == 0, "uploading multisampled guest color under compression metadata is not implemented");
         Require(use.layers == 1u && use.arraySlice == 0u && use.arrayLastSlice == 0u && use.depth == 1u && use.depthSlice == 0u && use.mipCount == 1u && use.mip == 0u && !use.mipTail, "uploading multisampled guest color of arrays, volumes or mips is not implemented");
         Require(use.tileMode == ColorTileMode::RenderTarget || use.tileMode == ColorTileMode::Z64KBX, "non-uniform multisampled guest color tiling is not implemented");
@@ -900,7 +900,7 @@ private:
         }
         Require(snapshot.size() == layout.Bytes(), "the multisampled guest color snapshot and footprint differ");
         if (guestColorBaseline.empty()) guestColorBaseline.assign(snapshot.begin(), snapshot.end());
-        auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>((layout.LinearBytes() + 3u) & ~std::uint64_t{3}), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        auto staging = std::make_shared<Buffer>(uploadContext, static_cast<std::size_t>((layout.LinearBytes() + 3u) & ~std::uint64_t{3}), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         layout.Detile(snapshot, staging->Bytes().first(static_cast<std::size_t>(layout.LinearBytes())));
         return staging;
     }
