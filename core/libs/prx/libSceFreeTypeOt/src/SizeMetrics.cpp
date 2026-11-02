@@ -1,8 +1,15 @@
+// Derived from FreeType src/base/ftobjs.c (FreeType 2.4.12, commit cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9).
+// Copyright (C) 1996-2013 by David Turner, Robert Wilhelm, and Werner Lemberg.
+// This file is part of the FreeType project, and may only be used, modified, and distributed
+// under the terms of the FreeType project license, LICENSE.TXT. By continuing to use, modify,
+// or distribute this file you indicate that you have read the license and understand and accept it fully.
+
 #include "prx/libSceFreeTypeOt/include/SizeMetrics.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 using FreeType::GuestBitmapSize;
 using FreeType::GuestFaceRec;
@@ -174,6 +181,7 @@ void APS5_VABI FT_Request_Metrics_nid_postfix(GuestFaceRec* face, const GuestSiz
         default:
             break;
         }
+        if (w == std::numeric_limits<std::int64_t>::min() || h == std::numeric_limits<std::int64_t>::min()) NotImplemented_nid_no_patch(__func__);
         if (w < 0) w = -w;
         if (h < 0) h = -h;
         scaledW = RequestDimension(req->width, req->horiResolution, __func__);
