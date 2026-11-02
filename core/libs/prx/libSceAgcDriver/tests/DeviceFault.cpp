@@ -150,35 +150,6 @@ void Nothing() {
     Require(faultCalls == 0, "the fault info was queried without the extension");
 }
 
-void BufferMarkers() {
-    AgcDriver::BufferMarkerLog log;
-    Require(log.Report(0, 0) == std::vector<std::string>{"[device-fault] no buffer marker reached"}, "an untouched marker buffer was not reported");
-    Require(log.Next(0x10000) == 1 && log.Next(0x10100) == 2 && log.Next(0x10200) == 3, "markers are not numbered from 1");
-    const auto lines = log.Report(3, 1);
-    Require(lines.size() == 4, "a hang two markers past the last finished one does not get four lines");
-    Require(lines[0] == "[device-fault] last dispatch reached: marker 3, program 0x10200", "the reached line changed");
-    Require(lines[1] == "[device-fault] last dispatch finished: marker 1, program 0x10000", "the finished line changed");
-    Require(lines[2] == "[device-fault] unfinished dispatch: marker 2, program 0x10100", "the first unfinished line changed");
-    Require(lines[3] == "[device-fault] unfinished dispatch: marker 3, program 0x10200", "the second unfinished line changed");
-    Require(log.Report(3, 3).size() == 2, "a finished queue listed unfinished dispatches");
-    const auto first = log.Report(1, 0);
-    Require(first.size() == 3 && first[1] == "[device-fault] no dispatch finished" && first[2] == "[device-fault] unfinished dispatch: marker 1, program 0x10000", "a hang in the first dispatch was not reported as nothing finished");
-    Require(log.Report(2, 3).size() == 2, "markers finished past the reached one listed unfinished dispatches");
-}
-
-void BufferMarkersWrap() {
-    AgcDriver::BufferMarkerLog log;
-    for (std::uint32_t i = 0; i <= AgcDriver::BufferMarkerLog::Capacity; ++i) static_cast<void>(log.Next(0x20000 + i));
-    const auto lines = log.Report(AgcDriver::BufferMarkerLog::Capacity + 1, 1);
-    Require(lines[0] == "[device-fault] last dispatch reached: marker 4097, program 0x21000", "the newest marker was not kept");
-    Require(lines[1] == "[device-fault] last dispatch finished: marker 1, program not in the log", "an overwritten marker kept a program");
-    Require(lines.size() == 2 + AgcDriver::BufferMarkerLog::Listed + 1 && lines.back() == "[device-fault] 4088 more unfinished dispatches", "a full log of unfinished markers was not listed and counted");
-    Require(log.Report(AgcDriver::BufferMarkerLog::Capacity + 1, 0).size() == 2, "more unfinished markers than the log holds were listed");
-    const auto pending = log.Report(AgcDriver::BufferMarkerLog::Capacity + 1, AgcDriver::BufferMarkerLog::Capacity - 19);
-    Require(pending.size() == 2 + AgcDriver::BufferMarkerLog::Listed + 1, "a long unfinished run was not cut to the listed count");
-    Require(pending.back() == "[device-fault] 12 more unfinished dispatches", "the count of unlisted unfinished dispatches changed");
-}
-
 std::vector<ShaderRecompiler::BdaAbi::Range> SnapshotRanges() {
     return {
         {0x10000ull, 0x11000ull, 0x10000ull, ShaderRecompiler::BdaAbi::Read, 0},
@@ -324,6 +295,14 @@ void BracketSerialMismatch() {
     Require(lines[1] == "[device-fault] bracket: last completed 5, in flight 8, first not started 9", "the mismatch window changed");
 }
 
+void BracketEmptyTokens() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::SubmitBracket bracket{7, 5, 0, 0};
+    const auto lines = AgcDriver::DeviceFaultBracketLines(bracket, ring);
+    Require(lines.size() == 1, "an empty token range does not report only the window");
+    Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the empty token window changed");
+}
+
 void FaultResultZero() {
     faultCalls = 0;
     faultFails = false;
@@ -334,11 +313,12 @@ void FaultResultZero() {
     const AgcDriver::SubmitBracket bracket{7, 5, 0, 0};
     const auto lines = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring);
     Require(faultCalls == 2, "a result-zero fault info was not queried for counts and then for data");
-    Require(lines.size() == 4, "a result-zero fault does not report the window, the result, the vendor and the missing device data");
+    Require(lines.size() == 5, "a result-zero fault does not report the window, the no-marker, the result, the vendor and the missing device data");
     Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the result-zero window changed");
-    Require(lines[1] == "[device-fault] result 0: page fault", "a zero result was not reported");
-    Require(lines[2] == "[device-fault] vendor: " + std::string(VK_MAX_DESCRIPTION_SIZE, 'v') + " (code 0x77, data 0x88)", "the vendor line changed");
-    Require(lines[3] == "[device-fault] no device-side fault data; CPU-side bracket only", "missing device-side data was not reported");
+    Require(lines[1] == "[device-fault] no per-submit marker (submit serial unknown; markers need APS5_GPU_CHECKPOINTS on the main queue)", "a zero effective serial missed its no-marker line");
+    Require(lines[2] == "[device-fault] result 0: page fault", "a zero result was not reported");
+    Require(lines[3] == "[device-fault] vendor: " + std::string(VK_MAX_DESCRIPTION_SIZE, 'v') + " (code 0x77, data 0x88)", "the vendor line changed");
+    Require(lines[4] == "[device-fault] no device-side fault data; CPU-side bracket only", "missing device-side data was not reported");
     faultDataAddressCount = 2;
 }
 
@@ -351,11 +331,125 @@ void TokenCheckpoint() {
     const AgcDriver::SubmitBracket bracket{7, 5, 0, 0};
     const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockTokenCheckpointData, 0, nullptr, bracket, ring);
     Require(lines.size() == 2, "a token checkpoint does not report the window and the checkpoint");
-    Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the checkpoint window changed");
+    Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8, queue 0x2000", "the checkpoint window changed");
     char expected[256];
-    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: token %u batch 7 program 0x12000 variant 9 draw main observed at bottom-of-pipe", static_cast<unsigned>(token));
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: token %u batch 7 queue 0x2000 program 0x12000 variant 9 draw main observed at bottom-of-pipe", static_cast<unsigned>(token));
     Require(lines[1] == expected, "the token checkpoint line changed");
     checkpointToken = 0;
+}
+
+void ReportBracketOnly() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::SubmitBracket bracket{7, 5, 0, 0};
+    const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring);
+    Require(lines.size() == 2, "a report without device data does not report the window and the missing data");
+    Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the bracket-only window changed");
+    Require(lines[1] == "[device-fault] no device-side fault data; CPU-side bracket only", "missing device-side data was not reported");
+}
+
+void ExtraQueueEmptyBracket() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken token = ring.Claim();
+    Require(token != 0, "the extra-queue token is invalid");
+    ClaimBracketToken(ring, token, 7, 0x12000ull, 9, "draw main");
+    checkpointToken = token;
+    const AgcDriver::SubmitBracket bracket{};
+    const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockTokenCheckpointData, 0, nullptr, bracket, ring);
+    Require(lines.size() == 1, "an extra-queue report does not report only the checkpoint");
+    char expected[256];
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: token %u batch 7 queue 0x2000 program 0x12000 variant 9 draw main observed at bottom-of-pipe", static_cast<unsigned>(token));
+    Require(lines[0] == expected, "the extra-queue checkpoint line changed");
+    checkpointToken = 0;
+}
+
+void LiveResourceEmpty() {
+    const auto lines = AgcDriver::LiveResourceRing::Instance().LinesFor(0x50000ull);
+    Require(lines.empty(), "an empty live ring reports resources");
+}
+
+void LiveResourceHit() {
+    AgcDriver::LiveResourceRing::Instance().Note(0x100000ull, 0x1000ull, "texture");
+    AgcDriver::LiveResourceRing::Instance().Note(0x200000ull, 0x2000ull, "buffer");
+    const auto lines = AgcDriver::LiveResourceRing::Instance().LinesFor(0x180000ull);
+    Require(lines.size() == 2, "the nearest live resources were not listed");
+    Require(lines[0] == "[device-fault] live resource 0x100000 size 0x1000 texture", "the nearest live resource changed");
+    Require(lines[1] == "[device-fault] live resource 0x200000 size 0x2000 buffer", "the farther live resource changed");
+}
+
+void LiveResourceInReport() {
+    AgcDriver::LiveResourceRing::Instance().Note(0x1230000ull, 0x10000ull, "texture");
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::SubmitBracket bracket{};
+    const auto lines = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring);
+    bool found = false;
+    for (const auto& line : lines) {
+        if (line == "[device-fault] live resource 0x1230000 size 0x10000 texture") {
+            found = true;
+            break;
+        }
+    }
+    Require(found, "a fault report missed its covering live resource");
+}
+
+void BracketTrimsToLastEight() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    AgcDriver::FaultToken first = 0;
+    for (int i = 0; i < 12; ++i) {
+        const AgcDriver::FaultToken token = ring.Claim();
+        Require(token != 0, "the trimming token is invalid");
+        if (i == 0) first = token;
+        ClaimBracketToken(ring, token, 7, 0x12000ull, 9, "draw main");
+    }
+    const AgcDriver::SubmitBracket bracket{7, 5, first, static_cast<AgcDriver::FaultToken>(static_cast<std::uint64_t>(first) + 11)};
+    const auto lines = AgcDriver::DeviceFaultBracketLines(bracket, ring);
+    Require(lines.size() == 10, "a twelve-token bracket does not report the window, eight tokens and the trim count");
+    Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8", "the trimming window changed");
+    for (int i = 0; i < 8; ++i) {
+        char expected[256];
+        std::snprintf(expected, sizeof(expected), "[device-fault] token %u in batch 7: program 0x12000 variant 9 draw main", static_cast<unsigned>(static_cast<std::uint64_t>(first) + 4 + static_cast<std::uint64_t>(i)));
+        Require(lines[1 + i] == expected, "a trimmed bracket missed its last eight tokens");
+    }
+    Require(lines[9] == "[device-fault] 4 more bracket tokens", "a trimmed bracket missed its remainder count");
+}
+
+void BracketDerivedViaFindBracket() {
+    AgcDriver::SubmissionSnapshots snapshots;
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken token = ring.Claim();
+    Require(token != 0, "the derived bracket token is invalid");
+    ClaimBracketToken(ring, token, 7, 0x12000ull, 9, "draw main");
+    checkpointToken = token;
+    const auto ranges = std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges());
+    const AgcDriver::SubmitBracket stored{7, 5, 0, 0};
+    snapshots.NoteSubmit(7, 3, ranges, stored);
+    const AgcDriver::SubmitBracket empty{};
+    const auto lines = AgcDriver::DeviceFaultReport(VK_NULL_HANDLE, nullptr, FakeQueue(), MockTokenCheckpointData, 0, &snapshots, empty, ring);
+    Require(lines.size() == 2, "a derived bracket does not report the window and the checkpoint");
+    Require(lines[0] == "[device-fault] bracket: last completed 5, in flight 7, first not started 8, queue 0x2000", "the derived window changed");
+    char expected[256];
+    std::snprintf(expected, sizeof(expected), "[device-fault] checkpoint: token %u batch 7 queue 0x2000 program 0x12000 variant 9 draw main observed at bottom-of-pipe", static_cast<unsigned>(token));
+    Require(lines[1] == expected, "the derived checkpoint line changed");
+    checkpointToken = 0;
+}
+
+void EffectiveSerialZeroHasNoMarker() {
+    faultCalls = 0;
+    faultFails = false;
+    faultDataResult = VK_SUCCESS;
+    faultDataAddressCount = 0;
+    faultDataVendorBinarySize = 0;
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::SubmitBracket bracket{};
+    const auto lines = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring);
+    bool found = false;
+    for (const auto& line : lines) {
+        if (line == "[device-fault] no per-submit marker (submit serial unknown; markers need APS5_GPU_CHECKPOINTS on the main queue)") {
+            found = true;
+            break;
+        }
+    }
+    Require(found, "an effective-zero report missed its no-marker line");
+    faultDataAddressCount = 2;
 }
 
 void FaultIncomplete() {
@@ -418,10 +512,17 @@ int main() {
         BracketWindow();
         BracketTokenMiss();
         BracketSerialMismatch();
+        BracketEmptyTokens();
+        BracketTrimsToLastEight();
+        BracketDerivedViaFindBracket();
         FaultResultZero();
+        EffectiveSerialZeroHasNoMarker();
         TokenCheckpoint();
-        BufferMarkers();
-        BufferMarkersWrap();
+        ReportBracketOnly();
+        ExtraQueueEmptyBracket();
+        LiveResourceEmpty();
+        LiveResourceHit();
+        LiveResourceInReport();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "agc_device_fault: %s\n", error.what());
         return 1;

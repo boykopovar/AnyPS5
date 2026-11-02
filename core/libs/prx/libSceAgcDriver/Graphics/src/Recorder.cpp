@@ -1191,14 +1191,29 @@ static bool PrepareCheckpointMarker(const Context& context) {
     return state.write != nullptr && state.buffer != VK_NULL_HANDLE;
 }
 
-void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std::uint64_t serial, std::uint32_t queue) {
+constexpr VkDeviceSize CheckpointMarkerSerialOffset = 0;
+constexpr VkDeviceSize CheckpointMarkerTokenOffset = sizeof(std::uint32_t);
+
+void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (queue != 0) return;
+    if (commands == VK_NULL_HANDLE || token == 0) return;
+    try {
+        if (!PrepareCheckpointMarker(context)) return;
+        auto& state = CheckpointMarkerState();
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerTokenOffset, static_cast<std::uint32_t>(token));
+    } catch (...) {
+    }
+}
+
+void WriteCheckpointSerial(const Context& context, VkCommandBuffer commands, std::uint64_t serial, std::uint32_t queue) {
     if (!CheckpointMarkersEnabled()) return;
     if (queue != 0) return;
     if (commands == VK_NULL_HANDLE || serial == 0) return;
     try {
         if (!PrepareCheckpointMarker(context)) return;
         auto& state = CheckpointMarkerState();
-        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, 0, static_cast<std::uint32_t>(serial));
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerSerialOffset, static_cast<std::uint32_t>(serial));
     } catch (...) {
     }
 }
@@ -1207,8 +1222,16 @@ std::uint32_t LastCheckpointMarkerSerial() noexcept {
     const void* mapping = CheckpointMarkerState().mapping;
     if (mapping == nullptr) return 0;
     std::uint32_t serial = 0;
-    std::memcpy(&serial, mapping, sizeof(serial));
+    std::memcpy(&serial, static_cast<const char*>(mapping) + CheckpointMarkerSerialOffset, sizeof(serial));
     return serial;
+}
+
+std::uint32_t LastCheckpointMarkerToken() noexcept {
+    const void* mapping = CheckpointMarkerState().mapping;
+    if (mapping == nullptr) return 0;
+    std::uint32_t token = 0;
+    std::memcpy(&token, static_cast<const char*>(mapping) + CheckpointMarkerTokenOffset, sizeof(token));
+    return token;
 }
 
 void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands) {
@@ -1217,7 +1240,8 @@ void WriteCheckpointSentinel(const Context& context, VkCommandBuffer commands) {
     try {
         if (!PrepareCheckpointMarker(context)) return;
         auto& state = CheckpointMarkerState();
-        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, 0, 0);
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerSerialOffset, 0);
+        state.write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state.buffer, CheckpointMarkerTokenOffset, 0);
     } catch (...) {
     }
 }
@@ -1777,7 +1801,7 @@ void Recorder::ensureOpen() {
         open = std::move(batch);
         open->predictedSerial = submissions + 1;
         try {
-            if (open->queue == 0) WriteCheckpointMarker(context, open->commands, open->predictedSerial, open->queue);
+            if (open->queue == 0) WriteCheckpointSerial(context, open->commands, open->predictedSerial, open->queue);
             else WriteCheckpointSentinel(context, open->commands);
         } catch (...) {
         }

@@ -38,6 +38,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
+#include "prx/libSceAgcDriver/TraceRevision.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -62,6 +63,8 @@
 #include "prx/libc/include/General.hpp"
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 #include <atomic>
 #include <chrono>
@@ -86,6 +89,7 @@
 
 namespace AgcDriver::Graphics {
 std::uint32_t LastCheckpointMarkerSerial() noexcept;
+std::uint32_t LastCheckpointMarkerToken() noexcept;
 void TeardownCheckpointMarkers() noexcept;
 void ResetCheckpointSnapshots() noexcept;
 }
@@ -172,11 +176,12 @@ bool WriteDeviceFaultVendorBinary(const char* path, const void* data, std::size_
 
 void DumpDeviceFaultVendorBinary(VkDevice device, PFN_vkGetDeviceFaultInfoEXT faultInfo, const char* path) noexcept {
     try {
+        constexpr VkDeviceSize DeviceFaultVendorBinaryLimit = 64u * 1024u * 1024u;
         if (device == VK_NULL_HANDLE || faultInfo == nullptr || path == nullptr || *path == '\0') return;
         VkDeviceFaultCountsEXT counts{VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
         if (faultInfo(device, &counts, nullptr) != VK_SUCCESS) return;
         if (counts.vendorBinarySize == 0) return;
-        if (counts.vendorBinarySize > 64u * 1024u * 1024u) {
+        if (counts.vendorBinarySize > DeviceFaultVendorBinaryLimit) {
             std::fprintf(stderr, "[device-fault] vendor binary of %llu bytes exceeds the 64 MiB dump bound\n", static_cast<unsigned long long>(counts.vendorBinarySize));
             return;
         }
@@ -2287,10 +2292,12 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             owner->hookActive.fetch_add(1, std::memory_order_acq_rel);
             try {
                 if (!owner->hookRetired.load(std::memory_order_acquire)) {
+                    bool stateZero = owner->markerMapping == nullptr;
                     if (owner->markerMapping != nullptr) {
                         std::uint32_t words[2];
                         std::memcpy(words, owner->markerMapping, sizeof(words));
-                        if (words[0] == 0 && words[1] == 0) {
+                        stateZero = words[0] == 0 && words[1] == 0;
+                        if (stateZero) {
                             std::fprintf(stderr, "[device-fault] no buffer marker reached\n");
                         } else {
                             const AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
@@ -2309,18 +2316,53 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                             }
                         }
                     }
+                    if (stateZero) {
+                        const std::uint32_t recorderToken = Graphics::LastCheckpointMarkerToken();
+                        if (recorderToken != 0) {
+                            const AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+                            char tokenLine[192];
+                            if (const AgcDriver::FaultTokenEntry* entry = ring.Find(static_cast<AgcDriver::FaultToken>(recorderToken))) {
+                                std::snprintf(tokenLine, sizeof(tokenLine), "[device-fault] last dispatch %s: token %u, batch %llu, program 0x%llx, variant 0x%llx (%.47s)", "reached", static_cast<unsigned>(entry->token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId), entry->desc);
+                            } else {
+                                std::snprintf(tokenLine, sizeof(tokenLine), "[device-fault] last dispatch %s: token %u not in the ring", "reached", static_cast<unsigned>(recorderToken));
+                            }
+                            std::fprintf(stderr, "%s\n", tokenLine);
+                        }
+                    }
+                    std::fprintf(stderr, "[device-fault] gpu %.256s vendor 0x%x device 0x%x driver %.256s commit %.12s%s\n", owner->properties.deviceName, static_cast<unsigned>(owner->properties.vendorID), static_cast<unsigned>(owner->properties.deviceID), owner->driverInfo.c_str(), APS5_TRACE_COMMIT, APS5_TRACE_DIRTY != 0 ? " dirty" : "");
+                    {
+                        std::uint32_t printedEnvs = 0;
+                        const std::uint32_t maxEnvs = 32;
+                        std::uint32_t scannedEnvs = 0;
+                        const std::uint32_t maxScannedEnvs = 512;
+#ifdef _WIN32
+                        char** entries = _environ;
+#else
+                        char** entries = ::environ;
+#endif
+                        for (; entries != nullptr && *entries != nullptr && printedEnvs < maxEnvs && scannedEnvs < maxScannedEnvs; ++entries) {
+                            ++scannedEnvs;
+                            const char* entry = *entries;
+                            if (std::strncmp(entry, "APS5_", 5) != 0) continue;
+                            std::fprintf(stderr, "[device-fault] env %.256s\n", entry);
+                            ++printedEnvs;
+                        }
+                    }
                     const std::uint64_t submitSerial = Graphics::LastCheckpointMarkerSerial();
                     AgcDriver::SubmitBracket bracket{};
-                    if (submitSerial == 0) {
-                        std::fprintf(stderr, "[device-fault] no per-submit marker (submit serial unknown; markers need APS5_GPU_CHECKPOINTS on the main queue)\n");
-                    } else if (const auto found = AgcDriver::SubmissionSnapshots::DeviceSnapshots().FindBracket(submitSerial)) {
-                        bracket = *found;
+                    if (submitSerial != 0) {
+                        if (const auto found = AgcDriver::SubmissionSnapshots::DeviceSnapshots().FindBracket(submitSerial)) {
+                            bracket = *found;
+                        }
                     }
+                    std::fprintf(stderr, "[device-fault] queue main\n");
                     for (const auto& line : DeviceFaultReport(device, faultInfo, queue, checkpointData, submitSerial, &AgcDriver::SubmissionSnapshots::DeviceSnapshots(), bracket, AgcDriver::FaultTokenRing::Instance())) std::fprintf(stderr, "%s\n", line.c_str());
                     const VkQueue extraQueues[] = {present, settle, sparse};
                     for (VkQueue extra : extraQueues) {
                         if (extra == VK_NULL_HANDLE || extra == queue) continue;
-                        for (const auto& line : DeviceFaultReport(VK_NULL_HANDLE, nullptr, extra, checkpointData)) std::fprintf(stderr, "%s\n", line.c_str());
+                        const char* role = extra == present ? "present" : extra == settle ? "settle" : "sparse";
+                        std::fprintf(stderr, "[device-fault] queue %s\n", role);
+                        for (const auto& line : DeviceFaultReport(VK_NULL_HANDLE, nullptr, extra, checkpointData, 0, nullptr, AgcDriver::SubmitBracket{}, AgcDriver::FaultTokenRing::Instance())) std::fprintf(stderr, "%s\n", line.c_str());
                     }
                     if (vendorDump) DumpDeviceFaultVendorBinary(device, faultInfo, DeviceFaultVendorDumpPath());
                 }

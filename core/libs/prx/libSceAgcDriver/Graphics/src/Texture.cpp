@@ -10,6 +10,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -369,6 +370,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
 #endif
 
         const auto guestBytes = geometry.guestBytes;
+        AgcDriver::LiveResourceRing::Instance().Note(descriptor.baseAddress, guestBytes, "texture");
         Require(clear != nullptr ? snapshot.empty() : snapshot.size() == guestBytes, "texture snapshot size mismatch");
         Require(clear == nullptr || (!depthCompare && !srgbExpand && !IsRepackedTextureFormat(descriptor.format) && !IsBlockCompressed(descriptor.format)), "a cleared texture needs a plain color format");
 

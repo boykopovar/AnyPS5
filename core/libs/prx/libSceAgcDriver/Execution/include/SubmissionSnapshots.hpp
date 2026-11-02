@@ -51,10 +51,24 @@ public:
         return &entries[static_cast<std::size_t>(token) % Capacity];
     }
     const FaultTokenEntry* Find(FaultToken token) const noexcept {
-        if (token == 0) return nullptr;
-        const FaultTokenEntry& slot = entries[static_cast<std::size_t>(token) % Capacity];
-        if (std::atomic_ref<FaultToken>(slot.token).load(std::memory_order_acquire) != token) return nullptr;
-        return &slot;
+        try {
+            if (token == 0) return nullptr;
+            const FaultTokenEntry& slot = entries[static_cast<std::size_t>(token) % Capacity];
+            if (std::atomic_ref<FaultToken>(slot.token).load(std::memory_order_acquire) != token) return nullptr;
+            std::uint64_t submitSerial = slot.submitSerial;
+            std::uint64_t programAddress = slot.programAddress;
+            std::uint64_t variantId = slot.variantId;
+            char desc[48];
+            for (std::size_t i = 0; i < 48; ++i) desc[i] = slot.desc[i];
+            if (std::atomic_ref<FaultToken>(slot.token).load(std::memory_order_acquire) != token) return nullptr;
+            static_cast<void>(submitSerial);
+            static_cast<void>(programAddress);
+            static_cast<void>(variantId);
+            static_cast<void>(desc);
+            return &slot;
+        } catch (...) {
+            return nullptr;
+        }
     }
 private:
     std::atomic<FaultToken> next{1};
