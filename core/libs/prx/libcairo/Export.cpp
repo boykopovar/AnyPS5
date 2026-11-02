@@ -20,9 +20,6 @@ int APS5_VABI cairo_set_font_options() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_device_to_user_distance() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_font_face_set_user_data() {
     NotImplemented_nid_no_patch(__func__);
@@ -40,21 +37,12 @@ int APS5_VABI cairo_new_sub_path() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_user_to_device() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI cairo_reference() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_set_antialias() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_rotate() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_image_surface_create_from_png_stream() {
     NotImplemented_nid_no_patch(__func__);
@@ -108,9 +96,6 @@ int APS5_VABI cairo_surface_write_to_png_stream() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_restore() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_pattern_set_extend() {
     NotImplemented_nid_no_patch(__func__);
@@ -144,13 +129,7 @@ int APS5_VABI cairo_rectangle() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_get_matrix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI cairo_user_to_device_distance() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_scaled_font_extents() {
     NotImplemented_nid_no_patch(__func__);
@@ -188,9 +167,6 @@ int APS5_VABI cairo_set_miter_limit() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_translate() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_font_face_destroy() {
     NotImplemented_nid_no_patch(__func__);
@@ -208,9 +184,6 @@ int APS5_VABI cairo_pattern_create_linear() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_destroy() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_clip_extents() {
     NotImplemented_nid_no_patch(__func__);
@@ -228,9 +201,6 @@ int APS5_VABI cairo_fill() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_transform() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_set_line_join() {
     NotImplemented_nid_no_patch(__func__);
@@ -248,13 +218,7 @@ int APS5_VABI cairo_font_options_copy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_identity_matrix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
-int APS5_VABI cairo_save() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_clip() {
     NotImplemented_nid_no_patch(__func__);
@@ -312,9 +276,6 @@ int APS5_VABI cairo_mesh_pattern_end_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_get_target() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_append_path() {
     NotImplemented_nid_no_patch(__func__);
@@ -420,9 +381,6 @@ int APS5_VABI cairo_font_options_create() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_device_to_user() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_font_options_set_antialias() {
     NotImplemented_nid_no_patch(__func__);
@@ -444,9 +402,6 @@ int APS5_VABI cairo_scaled_font_reference() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_set_matrix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_font_face_reference() {
     NotImplemented_nid_no_patch(__func__);
@@ -480,9 +435,6 @@ int APS5_VABI cairo_close_path() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_create() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_get_current_point() {
     NotImplemented_nid_no_patch(__func__);
@@ -492,9 +444,6 @@ int APS5_VABI cairo_move_to() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_scale() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_get_operator() {
     NotImplemented_nid_no_patch(__func__);
