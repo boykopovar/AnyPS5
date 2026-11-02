@@ -114,4 +114,11 @@ public:
     bool isContentEditable = false;
 };
 
+class Download final : public ObjectOf<ObjectType::Download> {
+public:
+    Retained<Object> request;
+    Retained<Object> originatingPage;
+    bool wasUserInitiated = false;
+};
+
 }  // namespace NKWebKit

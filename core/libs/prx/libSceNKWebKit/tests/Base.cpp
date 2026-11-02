@@ -429,6 +429,34 @@ static void TestHitTestResult() {
     WKRelease(ref);
 }
 
+static void TestDownload() {
+    Require(WKDownloadGetTypeID() == 52);
+    auto download = NKWebKit::Make<NKWebKit::Download>();
+    const void* ref = download.Get();
+
+    Require(!WKDownloadGetWasUserInitiated(ref));
+    Require(WKDownloadCopyRequest(ref) == nullptr);
+    Require(WKDownloadGetOriginatingPage(ref) == nullptr);
+
+    download->wasUserInitiated = true;
+    Require(WKDownloadGetWasUserInitiated(ref));
+
+    auto dummyReq = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{1, 2, 3});
+    download->request = std::move(dummyReq);
+    auto* req = WKDownloadCopyRequest(ref);
+    Require(req != nullptr);
+    Require(WKGetTypeID(req) == WKDataGetTypeID());
+    WKRelease(req);
+
+    bool threw = false;
+    try {
+        WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -452,6 +480,37 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestHitTestResult();
+    sUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestCertificateInfo() {
+    Require(WKCertificateInfoGetTypeID() == 0);
+    Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
+    Require(WKCertificateInfoGetVerificationError(nullptr) == 0);
+    Require(WKCertificateInfoCopyVerificationErrorDescription(nullptr) == nullptr);
+    Require(WKCertificateInfoGetCertificateChainSize(nullptr) == 0);
+    Require(WKCertificateInfoCopyCertificateAtIndex(nullptr, 0) == nullptr);
+}
+
+int main() {
+    TestTypeIDs();
+    TestSecurityOrigin();
+    TestRetainRelease();
+    TestStrings();
+    TestURL();
+    TestArray();
+    TestDictionary();
+    TestData();
+    TestNumbers();
+    TestGeometry();
+    TestUserContentURLPattern();
+    TestURLRequestResponse();
+    TestError();
+    TestDownload();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
