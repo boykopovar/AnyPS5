@@ -6,8 +6,24 @@
 
 namespace {
 
-const void* MakeWKString(std::string_view text) {
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(NKWebKit::DecodeUtf8(text.data(), text.size()).value_or(std::u16string())));
+std::string_view TrimWhitespace(std::string_view str) {
+    while (!str.empty() && (static_cast<unsigned char>(str.front()) <= ' ' || str.front() == '\t' || str.front() == '\r' || str.front() == '\n')) {
+        str.remove_prefix(1);
+    }
+    while (!str.empty() && (static_cast<unsigned char>(str.back()) <= ' ' || str.back() == '\t' || str.back() == '\r' || str.back() == '\n')) {
+        str.remove_suffix(1);
+    }
+    return str;
+}
+
+std::string ToLowerAscii(std::string_view text) {
+    std::string result;
+    result.reserve(text.size());
+    for (char c : text) {
+        if (c >= 'A' && c <= 'Z') result.push_back(static_cast<char>(c - 'A' + 'a'));
+        else result.push_back(c);
+    }
+    return result;
 }
 
 std::string_view ExtractScheme(std::string_view url) {
@@ -22,6 +38,60 @@ std::string_view ExtractScheme(std::string_view url) {
         }
     }
     return url.substr(0, colon);
+}
+
+bool IsSpecialScheme(std::string_view scheme) {
+    return scheme == "http" || scheme == "https" || scheme == "file" || scheme == "ws" || scheme == "wss" || scheme == "ftp";
+}
+
+std::string CanonicalizeURL(std::string_view raw) {
+    auto str = TrimWhitespace(raw);
+    const auto rawScheme = ExtractScheme(str);
+    if (rawScheme.empty()) return std::string(str);
+    const std::string scheme = ToLowerAscii(rawScheme);
+    const bool isSpecial = IsSpecialScheme(scheme);
+    std::string rest(str.substr(rawScheme.size() + 1));
+    if (isSpecial) {
+        for (char& c : rest) {
+            if (c == '\\') c = '/';
+        }
+    }
+    if (rest.starts_with("//")) {
+        const std::size_t authStart = 2;
+        auto authEnd = rest.find_first_of("/?#", authStart);
+        if (authEnd == std::string::npos) authEnd = rest.size();
+        std::string authority = rest.substr(authStart, authEnd - authStart);
+        std::string pathAndRest = rest.substr(authEnd);
+        if (pathAndRest.empty() || pathAndRest.front() == '?' || pathAndRest.front() == '#') {
+            pathAndRest = "/" + pathAndRest;
+        }
+        std::string userinfo;
+        std::string hostPart = authority;
+        const auto at = authority.rfind('@');
+        if (at != std::string::npos) {
+            userinfo = authority.substr(0, at);
+            hostPart = authority.substr(at + 1);
+        }
+        std::string host = hostPart;
+        std::string port;
+        if (hostPart.starts_with('[')) {
+            const auto bracket = hostPart.find(']');
+            if (bracket != std::string::npos) {
+                host = hostPart.substr(0, bracket + 1);
+                port = hostPart.substr(bracket + 1);
+            }
+        } else {
+            const auto colon = hostPart.find(':');
+            if (colon != std::string::npos) {
+                host = hostPart.substr(0, colon);
+                port = hostPart.substr(colon);
+            }
+        }
+        host = ToLowerAscii(host);
+        std::string canonAuth = (userinfo.empty() ? "" : userinfo + "@") + host + port;
+        return scheme + "://" + canonAuth + pathAndRest;
+    }
+    return scheme + ":" + rest;
 }
 
 std::string_view ExtractHost(std::string_view url) {
@@ -75,69 +145,95 @@ std::string_view ExtractLastPathComponent(std::string_view path) {
     return path.substr(start, end - start + 1);
 }
 
-std::string ResolveURL(std::string_view base, std::string_view relative) {
-    if (relative.empty()) return std::string(base);
-    const auto relScheme = ExtractScheme(relative);
-    if (!relScheme.empty()) return std::string(relative);
-    if (base.empty()) return std::string(relative);
-    if (relative.starts_with("//")) {
-        const auto baseScheme = ExtractScheme(base);
-        return baseScheme.empty() ? std::string(relative) : std::string(baseScheme) + ":" + std::string(relative);
-    }
-    const auto schemeEnd = base.find("://");
-    if (schemeEnd == std::string_view::npos) {
-        const auto colon = base.find(':');
-        if (colon == std::string_view::npos) return std::string(relative);
-        return std::string(base.substr(0, colon + 1)) + std::string(relative);
-    }
-    const auto authorityEnd = base.find_first_of("/?#", schemeEnd + 3);
-    const std::string origin(base.substr(0, authorityEnd));
-    if (relative.starts_with('/')) return origin + std::string(relative);
-    if (relative.starts_with('?')) {
-        const auto queryStart = base.find_first_of("?#", schemeEnd + 3);
-        const std::string basePath = (queryStart == std::string_view::npos) ? std::string(base) : std::string(base.substr(0, queryStart));
-        return basePath + std::string(relative);
-    }
-    if (relative.starts_with('#')) {
-        const auto hashStart = base.find('#');
-        const std::string baseNoHash = (hashStart == std::string_view::npos) ? std::string(base) : std::string(base.substr(0, hashStart));
-        return baseNoHash + std::string(relative);
-    }
-    std::string basePath;
-    if (authorityEnd == std::string_view::npos) {
-        basePath = "/";
-    } else {
-        const auto queryStart = base.find_first_of("?#", authorityEnd);
-        basePath = std::string(base.substr(authorityEnd, queryStart == std::string_view::npos ? std::string_view::npos : queryStart - authorityEnd));
-        const auto lastSlash = basePath.rfind('/');
-        if (lastSlash != std::string::npos) {
-            basePath = basePath.substr(0, lastSlash + 1);
-        } else {
-            basePath = "/";
-        }
-    }
-    std::string combined = basePath + std::string(relative);
-    std::vector<std::string_view> segments;
+std::string RemoveDotSegments(std::string_view path) {
+    if (path.empty()) return {};
+    const bool hasLeadingSlash = path.starts_with('/');
+    const bool hasTrailingSlash = path.ends_with('/') || path.ends_with("/.") || path.ends_with("/..");
+    std::vector<std::string> segments;
     std::size_t pos = 0;
-    while (pos < combined.size()) {
-        const auto nextSlash = combined.find('/', pos);
-        const auto segment = combined.substr(pos, nextSlash == std::string::npos ? std::string::npos : nextSlash - pos);
-        if (segment == ".") {
+    while (pos < path.size()) {
+        const auto nextSlash = path.find('/', pos);
+        std::string segment(path.substr(pos, nextSlash == std::string::npos ? std::string::npos : nextSlash - pos));
+        if (segment == "." || segment.empty()) {
         } else if (segment == "..") {
-            if (!segments.empty() && segments.back() != "..") segments.pop_back();
-        } else if (!segment.empty() || segments.empty()) {
+            if (!segments.empty() && segments.back() != "..") {
+                segments.pop_back();
+            }
+        } else {
             segments.push_back(segment);
         }
         if (nextSlash == std::string::npos) break;
         pos = nextSlash + 1;
     }
-    std::string normalized;
+    std::string result;
+    if (hasLeadingSlash) result += "/";
     for (std::size_t i = 0; i < segments.size(); ++i) {
-        if (i > 0 || (i == 0 && segments[i].empty())) normalized += "/";
-        normalized += segments[i];
+        if (i > 0) result += "/";
+        result += segments[i];
     }
-    if (combined.ends_with('/') && !normalized.ends_with('/')) normalized += "/";
-    return origin + (normalized.starts_with('/') ? normalized : "/" + normalized);
+    if (hasTrailingSlash && !result.ends_with('/')) result += "/";
+    return result;
+}
+
+std::string ResolveURL(std::string_view baseRaw, std::string_view relRaw) {
+    const std::string base = CanonicalizeURL(baseRaw);
+    std::string rel(TrimWhitespace(relRaw));
+    if (rel.empty()) {
+        const auto hashPos = base.find('#');
+        return (hashPos == std::string::npos) ? base : base.substr(0, hashPos);
+    }
+    const auto relScheme = ExtractScheme(rel);
+    if (!relScheme.empty()) return CanonicalizeURL(rel);
+    if (base.empty()) return CanonicalizeURL(rel);
+    const auto baseScheme = ExtractScheme(base);
+    if (IsSpecialScheme(baseScheme)) {
+        for (char& c : rel) {
+            if (c == '\\') c = '/';
+        }
+    }
+    if (rel.starts_with("//")) {
+        return CanonicalizeURL((baseScheme.empty() ? "" : std::string(baseScheme) + ":") + rel);
+    }
+    const auto schemeEnd = base.find("://");
+    if (schemeEnd == std::string::npos) {
+        const auto colon = base.find(':');
+        if (colon == std::string::npos) return rel;
+        return base.substr(0, colon + 1) + rel;
+    }
+    auto authEnd = base.find_first_of("/?#", schemeEnd + 3);
+    if (authEnd == std::string::npos) authEnd = base.size();
+    const std::string origin = base.substr(0, authEnd);
+    if (rel.starts_with('#')) {
+        const auto hashPos = base.find('#');
+        const std::string baseNoHash = (hashPos == std::string::npos) ? base : base.substr(0, hashPos);
+        return baseNoHash + rel;
+    }
+    std::string basePath = base.substr(authEnd);
+    const auto queryPos = basePath.find('?');
+    if (queryPos != std::string::npos) basePath = basePath.substr(0, queryPos);
+    const auto hashInPath = basePath.find('#');
+    if (hashInPath != std::string::npos) basePath = basePath.substr(0, hashInPath);
+    if (basePath.empty()) basePath = "/";
+    if (rel.starts_with('?')) {
+        return origin + basePath + rel;
+    }
+    const auto qOrH = rel.find_first_of("?#");
+    const std::string relPath = (qOrH == std::string::npos) ? rel : rel.substr(0, qOrH);
+    const std::string relQueryAndFrag = (qOrH == std::string::npos) ? "" : rel.substr(qOrH);
+    std::string normPath;
+    if (relPath.starts_with('/')) {
+        normPath = RemoveDotSegments(relPath);
+    } else {
+        const auto lastSlash = basePath.rfind('/');
+        const std::string baseDir = (lastSlash != std::string::npos) ? basePath.substr(0, lastSlash + 1) : "/";
+        normPath = RemoveDotSegments(baseDir + relPath);
+    }
+    if (!normPath.starts_with('/')) normPath = "/" + normPath;
+    return origin + normPath + relQueryAndFrag;
+}
+
+const void* MakeWKString(std::string_view text) {
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(NKWebKit::DecodeUtf8(text.data(), text.size()).value_or(std::u16string())));
 }
 
 }
@@ -145,12 +241,12 @@ std::string ResolveURL(std::string_view base, std::string_view relative) {
 extern "C" {
 const void* APS5_VABI WKURLCreateWithUTF8CString(const char* string) {
     if (!string) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(""));
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(std::string(string)));
+    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(CanonicalizeURL(string)));
 }
 
 const void* APS5_VABI WKURLCopyString(const void* urlRef) {
     const auto* url = NKWebKit::Cast<NKWebKit::URL>(urlRef, __func__);
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::String>(NKWebKit::DecodeUtf8(url->text.data(), url->text.size()).value_or(std::u16string())));
+    return MakeWKString(url->text);
 }
 
 const void* APS5_VABI WKURLCopyScheme(const void* urlRef) {

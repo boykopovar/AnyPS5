@@ -288,6 +288,52 @@ static void TestURL() {
     WKRelease(s9);
     WKRelease(r9);
 
+    auto* baseOrg = WKURLCreateWithUTF8CString("https://example.org/dir/page");
+    auto* rDotDot = WKURLCreateWithBaseURL(baseOrg, "/a/../b");
+    auto* sDotDot = WKURLCopyString(rDotDot);
+    Require(WKStringIsEqualToUTF8CString(sDotDot, "https://example.org/b"));
+    WKRelease(sDotDot);
+    WKRelease(rDotDot);
+
+    auto* rDot = WKURLCreateWithBaseURL(baseOrg, "/a/./b");
+    auto* sDot = WKURLCopyString(rDot);
+    Require(WKStringIsEqualToUTF8CString(sDot, "https://example.org/a/b"));
+    WKRelease(sDot);
+    WKRelease(rDot);
+    WKRelease(baseOrg);
+
+    auto* baseFrag = WKURLCreateWithUTF8CString("https://example.org/a?q#old");
+    auto* rEmpty = WKURLCreateWithBaseURL(baseFrag, "");
+    auto* sEmpty = WKURLCopyString(rEmpty);
+    Require(WKStringIsEqualToUTF8CString(sEmpty, "https://example.org/a?q"));
+    WKRelease(sEmpty);
+    WKRelease(rEmpty);
+    WKRelease(baseFrag);
+
+    auto* upperUrl = WKURLCreateWithUTF8CString("HTTP://Example.COM/a");
+    auto* upperScheme = WKURLCopyScheme(upperUrl);
+    Require(WKStringIsEqualToUTF8CString(upperScheme, "http"));
+    WKRelease(upperScheme);
+    auto* upperHost = WKURLCopyHostName(upperUrl);
+    Require(WKStringIsEqualToUTF8CString(upperHost, "example.com"));
+    WKRelease(upperHost);
+    auto* upperStr = WKURLCopyString(upperUrl);
+    Require(WKStringIsEqualToUTF8CString(upperStr, "http://example.com/a"));
+    WKRelease(upperStr);
+    WKRelease(upperUrl);
+
+    auto* bslashUrl = WKURLCreateWithUTF8CString("   https://example.com/dir\\file.txt   ");
+    auto* bslashPath = WKURLCopyPath(bslashUrl);
+    Require(WKStringIsEqualToUTF8CString(bslashPath, "/dir/file.txt"));
+    WKRelease(bslashPath);
+    auto* bslashLast = WKURLCopyLastPathComponent(bslashUrl);
+    Require(WKStringIsEqualToUTF8CString(bslashLast, "file.txt"));
+    WKRelease(bslashLast);
+    auto* bslashStr = WKURLCopyString(bslashUrl);
+    Require(WKStringIsEqualToUTF8CString(bslashStr, "https://example.com/dir/file.txt"));
+    WKRelease(bslashStr);
+    WKRelease(bslashUrl);
+
     WKRelease(base);
     WKRelease(u);
 }
