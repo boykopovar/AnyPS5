@@ -2164,7 +2164,7 @@ int main(int argc, char** argv) {
         Block varyingD(BlockBytes);
         StoreWords(varyingD, colorBytes, FillOnes);
         std::memcpy(varyingD.data, &odd, sizeof(odd));
-        RequireRefused(*device, TargetDescriptor(varyingD, SampleShift, Format16161616Float, TileD64KBX), "non-uniform multisampled guest color tiling is not implemented", "loading varying D_X color memory no draw rendered to");
+        RequireRefused(*device, TargetDescriptor(varyingD, SampleShift, 0u, Format16161616Float, TileD64KBX), "non-uniform multisampled guest color tiling is not implemented", "loading varying D_X color memory no draw rendered to");
         std::puts("loads of R_X and Z_X color memory no draw rendered to return each sample's guest color, and varying D_X color memory is refused");
         const auto oneSample = [](std::uint32_t, std::uint32_t, std::uint32_t sample) { return sample == StoredSample; };
         const auto drawnBefore = LoadSamples(*device, block);
