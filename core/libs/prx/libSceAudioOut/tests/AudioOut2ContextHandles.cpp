@@ -185,12 +185,24 @@ void FirmwareExSignatures() {
 
 }
 
+void OversizedGrainIsRefused() {
+    constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
+    AudioOut2ContextParam params{};
+    Require(sceAudioOut2ContextResetParam(&params) == 0, "the context parameters did not reset");
+    constexpr AudioOut2ContextHandle sentinel = 0x6B6B;
+    AudioOut2ContextHandle context = sentinel;
+    params.num_grains = 0xFFFFFFFFu;
+    Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == errorInvalidArgument, "a grain of 4 GiB frames was not refused");
+    Require(context == sentinel, "a refused context creation wrote a handle");
+}
+
 int main() {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_context_handles-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
     FirmwareExSignatures();
+    OversizedGrainIsRefused();
     UncreatedContextIsInvalid();
     DestroyedContextIsInvalid();
     std::filesystem::remove(path);
