@@ -693,6 +693,18 @@ private:
     std::vector<VkPipeline> pipelines;
 };
 
+std::vector<std::uint32_t> SingleSampleFetchShader(std::uint32_t width, std::uint32_t height) {
+    auto code = FetchShader(width, height, 1u, false, true);
+    for (std::size_t word = 5u; word < code.size();) {
+        const auto count = code[word] >> 16u;
+        const auto opcode = code[word] & 0xffffu;
+        if (opcode == spv::OpTypeImage && count > 6u) code[word + 6u] = 0u;
+        if (opcode == spv::OpImageFetch && count > 5u && code[word + 5u] == spv::ImageOperandsSampleMask) code[word + 5u] = spv::ImageOperandsLodMask;
+        word += count != 0u ? count : 1u;
+    }
+    return code;
+}
+
 std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     const auto base = (target.address | target.pipeBankXor) >> 8u;
     const auto metadata = target.htileAddress >> 8u;
@@ -1018,6 +1030,25 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
             RecordMemoryBarrier(context, arrayBatch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
             arrayBatch.SubmitAndWait();
             check(true, offset);
+            const auto firstSample = DepthSurfaceFirstSample(context, words, DecodeTextureResource(words), VkComponentMapping{});
+            Require(firstSample != nullptr && DepthSurfaceFirstSample(context, words, DecodeTextureResource(words), VkComponentMapping{}) == firstSample, "sample 0 of the native depth target was not read into one reused 2D image");
+            recorder.Sync();
+            std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+            {
+                const Fetch firstFetch(context, *firstSample, output, SingleSampleFetchShader(extent.width, extent.height));
+                CommandBatch firstBatch(context);
+                firstFetch.Run(firstBatch.Handle(), extent.width * extent.height);
+                RecordMemoryBarrier(context, firstBatch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                firstBatch.SubmitAndWait();
+            }
+            output.Invalidate();
+            for (std::uint32_t index = 0u; index < extent.width * extent.height; ++index) {
+                std::array<float, 4> result{};
+                std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+                const auto expected = offset + 1.0f / 16.0f;
+                const auto tolerance = format == VK_FORMAT_D16_UNORM ? 1.0f / 65535.0f : 0.0f;
+                Require(std::abs(result[0] - expected) <= tolerance && result[1] == 0.0f && result[2] == 0.0f && result[3] == 1.0f, "a 2D read of the native depth target did not return its sample 0 at pixel " + std::to_string(index) + ": " + std::to_string(result[0]) + ", expected " + std::to_string(expected));
+            }
         }
         if (clearing) {
             for (std::uint32_t iteration = 0u; iteration < 3u; ++iteration) {
