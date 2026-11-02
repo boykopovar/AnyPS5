@@ -374,9 +374,11 @@ static void TestJscAndPal() {
 }
 
 void TestAdditionalWtf();
+void TestURLParsing();
 
 int main() {
     TestAdditionalWtf();
+    TestURLParsing();
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
@@ -970,3 +972,164 @@ void TestURLsAndReallocation() {
 }
 
 }  // namespace Wtf2Tests
+
+void TestURLParsing() {
+    using namespace Wtf2Tests;
+    constexpr auto parse = _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE;
+    struct Case { const char* input; const char* base; const char* expected; };
+    for (const Case& test : {
+        Case{"HTTP://Example.COM", "", "http://example.com/"},
+        Case{"https://user:pass@example.com:443/a/b?x=1#frag", "", "https://user:pass@example.com/a/b?x=1#frag"},
+        Case{"http://u:p:a@host:00081", "", "http://u:p%3Aa@host:81/"},
+        Case{"http://a@b@host/", "", "http://a%40b@host/"},
+        Case{"http://user:@host/", "", "http://user@host/"},
+        Case{"http://a:b@c\\", "", nullptr},
+        Case{"ws://a@b\\c", "", nullptr},
+        Case{"http:/", "http://example.com/", nullptr},
+        Case{"non-special:opaque  ?hi", "", "non-special:opaque  ?hi"},
+        Case{"non-special:opaque  #hi", "", "non-special:opaque  #hi"},
+        Case{"non-special:opaque \t\t  \t#hi", "", "non-special:opaque   #hi"},
+        Case{"non-special:opaque \t\t  #hi", "", "non-special:opaque   #hi"},
+        Case{"non-special:opaque\t\t  \r #hi", "", "non-special:opaque   #hi"},
+        Case{"wss://host/ !\"$%&'()*+,-./:;<=>@[\\]^_`{|}~", "", "wss://host/%20!%22$%&'()*+,-./:;%3C=%3E@[/]^_%60%7B|%7D~"},
+        Case{"http://:@host/", "", "http://host/"},
+        Case{"http://:pass@host/", "", "http://:pass@host/"},
+        Case{"ftp://HOST:21", "", "ftp://host/"},
+        Case{"ws://HOST:80", "", "ws://host/"},
+        Case{"wss://HOST:443", "", "wss://host/"},
+        Case{"http://host:0/", "", "http://host:0/"},
+        Case{"http://host:/", "", "http://host/"},
+        Case{"http://host:65535/", "", "http://host:65535/"},
+        Case{"http://host:65536/", "", nullptr},
+        Case{"http://host:-1/", "", nullptr},
+        Case{"http://host:80a/", "", nullptr},
+        Case{"http://host%2fother/", "", nullptr},
+        Case{"http://bad%zz/", "", nullptr},
+        Case{"http://%FF/", "", nullptr},
+        Case{"http://%65xample.com/", "", "http://example.com/"},
+        Case{"http://[::]/", "", "http://[::]/"},
+        Case{"http://[0:0:0:0:0:0:0:1]/", "", "http://[::1]/"},
+        Case{"ws://[2001:0DB8:0:0:1:0:0:1]:8080/a?b#c", "", "ws://[2001:db8::1:0:0:1]:8080/a?b#c"},
+        Case{"https://u:p@[2001:db8::1]:443/", "", "https://u:p@[2001:db8::1]/"},
+        Case{"http://[1:2:3:4:5:6:7:8]/", "", "http://[1:2:3:4:5:6:7:8]/"},
+        Case{"http://[1:2:3:4:0:6:7:8]/", "", "http://[1:2:3:4:0:6:7:8]/"},
+        Case{"ftp://[1:2:3:4:5:6:0:0]:21", "", "ftp://[1:2:3:4:5:6::]/"},
+        Case{"http://[::ffff:192.0.2.128]/", "", "http://[::ffff:c000:280]/"},
+        Case{"http://[1:2:3:4:5:6:192.0.2.1]/", "", "http://[1:2:3:4:5:6:c000:201]/"},
+        Case{"http://[::192.0.2.1]:65535/", "", "http://[::c000:201]:65535/"},
+        Case{"http://[1::2:]/", "", "http://[1::2]/"},
+        Case{"../c", "http://[::1]:81/a/b", "http://[::1]:81/c"},
+        Case{"//[::2]:80", "http://[::1]/", "http://[::2]/"},
+        Case{"http://[]/", "", nullptr},
+        Case{"http://[1]/", "", nullptr},
+        Case{"http://[:::]/", "", nullptr},
+        Case{"http://[1::2::3]/", "", nullptr},
+        Case{"http://[:1:2:3:4:5:6:7]/", "", nullptr},
+        Case{"http://[1:2:3:4:5:6:7:]/", "", nullptr},
+        Case{"http://[1:2:3:4:5:6:7:8:]/", "", nullptr},
+        Case{"http://[1:2:3:4:5:6:7:8:9]/", "", nullptr},
+        Case{"http://[1:2:3:4:5:6:7::8]/", "", nullptr},
+        Case{"http://[12345::]/", "", nullptr},
+        Case{"http://[gg::]/", "", nullptr},
+        Case{"http://[fe80::1%25eth0]/", "", nullptr},
+        Case{"http://[::ffff:192.00.2.1]/", "", nullptr},
+        Case{"http://[::ffff:256.0.2.1]/", "", nullptr},
+        Case{"http://[::ffff:192.2.1]/", "", nullptr},
+        Case{"http://[::ffff:192.0.2.1.3]/", "", nullptr},
+        Case{"http://[::ffff:0x7f.0.0.1]/", "", nullptr},
+        Case{"http://[::ffff:192.0.2.1:]/", "", nullptr},
+        Case{"http://[1:2:3:4::192.0.2.1]/", "", nullptr},
+        Case{"http://[::1", "", nullptr},
+        Case{"http://[::1]extra/", "", nullptr},
+        Case{"http://[::1]:65536/", "", nullptr},
+        Case{"http://[::1]:x/", "", nullptr},
+        Case{"http://[::1]]/", "", nullptr},
+        Case{"http://127.1/", "", "http://127.0.0.1/"},
+        Case{"http://0x7f.01/", "", "http://127.0.0.1/"},
+        Case{"http://2130706433/", "", "http://127.0.0.1/"},
+        Case{"http://0177.0.0.1./", "", "http://127.0.0.1/"},
+        Case{"http://0x/", "", "http://0.0.0.0/"},
+        Case{"http://09/", "", nullptr},
+        Case{"http://256.1/", "", nullptr},
+        Case{"http://4294967296/", "", nullptr},
+        Case{"http://host.1/", "", nullptr},
+        Case{"http://host.1a/", "", "http://host.1a/"},
+        Case{"http://host/a/./b/../c/%2e%2E/d", "", "http://host/a/d"},
+        Case{"http://host/a//../b/.", "", "http://host/a/b/"},
+        Case{"http://host/../../a", "", "http://host/a"},
+        Case{"http:example.com", "", "http://example.com/"},
+        Case{"http:///example.com/a", "", "http://example.com/a"},
+        Case{"  http://ex\tample.com/a\nb\r  ", "", "http://example.com/ab"},
+        Case{"http://host/a b?x='<>#x y`", "", "http://host/a%20b?x=%27%3C%3E#x%20y%60"},
+        Case{"http://host/é?é#é", "", "http://host/%C3%A9?%C3%A9#%C3%A9"},
+        Case{"../c?new#f", "https://host/a/b?old#gone", "https://host/c?new#f"},
+        Case{"?new", "https://host/a/b?old#gone", "https://host/a/b?new"},
+        Case{"#new", "https://host/a/b?old#gone", "https://host/a/b?old#new"},
+        Case{"", "https://host/a/b?old#gone", "https://host/a/b?old"},
+        Case{"/new", "https://u:p@host:8443/a/b", "https://u:p@host:8443/new"},
+        Case{"//other:443", "https://host/a/b", "https://other/"},
+        Case{"https:next", "https://host/a/b", "https://host/a/next"},
+        Case{"https:", "https://host/a/b?x#y", "https://host/a/b?x"},
+        Case{"next", "", nullptr},
+        Case{"http://", "", nullptr},
+        Case{"about:blank", "", "about:blank"},
+        Case{"data:text/plain,hello world?x#y", "", "data:text/plain,hello world?x#y"},
+        Case{"#new", "about:blank?x#old", "about:blank?x#new"},
+        Case{"next", "about:blank", nullptr}
+    }) {
+        URL noBase{};
+        URL base{};
+        auto baseText = FromUTF8Z(U8(test.base));
+        parse(&base, &noBase, &baseText, nullptr);
+        String baseOwner(base.impl);
+        auto input = FromUTF8Z(U8(test.input));
+        URL result{};
+        parse(&result, &base, &input, nullptr);
+        String owner(result.impl);
+        if (!test.expected) {
+            Check(result.bits == 0 && owner.impl == input.impl);
+            Check(!result.userStart && !result.hostEnd && !result.queryEnd);
+            continue;
+        }
+        if (Bytes(UTF8(&owner, 1)) != test.expected) std::fprintf(stderr, "URL input %s expected %s got %s\n", test.input, test.expected, Bytes(UTF8(&owner, 1)).c_str());
+        Text(owner, test.expected);
+        Check(result.bits & 1);
+        const std::string href = test.expected;
+        const auto scheme = href.find(':');
+        Check((result.bits >> 6) == scheme);
+        Check(ViewText(URLProtocol(&result)) == href.substr(0, scheme));
+        const auto bracket = href.find('[');
+        if (bracket != std::string::npos && href[scheme + 1] == '/' && bracket < href.find('/', scheme + 3))
+            Check(ViewText(URLHost(&result)) == href.substr(bracket, href.find(']', bracket) - bracket + 1));
+        const auto pathStart = result.hostEnd + ((result.bits >> 3) & 7);
+        Check(ViewText(URLPath(&result)) == href.substr(pathStart, result.pathEnd - pathStart));
+        Check(ViewText(URLQuery(&result)) == href.substr(result.pathEnd, result.queryEnd - result.pathEnd));
+        Check(ViewText(URLFragmentSign(&result)) == href.substr(result.queryEnd));
+        Check(result.pathAfterLastSlash <= result.pathEnd);
+    }
+    URL noBase{};
+    auto input = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    URL value{};
+    parse(&value, &noBase, &input, nullptr);
+    String owner(value.impl);
+    Check(value.impl == input.impl);
+    Check(value.userStart == 8 && value.userEnd == 12 && value.passwordEnd == 17 && value.hostEnd == 30);
+    Check(value.pathAfterLastSlash == 38 && value.pathEnd == 39 && value.queryEnd == 43);
+    Check(ViewText(URLHost(&value)) == "example.test" && ViewText(URLUser(&value)) == "u%20" && ViewText(URLPassword(&value)) == "p%40");
+    String nullInput;
+    URL nullResult{};
+    parse(&nullResult, &value, &nullInput, nullptr);
+    String nullOwner(nullResult.impl);
+    Text(nullOwner, "https://u%20:p%40@example.test:8443/a/b?q=1");
+    const char16_t unpaired[]{u'h',u't',u't',u'p',u':',u'/',u'/',u'h',u'/',0xD800};
+    auto wide = Create16(unpaired, 10);
+    URL wideResult{};
+    parse(&wideResult, &noBase, &wide, nullptr);
+    String wideOwner(wideResult.impl);
+    Text(wideOwner, "http://h/%EF%BF%BD");
+    auto trailing = FromUTF8Z(U8("http://h/#x "));
+    URL sentinel{};
+    parse(&sentinel, &noBase, &trailing, reinterpret_cast<const void*>(std::uintptr_t(-1)));
+    String sentinelOwner(sentinel.impl);
+    Text(sentinelOwner, "http://h/#x%20");
+}
