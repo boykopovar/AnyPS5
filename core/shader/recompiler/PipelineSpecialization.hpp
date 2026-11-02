@@ -33,6 +33,8 @@ inline constexpr std::uint32_t RasterPrimitive = 8233u;
 inline constexpr std::uint32_t LayerExported = 8234u;
 inline constexpr std::uint32_t StencilReferenceOffset = 8235u;
 inline constexpr std::uint32_t ReversedBlend = 8236u;
+inline constexpr std::uint32_t MeshLayerBase = 8237u;
+inline constexpr std::uint32_t MeshLayerCount = 8238u;
 inline constexpr std::uint32_t DepthRemapBase = 8240u;
 inline constexpr std::uint32_t DepthRemapWords = 1u;
 inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
@@ -46,6 +48,7 @@ inline constexpr std::uint32_t DescriptorIndexStride = 128u;
 inline constexpr std::uint32_t FoldOffsetBase = 57344u;
 inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
 inline constexpr std::uint32_t FmaskFormatBase = 57472u;
+inline constexpr std::uint32_t MirrorUnnormalizedBase = 57536u;
 inline constexpr std::uint32_t SamplerLodBiasBase = 57600u;
 inline constexpr float SamplerLodBiasShaderThreshold = 15.0f;
 

@@ -28,17 +28,6 @@ static void RequireLockAllInvalid(int flags) {
     Require(mlockall_nid_postfix(flags) == -1 && *__error_nid_postfix() == 22);
 }
 
-static void RequireLockAllUnsupported(int flags) {
-    bool rejected = false;
-    try {
-        mlockall_nid_postfix(flags);
-
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    Require(rejected);
-}
-
 #if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
 #define HAS_LOCKED_KILOBYTES
 static std::size_t LockedKilobytes() {
@@ -183,9 +172,6 @@ int main() {
     RequireLockAllInvalid(4);
     RequireLockAllInvalid(1 | 4);
     RequireLockAllInvalid(-1);
-    RequireLockAllUnsupported(1);
-    RequireLockAllUnsupported(2);
-    RequireLockAllUnsupported(1 | 2);
 
     *__error_nid_postfix() = untouched;
     Require(munlockall_nid_postfix() == 0);

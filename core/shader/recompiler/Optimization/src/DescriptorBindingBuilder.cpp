@@ -212,10 +212,11 @@ struct UnnormalizedProof {
     std::vector<bool> images;
     std::vector<bool> imagesAtBaseLevel;
     std::vector<bool> samplersIgnoreCoordinates;
+    std::vector<std::uint32_t> mirroredAxes;
 };
 
 UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
-    UnnormalizedProof proof{std::vector<bool>(info.samplers.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.samplers.size())};
+    UnnormalizedProof proof{std::vector<bool>(info.samplers.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.images.size()), std::vector<bool>(info.samplers.size()), std::vector<std::uint32_t>(info.samplers.size())};
     for (std::uint32_t r = 0; r < info.samplers.size(); r++) {
         if (snapshot.samplers.at(r).dwordCount != 4u) fail("sampler descriptor must contain four dwords");
         const auto& sampler = info.samplers[r];
@@ -271,6 +272,9 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
         }
         if (nullMismatch != nullptr) failUnnormalized(nullMismatch);
         proof.samplers[r] = true;
+        const auto clampX = snapshot.samplers[r].dwords[0] & 7u;
+        const auto clampY = (snapshot.samplers[r].dwords[0] >> 3u) & 7u;
+        proof.mirroredAxes[r] = (clampX == 1u || clampX == 3u ? 1u : 0u) | (clampY == 1u || clampY == 3u ? 2u : 0u);
     }
     for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
         bool exact = proof.images[resource];
@@ -351,6 +355,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
         if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
         if (SamplesBaseLevelIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::UnnormalizedBaseLevelBase + index, unnormalized.samplers[index] ? 1u : 0u});
+        if (MirrorsIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::MirrorUnnormalizedBase + index, unnormalized.mirroredAxes[index]});
         if (info.samplers[index].table != NoTable) continue;
         const auto bias = unnormalized.samplers[index] ? 0.0f : static_cast<float>(static_cast<std::int32_t>((snapshot.samplers.at(index).dwords[2] & 0x3fffu) ^ 0x2000u) - 0x2000) / 256.0f;
         const bool beyondThreshold = bias < -PipelineSpecialization::SamplerLodBiasShaderThreshold || bias > PipelineSpecialization::SamplerLodBiasShaderThreshold;
