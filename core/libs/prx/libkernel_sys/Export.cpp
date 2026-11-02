@@ -1167,23 +1167,23 @@ int APS5_VABI scePthreadCondattrGetclock(const PthreadCondattr* attr, KernelCloc
 int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const char* to) {
     std::string fromCopy, toCopy;
     if (const int error = CopyPath(from, fromCopy)) return static_cast<int>(Fail(error));
-    if ((oldfd == GuestAtFdcwd || *from == '/') && newfd == GuestAtFdcwd)
-        return RenameGuestPath_nid_no_patch(from, to);
-    if (std::strlen(from) >= GuestPathMax || HasLongComponent(from))
+    if ((oldfd == GuestAtFdcwd || fromCopy[0] == '/') && newfd == GuestAtFdcwd)
+        return RenameGuestPath_nid_no_patch(fromCopy.c_str(), to);
+    if (fromCopy.size() >= GuestPathMax || HasLongComponent(fromCopy.c_str()))
         return static_cast<int>(Fail(GuestEnametoolong));
-    if (IsDotOrDotDot(from)) return static_cast<int>(Fail(GuestEinval));
+    if (IsDotOrDotDot(fromCopy.c_str())) return static_cast<int>(Fail(GuestEinval));
 
     std::filesystem::path source;
-    if (oldfd == GuestAtFdcwd || *from == '/') {
-        if (const int error = ResolvePathError_nid_no_patch(from, source)) return static_cast<int>(Fail(error));
+    if (oldfd == GuestAtFdcwd || fromCopy[0] == '/') {
+        if (const int error = ResolvePathError_nid_no_patch(fromCopy.c_str(), source)) return static_cast<int>(Fail(error));
     } else {
         int error = 0;
         const char* base = GetDirectoryDescriptorPath_nid_no_patch(oldfd, &error);
         if (base == nullptr) return static_cast<int>(Fail(error));
         source = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                 std::filesystem::path(reinterpret_cast<const char8_t*>(from));
+                 std::filesystem::path(reinterpret_cast<const char8_t*>(fromCopy.c_str()));
     }
-    const std::string_view fromView(from);
+    const std::string_view fromView(fromCopy);
     const bool oldTrailingSlash = !fromView.empty() && fromView.back() == '/';
     while (!source.has_filename() && source.has_relative_path()) source = source.parent_path();
     std::error_code statusError;
@@ -1195,21 +1195,21 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
     if (oldTrailingSlash && !std::filesystem::is_directory(sourceStatus)) return static_cast<int>(Fail(GuestEnotdir));
 
     if (const int error = CopyPath(to, toCopy)) return static_cast<int>(Fail(error));
-    if (std::strlen(to) >= GuestPathMax || HasLongComponent(to)) return static_cast<int>(Fail(GuestEnametoolong));
-    if (IsDotOrDotDot(to)) return static_cast<int>(Fail(GuestEinval));
+    if (toCopy.size() >= GuestPathMax || HasLongComponent(toCopy.c_str())) return static_cast<int>(Fail(GuestEnametoolong));
+    if (IsDotOrDotDot(toCopy.c_str())) return static_cast<int>(Fail(GuestEinval));
 
     std::filesystem::path destination;
-    if (newfd == GuestAtFdcwd || *to == '/') {
-        if (const int error = ResolvePathError_nid_no_patch(to, destination)) return static_cast<int>(Fail(error));
+    if (newfd == GuestAtFdcwd || toCopy[0] == '/') {
+        if (const int error = ResolvePathError_nid_no_patch(toCopy.c_str(), destination)) return static_cast<int>(Fail(error));
     } else {
         int error = 0;
         const char* base = GetDirectoryDescriptorPath_nid_no_patch(newfd, &error);
         if (base == nullptr) return static_cast<int>(Fail(error));
         destination = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                      std::filesystem::path(reinterpret_cast<const char8_t*>(to));
+                      std::filesystem::path(reinterpret_cast<const char8_t*>(toCopy.c_str()));
     }
 
-    const std::string_view toView(to);
+    const std::string_view toView(toCopy);
     const bool newTrailingSlash = !toView.empty() && toView.back() == '/';
 
     while (!destination.has_filename() && destination.has_relative_path()) destination = destination.parent_path();
