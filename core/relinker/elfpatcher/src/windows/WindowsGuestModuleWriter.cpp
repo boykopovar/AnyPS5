@@ -29,6 +29,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             const auto symbolIndex = info >> 32;
             const auto& symbol = guest.Symbols.at(symbolIndex);
             const auto rva = image.GetRva(target, 8);
+            image.RecordRelocation(target);
             for (const auto& header : guest.Headers) {
                 if (header.Type != 7 || header.FileSize == 0) continue;
                 const auto templateRva = image.GetRva(header.MappedAddress, header.FileSize);
@@ -89,6 +90,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(guest.SourcePath);
         throw;
     }
+    runtime.RequiresGuestGsRuntime = std::any_of(sections.begin(), sections.end(), [](const auto& section) { return section.Name == ".ggs"; });
     WindowsTrampolineBuilder().Build(guest.Trampolines, image, sections, nextRva);
     for (const auto& [target, rva] : tlsModules) {
         if (tlsIndex == 0) throw Domain::RelinkerException("Guest TLS relocation has no TLS block", target);

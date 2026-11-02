@@ -88,6 +88,10 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     directories[12] = nativeImports.AddressTable;
     nextRva = AlignRva(nextRva + nativeImports.Section.Data.size());
     auto libraries = importBuilder.ReadLibraries(dynamicSection);
+    const bool requiresGuestGsRuntime = std::any_of(sections.begin(), sections.end(), [](const auto& section) { return section.Name == ".ggs"; }) ||
+        std::any_of(dynamicSection.GuestModules.begin(), dynamicSection.GuestModules.end(), [](const auto& module) { return module.RequiresGuestGsRuntime; });
+    if (requiresGuestGsRuntime && std::find(libraries.begin(), libraries.end(), "libc.prx") == libraries.end())
+        libraries.emplace_back("libc.prx");
     std::vector<std::string> guestPaths;
     for (std::size_t index = 0; index < dynamicSection.GuestModules.size(); ++index) {
         const auto& module = dynamicSection.GuestModules[index];
@@ -102,7 +106,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     if (dependencyDiagnostics)
         for (const auto& import : relocations.Imports) diagnostics += import.Name + '\n';
     report(8500);
-    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports);
+    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports, requiresGuestGsRuntime);
     report(9000);
     directories[3] = entry.ExceptionDirectory;
     const auto entryRva = entry.Code.Rva;

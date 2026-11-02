@@ -30,6 +30,7 @@ struct GuestRuntime {
     std::vector<std::string> UnmatchedImportModules;
     std::set<std::string> ZeroReturnExports;
     bool DeferInitialization = false;
+    bool RequiresGuestGsRuntime = false;
 };
 
 }
