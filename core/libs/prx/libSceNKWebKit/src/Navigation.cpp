@@ -1,4 +1,4 @@
-#include "prx/libSceNKWebKit/src/Configuration.hpp"
+#include "prx/libSceNKWebKit/src/Types.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 
 extern "C" {

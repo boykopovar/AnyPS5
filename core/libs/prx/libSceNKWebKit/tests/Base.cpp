@@ -352,8 +352,8 @@ static void TestError() {
 }
 
 static void TestNavigation() {
-    Require(WKNavigationActionGetTypeID() == 86);
-    Require(WKNavigationResponseGetTypeID() == 88);
+    Require(WKNavigationActionGetTypeID() == 73);
+    Require(WKNavigationResponseGetTypeID() == 75);
 
     auto action = NKWebKit::Make<NKWebKit::NavigationAction>();
     const void* actionRef = NKWebKit::ToRef(action);

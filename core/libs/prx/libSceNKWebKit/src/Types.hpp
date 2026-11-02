@@ -101,4 +101,14 @@ public:
     bool valid = false;
 };
 
+class NavigationAction final : public ObjectOf<ObjectType::NavigationAction> {
+public:
+    bool shouldPerformDownload = false;
+};
+
+class NavigationResponse final : public ObjectOf<ObjectType::NavigationResponse> {
+public:
+    bool canShowMIMEType = false;
+};
+
 }  // namespace NKWebKit
