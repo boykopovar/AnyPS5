@@ -167,6 +167,13 @@ int main() {
     std::array<void*, 4> notHandle{};
     Require(sceJpegDecDecodeWithInputControl(notHandle.data(), &parse, &info) == invalidHandle);
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, nullptr, &info) == invalidAddr);
+    JpegHandle invalidPointerDecoder(96);
+    Source dummySource{jpeg, 100};
+    JpegDecInputControlParam dummyParse = StreamParam(0x10, dummySource);
+    Require(sceJpegDecDecodeWithInputControl(reinterpret_cast<void*>(0x20), &dummyParse, &info) == invalidHandle);
+    Require(sceJpegDecDecodeWithInputControl(invalidPointerDecoder.handle, reinterpret_cast<const JpegDecInputControlParam*>(0x10), &info) == invalidAddr);
+    Require(sceJpegDecDecodeWithInputControl(invalidPointerDecoder.handle, &dummyParse, reinterpret_cast<JpegDecImageInfo*>(0x10)) == invalidAddr);
+    Require(sceJpegDecDelete(invalidPointerDecoder.handle) == 0);
     JpegDecInputControlParam noInput = parse;
     noInput.input = nullptr;
     noInput.operation = 0x30;
