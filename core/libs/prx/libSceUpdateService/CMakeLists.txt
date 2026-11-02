@@ -1,0 +1,16 @@
+add_library(libSceUpdateService SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_link_libraries(libSceUpdateService PRIVATE libkernel libc)
+target_include_directories(libSceUpdateService PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceUpdateService)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_updateservice_unimplemented_tests ${LIBS_INCLUDE_DIR}/tests/GuestUpdateService.cpp)
+    target_include_directories(guest_updateservice_unimplemented_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_updateservice_unimplemented_tests PRIVATE libSceUpdateService libc)
+    configure_windows_unwind(guest_updateservice_unimplemented_tests)
+    add_test(NAME guest_updateservice_unimplemented COMMAND guest_updateservice_unimplemented_tests)
+    if(WIN32)
+        set_tests_properties(guest_updateservice_unimplemented PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUpdateService>")
+    endif()
+endif()
