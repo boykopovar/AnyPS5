@@ -2,10 +2,12 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_GUESTMEMORY_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <utility>
@@ -73,6 +75,31 @@ void SetFreshCollectHook(FreshCollectHook hook);
 #endif
 bool Watched(std::uint64_t address, std::size_t bytes);
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes);
+struct WriteSubscription;
+bool WriteIndexEnabled();
+std::shared_ptr<WriteSubscription> SubscribeWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+std::uint64_t SubscriptionGeneration(const WriteSubscription& subscription);
+std::span<const std::pair<std::uint64_t, std::uint64_t>> SubscriptionSpans(const WriteSubscription& subscription);
+bool SweepSubscription(const WriteSubscription& subscription);
+bool SubscriptionBumpsSince(const WriteSubscription& subscription, std::uint64_t generation, std::vector<std::uint64_t>& blocks, std::vector<std::uint64_t>& lookupBlocks);
+void TrimSubscriptionBumps(WriteSubscription& subscription, std::uint64_t generation);
+std::uint64_t WriteBlockOf(std::uint64_t address);
+void NoteGpuPending(std::uint64_t address, std::size_t bytes);
+void NoteTextureReleased(std::uint64_t address);
+enum class WriteBumpSource : std::uint8_t { Cpu, Driver, Pending, Unwatch, Forget, Release, Import, Count };
+struct WriteIndexStats {
+    std::uint64_t subscriptions = 0;
+    std::uint64_t blocks = 0;
+    std::uint64_t bumps = 0;
+    std::uint64_t lookups = 0;
+    std::uint64_t sweeps = 0;
+    std::uint64_t sweepFailures = 0;
+    std::uint64_t overflows = 0;
+    std::uint64_t lookupNanoseconds = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(WriteBumpSource::Count)> bySource{};
+};
+WriteIndexStats WriteIndexCounted();
+void ResetWriteIndexCounts();
 bool UnchangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // UnchangedSince for several ranges under one tracker lock: true only when every one holds.
 struct UnchangedQuery {
