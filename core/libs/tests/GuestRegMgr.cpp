@@ -78,8 +78,12 @@ int main() {
     Require(sceRegMgrSetBin(0x2000, data, sizeof(data)) == static_cast<int>(0x80820006));
     Require(sceRegMgrSetStr(0x2003, nullptr, 5) == static_cast<int>(0x80820001));
     Require(sceRegMgrSetBin(0x2003, nullptr, 5) == static_cast<int>(0x80820001));
-    Require(ReportsNotImplemented("sceRegMgrSetStr", [&] { sceRegMgrSetStr(0x2003, "x", 0); }));
-    Require(ReportsNotImplemented("sceRegMgrSetBin", [&] { sceRegMgrSetBin(0x2003, data, 0); }));
+    Require(sceRegMgrSetInt(static_cast<int32_t>(0xC0808000u), 5) == 0);
+    intVal = 0;
+    Require(sceRegMgrGetInt(3229646848, &intVal) == 0 && intVal == 5);
+    Require(sceRegMgrSetStr(static_cast<int32_t>(0xC0808001u), "hi", 3) == 0);
+    std::memset(strBuf, 0, sizeof(strBuf));
+    Require(sceRegMgrGetStr(3229646849, strBuf, sizeof(strBuf)) == 0 && std::strcmp(strBuf, "hi") == 0);
 
     return 0;
 }

@@ -135,11 +135,11 @@ int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::siz
     return gStore.setBin(optionId, data, size);
 }
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt) {
-    return gStore.setInt(optionId, inInt);
+    return gStore.setInt(static_cast<std::uint32_t>(optionId), inInt);
 }
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength) {
     if (stringLength == 0) NotImplemented_nid_no_patch(__func__);
-    return gStore.setStr(optionId, inStirng, stringLength);
+    return gStore.setStr(static_cast<std::uint32_t>(optionId), inStirng, stringLength);
 }
 std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t unk, std::int32_t* data) {
     (void)key;
