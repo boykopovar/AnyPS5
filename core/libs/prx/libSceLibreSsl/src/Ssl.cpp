@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
@@ -15,6 +16,7 @@ static_assert(offsetof(LibreSslSsl, wbio) == 24);
 static_assert(offsetof(LibreSslSsl, param) == 64);
 static_assert(offsetof(LibreSslSsl, session) == 128);
 static_assert(offsetof(LibreSslSsl, ctx) == 152);
+static_assert(offsetof(LibreSslSsl, tlsextHostname) == 184);
 static_assert(offsetof(LibreSslSsl, verifyResult) == 160);
 static_assert(offsetof(LibreSslSsl, internal) == 224);
 static_assert(offsetof(LibreSslSslInternal, options) == 8);
@@ -40,6 +42,9 @@ static_assert(offsetof(LibreSslSsl, encReadCtx) == 208);
 static_assert(offsetof(LibreSslSsl, readHash) == 216);
 
 namespace {
+
+constexpr int TlsextNametypeHostName = 0;
+constexpr std::size_t SessionTlsextHostnameOffset = 192;
 
 const LibreSslSsl& Connection(const LibreSslSsl* ssl, const char* function) {
     if (!ssl) throw std::invalid_argument(std::string(function) + ": null connection");
@@ -257,6 +262,17 @@ void* APS5_VABI SSL_get_ex_data_nid_postfix(const LibreSslSsl* ssl, int index) {
     const auto* const data = static_cast<const LibreSslStack*>(Internal(ssl, __func__).exData.stack);
     if (!data || index >= sk_num_nid_postfix(data)) return nullptr;
     return sk_value_nid_postfix(data, index);
+}
+
+const char* APS5_VABI SSL_get_servername_nid_postfix(const LibreSslSsl* ssl, int type) {
+    if (type != TlsextNametypeHostName) return nullptr;
+    const LibreSslSsl& connection = Connection(ssl, __func__);
+    if (connection.session && !connection.tlsextHostname) {
+        const char* hostname;
+        std::memcpy(&hostname, static_cast<const unsigned char*>(connection.session) + SessionTlsextHostnameOffset, sizeof(hostname));
+        return hostname;
+    }
+    return connection.tlsextHostname;
 }
 
 }
