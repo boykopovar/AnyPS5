@@ -11,17 +11,7 @@ int APS5_VABI _ZN3sce2np10CancelableC2Ev(void) {
     return 0;
 }
 
-int APS5_VABI sceNpUtilXmlEscape(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np4CondD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _sceNpAllocatorExRealloc(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -211,17 +201,7 @@ int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTyp
     return 0;
 }
 
-int APS5_VABI sceNpUtilParseJid(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpUtilXmlUnescape(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -407,11 +387,6 @@ int APS5_VABI _ZN3sce2np6Handle4InitEv(void) {
 }
 
 int APS5_VABI _ZThn16_N3sce2np10MemoryFileD1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _sceNpAllocatorExFree(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
