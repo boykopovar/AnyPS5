@@ -7399,7 +7399,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTUAAAA=", "new requests did not use serialization version 53");
+    require(requestPrefix(encoded, 8u) == "NVNQQTcAAAA=", "new requests did not use serialization version 55");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -7520,7 +7520,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTYAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTgAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -7639,9 +7639,9 @@ void verifyDepthExportClamp() {
         const auto both = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(tail));
         require(both.request.target.largePixelFunctionLdsBuffer && both.request.target.pixelFunctionStorageDwords == 2048u &&
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
-            "depth export: a version 53 request lost the bounds or the version 45 target tail");
+            "depth export: a version 55 request lost the bounds or the version 45 target tail");
         auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 53u, "depth export: a depth exporting request did not use serialization version 53");
+        require(bytes.size() > 8u && bytes[4] == 55u, "depth export: a depth exporting request did not use serialization version 55");
         static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
         const auto found = std::search(bytes.begin(), bytes.end(), boundBytes.begin(), boundBytes.end());
         require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
@@ -7669,7 +7669,7 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
             auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 53u, "a two-sample dithered request did not use serialization version 53");
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 55u, "a two-sample dithered request did not use serialization version 55");
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
                 require(bounds != ditheredBytes.end(), "a two-sample dithered depth exporting request lacks the clamp bounds");
@@ -8069,7 +8069,7 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 57u + pointTailBytes && legacy[4] == 53u, "a merged hull request did not use serialization version 53");
+    require(legacy.size() > 57u + pointTailBytes && legacy[4] == 55u, "a merged hull request did not use serialization version 55");
     legacy.resize(legacy.size() - sizeof(std::uint32_t) - 4u - pointTailBytes - 12u);
     legacy.pop_back();
     legacy.pop_back();
