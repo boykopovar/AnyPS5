@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -7596,6 +7597,15 @@ void sampledTextureBudgetTests() {
     Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
 }
 
+void publishReasonTests() {
+    using AgcDriver::Graphics::PublishReason;
+    using AgcDriver::Graphics::PublishReasonFor;
+    Require(PublishReasonFor("memory access") == PublishReason::Hook, "a CPU memory access is not counted as a hook publish");
+    Require(PublishReasonFor("storage refresh") == PublishReason::Upload, "a storage refresh is not counted as an upload publish");
+    Require(PublishReasonFor("cache eviction") == PublishReason::Other, "a flush reason the classifier does not list is counted as a hook publish");
+    Require(PublishReasonFor(nullptr) == PublishReason::Other, "a flush without a reason is counted as a hook publish");
+}
+
 void storageTextureBudgetTests() {
     using AgcDriver::Graphics::StorageTextureBudget;
     constexpr std::uint64_t GiB = 1ull << 30u;
@@ -13353,6 +13363,7 @@ int main(int argc, char** argv) {
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();
+        publishReasonTests();
         sampledBudgetReportTests();
         meshArgumentTests();
         meshLimitTests();
