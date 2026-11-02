@@ -23,16 +23,6 @@ static bool RejectsNull(TResult (APS5_VABI *accessor)(const KernelEvent*)) {
     return false;
 }
 
-static bool RejectsWideFflags(const KernelEvent* ev) {
-    try {
-        sceKernelGetEventError(ev);
-
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 static void SleepAtLeast(std::chrono::steady_clock::duration duration) {
     const auto start = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() - start < duration) {
@@ -230,6 +220,103 @@ static void VerifyRepeatedAmprCompletionsAreNotLost() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyUndrainedTriggersStayBounded() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "pending-bound") == SCE_OK);
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    int udata = 0;
+    auto data = [](std::uintptr_t value) { return reinterpret_cast<void*>(value); };
+    Require(sceKernelAddAmprEvent(eq, 9, &udata) == SCE_OK);
+    constexpr int kFlood = 100000;
+    for (int i = 1; i <= kFlood; ++i) {
+        Require(EqueueTriggerEvent_nid_postfix(eq, 9, EVFILT_AMPR, data(static_cast<std::uintptr_t>(i))) == SCE_OK);
+    }
+    const int kBound = static_cast<int>(1 + KernelEqueuePrivate::kMaxPendingEvents);
+    int total = 0;
+    intptr_t last = 0;
+    for (;;) {
+        const int rc = sceKernelWaitEqueue(eq, events, 4, &count, &poll);
+        if (rc == SCE_KERNEL_ERROR_ETIMEDOUT) {
+            break;
+        }
+        Require(rc == SCE_OK);
+        for (int i = 0; i < count; ++i) {
+            ++total;
+            last = sceKernelGetEventData(&events[i]);
+        }
+        Require(total <= kBound);
+    }
+    Require(total == kBound);
+    Require(last == kFlood);
+    Require(sceKernelDeleteAmprEvent(eq, 9) == SCE_OK);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
+static void VerifyAddEventTruncatesPending() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "add-bound") == SCE_OK);
+    int udata = 0;
+    KernelEqueueEvent seeded{};
+    seeded.enabled = true;
+    seeded.triggered = true;
+    seeded.event.ident = 21;
+    seeded.event.filter = EVFILT_AMPR;
+    seeded.event.flags = EV_ADD | EV_CLEAR;
+    seeded.event.udata = &udata;
+    seeded.event.data = 1;
+    seeded.filter.triggerFunc = [](KernelEqueueEvent* e, void* data) {
+        KernelEvent triggered = e->event;
+        triggered.data = static_cast<intptr_t>(reinterpret_cast<uintptr_t>(data));
+        if (e->triggered) {
+            e->pendingEvents.push_back(triggered);
+        } else {
+            e->event = triggered;
+            e->triggered = true;
+        }
+    };
+    seeded.filter.resetFunc = [](KernelEqueueEvent* e) {
+        if ((e->event.flags & EV_CLEAR) != 0) {
+            e->triggered = false;
+            e->event.fflags = 0;
+            e->event.data = 0;
+        }
+    };
+    constexpr int kQueued = 20000;
+    for (int i = 2; i <= kQueued + 1; ++i) {
+        KernelEvent queued{};
+        queued.ident = 21;
+        queued.filter = EVFILT_AMPR;
+        queued.flags = EV_ADD | EV_CLEAR;
+        queued.data = i;
+        queued.udata = &udata;
+        seeded.pendingEvents.push_back(queued);
+    }
+    Require(EqueueAddEvent_nid_postfix(eq, seeded) == SCE_OK);
+    const int kBound = static_cast<int>(1 + KernelEqueuePrivate::kMaxPendingEvents);
+    KernelEvent events[4]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    int total = 0;
+    intptr_t last = 0;
+    for (;;) {
+        const int rc = sceKernelWaitEqueue(eq, events, 4, &count, &poll);
+        if (rc == SCE_KERNEL_ERROR_ETIMEDOUT) {
+            break;
+        }
+        Require(rc == SCE_OK);
+        for (int i = 0; i < count; ++i) {
+            ++total;
+            last = sceKernelGetEventData(&events[i]);
+        }
+        Require(total <= kBound);
+    }
+    Require(total == kBound);
+    Require(last == kQueued + 1);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 static void RequireReported(KernelEqueue eq, int num, std::initializer_list<uintptr_t> expected) {
     KernelEvent events[4]{};
     int count = 0;
@@ -287,6 +374,8 @@ int main() {
     VerifyBlockingWaitReportsLevelEventOnce();
     VerifyEdgeUserEventReportedOnce();
     VerifyRepeatedAmprCompletionsAreNotLost();
+    VerifyUndrainedTriggersStayBounded();
+    VerifyAddEventTruncatesPending();
     VerifyReportedEventsMoveBehindWaitingOnes();
 
     KernelEqueue eq = 0;
@@ -327,7 +416,15 @@ int main() {
     Require(sceKernelGetEventFflags(&rawEvent) == static_cast<intptr_t>(0x80000001LL));
     Require(sceKernelGetEventData(&rawEvent) == -5);
     Require(sceKernelGetEventUserData(&rawEvent) == nullptr);
-    Require(RejectsWideFflags(&rawEvent));
+    Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(0x00020001));
+    const std::uint32_t wide[][2] = {
+        {0x00010000u, 0x80030000u}, {0x00020000u, 0x80040000u}, {0x7fff0001u, 0x00010001u},
+        {0x80020005u, 0x00040005u}, {0x8000ffffu, 0x0002ffffu}, {0xffffffffu, 0x8001ffffu},
+    };
+    for (const auto& [fflags, error] : wide) {
+        rawEvent.fflags = fflags;
+        Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(error));
+    }
     rawEvent.fflags = 0;
     rawEvent.flags = EV_ERROR;
     rawEvent.data = 22;

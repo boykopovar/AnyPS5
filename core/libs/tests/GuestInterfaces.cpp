@@ -12,6 +12,9 @@
 #ifdef __linux__
 #include <net/if_arp.h>
 #include <netpacket/packet.h>
+#elif defined(__APPLE__)
+#include <net/if_dl.h>
+#include <net/if_types.h>
 #endif
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -21,6 +24,7 @@
 #endif
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -64,12 +68,36 @@ static HostInterfaceAddress HostAddress(const sockaddr* address) {
 }
 
 #ifdef __linux__
+constexpr int HostLinkFamily = AF_PACKET;
+
 static std::uint64_t SysfsCounter(const char* name, const char* file) {
     std::ifstream input(std::string("/sys/class/net/") + name + "/statistics/" + file);
     unsigned long long value = 0;
     Require(static_cast<bool>(input >> value));
     return value;
 }
+#elif defined(__APPLE__)
+constexpr int HostLinkFamily = AF_LINK;
+
+static std::uint64_t SysfsCounter(const char* name, const char* file) {
+    ifaddrs* host = nullptr;
+    Require(::getifaddrs(&host) == 0);
+    std::uint64_t value = 0;
+    bool found = false;
+    for (auto* item = host; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_LINK || std::strcmp(item->ifa_name, name) != 0 || !item->ifa_data) continue;
+        const auto& data = *static_cast<const if_data*>(item->ifa_data);
+        const std::string counter(file);
+        value = counter == "rx_packets" ? data.ifi_ipackets : counter == "tx_packets" ? data.ifi_opackets : counter == "rx_bytes" ? data.ifi_ibytes : data.ifi_obytes;
+        found = true;
+    }
+    ::freeifaddrs(host);
+    Require(found);
+    return value;
+}
+#endif
+
+#if defined(__linux__) || defined(__APPLE__)
 
 static std::uint32_t HostMtu(const char* name) {
     const int probe = ::socket(AF_INET, SOCK_DGRAM, 0);
@@ -153,6 +181,21 @@ static std::vector<HostInterfaceAddress> HostSnapshot() {
                 members.insert(members.begin(), entry);
                 continue;
             }
+#elif defined(__APPLE__)
+            if (item->ifa_addr->sa_family == AF_LINK) {
+                const auto& link = *reinterpret_cast<const sockaddr_dl*>(item->ifa_addr);
+                HostInterfaceAddress entry{};
+                entry.family = AF_LINK;
+                std::strncpy(entry.name, item->ifa_name, sizeof(entry.name) - 1);
+                entry.index = link.sdl_index;
+                entry.type = link.sdl_type == IFT_ETHER ? 0x6 : link.sdl_type == IFT_LOOP ? 0x18 : link.sdl_type == IFT_PPP ? 0x17 : 0x1;
+                entry.hardwareLength = entry.type == 0x18 ? 0 : std::min<std::uint8_t>(link.sdl_alen, sizeof(entry.hardware));
+                std::memcpy(entry.hardware, link.sdl_data + link.sdl_nlen, entry.hardwareLength);
+                entry.loopbackUp = (item->ifa_flags & IFF_UP) != 0;
+                auto& members = group(item->ifa_name);
+                members.insert(members.begin(), entry);
+                continue;
+            }
 #endif
             if (item->ifa_addr->sa_family != AF_INET && item->ifa_addr->sa_family != AF_INET6) continue;
             Require(item->ifa_netmask != nullptr);
@@ -181,7 +224,7 @@ int main() {
     const std::uint8_t loopbackAddress[] = {127, 0, 0, 1};
     const std::uint8_t loopbackMask[] = {255, 0, 0, 0};
     bool matched = false;
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     bool linkChecked = false;
     SendLoopbackDatagram();
 #endif
@@ -200,7 +243,7 @@ int main() {
             Require((item->flags & ~knownFlags) == 0);
             const auto* address = static_cast<const std::uint8_t*>(item->address);
             Require(address != nullptr && reinterpret_cast<std::uintptr_t>(address) % 8 == 0);
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
             if (address[1] == 18) {
                 Require(item->netmask == nullptr && item->destination == nullptr);
                 const auto* data = static_cast<const std::uint8_t*>(item->data);
@@ -223,7 +266,7 @@ int main() {
                 Require(counters[5] <= SysfsCounter(item->name, "rx_bytes") && counters[6] <= SysfsCounter(item->name, "tx_bytes"));
                 if (entries <= host.size()) {
                     const HostInterfaceAddress& expected = host[entries - 1];
-                    equal = equal && expected.family == AF_PACKET && std::strcmp(expected.name, item->name) == 0 && expected.index == index &&
+                    equal = equal && expected.family == HostLinkFamily && std::strcmp(expected.name, item->name) == 0 && expected.index == index &&
                         expected.type == address[4] && expected.hardwareLength == address[6] &&
                         std::memcmp(expected.hardware, address + 8 + nameLength, expected.hardwareLength) == 0;
                     if (expected.type == 0x18) {
@@ -285,7 +328,7 @@ int main() {
 
     }
     Require(matched);
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     Require(linkChecked);
 #endif
     GuestInterfaceAddress* released = nullptr;

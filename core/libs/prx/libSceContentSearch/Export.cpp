@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceContentSearch/include/InventoryExports.hpp"
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -58,12 +60,26 @@ void ValidateOrderBy(const char* funcName, const ContentSearchContentOrderByCond
     }
 }
 
-[[noreturn]] void ThrowUnknownMetadataId(const char* funcName, std::int32_t metadataId) {
-    throw std::logic_error(std::string(funcName) + ": metadata id " + std::to_string(metadataId) + " was never opened, as the host content library is empty, and the console's error for it is unknown");
-}
 }
 
 extern "C" {
+
+int APS5_VABI sceContentSearchAddAvContentCreatedEventCondition() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceContentSearchDisableAvContentCreatedEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceContentSearchEnableAvContentCreatedEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceContentSearchGetContentIdByAvContentCreatedEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceContentSearchInit(const ContentSearchInitParam* init_param) {
     if (g_initialized.load()) return ErrorAlreadyInitialized;
@@ -81,19 +97,22 @@ int APS5_VABI sceContentSearchCloseMetadata(std::int32_t metadataId) {
 int APS5_VABI sceContentSearchGetMetadataFieldInfo(std::int32_t metadataId, const char* field, std::int32_t* metadataType, std::int32_t* size) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (field == nullptr || metadataType == nullptr || size == nullptr) return ErrorInvalidArgument;
-    ThrowUnknownMetadataId(__func__, metadataId);
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentSearchGetMetadataValue(std::int32_t metadataId, const char* field, void* value) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (field == nullptr || value == nullptr) return ErrorInvalidArgument;
-    ThrowUnknownMetadataId(__func__, metadataId);
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentSearchOpenMetadata(const char* filePath, std::int32_t* metadataId) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (filePath == nullptr || metadataId == nullptr) return ErrorInvalidArgument;
-    throw std::logic_error(std::string(__func__) + ": " + filePath + " is not in the host content library, which is empty, and the console's error for it is unknown");
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentSearchSearchContent(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::uint32_t offset, std::uint32_t limit, std::int64_t* numOfContent, void* infos, std::int64_t* lastUpdateId) {
@@ -119,7 +138,8 @@ int APS5_VABI sceContentSearchGetContentLastUpdateId(std::int64_t* lastUpdateId)
 int APS5_VABI sceContentSearchOpenMetadataByContentId(std::int64_t contentId, std::int32_t* metadataId) {
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (metadataId == nullptr) return ErrorInvalidArgument;
-    throw std::logic_error(std::string(__func__) + ": content id " + std::to_string(contentId) + " is not in the host content library, which is empty, and the console's error for it is unknown");
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentSearchGetTotalContentSize(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, std::int64_t* size, std::int64_t* lastUpdateId) {
@@ -186,5 +206,19 @@ int APS5_VABI sceContentSearchSearchApplication() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceContentSearchUnknown_Np8cEpyDFRE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Np8cEpyDFRE", libSceContentSearchUnknown_Np8cEpyDFRE_nid_no_patch);
+
+int APS5_VABI libSceContentSearchUnknown_X9e_plus_hZfue0U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("X9e+hZfue0U", libSceContentSearchUnknown_X9e_plus_hZfue0U_nid_no_patch);
 
 }

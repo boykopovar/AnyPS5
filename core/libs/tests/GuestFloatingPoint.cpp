@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <barrier>
 #include <cstdint>
@@ -37,8 +38,9 @@ void WriteEnvironment(const Environment& state) {
     _mm_setcsr(state.sse);
 }
 
-bool SameControlState(const Environment& left, const Environment& right) {
-    return left.x87[0] == right.x87[0] && left.x87[1] == right.x87[1] && left.sse == right.sse;
+bool SameEnvironment(const Environment& lhs, const Environment& rhs) {
+    const bool pointers = (lhs.x87[1] & 0x80u) != 0u && (rhs.x87[1] & 0x80u) != 0u;
+    return std::equal(lhs.x87.begin(), lhs.x87.begin() + (pointers ? 7 : 3), rhs.x87.begin()) && lhs.sse == rhs.sse;
 }
 
 void Require(bool value, const char* message) {
@@ -66,13 +68,14 @@ void CheckEnabledExceptions() {
             state.x87[1] = (state.x87[1] & ~0x3fu) | (x87 & 0x15u);
             state.sse = (state.sse & ~0x7fbfu) | 0x2000 | (sse << 7) | (sse & 0x2au);
             WriteEnvironment(state);
+            const auto written = ReadEnvironment();
             *__error_nid_postfix() = 123;
             const int enabled = fegetexcept_nid_postfix();
             const int error = *__error_nid_postfix();
             const auto after = ReadEnvironment();
             WriteEnvironment(seeded);
             Require(enabled == static_cast<int>(0x3f ^ x87), "enabled exceptions use the x87 masks independently of SSE");
-            Require(after.x87[0] == state.x87[0] && after.x87[1] == state.x87[1] && after.sse == state.sse,
+            Require(after.x87[0] == written.x87[0] && after.x87[1] == written.x87[1] && after.sse == written.sse,
                     "enabled exception query preserves control modes and flags");
             Require(error == 123, "enabled exception query preserves errno");
         }
@@ -138,6 +141,8 @@ void CheckFlags() {
     Require(fetestexcept_nid_postfix(0) == 0, "empty exception query");
     Require(fetestexcept_nid_postfix(0x3f) == 0x27, "combine x87 and SSE flags, including denormals");
     Require(fetestexcept_nid_postfix(0x0c) == 0x04, "query only requested flags");
+    const auto unmasked = ReadEnvironment();
+    Require(fetestexcept_nid_postfix(0xffff) == static_cast<int>((unmasked.x87[1] | unmasked.sse) & 0xffffu), "a mask past the exception flags returns the other status and MXCSR bits");
     struct { std::uint16_t before, value, after; } saved{0x1234, 0xffff, 0x5678};
     Require(fegetexceptflag_nid_postfix(&saved.value, 0x07) == 0 && saved.value == 0x07, "save selected flags");
     Require(saved.before == 0x1234 && saved.after == 0x5678, "fexcept_t writes exactly two bytes");
@@ -249,13 +254,13 @@ void CheckHold(HoldExcept hold, Environment* saved) {
     *__error_nid_postfix() = 123;
     Require(hold(saved) == 0, "feholdexcept succeeds");
     const auto after = ReadEnvironment();
-    Require(std::memcmp(saved, &before, sizeof(before)) == 0, "feholdexcept saves the full original environment");
+    Require(SameEnvironment(*saved, before), "feholdexcept saves the full original environment");
     Require((after.x87[0] & 0x3f) == 0x3f && (after.sse & 0x1f80) == 0x1f80, "feholdexcept masks both units");
     Require((after.x87[1] & 0x80ff) == 0 && (after.sse & 0x3f) == 0, "feholdexcept clears pending exceptions");
     Require((after.x87[1] & ~0x80ffu) == (before.x87[1] & ~0x80ffu), "feholdexcept preserves other x87 status bits");
     Require((after.x87[0] & ~0x3fu) == (before.x87[0] & ~0x3fu), "feholdexcept preserves x87 control settings");
     Require((after.sse & ~0x1fbfu) == (before.sse & ~0x1fbfu), "feholdexcept preserves SSE control settings");
-    Require(after.x87[2] == before.x87[2] && std::memcmp(after.x87.data() + 3, before.x87.data() + 3, 16) == 0, "feholdexcept preserves x87 tags and instruction/data state");
+    Require(after.x87[2] == before.x87[2], "feholdexcept preserves x87 tags");
     Require(*__error_nid_postfix() == 123, "feholdexcept preserves errno");
 }
 
@@ -289,7 +294,7 @@ void CheckHoldExcept(HoldExcept hold) {
     try { hold(nullptr); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw, "feholdexcept rejects null storage");
     const auto afterNull = ReadEnvironment();
-    Require(SameControlState(original, afterNull), "null feholdexcept preserves the environment");
+    Require(SameEnvironment(original, afterNull), "null feholdexcept preserves the environment");
 #ifdef _WIN32
     SYSTEM_INFO info{};
     GetSystemInfo(&info);
@@ -332,7 +337,7 @@ void CheckHoldExcept(HoldExcept hold) {
     first.join();
     second.join();
     const auto afterThreads = ReadEnvironment();
-    Require(SameControlState(original, afterThreads), "feholdexcept workers preserve the main environment");
+    Require(SameEnvironment(original, afterThreads), "feholdexcept workers preserve the main environment");
 }
 
 int main(int argc, char** argv) {

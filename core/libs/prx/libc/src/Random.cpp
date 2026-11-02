@@ -194,11 +194,11 @@ void APS5_VABI srandomdev_nid_postfix() {
 }
 
 char* APS5_VABI initstate_nid_postfix(std::uint64_t seed, char* state, std::int64_t size) {
+    std::lock_guard lock(g_randomLock);
+    SaveTypeWordLocked();
     if (size < MinimumStateBytes[0]) return nullptr;
     if (state == nullptr) throw std::invalid_argument("initstate: null state");
-    std::lock_guard lock(g_randomLock);
     char* previous = g_random.table;
-    SaveTypeWordLocked();
     int type = MaxTypes - 1;
     while (size < MinimumStateBytes[static_cast<std::size_t>(type)]) --type;
     g_random = {state, type, Degrees[static_cast<std::size_t>(type)], Separations[static_cast<std::size_t>(type)], 0, 0};
@@ -214,7 +214,6 @@ char* APS5_VABI setstate_nid_postfix(char* state) {
     const int type = static_cast<int>(word % MaxTypes);
     const std::uint32_t rear = word / MaxTypes;
     const int degree = Degrees[static_cast<std::size_t>(type)];
-    if (type != LinearCongruentialType && rear >= static_cast<std::uint32_t>(degree)) return nullptr;
     char* previous = g_random.table;
     SaveTypeWordLocked();
     const int separation = Separations[static_cast<std::size_t>(type)];

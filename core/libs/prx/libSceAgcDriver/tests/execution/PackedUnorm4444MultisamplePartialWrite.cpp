@@ -197,8 +197,9 @@ AgcDriver::Graphics::State TargetState(const Block& block, std::uint32_t exporte
     char detail[256];
     std::snprintf(detail, sizeof(detail), "CB_TARGET_MASK 0x%x of the %u-sample 4_4_4_4 target decoded %zu targets, %u samples, word mask 0x%04x, write mask 0x%x and %s shading", exportedMask, samples, decoded.colors.size(), decoded.samples, color.partialWriteMask, decoded.blends.front().colorWriteMask, decoded.perSampleShading ? "per-sample" : "pixel-rate");
     Require(decoded.colors.size() == 1u && decoded.samples == samples && color.samples == samples && color.partialWriteMask == (partial ? AgcDriver::Graphics::PackedWriteMask(color.componentMapping, exportedMask) : 0u) && decoded.blends.size() == 1u && decoded.blends.front().colorWriteMask == (partial ? 0u : 0xfu) && decoded.blend.colorWriteMask == decoded.blends.front().colorWriteMask && decoded.perSampleShading == partial, detail);
-    const auto merge = AgcDriver::Graphics::ExportTargetMerge(decoded);
-    Require(merge.mask == color.partialWriteMask && merge.samples == (partial ? samples : 1u) && !merge.depthStencilWrites && merge.descriptor == (partial ? AgcDriver::Graphics::EncodeTextureResource(AgcDriver::Graphics::TargetMergeSurface(color)) : std::array<std::uint32_t, 8>{}), "the decoded " + std::to_string(samples) + "-sample target exported another merge than its own surface");
+    const auto merges = AgcDriver::Graphics::ExportTargetMerges(decoded);
+    const auto merge = merges.empty() ? ShaderRecompiler::TargetMerge{} : merges.front();
+    Require(merges.size() == (partial ? 1u : 0u) && merge.mask == color.partialWriteMask && merge.samples == (partial ? samples : 1u) && !merge.depthStencilWrites && merge.descriptor == (partial ? AgcDriver::Graphics::EncodeTextureResource(AgcDriver::Graphics::TargetMergeSurface(color)) : std::array<std::uint32_t, 8>{}), "the decoded " + std::to_string(samples) + "-sample target exported another merge than its own surface");
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 64u, 64u, std::nullopt, std::nullopt};
     state.colors = decoded.colors;
@@ -251,7 +252,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::State& sta
     fragment.shader.code = snapshot.code;
     fragment.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(context, AgcDriver::Graphics::ExportMappings(state));
     fragment.context.pixel->targetExportPacking = AgcDriver::Graphics::ExportPackings(state);
-    fragment.context.pixel->targetMerge = AgcDriver::Graphics::ExportTargetMerge(state);
+    fragment.context.pixel->targetMerges = AgcDriver::Graphics::ExportTargetMerges(state);
     const ShaderRecompiler::SrtRuntime runtime{};
     const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, fragment);
     const auto pixelResult = invocation.Materialize(*invocation.Capture(runtime));

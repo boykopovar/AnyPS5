@@ -65,11 +65,12 @@ def main():
             for idx in range(3, 8):
                 struct.pack_into("<IIQQQQQQ", image, 64 + idx * 56, 0x6fffff01, 0, 0, 0, 0, 0, 0, 1)
             relocations = [(slot, (1 << 32) | 7, 0)]
-            tags = [(1, 4), (5, 0x600), (10, 12), (6, 0x620), (11, 24), (3, slot if not invalid_slot else 0x800), (2, 24), (20, 7), (23, 0x700),
+            tags = [(1, 5), (5, 0x600), (10, 12), (6, 0x620), (11, 24), (3, slot if not invalid_slot else 0x800), (2, 24), (20, 7), (23, 0x700),
                     (7, 0x7a0), (8, 0), (9, 24), (0x6100003f, 48), (0, 0)]
             for idx, tag in enumerate(tags):
                 struct.pack_into("<qQ", image, 0x400 + idx * 16, *tag)
-            image[0x600:0x600 + 11] = b"foo\0lib.so\0"
+            image[0x600:0x600 + 12] = b"\0foo\0lib.so\0"
+            struct.pack_into("<I", image, 0x638, 1)
             for idx, relocation in enumerate(relocations):
                 struct.pack_into("<QQq", image, 0x700 + idx * 24, *relocation)
             if not invalid_slot:

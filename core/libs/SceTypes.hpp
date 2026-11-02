@@ -1432,7 +1432,9 @@ struct NetEpollEvent {
 
 struct NetCtlNatInfo {
     std::uint32_t size;
-    std::uint8_t opaque[12];
+    std::int32_t stun_status;
+    std::int32_t nat_type;
+    std::uint32_t mapped_addr;
 };
 
 static_assert(sizeof(NetCtlNatInfo) == 16);
@@ -1707,6 +1709,16 @@ struct SaveDataMount3 {
     int pad2;
     std::int32_t resource;
     std::uint8_t reserved[32];
+};
+
+struct SaveDataMount2 {
+    int user_id;
+    int pad;
+    const SceSaveDataDirName* dir_name;
+    std::uint64_t blocks;
+    std::uint32_t mount_mode;
+    std::uint8_t reserved[32];
+    int pad2;
 };
 
 struct SaveDataDirNameSearchCond {
@@ -2043,6 +2055,29 @@ struct JpegDecImageInfo {
     std::uint32_t suitable_csc_attribute;
     std::uint32_t output_image_width;
     std::uint32_t output_image_height;
+};
+
+struct JpegDecInputChunk {
+    const void* data;
+    std::uint32_t size;
+    std::uint32_t reserved;
+};
+
+using JpegDecInputCallback = std::int32_t (APS5_VABI *)(JpegDecInputChunk*, void*);
+
+struct JpegDecInputControlParam {
+    JpegDecInputCallback input;
+    void* input_argument;
+    void* image_mem_addr;
+    void* coefficient_mem_addr;
+    std::uint32_t image_mem_size;
+    std::uint32_t coefficient_mem_size;
+    std::uint16_t operation;
+    std::uint16_t down_scale;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint32_t image_pitch;
+    std::uint32_t reserved;
 };
 
 struct PlayGoInitParams {

@@ -33,7 +33,7 @@ std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uin
     const auto low = static_cast<std::uint32_t>(modifier);
     const auto control = Agc::Command::DrawIndexLocation(modifier) | ((low & 0x10u) << 23u) | (countIndirect << 30u) | ((low & 8u) << 28u);
     auto* packet = Agc::Command::Allocate(buf, 16, __func__);
-    packet[0] = Agc::Command::Header(0x79u, 3, 1);
+    packet[0] = Agc::Command::Header(0x79u, 3, 4);
     packet[1] = 0x342u;
     packet[2] = 0xc6000008u;
     packet[3] = Agc::Command::Header(0x2cu, 10);
@@ -46,7 +46,7 @@ std::uint32_t* APS5_VABI sceAgcDcbDrawIndirectMulti(CommandBuffer* buf, std::uin
     packet[10] = static_cast<std::uint32_t>(address >> 32u);
     packet[11] = strideInBytes;
     packet[12] = initiator;
-    packet[13] = Agc::Command::Header(0x79u, 3, 1);
+    packet[13] = Agc::Command::Header(0x79u, 3, 4);
     packet[14] = 0x342u;
     packet[15] = 0xc6000000u;
     return packet;

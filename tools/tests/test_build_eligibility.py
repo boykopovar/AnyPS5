@@ -35,7 +35,8 @@ async function run(scenario) {
           return { data: scenario.commits };
         },
         getBranch: async () => ({ data: { commit: { sha: 'main' } } }),
-        getCollaboratorPermissionLevel: async () => ({ data: { permission: 'write' } })
+        getCollaboratorPermissionLevel: async () => ({ data: { permission: 'write' } }),
+        getContent: async () => ({ data: { content: Buffer.from(scenario.workflow ?? '').toString('base64') } })
       },
       search: {
         issuesAndPullRequests: async (params) => {
@@ -47,7 +48,7 @@ async function run(scenario) {
         }
       }
     },
-    paginate: async () => scenario.files.map((filename) => ({ filename }))
+    paginate: async () => scenario.files.map((file) => typeof file === 'string' ? { filename: file } : file)
   };
   const context = {
     eventName: scenario.manual ? 'workflow_dispatch' : 'pull_request',
@@ -116,9 +117,9 @@ class RelinkerEligibilityTests(unittest.TestCase):
                 cls.process.wait()
         cls.temp.cleanup()
 
-    def run_gate(self, commits, search, files=("core/relinker/main.cpp",), manual=False):
+    def run_gate(self, commits, search, files=("core/relinker/main.cpp",), manual=False, workflow=None):
         self.process.stdin.write(json.dumps({
-            "commits": commits, "search": search, "files": list(files), "manual": manual,
+            "commits": commits, "search": search, "files": list(files), "manual": manual, "workflow": workflow,
         }) + "\n")
         self.process.stdin.flush()
         response = queue.Queue(maxsize=1)
@@ -173,6 +174,40 @@ class RelinkerEligibilityTests(unittest.TestCase):
         self.assertIs(result["outputs"]["relinker"], False)
         self.assertIs(result["outputs"]["write-watch"], True)
         self.assertEqual(result["calls"], [])
+
+    def test_relinker_build_inputs_outside_the_relinker_run_the_relinker(self):
+        for path in ("core/libs/nid/src/NidCompute.cpp", "core/libs/nid/src/Sha1.cpp",
+                     "core/libs/nid/include/nid/NidCompute.hpp", "core/libs/nid/include/nid/Sha1.hpp",
+                     "core/libs/prx/libkernel/KernelErrors.hpp", "core/libs/prx/libkernel/DirectMemory/DirectMemory.hpp",
+                     "core/libs/prx/libScePad/tests/InputCommandFile.cpp", "core/libs/prx/libScePad/include/InputCommandFile.hpp",
+                     "core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp",
+                     "core/shader/recompiler/ShaderCacheVersion.cmake", ".github/pull_request_template.md",
+                     ".github/workflows/pr-overlap.yml"):
+            with self.subTest(path=path):
+                self.assertIs(self.run_gate([{"sha": "a"}], None, files=(path,))["outputs"]["relinker"], True)
+
+    def test_files_beside_relinker_build_inputs_skip_the_relinker(self):
+        for path in ("core/libs/nid/src/ElfNidPatcher.cpp", "core/libs/prx/libkernel/DirectMemory/DirectMemory.cpp",
+                     "core/libs/prx/libScePad/include/Pad.hpp", ".github/workflows/labels.yml"):
+            with self.subTest(path=path):
+                result = self.run_gate([{"sha": "a"}], None, files=(path,))
+                self.assertIs(result["outputs"]["relinker"], False)
+                self.assertEqual(result["calls"], [])
+
+    def test_workflow_edit_runs_only_the_jobs_it_touches(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for job, relinker, register_context in (("relinker-asan", True, False), ("register-context", False, True)):
+            with self.subTest(job=job):
+                line = next(index for index in range(lines.index(f"  {job}:"), len(lines))
+                            if lines[index].strip().startswith("timeout-minutes:")) + 1
+                patch = f"@@ -{line},1 +{line},1 @@\n-{lines[line - 1]}\n+{lines[line - 1]}"
+                result = self.run_gate([{"sha": "a"}], None, workflow=text,
+                                       files=({"filename": ".github/workflows/build.yml", "patch": patch},))
+                self.assertIs(result["outputs"]["relinker"], relinker)
+                self.assertIs(result["outputs"]["register-context"], register_context)
+                self.assertIs(result["outputs"]["write-watch"], False)
+                self.assertEqual(result["warnings"], [])
 
     def test_manual_run_checks_no_author(self):
         result = self.run_gate([], None, manual=True)

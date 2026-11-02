@@ -13,7 +13,9 @@
 #endif
 #endif
 #include "prx/libkernel/Socket/include/SocketError.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/Socket/include/SocketOptions.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -28,6 +30,7 @@ constexpr int GuestDontRoute = 0x10;
 constexpr int GuestBroadcast = 0x20;
 constexpr int GuestLinger = 0x80;
 constexpr int GuestOobInline = 0x100;
+constexpr int GuestAcceptFilter = 0x1000;
 constexpr int GuestNoSigpipe = 0x800;
 constexpr int GuestSendBuffer = 0x1001;
 constexpr int GuestReceiveBuffer = 0x1002;
@@ -73,6 +76,7 @@ constexpr int ErrorNotSupported = 45;
 constexpr int ErrorAddressInUse = 48;
 constexpr int ErrorAddressNotAvailable = 49;
 
+constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
 constexpr int ErrorNoProtocolOption = 42;
@@ -156,6 +160,10 @@ int IpReceiveBit(int option) {
 
 int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t size) {
     const std::uint32_t count = output ? std::min(*length, size) : 0;
+    const GuestArena::HostWrite destination(count == 0 ? nullptr : output, count);
+    if (!destination.Open()) return ErrorFault;
+    const GuestArena::HostWrite lengthOutput(length, sizeof(*length));
+    if (!lengthOutput.Open()) return ErrorFault;
     if (count != 0) std::memcpy(output, value, count);
     *length = count;
     return 0;
@@ -165,6 +173,12 @@ int Copy(void* output, std::uint32_t* length, const void* value, std::uint32_t s
 
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length) {
     const auto handle = static_cast<NativeHandle>(native);
+    if (option == GuestAcceptFilter) {
+        bool listening = false;
+        if (type != 2 && !NativeListening(native, listening)) return HostError();
+        if (!listening) return ErrorInvalid;
+        NotImplemented_nid_no_patch("setsockopt: SO_ACCEPTFILTER on a listening socket");
+    }
     if (option == GuestLinger) {
         if (length < sizeof(GuestLingerValue)) return ErrorInvalid;
         GuestLingerValue guest;
@@ -274,6 +288,12 @@ bool NativeListening(std::uintptr_t native, bool& listening) {
 
 int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, void* value, std::uint32_t* length) {
     const auto handle = static_cast<NativeHandle>(native);
+    if (option == GuestAcceptFilter) {
+        bool listening = false;
+        if (type != 2 && !NativeListening(native, listening)) return HostError();
+        if (!listening) return ErrorInvalid;
+        NotImplemented_nid_no_patch("getsockopt: SO_ACCEPTFILTER on a listening socket");
+    }
     if (option == GuestLinger) {
         linger current{};
         socklen_t size = sizeof(current);
@@ -517,4 +537,12 @@ int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value
     return Copy(value, length, &number, sizeof(number));
 }
 
+}
+
+extern "C" int GuestSocketSetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, const void* value, std::uint32_t length) {
+    return GuestSockets::SetIpv6LevelOption(native, ipv6, option, value, length);
+}
+
+extern "C" int GuestSocketGetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length) {
+    return GuestSockets::GetIpv6LevelOption(native, ipv6, option, value, length);
 }
