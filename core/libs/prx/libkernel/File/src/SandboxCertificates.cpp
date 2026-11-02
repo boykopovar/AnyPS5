@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -11,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -98,17 +100,26 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
     }
     using std::filesystem::perms;
     std::filesystem::permissions(temporary, perms::owner_read | perms::group_read | perms::others_read);
-    std::error_code error;
-    std::filesystem::rename(temporary, target, error);
-    if (!error) return target;
-    if (ReadFile(target) == bundle) {
-        std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add);
-        std::filesystem::remove(temporary);
-        return target;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (true) {
+        std::error_code error;
+        std::filesystem::rename(temporary, target, error);
+        if (!error) return target;
+        if (ReadFile(target) == bundle) {
+            std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add);
+            std::filesystem::remove(temporary);
+            std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::remove);
+            return target;
+        }
+        if (std::chrono::steady_clock::now() > deadline) {
+            std::error_code cleanup;
+            std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add, cleanup);
+            std::filesystem::remove(temporary, cleanup);
+            throw std::filesystem::filesystem_error("Replacing the certificate list failed", temporary, target, error);
+        }
+        std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add, error);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add);
-    std::filesystem::rename(temporary, target);
-    return target;
 }
 
 std::filesystem::path CertificateList(const std::filesystem::path& root) {

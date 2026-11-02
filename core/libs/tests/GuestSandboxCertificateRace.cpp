@@ -47,9 +47,15 @@ static void RemoveTree(const std::filesystem::path& directory) {
     std::filesystem::remove_all(directory);
 }
 
-static void Round(const std::filesystem::path& directory, int round, int processes) {
+static void Round(const std::filesystem::path& directory, int round, int processes, bool outdated) {
     RemoveTree(directory);
     std::filesystem::create_directories(directory);
+    if (outdated) {
+        const auto cache = directory / "cert_cache";
+        std::filesystem::create_directories(cache);
+        std::ofstream(cache / "CA_LIST.cer", std::ios::binary) << "outdated";
+        std::filesystem::permissions(cache / "CA_LIST.cer", std::filesystem::perms::owner_read);
+    }
     const std::string start = "Local\\AnyPS5SandboxCertificateRace" + std::to_string(::GetCurrentProcessId()) + "_" + std::to_string(round);
     const HANDLE event = ::CreateEventA(nullptr, TRUE, FALSE, start.c_str());
     Require(event != nullptr);
@@ -95,7 +101,7 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::string(argv[1]) == "child") return Child(argv[2]);
     Require(argc == 1);
     const auto root = std::filesystem::current_path() / "rounds";
-    for (int round = 0; round < 10; ++round) Round(root / std::to_string(round), round, 8);
+    for (int round = 0; round < 20; ++round) Round(root / std::to_string(round), round, 8, round % 2 == 1);
     RemoveTree(root);
     return 0;
 }
