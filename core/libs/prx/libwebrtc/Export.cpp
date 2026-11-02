@@ -878,11 +878,6 @@ int APS5_VABI libwebrtcUnknown26(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc11field_trial25InitFieldTrialsFromStringEPKc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("pH5oyjlfrL0", libwebrtcUnknown27);
 int APS5_VABI libwebrtcUnknown27(void) {
     NotImplemented_nid_no_patch("pH5oyjlfrL0");

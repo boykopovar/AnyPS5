@@ -6,6 +6,7 @@
 #include "prx/libwebrtc/include/AudioEncoder.hpp"
 #include "prx/libwebrtc/include/AudioFrame.hpp"
 #include "prx/libwebrtc/include/ExpFilter.hpp"
+#include "prx/libwebrtc/include/FieldTrial.hpp"
 #include "prx/libwebrtc/include/IpAddress.hpp"
 #include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
 #include "prx/libwebrtc/include/Opus.hpp"
@@ -189,7 +190,7 @@ int APS5_VABI _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(void);
 int APS5_VABI _ZN3rtc14PlatformThreadD1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown26(void);
-int APS5_VABI _ZN6webrtc11field_trial25InitFieldTrialsFromStringEPKc_nid_postfix(void);
+void APS5_VABI _ZN6webrtc11field_trial25InitFieldTrialsFromStringEPKc_nid_postfix(const char* trialsString);
 int APS5_VABI libwebrtcUnknown27(void);
 int APS5_VABI _ZN3rtc10SSLAdapter6CreateEPNS_6SocketE_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown28(void);
