@@ -794,6 +794,101 @@ static void TestMissingPathListsDirectoryOnce() {
 }
 #endif
 
+static void CheckNmount() {
+    char fstype[] = "fstype";
+    char fspath[] = "fspath";
+    char errmsg[] = "errmsg";
+    char nofstype[] = "nofstype";
+    char readonly[] = "ro";
+    char ufs[] = "ufs";
+    char unterminated[] = {'u', 'f', 's'};
+    char mnt[] = "/mnt";
+    const auto fails = [](std::vector<KernelIovec> vectors, int error, int flags = 0) {
+        *__error_nid_postfix() = 0;
+        Require(nmount_nid_postfix(vectors.data(), static_cast<unsigned int>(vectors.size()), flags) == -1 && *__error_nid_postfix() == error);
+    };
+    const KernelIovec typeName{fstype, sizeof(fstype)};
+    const KernelIovec typeValue{ufs, sizeof(ufs)};
+    const KernelIovec pathName{fspath, sizeof(fspath)};
+    const KernelIovec pathValue{mnt, sizeof(mnt)};
+    const std::vector<KernelIovec> good{typeName, typeValue, pathName, pathValue};
+    for (const int flags : {0, 1, 0x4000, 0x10000, -1}) fails(good, 1, flags);
+    fails({typeName, typeValue, pathName, pathValue, {readonly, sizeof(readonly)}, {nullptr, 0}}, 1);
+    fails({pathName, pathValue, typeName, typeValue}, 1);
+
+    const KernelIovec none{nullptr, 0};
+    *__error_nid_postfix() = 0;
+    Require(nmount_nid_postfix(good.data(), 0, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(nmount_nid_postfix(good.data(), 2, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(nmount_nid_postfix(good.data(), 3, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(nmount_nid_postfix(nullptr, 5, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(nmount_nid_postfix(nullptr, 1026, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(nmount_nid_postfix(nullptr, 4, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(nmount_nid_postfix(reinterpret_cast<const KernelIovec*>(0x10), 4, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(nmount_nid_postfix(nullptr, 1024, 0) == -1 && *__error_nid_postfix() == 14);
+
+    fails({{nullptr, sizeof(fstype)}, typeValue, pathName, pathValue}, 14);
+    fails({{reinterpret_cast<void*>(0x10), sizeof(fstype)}, typeValue, pathName, pathValue}, 14);
+    fails({typeName, {nullptr, sizeof(ufs)}, pathName, pathValue}, 14);
+    fails({typeName, {reinterpret_cast<void*>(0x10), sizeof(ufs)}, pathName, pathValue}, 14);
+    fails({typeName, typeValue, pathName, {reinterpret_cast<void*>(0x10), sizeof(mnt)}}, 14);
+    fails({{fstype, sizeof(fstype) - 1}, typeValue, pathName, pathValue}, 22);
+    fails({none, typeValue, pathName, pathValue}, 22);
+    fails({{nullptr, 65537}, typeValue, pathName, pathValue}, 22);
+    fails({typeName, {ufs, 65537}, pathName, pathValue}, 22);
+    fails({{reinterpret_cast<void*>(0x10), 5}, typeValue, pathName, pathValue}, 14);
+    fails({{fstype, sizeof(fstype) - 1}, {reinterpret_cast<void*>(0x10), 4}, pathName, pathValue}, 22);
+
+    fails({pathName, pathValue, none, none}, 22);
+    fails({typeName, none, pathName, pathValue}, 22);
+    fails({typeName, {unterminated, sizeof(unterminated)}, pathName, pathValue}, 22);
+    fails({typeName, typeValue, pathName, none}, 22);
+    fails({typeName, typeValue, pathName, {unterminated, sizeof(unterminated)}}, 22);
+    fails({typeName, typeValue, {nofstype, sizeof(nofstype)}, none, pathName, pathValue}, 22);
+    fails({typeName, typeValue, pathName, pathValue, {nofstype, sizeof(nofstype)}, none}, 22);
+    fails({{nofstype, sizeof(nofstype)}, none, typeName, typeValue, pathName, pathValue}, 1);
+    fails({typeName, {unterminated, sizeof(unterminated)}, typeName, typeValue, pathName, pathValue}, 1);
+    char nonofstype[] = "nonofstype";
+    fails({typeName, typeValue, {nofstype, sizeof(nofstype)}, none, {nonofstype, sizeof(nonofstype)}, none, pathName, pathValue}, 1);
+    fails({typeName, typeValue, typeName, {unterminated, sizeof(unterminated)}, pathName, pathValue}, 22);
+
+    std::string fifteen(15, 'f');
+    std::string sixteen(16, 'f');
+    std::string path87(87, 'p');
+    std::string path88(88, 'p');
+    fails({typeName, {fifteen.data(), fifteen.size() + 1}, pathName, pathValue}, 1);
+    fails({typeName, {sixteen.data(), sixteen.size() + 1}, pathName, pathValue}, 63);
+    fails({typeName, typeValue, pathName, {path87.data(), path87.size() + 1}}, 1);
+    fails({typeName, typeValue, pathName, {path88.data(), path88.size() + 1}}, 63);
+
+    std::vector<char> large(65421, 'x');
+    large.back() = '\0';
+    fails({pathName, pathValue, typeName, {large.data(), large.size()}}, 63);
+    large.push_back('\0');
+    fails({pathName, pathValue, typeName, {large.data(), large.size()}}, 22);
+
+    char message[32];
+    std::memset(message, 'x', sizeof(message));
+    fails({{errmsg, sizeof(errmsg)}, {message, sizeof(message)}, pathName, pathValue}, 22);
+    char expected[sizeof(message)]{};
+    std::memcpy(expected, "Invalid fstype", sizeof("Invalid fstype"));
+    Require(std::memcmp(message, expected, sizeof(message)) == 0);
+    std::memset(message, 'x', sizeof(message));
+    fails({{errmsg, sizeof(errmsg)}, {message, sizeof(message)}, typeName, typeValue}, 22);
+    std::memset(expected, 0, sizeof(expected));
+    std::memcpy(expected, "Invalid fspath", sizeof("Invalid fspath"));
+    Require(std::memcmp(message, expected, sizeof(message)) == 0);
+    char shortMessage[8];
+    std::memset(shortMessage, 'x', sizeof(shortMessage));
+    fails({{errmsg, sizeof(errmsg)}, {shortMessage, sizeof(shortMessage)}, pathName, pathValue}, 22);
+    Require(std::memcmp(shortMessage, "Invalid ", 8) == 0);
+    std::memset(message, 'x', sizeof(message));
+    fails({{errmsg, sizeof(errmsg)}, {message, sizeof(message)}, typeName, typeValue, pathName, pathValue}, 1);
+    for (const char value : message) Require(value == 'x');
+    fails({{errmsg, sizeof(errmsg)}, none, pathName, pathValue}, 22);
+    fails({{errmsg, sizeof(errmsg)}, {reinterpret_cast<void*>(0x10), 8}, pathName, pathValue}, 14);
+}
+
 int main() {
     TestParentTraversal();
     TestRelinkedModuleNames();
@@ -1122,6 +1217,7 @@ int main() {
     const int flaggedSocket = socket_nid_postfix(2, 2, 0);
     Require(flaggedSocket >= 0 && fchflags_nid_postfix(flaggedSocket, 0) == -1 && *__error_nid_postfix() == 22);
     Require(close_nid_postfix(flaggedSocket) == 0);
+    CheckNmount();
     const auto held = root / "held.txt";
     const auto heldName = held.string();
     { std::ofstream stream(held); stream << "held"; }

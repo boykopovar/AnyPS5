@@ -944,12 +944,134 @@ int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags) {
     return 0;
 }
 
+static int CopyIovecs(const KernelIovec* iov, int iovcnt, std::vector<KernelIovec>& vectors);
+
+static constexpr std::size_t MOUNT_OPTION_OVERHEAD = 48;
+static constexpr std::size_t MOUNT_ARGUMENT_MAX = 1024 * 64;
+static constexpr std::size_t MOUNT_TYPE_NAME_MAX = 16;
+static constexpr std::size_t MOUNT_PATH_NAME_MAX = 88;
+
+struct MountOption {
+    std::string name;
+    std::vector<char> value;
+    std::size_t position = 0;
+};
+
+/* Derived from FreeBSD sys/kern/vfs_mount.c (8c639945a445) */
+/*-
+ * Copyright (c) 1999-2004 Poul-Henning Kamp
+ * Copyright (c) 1999 Michael Smith
+ * Copyright (c) 1989, 1993
+ *	The Regents of the University of California.  All rights reserved.
+ * (c) UNIX System Laboratories, Inc.
+ * All or some portions of this file are derived from material licensed
+ * to the University of California by American Telephone and Telegraph
+ * Co. or Unix System Laboratories, Inc. and are reproduced herein with
+ * the permission of UNIX System Laboratories, Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 4. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+static bool MountOptionIsReadOnly(const char* name) {
+    return std::strcmp(name, "ro") == 0 || std::strcmp(name, "rdonly") == 0 || std::strcmp(name, "norw") == 0;
+}
+
+static bool MountOptionIsReadWrite(const char* name) {
+    return std::strcmp(name, "rw") == 0 || std::strcmp(name, "noro") == 0;
+}
+
+static bool MountOptionsEqual(const char* first, const char* second) {
+    if (std::strcmp(first, second) == 0) return true;
+    if (std::strncmp(first, "no", 2) == 0 && std::strcmp(first + 2, second) == 0) return true;
+    if (std::strncmp(second, "no", 2) == 0 && std::strcmp(first, second + 2) == 0) return true;
+    while (const char* dot = std::strchr(first, '.')) {
+        ++dot;
+        if (std::strncmp(first, second, static_cast<std::size_t>(dot - first)) != 0) break;
+        second += dot - first;
+        first = dot;
+        if (std::strncmp(first, "no", 2) == 0 && std::strcmp(first + 2, second) == 0) return true;
+        if (std::strncmp(second, "no", 2) == 0 && std::strcmp(first, second + 2) == 0) return true;
+    }
+    return (MountOptionIsReadOnly(first) || MountOptionIsReadWrite(first)) && (MountOptionIsReadOnly(second) || MountOptionIsReadWrite(second));
+}
+
+static void SanitizeMountOptions(std::vector<MountOption>& options) {
+    for (std::size_t i = options.size(); i-- > 0;) {
+        for (std::size_t j = i; j-- > 0;) {
+            if (MountOptionsEqual(options[i].name.c_str(), options[j].name.c_str())) {
+                options.erase(options.begin() + static_cast<std::ptrdiff_t>(j));
+                --i;
+            }
+        }
+    }
+}
+
+static const MountOption* FindMountOption(const std::vector<MountOption>& options, const char* name) {
+    for (const auto& option : options) {
+        if (option.name == name) return &option;
+    }
+    return nullptr;
+}
+
 int APS5_VABI nmount_nid_postfix(const KernelIovec* iov, unsigned int niov, int flags) {
-    (void)iov;
-    (void)niov;
     (void)flags;
-    NotImplemented_nid_no_patch("nmount: mounting file systems");
-    return -1;
+    if ((niov & 1) != 0 || niov < 4 || niov > static_cast<unsigned int>(KERNEL_IOV_MAX)) return PosixFailure(GUEST_EINVAL);
+    std::vector<KernelIovec> vectors;
+    if (const int error = CopyIovecs(iov, static_cast<int>(niov), vectors)) return PosixFailure(error & 0xffff);
+    std::vector<MountOption> options;
+    std::size_t used = 0;
+    for (std::size_t i = 0; i < vectors.size(); i += 2) {
+        const std::size_t nameLength = vectors[i].length;
+        const std::size_t valueLength = vectors[i + 1].length;
+        used += MOUNT_OPTION_OVERHEAD + valueLength + nameLength;
+        if (used > MOUNT_ARGUMENT_MAX || valueLength > MOUNT_ARGUMENT_MAX || nameLength > MOUNT_ARGUMENT_MAX) return PosixFailure(GUEST_EINVAL);
+        std::vector<char> name(nameLength);
+        if (nameLength != 0 && !GuestCopyIn_nid_no_patch(name.data(), vectors[i].base, nameLength)) return PosixFailure(GUEST_EFAULT);
+        if (nameLength == 0 || name.back() != '\0') return PosixFailure(GUEST_EINVAL);
+        MountOption option;
+        option.name = name.data();
+        option.position = i / 2;
+        option.value.resize(valueLength);
+        if (valueLength != 0 && !GuestCopyIn_nid_no_patch(option.value.data(), vectors[i + 1].base, valueLength)) return PosixFailure(GUEST_EFAULT);
+        options.push_back(std::move(option));
+    }
+    SanitizeMountOptions(options);
+    const MountOption* message = FindMountOption(options, "errmsg");
+    const auto invalid = [&](const char* text) {
+        if (message != nullptr && !message->value.empty()) {
+            std::vector<char> reply(message->value.size(), '\0');
+            std::strncpy(reply.data(), text, reply.size());
+            GuestCopyOut_nid_no_patch(vectors[2 * message->position + 1].base, reply.data(), reply.size());
+        }
+        return PosixFailure(GUEST_EINVAL);
+    };
+    const MountOption* type = FindMountOption(options, "fstype");
+    if (type == nullptr || type->value.empty() || type->value.back() != '\0') return invalid("Invalid fstype");
+    const MountOption* path = FindMountOption(options, "fspath");
+    if (path == nullptr || path->value.empty() || path->value.back() != '\0') return invalid("Invalid fspath");
+    if (type->value.size() > MOUNT_TYPE_NAME_MAX || path->value.size() > MOUNT_PATH_NAME_MAX) return PosixFailure(GUEST_ENAMETOOLONG);
+    return PosixFailure(GUEST_EPERM);
 }
 
 int APS5_VABI close_nid_postfix(int d) {
