@@ -2,6 +2,7 @@
 
 ### Silent stubs
 
+- [sceNpProfileDialogOpen, sceNpProfileDialogOpenA](../../../core/libs/prx/libSceNpProfileDialog/Export.cpp) (libSceNpProfileDialog) - with `ANYPS5_PSN_DIALOGS=show`, a successful open shows AnyPS5's notice that the feature needs PlayStation Network; the console's own display for this call without PlayStation Network is not measured, and the notice wording is AnyPS5's.
 - [sceNpProfileDialogOpen, sceNpProfileDialogOpenA, sceNpProfileDialogGetResult](../../../core/libs/prx/libSceNpProfileDialog/Export.cpp) (libSceNpProfileDialog) - no profile is shown: `Open` and `OpenA` move the dialog straight to `FINISHED`, and `GetResult` reports `result` 0, `userAction` `USER_CANCELED` (1) and the caller's `userData`, as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/c2814041e546bf75c12756dbec9da911c721ce1c/src/core/libraries/np/np_profile_dialog/np_profile_dialog.cpp#L21-L180) does when its window is dismissed. Not measured on a console.
 
 ### Unknown function info

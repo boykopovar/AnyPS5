@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include <shared_mutex>
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -271,7 +272,7 @@ public:
     void destroy(const Allocation& allocation) noexcept {
         if (allocation.view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, allocation.view, nullptr);
         if (allocation.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, allocation.image, nullptr);
-        if (allocation.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, allocation.memory, nullptr);
+        if (allocation.memory) MemoryAccounting::Free(context, allocation.memory);
     }
 
     void recordToGeneral(VkCommandBuffer commands, VkImage destination) {
@@ -1202,6 +1203,7 @@ VkClearColorValue MultisampledDccClear(const ColorTarget& target, std::span<cons
     if (dcc.front() == std::byte{0x10}) return singleClearColor(target);
     DccKeys keys;
     switch (std::to_integer<std::uint32_t>(dcc.front())) {
+        case 0x20u: return fastClearColor(target);
         case 0x00u: keys = DccKeys::Clear0000; break;
         case 0x40u: keys = DccKeys::Clear0001; break;
         case 0x80u: keys = DccKeys::Clear1110; break;
