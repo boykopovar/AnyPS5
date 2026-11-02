@@ -187,6 +187,17 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         });
         if (!covered)
             throw RelinkerException("PT_TLS initialization image is outside PT_LOAD memory", tls.Offset);
+        const bool matches = std::any_of(headers.begin(), headers.end(), [&](const ProgramHeader& load) {
+            if (load.Type != PT_LOAD || tls.MappedAddress < load.MappedAddress) return false;
+            const auto relative = tls.MappedAddress - load.MappedAddress;
+            if (relative > load.MemorySize || tls.FileSize > load.MemorySize - relative) return false;
+            const auto fileBytes = relative < load.FileSize ? std::min(tls.FileSize, load.FileSize - relative) : 0;
+            const auto tlsBegin = _fileBuffer.begin() + tls.Offset;
+            if (fileBytes != 0 && !std::equal(tlsBegin, tlsBegin + fileBytes, _fileBuffer.begin() + load.Offset + relative)) return false;
+            return std::all_of(tlsBegin + fileBytes, tlsBegin + tls.FileSize, [](std::uint8_t value) { return value == 0; });
+        });
+        if (!matches)
+            throw RelinkerException("PT_TLS initialization image differs from PT_LOAD memory", tls.Offset);
     }
 
     return headers;
