@@ -238,7 +238,7 @@ const Bytes KeyUsageObject{0x55, 0x1d, 0x0f};
 const Bytes ExtendedKeyUsageObject{0x55, 0x1d, 0x25};
 const Bytes AuthorityKeyIdObject{0x55, 0x1d, 0x23};
 const Bytes CrlDistributionPoints{0x55, 0x1d, 0x1f};
-const Bytes CertificatePolicies{0x55, 0x1d, 0x20};
+const Bytes IssuerAltName{0x55, 0x1d, 0x12};
 const Bytes DirectoryAttributes{0x55, 0x1d, 0x09};
 const Bytes AuthorityInfoAccess{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x01};
 const Bytes OcspNonce{0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01, 0x02};
@@ -355,21 +355,37 @@ void Positions() {
     X509_free_nid_postfix(certificate);
 }
 
+std::vector<std::uint64_t> Queue() {
+    std::vector<std::uint64_t> codes;
+    for (std::uint64_t code = ERR_get_error_nid_postfix(); code != 0; code = ERR_get_error_nid_postfix()) codes.push_back(code);
+    return codes;
+}
+
+std::vector<std::uint64_t> Codes(std::initializer_list<int> reasons) {
+    std::vector<std::uint64_t> codes;
+    for (int reason : reasons) codes.push_back(Asn1Code(reason));
+    return codes;
+}
+
 void ExtensionFailures() {
-    LibreSslX509* certificate = WithExtensions(Cat({Extension(SubjectAltName, -1, Tlv(0x30, Tlv(0x89, {0x01}))), Extension(CertificatePolicies, -1, Tlv(0x30, {}))}));
+    const Bytes unknown = Tlv(0x30, Tlv(0x89, {0x01}));
+    const Bytes longer = {0x30, 0x04, 0x82, 0x05, 'a', 'b'};
+    const Bytes cut = {0x30, 0x02, 0x82, 0x05};
+    const Bytes directory = {0x30, 0x04, 0xa4, 0x02, 0x30, 0x05};
+    LibreSslX509* certificate = WithExtensions(Cat({Extension(SubjectAltName, -1, unknown), Extension(IssuerAltName, -1, longer),
+        Extension(SubjectAltName, -1, cut), Extension(SubjectAltName, -1, directory)}));
     ERR_clear_error_nid_postfix();
     int critical = 7;
-    Require(!Lookup(certificate, 85, &critical, nullptr) && critical == 0, "a general name with an unknown tag fails");
-    Require(ERR_get_error_nid_postfix() == Asn1Code(143), "an unknown general name reports ASN1_R_NO_MATCHING_CHOICE_TYPE first");
-    ERR_clear_error_nid_postfix();
+    int index = -1;
+    Require(!Lookup(certificate, 85, &critical, &index) && index == 0 && critical == 0, "a general name with an unknown tag fails");
+    Require(Queue() == Codes({143, 58}), "an unknown general name queues ASN1_R_NO_MATCHING_CHOICE_TYPE then the nested field error");
+    Require(!Lookup(certificate, 86, &critical, nullptr) && critical == 0, "a general name longer than its SEQUENCE fails");
+    Require(Queue() == Codes({155, 102, 58, 58, 58, 58}), "a value longer than its SEQUENCE queues ASN1_R_TOO_LONG and the header error");
+    Require(!Lookup(certificate, 85, &critical, &index) && index == 2, "a general name header without its value fails");
+    Require(Queue() == Codes({155, 102, 58, 58, 58, 58}), "a header without its value queues ASN1_R_TOO_LONG and the header error");
+    Require(!Lookup(certificate, 85, &critical, &index) && index == 3, "a truncated directoryName fails");
+    Require(Queue() == Codes({155, 102, 58, 58, 58, 58, 58}), "a truncated directoryName queues one more nested field error");
     bool threw = false;
-    try {
-        Lookup(certificate, 89, nullptr, nullptr);
-    } catch (...) {
-        threw = true;
-    }
-    Require(threw, "certificatePolicies throws instead of decoding qualifiers");
-    threw = false;
     try {
         Lookup(nullptr, 85, nullptr, nullptr);
     } catch (const std::invalid_argument&) {
