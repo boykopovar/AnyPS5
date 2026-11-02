@@ -579,6 +579,7 @@ private:
     bool uploaded = false;
     bool committed = false;
     mutable std::uint64_t directWritesGeneration = 0;
+    mutable std::uint64_t directWritesOrder = 0;
 };
 
 }

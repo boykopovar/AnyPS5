@@ -1562,6 +1562,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         layerPendingSince.assign(trackedLayers, 0);
         unwatchHash.assign(trackedLayers, {});
         pendingMiss.assign(trackedLayers, BaselineMiss::None);
+        layerRecorded.assign(trackedLayers, 0);
         layerPending.assign(trackedLayers, false);
         layerOriginal.assign(trackedLayers, true);
         savedTicket.assign(trackedLayers, 0);
@@ -4114,6 +4115,8 @@ std::uint64_t StorageTexture::OccasionalLabelStores() {
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
+    const auto recorded = NextRecordOrder();
+    for (std::uint32_t layer = first; layer < first + count && layer < layerRecorded.size(); ++layer) layerRecorded[layer] = recorded;
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     if (const auto flip = flipSerial.load(std::memory_order_relaxed); writes == 1u || flip != writtenFlip) {
         writtenOccasionally = writes == 1u || flip - writtenFlip > OccasionalWriteFlips;
@@ -5321,6 +5324,14 @@ std::uint64_t StorageTexture::StampKeepingNewerResults(std::uint64_t address, st
     return generation;
 }
 
+bool StorageTexture::AnyPendingInside(std::uint64_t address, std::size_t bytes, const StorageTexture* except) {
+    auto& pending = Pending();
+    if (pending.flushingCount.load(std::memory_order_acquire) == 0 && pending.textures.SurelyClear(address, bytes)) return false;
+    std::lock_guard lock(pending.mutex);
+    if (pending.textures.MayOverlap(address, bytes) && std::any_of(pending.textures.begin(), pending.textures.end(), [&](const StorageTexture* texture) { return texture != except && texture->overlaps(address, bytes) && texture->pendingUnitInside(address, bytes); })) return true;
+    return std::any_of(pending.flushing.begin(), pending.flushing.end(), [&](const StorageTexture* texture) { return texture != except && texture->overlaps(address, bytes); });
+}
+
 bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (ranges.empty()) return false;
     auto& pending = Pending();
@@ -6497,6 +6508,28 @@ bool StorageTexture::cpuLeftUnchanged(std::uint32_t layer, std::uint64_t from, s
 }
 
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
+    std::uint64_t recorded = 0;
+    bool ordered = true;
+    std::uint64_t first = descriptor.baseAddress + guestBytes;
+    std::uint64_t last = descriptor.baseAddress;
+    for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+        if (!layers[layer]) continue;
+        ordered = ordered && layer < layerRecorded.size() && layerRecorded[layer] != 0;
+        if (layer < layerRecorded.size()) recorded = std::max(recorded, layerRecorded[layer]);
+        first = std::min(first, layerBegin(layer));
+        last = std::max(last, layerBegin(layer) + layerBytes(layer));
+    }
+    if (!ordered || last <= first) {
+        storeLayers(layers);
+        return;
+    }
+    static_cast<void>(KeepNewerDepthUnits(first, static_cast<std::size_t>(last - first), recorded, [&] {
+        storeLayers(layers);
+        return GuestMemory::TrackerGeneration();
+    }));
+}
+
+void StorageTexture::storeLayers(const std::vector<bool>& layers) {
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;

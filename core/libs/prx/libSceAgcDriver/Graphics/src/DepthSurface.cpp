@@ -1208,7 +1208,8 @@ public:
         return mirror;
     }
 
-    void SizeUnits(std::uint64_t planeBytes) {
+    void SizeUnits(std::uint64_t bytesOfPlane) {
+        planeBytes = bytesOfPlane;
         static const bool whole = std::getenv("APS5_DEPTH_PLANE_WHOLE_STORE") != nullptr;
         const std::uint64_t bytes = !whole && target.address % 65536u == 0 ? std::uint64_t{65536} : std::max<std::uint64_t>(planeBytes, 1u);
         const auto count = static_cast<std::size_t>(std::max<std::uint64_t>((planeBytes + bytes - 1u) / bytes, 1u));
@@ -1217,6 +1218,7 @@ public:
         staleUnits.assign(count, false);
         staleCount = 0;
         unitGeneration.assign(count, 0);
+        unitDrawn.assign(count, 0);
     }
 
     bool AnyStale() const {
@@ -1231,6 +1233,10 @@ public:
         SizeUnits(planeBytes);
         staleUnits.assign(staleUnits.size(), true);
         staleCount = staleUnits.size();
+    }
+
+    void NoteDrawn(std::uint64_t order) {
+        unitDrawn.assign(staleUnits.size(), order);
     }
 
     void ClearStale() {
@@ -1312,7 +1318,20 @@ public:
         return changed;
     }
 
+    void StorePendingImages(const GuestTextureResource& resource) {
+        const auto bytes = planeBytes != 0 ? planeBytes : DescribeSurface(resource).guestBytes;
+        if (!StorageTexture::AnyPendingInside(resource.baseAddress, static_cast<std::size_t>(bytes), mirrorPlane.storage.get())) return;
+        struct Syncing {
+            bool& flag;
+            bool previous;
+            ~Syncing() { flag = previous; }
+        } guard{syncing, syncing};
+        syncing = true;
+        static_cast<void>(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(bytes), mirrorPlane.storage.get(), "depth plane sync", PublishScope::None));
+    }
+
     void SyncFromMemory(const GuestTextureResource& resource) {
+        StorePendingImages(resource);
         std::uint64_t generation = 0;
         const auto changed = WrittenUnits(resource, generation);
         if ((pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 || !anyUnit(changed)) {
@@ -1395,7 +1414,9 @@ public:
     std::uint64_t depthMark = 0;
     std::uint64_t stencilMark = 0;
     std::vector<std::uint64_t> unitGeneration;
+    std::vector<std::uint64_t> unitDrawn;
     std::uint64_t unitBytes = 0;
+    std::uint64_t planeBytes = 0;
     bool syncing = false;
     std::uint64_t scannedEpoch = 0;
 
@@ -2866,6 +2887,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         const auto planeBytes = DescribeSurface(mirrorResource(target)).guestBytes;
         surface->NoteDepthWork();
         surface->MarkAllStale(planeBytes);
+        surface->NoteDrawn(NextRecordOrder());
         noteStalePlane(plane, plane + planeBytes);
     }
     if (stencilWritten || created || stencilRebound) surface->MarkStencilStale();
@@ -2902,6 +2924,52 @@ DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const D
 bool DepthPlanesStale() {
     auto& planes = stalePlanes();
     return planes.begin.load(std::memory_order_acquire) < planes.end.load(std::memory_order_acquire);
+}
+
+std::uint64_t NextRecordOrder() {
+    static std::atomic<std::uint64_t> order{0};
+    return order.fetch_add(1, std::memory_order_relaxed) + 1u;
+}
+
+std::uint64_t KeepNewerDepthUnits(std::uint64_t address, std::size_t bytes, std::uint64_t recorded, const std::function<std::uint64_t()>& stamp) {
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    if (recorded == 0 || bytes == 0 || !overlapsStalePlane(address, end)) return stamp();
+    struct Kept {
+        DepthSurface* surface;
+        std::size_t unit;
+        std::uint64_t from;
+        std::size_t bytes;
+        std::uint64_t since;
+    };
+    std::vector<Kept> kept;
+    {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        std::lock_guard lock(surfacesMutex());
+        for (const auto& surface : surfaces()) {
+            if (!surface->AnyStale() || surface->retired || !mirrorable(surface->target) || surface->unitBytes == 0 || surface->planeBytes == 0) continue;
+            const auto plane = surface->target.address;
+            const auto planeBytes = surface->planeBytes;
+            if (plane >= end || address >= plane + planeBytes) continue;
+            const auto units = surface->StaleUnitsIn(planeBytes, address, end);
+            for (std::size_t unit = 0; unit < units.size() && unit < surface->unitDrawn.size() && unit < surface->unitGeneration.size(); ++unit) {
+                if (!units[unit] || surface->unitDrawn[unit] <= recorded || surface->unitGeneration[unit] == 0) continue;
+                const auto from = plane + unit * surface->unitBytes;
+                const auto length = static_cast<std::size_t>(std::min<std::uint64_t>(surface->unitBytes, planeBytes - unit * surface->unitBytes));
+                if (GuestMemory::UnchangedSince(from, length, surface->unitGeneration[unit])) kept.push_back({surface.get(), unit, from, length, surface->unitGeneration[unit]});
+            }
+        }
+    }
+    const auto generation = stamp();
+    if (generation == 0 || kept.empty()) return generation;
+    std::lock_guard gpu(GuestMemory::GpuMutex());
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& entry : kept) {
+        if (std::none_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface.get() == entry.surface; })) continue;
+        auto& surface = *entry.surface;
+        if (entry.unit >= surface.staleUnits.size() || entry.unit >= surface.unitGeneration.size() || !surface.staleUnits[entry.unit] || surface.unitGeneration[entry.unit] != entry.since) continue;
+        if (GuestMemory::UnchangedSinceCollected(entry.from, entry.bytes, entry.since)) surface.unitGeneration[entry.unit] = std::max(entry.since, generation);
+    }
+    return generation;
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint64_t address, std::size_t bytes, DepthPlaneScope scope) {

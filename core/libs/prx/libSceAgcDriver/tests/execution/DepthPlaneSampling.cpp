@@ -27,6 +27,7 @@
 #include <cstring>
 #include <deque>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -73,6 +74,7 @@ constexpr std::size_t LargeCubeOffset = 0x200000;
 constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr std::size_t FrameCopiesOffset = 0x520000;
 constexpr std::size_t ReloadOffset = 0x700000;
+constexpr std::size_t AliasOffset = 0x720000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -175,7 +177,7 @@ std::uint32_t Bits(float value) {
 
 // Draws a full-target triangle at depth `z` into the depth surface at `address`, which makes the driver create the
 // surface (the base slice a later plane copy reads from the surface instead of from guest memory).
-void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0) {
+void DrawTriangle(AgcDriver::VulkanDevice& device, VkExtent2D extent, float z, const AgcDriver::Graphics::ColorTarget& color, std::optional<AgcDriver::Graphics::DepthTarget> depth) {
     static std::deque<std::vector<std::array<float, 4>>> vertexData;
     vertexData.push_back({{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}});
     const auto& vertices = vertexData.back();
@@ -216,13 +218,12 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     }};
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), extent, VK_FORMAT_R8G8B8A8_UNORM, AgcDriver::Graphics::ColorTargetLayout(extent.width, extent.height, AgcDriver::Graphics::ColorTileMode::Linear).Bytes(), 0xe4u};
+    state.color = color;
     state.colors = {state.color};
     state.hasColorTarget = true;
-    state.depth = AgcDriver::Graphics::DepthTarget{address, 0, extent, format, 1.0f, 0};
-    state.depth->depthSwizzle = swizzle;
-    state.depthTest = true;
-    state.depthWrite = true;
+    state.depth = depth;
+    state.depthTest = depth.has_value();
+    state.depthWrite = depth.has_value();
     state.depthCompare = VK_COMPARE_OP_ALWAYS;
     state.renderExtent = extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -237,6 +238,21 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(vertices.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
+}
+
+void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0) {
+    const AgcDriver::Graphics::ColorTarget color{reinterpret_cast<std::uintptr_t>(Pixels.data()), extent, VK_FORMAT_R8G8B8A8_UNORM, AgcDriver::Graphics::ColorTargetLayout(extent.width, extent.height, AgcDriver::Graphics::ColorTileMode::Linear).Bytes(), 0xe4u};
+    AgcDriver::Graphics::DepthTarget depth{address, 0, extent, format, 1.0f, 0};
+    depth.depthSwizzle = swizzle;
+    DrawTriangle(device, extent, z, color, depth);
+}
+
+void DrawColor(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent) {
+    AgcDriver::Graphics::ColorTarget color{address, extent, VK_FORMAT_R32_SFLOAT, AgcDriver::Graphics::ColorTargetLayout(extent.width, extent.height, AgcDriver::Graphics::ColorTileMode::RenderTarget).Bytes(), 0xe4u};
+    color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+    color.surfaceAddress = address;
+    color.surfaceExtent = extent;
+    DrawTriangle(device, extent, 0.0f, color, std::nullopt);
 }
 
 void Load(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const Shape& shape, std::uint32_t slice, std::span<std::uint32_t> output, bool shaderImage2D = false, std::uint32_t row = 0) {
@@ -355,6 +371,49 @@ void GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block,
     FillSlice(base, SliceBytes, Bits(0.75f), 4u);
     Load(device, base, shape, 0, output);
     Expect(output, Bits(0.75f), "D32 plane the guest wrote after a draw, sampled before its surface is bound again");
+}
+
+void ExpectMemory(const std::uint8_t* base, std::uint64_t bytes, float expected, const std::string& what) {
+    for (std::uint64_t offset = 0; offset < bytes; offset += 4u) {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, base + offset, sizeof(bits));
+        char text[160];
+        std::snprintf(text, sizeof(text), "%s: guest word at +0x%llx holds 0x%08x, expected 0x%08x", what.c_str(), static_cast<unsigned long long>(offset), bits, Bits(expected));
+        Require(bits == Bits(expected), text);
+    }
+}
+
+void AliasedStoreAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    auto* base = block.At(AliasOffset);
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+    constexpr VkExtent2D extent{128, 256};
+    const auto bytes = AgcDriver::Graphics::DepthSliceBytes(extent, 4u);
+    if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(address, static_cast<std::size_t>(bytes))) {
+        std::puts("guest memory has no write watch: an aliased image stored after a draw is not checked");
+        return;
+    }
+    const auto swizzle = AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX);
+    const Shape shape{Format32Float, extent.width, extent.height, Type2D, 0, Swizzle64KbZX};
+    DrawDepth(device, address, extent, VK_FORMAT_D32_SFLOAT, 0.5f, swizzle);
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(address, static_cast<std::size_t>(bytes)));
+    device.WaitIdle();
+    DrawColor(device, address, {256, 256});
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.75f), 4u);
+    DrawDepth(device, address, extent, VK_FORMAT_D32_SFLOAT, DrawnDepth, swizzle);
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(DrawnDepth), "D32 plane drawn after an aliasing image's results were recorded, sampled after those results were stored");
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(address, static_cast<std::size_t>(bytes)));
+    device.WaitIdle();
+    ExpectMemory(base, bytes, DrawnDepth, "D32 plane stored after the aliasing image");
+    const auto before = AgcDriver::Graphics::NextRecordOrder();
+    DrawDepth(device, address, extent, VK_FORMAT_D32_SFLOAT, 0.375f, swizzle);
+    static_cast<void>(AgcDriver::Graphics::KeepNewerDepthUnits(address, static_cast<std::size_t>(bytes), before, [&] { return AgcDriver::GuestMemory::MarkPossiblyWritten(address, static_cast<std::size_t>(bytes)); }));
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(0.375f), "D32 plane sampled after a GPU write recorded before its draw completed");
+    const auto after = AgcDriver::Graphics::NextRecordOrder();
+    static_cast<void>(AgcDriver::Graphics::KeepNewerDepthUnits(address, static_cast<std::size_t>(bytes), after, [&] { return AgcDriver::GuestMemory::MarkPossiblyWritten(address, static_cast<std::size_t>(bytes)); }));
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(DrawnDepth), "D32 plane sampled after a GPU write recorded after its draw completed");
 }
 
 void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
@@ -515,6 +574,8 @@ int main(int argc, char** argv) {
         GuestDepthBitsCase(*device, block, output);
         present();
         GuestWriteAfterDrawCase(*device, block, output);
+        present();
+        AliasedStoreAfterDrawCase(*device, block, output);
         present();
         FirstSliceCase(*device, block, output);
         present();
