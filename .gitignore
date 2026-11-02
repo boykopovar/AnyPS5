@@ -57,6 +57,7 @@ build-wasm/
 
 .idea/
 .vscode/
+.system_generated/
 
 .venv/
 venv/
