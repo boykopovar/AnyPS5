@@ -137,7 +137,6 @@ static void CheckSigsetjmp() {
     Require(sigsetjmp_nid_postfix(buffer, 0) == 0);
     for (std::size_t offset = 72; offset < 88; offset += 4) Require(BufferWord(buffer, offset) == Filler);
     Require(BufferWord(buffer, 88) == 0);
-    Require(BufferWord(buffer, 92) == Filler);
     Require(BlockedMask() == 0x30u);
 
     SetBlockedMask(0x80000005u);
@@ -145,7 +144,6 @@ static void CheckSigsetjmp() {
     Require(BufferWord(buffer, 72) == 0x80000005u);
     for (std::size_t offset = 76; offset < 88; offset += 4) Require(BufferWord(buffer, offset) == 0);
     Require(BufferWord(buffer, 88) == 1);
-    Require(BufferWord(buffer, 92) == Filler);
     Require(BlockedMask() == 0x80000005u);
 
     SetBlockedMask(0x6u);

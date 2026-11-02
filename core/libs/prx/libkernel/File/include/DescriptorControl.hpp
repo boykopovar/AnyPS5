@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <exception>
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 namespace File {
 
@@ -18,18 +19,27 @@ void RememberPipe(int fd);
 void ShareDescriptor(int from, int to);
 void ForgetDescriptor(int fd);
 bool Appends(int fd);
-void SyncWrites(int fd);
+bool SyncWrites(int fd);
+using SynchronousWriteHook = int (*)(int);
+extern "C" void FileSetSynchronousWriteHookForTest_nid_no_patch(SynchronousWriteHook hook);
+extern "C" void FileSetSynchronousWriteMetadataHookForTest_nid_no_patch(SynchronousWriteHook hook);
 
 class WriteSync {
 public:
-    explicit WriteSync(int fd) : _fd(fd), _exceptions(std::uncaught_exceptions()) {}
+    explicit WriteSync(int fd) : _fd(fd), _exceptions(std::uncaught_exceptions()), posix(ThreadCancel::IoActive()) {}
     ~WriteSync() noexcept(false) {
-        if (std::uncaught_exceptions() == _exceptions) SyncWrites(_fd);
+        if (!posix && std::uncaught_exceptions() == _exceptions) SyncWrites(_fd);
+    }
+    template <class TResult>
+    TResult Complete(TResult result) const {
+        if (posix && result > 0 && _fd >= 0) SyncWrites(_fd);
+        return result;
     }
 
 private:
     int _fd;
     int _exceptions;
+    bool posix;
 };
 bool IsVnode(int fd);
 bool IsCharacterDevice(int fd);
