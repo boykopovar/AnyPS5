@@ -524,7 +524,7 @@ int MutexWake(UserMutex* mutex) {
     return 0;
 }
 
-int ConditionDeadline(const UserCondition* condition, std::uint64_t flags, const void* timeArgument, std::optional<std::uint64_t>& deadlineNanos) {
+int ConditionDeadline(UserCondition* condition, std::uint64_t flags, const void* timeArgument, std::optional<std::uint64_t>& deadlineNanos) {
     deadlineNanos.reset();
     if (timeArgument == nullptr) {
         return 0;
@@ -537,7 +537,7 @@ int ConditionDeadline(const UserCondition* condition, std::uint64_t flags, const
     if ((flags & CVWAIT_ABSTIME) == 0) {
         remaining = SaturatingNanos(timeout.tv_sec, timeout.tv_nsec);
     } else {
-        const int clock = (flags & CVWAIT_CLOCKID) != 0 ? static_cast<int>(std::atomic_ref<const std::uint32_t>(condition->clockId).load()) : GUEST_CLOCK_REALTIME;
+        const int clock = (flags & CVWAIT_CLOCKID) != 0 ? static_cast<int>(std::atomic_ref<std::uint32_t>(condition->clockId).load()) : GUEST_CLOCK_REALTIME;
         KernelTimespec now{};
         clock_gettime_nid_postfix(clock, &now);
         remaining = SaturatingNanos(timeout.tv_sec - now.tv_sec, timeout.tv_nsec - now.tv_nsec);
