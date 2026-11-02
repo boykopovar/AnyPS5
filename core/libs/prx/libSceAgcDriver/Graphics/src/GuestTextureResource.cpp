@@ -247,15 +247,19 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         Require(baseAddress != 0, "guest texture descriptor has a null base address");
     }
 
+    std::uint32_t linearPitch = 0;
     switch (dimension) {
         case TextureDimension::k1D:
             Require(height == 1 && depth == 0 && baseArray == 0, "guest 1D texture descriptor has a nonzero height, depth or base array");
             break;
         case TextureDimension::k2D:
             if (depth != 0 && tileMode == TextureTileMode::kLinear) {
+                Require(!IsBlockCompressed(format) && maxMip == 0 && baseArray == 0, "guest 2D linear texture descriptor sets a pitch on a block-compressed, mipmapped or base-array surface, which is not implemented" + describe());
                 const auto elementsPerPitchUnit = 256u / BytesPerElement(format);
                 const auto defaultPitch = (width + elementsPerPitchUnit - 1u) / elementsPerPitchUnit * elementsPerPitchUnit;
-                Require(!IsBlockCompressed(format) && maxMip == 0 && baseArray == 0 && depth + 1u == defaultPitch, "guest 2D linear texture descriptor sets a custom pitch other than its default pitch, which is not implemented" + describe());
+                Require(!ShaderRecompiler::GcnGuestShaders() || depth + 1u == defaultPitch, "guest 2D linear texture descriptor of a PS4 guest sets a custom pitch other than its default pitch, which is not implemented" + describe());
+                const auto pitch = (std::max(depth + 1u, width) + elementsPerPitchUnit - 1u) / elementsPerPitchUnit * elementsPerPitchUnit;
+                linearPitch = pitch == defaultPitch ? 0u : pitch;
                 depth = 0;
             }
             Require(depth == 0 && baseArray == 0, "guest 2D texture descriptor has a nonzero depth or base array");
@@ -314,6 +318,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         result.gcnLinearGeneral = ShaderRecompiler::GcnImageTilingIndex(gcnTiling) == 31u;
         Require(result.gcnPitch >= width, "PS4 texture descriptor has a pitch below its width" + describe());
     }
+    result.linearPitch = linearPitch;
     if (baseLevel > maxMip) {
         const bool fits = LevelsFitAllocation(result, lastLevel + 1u);
         if (!fits && ZeroTail(words)) {
@@ -328,7 +333,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
 std::array<std::uint32_t, 8> EncodeTextureResource(const GuestTextureResource& resource) {
     const bool multisampled = resource.dimension == TextureDimension::k2DMsaa;
     Require((resource.dimension == TextureDimension::k2D && resource.samples == 1u) || (multisampled && resource.samples >= 2u && resource.samples <= 16u && std::has_single_bit(resource.samples)), "only 2D and multisampled 2D surfaces have a texture descriptor encoding");
-    Require(resource.mipCount == 1u && resource.allocatedMipCount <= 1u && resource.baseLevel == 0u && resource.lastLevel == 0u && resource.depthOrLastArray == 0u && resource.baseArray == 0u && resource.dccAddress == 0u && resource.minLod == 0u && !resource.iterate256 && resource.bcSwizzle == 0u, "only single-level, single-layer surfaces without metadata have a texture descriptor encoding");
+    Require(resource.mipCount == 1u && resource.allocatedMipCount <= 1u && resource.baseLevel == 0u && resource.lastLevel == 0u && resource.depthOrLastArray == 0u && resource.baseArray == 0u && resource.dccAddress == 0u && resource.minLod == 0u && !resource.iterate256 && resource.bcSwizzle == 0u && resource.linearPitch == 0u, "only single-level, single-layer surfaces without metadata have a texture descriptor encoding");
     Require(resource.width >= 1u && resource.width <= 0x4000u && resource.height >= 1u && resource.height <= 0x4000u && resource.format < 0x200u, "the surface's extent or format has no texture descriptor encoding");
     const auto xorMask = resource.tileMode == TextureTileMode::kS4KBX || resource.tileMode == TextureTileMode::kD4KBX ? 0xfffull : 0xffffull;
     Require(XorSwizzleMode(resource.tileMode) != 0 ? (resource.baseAddress & xorMask) == 0 && (resource.pipeBankXor & ~xorMask) == 0 : resource.pipeBankXor == 0, "the surface's pipe and bank XOR has no texture descriptor encoding");
