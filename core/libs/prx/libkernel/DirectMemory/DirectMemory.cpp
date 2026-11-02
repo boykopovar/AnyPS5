@@ -1495,8 +1495,17 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     auto bytes = static_cast<std::size_t>(end - first);
     const void* pointer = reinterpret_cast<const void*>(first);
     const auto nativeProtection = LinuxProtFromSce(prot);
-    if (GuestThreadStackHostRangeOverlaps(address, address + len))
-        throw std::system_error(EACCES, std::generic_category(), "mprotect overlaps host-only guest thread stack pages");
+    if (const auto hostRanges = GuestThreadStackHostRanges(address, address + len); !hostRanges.empty()) {
+        if (requireMappedStart && hostRanges.front().first == address) return SCE_KERNEL_ERROR_EINVAL;
+        auto cursor = address;
+        for (const auto& [low, high] : hostRanges) {
+            if (cursor < low)
+                if (const int result = DoMprotect(reinterpret_cast<const void*>(cursor), low - cursor, prot, requireMappedStart && cursor == address); result != 0) return result;
+            cursor = high;
+        }
+        if (cursor < address + len) return DoMprotect(reinterpret_cast<const void*>(cursor), address + len - cursor, prot, false);
+        return 0;
+    }
     std::uintptr_t stackStart = 0;
     std::uintptr_t stackEnd = 0;
     if ((prot & GuestProtGpuReadWrite) == 0 && GuestThreadStack(address, &stackStart, &stackEnd) && address >= stackStart && address + len <= stackEnd) {
