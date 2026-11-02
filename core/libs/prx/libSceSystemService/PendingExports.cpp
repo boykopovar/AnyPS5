@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -184,11 +185,6 @@ int APS5_VABI sceLncUtilAddLocalProcess(std::int32_t appId, const char* path, co
     return 0;
 }
 
-int APS5_VABI sceLncUtilBlockAppSuspend(const char* reason) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilBlockingGetEventForDaemon(LncDaemonEvent* event, std::uint64_t receiveArgument) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -210,16 +206,6 @@ int APS5_VABI sceLncUtilDeactivateCdlg() {
 }
 
 int APS5_VABI sceLncUtilDeclareReadyForSuspend() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilDisableSuspendNotification() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilEnableSuspendNotification() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -359,19 +345,9 @@ int APS5_VABI sceLncUtilIsHostBoot(std::int32_t appId, bool* hostBoot) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilIsPs2Emu(bool* emulated) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
     if (speculative == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
-    if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) NotImplemented_nid_no_patch("sceLncUtilIsSpeculativeLaunch: application other than the running title");
+    if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) throw std::runtime_error("sceLncUtilIsSpeculativeLaunch: application other than the running title");
     *speculative = false;
     return 0;
 }
@@ -507,11 +483,6 @@ int APS5_VABI sceLncUtilTerminate() {
 }
 
 int APS5_VABI sceLncUtilTryBlockAppSuspend(const char* reason) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilUnblockAppSuspend(const char* reason) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -865,22 +836,7 @@ int APS5_VABI sceShellCoreUtilGetFsckProgress(const char* titleId, std::uint32_t
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 bool APS5_VABI sceShellCoreUtilGetGnmCompositorOnScreenProfilerFlag() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationMode() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationModeByAppId(std::int32_t appId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -985,22 +941,7 @@ int APS5_VABI sceShellCoreUtilGetPsnAccountInfo(ShellCorePsnAccountInfoFirst* fi
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilGetRemotePlayStatus(bool* active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilGetRunLevel() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilGetSharePlayStatus(bool* active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1011,11 +952,6 @@ int APS5_VABI sceShellCoreUtilGetSplashScreenState(std::int32_t appId) {
 }
 
 int APS5_VABI sceShellCoreUtilGetSupportSiteURL(std::uint32_t first, std::uint32_t second, char* value, std::size_t capacity) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilGetSuspendConfirmationDialogFlag(std::int32_t appId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1105,27 +1041,7 @@ bool APS5_VABI sceShellCoreUtilIsBgmCpuBudgetAvailable() {
     return 0;
 }
 
-bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsGameLiveStreamingOnAir() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceShellCoreUtilIsIDUState() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsImposeScreenOverlaid() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1160,11 +1076,6 @@ bool APS5_VABI sceShellCoreUtilIsRemotePlayCpuBudgetAcquired() {
     return 0;
 }
 
-bool APS5_VABI sceShellCoreUtilIsScreenSaverOn() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 bool APS5_VABI sceShellCoreUtilIsSharePlayCpuBudgetAcquired() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1181,11 +1092,6 @@ int APS5_VABI sceShellCoreUtilIsTemperatureDanger() {
 }
 
 int APS5_VABI sceShellCoreUtilIsTitleWorkaroundEnabled(std::int32_t selector, const char* key) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceShellCoreUtilIsUsbMassStorageMounted(std::uint32_t deviceIndex) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1396,16 +1302,6 @@ int APS5_VABI sceShellCoreUtilSetGameLiveStreamingStatus(std::int32_t active) {
 }
 
 int APS5_VABI sceShellCoreUtilSetGnmCompositorOnScreenProfilerFlag(std::int32_t enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilSetGpuLoadEmulationMode(std::uint32_t mode) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilSetGpuLoadEmulationModeByAppId(std::int32_t appId, std::uint32_t mode) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1779,31 +1675,11 @@ int APS5_VABI sceSystemServiceDisablePersonalEyeToEyeDistanceSetting() {
     return 0;
 }
 
-int APS5_VABI sceSystemServiceDisableSuspendConfirmationDialog() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceDisableSuspendNotification() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceDisableVoiceRecognition() {
     return SystemServiceUnavailable;
 }
 
 int APS5_VABI sceSystemServiceEnablePersonalEyeToEyeDistanceSetting() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceEnableSuspendConfirmationDialog() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceEnableSuspendNotification() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1834,11 +1710,6 @@ int APS5_VABI sceSystemServiceGetDbgExecutablePath(char* path, std::uint64_t sel
 }
 
 int APS5_VABI sceSystemServiceGetEventForDaemon(SystemServiceDaemonEvent* event) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetGpuLoadEmulationMode() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1905,11 +1776,6 @@ int APS5_VABI sceSystemServiceGetRecentLotusPushedButton(std::uint32_t timeout, 
     return 0;
 }
 
-int APS5_VABI sceSystemServiceGetRemoteplayStatus(bool* active) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceGetRenderingMode() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1951,26 +1817,6 @@ int APS5_VABI sceSystemServiceInvokeAppLaunchLink(const char* uri) {
 }
 
 bool APS5_VABI sceSystemServiceIsBgmCpuBudgetAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemServiceIsScreenSaverOn() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemServiceIsShellUiFgAndGameBgCpuMode() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2102,11 +1948,6 @@ int APS5_VABI sceSystemServiceSaveVideoToken(std::int32_t userId, const char* to
 }
 
 int APS5_VABI sceSystemServiceSetControllerFocusPermission(std::uint8_t permission) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceSetGpuLoadEmulationMode(std::uint32_t mode) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2282,17 +2123,7 @@ int APS5_VABI sceSystemStateMgrGetTriggerCode() {
     return 0;
 }
 
-bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemStateMgrIsGpuPerformanceNormal() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

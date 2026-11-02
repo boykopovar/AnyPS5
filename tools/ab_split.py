@@ -53,7 +53,7 @@ def parse_report(kind, text):
             return None
         programs_text, classes_text = text.split("by program:", 1)[-1].split("; by class:", 1)
         programs, classes = {}, {}
-        for key, ms in re.findall(r" (0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
+        for key, ms in re.findall(r" (?<!draw )(0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
             programs[key] = programs.get(key, 0.0) + finite(float(ms))
         for name, ms in re.findall(r" ([a-z][a-z-]*) x\d+ ([\d.]+)ms [\d.]+MiB \(per present", classes_text):
             classes[name] = classes.get(name, 0.0) + finite(float(ms))
@@ -87,16 +87,25 @@ def read_log(lines):
         match = PHASE.match(text)
         if match:
             kind, index, event, present, seconds = match.group(1), int(match.group(2)), match.group(3), int(match.group(4)), finite(float(match.group(5)))
+            point = (present, seconds)
+
             if event == "begins":
                 if phases and index <= phases[-1]["index"]:
                     raise ValueError("phase index restarts in one log (multiple A/B runs); split the captures before comparing phases")
+
                 if current is not None:
-                    current["end"] = (present, seconds)
-                current = {"kind": kind, "index": index, "begin": (present, seconds), "settled": None, "end": None,
+                    current["end"] = point
+
+                current = {"kind": kind, "index": index, "begin": point, "settled": None, "end": None,
                            "reports": {name: [] for name, _ in KINDS}}
                 phases.append(current)
+
             elif current is not None and current["index"] == index and current["kind"] == kind:
-                current["settled"] = (present, seconds)
+                previous_point = current["begin"]
+                if point[0] < previous_point[0] or point[1] < previous_point[1]:
+                    raise ValueError("phase settled before it began")
+                current["settled"] = point
+
             continue
         for name, prefix in KINDS:
             if text.startswith(prefix):

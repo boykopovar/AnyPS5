@@ -47,6 +47,13 @@ struct NpIdFull {
     std::uint8_t reserved[8];
 };
 
+struct NpJid {
+    const char* user;
+    const char* domain;
+    const char* resource;
+    std::uint64_t reserved;
+};
+
 struct NpJsonRule {
     std::uint64_t kind;
     const char* key;
@@ -196,7 +203,7 @@ int APS5_VABI sceNpUtilGetTrcNotify(void);
 int APS5_VABI sceNpUtilGetWebApi2FakeRateLimit(void);
 int APS5_VABI sceNpUtilGetWebApi2FakeRateLimitTarget(void);
 int APS5_VABI sceNpUtilGetWebTraceSetting(void);
-int APS5_VABI sceNpUtilJidToNpId(void);
+int APS5_VABI sceNpUtilJidToNpId(NpIdFull* npId, const NpJid* jid);
 int APS5_VABI sceNpAtomicCas32(std::int32_t* value, std::int32_t expected, std::int32_t desired);
 int APS5_VABI sceNpAtomicInc32(std::int32_t* value);
 int APS5_VABI sceNpAtomicDec32(std::int32_t* value);
@@ -242,6 +249,12 @@ void APS5_VABI sceNpGlobalHeapGetAllocator(NpAllocator* allocator);
 void APS5_VABI sceNpGlobalHeapGetAllocatorEx(NpAllocatorEx* allocator);
 NpAllocator* APS5_VABI sceNpGlobalHeapGetAllocatorPtr(void);
 NpAllocatorEx* APS5_VABI sceNpGlobalHeapGetAllocatorExPtr(void);
+NpAllocator* APS5_VABI _sceNpAllocatorExConvertAllocator(NpAllocatorEx* allocator);
+void* APS5_VABI _sceNpAllocatorExMalloc(NpAllocatorEx* allocator, std::size_t size);
+void* APS5_VABI _sceNpAllocatorExRealloc(NpAllocatorEx* allocator, void* pointer, std::size_t size);
+void APS5_VABI _sceNpAllocatorExFree(NpAllocatorEx* allocator, void* pointer);
+char* APS5_VABI _sceNpAllocatorExStrdup(NpAllocatorEx* allocator, const char* text);
+char* APS5_VABI _sceNpAllocatorExStrndup(NpAllocatorEx* allocator, const char* text, std::size_t maxLength);
 void* APS5_VABI _ZN3sce2np6ObjectnwEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator);
 void* APS5_VABI _ZN3sce2np6ObjectnaEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator);
 void APS5_VABI _ZN3sce2np6ObjectdlEPvR14SceNpAllocator(void* object, NpAllocator* allocator);
@@ -339,9 +352,8 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
 int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* dstLength);
 
 int APS5_VABI _ZN3sce2np10CancelableC2Ev(void);
-int APS5_VABI sceNpUtilXmlEscape(void);
+int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required);
 int APS5_VABI _ZN3sce2np4CondD0Ev(void);
-int APS5_VABI _sceNpAllocatorExRealloc(void);
 int APS5_VABI _ZN3sce2np8WorkItem6CancelEi(void);
 int APS5_VABI _ZN3sce2np9WorkQueue11GetItemByIdEi(void);
 int APS5_VABI _ZN3sce2np14JsonDocBuilderC2ERKNS0_9JsonValueE(void);
@@ -379,9 +391,9 @@ int APS5_VABI _ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient10DisconnectEv(void);
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void);
 int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTypePKcPcS5_iPPhPmPiPvESA_(void);
-int APS5_VABI sceNpUtilParseJid(void);
+int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std::size_t bufferSize, std::size_t* required);
 int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void);
-int APS5_VABI sceNpUtilXmlUnescape(void);
+int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required);
 int APS5_VABI sceNpXmlParse(void);
 int APS5_VABI _ZN3sce2np9WorkQueue15GetFinishedItemENS0_14WorkItemStatusE(void);
 int APS5_VABI _ZN3sce2np9EventFlag4PollEmjPm(void);
@@ -419,7 +431,6 @@ int APS5_VABI _ZN3sce2np7Callout11CalloutFuncEPv(void);
 int APS5_VABI _ZThn8_N3sce2np6HandleD1Ev(void);
 int APS5_VABI _ZN3sce2np6Handle4InitEv(void);
 int APS5_VABI _ZThn16_N3sce2np10MemoryFileD1Ev(void);
-int APS5_VABI _sceNpAllocatorExFree(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient7ConnectEPKvm(void);
 int APS5_VABI _ZN3sce2np7RingBufC1Ev(void);
 int APS5_VABI _ZN3sce2np10MemoryFileD1Ev(void);

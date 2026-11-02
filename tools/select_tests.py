@@ -196,7 +196,10 @@ def chunks(names):
 
 
 def load_graph(path):
-    graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    try:
+        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: test graph is nested too deeply") from error
     if not isinstance(graph, dict) or not isinstance(graph.get("tests"), dict) or not isinstance(graph.get("closures"), dict):
         raise ValueError(f"{path}: invalid test graph (expected tests and closures objects)")
     fields = ("registered", "arguments", "sets", "requires", "depends")
@@ -348,7 +351,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+        try:
+            extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+        except (OSError, UnicodeDecodeError) as error:
+            parser.error(f"{selected}: {error}")
         return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
     if args.command == "explain":
         try:
