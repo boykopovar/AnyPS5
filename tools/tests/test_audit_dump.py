@@ -548,6 +548,34 @@ class AuditDumpTests(unittest.TestCase):
                 audit.assert_not_called()
                 self.assertEqual((self.dump / "eboot.bin").read_bytes(), SELF)
 
+    def test_json_output_relinker_paths_are_rejected_before_staging(self):
+        for report in (self.relinker, self.root / "missing" / ".." / self.relinker.name):
+            with self.subTest(report=report):
+                original = self.relinker.read_bytes()
+                self.assert_report_rejected(report)
+                self.assertEqual(self.relinker.read_bytes(), original)
+
+    def test_json_output_hardlinked_to_the_relinker_is_rejected_before_staging(self):
+        report = self.root / "relinker-report.json"
+        os.link(self.relinker, report)
+        self.assert_report_rejected(report)
+        self.assertTrue(report.samefile(self.relinker))
+
+    def test_actual_cli_rejects_a_relinker_report_before_work_cleanup(self):
+        (self.dump / "eboot.bin").write_bytes(ELF)
+        work = self.root / "cli-work"
+        marker = work / "source" / "preserve"
+        marker.parent.mkdir(parents=True)
+        marker.write_bytes(b"preserve work")
+        result = subprocess.run([sys.executable, audit_dump.__file__, str(self.dump),
+                                 "--relinker", str(self.relinker), "--libs", "libs", "--work", str(work),
+                                 "--json", str(self.relinker)], capture_output=True, text=True, encoding="utf-8", timeout=10)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("JSON output would overwrite the relinker", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(marker.read_bytes(), b"preserve work")
+        self.assertEqual((self.dump / "eboot.bin").read_bytes(), ELF)
+
     def test_an_invalid_relinker_executable_is_reported_without_a_traceback(self):
         (self.dump / "eboot.bin").write_bytes(ELF)
         result = subprocess.run([sys.executable, audit_dump.__file__, str(self.dump),
