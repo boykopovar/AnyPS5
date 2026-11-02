@@ -394,6 +394,10 @@ def validate_interval(record):
             raise ValueError(f"{field} must be an object")
         for name, value in values.items():
             interval_number(value, f"{field}.{name}")
+    for field in ("owned_draw_counts", "owned_storage_counts"):
+        counts = record.get(field, {})
+        if not isinstance(counts, dict) or any(not isinstance(name, str) or type(value) is not int or value < 0 for name, value in counts.items()):
+            raise ValueError(f"{field} must map names to non-negative integers")
     if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
         raise ValueError("trace_dropped must be a boolean")
 
@@ -416,7 +420,7 @@ def digest_intervals(lines):
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
                      "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
-                     "trace_dropped": line.get("trace_dropped", False)})
+                     "trace_dropped": line.get("trace_dropped", False), "owned_draw_counts": line.get("owned_draw_counts"), "owned_storage_counts": line.get("owned_storage_counts")})
     first = lines[0] if lines else {}
     keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution",
             "cpu", "cpu_threads", "memory_mib", "title_id", "title", "content_version")
@@ -441,6 +445,12 @@ def markdown_intervals(result):
         phase = f"{row['top_phase']['name']} {row['top_phase']['ms_per_frame']:.1f}" if row["top_phase"] else "-"
         lines.append(f"| {index} | {row['start_s']:.0f}-{row['end_s']:.0f}{' (dropped)' if row['trace_dropped'] else ''} | {row['presents']} | {frame['p50']:.1f} | {frame['p90']:.1f} "
                      f"| {frame['p99']:.1f} | {frame['max']:.1f} | {row['gpu_busy_ms_per_present']:.1f} | {worker} | {table_cell(phase)} |")
+    for field in ("owned_draw_counts", "owned_storage_counts"):
+        count_names = sorted({name for row in rows for name in (row[field] or {})})
+        if count_names:
+            lines += ["", "| # | " + " | ".join(table_cell(name) for name in count_names) + " |", "|---|" + "---|" * len(count_names)]
+            for index, row in enumerate(rows, 1):
+                lines.append(f"| {index} | " + " | ".join(str(row[field].get(name, 0)) if row[field] is not None else "-" for name in count_names) + " |")
     p99 = [row["frame_ms"]["p99"] for row in rows]
     gpu = [row["gpu_busy_ms_per_present"] for row in rows]
     lines += ["", "```", f"p99 ms  {sparkline(p99)}  0-{max(p99):.1f}", f"gpu ms  {sparkline(gpu)}  0-{max(gpu):.1f}", "```"]
