@@ -892,8 +892,8 @@ int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {
     if (File::InvalidOpenFlags(flags)) return static_cast<int>(Fail(GuestEinval));
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (fd == GuestAtFdcwd || *path == '/') return open_nid_postfix(path, flags, mode);
-    const int result = OpenInDirectory_nid_no_patch(fd, path, flags, static_cast<std::uint16_t>(mode));
+    if (fd == GuestAtFdcwd || copy[0] == '/') return open_nid_postfix(copy.c_str(), flags, mode);
+    const int result = OpenInDirectory_nid_no_patch(fd, copy.c_str(), flags, static_cast<std::uint16_t>(mode));
     if (result < 0) return static_cast<int>(Fail(result & 0xffff));
     return result;
 }
@@ -920,13 +920,13 @@ int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...) {
 int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) {
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (fd == GuestAtFdcwd || *path == '/') return mkdir_nid_postfix(path, mode);
-    if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return static_cast<int>(Fail(GuestEnametoolong));
+    if (fd == GuestAtFdcwd || copy[0] == '/') return mkdir_nid_postfix(copy.c_str(), mode);
+    if (copy.size() >= GuestPathMax || HasLongComponent(copy.c_str())) return static_cast<int>(Fail(GuestEnametoolong));
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
     if (base == nullptr) return static_cast<int>(Fail(error));
     auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                  std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+                  std::filesystem::path(reinterpret_cast<const char8_t*>(copy.c_str()));
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
 #ifdef _WIN32
     if (!CreateDirectoryW(native.wstring().c_str(), nullptr)) {
@@ -958,13 +958,13 @@ int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag)
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
     std::filesystem::path native;
-    if (fd == GuestAtFdcwd || *path == '/') {
-        if (const int error = ResolvePathError_nid_no_patch(path, native)) return static_cast<int>(Fail(error));
+    if (fd == GuestAtFdcwd || copy[0] == '/') {
+        if (const int error = ResolvePathError_nid_no_patch(copy.c_str(), native)) return static_cast<int>(Fail(error));
     } else {
         int error = 0;
         const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
         if (base == nullptr) return static_cast<int>(Fail(error));
-        native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+        native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) / std::filesystem::path(reinterpret_cast<const char8_t*>(copy.c_str()));
     }
     if (flag == GuestAtSymlinkNofollow) {
 #ifdef _WIN32
@@ -1056,8 +1056,8 @@ int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int fl
     if (flag & ~GuestAtSymlinkNofollow) return static_cast<int>(Fail(GuestEinval));
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (fd == GuestAtFdcwd || *path == '/') return flag ? lstat_nid_postfix(path, sb) : stat_nid_postfix(path, sb);
-    const int result = StatInDirectory_nid_no_patch(fd, path, sb, flag == 0);
+    if (fd == GuestAtFdcwd || copy[0] == '/') return flag ? lstat_nid_postfix(copy.c_str(), sb) : stat_nid_postfix(copy.c_str(), sb);
+    const int result = StatInDirectory_nid_no_patch(fd, copy.c_str(), sb, flag == 0);
     if (result < 0) return static_cast<int>(Fail(result & 0xffff));
     return 0;
 }
@@ -1072,18 +1072,18 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
     if (flag & ~GuestAtRemovedir) return static_cast<int>(Fail(GuestEinval));
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
-    if (fd == GuestAtFdcwd || *path == '/') return (flag & GuestAtRemovedir) ? rmdir_nid_postfix(path) : unlink_nid_postfix(path);
-    if (std::strlen(path) >= GuestPathMax || HasLongComponent(path)) return static_cast<int>(Fail(GuestEnametoolong));
+    if (fd == GuestAtFdcwd || copy[0] == '/') return (flag & GuestAtRemovedir) ? rmdir_nid_postfix(copy.c_str()) : unlink_nid_postfix(copy.c_str());
+    if (copy.size() >= GuestPathMax || HasLongComponent(copy.c_str())) return static_cast<int>(Fail(GuestEnametoolong));
     int error = 0;
     const char* base = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
     if (base == nullptr) return static_cast<int>(Fail(error));
     auto native = std::filesystem::path(reinterpret_cast<const char8_t*>(base)) /
-                  std::filesystem::path(reinterpret_cast<const char8_t*>(path));
+                  std::filesystem::path(reinterpret_cast<const char8_t*>(copy.c_str()));
     const bool trailingSlash = !native.has_filename() && native.has_relative_path();
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
     std::error_code statusError;
     const auto symlinkStatus = std::filesystem::symlink_status(native, statusError);
-    if (IsDotOrDotDot(path)) return static_cast<int>(Fail(GuestEinval));
+    if (IsDotOrDotDot(copy.c_str())) return static_cast<int>(Fail(GuestEinval));
     if (flag & GuestAtRemovedir) {
         if (std::filesystem::is_symlink(symlinkStatus)) return static_cast<int>(Fail(GuestEnotdir));
 #ifdef _WIN32
