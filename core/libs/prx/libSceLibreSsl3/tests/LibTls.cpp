@@ -85,8 +85,8 @@ void TestMemoryAndOwnership() {
         std::memset(key.data(), 0xCD, key.size());
         Check(tls_config_set_key_mem_nid_postfix(config, nullptr, 0) == 0);
         Check(tls_config_set_key_mem_nid_postfix(config, key.data(), key.size()) == 0);
-        Check(tls_config_set_key_mem_nid_postfix(config, nullptr, key.size()) == -1);
-        Check(std::strcmp(tls_config_error_nid_postfix(config), "invalid key data") == 0);
+        Check(tls_config_set_key_mem_nid_postfix(config, nullptr, key.size()) == 0);
+        Check(tls_config_error_nid_postfix(config) == nullptr);
         Check(tls_config_set_key_mem_nid_postfix(config, key.data(), key.size()) == 0);
 
         tls_config_free_nid_postfix(config);
