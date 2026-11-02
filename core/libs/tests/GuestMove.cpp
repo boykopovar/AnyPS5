@@ -78,6 +78,16 @@ void RequireNotInit(std::int32_t handle) {
     Require(sceMoveSetVibration(handle, 0xFF) == kNotInit);
     Require(sceMoveSetLightSphere(handle, 0xFF, 0, 0) == kNotInit);
     Require(sceMoveResetLightSphere(handle) == kNotInit);
+    Require(sceMoveGetBluetoothAddress() == kNotInit);
+    Require(sceMoveGetCalibrationInfo() == kNotInit);
+    Require(sceMoveGetDeviceId() == kNotInit);
+    Require(sceMoveIsReproductionModel() == kNotInit);
+    Require(sceMoveIsValidHandle() == 0);
+    Require(sceMoveReadStateRecentForTracker() == kNotInit);
+    Require(sceMoveSetCalibrationMode() == kNotInit);
+    Require(sceMoveSetExtensionPortOutput() == kNotInit);
+    Require(sceMoveSetLightSphereForTracker() == kNotInit);
+    Require(sceMoveWriteCalibrationInfo() == kNotInit);
     Require(sceMoveTerm() == kNotInit);
     Require(buffer.Untouched());
     Require(count == -7);
