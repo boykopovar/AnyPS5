@@ -161,6 +161,8 @@ public:
 #ifdef __EMSCRIPTEN__
         NoteDirtyLocked(start, end);
 #endif
+        _occupiedPrefixEnd = std::min(_occupiedPrefixEnd, std::max(_base, start));
+        _occupiedDefaultPrefixEnd = std::min(_occupiedDefaultPrefixEnd, std::max(DefaultAllocationStart, start));
         auto it = _used.upper_bound(start);
         if (it != _used.begin()) --it;
         while (it != _used.end() && it->first < end) {
@@ -371,13 +373,16 @@ private:
         if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest arena alignment");
     }
 
-    std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) const {
-        std::uintptr_t candidate = alignUp(hint == 0 ? DefaultAllocationStart : std::max(_base, hint), alignment);
+    std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
+        const auto first = hint == 0 ? DefaultAllocationStart : std::max(_base, hint);
+        auto& prefixEnd = first >= DefaultAllocationStart ? _occupiedDefaultPrefixEnd : _occupiedPrefixEnd;
+        std::uintptr_t candidate = alignUp(bytes == 0 ? first : std::max(prefixEnd, first), alignment);
         auto it = _used.upper_bound(candidate);
         if (it != _used.begin() && std::prev(it)->second > candidate) --it;
         for (; it != _used.end(); ++it) {
             const auto& [start, end] = *it;
             if (candidate <= _end && bytes <= _end - candidate && candidate + bytes <= start) break;
+            if (start <= prefixEnd) prefixEnd = std::max(prefixEnd, end);
             candidate = std::max(candidate, alignUp(end, alignment));
         }
         if (candidate > _end || bytes > _end - candidate) return 0;
@@ -392,6 +397,8 @@ private:
 
     std::uintptr_t _base = 0;
     std::uintptr_t _end = 0;
+    std::uintptr_t _occupiedPrefixEnd = ArenaStart;
+    std::uintptr_t _occupiedDefaultPrefixEnd = DefaultAllocationStart;
     bool _writeWatched = false;
 
 public:
@@ -764,6 +771,7 @@ namespace {
 
 std::atomic<SharedBackingResolver> sharedBackingResolver{nullptr};
 std::atomic<SharedBackingWriter> sharedBackingWriter{nullptr};
+std::atomic<SharedBackingRunsResolver> sharedBackingRunsResolver{nullptr};
 
 }
 
@@ -783,6 +791,15 @@ bool GuestArenaWriteSharedBacking_nid_no_patch(std::uintptr_t address, const voi
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
     const auto resolver = sharedBackingResolver.load(std::memory_order_acquire);
     return resolver != nullptr && resolver(address, bytes, file, offset);
+}
+
+void GuestArenaSetSharedBackingRuns_nid_postfix(SharedBackingRunsResolver resolver) {
+    sharedBackingRunsResolver.store(resolver, std::memory_order_release);
+}
+
+bool GuestArenaSharedBackingRuns_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
+    const auto resolver = sharedBackingRunsResolver.load(std::memory_order_acquire);
+    return resolver != nullptr && resolver(address, bytes, file, runs, capacity, count);
 }
 
 bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes) {

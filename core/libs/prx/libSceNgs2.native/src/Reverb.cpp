@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -72,6 +73,9 @@ struct Ngs2ReverbChannel {
 struct Ngs2ReverbState {
     Ngs2ReverbI3DL2Param params{};
     bool reset = true;
+    bool custom = false;
+    bool active = false;
+    std::uint32_t ringSamples = TAP_RING_SAMPLES;
     bool changed = true;
     std::uint32_t sampleRate = 0;
     std::vector<float> ring;
@@ -82,6 +86,15 @@ struct Ngs2ReverbState {
     float density = NAN;
     std::array<Ngs2Comb, COMBS> combs;
     std::array<Ngs2ReverbChannel, 8> channels;
+    std::vector<float> input;
+    std::vector<float> mapped;
+    std::vector<float> mono;
+    std::vector<float> early;
+    std::vector<float> late;
+    std::vector<float> oldEarly;
+    std::vector<float> oldLate;
+    std::vector<float> combSamples;
+    std::vector<float> tail;
     bool roomFilter = false;
     float roomB0 = 0.0f;
     float roomA1 = 0.0f;
@@ -190,7 +203,7 @@ static void SetupComb(Ngs2Comb& comb, std::uint32_t length, const Ngs2ReverbI3DL
 }
 
 static void Reset(Ngs2ReverbState& reverb) {
-    reverb.ring.assign(TAP_RING_SAMPLES, 0.0f);
+    reverb.ring.assign(reverb.ringSamples, 0.0f);
     reverb.ringCursor = 0;
     reverb.taps = {};
     reverb.earlyGain = 1.0f;
@@ -239,6 +252,46 @@ static void UpdateRoomFilter(Ngs2ReverbState& reverb, float rate) {
     reverb.roomA2 = pole * -pole;
 }
 
+static void RunCustomRoomFilter(const Ngs2ReverbState& reverb, Ngs2ReverbChannel& state, float* samples, std::uint32_t grain) {
+    const float b = reverb.roomB0;
+    const float a1 = reverb.roomA1;
+    const float a2 = reverb.roomA2;
+    const float h1 = b * a1;
+    const float h2 = b * a2 + h1 * a1;
+    const float h3 = h1 * a2 + h2 * a1;
+    const std::array<float, 4> x0{b, h1, h2, h3};
+    const std::array<float, 4> x1{0, b, h1, h2};
+    const std::array<float, 4> x2{0, 0, b, h1};
+    const std::array<float, 4> x3{0, 0, 0, b};
+    const float feedback1 = a2 + a1 * a1;
+    const float feedback2 = a1 * a2 + feedback1 * a1;
+    const float feedback3 = feedback1 * a2 + feedback2 * a1;
+    const float previous1 = a2 * a1;
+    const float previous2 = a2 * a2 + previous1 * a1;
+    const float previous3 = previous1 * a2 + previous2 * a1;
+    const std::array<float, 4> y1{a1, feedback1, feedback2, feedback3};
+    const std::array<float, 4> y2{a2, previous1, previous2, previous3};
+    std::uint32_t i = 0;
+    for (; i + 4 <= grain; i += 4) {
+        const std::array<float, 4> input{samples[i], samples[i + 1], samples[i + 2], samples[i + 3]};
+        for (std::uint32_t lane = 0; lane < 4; lane++) {
+            float odd = std::fma(x1[lane], input[1], x3[lane] * input[3]);
+            odd = std::fma(y1[lane], state.y1, odd);
+            float even = std::fma(x0[lane], input[0], x2[lane] * input[2]);
+            even = std::fma(y2[lane], state.y2, even);
+            samples[i + lane] = even + odd;
+        }
+        state.y2 = samples[i + 2];
+        state.y1 = samples[i + 3];
+    }
+    for (; i < grain; i++) {
+        const float y = std::fma(a2, state.y2, std::fma(a1, state.y1, b * samples[i]));
+        state.y2 = state.y1;
+        state.y1 = y;
+        samples[i] = y;
+    }
+}
+
 static void RunComb(Ngs2Comb& comb, const float* input, float* output, std::uint32_t grain) {
     const auto length = static_cast<std::uint32_t>(comb.buffer.size());
     for (std::uint32_t i = 0; i < grain; i++) {
@@ -264,7 +317,20 @@ static void RunAllpass(Ngs2Allpass& allpass, float gain, float* samples, std::ui
     }
 }
 
-static void MixDown(const float* input, std::uint32_t channels, std::uint32_t grain, float* mono) {
+static void MixDown(const float* input, std::uint32_t channels, std::uint32_t grain, float* mono, const Ngs2ReverbState& reverb) {
+    if (reverb.custom) {
+        const auto mask = reverb.params.reserved[0];
+        const auto count = std::popcount(((1u << channels) - 1) & ~mask);
+        const float gain = count == 0 ? 0.0f : (count <= 2 ? 1.0f : 0.707106769f) / std::sqrt(static_cast<float>(count));
+        bool first = true;
+        for (std::uint32_t c = 0; c < channels; c++) {
+            if ((mask & (1u << c)) != 0) continue;
+            const float* channel = input + static_cast<std::size_t>(c) * grain;
+            for (std::uint32_t i = 0; i < grain; i++) mono[i] = first ? channel[i] * gain : mono[i] + channel[i] * gain;
+            first = false;
+        }
+        return;
+    }
     const float* channel[8];
     for (std::uint32_t c = 0; c < channels; c++) channel[c] = input + static_cast<std::size_t>(c) * grain;
     if (channels == 1) {
@@ -279,8 +345,7 @@ static void MixDown(const float* input, std::uint32_t channels, std::uint32_t gr
     }
 }
 
-bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
-    auto& reverb = *voice.reverb;
+static bool ProcessReverb(Ngs2Voice& voice, Ngs2ReverbState& reverb, std::uint32_t grain, std::uint32_t sampleRate) {
     const float rate = static_cast<float>(sampleRate);
     const std::uint32_t channels = voice.channels;
     if (reverb.sampleRate != sampleRate) {
@@ -293,10 +358,16 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
         reverb.changed = true;
     }
     const std::uint32_t inputChannels = voice.InputChannels();
-    const std::vector<float> input = voice.samples;
-    std::vector<float> mono(grain), early(grain), late(grain);
-    MixDown(input.data(), inputChannels, grain, mono.data());
-    std::vector<float> mapped;
+    reverb.input = voice.samples;
+    const auto& input = reverb.input;
+    auto& mono = reverb.mono;
+    auto& early = reverb.early;
+    auto& late = reverb.late;
+    mono.assign(grain, 0.0f);
+    early.resize(grain);
+    late.resize(grain);
+    MixDown(input.data(), inputChannels, grain, mono.data(), reverb);
+    auto& mapped = reverb.mapped;
     if (inputChannels != channels) {
         mapped.assign(static_cast<std::size_t>(grain) * channels, 0.0f);
         for (std::uint32_t dst = 0; dst < channels; dst++) {
@@ -310,7 +381,10 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
     }
     const std::vector<float>& direct = inputChannels != channels ? mapped : input;
     if (reverb.changed) {
-        std::vector<float> oldEarly(grain), oldLate(grain);
+        auto& oldEarly = reverb.oldEarly;
+        auto& oldLate = reverb.oldLate;
+        oldEarly.resize(grain);
+        oldLate.resize(grain);
         RunTaps(reverb, reverb.taps, mono.data(), grain, oldEarly.data(), oldLate.data());
         ApplyParams(reverb, rate);
         RunTaps(reverb, reverb.taps, mono.data(), grain, early.data(), late.data());
@@ -325,7 +399,8 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
         reverb.ring[reverb.ringCursor] = mono[i];
         reverb.ringCursor = reverb.ringCursor + 1 == reverb.ring.size() ? 0 : reverb.ringCursor + 1;
     }
-    std::vector<float> combs(static_cast<std::size_t>(COMBS) * grain);
+    auto& combs = reverb.combSamples;
+    combs.resize(static_cast<std::size_t>(COMBS) * grain);
     for (std::uint32_t i = 0; i < COMBS; i++) RunComb(reverb.combs[i], late.data(), combs.data() + static_cast<std::size_t>(i) * grain, grain);
     UpdateRoomFilter(reverb, rate);
     const auto& params = reverb.params;
@@ -334,10 +409,12 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
         auto& state = reverb.channels[channel];
         float* out = voice.samples.data() + static_cast<std::size_t>(channel) * grain;
         const float* in = direct.data() + static_cast<std::size_t>(channel) * grain;
-        if (channel == LFE_CHANNEL) {
+        const bool excluded = reverb.custom ? (params.reserved[0] & (1u << channel)) != 0 : channel == LFE_CHANNEL;
+        if (excluded) {
             std::copy(in, in + grain, out);
         } else {
-            std::vector<float> tail(grain, 0.0f);
+            auto& tail = reverb.tail;
+            tail.assign(grain, 0.0f);
             std::uint32_t selected = 0;
             for (std::uint32_t i = 0; i < COMBS; i++) {
                 if ((CHANNEL_COMBS[channel] >> i & 1) == 0) continue;
@@ -348,14 +425,18 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
             }
             for (auto& allpass : state.allpasses) RunAllpass(allpass, params.diffusion * 0.005f, tail.data(), grain);
             for (std::uint32_t n = 0; n < grain; n++) out[n] = early[n] * reverb.earlyGain + tail[n] * reverb.lateGain;
-            for (std::uint32_t n = 0; n < grain; n++) {
-                const float y = reverb.roomFilter ? reverb.roomB0 * out[n] + reverb.roomA1 * state.y1 + reverb.roomA2 * state.y2 : out[n];
-                state.y2 = state.y1;
-                state.y1 = y;
-                out[n] = y;
+            if (reverb.custom && reverb.roomFilter) {
+                RunCustomRoomFilter(reverb, state, out, grain);
+            } else {
+                for (std::uint32_t n = 0; n < grain; n++) {
+                    const float y = reverb.roomFilter ? reverb.roomB0 * out[n] + reverb.roomA1 * state.y1 + reverb.roomA2 * state.y2 : out[n];
+                    state.y2 = state.y1;
+                    state.y1 = y;
+                    out[n] = y;
+                }
             }
         }
-        const float wet = channel == LFE_CHANNEL ? 0.0f : params.wet;
+        const float wet = excluded ? 0.0f : params.wet;
         Ramp(out, reset ? wet : state.wet, wet, grain, out, false);
         Ramp(out, reset ? params.dry : state.dry, params.dry, grain, in, true);
         state.wet = wet;
@@ -367,16 +448,16 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
     return audible;
 }
 
-void Ngs2SetReverbParams(Ngs2Voice& voice, const Ngs2ReverbI3DL2Param& params) {
+static void SetReverbParams(Ngs2Reverb& reverb, const Ngs2ReverbI3DL2Param& params) {
     if (std::isnan(params.wet) || std::isnan(params.dry) || std::isnan(params.decay_time) || std::isnan(params.decay_hf_ratio) || std::isnan(params.reflections_delay) ||
         std::isnan(params.reverb_delay) || std::isnan(params.diffusion) || std::isnan(params.density) || std::isnan(params.hf_reference)) {
         APS5_INVALID_ARG_EX;
     }
-    if (!voice.reverb) voice.reverb.reset(new Ngs2ReverbState{});
-    auto& stored = voice.reverb->params;
+    if (!reverb) reverb.reset(new Ngs2ReverbState{});
+    auto& stored = reverb->params;
     stored = params;
-    stored.wet = Clamp(params.wet, 0.0f, 32.0f);
-    stored.dry = Clamp(params.dry, 0.0f, 32.0f);
+    stored.wet = reverb->custom ? params.wet : Clamp(params.wet, 0.0f, 32.0f);
+    stored.dry = reverb->custom ? params.dry : Clamp(params.dry, 0.0f, 32.0f);
     stored.reflection_pattern = params.reflection_pattern < 16 ? params.reflection_pattern : 0;
     stored.decay_time = Clamp(params.decay_time, 0.1f, 20.0f);
     stored.decay_hf_ratio = Clamp(params.decay_hf_ratio, 0.00999999978f, 2.0f);
@@ -385,7 +466,32 @@ void Ngs2SetReverbParams(Ngs2Voice& voice, const Ngs2ReverbI3DL2Param& params) {
     stored.diffusion = Clamp(params.diffusion, 0.0f, 100.0f);
     stored.density = Clamp(params.density, 0.0f, 100.0f);
     stored.hf_reference = Clamp(params.hf_reference, 20.0f, 20000.0f);
-    voice.reverb->changed = true;
+    reverb->changed = true;
+}
+
+bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
+    return ProcessReverb(voice, *voice.reverb, grain, sampleRate);
+}
+
+void Ngs2SetReverbParams(Ngs2Voice& voice, const Ngs2ReverbI3DL2Param& params) {
+    SetReverbParams(voice.reverb, params);
+}
+
+Ngs2Reverb Ngs2CreateCustomReverb(std::uint32_t size) {
+    Ngs2Reverb reverb(new Ngs2ReverbState{});
+    reverb->custom = true;
+    reverb->ringSamples = size == 0 ? 4800 : 14400;
+    return reverb;
+}
+
+void Ngs2SetCustomReverbParams(Ngs2Reverb& reverb, const Ngs2ReverbI3DL2Param& params) {
+    SetReverbParams(reverb, params);
+    reverb->active = true;
+}
+
+bool Ngs2ProcessCustomReverb(Ngs2Voice& voice, std::size_t module, std::uint32_t grain, std::uint32_t sampleRate) {
+    auto& reverb = *voice.customReverb[module];
+    return reverb.active ? ProcessReverb(voice, reverb, grain, sampleRate) : voice.hasSamples;
 }
 
 void Ngs2SetupReverb(Ngs2Voice& voice) {
@@ -393,6 +499,22 @@ void Ngs2SetupReverb(Ngs2Voice& voice) {
     Ngs2SetReverbParams(voice, SETUP_PARAMS);
 }
 
+void Ngs2ClearCustomReverb(Ngs2Voice& voice) {
+    for (auto& reverb : voice.customReverb) {
+        if (reverb) reverb->reset = true;
+    }
+}
+
+void Ngs2ResetCustomReverb(Ngs2Voice& voice) {
+    for (auto& reverb : voice.customReverb) {
+        if (reverb) {
+            reverb->active = false;
+            reverb->reset = true;
+        }
+    }
+}
+
 void Ngs2ClearReverb(Ngs2Voice& voice) {
     if (voice.reverb) voice.reverb->reset = true;
+    Ngs2ClearCustomReverb(voice);
 }
