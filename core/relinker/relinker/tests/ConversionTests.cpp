@@ -302,6 +302,36 @@ void scanning() {
     require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
 }
 
+void lifecycleRoots() {
+    std::vector<std::uint8_t> image(256);
+    Io::WriteU64(image, 24, 16);
+    image[64] = 0xc3;
+    image[72] = 0xc3;
+    image[80] = 0xc3;
+    Domain::ProgramHeader code{};
+    code.Type = 1;
+    code.Flags = 1;
+    code.Offset = 64;
+    code.FileSize = 17;
+    code.MemorySize = 17;
+    Domain::ProgramHeader dynamic{};
+    dynamic.Type = 2;
+    dynamic.Offset = 128;
+    dynamic.FileSize = 32;
+    dynamic.MemorySize = 32;
+    const std::vector<Domain::ProgramHeader> headers{code, dynamic};
+    const Relinker::CodeInstructionCollector collector;
+    require(collector.Collect(image, headers) == std::vector<Domain::VirtualAddress>{16}, "Absent lifecycle tags introduced a code root");
+    for (const auto tag : {12u, 13u}) {
+        Io::WriteU64(image, 128, tag);
+        for (const auto address : {0u, 8u}) {
+            Io::WriteU64(image, 136, address);
+            require(collector.Collect(image, headers) == std::vector<Domain::VirtualAddress>{address, 16}, "Present lifecycle tag lost its mapped code root");
+            require(collector.CollectRewriteAnchors(image, headers).contains(address), "Present lifecycle tag lost its rewrite anchor");
+        }
+    }
+}
+
 void branchAcrossSignedBoundary() {
     std::vector<std::uint8_t> image(64 + 32, 0x90);
     image[64] = 0xc3;
@@ -551,6 +581,7 @@ int main() {
         runtimeLifecyclePolicy();
         fixedBase();
         scanning();
+        lifecycleRoots();
         branchAcrossSignedBoundary();
         diagnosticContext();
         cancellation();

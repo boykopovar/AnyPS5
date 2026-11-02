@@ -288,7 +288,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::collect(const std:
     range(0, 64);
     if (const auto entry = Io::ReadU64(bytes, 24); entry != 0) addStrongRoot(entry);
     if (const auto init = value(12, 0x6000000c)) addStrongRoot(*init);
-    if (const auto fini = value(13, 0x6000000d); fini && *fini != 0) addStrongRoot(*fini);
+    if (const auto fini = value(13, 0x6000000d)) addStrongRoot(*fini);
     const auto symbolBytes = value(0x6100003f, 0xffffffffffffffffull);
     std::uint64_t symbolCount = 0;
     if (symbolBytes) {
