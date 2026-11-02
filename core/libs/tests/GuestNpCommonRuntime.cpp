@@ -287,6 +287,41 @@ void TestObjects() {
         "a failed allocation returns null");
 }
 
+void TestAllocatorEx() {
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-test") == 0, "a memory heap is created");
+    NpAllocatorEx allocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, &allocator);
+
+    Require(_sceNpAllocatorExConvertAllocator(&allocator) == &allocator.allocator, "the extended allocator converts to its allocator");
+    auto* block = static_cast<std::uint8_t*>(_sceNpAllocatorExMalloc(&allocator, 16));
+    Require(block != nullptr, "the extended allocator hands out memory");
+    block[15] = 0x5A;
+    block = static_cast<std::uint8_t*>(_sceNpAllocatorExRealloc(&allocator, block, 128));
+    Require(block != nullptr && block[15] == 0x5A, "reallocation keeps the contents");
+    _sceNpAllocatorExFree(&allocator, block);
+    char* copy = _sceNpAllocatorExStrdup(&allocator, "np-common");
+
+    Require(copy != nullptr && std::strcmp(copy, "np-common") == 0, "a string is duplicated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np-common", 2);
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a duplicated prefix is terminated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np", 16);
+
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a short string is duplicated whole");
+    _sceNpAllocatorExFree(&allocator, copy);
+    sceNpMemoryHeapDestroy(&memoryHeap);
+    AllocatorRecord record {};
+    record.fail = true;
+    NpAllocatorEx failing {{RecordAllocate, nullptr, RecordRelease, &record}, 0};
+
+    Require(_sceNpAllocatorExStrdup(&failing, "abc") == nullptr && record.size == 4, "a failed duplicate returns null after asking for the string and its terminator");
+    Require(_sceNpAllocatorExStrndup(&failing, "abcdef", 3) == nullptr && record.size == 4, "a failed prefix duplicate returns null");
+    _sceNpAllocatorExFree(&failing, record.block.data());
+    Require(record.released == record.block.data(), "freeing goes through the allocator");
+}
+
 void TestObjectsThroughStoredAllocator() {
     AllocatorRecord record {};
     NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
@@ -317,6 +352,67 @@ void TestObjectsThroughStoredAllocator() {
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
+}
+
+struct ExRecord {
+    std::array<std::uint8_t, 64> block {};
+    int allocations = 0;
+    int reallocations = 0;
+    int releases = 0;
+    void* reallocated = nullptr;
+    std::size_t size = 0;
+    void* released = nullptr;
+    bool fail = false;
+};
+
+void* APS5_VABI ExAllocate(std::size_t size, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->allocations;
+    record->size = size;
+    return record->fail ? nullptr : record->block.data();
+}
+
+void* APS5_VABI ExReallocate(void* pointer, std::size_t size, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->reallocations;
+    record->reallocated = pointer;
+    record->size = size;
+    return record->fail ? nullptr : record->block.data() + 8;
+}
+
+void APS5_VABI ExRelease(void* pointer, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->releases;
+    record->released = pointer;
+}
+
+void TestAllocatorExRecorded() {
+    ExRecord record {};
+    NpAllocatorEx allocator {{ExAllocate, ExReallocate, ExRelease, &record}, 0x1234};
+    std::uint8_t old = 0;
+
+    Require(_sceNpAllocatorExRealloc(&allocator, &old, 96) == record.block.data() + 8 && record.reallocated == &old && record.size == 96
+            && record.reallocations == 1 && record.allocations == 0 && record.releases == 0,
+        "reallocation is one call to the allocator's reallocate with the pointer and size");
+    record.fail = true;
+    Require(_sceNpAllocatorExRealloc(&allocator, &old, 32) == nullptr && record.reallocations == 2 && record.releases == 0,
+        "a failed reallocation returns null and keeps the old block");
+    Require(_sceNpAllocatorExMalloc(&allocator, 24) == nullptr && record.allocations == 1 && record.size == 24,
+        "a failed allocation is one call to allocate");
+    _sceNpAllocatorExFree(&allocator, nullptr);
+    Require(record.releases == 1 && record.released == nullptr, "freeing null still calls release");
+
+    record.fail = false;
+    record.size = 0;
+    Require(_sceNpAllocatorExStrndup(&allocator, "abc", 10) != nullptr && record.size == 4,
+        "a short string asks for its length and terminator, not the limit");
+    Require(_sceNpAllocatorExStrndup(&allocator, "abc", SIZE_MAX) != nullptr && record.size == 4
+            && std::memcmp(record.block.data(), "abc", 4) == 0,
+        "an unbounded limit duplicates the whole string");
+    const char unterminated[3] = {'x', 'y', 'z'};
+    Require(_sceNpAllocatorExStrndup(&allocator, unterminated, sizeof(unterminated)) != nullptr && record.size == 4
+            && std::memcmp(record.block.data(), "xyz", 4) == 0,
+        "the limit bounds the read of an unterminated buffer");
 }
 
 void TestTitleIdObjects() {
@@ -562,6 +658,78 @@ void TestJsonText() {
         "form encoding keeps the safe set and escapes the rest");
     Require(sceNpUtilHttpUrlEncode(nullptr, 0, "@", 1, &length) == 0 && length == 4, "a null buffer reports the encoded size");
     Require(sceNpUtilHttpUrlEncode(url, 3, "@", 1, &length) == NpUtilBufferTooSmall, "encoding needs room for the terminator");
+}
+
+void TestXmlText() {
+    char escaped[64] = {};
+    std::size_t length = 0;
+    const char* special = "a\"&'<>b";
+    const char* specialEscaped = "a&quot;&amp;&apos;&lt;&gt;b";
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), special, std::strlen(special), &length) == 0 && Equals(escaped, specialEscaped)
+            && length == std::strlen(specialEscaped) + 1,
+        "xml escaping replaces the five special characters and counts the terminator");
+    length = 0;
+    Require(sceNpUtilXmlEscape(nullptr, 0, special, std::strlen(special), &length) == 0 && length == std::strlen(specialEscaped) + 1,
+        "xml escaping without a buffer only measures");
+    const char* text = "\t\n\r \xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80";
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), text, std::strlen(text), &length) == 0 && Equals(escaped, text) && length == std::strlen(text) + 1,
+        "xml escaping copies whitespace and UTF-8 sequences");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a\x01", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses control characters");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\x7F", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses DEL");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\0", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses a NUL byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\x80", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses a lone continuation byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC1\xBF", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses an overlong lead byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC3(", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses a broken sequence");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xF8\x80\x80\x80", 4, &length) == NpUtilInvalidCharacter, "xml escaping refuses a five-byte lead");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC3\xA9", 1, &length) == 0 && Equals(escaped, "\xC3\xA9") && length == 3,
+        "a sequence that starts inside the source is copied whole");
+    Require(sceNpUtilXmlEscape(escaped, 5, "&", 1, &length) == NpUtilBufferTooSmall, "an entity must fit whole");
+    Require(sceNpUtilXmlEscape(escaped, 5, "abcde", 5, &length) == NpUtilBufferTooSmall, "the terminator must fit");
+    Require(sceNpUtilXmlEscape(escaped, 6, "abcde", 5, &length) == 0 && Equals(escaped, "abcde"), "a buffer of the measured size is enough");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), nullptr, 1, &length) == NpUtilInvalid, "xml escaping needs a source");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a", 0, &length) == NpUtilInvalid, "xml escaping needs a source length");
+    Require(sceNpUtilXmlEscape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml escaping needs a buffer or a length");
+
+    char unescaped[64] = {};
+    const char* entities = "x&lt;&gt;&amp;&quot;&apos;y";
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), entities, std::strlen(entities), &length) == 0 && Equals(unescaped, "x<>&\"'y")
+            && length == 8,
+        "xml unescaping replaces the five entities and counts the terminator");
+    length = 0;
+    Require(sceNpUtilXmlUnescape(nullptr, 0, entities, std::strlen(entities), &length) == 0 && length == 8, "xml unescaping without a buffer only measures");
+    const char* others = "&nbsp;&amp&#65;&";
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), others, std::strlen(others), &length) == 0 && Equals(unescaped, others),
+        "other ampersands are copied");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a\0b", 3, &length) == 0 && unescaped[0] == 'a' && unescaped[1] == '\0'
+            && unescaped[2] == 'b' && unescaped[3] == '\0' && length == 4,
+        "xml unescaping copies every other byte");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "&amp;", 1, &length) == 0 && Equals(unescaped, "&") && length == 2,
+        "an entity that starts inside the source is read whole");
+    Require(sceNpUtilXmlUnescape(unescaped, 3, "&lt;ab", 6, &length) == NpUtilBufferTooSmall, "each character must leave room for the terminator");
+    Require(sceNpUtilXmlUnescape(unescaped, 3, "&lt;a", 5, &length) == 0 && Equals(unescaped, "<a"), "a buffer of the measured size is enough");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), nullptr, 1, &length) == NpUtilInvalid, "xml unescaping needs a source");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a", 0, &length) == NpUtilInvalid, "xml unescaping needs a source length");
+    Require(sceNpUtilXmlUnescape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml unescaping needs a buffer or a length");
+    struct {
+        char buffer[4];
+        char canary[4];
+    } bounded {};
+    Require(sceNpUtilXmlEscape(bounded.buffer, 3, "ab&", 3, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "ab\0", 3) == 0
+            && bounded.buffer[3] == 0 && bounded.canary[0] == 0,
+        "xml escaping keeps the pieces that fit and writes nothing past the buffer");
+    Require(sceNpUtilXmlEscape(bounded.buffer, 4, "<", 1, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "&lt;", 4) == 0
+            && bounded.canary[0] == 0,
+        "an entity that fits stays written when the terminator does not");
+    std::memset(&bounded, 0, sizeof(bounded));
+    Require(sceNpUtilXmlUnescape(bounded.buffer, 2, "abc", 3, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "ab\0", 3) == 0
+            && bounded.canary[0] == 0,
+        "xml unescaping keeps the characters that fit and writes nothing past the buffer");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "&amp;", 2, &length) == 0 && Equals(unescaped, "&") && length == 2,
+        "an entity is matched past the source length");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xF7\xBF\xBF\xBF\xED\xA0\x80", 7, &length) == 0 && length == 8,
+        "xml escaping accepts lead bytes up to 0xF7 and does not check surrogates");
+    length = 99;
+    Require(sceNpUtilXmlEscape(escaped, 2, "ab", 2, &length) == NpUtilBufferTooSmall && length == 99, "a failed xml escape leaves the length untouched");
 }
 
 int g_jsonVariant = 0;
@@ -1226,7 +1394,9 @@ int main() {
     TestConditionWakeups();
     TestHeaps();
     TestObjects();
+    TestAllocatorEx();
     TestObjectsThroughStoredAllocator();
+    TestAllocatorExRecorded();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestStreamHelpers();
@@ -1241,6 +1411,7 @@ int main() {
     TestJid();
     TestLanguagesAndDebugIds();
     TestJsonText();
+    TestXmlText();
     TestJsonParser();
     TestTitleIds();
     std::puts("guest np common runtime: PASS");
