@@ -62,16 +62,23 @@ class PreparedShaderInvocation {
 public:
     static std::optional<PreparedShaderInvocation> TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);
     static std::optional<PreparedShaderInvocation> TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle, std::span<const std::uint64_t> key);
+    static std::optional<PreparedShaderInvocation> TryCreate(RecompileRequest&& request, const std::shared_ptr<const SourceHandle>& handle, std::span<const std::uint64_t> key);
     const RecompileRequest& Request() const { return request; }
     std::shared_ptr<const ResourceCapture> Capture(const SrtRuntime& runtime) const;
     std::shared_ptr<const RecompileResult> Materialize(const ResourceCapture& capture) const;
+    std::shared_ptr<const RecompileResult> MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words) const;
+    const std::shared_ptr<const IrResourcePlan>& Plan() const;
+    std::shared_ptr<const IrResourcePlan> LoadPlan() const;
+    std::uint64_t VariantId() const;
 
 private:
-    PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);
+    PreparedShaderInvocation(RecompileRequest request, const std::shared_ptr<const SourceHandle>& handle);
     RecompileRequest request;
     std::shared_ptr<const SourceHandle> handle;
 };
 [[nodiscard]] std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle);
+[[nodiscard]] bool HeapFragmentEligible(const IrResourcePlan& plan);
+void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request);
 [[nodiscard]] std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext* preparation);
 [[nodiscard]] bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle);

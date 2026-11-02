@@ -41,6 +41,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <map>
+#include <set>
 #include <future>
 #include <memory>
 #include <new>
@@ -6344,6 +6345,28 @@ void verifySingleLaneVertexWave() {
     require(withoutKey != withKey, "single-lane vertex wave: vertex subgroup support did not change the cache key");
 }
 
+void verifyExtensionKey() {
+    using namespace ShaderRecompiler;
+    RecompileRequest request{};
+    request.shader.stage = ShaderStage::Compute;
+    const std::array<std::string_view, 2> first{"VK_KHR_a", "VK_KHR_bb"};
+    const std::string copied[2] = {"VK_KHR_a", "VK_KHR_bb"};
+    const std::array<std::string_view, 2> same{copied[0], copied[1]};
+    const std::array<std::string_view, 2> second{"VK_KHR_a", "VK_KHR_bc"};
+    std::vector<std::uint64_t> firstKey, againKey, sameKey, secondKey, backKey;
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, firstKey);
+    RecompileCacheKey::BuildInterface(request, againKey);
+    request.target.supportedExtensions = same;
+    RecompileCacheKey::BuildInterface(request, sameKey);
+    request.target.supportedExtensions = second;
+    RecompileCacheKey::BuildInterface(request, secondKey);
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, backKey);
+    require(firstKey == againKey && firstKey == sameKey && firstKey == backKey, "extension key: the same extension names built different keys");
+    require(firstKey != secondKey, "extension key: a changed extension name kept the key");
+}
+
 void verifySingleLaneElectedAtomicMax() {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityGroupNonUniformShuffleRelative, spv::CapabilityClipDistance, spv::CapabilityInt64};
@@ -7013,7 +7036,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTMAAAA=", "new requests did not use serialization version 51");
+    require(requestPrefix(encoded, 8u) == "NVNQQTQAAAA=", "new requests did not use serialization version 52");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -7134,7 +7157,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTQAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTUAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -7255,12 +7278,13 @@ void verifyDepthExportClamp() {
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
             "depth export: a version 49 request lost the bounds or the version 45 target tail");
         auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 51u, "depth export: a depth exporting request did not use serialization version 51");
+        require(bytes.size() > 8u && bytes[4] == 52u, "depth export: a depth exporting request did not use serialization version 52");
         static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
         const auto found = std::search(bytes.begin(), bytes.end(), boundBytes.begin(), boundBytes.end());
         require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
             "depth export: the clamp bounds were not written exactly once");
         bytes.erase(found, found + boundBytes.size());
+        bytes.resize(bytes.size() - 12u);
         bytes.pop_back();
         for (const std::uint8_t legacyVersion : {48u, 47u, 46u}) {
             if (legacyVersion == 47u) bytes.pop_back();
@@ -7281,12 +7305,13 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
             auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 51u, "a two-sample dithered request did not use serialization version 51");
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 52u, "a two-sample dithered request did not use serialization version 52");
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
                 require(bounds != ditheredBytes.end(), "a two-sample dithered depth exporting request lacks the clamp bounds");
                 ditheredBytes.erase(bounds, bounds + boundBytes.size());
             }
+            ditheredBytes.resize(ditheredBytes.size() - 12u);
             ditheredBytes.pop_back();
             ditheredBytes[4] = 48u;
             const auto main48 = RequestSerializer{}.Deserialize(encodeBase64(ditheredBytes));
@@ -7444,7 +7469,7 @@ void verifyVertexInfoVersion19() {
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
         bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
-        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 4u);
+        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 4u - 12u);
         return bytes;
     };
     auto version42 = version43Bytes(plainPixel);
@@ -7606,9 +7631,10 @@ void verifyDepthRemapRequests() {
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
     constexpr std::size_t pointTailBytes = 13u;
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 15u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 15 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 8 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 8 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag and the tessellation evaluation subgroup flag of a vertex request");
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 27u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 27 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 20 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 20 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the heap profile and the other keyed target flags of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
+        legacyBytes.resize(legacyBytes.size() - 12u);
         legacyBytes.resize(legacyBytes.size() - sizeof(std::uint32_t));
         legacyBytes.pop_back();
         legacyBytes.pop_back();
@@ -7622,6 +7648,7 @@ void verifyDepthRemapRequests() {
         require(serializer.Serialize(legacy.request) == plain, ("a version " + std::to_string(legacyVersion) + " vertex request misread the fields before the depth remap").c_str());
     }
     auto version35 = remappedBytes;
+    version35.resize(version35.size() - 12u);
     version35.resize(version35.size() - sizeof(std::uint32_t));
     version35.pop_back();
     version35.pop_back();
@@ -7675,8 +7702,8 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 56u + pointTailBytes && legacy[4] == 51u, "a merged hull request did not use serialization version 51");
-    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 3u - pointTailBytes);
+    require(legacy.size() > 56u + pointTailBytes && legacy[4] == 52u, "a merged hull request did not use serialization version 52");
+    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 3u - pointTailBytes - 12u);
     legacy.pop_back();
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
@@ -8256,7 +8283,7 @@ void verifyCoherentGds() {
     require(std::ranges::find(decorations[gds], static_cast<std::uint32_t>(spv::DecorationCoherent)) != decorations[gds].end(), "coherent GDS: the gds buffer is not Coherent");
 }
 
-void verifyCoherentBufferAccesses() {
+auto recompileCoherent(const std::vector<std::uint32_t>& code, std::uint32_t address, std::span<const std::uint32_t> capabilities, bool addressed) {
     using namespace ShaderRecompiler;
     alignas(256) static std::array<std::uint32_t, 64> input{};
     alignas(256) static std::array<std::uint32_t, 64> output{};
@@ -8266,6 +8293,28 @@ void verifyCoherentBufferAccesses() {
         static_cast<std::uint32_t>(inputAddress), static_cast<std::uint32_t>((inputAddress >> 32u) & 0xffffu), 256u, 0x31016facu,
         static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 256u, 0x31016facu};
     const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, address, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.target.gpuResolvedImages = addressed;
+    request.target.descriptorMemory = addressed;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = false;
+    return Recompile(request).spirv;
+}
+
+void verifyCoherentBufferAccesses() {
+    using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     struct Module {
         std::map<std::uint32_t, std::string> names;
@@ -8277,22 +8326,7 @@ void verifyCoherentBufferAccesses() {
         std::vector<std::uint32_t> code{0x34020082u};
         if (invalidate) code.insert(code.end(), {0xe1c40000u, 0u});
         code.insert(code.end(), {0xe0301000u | (glcLoad ? 0x4000u : 0u), 0x80000201u, 0xbf8c3f70u, 0xe0701000u | (glcStore ? 0x4000u : 0u), 0x80010201u, 0xbf810000u});
-        RecompileRequest request{};
-        request.shader = {ShaderStage::Compute, 0x5a000u, code, 0, {}};
-        request.context.waveSize = 32;
-        request.context.userDataBaseRegister = 0;
-        request.context.userData = userData;
-        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
-        request.target.vulkanVersion = 0x00401000u;
-        request.target.spirvVersion = 0x00010300u;
-        request.target.subgroupSize = 32;
-        request.target.bdaAbiVersion = BdaAbi::Version;
-        request.target.supportedCapabilities = capabilities;
-        request.target.supportedExtensions = extensions;
-        request.target.fragmentShaderBarycentricEnabled = false;
-        request.layout.pushConstantSizeBytes = 128;
-        request.useCache = false;
-        const auto words = Recompile(request).spirv;
+        const auto words = recompileCoherent(code, 0x5a000u, capabilities, false);
         Module module;
         std::map<std::uint32_t, std::uint32_t> bases;
         const auto base = [&](std::uint32_t pointer) {
@@ -8350,6 +8384,51 @@ void verifyCoherentBufferAccesses() {
     const auto invalidated = compile(true, false, true);
     require(!declared(invalidated, "buffers_coherent") && decorated(invalidated, "buffers", spv::DecorationCoherent), "coherent buffers: a program that invalidates the vector caches does not keep every buffer access coherent");
     require(only(invalidated.loads, "buffers") && only(invalidated.stores, "buffers"), "coherent buffers: a program that invalidates the vector caches does not use the coherent buffer array");
+}
+
+void verifyAddressedCoherentBufferAccesses() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 4> capabilities{spv::CapabilityInt64, spv::CapabilityInt64Atomics, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    struct Counts {
+        std::uint32_t loads = 0, stores = 0, wideLoads = 0;
+    };
+    const auto compile = [&](bool glcLoad, bool glcStore, bool pair, bool invalidate) {
+        const std::uint32_t loadOp = pair ? 0xe0341000u : 0xe0301000u;
+        const std::uint32_t storeOp = pair ? 0xe0741000u : 0xe0701000u;
+        std::vector<std::uint32_t> code{0x34020082u};
+        if (invalidate) code.insert(code.end(), {0xe1c40000u, 0u});
+        code.insert(code.end(), {loadOp | (glcLoad ? 0x4000u : 0u), 0x80000201u, 0xbf8c3f70u, storeOp | (glcStore ? 0x4000u : 0u), 0x80010201u, 0xbf810000u});
+        const auto words = recompileCoherent(code, 0x5b000u, capabilities, true);
+        std::set<std::uint32_t> wideTypes;
+        Counts counts;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            const auto opcode = words[cursor] & 0xffffu;
+            require(count != 0 && count <= words.size() - cursor, "addressed coherent buffers: truncated SPIR-V instruction");
+            if (opcode == spv::OpTypeInt && words[cursor + 2] == 64u) wideTypes.insert(words[cursor + 1]);
+            if (opcode == spv::OpAtomicLoad) ++(wideTypes.contains(words[cursor + 1]) ? counts.wideLoads : counts.loads);
+            if (opcode == spv::OpAtomicStore) ++counts.stores;
+            cursor += count;
+        }
+        return counts;
+    };
+
+    const auto plain = compile(false, false, false, false);
+    require(plain.loads == 0u && plain.stores == 0u && plain.wideLoads == 0u, "addressed coherent buffers: accesses without GLC became atomics");
+
+    const auto single = compile(true, true, false, false);
+    require(single.loads != 0u, "addressed coherent buffers: a GLC load through a buffer address is not an atomic load");
+    require(single.stores != 0u, "addressed coherent buffers: a GLC store through a buffer address is not an atomic store");
+
+    const auto wide = compile(true, true, true, false);
+    require(wide.wideLoads != 0u, "addressed coherent buffers: a GLC two-dword load through a buffer address is not one 64-bit atomic load");
+    require(wide.stores != 0u, "addressed coherent buffers: a GLC two-dword store through a buffer address is not an atomic store");
+
+    const auto invalidated = compile(false, true, false, true);
+    require(invalidated.loads != 0u, "addressed coherent buffers: a load without GLC in a program that invalidates the vector caches is not an atomic load");
+
+    const auto invalidatedPlain = compile(false, false, false, true);
+    require(invalidatedPlain.loads == 0u && invalidatedPlain.stores == 0u, "addressed coherent buffers: a program that invalidates the vector caches without GLC or DLC accesses made its accesses atomic");
 }
 
 void verifyUnnormalizedSamplers() {
@@ -10313,6 +10392,7 @@ int main(int argc, char** argv) {
         verifyFusedExactArithmetic();
         verifyNarrowVertexWave();
         verifySingleLaneVertexWave();
+        verifyExtensionKey();
         verifySingleLaneElectedAtomicMax();
         verifySingleLaneDomainWave();
         verifyMeshConfiguration();
@@ -10333,6 +10413,7 @@ int main(int argc, char** argv) {
         verifyInt64AtomicCapabilities();
         verifySpecializedBufferAtomicBindings();
         verifyCoherentBufferAccesses();
+        verifyAddressedCoherentBufferAccesses();
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyNullVolumeUnnormalizedSampler();
