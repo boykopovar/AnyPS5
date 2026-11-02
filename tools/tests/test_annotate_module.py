@@ -104,6 +104,15 @@ def with_relocation(module, table_offset, index, slot, symbol_index, kind):
 
 
 class ImportRelocationTests(unittest.TestCase):
+    def test_dynamic_segment_must_contain_complete_terminated_tags(self):
+        for size in (113, 128, 0x10000):
+            with self.subTest(size=size):
+                image = bytearray(build_module())
+                struct.pack_into("<QQ", image, 64 + 2 * 56 + 32, size, size)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "PT_DYNAMIC"):
+                    annotate_module.Module(image)
+        self.assertTrue(annotate_module.Module(build_module()).imports())
+
     def test_symbol_entry_size_must_match_elf64(self):
         for size in (None, 0, 16, 32):
             with self.subTest(size=size):
