@@ -1300,6 +1300,7 @@ int APS5_VABI _fcntl_nid_postfix(int descriptor, int command, ...) {
 int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
                                     const void* value, std::uint32_t length) {
     if (!value && length != 0) return Fail(14);
+    if (static_cast<std::int32_t>(length) < 0) return Fail(22);
     int netError = 0;
     if (!GuestSockets::IsOpen(descriptor) && KernelSetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
         return netError == 0 ? 0 : Fail(netError);
@@ -1317,26 +1318,25 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
 }
 int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
                                     void* value, std::uint32_t* length) {
+    std::uint32_t declared = 0;
+    if (value && !GuestCopyIn_nid_no_patch(&declared, length, sizeof(declared))) return Fail(14);
+    if (value && !GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared))) return Fail(14);
     int netError = 0;
-    if (!GuestSockets::IsOpen(descriptor) && KernelGetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
-        return netError == 0 ? 0 : Fail(netError);
+    if (!GuestSockets::IsOpen(descriptor) && KernelGetSocketOption_nid_no_patch(descriptor, level, option, value, &declared, &netError)) {
+        if (netError != 0) return Fail(netError);
+        return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);
-    if (!length) return Fail(22);
-    if (!value) {
-        const GuestArena::HostWrite lengthOutput(length, sizeof(*length));
-        if (!lengthOutput.Open()) return Fail(14);
-        *length = 0;
-    }
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
-    const int error = level == 0    ? GuestSockets::GetIpLevelOption(socket->options, socket->family == 2, socket->type == 2, option, value, length)
-                      : level == 6  ? GuestSockets::GetTcpLevelOption(native, socket->options, socket->family != GuestUnix && socket->type == 1, option, value, length)
-                      : level == 41 ? GuestSockets::GetIpv6LevelOption(native, socket->family == 28, option, value, length)
-                                    : GuestSockets::GetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, length);
-    return error == 0 ? 0 : Fail(error);
+    const int error = level == 0    ? GuestSockets::GetIpLevelOption(socket->options, socket->family == 2, socket->type == 2, option, value, &declared)
+                      : level == 6  ? GuestSockets::GetTcpLevelOption(native, socket->options, socket->family != GuestUnix && socket->type == 1, option, value, &declared)
+                      : level == 41 ? GuestSockets::GetIpv6LevelOption(native, socket->family == 28, option, value, &declared)
+                                    : GuestSockets::GetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, &declared);
+    if (error != 0) return Fail(error);
+    return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
 }
 int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
     const bool nonblocking = (type & GuestNonBlocking) != 0;
