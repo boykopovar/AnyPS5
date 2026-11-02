@@ -126,6 +126,34 @@ static void CheckSchedArguments() {
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
 }
 
+static void CheckSchedPolicyAndStackGetters() {
+    PthreadAttr unset = nullptr;
+    PthreadAttr destroyed = nullptr;
+    PthreadAttr live = nullptr;
+    Require(scePthreadAttrInit(&destroyed) == SCE_OK);
+    Require(scePthreadAttrDestroy(&destroyed) == SCE_OK);
+    Require(scePthreadAttrInit(&live) == SCE_OK);
+    for (PthreadAttr* invalid : {static_cast<PthreadAttr*>(nullptr), &unset, &destroyed}) {
+        int policy = -1;
+        KernelSchedParam param{-1};
+        void* address = &policy;
+        std::size_t size = 7;
+        Require(pthread_attr_getschedpolicy_nid_postfix(invalid, &policy) == GUEST_EINVAL && policy == -1);
+        Require(pthread_attr_getschedparam_nid_postfix(invalid, &param) == GUEST_EINVAL && param.sched_priority == -1);
+        Require(pthread_attr_getstacksize_nid_postfix(invalid, &size) == GUEST_EINVAL && size == 7);
+        Require(pthread_attr_getstackaddr_nid_postfix(invalid, &address) == GUEST_EINVAL && address == &policy);
+        Require(pthread_attr_getstack_nid_postfix(invalid, &address, &size) == GUEST_EINVAL && address == &policy && size == 7);
+    }
+    int policy = -1;
+    void* address = &policy;
+    std::size_t size = 7;
+    Require(pthread_attr_getschedpolicy_nid_postfix(&live, nullptr) == GUEST_EINVAL);
+    Require(pthread_attr_getstackaddr_nid_postfix(&live, nullptr) == GUEST_EINVAL);
+    Require(pthread_attr_getstack_nid_postfix(&live, nullptr, &size) == GUEST_EINVAL && size == 7);
+    Require(pthread_attr_getstack_nid_postfix(&live, &address, nullptr) == GUEST_EINVAL && address == &policy);
+    Require(scePthreadAttrDestroy(&live) == SCE_OK);
+}
+
 static void* APS5_VABI Worker(void* arg) {
     static_cast<std::future<void>*>(arg)->get();
     return nullptr;
@@ -340,6 +368,7 @@ int main() {
     CheckSoloSched();
     CheckSchedArguments();
     CheckSchedulingAttributes();
+    CheckSchedPolicyAndStackGetters();
     CheckThreadScope();
     CheckEndedThreads();
     PthreadAttr attr = nullptr;
