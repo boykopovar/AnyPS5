@@ -833,10 +833,6 @@ bool PrecedesEveryMemoryAccess(const IrProgram& program, const IrValue& barrier)
 
 }
 
-void EmitControlFlow(SpirvModule& module, const IrProgram& program) {
-    throw std::runtime_error("EmitControlFlow not implemented");
-}
-
 void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& functionState, const IrProgram& program) {
     auto& state = context.state;
     const std::vector<IrBlock*>& blocks = program.BlockOrder();

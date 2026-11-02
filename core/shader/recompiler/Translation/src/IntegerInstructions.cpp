@@ -1,13 +1,8 @@
-#include "Translation/IntegerInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
-
-void TranslateIntegerInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateIntegerInstruction not implemented");
-}
 
 bool TranslationContext::integer16Shift(const RdnaInstruction& inst, IrOpcode opcode, bool arithmetic) {
     const IrU32 value = readU16AsU32(sourceAt(inst, 1u), arithmetic);
@@ -927,10 +922,6 @@ bool TranslationContext::vCvtPk16I32(const RdnaInstruction& inst, bool sign) {
     const IrU32 result = packU16Lanes(saturate(0u), saturate(1u));
     writeOperand(inst.destination, &result.Value());
     return true;
-}
-
-void TranslateIntegerInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateIntegerInstruction not implemented");
 }
 
 }

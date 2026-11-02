@@ -1,13 +1,8 @@
-#include "Translation/VectorInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
 #include <stdexcept>
 
 namespace ShaderRecompiler {
-
-void TranslateVectorInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateVectorInstruction not implemented");
-}
 
 namespace {
 
@@ -1308,10 +1303,6 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     default:
         return false;
     }
-}
-
-void TranslateVectorInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateVectorInstruction not implemented");
 }
 
 }
