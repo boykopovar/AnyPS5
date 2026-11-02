@@ -19,6 +19,7 @@ constexpr int SAVE_DATA_ERROR_EXISTS = -2137063417;
 constexpr int SAVE_DATA_ERROR_NOT_FOUND = -2137063416;
 constexpr int SAVE_DATA_ERROR_NO_SPACE_FS = -2137063414;
 constexpr int SAVE_DATA_ERROR_INTERNAL = -2137063413;          // 0x809F000B
+constexpr int SAVE_DATA_ERROR_INVALID_LOGIN_USER = -2137063407;  // 0x809F0011
 constexpr int SAVE_DATA_ERROR_MEMORY_NOT_READY = -2137063406;  // 0x809F0012
 
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_RDONLY = 1;
@@ -26,6 +27,7 @@ constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_RDWR = 2;
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_CREATE = 4;
 constexpr std::uint32_t SAVE_DATA_MOUNT_MODE_CREATE2 = 32;
 
+constexpr std::uint64_t SAVE_DATA_BLOCKS_MIN2 = 96;
 constexpr std::uint64_t SAVE_DATA_BLOCKS_MAX = 16384;
 constexpr std::uint32_t SAVE_DATA_PARAM_TYPE_ALL = 0;
 constexpr std::uint32_t SAVE_DATA_PARAM_TYPE_TITLE = 1;
