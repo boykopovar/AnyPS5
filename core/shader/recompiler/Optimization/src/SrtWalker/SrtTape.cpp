@@ -1,4 +1,5 @@
 #include "Optimization/SrtWalker/SrtTape.hpp"
+#include "Optimization/SrtWalker/SrtDescriptorEvaluation.hpp"
 #include "Optimization/SrtWalker/SrtAddressArithmetic.hpp"
 #include "Optimization/SrtWalker/SrtInstructionPredicates.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
@@ -649,6 +650,7 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             }
         }
     }
+    if (!plan.controlFlow.empty() && !ApplySourceBlockGuards(plan, scratch.visited, active)) return refuse();
     auto& evaluated = scratch.evaluated;
     evaluated.clear();
     evaluated.reserve(plan.materializationSources.size());
