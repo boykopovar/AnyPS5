@@ -65,6 +65,8 @@ std::string Describe(const Value& value);
 std::string Describe(const NpUniversalDataSystemEventPropertyObject& object);
 std::string Describe(const NpUniversalDataSystemEvent& event);
 std::size_t MessagePackSize(const NpUniversalDataSystemEvent& event);
+std::size_t MessagePackSize(const NpUniversalDataSystemEventPropertyObject& object);
+std::size_t MessagePackSize(const NpUniversalDataSystemEventPropertyArray& array);
 std::string DebugString(const NpUniversalDataSystemEvent& event);
 NpTrophy2Event StatEvent(const NpUniversalDataSystemEvent& event);
 

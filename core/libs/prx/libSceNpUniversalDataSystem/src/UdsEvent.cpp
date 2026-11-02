@@ -275,6 +275,16 @@ std::size_t MessagePackSize(const NpUniversalDataSystemEvent& event) {
            lengthPrefixed(PropertiesKey.size(), 32) + packedSize(event.properties);
 }
 
+std::size_t MessagePackSize(const NpUniversalDataSystemEventPropertyObject& object) {
+    return packedSize(object);
+}
+
+std::size_t MessagePackSize(const NpUniversalDataSystemEventPropertyArray& array) {
+    std::size_t size = containerHeader(array.values.size());
+    for (const auto& element : array.values) size += packedSize(element);
+    return size;
+}
+
 std::string DebugString(const NpUniversalDataSystemEvent& event) {
     NpUniversalDataSystemEventPropertyObject root;
     root.Set(EventNameKey, event.name);
