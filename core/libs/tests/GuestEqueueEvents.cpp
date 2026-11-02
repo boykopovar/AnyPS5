@@ -394,7 +394,39 @@ static void VerifyReportedEventsMoveBehindWaitingOnes() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyFailedWaitClearsCount() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "failed_wait") == SCE_OK);
+    KernelEvent events[2]{};
+    const KernelUseconds poll = 0;
+    const KernelUseconds wait = 1000000;
+    int count = -1;
+    Require(sceKernelWaitEqueue(eq, events, 0, &count, &poll) == SCE_KERNEL_ERROR_EINVAL && count == 0);
+    count = -1;
+    Require(sceKernelWaitEqueue(eq, events, -1, &count, &poll) == SCE_KERNEL_ERROR_EINVAL && count == 0);
+    count = -1;
+    Require(sceKernelWaitEqueue(eq, nullptr, 2, &count, &poll) == SCE_KERNEL_ERROR_EFAULT && count == 0);
+    count = -1;
+    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT && count == 0);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    count = -1;
+    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_EBADF && count == 0);
+    count = -1;
+    Require(sceKernelWaitEqueue(eq, events, 0, &count, &poll) == SCE_KERNEL_ERROR_EINVAL && count == 0);
+
+    Require(sceKernelCreateEqueue(&eq, "closed_while_waiting") == SCE_OK);
+    std::thread close([eq] {
+        SleepAtLeast(std::chrono::milliseconds(10));
+        Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    });
+    count = -1;
+    const int result = sceKernelWaitEqueue(eq, events, 2, &count, &wait);
+    close.join();
+    Require(result == SCE_KERNEL_ERROR_EBADF && count == 0);
+}
+
 int main() {
+    VerifyFailedWaitClearsCount();
     VerifyPeriodicTimer();
     VerifyHRTimerDelete();
     VerifyUserEventReportedOncePerWait();
