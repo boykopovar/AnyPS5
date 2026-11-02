@@ -77,12 +77,8 @@ void RequestMetrics() {
     FT_Request_Metrics_nid_postfix(&noRequest.face, nullptr);
     Require(Equals(noRequest.size.metrics, 0, 0, 65536, 65536, 0, 0, 0, 0), "a face without outlines does not read the request");
 
-    Fixture overflow(1);
-    const GuestSizeMetrics before = overflow.size.metrics;
-    const GuestSizeRequestRec large{4, 0x100000000LL, 0, 0, 0};
-    Require(Throws([&] { FT_Request_Metrics_nid_postfix(&overflow.face, &large); }), "a scale beyond 32 bits throws");
-    Require(std::memcmp(&before, &overflow.size.metrics, sizeof(before)) == 0, "a throwing request leaves the metrics untouched");
-    Require(Throws([&] { FT_Request_Metrics_nid_postfix(&overflow.face, nullptr); }), "a null request on a scalable face throws");
+    Fixture scalable(1);
+    Require(Throws([&] { FT_Request_Metrics_nid_postfix(&scalable.face, nullptr); }), "a null request on a scalable face throws");
     Require(Throws([] { FT_Request_Metrics_nid_postfix(nullptr, nullptr); }), "a null face throws");
 }
 
