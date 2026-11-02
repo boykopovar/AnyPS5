@@ -1,4 +1,5 @@
 #include "prx/libSceGameUpdate/include/Api.hpp"
+#include <cerrno>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -109,8 +110,13 @@ int APS5_VABI sceGameUpdateCheck(int requestId, const GameUpdateCheckParam* para
     if (request->aborted) {
         return SCE_GAME_UPDATE_ERROR_ABORTED;
     }
-    result->found = false;
-    result->addcont_found = false;
+    GameUpdateCheckResult localResult{};
+    localResult.found = false;
+    localResult.addcont_found = false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedErrno;
+    if (!copied) return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
