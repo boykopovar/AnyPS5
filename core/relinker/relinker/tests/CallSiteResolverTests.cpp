@@ -55,6 +55,17 @@ int main() {
         check("final REX.W after DS widens a load", {0x48, 0x3e, 0x48, 0x8b, 0x05, 0xf7, 0, 0, 0}, true);
         check("final REX.W after REPNE widens a load", {0x48, 0xf2, 0x48, 0x8b, 0x05, 0xf7, 0, 0, 0}, true);
         check("NOTRACK preserves final narrow REX", {0x3e, 0x48, 0x40, 0x8b, 0x05, 0xf7, 0, 0, 0}, false);
+        check("REP-prefixed indirect call", {0xf3, 0xff, 0x15, 0xf9, 0, 0, 0}, true);
+        check("REP-prefixed indirect tail jump", {0xf3, 0xff, 0x25, 0xf9, 0, 0, 0}, true);
+        check("operand-size indirect call", {0x66, 0xff, 0x15, 0xf9, 0, 0, 0}, true);
+        check("operand-size push memory", {0x66, 0xff, 0x35, 0xf9, 0, 0, 0}, true);
+        check("REX.W overrides operand size on a pointer load", {0x66, 0x48, 0x8b, 0x05, 0xf8, 0, 0, 0}, true);
+        check("operand-size load without REX.W", {0x66, 0x8b, 0x05, 0xf9, 0, 0, 0}, false);
+        check("operand-size after REX.W leaves a narrow load", {0x48, 0x66, 0x8b, 0x05, 0xf8, 0, 0, 0}, false);
+        check("REP after REX.W leaves a narrow load", {0x48, 0xf3, 0x8b, 0x05, 0xf8, 0, 0, 0}, false);
+        check("operand-size increment is not an import access", {0x66, 0xff, 0x05, 0xf9, 0, 0, 0}, false);
+        check("LOCK-prefixed call is not an import access", {0xf0, 0xff, 0x15, 0xf9, 0, 0, 0}, false);
+        check("FS after operand size is not a flat GOT reference", {0x66, 0x64, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
         check("FS call is not a flat GOT reference", {0x64, 0xf2, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
         check("GS jump is not a flat GOT reference", {0x3e, 0x65, 0xff, 0x25, 0xf8, 0, 0, 0}, false);
         check("address-size override is not a RIP64 reference", {0x3e, 0x67, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
@@ -80,7 +91,12 @@ int main() {
             check(name + " increment", ripInstruction({segment}, 0xff, 0x05), false);
             check(name + " decrement", ripInstruction({segment}, 0xff, 0x0d), false);
             check(name + " narrow load", ripInstruction({segment}, 0x8b, 0x05), false);
-            for (const std::uint8_t unsupported : {0x64, 0x65, 0x67, 0x66, 0xf0, 0xf3}) {
+            for (const std::uint8_t flat : {0x66, 0xf3}) {
+                const auto suffix = " flat prefix " + std::to_string(flat);
+                check(name + " before" + suffix, ripInstruction({segment, flat}, 0xff, 0x15), true);
+                check(name + " after" + suffix, ripInstruction({flat, segment}, 0xff, 0x15), true);
+            }
+            for (const std::uint8_t unsupported : {0x64, 0x65, 0x67, 0xf0}) {
                 const auto suffix = " unsupported prefix " + std::to_string(unsupported);
                 check(name + " before" + suffix, ripInstruction({segment, unsupported}, 0xff, 0x15), false);
                 check(name + " after" + suffix, ripInstruction({unsupported, segment}, 0xff, 0x15), false);
