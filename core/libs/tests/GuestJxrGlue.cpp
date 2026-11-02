@@ -135,7 +135,7 @@ void TestImageIids() {
 }
 
 void TestAlignedAllocation() {
-    for (std::size_t alignment : {std::size_t{4}, std::size_t{8}, std::size_t{16}, std::size_t{64},
+    for (std::size_t alignment : {std::size_t{8}, std::size_t{16}, std::size_t{24}, std::size_t{64},
                                   std::size_t{4096}}) {
         for (std::size_t size : {std::size_t{0}, std::size_t{1}, std::size_t{100}}) {
             void* memory = reinterpret_cast<void*>(std::uintptr_t{1});
@@ -168,11 +168,14 @@ void TestAlignedAllocation() {
     memory = reinterpret_cast<void*>(std::uintptr_t{1});
     RequireThrows([&memory] { PKAllocAligned_nid_postfix(&memory, 32, 0); });
     Require(memory == nullptr);
-    for (std::size_t alignment : {std::size_t{1}, std::size_t{2}}) {
+    for (std::size_t alignment : {std::size_t{1}, std::size_t{2}, std::size_t{4}, std::size_t{7}}) {
         const int before = frees;
+        void* const previous = lastCalloc;
+        lastCalloc = nullptr;
         memory = reinterpret_cast<void*>(std::uintptr_t{1});
         RequireThrows([&memory, alignment] { PKAllocAligned_nid_postfix(&memory, 32, alignment); });
-        Require(memory == nullptr && frees == before + 1 && lastFreed == lastCalloc);
+        Require(memory == nullptr && frees == before && lastCalloc == nullptr);
+        lastCalloc = previous;
     }
     constexpr auto maximum = std::numeric_limits<std::size_t>::max();
     RequireThrows([] {

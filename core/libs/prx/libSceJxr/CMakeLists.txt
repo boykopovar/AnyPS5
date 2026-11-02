@@ -1,9 +1,16 @@
-add_library(jxr_lookup_native STATIC src/NativeLookup.c src/NativeHash.c)
+add_library(jxr_lookup_native STATIC src/NativeLookup.c)
 configure_jxr_native(jxr_lookup_native)
 target_include_directories(jxr_lookup_native PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(jxr_lookup_native PRIVATE jxr)
 add_library(libSceJxr SHARED EXCLUDE_FROM_ALL Export.cpp src/GlueHelpers.cpp src/PixelFormatLookup.cpp src/GuidExports.cpp)
-target_link_libraries(libSceJxr PRIVATE jxr_lookup_native)
+# Pinned jxrlib JXRGlue.c with its allocator routed to the guest heap, plus the C bridge
+# GlueHelpers.cpp adapts; both sit in one archive ahead of jxr so this copy is the one linked.
+add_library(jxr_glue_guest STATIC ${JXR_SOURCE_DIR}/jxrgluelib/JXRGlue.c src/NativeGlue.c)
+configure_jxr_native(jxr_glue_guest)
+set_source_files_properties(${JXR_SOURCE_DIR}/jxrgluelib/JXRGlue.c TARGET_DIRECTORY jxr_glue_guest
+    PROPERTIES COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeap.h")
+target_link_libraries(jxr_glue_guest PRIVATE jxr)
+target_link_libraries(libSceJxr PRIVATE jxr_glue_guest jxr_lookup_native)
 if(NOT APPLE)
     target_link_options(libSceJxr PRIVATE LINKER:--exclude-libs,ALL)
 endif()
