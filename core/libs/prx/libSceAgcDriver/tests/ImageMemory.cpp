@@ -488,13 +488,13 @@ void DedicatedRequirements() {
             Bind(images[index], allocations[index]);
         }
         Expect(MemoryOf(allocations[0]) != MemoryOf(allocations[1]), "required dedicated images share a driver allocation");
-        for (std::size_t index = 0; index < 2; ++index) {
+        for (std::size_t index = 0; index < 3; ++index) {
             const auto memory = MemoryOf(allocations[index]);
-            Expect(mock.memories[Index(memory)].dedicated == images[index].image, "required image omitted its dedicated allocation chain");
+            Expect(mock.memories[Index(memory)].dedicated == images[index].image, "dedicated image omitted its allocation chain");
             Drop(images[index], allocations[index]);
             Expect(!mock.memories[Index(memory)].active, "dedicated memory was retained for reuse by another image");
         }
-        for (std::size_t index = 2; index < images.size(); ++index) Drop(images[index], allocations[index]);
+        for (std::size_t index = 3; index < images.size(); ++index) Drop(images[index], allocations[index]);
         const auto another = NewImage(64 * KiB, 256, 1u, true);
         auto allocation = Take(context, another);
         Bind(another, allocation);
@@ -514,7 +514,7 @@ void LargeAndLinearImages() {
         auto second = Take(context, large);
         Bind(linear, first);
         Bind(large, second);
-        Expect(OffsetOf(first) == 0 && OffsetOf(second) == 0, "linear or large image entered the small optimal-image arena");
+        Expect(context.bufferPool->ImageSlabBlocks() == 0 && OffsetOf(first) == 0 && OffsetOf(second) == 0, "linear or large image entered the small optimal-image arena");
         Drop(linear, first);
         Drop(large, second);
     }
@@ -557,7 +557,7 @@ void RejectedImageForms() {
         withFormatList.info.pNext = &formats;
         auto allocation = Take(context, withFormatList);
         Bind(withFormatList, allocation);
-        Expect(OffsetOf(allocation) == 0, "image creation metadata was passed through the ordinary slab arena");
+        Expect(context.bufferPool->ImageSlabBlocks() == 0 && OffsetOf(allocation) == 0, "image creation metadata was passed through the ordinary slab arena");
         Drop(withFormatList, allocation);
     }
     Clean();
