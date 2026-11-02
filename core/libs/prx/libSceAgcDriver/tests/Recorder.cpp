@@ -888,6 +888,24 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
         Require(*completed && *block == 45, "the GPU label consumer lost its value or completion");
     }
     {
+        const std::uint32_t stored = 50;
+        const auto labelBytes = std::as_bytes(std::span(&stored, 1));
+        const auto* import = HostImportFor(context, address, sizeof(stored));
+        Require(import != nullptr, "import the GPU label memory");
+        static_cast<void>(recorder.Commands());
+        recorder.RecordStore(import->buffer, HostImportOffset(*import, address), labelBytes, address);
+        recorder.NoteLabel(address, labelBytes, 2000, 0);
+        Require(recorder.AfterRecordedWork([] {}) && Recorder::PendingCompletionLabels() != 0, "no completion pending beside the GPU label");
+        const auto beforeFresh = recorder.Submissions();
+        auto fresh = std::make_shared<ShaderResources>(context, compute);
+        Require(recorder.Submissions() == beforeFresh, "a fresh direct consumer waited for a label the GPU stores in order");
+        if (recorder.QueuedStoreOverlaps(address, sizeof(stored))) recorder.FlushStores();
+        update(fresh, 2);
+        recorder.Sync();
+        Require(*block == 52, "a direct consumer preceded a label the GPU stored before it");
+        *block = 45;
+    }
+    {
         std::array<std::uint32_t, 1024> unregistered{};
         struct Finish {
             Recorder& recorder;
