@@ -1,0 +1,15 @@
+add_library(libScePsmUtil SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libScePsmUtil PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePsmUtil)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_psm_util_tests ${LIBS_INCLUDE_DIR}/tests/GuestPsmUtil.cpp)
+    target_include_directories(guest_psm_util_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_psm_util_tests PRIVATE libScePsmUtil libc)
+    configure_windows_unwind(guest_psm_util_tests)
+    add_test(NAME guest_psm_util COMMAND guest_psm_util_tests)
+    if(WIN32)
+        set_tests_properties(guest_psm_util PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePsmUtil>")
+    endif()
+endif()
