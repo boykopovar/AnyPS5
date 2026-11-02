@@ -66,7 +66,7 @@ endif()
 
 add_test_executable(video_out_flip_tests EXCLUDE_FROM_ALL tests/Flip.cpp)
 target_include_directories(video_out_flip_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
-target_link_libraries(video_out_flip_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+target_link_libraries(video_out_flip_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc SDL2-static)
 set_target_properties(video_out_flip_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(video_out_flip_tests)
 if(BUILD_TESTING)
