@@ -4,14 +4,9 @@
 
 extern "C" {
 
-int APS5_VABI WKURLRequestSetDefaultTimeoutInterval();
 int APS5_VABI WKErrorCopyDomain();
 int APS5_VABI WKErrorGetErrorCode();
 int APS5_VABI WKErrorCopyFailingURL();
-int APS5_VABI WKURLRequestCopyURL();
-int APS5_VABI WKURLRequestCopyFirstPartyForCookies();
-int APS5_VABI WKURLRequestCopyHTTPMethod();
-int APS5_VABI WKURLRequestCopySettingHTTPBody();
 int APS5_VABI WKURLResponseCopyURL();
 int APS5_VABI WKURLResponseCopyMIMEType();
 int APS5_VABI WKURLResponseHTTPStatusCode();
@@ -27,7 +22,6 @@ int APS5_VABI WKSecurityOriginCreate();
 int APS5_VABI WKSecurityOriginCreateFromString();
 int APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier();
 int APS5_VABI WKUserContentURLPatternMatchesURL();
-int APS5_VABI WKURLRequestCreateWithWKURL();
 int APS5_VABI JSContextCreateBacktrace();
 int APS5_VABI JSRemoteInspectorDisableAutoStart();
 int APS5_VABI JSRemoteInspectorServerStart();
