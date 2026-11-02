@@ -22,3 +22,33 @@
 - [the getdents scan](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - `sceUsbStorageGetdentsOpen` lists the root of the device into descriptors numbered from 1 with a 0x8000-byte buffer size, skipping names that start with a dot, and `sceUsbStorageGetdentsRead` writes shadPS4's [packed dirent](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L290-L376) (u32 file number from 1, u16 record length rounded to 8, type 4 for a directory and 8 otherwise, u8 name length, NUL-terminated name) until the buffer is full and zero bytes at the end. A name longer than 255 bytes, a host listing error and a buffer too small for the next record throw where shadPS4 truncates, ignores or answers zero bytes. None of this is measured on a console. Closes when: measured on a PS5
 - [the argument validation](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - the null-pointer, null-callback, event-type and null-directory refusals with 0x80f40002, the answers 0x80f40004 for a device that is not attached, and the getdents read of a descriptor that is not open answering 0x80f40005 with zero bytes, follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L176-L383); the validation runs before the markers the exports keep above. None of this is measured on a console.
 - [the prototypes of sceUsbStorageRequestMap and sceUsbStorageGetDeviceList](../../../core/libs/prx/libSceUsbStorage/Export.cpp) (libSceUsbStorage) - the signatures follow the ABI restored on `main` (the firmware-database sweep of 2026-10-21), which matches [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/f68923fe807f657348e6719ce658bcbd0a2b1c72/src/core/libraries/usbd/usbstorage.cpp#L176-L383): `RequestMap`'s six parameters, the typed `UsbStorageCallback` of the register/unregister family, `IsExist`'s three-argument bool form and `GetDeviceList`'s `std::int32_t*` count (the count also follows [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Platform/UsbStorage.cs#L233-L235), whose earlier eight-parameter `RequestMap` reading carried the trailing reserved pair the restored ABI drops).
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceUsbStorage/Export.cpp) - 23 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `267oD-IF+8k` |
+| `Unknown` | `96s31EeG0LM` |
+| `Unknown` | `AIyv-u-8w0s` |
+| `Unknown` | `FhdRv3K4EMQ` |
+| `Unknown` | `H6axEciG5Gw` |
+| `Unknown` | `IgVY6sHaVuE` |
+| `Unknown` | `O6+fXKZS62g` |
+| `Unknown` | `OhsV6P0FD5A` |
+| `Unknown` | `PsB2k0hnCRo` |
+| `Unknown` | `W+CjjL0iEmU` |
+| `Unknown` | `W5e8Vxa9OCI` |
+| `Unknown` | `W6xoHROgu6w` |
+| `Unknown` | `XMDFDnkOilA` |
+| `Unknown` | `d5QHvMfsCx0` |
+| `Unknown` | `dVQFgpSzA2I` |
+| `Unknown` | `jjKZ79juYfE` |
+| `Unknown` | `jl++fwrnXXI` |
+| `Unknown` | `jpS2TJZhsRU` |
+| `Unknown` | `jqw6RT84rQI` |
+| `Unknown` | `kzxjYuKrhv0` |
+| `Unknown` | `rZgSodboauI` |
+| `Unknown` | `uXZqnG02MiM` |
+| `Unknown` | `yct-absP9LM` |

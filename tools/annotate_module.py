@@ -235,12 +235,13 @@ def disassemble(code, vaddr):
     objdump = gnu_objdump()
     if objdump is None:
         raise ModuleError("GNU binutils objdump was not found as any of %s" % ", ".join(OBJDUMP_NAMES))
+    objdump = str(Path(objdump).absolute())
     with tempfile.TemporaryDirectory() as directory:
         blob = Path(directory) / "text.bin"
         blob.write_bytes(code)
         command = [objdump, "-D", "--disassemble-zeroes", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
-                   "--adjust-vma=%d" % vaddr, str(blob)]
-        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                   "--adjust-vma=%d" % vaddr, blob.name]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=directory)
     if result.returncode != 0:
         raise ModuleError("objdump failed: %s" % result.stderr.strip())
     return result.stdout.splitlines()
