@@ -30,6 +30,10 @@ endif()
 if(ANYPS5_GUEST_LIFTED)
     get_filename_component(ANYPS5_LIFTED_RUNTIME_DIRECTORY "${ANYPS5_LIFTED_RUNTIME}" DIRECTORY)
     list(APPEND ANYPS5_PRX_RPATH "${ANYPS5_LIFTED_RUNTIME_DIRECTORY}")
+    add_library(anyps5_lifted_test_program OBJECT ${CMAKE_CURRENT_SOURCE_DIR}/tests/LiftedEmptyProgram.cpp)
+    target_include_directories(anyps5_lifted_test_program PRIVATE ${CMAKE_SOURCE_DIR}/ps5lift/runtime/include)
+    target_link_libraries(anyps5_lifted_test_program INTERFACE ${ANYPS5_LIFTED_RUNTIME})
+    set(ANYPS5_LIFTED_TEST_PROGRAM anyps5_lifted_test_program)
 endif()
 
 add_executable(nid_patcher
