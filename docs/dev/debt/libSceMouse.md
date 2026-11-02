@@ -10,7 +10,6 @@
 | `sceMouseExtensionGetCursor` | `UBO+tFHvcyE` |
 | `sceMouseExtensionRead` | `doRbAW89lZE` |
 | `sceMouseExtensionReadState` | `CvUnq1gsWMg` |
-| `sceMouseExtensionScalePosition` | `GE+ZU2Y9pEs` |
 | `sceMouseExtensionSetConfig` | `T4BHUjH773k` |
 | `sceMouseExtensionSetCursor` | `2KVa2-HqIRs` |
 | `sceMouseGetHandle` | `P+9UQOe1F2g` |
@@ -25,4 +24,5 @@
 
 ### Functional
 
+- [sceMouseExtensionScalePosition](../../../core/libs/prx/libSceMouse/InventoryExports.cpp) (libSceMouse) - firmware 13.42 accepts a position pointer and nonzero 16-bit scale after initialization, then stores the rounded `position * (scale - 1) / 65535` result. Null position and zero scale return `0x80df0001`; it returns `0x80df0005` before initialization. Firmware module `libSceMouse.sprx`, SHA-256 `e07cd04766ea48f5216e40fd4397758f640a7200cfa7edb6a00255326bd33c61`, read by disassembly; not measured on a console.
 - [sceMouseResetAbsolutePosition](../../../core/libs/prx/libSceMouse/Export.cpp) (libSceMouse) - the position is not stored because the host reports relative motion only. Native input widths and validation are confirmed, including the default 1920 by 1080 bounds; other native coordinate modes and absolute reports remain unimplemented

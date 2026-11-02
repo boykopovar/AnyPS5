@@ -1,4 +1,5 @@
 #include "prx/libSceMouse/include/Api.hpp"
+#include "prx/libSceMouse/include/InventoryExports.hpp"
 #include "prx/libSceMouse/include/mouse_structs.h"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -16,11 +17,22 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     MouseData data[64]{};
+    std::uint16_t position = 123;
+    Require(sceMouseExtensionScalePosition(nullptr, 1) == MOUSE_ERROR_NOT_INITIALIZED);
+    Require(sceMouseExtensionScalePosition(&position, 0) == MOUSE_ERROR_NOT_INITIALIZED && position == 123);
     Require(!MouseIsOpen_nid_no_patch());
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_ERROR_NOT_INITIALIZED);
     Require(sceMouseInit() == MOUSE_OK);
     Require(sceMouseInit() == MOUSE_OK);
+    Require(sceMouseExtensionScalePosition(nullptr, 1) == MOUSE_ERROR_INVALID_ARG);
+    Require(sceMouseExtensionScalePosition(&position, 0) == MOUSE_ERROR_INVALID_ARG && position == 123);
+    position = 65535;
+    Require(sceMouseExtensionScalePosition(&position, 1) == MOUSE_OK && position == 0);
+    position = 32768;
+    Require(sceMouseExtensionScalePosition(&position, 32768) == MOUSE_OK && position == 16384);
+    position = 65535;
+    Require(sceMouseExtensionScalePosition(&position, 65535) == MOUSE_OK && position == 65534);
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_INVALID_HANDLE);
     Require(sceMouseOpen(1, 0, 1, nullptr) == MOUSE_ERROR_INVALID_ARG);
     MouseOpenParam unsupported{};

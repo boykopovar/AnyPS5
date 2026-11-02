@@ -17,6 +17,7 @@ struct MouseInputEvent {
 
 namespace Mouse {
 bool IsOpen();
+bool IsInitialized();
 int Initialize();
 int Open(int userId, std::int32_t type, std::int32_t index, const MouseOpenParam* param);
 int Close(std::int32_t handle);
