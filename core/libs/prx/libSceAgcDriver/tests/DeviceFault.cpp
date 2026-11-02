@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -61,6 +62,16 @@ VKAPI_ATTR void VKAPI_CALL MockCheckpointData(VkQueue, std::uint32_t* count, VkC
 }
 
 AgcDriver::FaultToken checkpointToken = 0;
+
+VkCommandBuffer emitCmd = VK_NULL_HANDLE;
+const void* emitMarker = nullptr;
+std::uint32_t emitCalls = 0;
+
+VKAPI_ATTR void VKAPI_CALL MockEmitCheckpoint(VkCommandBuffer commands, const void* marker) {
+    ++emitCalls;
+    emitCmd = commands;
+    emitMarker = marker;
+}
 
 VKAPI_ATTR void VKAPI_CALL MockTokenCheckpointData(VkQueue, std::uint32_t* count, VkCheckpointDataNV* data) {
     if (data == nullptr) {
@@ -362,6 +373,35 @@ void ExtraQueueEmptyBracket() {
     checkpointToken = 0;
 }
 
+void TokenReuse() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    AgcDriver::FaultToken first = 0;
+    for (std::size_t i = 0; i < AgcDriver::FaultTokenRing::Capacity + 5; ++i) {
+        const AgcDriver::FaultToken token = ring.Claim();
+        Require(token != 0, "the reuse token is invalid");
+        if (i == 0) first = token;
+        ClaimBracketToken(ring, token, 7, 0x12000ull, 9, "draw main");
+    }
+    Require(!ring.Find(first).has_value(), "an overwritten token still resolves");
+}
+
+void TokenEmission() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken token = ring.Claim();
+    Require(token != 0, "the emission token is invalid");
+    ClaimBracketToken(ring, token, 7, 0x12000ull, 9, "draw main");
+    emitCmd = VK_NULL_HANDLE;
+    emitMarker = nullptr;
+    emitCalls = 0;
+    static VkCommandBuffer fakeCmd = reinterpret_cast<VkCommandBuffer>(static_cast<std::uintptr_t>(0xC0FFEE1));
+    AgcDriver::Graphics::EmitNvCheckpointToken(fakeCmd, token, MockEmitCheckpoint);
+    Require(emitCalls == 1, "the checkpoint backend was not called once");
+    Require(emitCmd == fakeCmd, "the checkpoint backend got the wrong command buffer");
+    Require(emitMarker == reinterpret_cast<const void*>(static_cast<std::uintptr_t>(token)), "the checkpoint backend got the wrong token");
+    const auto found = ring.Find(token);
+    Require(found.has_value() && found->token == token && found->submitSerial == 7, "an emitted token missed its ring entry");
+}
+
 void LiveResourceEmpty() {
     const auto lines = AgcDriver::LiveResourceRing::Instance().LinesFor(0x50000ull);
     Require(lines.empty(), "an empty live ring reports resources");
@@ -520,6 +560,8 @@ int main() {
         TokenCheckpoint();
         ReportBracketOnly();
         ExtraQueueEmptyBracket();
+        TokenReuse();
+        TokenEmission();
         LiveResourceEmpty();
         LiveResourceHit();
         LiveResourceInReport();

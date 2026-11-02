@@ -1206,6 +1206,19 @@ void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std
     }
 }
 
+void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue) {
+    if (!CheckpointMarkersEnabled()) return;
+    if (queue != 0) return;
+    if (commands == VK_NULL_HANDLE || token == 0) return;
+    try {
+        if (context.device == VK_NULL_HANDLE || context.deviceProc == nullptr) return;
+        auto setCheckpoint = reinterpret_cast<PFN_vkCmdSetCheckpointNV>(context.deviceProc(context.device, "vkCmdSetCheckpointNV"));
+        if (setCheckpoint == nullptr) return;
+        EmitNvCheckpointToken(commands, static_cast<AgcDriver::FaultToken>(token), setCheckpoint);
+    } catch (...) {
+    }
+}
+
 void WriteCheckpointSerial(const Context& context, VkCommandBuffer commands, std::uint64_t serial, std::uint32_t queue) {
     if (!CheckpointMarkersEnabled()) return;
     if (queue != 0) return;

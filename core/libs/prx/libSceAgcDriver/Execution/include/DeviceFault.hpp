@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -121,6 +122,7 @@ public:
     void Note(std::uint64_t address, std::uint64_t size, const char* kind) noexcept {
         try {
             if (address == 0 || size == 0 || kind == nullptr || *kind == '\0') return;
+            std::lock_guard<std::mutex> lock(mutex);
             const std::uint64_t slot = next.fetch_add(1, std::memory_order_relaxed) % DeviceFaultLiveResourceCapacity;
             Entry& entry = entries[static_cast<std::size_t>(slot)];
             std::size_t length = 0;
@@ -145,27 +147,30 @@ public:
             };
             Candidate found[DeviceFaultLiveResourceCapacity];
             std::size_t count = 0;
-            for (std::size_t i = 0; i < DeviceFaultLiveResourceCapacity; ++i) {
-                const std::uint64_t address = entries[i].address.load(std::memory_order_acquire);
-                if (address == 0) continue;
-                const std::uint64_t size = entries[i].size.load(std::memory_order_relaxed);
-                if (size == 0) continue;
-                std::uint64_t distance = 0;
-                if (va < address) distance = address - va;
-                else if (va - address >= size) distance = va - address - size;
-                char kind[16]{};
-                const char* stored = entries[i].kind;
-                std::size_t length = 0;
-                while (length + 1 < sizeof(kind) && stored[length] != '\0') {
-                    kind[length] = stored[length];
-                    ++length;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                for (std::size_t i = 0; i < DeviceFaultLiveResourceCapacity; ++i) {
+                    const std::uint64_t address = entries[i].address.load(std::memory_order_acquire);
+                    if (address == 0) continue;
+                    const std::uint64_t size = entries[i].size.load(std::memory_order_relaxed);
+                    if (size == 0) continue;
+                    std::uint64_t distance = 0;
+                    if (va < address) distance = address - va;
+                    else if (va - address >= size) distance = va - address - size;
+                    char kind[16]{};
+                    const char* stored = entries[i].kind;
+                    std::size_t length = 0;
+                    while (length + 1 < sizeof(kind) && stored[length] != '\0') {
+                        kind[length] = stored[length];
+                        ++length;
+                    }
+                    kind[length] = '\0';
+                    found[count].distance = distance;
+                    found[count].address = address;
+                    found[count].size = size;
+                    for (std::size_t k = 0; k < sizeof(kind); ++k) found[count].kind[k] = kind[k];
+                    ++count;
                 }
-                kind[length] = '\0';
-                found[count].distance = distance;
-                found[count].address = address;
-                found[count].size = size;
-                for (std::size_t k = 0; k < sizeof(kind); ++k) found[count].kind[k] = kind[k];
-                ++count;
             }
             for (std::size_t i = 0; i < count; ++i) {
                 for (std::size_t j = i + 1; j < count; ++j) {
@@ -194,6 +199,7 @@ private:
     };
     std::atomic<std::uint64_t> next{0};
     Entry entries[DeviceFaultLiveResourceCapacity]{};
+    mutable std::mutex mutex;
 };
 
 inline void DeviceFaultAppendStage(char* line, std::size_t size, std::uint32_t stage) noexcept {
@@ -218,19 +224,19 @@ inline std::vector<std::string> DeviceFaultBracketLines(const SubmitBracket& bra
         const std::uint64_t start = static_cast<std::uint64_t>(bracket.firstToken) + (tokens > listed ? tokens - listed : 0);
         for (std::uint64_t i = 0; i < listed; ++i) {
             const FaultToken token = static_cast<FaultToken>(start + i);
-            const FaultTokenEntry* entry = ring.Find(token);
-            if (entry == nullptr) {
+            const auto found = ring.Find(token);
+            if (!found.has_value()) {
                 if (queue == VK_NULL_HANDLE) std::snprintf(line, sizeof(line), "[device-fault] unknown token %u in batch %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(bracket.submitSerial));
                 else std::snprintf(line, sizeof(line), "[device-fault] unknown token %u in batch %llu queue 0x%llx", static_cast<unsigned>(token), static_cast<unsigned long long>(bracket.submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
                 lines.emplace_back(line);
                 continue;
             }
-            const std::size_t descLength = strnlen(entry->desc, sizeof(entry->desc));
+            const std::size_t descLength = strnlen(found->desc, sizeof(found->desc));
             if (queue == VK_NULL_HANDLE) {
-                if (descLength == 0) std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu: program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId));
-                else std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu: program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId), static_cast<int>(descLength), entry->desc);
-            } else if (descLength == 0) std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu queue 0x%llx: program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId));
-            else std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu queue 0x%llx: program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId), static_cast<int>(descLength), entry->desc);
+                if (descLength == 0) std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu: program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId));
+                else std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu: program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), static_cast<int>(descLength), found->desc);
+            } else if (descLength == 0) std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu queue 0x%llx: program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId));
+            else std::snprintf(line, sizeof(line), "[device-fault] token %u in batch %llu queue 0x%llx: program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), static_cast<int>(descLength), found->desc);
             lines.emplace_back(line);
         }
         if (tokens > listed) {
@@ -318,8 +324,8 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
             points.resize(count);
             for (const auto& point : points) {
                 const FaultToken token = static_cast<FaultToken>(reinterpret_cast<std::uintptr_t>(point.pCheckpointMarker));
-                const FaultTokenEntry* entry = ring.Find(token);
-                if (entry != nullptr && entry->submitSerial != 0) tokenSerial = entry->submitSerial;
+                const auto found = ring.Find(token);
+                if (found.has_value() && found->submitSerial != 0) tokenSerial = found->submitSerial;
             }
         }
         const std::uint64_t effectiveSerial = submitSerial != 0 ? submitSerial : tokenSerial;
@@ -335,13 +341,13 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
             char checkpoint[256];
             for (const auto& point : points) {
                 const FaultToken token = static_cast<FaultToken>(reinterpret_cast<std::uintptr_t>(point.pCheckpointMarker));
-                const FaultTokenEntry* entry = ring.Find(token);
-                if (entry == nullptr) {
+                const auto found = ring.Find(token);
+                if (!found.has_value()) {
                     std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: unknown token %u queue 0x%llx", static_cast<unsigned>(token), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)));
                 } else {
-                    const std::size_t descLength = strnlen(entry->desc, sizeof(entry->desc));
-                    if (descLength == 0) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu queue 0x%llx program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId));
-                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu queue 0x%llx program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId), static_cast<int>(descLength), entry->desc);
+                    const std::size_t descLength = strnlen(found->desc, sizeof(found->desc));
+                    if (descLength == 0) std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu queue 0x%llx program 0x%llx variant %llu", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId));
+                    else std::snprintf(checkpoint, sizeof(checkpoint), "[device-fault] checkpoint: token %u batch %llu queue 0x%llx program 0x%llx variant %llu %.*s", static_cast<unsigned>(token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(queue)), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), static_cast<int>(descLength), found->desc);
                 }
                 DeviceFaultAppendStage(checkpoint, sizeof(checkpoint), point.stage);
                 lines.emplace_back(checkpoint);

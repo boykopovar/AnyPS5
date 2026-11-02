@@ -919,6 +919,14 @@ private:
     mutable bool publishedWriteRangesValid = false;
 };
 
+inline void EmitNvCheckpointToken(VkCommandBuffer commands, AgcDriver::FaultToken token, PFN_vkCmdSetCheckpointNV setCheckpoint) noexcept {
+    try {
+        if (commands == VK_NULL_HANDLE || setCheckpoint == nullptr || token == 0) return;
+        setCheckpoint(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(token)));
+    } catch (...) {
+    }
+}
+
 }
 
 #endif

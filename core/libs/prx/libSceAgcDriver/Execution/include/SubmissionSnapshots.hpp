@@ -43,31 +43,30 @@ public:
     FaultToken Claim() noexcept {
         for (;;) {
             FaultToken candidate = next.fetch_add(1, std::memory_order_relaxed);
-            if (candidate != 0) return candidate;
+            if (candidate == 0) continue;
+            std::atomic_ref<FaultToken>(entries[static_cast<std::size_t>(candidate) % Capacity].token).store(0, std::memory_order_release);
+            return candidate;
         }
     }
     FaultTokenEntry* Mutable(FaultToken token) noexcept {
         if (token == 0) return nullptr;
         return &entries[static_cast<std::size_t>(token) % Capacity];
     }
-    const FaultTokenEntry* Find(FaultToken token) const noexcept {
+    std::optional<FaultTokenEntry> Find(FaultToken token) const noexcept {
         try {
-            if (token == 0) return nullptr;
+            if (token == 0) return std::nullopt;
             const FaultTokenEntry& slot = entries[static_cast<std::size_t>(token) % Capacity];
-            if (std::atomic_ref<FaultToken>(slot.token).load(std::memory_order_acquire) != token) return nullptr;
-            std::uint64_t submitSerial = slot.submitSerial;
-            std::uint64_t programAddress = slot.programAddress;
-            std::uint64_t variantId = slot.variantId;
-            char desc[48];
-            for (std::size_t i = 0; i < 48; ++i) desc[i] = slot.desc[i];
-            if (std::atomic_ref<FaultToken>(slot.token).load(std::memory_order_acquire) != token) return nullptr;
-            static_cast<void>(submitSerial);
-            static_cast<void>(programAddress);
-            static_cast<void>(variantId);
-            static_cast<void>(desc);
-            return &slot;
+            if (std::atomic_ref<FaultToken>(slot.token).load(std::memory_order_acquire) != token) return std::nullopt;
+            FaultTokenEntry copy;
+            copy.submitSerial = slot.submitSerial;
+            copy.programAddress = slot.programAddress;
+            copy.variantId = slot.variantId;
+            for (std::size_t i = 0; i < 48; ++i) copy.desc[i] = slot.desc[i];
+            if (std::atomic_ref<FaultToken>(slot.token).load(std::memory_order_acquire) != token) return std::nullopt;
+            copy.token = token;
+            return copy;
         } catch (...) {
-            return nullptr;
+            return std::nullopt;
         }
     }
 private:

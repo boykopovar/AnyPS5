@@ -2307,8 +2307,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                                     continue;
                                 }
                                 char tokenLine[192];
-                                if (const AgcDriver::FaultTokenEntry* entry = ring.Find(static_cast<AgcDriver::FaultToken>(words[i]))) {
-                                    std::snprintf(tokenLine, sizeof(tokenLine), "[device-fault] last dispatch %s: token %u, batch %llu, program 0x%llx, variant 0x%llx (%.47s)", i == 0 ? "reached" : "finished", static_cast<unsigned>(entry->token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId), entry->desc);
+                                if (const auto found = ring.Find(static_cast<AgcDriver::FaultToken>(words[i]))) {
+                                    std::snprintf(tokenLine, sizeof(tokenLine), "[device-fault] last dispatch %s: token %u, batch %llu, program 0x%llx, variant 0x%llx (%.47s)", i == 0 ? "reached" : "finished", static_cast<unsigned>(found->token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), found->desc);
                                 } else {
                                     std::snprintf(tokenLine, sizeof(tokenLine), "[device-fault] last dispatch %s: token %u not in the ring", i == 0 ? "reached" : "finished", static_cast<unsigned>(words[i]));
                                 }
@@ -2321,8 +2321,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
                         if (recorderToken != 0) {
                             const AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
                             char tokenLine[192];
-                            if (const AgcDriver::FaultTokenEntry* entry = ring.Find(static_cast<AgcDriver::FaultToken>(recorderToken))) {
-                                std::snprintf(tokenLine, sizeof(tokenLine), "[device-fault] last dispatch %s: token %u, batch %llu, program 0x%llx, variant 0x%llx (%.47s)", "reached", static_cast<unsigned>(entry->token), static_cast<unsigned long long>(entry->submitSerial), static_cast<unsigned long long>(entry->programAddress), static_cast<unsigned long long>(entry->variantId), entry->desc);
+                            if (const auto found = ring.Find(static_cast<AgcDriver::FaultToken>(recorderToken))) {
+                                std::snprintf(tokenLine, sizeof(tokenLine), "[device-fault] last dispatch %s: token %u, batch %llu, program 0x%llx, variant 0x%llx (%.47s)", "reached", static_cast<unsigned>(found->token), static_cast<unsigned long long>(found->submitSerial), static_cast<unsigned long long>(found->programAddress), static_cast<unsigned long long>(found->variantId), found->desc);
                             } else {
                                 std::snprintf(tokenLine, sizeof(tokenLine), "[device-fault] last dispatch %s: token %u not in the ring", "reached", static_cast<unsigned>(recorderToken));
                             }

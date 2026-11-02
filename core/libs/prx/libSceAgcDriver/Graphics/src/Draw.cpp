@@ -47,6 +47,7 @@
 namespace AgcDriver::Graphics {
 
 void WriteCheckpointMarker(const Context& context, VkCommandBuffer commands, std::uint64_t serial, std::uint32_t queue);
+void WriteNvCheckpointToken(const Context& context, VkCommandBuffer commands, std::uint64_t token, std::uint32_t queue);
 
 namespace {
 
@@ -75,6 +76,7 @@ void noteDrawFaultToken(const Context& context, Recorder& recorder, VkCommandBuf
             std::atomic_ref<AgcDriver::FaultToken>(entry->token).store(faultToken, std::memory_order_release);
         }
         WriteCheckpointMarker(context, commands, faultToken, queue);
+        WriteNvCheckpointToken(context, commands, faultToken, queue);
     } catch (...) {
     }
 }
