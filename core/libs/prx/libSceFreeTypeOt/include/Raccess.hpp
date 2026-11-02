@@ -1,3 +1,9 @@
+// Derived from FreeType include/freetype/internal/ftrfork.h (FreeType 2.4.12, commit cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9).
+// Copyright 2004, 2006, 2007, 2012 by Masatake YAMATO and Redhat K.K.
+// This file is part of the FreeType project, and may only be used, modified, and distributed
+// under the terms of the FreeType project license, LICENSE.TXT. By continuing to use, modify,
+// or distribute this file you indicate that you have read the license and understand and accept it fully.
+
 #pragma once
 
 #include "prx/libSceFreeTypeOt/include/Stream.hpp"

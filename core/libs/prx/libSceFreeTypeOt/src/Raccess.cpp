@@ -1,3 +1,9 @@
+// Derived from FreeType src/base/ftrfork.c (FreeType 2.4.12, commit cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9).
+// Copyright 2004-2010, 2013 by Masatake YAMATO and Redhat K.K.
+// This file is part of the FreeType project, and may only be used, modified, and distributed
+// under the terms of the FreeType project license, LICENSE.TXT. By continuing to use, modify,
+// or distribute this file you indicate that you have read the license and understand and accept it fully.
+
 #include "prx/libSceFreeTypeOt/include/Raccess.hpp"
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libc/include/General.hpp"
