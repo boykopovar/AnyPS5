@@ -22,6 +22,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_AUTORUN_NO_PAUSE` | string | `core/relinker/cli/src/Autorun.cpp` | | exactly `1` skips the exit prompt and stdin read after autorun; unset, empty and other values keep the prompt |
 | `ANYPS5_GUEST_MODULE_ARGS` | string | `core/relinker/elfpatcher/tests/GuestModuleArgsHost.cpp` |  | path of the file the module-argument fixture appends its events to |
 
 ### core/shader
@@ -69,6 +70,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_VERIFY_MASKED_RESULT_MEMO` | presence | `core/shader/recompiler/Recompiler.cpp` |  | also materializes every patched result memo hit, prints the first twenty whose patched result differs and counts them in the result memo report of `APS5_PROFILE_DRAW` |
 | `APS5_VERIFY_SRT_COMPACT` | presence | `core/shader/recompiler/Optimization/src/SrtWalker/SrtDescriptorEvaluation.cpp` |  | walks every SRT descriptor a second time through the IR evaluator and throws when the two walks differ |
 | `APS5_VERIFY_SRT_TAPE` | presence | `core/shader/recompiler/Optimization/src/SrtWalker/SrtTape.cpp` |  | walks a plan's runtime sources a second time through the evaluator, adopts its answers where the two differ and prints the first twenty differences |
+| `APS5_WAIT_PENDING_BRANCHES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/ShaderMemory.cpp` |  | a resource capture that evaluates a scalar branch condition over a word with a pending GPU write waits for the write to prune the branch, instead of leaving the branch unpruned (both successors' resources captured) |
 | `APS5_WAVE_LDS_SUBGROUP` | presence | `core/shader/recompiler/SpirvBackend/src/SpirvEmitter.cpp` |  | restores subgroup-scope LDS barriers for single-wave workgroups instead of workgroup scope |
 
 ### libSceAgc
@@ -157,6 +159,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_DUMP_DRAW_SLOT1` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` | 0 | hex slot-1 address whose draw's shaders and register state are dumped |
 | `APS5_DUMP_FRAMES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0 | saves the first n presented frames as frame_<index>.bmp |
 | `APS5_DUMP_FRAMES_EVERY` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 1 | dumps every n-th presented frame |
+| `APS5_DUMP_PREPARE_INPUTS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderDiagnostics.cpp` | off | saves inputs before preparation as `shader_<address>.input-<process>-<session>-<n>.prepare.req`, respecting `APS5_DUMP_SHADERS` selection; logs begin after saving and end after successful preparation |
 | `APS5_DUMP_QUEUE` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketExecution.cpp` |  | dumps the first submissions of the queue with this hex id |
 | `APS5_DUMP_REJECTED` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/CommandValidation.cpp` |  | writes a rejected submission to rejected_submission_<n>.bin |
 | `APS5_DUMP_SCALE` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 4 | keeps every n-th pixel in each direction of a dumped frame (1 to 16384; any other value fails) |
@@ -285,8 +288,10 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_HOOK_COMPLETION_GUARD` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | lets the flush hook record the accessing worker's queued labels even from inside a completion action |
 | `APS5_NO_HOOK_SNAPSHOT` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | takes the GpuMutex on every access instead of using the pending-write snapshot |
 | `APS5_NO_HOST_IMPORT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | disables importing guest memory, so address-based shaders copy instead of using it in place |
+| `APS5_NO_HOST_INTERPOLATION_FIRST` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | on RADV, reads pixel shader inputs through VK_KHR_fragment_shader_barycentric again instead of trying host interpolation first |
 | `APS5_NO_HW_F32_FLUSH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | skips the startup f32 denormal flush probe and keeps the emulated flush in every shader |
 | `APS5_NO_HW_F32_PRESERVE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | stops requesting DenormPreserve for 32-bit floats, so the device keeps its default f32 denormal handling |
+| `APS5_NO_IDLE_STORE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/QueueWorker.cpp` |  | stops queue 0's worker from storing pending storage-image results after the queues stay idle for 50 ms, so they stay pending until a reader, label or flush stores them; queue 0 still waits for work while they are pending |
 | `APS5_NO_IMAGE_PAGE_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | leaves the main guest image's page-protection table uncached |
 | `APS5_NO_INDIRECT_DRAW` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp` |  | rejects indirect draw packets at submission validation |
 | `APS5_NO_JOIN_WAW_CHECK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | lets a contiguous store join the pending one without the write-after-write check |
@@ -331,6 +336,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_PROC_TABLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | resolves the device's Vulkan entry points per call instead of filling the function table once |
 | `APS5_NO_QUEUED_DRAW_READ_ORDER` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp` |  | stops queued draws and DMA copies from holding back write-backs over the guest memory they read at commit |
 | `APS5_NO_QUEUED_LABELS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/DeferredLabels.cpp` |  | disables the queued-label table |
+| `APS5_NO_READ_ONLY_LEASE_SKIP` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | counts the lease of an address-based build whose shaders never store through BDA as a pending writer of its leased range instead of only a reader |
 | `APS5_NO_RECENT_IMPORTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | looks every host import up in the import map instead of first checking the last four found while the map is unchanged |
 | `APS5_NO_RECORDED_CLEAR` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | waits for a storage image's fast clear in a batch of its own instead of recording it |
 | `APS5_NO_RECORDER_SYNC_DRAWS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | gives the draws the recorder waits for their own batch instead of recording them with the wait |
@@ -346,11 +352,13 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_SEPARATE_QUEUED_LABELS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | lets a queued label enter the recorded table and replace a recorded entry of its dword |
 | `APS5_NO_SHAPE_MEMO` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | looks up every draw's resident targets and pipeline anew instead of repeating the ones an earlier draw of the same register shape used |
 | `APS5_NO_SHARED_FAULT_SLOTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/BdaResources.cpp` |  | gives every BDA resource object its own full-size fault buffer for its whole life instead of a slot from the device's shared fault chunks that an idle cached object gives back (a 32-byte slot when its programs can write only the fault report) |
+| `APS5_NO_SHARED_GDS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp` |  | keeps the GDS in a private guest mapping, which the GPU cannot import, instead of anonymous shared memory on an integrated GPU with host imports; DMA_DATA into the GDS behind GPU writes to it then drains, and DMA_DATA out of it is read on the CPU |
 | `APS5_NO_SINGLE_PASS_COLLECT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | walks the written pages once without clearing them and, when any were written, a second time clearing them, instead of one cleared pass |
 | `APS5_NO_SITE_SAMPLING` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | disables per-site sampling of write evidence |
 | `APS5_NO_SNAPSHOT_CHECK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | skips the live compare that proves a captured snapshot still equals the guest bytes |
 | `APS5_NO_SORTED_SNAPSHOT_LOOKUP` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | scans the snapshot's regions in AddSnapshot instead of searching them |
 | `APS5_NO_SPACE_STAMP_ONCE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | stamps every direct import of a cached address space on each hit instead of once per space |
+| `APS5_NO_SPANNED_WAVE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | keeps single-wave wave64 compute programs at two guest lanes per invocation instead of spanning two full 32-lane subgroups |
 | `APS5_NO_SPARSE_HEAP_MIRROR` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | disables sparse heap mirrors, mirroring only whole heap ranges |
 | `APS5_NO_STAGE_A_IMAGES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | leaves every image element to the stage-B full lookup instead of a stage-A record |
 | `APS5_NO_STORAGE_DEDUPE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | looks each identical consecutive storage descriptor up, and refreshes its image, separately |
@@ -420,7 +428,6 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_SKIP_SHADER` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Diagnostics.cpp` | 0 | hex program address of a shader whose draws and dispatches are dropped |
 | `APS5_SKIP_SHADER_FILE` | path | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Diagnostics.cpp` |  | file of whitespace-separated hex program addresses (`#` starts a comment) whose draws and dispatches are dropped; re-read within 500 ms of a change; a token that is not a whole 64-bit hex number is reported and ignored |
 | `APS5_SNAPSHOT_CHECK_FATAL` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | throws on the first snapshot that differs from registered memory instead of only counting them |
-| `APS5_SPANNED_WAVE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | spans a single-wave wave64 compute program over two full 32-lane subgroups |
 | `APS5_SPIRV_OPT` | string | `core/shader/recompiler/SpirvBackend/src/SpirvOptimizer.cpp` |  | selects the SPIR-V optimization pipeline: `full` restores the performance pipeline, `none` skips optimization |
 | `APS5_SRGB_ATTACHMENT_PROXY` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | forces the sRGB color-attachment proxy format; `1` forces it |
 | `APS5_SRGB_SHADER_DECODE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/TextureFormat.cpp` |  | `1` forces shader sRGB decode for the sRGB 8-bit formats; `copy` does the same, except that 8 and 8_8 sRGB sample an RGBA8 sRGB copy when the device can blit to RGBA8; any other value has no effect |
@@ -570,7 +577,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
-| `APS5_PLAYGO_UNLISTED_CHUNKS` | string | `core/libs/prx/libScePlayGo/Export.cpp` |  | answer for a chunk ID the playgo manifest does not list: installed or absent; unset throws instead of answering |
+| `APS5_PLAYGO_UNLISTED_CHUNKS` | string | `core/libs/prx/libScePlayGo/Export.cpp` |  | answer for a chunk ID the playgo manifest does not list: installed, absent, or a comma-separated list of installed chunk ids; unset throws instead of answering |
 
 ### libSceSaveData.native
 
@@ -583,7 +590,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
-| `ANYPS5_LANGUAGE` | integer | `core/libs/prx/libSceSystemService/SystemService.hpp` | 1 | console language number from 0 to 30 returned by sceSystemServiceParamGetInt, defaulting to English US; any other value throws |
+| `ANYPS5_LANGUAGE` | integer | `core/libs/prx/libSceSystemService/SystemService.hpp` | 1 | console language number from 0 to 30 returned by sceSystemServiceParamGetInt, defaulting to English US; `auto` (any letter case) maps the host's locale to a console language once per process and falls back to English US with one stderr line; any other value throws |
 
 ### libSceUsbStorage
 
