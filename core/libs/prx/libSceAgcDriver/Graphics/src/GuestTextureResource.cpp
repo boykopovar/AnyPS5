@@ -64,6 +64,26 @@ TextureTileMode resolveGcnTileMode(std::uint32_t index) {
     }
 }
 
+TextureTileMode resolveDescriptorTileMode(std::span<const std::uint32_t> words, bool gcn) {
+    return gcn ? resolveGcnTileMode(ShaderRecompiler::GcnImageTilingIndex(words[7])) : resolveTileMode((words[3] >> 20u) & 0x1fu);
+}
+
+std::uint64_t descriptorBaseAddress(std::span<const std::uint32_t> words) {
+    Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
+    const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
+    return base40 << 8u;
+}
+
+std::uint64_t normalizedDescriptorBaseAddress(std::uint64_t baseAddress, TextureTileMode tileMode, std::uint32_t* pipeBankXor) {
+    auto xorBytes = 0u;
+    if (XorSwizzleMode(tileMode) != 0) {
+        xorBytes = static_cast<std::uint32_t>(baseAddress & (tileMode == TextureTileMode::kS4KBX || tileMode == TextureTileMode::kD4KBX ? 0xfffu : 0xffffu));
+        baseAddress -= xorBytes;
+    }
+    if (pipeBankXor != nullptr) *pipeBankXor = xorBytes;
+    return baseAddress;
+}
+
 TextureDimension resolveDimension(std::uint32_t raw) {
     switch (raw) {
         case 8: return TextureDimension::k1D;
@@ -120,6 +140,21 @@ std::uint64_t descriptorBase(std::span<const std::uint32_t> words) {
     return (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & (ShaderRecompiler::GcnGuestShaders() ? 0x3fffffffffull : 0xffffffffffull);
 }
 
+}
+
+std::optional<std::uint64_t> TextureResourceAllocationAddress(std::span<const std::uint32_t> words) {
+    const auto baseAddress = descriptorBaseAddress(words);
+    if (baseAddress == 0) return std::nullopt;
+    const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    TextureTileMode tileMode;
+    try {
+        tileMode = resolveDescriptorTileMode(words, gcn);
+    } catch (const std::runtime_error&) {
+        return std::nullopt;
+    }
+    const auto normalized = normalizedDescriptorBaseAddress(baseAddress, tileMode, nullptr);
+    if (normalized == 0) return std::nullopt;
+    return normalized;
 }
 
 bool IsNullTextureResource(std::span<const std::uint32_t> words) {
@@ -227,7 +262,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     TextureTileMode tileMode;
     TextureDimension dimension;
     try {
-        tileMode = gcn ? resolveGcnTileMode(ShaderRecompiler::GcnImageTilingIndex(gcnTiling)) : resolveTileMode(tileModeRaw);
+        tileMode = resolveDescriptorTileMode(descriptor, gcn);
         dimension = resolveDimension(typeRaw);
     } catch (const std::exception& error) {
         throw std::runtime_error(std::string(error.what()) + describe());
@@ -243,11 +278,8 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
     // hardware never addresses them, so the view ends at the surface's last level.
     if (baseLevel <= maxMip) lastLevel = std::min(lastLevel, maxMip);
     std::uint32_t pipeBankXor = 0;
-    if (XorSwizzleMode(tileMode) != 0) {
-        pipeBankXor = static_cast<std::uint32_t>(baseAddress & (tileMode == TextureTileMode::kS4KBX || tileMode == TextureTileMode::kD4KBX ? 0xfffu : 0xffffu));
-        baseAddress -= pipeBankXor;
-        Require(baseAddress != 0, "guest texture descriptor has a null base address");
-    }
+    baseAddress = normalizedDescriptorBaseAddress(baseAddress, tileMode, &pipeBankXor);
+    Require(baseAddress != 0, "guest texture descriptor has a null base address");
 
     std::uint32_t linearPitch = 0;
     switch (dimension) {
