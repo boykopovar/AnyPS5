@@ -26,6 +26,7 @@ static constexpr int POLL_FINISHED = 0;
 static constexpr int POLL_RUNNING = 1;
 static constexpr std::size_t MAX_TITLE_CONTEXTS = 32;
 static constexpr std::size_t MAX_REQUESTS = 32;
+static constexpr std::uint32_t MAX_SERVICE_CHECKER2_REQUEST_ID = 0x1000;
 static constexpr int WORD_FILTER_TITLE_CTX_ID_OFFSET = 0x01000000;
 static constexpr int WORD_FILTER_REQUEST_ID_OFFSET = 0x02000000;
 static constexpr std::size_t WORD_FILTER_COMMENT_MAX_LENGTH = 0x400;
@@ -60,7 +61,7 @@ struct ServiceChecker2 {
     std::mutex mutex;
     bool initialized = false;
     std::unordered_set<int> requests;
-    int nextRequest = 1;
+    std::uint32_t nextRequest = 1;
 };
 ServiceChecker2 serviceChecker2;
 
@@ -384,6 +385,7 @@ int APS5_VABI sceNpLookupNetTerm() {
 int APS5_VABI sceNpServiceChecker2IntAbortRequest(int requestId) {
     std::lock_guard lock(serviceChecker2.mutex);
     if (!serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED;
+    if (!serviceChecker2.requests.contains(requestId)) return SCE_NP_SERVICE_CHECKER2_ERROR_REQUEST_NOT_FOUND;
     serviceChecker2.requests.erase(requestId);
     return 0;
 }
@@ -391,7 +393,8 @@ int APS5_VABI sceNpServiceChecker2IntCreateRequest(int* requestId) {
     std::lock_guard lock(serviceChecker2.mutex);
     if (!serviceChecker2.initialized) return SCE_NP_SERVICE_CHECKER2_ERROR_NOT_INITIALIZED;
     if (!requestId) return SCE_NP_SERVICE_CHECKER2_ERROR_INVALID_ARGUMENT;
-    const int id = serviceChecker2.nextRequest++;
+    if (serviceChecker2.nextRequest > MAX_SERVICE_CHECKER2_REQUEST_ID) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
+    const int id = static_cast<int>(serviceChecker2.nextRequest++);
     serviceChecker2.requests.insert(id);
     *requestId = id;
     return 0;

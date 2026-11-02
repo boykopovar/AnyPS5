@@ -147,6 +147,8 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntDestroyRequest(second) == 0, "sceNpServiceChecker2IntDestroyRequest", "destroying the request failed");
     Require(sceNpServiceChecker2IntGetServiceAvailability(second, selfNpId, &availability) == RequestNotFound, "sceNpServiceChecker2IntDestroyRequest", "a destroyed request was found");
     Require(sceNpServiceChecker2IntAbortRequest(request) == 0, "sceNpServiceChecker2IntAbortRequest", "aborting the request failed");
+    Require(sceNpServiceChecker2IntAbortRequest(request + 100) == RequestNotFound, "sceNpServiceChecker2IntAbortRequest", "an unknown abort request was accepted");
+    Require(sceNpServiceChecker2IntDestroyRequest(request + 100) == 0, "sceNpServiceChecker2IntDestroyRequest", "the destroy wrapper rejected an unknown request");
     const std::uint32_t serviceTypes[1] = {0x5};
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 0) == 1, "sceNpServiceChecker2IntIsSetServiceType", "bit 0 was not set");
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 1) == 0, "sceNpServiceChecker2IntIsSetServiceType", "bit 1 was set");
@@ -154,6 +156,16 @@ void CheckServiceChecker2() {
     Require(sceNpServiceChecker2IntIsSetServiceType(serviceTypes, 10) == 0, "sceNpServiceChecker2IntIsSetServiceType", "type 10 was taken");
     Require(sceNpServiceChecker2IntIsSetServiceType(nullptr, 0) == 0, "sceNpServiceChecker2IntIsSetServiceType", "a null mask was taken");
     Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization failed");
+    Require(sceNpServiceChecker2IntInitialize() == 0, "sceNpServiceChecker2IntInitialize", "reinitialization failed");
+    int boundaryId = 0;
+    for (std::uint32_t index = 0; index < 0x1000; ++index) {
+        Require(sceNpServiceChecker2IntCreateRequest(&boundaryId) == 0, "sceNpServiceChecker2IntCreateRequest", "a request below the host limit was refused");
+    }
+    const int lastId = boundaryId;
+    Require(sceNpServiceChecker2IntCreateRequest(&boundaryId) == TooManyObjects, "sceNpServiceChecker2IntCreateRequest", "the host request limit was not enforced");
+    Require(boundaryId == lastId, "sceNpServiceChecker2IntCreateRequest", "the request output changed on refusal");
+    Require(sceNpServiceChecker2IntGetServiceAvailability(lastId, selfNpId, &availability) == SignedOut, "sceNpServiceChecker2IntGetServiceAvailability", "an existing request was lost at the host limit");
+    Require(sceNpServiceChecker2IntFinalize() == 0, "sceNpServiceChecker2IntFinalize", "finalization after the host limit failed");
     Require(sceNpServiceChecker2IntCreateRequest(&request) == NotInitialized, "sceNpServiceChecker2IntCreateRequest", "a request was created after finalization");
 }
 
