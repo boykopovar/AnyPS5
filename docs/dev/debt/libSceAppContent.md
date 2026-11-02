@@ -1,5 +1,9 @@
 # libSceAppContent technical debt
 
+### Silent stubs
+
+- [sceAppContentGetGameTrialsFlag](../../../core/libs/prx/libSceAppContent/Export.cpp) (libSceAppContent) - returning `SCE_APP_CONTENT_ERROR_PARAMETER` for an unwritable game trials flag pointer is a host-safety fallback with console behavior unmeasured.
+
 ### Unknown function info
 
 - [libSceAppContent additional exports](../../../core/libs/prx/libSceAppContent/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
