@@ -1,8 +1,10 @@
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -477,6 +479,42 @@ class DebtSplitTests(unittest.TestCase):
                           + "\n- A toolchain limitation\n\n" + paragraph + "\n")
         self.split()
         self.assertIn("- A toolchain limitation\n\n" + paragraph + "\n", self.read(INDEX))
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(debt_split.sys, "stdout", out), patch.object(debt_split.sys, "stderr", err):
+            try:
+                debt_split.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
+    def test_main_reports_non_git_repository(self):
+        with tempfile.TemporaryDirectory() as empty_dir:
+            with patch("pathlib.Path.cwd", return_value=Path(empty_dir)):
+                with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                    with self.assertRaises(SystemExit) as cm:
+                        debt_split.main(["split"])
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn("not a git repository", stderr.getvalue())
 
 
 if __name__ == "__main__":
