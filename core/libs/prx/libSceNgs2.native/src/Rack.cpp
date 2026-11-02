@@ -12,6 +12,13 @@
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool PS4_LIBRARY = true;
+#else
+static constexpr bool PS4_LIBRARY = false;
+#endif
+static constexpr std::uint32_t MAX_WAVEFORM_BLOCKS = 32;
+
 union RackOptions {
     Ngs2RackOption common;
     Ngs2SamplerRackOption sampler;
@@ -99,6 +106,10 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
     if (option->size != size) throw std::invalid_argument("NGS2: unexpected rack option size " + std::to_string(option->size));
     options = {};
     std::memcpy(&options, option, size);
+    if (!PS4_LIBRARY && (rackId == SCE_NGS2_RACK_ID_SAMPLER || rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER)) {
+        const auto blocks = rackId == SCE_NGS2_RACK_ID_SAMPLER ? options.sampler.max_waveform_blocks : options.customSampler.max_waveform_blocks;
+        if (blocks == 0 || blocks > MAX_WAVEFORM_BLOCKS) return SCE_NGS2_ERROR_INVALID_NUM_WAVEFORM_BLOCKS;
+    }
     const auto maxChannels = RackMaxChannels(rackId, options);
     if ((rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) && maxChannels > SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS) return SCE_NGS2_ERROR_INVALID_NUM_CHANNELS;
     if ((rackId == SCE_NGS2_RACK_ID_SAMPLER && (options.sampler.num_peak_meter_blocks < 1 || options.sampler.num_peak_meter_blocks > 256)) ||
@@ -113,7 +124,7 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) result = Ngs2CheckCustomRack(rackId, options.customSampler.custom_rack_option, 0);
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) result = Ngs2CheckCustomRack(rackId, options.customSubmixer.custom_rack_option, options.customSubmixer.max_inputs);
     if (result != SCE_NGS2_OK) return result;
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER && options.customSampler.max_waveform_blocks == 0) return static_cast<int>(0x804A8053u);
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER && options.customSampler.max_waveform_blocks == 0) return SCE_NGS2_ERROR_INVALID_NUM_WAVEFORM_BLOCKS;
     if (maxChannels > NGS2_MAX_CHANNELS && rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
         if (rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
             throw std::runtime_error("NGS2: custom mastering racks with " + std::to_string(maxChannels) + " channels are not implemented");
@@ -220,6 +231,7 @@ int Ngs2DestroyRack(Ngs2Rack& rack, Ngs2ContextBufferInfo* outBufferInfo) {
             for (auto& port : voice.ports) {
                 if (port.dest != nullptr && port.dest->rack == &rack) port.dest = nullptr;
             }
+            Ngs2DetachPendingPatches(voice, rack);
         }
     }
     rack.system = nullptr;
@@ -244,7 +256,7 @@ int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption*
     if (buffer_info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     RackOptions options{};
     const int result = CheckedRackOption(rack_id, option, options);
-    if (result == static_cast<int>(0x804A8053u)) return result;
+    if (result == SCE_NGS2_ERROR_INVALID_NUM_WAVEFORM_BLOCKS) return result;
     if (result != SCE_NGS2_OK) throw std::invalid_argument("NGS2: invalid rack option, rejected at creation with " + Ngs2Hex(static_cast<std::uint32_t>(result)));
     *buffer_info = {};
     buffer_info->host_buffer_size = sizeof(Ngs2Rack);

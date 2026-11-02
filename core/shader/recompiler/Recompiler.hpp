@@ -236,7 +236,7 @@ struct ShaderPixelStageInfo {
     bool iteratesSamples = false;
     PixelPositionLocation positionLocation = PixelPositionLocation::Center;
     std::array<std::uint8_t, 32> sampleLocations{};
-    TargetMerge targetMerge{};
+    std::vector<TargetMerge> targetMerges{};
     std::array<std::uint32_t, 4> sampleOrder{};
 };
 
@@ -292,6 +292,7 @@ struct GuestContext {
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedCallFallbacks;
     bool convertedSamples = false;
+    bool layerRowSamples = false;
 };
 
 struct MeshTargetLimits {
@@ -331,12 +332,14 @@ struct SpirvTarget {
     std::optional<TessellationTargetLimits> tessellation;
     bool nonConstantImageOffsets = false;
     std::uint32_t srgbDecodeFormats = 0;
+    std::uint32_t maxImageArrayLayers = 0;
     bool narrowSubgroupClock = false;
     bool fixedPushSlots = false;
     bool float64DenormPreserve = false;
     bool registrationModules = false;
     std::uint32_t registrationWordLimit = 200000u;
     bool vertexSubgroups = true;
+    bool tessellationEvaluationSubgroups = true;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
     bool robustBufferAccess2 = false;
@@ -352,6 +355,7 @@ struct SpirvTarget {
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
+    bool hostInterpolationFirst = false;
 };
 
 struct BindingLayout {
@@ -416,6 +420,8 @@ inline constexpr std::uint32_t MeshArgumentIndexCountDword = 3;
 inline constexpr std::uint32_t MeshArgumentFirstIndexDword = 4;
 inline constexpr std::uint32_t MeshArgumentBytes = 20;
 inline constexpr std::uint32_t MeshIndexRestartTable = 0x100;
+inline constexpr std::uint32_t MeshLayerStrideShift = 16;
+inline constexpr std::uint32_t MeshLayerStrideLimit = 0xffff;
 inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
 inline constexpr std::uint32_t MeshCapturedCounterDword = MeshArgumentBytes / 4;
@@ -765,6 +771,7 @@ struct CompiledShaderArtifact {
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
     bool bdaWrites = false;
+    bool layerReplaySafe = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
     std::uint64_t variantId = 0;
 };
@@ -870,6 +877,7 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool DebugProbeActive();
 [[nodiscard]] bool RayTracingStrict();
 [[nodiscard]] bool RayTracingMiss();
+[[nodiscard]] bool ExactF32Arithmetic();
 
 struct RectListShaders {
     RecompileResult control;

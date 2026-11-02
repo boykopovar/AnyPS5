@@ -471,7 +471,9 @@ void DefineModule(SpirvEmitterState& state) {
     const bool deviceFloat64 = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) != state.supportedCapabilities.end();
     state.integerInterpolation = state.requirements.float64Interpolation && !deviceFloat64;
     if (state.integerInterpolation) state.module.EmitCapability(spv::CapabilityInt64);
-    if (state.requirements.float64 || (state.requirements.float64Interpolation && deviceFloat64)) {
+    state.integerFloat64 = state.requirements.float64 && !deviceFloat64 && !state.requirements.float64NeedsDevice;
+    if (state.integerFloat64) state.module.EmitCapability(spv::CapabilityInt64);
+    if (!state.integerFloat64 && (state.requirements.float64 || (state.requirements.float64Interpolation && deviceFloat64))) {
         if (!deviceFloat64) {
             throw std::runtime_error("64-bit float instructions need the Float64 capability, which the device lacks");
         }
@@ -506,8 +508,8 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.EmitExtension("SPV_EXT_shader_stencil_export");
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeStencilRefReplacingEXT);
         }
-        const bool merge = pixel.mergeMask != 0u;
-        const std::string mergeName = pixel.mergeBlend.enabled ? "blending into an unclamped normalized color target" : "a partial write of a packed color target";
+        const bool merge = !pixel.merges.empty();
+        const std::string mergeName = merge && pixel.merges.front().blend.enabled ? "blending into an unclamped normalized color target" : "a partial write of a packed color target";
         if (merge && (state.depthVariable != 0 || state.stencilRefVariable != 0 || pixel.psDepthExportEnable || pixel.psSampleMaskExportEnable || pixel.psStencilRefExportEnable || pixel.psAlphaToCoverage || pixel.QuadMasked() || (pixel.psPixelKillEnable && !pixel.psEarlyZ && pixel.mergeDepthStencilWrites))) {
             throw std::runtime_error(mergeName + " merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests of a draw writing depth or stencil, exports depth, stencil or coverage, or runs with a quad sample mask cannot use");
         }

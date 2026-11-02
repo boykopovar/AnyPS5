@@ -17,6 +17,11 @@ constexpr std::size_t GdsOrderedTurnOffset = GdsBytes;
 constexpr std::size_t GdsOrderedTimeoutsOffset = GdsBytes + 4;
 constexpr std::size_t GdsBindingBytes = GdsBytes + 8;
 std::uint64_t GdsAddress();
+void RequestImportableGds(bool requested);
+bool ImportableGdsRequested();
+bool GdsShared();
+bool GdsImportable();
+void RejectGdsImport();
 
 struct DrawParameters {
     std::uint64_t indexAddress;

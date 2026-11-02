@@ -16,6 +16,7 @@ import unwrap_self
 SELF_MAGIC = 0x1D3D154F
 ELF_HEADER_OFFSET = 0x1A0
 PROGRAM_TABLE_OFFSET = 0x40
+PT_NULL = 0
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_TLS = 7
@@ -148,7 +149,7 @@ class UnwrapTest(unittest.TestCase):
         for output in (source, source.parent / "." / source.name, alias):
             with self.subTest(output=output):
                 result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, encoding="utf-8", timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("output aliases the input", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
@@ -168,7 +169,7 @@ class UnwrapTest(unittest.TestCase):
         for arguments in ((source, loop), (loop, output)):
             with self.subTest(arguments=arguments):
                 result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), *map(str, arguments)],
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, encoding="utf-8", timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
                 self.assertIn("FAIL: ", result.stderr)
@@ -196,7 +197,7 @@ class UnwrapTest(unittest.TestCase):
         output = Path(self.directory) / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("does not fit the file", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
@@ -219,7 +220,7 @@ class UnwrapTest(unittest.TestCase):
                 output = Path(self.directory) / "output.elf"
                 source.write_bytes(container)
                 result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, encoding="utf-8", timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn(f"FAIL: {source}: {message}", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
@@ -250,7 +251,7 @@ class UnwrapTest(unittest.TestCase):
         output = Path(self.directory) / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("does not fit the file", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
@@ -263,7 +264,7 @@ class UnwrapTest(unittest.TestCase):
         output = Path(self.directory) / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, encoding="utf-8", timeout=60)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("bytes of output", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
@@ -417,14 +418,14 @@ class UnwrapTest(unittest.TestCase):
     def test_new_output_inherits_the_destination_directory_acl(self):
         directory = Path(self.directory)
         grant = subprocess.run(["icacls.exe", str(directory), "/grant", "*S-1-1-0:(OI)(CI)(RX)"],
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, encoding="oem", errors="replace", timeout=30)
         self.assertEqual(grant.returncode, 0, grant.stdout + grant.stderr)
         container = build_container(default_segments(), default_records(), default_payloads())
         result, output = self.convert(container)
         self.assertEqual(result.returncode, 0, result.stderr)
         permissions = directory / "output-acl.txt"
         saved = subprocess.run(["icacls.exe", str(output), "/save", str(permissions)],
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, encoding="oem", errors="replace", timeout=30)
         self.assertEqual(saved.returncode, 0, saved.stdout + saved.stderr)
         self.assertIn(";;;WD)", permissions.read_text(encoding="utf-16-le"))
         self.assertTrue(output.read_bytes().startswith(b"\x7fELF"))
@@ -441,7 +442,7 @@ class UnwrapTest(unittest.TestCase):
             with self.subTest(umask=oct(mask)):
                 output = directory / f"output-{mask:o}.elf"
                 result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                        capture_output=True, text=True, timeout=30, umask=mask)
+                                        capture_output=True, encoding="utf-8", timeout=30, umask=mask)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 mode = output.stat().st_mode & 0o777
                 self.assertEqual(mode, 0o666 & ~mask)
@@ -508,7 +509,7 @@ class UnwrapTest(unittest.TestCase):
         output = directory / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, encoding="utf-8", timeout=30)
         return result, output
 
     def setUp(self):
@@ -1061,7 +1062,7 @@ class UnwrapTest(unittest.TestCase):
         output = directory / "output.elf"
         source.write_bytes(container)
         result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), "--verbose",
-                                 str(source), str(output)], capture_output=True, text=True, timeout=30)
+                                 str(source), str(output)], capture_output=True, encoding="utf-8", timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("PT_LOAD", result.stdout)
         self.assertIn("PT_DYNAMIC", result.stdout)
@@ -1389,6 +1390,27 @@ class UnwrapTest(unittest.TestCase):
                 self.assertIn(message, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(output.read_bytes(), b"previous output")
+
+    def test_invalid_non_null_segment_alignment_is_refused_before_replacing_output(self):
+        output = Path(self.directory) / "output.elf"
+        for kind in (PT_DYNAMIC, PT_NOTE, PT_PHDR, SCE_COMMENT):
+            with self.subTest(kind=kind):
+                segments = default_segments()
+                segments[2] = (kind, 6, 0x1580, 0x1040, 0x10, 3)
+                container = build_container(segments, default_records(), default_payloads())
+                output.write_bytes(b"previous output")
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("segment 2 alignment is not a power of two", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(output.read_bytes(), b"previous output")
+
+    def test_null_segment_alignment_is_ignored(self):
+        segments = default_segments()
+        segments[2] = (PT_NULL, 0, 0, 0, 0, 3)
+        container = build_container(segments, default_records(), default_payloads())
+        _, _, headers = unwrap_self.parse_elf(container)
+        self.assertEqual(headers[2]["align"], 3)
 
     def test_load_alignment_zero_and_one_remain_supported(self):
         for alignment in (0, 1):

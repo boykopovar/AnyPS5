@@ -89,13 +89,13 @@ cmd /c '.\app.exe > run.log 2>&1'
 - Use the title's default settings, and say so. A changed graphics mode makes a number incomparable with everyone else's.
 - Measure the same spot every time: load a save, wait for the scene to settle, then measure a fixed window with no input.
 - Compare builds on the same machine, alternating them (A, B, A, B), at least two runs each. Throw away a run that was disturbed (another program, a sleeping display) and say so.
-- `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change.
+- `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change, except `perf(tools)`, `perf(ci)` and `perf(build)`.
 - `APS5_DUMP_FRAMES=<n>` with `APS5_DUMP_FRAMES_EVERY=<k>` saves frames as `frame_<index>.bmp` to check what was on screen. A second process of the same title writes to the same names and overwrites the first one's frames. While 64 MiB of frames wait to be written, the presenter waits for the
   writer, so a slow disk or `APS5_DUMP_SCALE=1` slows the title down instead of stopping it.
 
 ## Title notes
 
-- **PlayGo:** dumps without PlayGo metadata stop at start unless `APS5_PLAYGO_UNLISTED_CHUNKS` is set; report the value used.
+- **PlayGo:** dumps without PlayGo metadata stop at start unless `APS5_PLAYGO_UNLISTED_CHUNKS` is set (installed, absent, or a comma-separated list of installed chunk ids); report the value used.
 - **UE4 titles:** keep the startup movies in place. Renaming them to skip the intro has made a level render without its 3D view, which looked like an emulator bug and wasn't.
 
 ## Input
@@ -112,7 +112,7 @@ Include, in this order:
 
 1. The build: the `main` commit, each PR applied on top with its head, and any local change. A result from an integration branch should stay distinguishable after one of its PRs merges.
 2. Title ID and content version, not only the game name.
-3. Host: CPU, OS (and kernel on Linux), the GPU as the `Selected GPU name=` line names it, the driver version, AC or battery, and the display refresh rate.
+3. Host: CPU, OS (and kernel on Linux), the GPU as the `Selected GPU name=` line names it, the driver version, AC or battery, and the display refresh rate. Start with `ANYPS5_HOST_REPORT=1` and paste the [host report](../user/USAGE.md#host-report) for the CPU, OS, GPU, driver and Vulkan items; AC or battery and the refresh rate are not in it.
 4. The exact command and every `APS5_*` / `ANYPS5_*` variable, the in-game settings if they differ from the defaults, and whether the caches were empty or warm.
 5. How far the title got (menu, a save, a scene) and what stopped it: the exit code and the last 200 log lines, plus the kernel line (Linux) or crash report (Windows) for a crash.
 6. Presents per 10 s, and the storage-image and budget lines (`[gpu] host import budget`, `[gpu] sampled texture cache budget`, `[texture-cache]`) if memory is involved.
