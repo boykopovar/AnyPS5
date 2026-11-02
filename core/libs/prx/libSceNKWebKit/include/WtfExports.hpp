@@ -150,6 +150,8 @@ unsigned int APS5_VABI _ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8Mask
 std::uint64_t APS5_VABI _ZN3WTF7ramSizeEv();
 double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm( const char16_t* string, std::size_t length, std::size_t& parsedLength);
 WTF::WallTime APS5_VABI _ZN3WTF8WallTime3nowEv();
+void APS5_VABI _ZN3WTF8WordLock8lockSlowEv(std::uintptr_t* self);
+void APS5_VABI _ZN3WTF8WordLock10unlockSlowEv(std::uintptr_t* self);
 void APS5_VABI _ZN3WTF8dataLogFEPKcz(const char* format, ...);
 void APS5_VABI _ZN3WTF8fastFreeEPv(void* ptr);
 std::size_t APS5_VABI _ZN3WTF8pageSizeEv();
