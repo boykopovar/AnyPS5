@@ -863,6 +863,127 @@ class HipOracleTests(unittest.TestCase):
         self.assertIn("action 0x8 status 1: log", str(error.exception))
         self.assertIn("action 0xa status 0: log", str(error.exception))
 
+    def test_comgr_data_is_released_when_reading_it_fails(self):
+        for failure in ("size", "payload"):
+            library = unittest.mock.MagicMock()
+            library.amd_comgr_action_data_count.side_effect = lambda _set, _kind, count: setattr(count._obj, "value", 1) or 0
+
+            def get_data(_set, _kind, _index, data):
+                data._obj.value = 0x1234
+                return 0
+
+            def read_data(_data, size, buffer):
+                if buffer is None:
+                    size._obj.value = 4
+                    return 91 if failure == "size" else 0
+                return 92
+
+            library.amd_comgr_action_data_get_data.side_effect = get_data
+            library.amd_comgr_get_data.side_effect = read_data
+            with self.subTest(failure=failure), patch.object(self.oracle_hip, "comgr", return_value=library), \
+                    self.assertRaises(self.oracle_hip.OracleError):
+                self.oracle_hip.data_bytes(self.oracle_hip.Handle(1), self.oracle_hip.DATA_RELOCATABLE)
+            library.amd_comgr_release_data.assert_called_once()
+
+    def test_comgr_input_data_is_released_when_populating_it_fails(self):
+        for failed_call in ("amd_comgr_set_data", "amd_comgr_set_data_name", "amd_comgr_create_data_set"):
+            library = unittest.mock.MagicMock()
+            for name in ("amd_comgr_set_data", "amd_comgr_set_data_name", "amd_comgr_create_data_set"):
+                getattr(library, name).return_value = 0
+
+            def create_data(_kind, data):
+                data._obj.value = 0x1234
+                return 0
+
+            library.amd_comgr_create_data.side_effect = create_data
+            getattr(library, failed_call).return_value = 92
+            with self.subTest(failed_call=failed_call), patch.object(self.oracle_hip, "comgr", return_value=library), \
+                    self.assertRaises(self.oracle_hip.OracleError):
+                self.oracle_hip.data_set(self.oracle_hip.DATA_SOURCE, b"k.s", b"source")
+            library.amd_comgr_release_data.assert_called_once()
+            library.amd_comgr_destroy_data_set.assert_not_called()
+
+    def test_comgr_data_set_is_destroyed_when_adding_data_fails(self):
+        library = unittest.mock.MagicMock()
+        for name in ("amd_comgr_create_data", "amd_comgr_set_data", "amd_comgr_set_data_name", "amd_comgr_create_data_set"):
+            getattr(library, name).return_value = 0
+        library.amd_comgr_data_set_add.return_value = 93
+        with patch.object(self.oracle_hip, "comgr", return_value=library), self.assertRaises(self.oracle_hip.OracleError):
+            self.oracle_hip.data_set(self.oracle_hip.DATA_SOURCE, b"k.s", b"source")
+        library.amd_comgr_release_data.assert_called_once()
+        library.amd_comgr_destroy_data_set.assert_called_once()
+
+    def test_comgr_step_destroys_output_set_when_reading_output_fails(self):
+        library = unittest.mock.MagicMock()
+        for name in ("amd_comgr_create_action_info", "amd_comgr_action_info_set_isa_name", "amd_comgr_action_info_set_logging",
+                     "amd_comgr_create_data_set"):
+            getattr(library, name).return_value = 0
+        library.amd_comgr_do_action.return_value = 0
+        with patch.object(self.oracle_hip, "comgr", return_value=library), \
+                patch.object(self.oracle_hip, "data_bytes", side_effect=self.oracle_hip.OracleError("read output failed")), \
+                self.assertRaises(self.oracle_hip.OracleError):
+            self.oracle_hip.comgr_step((0x8,), "amdgcn-amd-amdhsa--gfx1010", [], self.oracle_hip.Handle(1),
+                                       self.oracle_hip.DATA_RELOCATABLE)
+        library.amd_comgr_destroy_data_set.assert_called_once()
+        library.amd_comgr_destroy_action_info.assert_called_once()
+
+    def test_comgr_data_is_released_once_after_successful_reads(self):
+        library = unittest.mock.MagicMock()
+        payloads = {0x11: b"first", 0x12: b"second!"}
+        library.amd_comgr_action_data_count.side_effect = \
+            lambda _set, _kind, count: setattr(count._obj, "value", 2) or 0
+        library.amd_comgr_action_data_get_data.side_effect = \
+            lambda _set, _kind, index, data: setattr(data._obj, "value", 0x11 + index) or 0
+
+        def read_data(data, size, buffer):
+            payload = payloads[data.value]
+            size._obj.value = len(payload)
+            if buffer is not None:
+                self.oracle_hip.ctypes.memmove(buffer, payload, len(payload))
+            return 0
+
+        library.amd_comgr_get_data.side_effect = read_data
+        with patch.object(self.oracle_hip, "comgr", return_value=library):
+            chunks = self.oracle_hip.data_bytes(self.oracle_hip.Handle(1), self.oracle_hip.DATA_RELOCATABLE)
+        self.assertEqual(chunks, [b"first", b"second!"])
+        self.assertEqual([call.args[0].value for call in library.amd_comgr_release_data.call_args_list], [0x11, 0x12])
+
+    def test_comgr_data_set_success_transfers_ownership_and_releases_input(self):
+        library = unittest.mock.MagicMock()
+        library.amd_comgr_create_data.side_effect = lambda _kind, data: setattr(data._obj, "value", 0x21) or 0
+        library.amd_comgr_create_data_set.side_effect = lambda data_set: setattr(data_set._obj, "value", 0x22) or 0
+        for name in ("amd_comgr_set_data", "amd_comgr_set_data_name", "amd_comgr_data_set_add"):
+            getattr(library, name).return_value = 0
+        with patch.object(self.oracle_hip, "comgr", return_value=library):
+            result = self.oracle_hip.data_set(self.oracle_hip.DATA_SOURCE, b"k.s", b"source")
+        self.assertEqual(result.value, 0x22)
+        self.assertEqual([call.args[0].value for call in library.amd_comgr_release_data.call_args_list], [0x21])
+        library.amd_comgr_destroy_data_set.assert_not_called()
+
+    def test_comgr_step_destroys_created_output_set_on_success(self):
+        library = unittest.mock.MagicMock()
+        for name in ("amd_comgr_create_action_info", "amd_comgr_action_info_set_isa_name", "amd_comgr_action_info_set_logging",
+                     "amd_comgr_create_data_set"):
+            getattr(library, name).return_value = 0
+        library.amd_comgr_do_action.return_value = 0
+        with patch.object(self.oracle_hip, "comgr", return_value=library), \
+                patch.object(self.oracle_hip, "data_bytes", return_value=[b"object"]):
+            self.assertEqual(self.oracle_hip.comgr_step((0x8,), "amdgcn-amd-amdhsa--gfx1010", [], self.oracle_hip.Handle(1),
+                                                        self.oracle_hip.DATA_RELOCATABLE), b"object")
+        library.amd_comgr_destroy_data_set.assert_called_once()
+        library.amd_comgr_destroy_action_info.assert_called_once()
+
+    def test_comgr_step_does_not_destroy_output_set_when_creation_fails(self):
+        library = unittest.mock.MagicMock()
+        for name in ("amd_comgr_create_action_info", "amd_comgr_action_info_set_isa_name", "amd_comgr_action_info_set_logging"):
+            getattr(library, name).return_value = 0
+        library.amd_comgr_create_data_set.return_value = 94
+        with patch.object(self.oracle_hip, "comgr", return_value=library), self.assertRaises(self.oracle_hip.OracleError):
+            self.oracle_hip.comgr_step((0x8,), "amdgcn-amd-amdhsa--gfx1010", [], self.oracle_hip.Handle(1),
+                                       self.oracle_hip.DATA_RELOCATABLE)
+        library.amd_comgr_destroy_data_set.assert_not_called()
+        library.amd_comgr_destroy_action_info.assert_called_once()
+
     def test_device_selection_follows_rocr_visible_devices(self):
         library = unittest.mock.MagicMock()
         library.hipInit.return_value = 0

@@ -5,8 +5,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import base_ref
+
 PULL_REQUEST = re.compile(r"Merge pull request #(\d+)|\(#(\d+)\)$")
-BASES = ("upstream/main", "origin/main", "main")
+BASES = base_ref.CANDIDATES
 
 
 def git(repo, *args, check=True):
