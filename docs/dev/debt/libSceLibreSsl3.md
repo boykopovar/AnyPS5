@@ -2,6 +2,8 @@
 
 ### Functional
 
+- [libtls context and configuration lifecycle](../../../core/libs/prx/libSceLibreSsl3/src/LibTls.cpp) - Ten libtls exports implement independent config allocation, retained ownership by client/server contexts, reference release, copied in-memory key bytes, key zeroization on replacement/destruction, config and context error pointers, and preconnection close/configure behavior. Signatures follow the documented [LibreSSL libtls API](https://man.openbsd.org/tls_init.3), and allocation/lifetime handling follows [LibreSSL's libtls implementation](https://github.com/libressl/openbsd/tree/master/src/lib/libtls). No guest TLS connection, handshake, certificate validation or encrypted transport is implemented; those exports continue throwing, as does `tls_config_set_cert_mem`, and callers cannot establish a TLS session. Server configuration without a certificate fails. These standalone lifecycle contracts and their error strings have not been measured on a PS5; future TLS transport must consume the retained config and implement the full certificate and OpenSSL context state.
+
 - [OpenSSL_version](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - other firmware revisions are unverified. Selectors 0 through 5 follow the public firmware 13.40 measurements in [discussion #8981](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214); unknown selectors follow LibreSSL 4.0.0 and return `not available`. No independent console test was run.
 
 - [ERR_load_crypto_strings and ERR_peek_last_error](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) have no console execution verification. [Firmware 13.42 modules run on a PC](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914) retained numeric-only output after loaders and matched queue order/overflow; whether the two firmware modules share a queue was not tested. This implementation reads libSceLibreSsl's calling-thread queue. `ERR_print_errors_cb` remains throwing because guest thread identifiers and diagnostic metadata are unverified.
@@ -26,7 +28,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 176 callable exports: 50 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 166 still-unimplemented callable exports: 40 named and 126 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The ten libtls lifecycle/config exports are now implemented in `LibTls.cpp`; title compatibility beyond their preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
@@ -57,21 +59,17 @@
 | `BIO_meth_set_create` | `5NBoRJYLH0U` |
 | `X509_CRL_free` | `5PWK0cYOpHs` |
 | `i2d_SSL_SESSION` | `5aSlVeVSKVc` |
-| `tls_config_error` | `5ex+694ri90` |
 | `tls_read` | `7RvDjfy4gUA` |
 | `BIO_meth_set_read` | `8A-gU2xQfjY` |
 | `EC_POINT_set_affine_coordinates_GFp` | `8AGfaSvdDq4` |
 | `SSL_CTX_set_max_early_data` | `8kct4CSWwOA` |
-| `tls_configure` | `8pwP-7j5UZI` |
 | `X509_STORE_CTX_get0_param` | `8wroYNJAQpo` |
 | `unknown` | `A-Hs-8mau+8` |
 | `ERR_load_X509_strings` | `A0lZtFjhcTw` |
-| `tls_config_set_key_mem` | `A65b+ZhOt9k` |
 | `BN_clear_free` | `ABcJv8S1KEM` |
 | `unknown` | `AiNud8LR8B4` |
 | `X509_cmp_current_time` | `Ax+Uu++rnrA` |
 | `SSL_CTX_set_timeout` | `BBOgwZLvXHA` |
-| `tls_config_new` | `BQNyLN2nA9w` |
 | `X509_get_ext_by_NID` | `BRjfzlGULmU` |
 | `EVP_PKEY_security_bits` | `BS5yWv6X-hg` |
 | `X509_check_akid` | `C7eFtWPfLdk` |
@@ -79,8 +77,6 @@
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
 | `TLS_server_method` | `EtM5Jwx4EFo` |
 | `ERR_lib_error_string` | `F7jknWesBTY` |
-| `tls_close` | `Fqc0-3YCXjo` |
-| `tls_client` | `GEK3LmjM9Q4` |
 | `BIO_meth_set_ctrl` | `GFEaREp1UFw` |
 | `EVP_PKEY_get0_EC_KEY` | `GY2X+VHs568` |
 | `unknown` | `GjO5Ap3E-t4` |
@@ -95,11 +91,9 @@
 | `ASN1_OCTET_STRING_cmp` | `Jzebx477Q3M` |
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
 | `X509_print` | `LA1MlgDx80o` |
-| `tls_config_free` | `LL8N+X6DA-4` |
 | `HMAC_CTX_new` | `LcxutSyn11o` |
 | `X509_CRL_get0_by_cert` | `LdGe2IfIlpI` |
 | `ERR_load_PEM_strings` | `M7ze0mz2jQM` |
-| `tls_error` | `N+G3Gxequt0` |
 | `OpenSSL_add_all_digests` | `O9Thca3enw8` |
 | `EVP_PKEY_base_id` | `OqtHJ7QUZg8` |
 | `unknown` | `PBYz0kpXwg8` |
@@ -167,7 +161,6 @@
 | `SSL_set_info_callback` | `mOQe5RQATT4` |
 | `ASN1_get_object` | `mXrusLhI3CI` |
 | `SSL_provide_quic_data` | `mhAgol4ETgY` |
-| `tls_server` | `nCOh70mg3K0` |
 | `BIO_meth_new` | `o0dpw6ZZ6K0` |
 | `d2i_PUBKEY` | `o3Q8yQAMT-k` |
 | `EVP_PKEY_derive_set_peer` | `ovH4WphWIQQ` |
@@ -186,7 +179,6 @@
 | `EVP_aes_128_ccm` | `uM9UnC8KFjY` |
 | `RSA_set0_key` | `uihDBp74nLI` |
 | `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
-| `tls_free` | `uz3bWkbHZu4` |
 | `tls_config_verify_client` | `v1vHv4jOJxQ` |
 | `EVP_PKEY_cmp` | `vLuIwBfrxrk` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |

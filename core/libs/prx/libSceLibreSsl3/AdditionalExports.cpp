@@ -163,39 +163,7 @@ int APS5_VABI i2d_X509_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI tls_client_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI tls_close_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI tls_config_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI tls_config_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI tls_configure_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI tls_error_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI tls_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_read_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI tls_server_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -293,10 +261,6 @@ int APS5_VABI X509_CRL_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI tls_config_error_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI BIO_meth_set_read_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -315,10 +279,6 @@ int APS5_VABI Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch() {
 APS5_EXPORT("A-Hs-8mau+8", Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch);
 
 int APS5_VABI ERR_load_X509_strings_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI tls_config_set_key_mem_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
