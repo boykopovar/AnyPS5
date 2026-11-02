@@ -102,7 +102,9 @@ void RunReads() {
             std::uint32_t bits = Next() % 17;
             if (operation == 4) bits %= 16;
             if (operation == 5) bits = Next() % 33;
-            const auto expected = JxrBitIoReference_nid_no_patch(operation, &native, 0, bits);
+            const bool zeroBits = bits == 0 && (operation == 0 || operation == 2 || operation == 5);
+            const auto expected = zeroBits ? 0u : JxrBitIoReference_nid_no_patch(operation, &native, 0, bits);
+            if (zeroBits && operation != 0) JxrBitIoReference_nid_no_patch(1, &native, 0, 0);
             const auto actual = Guest(operation, &guest, 0, bits);
             Require(actual == expected, "read result differs from jxrlib");
             RequireSame(guest, guestRing, native, nativeRing, "read state differs from jxrlib");
@@ -129,12 +131,59 @@ void RunWrites() {
             std::uint32_t bits = operation == 11 ? Next() % 33 : Next() % 17;
             std::uint32_t value = Next() ^ (Next() << 24);
             if (operation == 9) value &= bits == 0 ? 0u : 0xffffffffu >> (32 - bits);
-            const auto expected = JxrBitIoReference_nid_no_patch(operation, &native, value, bits);
+            const bool emptyStore = native.bitsUsed == 0 && (operation == 12 || (operation != 13 && bits == 0));
+            const auto expected = emptyStore ? 0u : JxrBitIoReference_nid_no_patch(operation, &native, value, bits);
             const auto actual = Guest(operation, &guest, value, bits);
             Require(actual == expected, "write result differs from jxrlib");
             RequireSame(guest, guestRing, native, nativeRing, "write state differs from jxrlib");
         }
     }
+}
+
+void RunZeroBits(Ring& ring) {
+    for (std::size_t i = 0; i < RingAlignment; ++i) ring.base[i] = static_cast<std::uint8_t>(i * 13 + 5);
+    for (std::uint32_t used = 0; used < 16; ++used) {
+        auto io = Attach(ring, 64, used, 0);
+        const auto before = io;
+        Require(peekBit16_nid_postfix(&io, 0) == 0, "zero-bit peek");
+        Require(std::memcmp(&io, &before, sizeof(io)) == 0, "zero-bit peek keeps the state");
+        Require(getBit16_nid_postfix(&io, 0) == 0, "zero-bit read");
+        Require(io.current == before.current && io.bitsUsed == used && io.accumulator == before.accumulator,
+                "zero-bit read keeps the position");
+        Require(getBit32_nid_postfix(&io, 0) == 0, "zero-bit 32-bit read");
+        Require(io.current == before.current && io.bitsUsed == used && io.accumulator == before.accumulator,
+                "zero-bit 32-bit read keeps the position");
+    }
+
+    std::vector<std::uint8_t> snapshot(ring.base, ring.base + RingAlignment);
+    Jxr::BitIo io{};
+    io.mask = WriteMask;
+    io.start = ring.base;
+    io.current = ring.base + 128;
+    const auto before = io;
+    putBit16z_nid_postfix(&io, 0, 0);
+    putBit16_nid_postfix(&io, 0xffffffffu, 0);
+    putBit32_nid_postfix(&io, 0xffffffffu, 0);
+    fillToByte_nid_postfix(&io);
+    Require(std::memcmp(&io, &before, sizeof(io)) == 0, "aligned empty stores keep the state");
+    Require(std::memcmp(snapshot.data(), ring.base, RingAlignment) == 0, "aligned empty stores keep the buffer");
+
+    putBit16_nid_postfix(&io, 0xfff5u, 4);
+    Require(io.accumulator == 5 && io.bitsUsed == 4 && io.current == ring.base + 128, "masked 4-bit store state");
+    Require(ring.base[128] == 0x50 && ring.base[129] == 0x00, "masked 4-bit store bytes");
+    fillToByte_nid_postfix(&io);
+    Require(io.bitsUsed == 8 && ring.base[128] == 0x50, "fill to the byte boundary");
+    fillToByte_nid_postfix(&io);
+    putBit16_nid_postfix(&io, 0x1234u, 0);
+    Require(io.bitsUsed == 8 && io.current == ring.base + 128, "empty stores at a byte boundary");
+    putBit32_nid_postfix(&io, 0xfabcdeu, 20);
+    Require(io.bitsUsed == 12 && io.current == ring.base + 130, "20-bit store position");
+    Require(ring.base[128] == 0x50 && ring.base[129] == 0xab && ring.base[130] == 0xcd && ring.base[131] == 0xe0,
+            "20-bit store bytes");
+    putBit32_nid_postfix(&io, 0xffffffffu, 32);
+    Require(io.bitsUsed == 12 && io.current == ring.base + 134, "32-bit store position");
+    Require(ring.base[130] == 0xcd && ring.base[131] == 0xef && ring.base[132] == 0xff && ring.base[133] == 0xff,
+            "32-bit store bytes");
 }
 
 void RunEdges() {
@@ -155,6 +204,8 @@ void RunEdges() {
     auto crossing = Attach(ring, 4096, 0, 0);
     RequireInvalidArgument([&] { getBit16_S_nid_postfix(nullptr, &crossing, 1); }, "getBit16_S packet without stream");
 
+    RunZeroBits(ring);
+
     RequireInvalidArgument([] { getBit16_nid_postfix(nullptr, 1); }, "null read state");
     RequireInvalidArgument([] { putBit16_nid_postfix(nullptr, 1, 1); }, "null write state");
     RequireInvalidArgument([] { getSizeRead_nid_postfix(nullptr); }, "null size state");
@@ -170,6 +221,11 @@ void RunEdges() {
     RequireInvalidArgument([&] { putBit16z_nid_postfix(&edge, 2, 1); }, "wide unmasked value");
     RequireInvalidArgument([&] { putBit16_nid_postfix(&edge, 0, 17); }, "17-bit write");
     RequireInvalidArgument([&] { putBit32_nid_postfix(&edge, 0, 33); }, "33-bit write");
+    edge.mask = WriteMask;
+    edge.bitsUsed = 16;
+    RequireInvalidArgument([&] { putBit16z_nid_postfix(&edge, 0, 0); }, "write position past the word");
+    RequireInvalidArgument([&] { fillToByte_nid_postfix(&edge); }, "fill position past the word");
+    edge.bitsUsed = 0;
     edge.mask = -1;
     RequireInvalidArgument([&] { flushBit16_nid_postfix(&edge, 1); }, "odd wrap mask");
     edge.mask = ReadMask;

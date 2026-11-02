@@ -12,8 +12,6 @@ std::int32_t JxrGetBit16s_nid_no_patch(void* io, std::uint32_t bits);
 std::uint32_t JxrGetBit32_nid_no_patch(void* io, std::uint32_t bits);
 std::uint32_t JxrFlushToByte_nid_no_patch(void* io);
 void JxrPutBit16z_nid_no_patch(void* io, std::uint32_t value, std::uint32_t bits);
-void JxrPutBit16_nid_no_patch(void* io, std::uint32_t value, std::uint32_t bits);
-void JxrPutBit32_nid_no_patch(void* io, std::uint32_t value, std::uint32_t bits);
 void JxrFillToByte_nid_no_patch(void* io);
 std::uint32_t JxrGetSizeRead_nid_no_patch(void* io);
 std::uint32_t JxrGetSizeWrite_nid_no_patch(void* io);
@@ -48,7 +46,18 @@ void* Read(Jxr::BitIo* io, std::uint32_t bits, std::uint32_t limit, const char* 
 void* Write(Jxr::BitIo* io, std::uint32_t bits, std::uint32_t limit, const char* function) {
     Stream(io, function);
     Require(bits <= limit, function, "bit count over the jxrlib limit");
+    Require(io->bitsUsed < 16, function, "write position outside the 16-bit word");
     return io;
+}
+
+std::uint32_t ZeroBitRead(Jxr::BitIo* io) {
+    JxrFlushBit16_nid_no_patch(io, 0);
+    return 0;
+}
+
+void PutMasked(Jxr::BitIo* io, std::uint32_t value, std::uint32_t bits) {
+    if (bits == 0 && io->bitsUsed == 0) return;
+    JxrPutBit16z_nid_no_patch(io, value & (0xffffu >> (16 - bits)), bits);
 }
 
 } // namespace
@@ -56,7 +65,8 @@ void* Write(Jxr::BitIo* io, std::uint32_t bits, std::uint32_t limit, const char*
 extern "C" {
 
 std::uint32_t APS5_VABI peekBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
-    return JxrPeekBit16_nid_no_patch(Read(io, bits, 16, __func__), bits);
+    Read(io, bits, 16, __func__);
+    return bits == 0 ? 0 : JxrPeekBit16_nid_no_patch(io, bits);
 }
 
 std::uint32_t APS5_VABI flushBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
@@ -64,7 +74,8 @@ std::uint32_t APS5_VABI flushBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t bit
 }
 
 std::uint32_t APS5_VABI getBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
-    return JxrGetBit16_nid_no_patch(Read(io, bits, 16, __func__), bits);
+    Read(io, bits, 16, __func__);
+    return bits == 0 ? ZeroBitRead(io) : JxrGetBit16_nid_no_patch(io, bits);
 }
 
 std::uint32_t APS5_VABI getBool16_nid_postfix(Jxr::BitIo* io) {
@@ -76,7 +87,8 @@ std::int32_t APS5_VABI getBit16s_nid_postfix(Jxr::BitIo* io, std::uint32_t bits)
 }
 
 std::uint32_t APS5_VABI getBit32_nid_postfix(Jxr::BitIo* io, std::uint32_t bits) {
-    return JxrGetBit32_nid_no_patch(Read(io, bits, 32, __func__), bits);
+    Read(io, bits, 32, __func__);
+    return bits == 0 ? ZeroBitRead(io) : JxrGetBit32_nid_no_patch(io, bits);
 }
 
 std::uint32_t APS5_VABI flushToByte_nid_postfix(Jxr::BitIo* io) {
@@ -85,19 +97,29 @@ std::uint32_t APS5_VABI flushToByte_nid_postfix(Jxr::BitIo* io) {
 
 void APS5_VABI putBit16z_nid_postfix(Jxr::BitIo* io, std::uint32_t value, std::uint32_t bits) {
     Require(bits >= 32 || (value >> bits) == 0, __func__, "value wider than the bit count");
-    JxrPutBit16z_nid_no_patch(Write(io, bits, 16, __func__), value, bits);
+    Write(io, bits, 16, __func__);
+    if (bits == 0 && io->bitsUsed == 0) return;
+    JxrPutBit16z_nid_no_patch(io, value, bits);
 }
 
 void APS5_VABI putBit16_nid_postfix(Jxr::BitIo* io, std::uint32_t value, std::uint32_t bits) {
-    JxrPutBit16_nid_no_patch(Write(io, bits, 16, __func__), value, bits);
+    Write(io, bits, 16, __func__);
+    PutMasked(io, value, bits);
 }
 
 void APS5_VABI putBit32_nid_postfix(Jxr::BitIo* io, std::uint32_t value, std::uint32_t bits) {
-    JxrPutBit32_nid_no_patch(Write(io, bits, 32, __func__), value, bits);
+    Write(io, bits, 32, __func__);
+    if (bits > 16) {
+        PutMasked(io, value >> (bits - 16), 16);
+        bits -= 16;
+    }
+    PutMasked(io, value, bits);
 }
 
 void APS5_VABI fillToByte_nid_postfix(Jxr::BitIo* io) {
-    JxrFillToByte_nid_no_patch(Write(io, 0, 16, __func__));
+    Write(io, 0, 16, __func__);
+    if (io->bitsUsed == 0) return;
+    JxrFillToByte_nid_no_patch(io);
 }
 
 std::uint32_t APS5_VABI getBit16_S_nid_postfix(void* codec, Jxr::BitIo* io, std::uint32_t bits) {

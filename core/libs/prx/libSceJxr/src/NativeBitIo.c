@@ -11,8 +11,6 @@ int32_t JxrGetBit16s_nid_no_patch(void* io, uint32_t bits) { return getBit16s((B
 uint32_t JxrGetBit32_nid_no_patch(void* io, uint32_t bits) { return getBit32((BitIOInfo*)io, bits); }
 uint32_t JxrFlushToByte_nid_no_patch(void* io) { return flushToByte((BitIOInfo*)io); }
 void JxrPutBit16z_nid_no_patch(void* io, uint32_t value, uint32_t bits) { putBit16z((BitIOInfo*)io, value, bits); }
-void JxrPutBit16_nid_no_patch(void* io, uint32_t value, uint32_t bits) { putBit16((BitIOInfo*)io, value, bits); }
-void JxrPutBit32_nid_no_patch(void* io, uint32_t value, uint32_t bits) { putBit32((BitIOInfo*)io, value, bits); }
 void JxrFillToByte_nid_no_patch(void* io) { fillToByte((BitIOInfo*)io); }
 uint32_t JxrGetSizeRead_nid_no_patch(void* io) { return getSizeRead((BitIOInfo*)io); }
 uint32_t JxrGetSizeWrite_nid_no_patch(void* io) { return getSizeWrite((BitIOInfo*)io); }
