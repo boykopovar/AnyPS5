@@ -351,6 +351,151 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static NKWebKit::Retained<NKWebKit::BackForwardListItem> MakeBackForwardItem(const char* url, const char* title, const char* originalURL) {
+    return NKWebKit::Make<NKWebKit::BackForwardListItem>(std::string(url), NKWebKit::String::FromUtf8(title), std::string(originalURL));
+}
+
+template<typename Function>
+static bool Throws(Function function, const void* ref) {
+    try {
+        function(ref);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+static void TestBackForwardList() {
+    using ItemList = std::vector<NKWebKit::Retained<NKWebKit::BackForwardListItem>>;
+    ItemList entries;
+    for (int index = 0; index < 5; ++index) {
+        std::string url = "https://example.com/" + std::to_string(index);
+        entries.push_back(MakeBackForwardItem(url.c_str(), url.c_str(), url.c_str()));
+    }
+    const void* items[5];
+    for (int index = 0; index < 5; ++index) items[index] = entries[index].Get();
+
+    auto* list = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BackForwardList>(entries, 2));
+    Require(WKGetTypeID(list) == WKBackForwardListGetTypeID());
+    Require(WKBackForwardListGetBackListCount(list) == 2);
+    Require(WKBackForwardListGetForwardListCount(list) == 2);
+    Require(WKBackForwardListGetCurrentItem(list) == items[2]);
+    Require(WKBackForwardListGetBackItem(list) == items[1]);
+    Require(WKBackForwardListGetForwardItem(list) == items[3]);
+    Require(WKBackForwardListGetItemAtIndex(list, 0) == items[2]);
+    Require(WKBackForwardListGetItemAtIndex(list, -2) == items[0]);
+    Require(WKBackForwardListGetItemAtIndex(list, 2) == items[4]);
+    Require(WKBackForwardListGetItemAtIndex(list, -3) == nullptr);
+    Require(WKBackForwardListGetItemAtIndex(list, 3) == nullptr);
+    Require(WKBackForwardListGetItemAtIndex(list, INT32_MIN) == nullptr);
+    Require(WKBackForwardListGetItemAtIndex(list, INT32_MAX) == nullptr);
+
+    auto* back = WKBackForwardListCopyBackListWithLimit(list, 1);
+    Require(WKArrayGetSize(back) == 1);
+    Require(WKArrayGetItemAtIndex(back, 0) == items[1]);
+    WKRelease(back);
+    back = WKBackForwardListCopyBackListWithLimit(list, 10);
+    Require(WKArrayGetSize(back) == 2);
+    Require(WKArrayGetItemAtIndex(back, 0) == items[0]);
+    Require(WKArrayGetItemAtIndex(back, 1) == items[1]);
+    WKRelease(back);
+    back = WKBackForwardListCopyBackListWithLimit(list, 0);
+    Require(WKArrayGetSize(back) == 0);
+    WKRelease(back);
+    auto* forward = WKBackForwardListCopyForwardListWithLimit(list, 1);
+    Require(WKArrayGetSize(forward) == 1);
+    Require(WKArrayGetItemAtIndex(forward, 0) == items[3]);
+    WKRelease(forward);
+    forward = WKBackForwardListCopyForwardListWithLimit(list, 0xFFFFFFFFu);
+    Require(WKArrayGetSize(forward) == 2);
+    Require(WKArrayGetItemAtIndex(forward, 1) == items[4]);
+    WKRelease(forward);
+
+    auto* url = WKBackForwardListItemCopyURL(items[1]);
+    auto* urlString = WKURLCopyString(url);
+    Require(WKStringIsEqualToUTF8CString(urlString, "https://example.com/1"));
+    WKRelease(urlString);
+    WKRelease(url);
+    auto* title = WKBackForwardListItemCopyTitle(items[1]);
+    Require(WKStringIsEqualToUTF8CString(title, "https://example.com/1"));
+    WKRelease(title);
+    auto* original = WKBackForwardListItemCopyOriginalURL(items[3]);
+    auto* originalString = WKURLCopyString(original);
+    Require(WKStringIsEqualToUTF8CString(originalString, "https://example.com/3"));
+    WKRelease(originalString);
+    WKRelease(original);
+
+    WKBackForwardListClear(list);
+    Require(WKBackForwardListGetBackListCount(list) == 0);
+    Require(WKBackForwardListGetForwardListCount(list) == 0);
+    Require(WKBackForwardListGetCurrentItem(list) == items[2]);
+    Require(WKBackForwardListGetBackItem(list) == nullptr);
+    Require(WKBackForwardListGetForwardItem(list) == nullptr);
+    Require(WKBackForwardListGetItemAtIndex(list, 0) == items[2]);
+    WKRelease(list);
+
+    ItemList pair{entries[0], entries[1]};
+    auto* atStart = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BackForwardList>(pair, 0));
+    Require(WKBackForwardListGetBackItem(atStart) == nullptr);
+    Require(WKBackForwardListGetForwardItem(atStart) == items[1]);
+    Require(WKBackForwardListGetItemAtIndex(atStart, -1) == nullptr);
+    WKRelease(atStart);
+
+    auto* atEnd = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BackForwardList>(pair, 1));
+    Require(WKBackForwardListGetBackItem(atEnd) == items[0]);
+    Require(WKBackForwardListGetForwardItem(atEnd) == nullptr);
+    Require(WKBackForwardListGetForwardListCount(atEnd) == 0);
+    WKRelease(atEnd);
+
+    auto* noCurrent = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BackForwardList>(pair, std::nullopt));
+    Require(WKBackForwardListGetCurrentItem(noCurrent) == nullptr);
+    Require(WKBackForwardListGetBackListCount(noCurrent) == 0);
+    Require(WKBackForwardListGetForwardListCount(noCurrent) == 0);
+    Require(WKBackForwardListGetItemAtIndex(noCurrent, 0) == nullptr);
+    auto* none = WKBackForwardListCopyForwardListWithLimit(noCurrent, 5);
+    Require(WKArrayGetSize(none) == 0);
+    WKRelease(none);
+    WKBackForwardListClear(noCurrent);
+    Require(NKWebKit::Cast<NKWebKit::BackForwardList>(noCurrent, "test")->entries.empty());
+    WKRelease(noCurrent);
+
+    auto* single = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BackForwardList>(ItemList{entries[0]}, 0));
+    WKBackForwardListClear(single);
+    Require(WKBackForwardListGetCurrentItem(single) == items[0]);
+    WKRelease(single);
+
+    auto detached = NKWebKit::Make<NKWebKit::BackForwardList>(entries, 2);
+    detached->attached = false;
+    auto* detachedRef = NKWebKit::ToRef(std::move(detached));
+    Require(WKBackForwardListGetCurrentItem(detachedRef) == nullptr);
+    Require(WKBackForwardListGetBackListCount(detachedRef) == 0);
+    Require(WKBackForwardListGetForwardListCount(detachedRef) == 0);
+    Require(WKBackForwardListGetItemAtIndex(detachedRef, 1) == nullptr);
+    WKBackForwardListClear(detachedRef);
+    Require(NKWebKit::Cast<NKWebKit::BackForwardList>(detachedRef, "test")->entries.size() == 5);
+    WKRelease(detachedRef);
+
+    auto* empty = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BackForwardList>());
+    Require(WKBackForwardListGetCurrentItem(empty) == nullptr);
+    Require(WKBackForwardListGetBackListCount(empty) == 0);
+    WKRelease(empty);
+
+    auto* bare = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BackForwardListItem>());
+    Require(WKBackForwardListItemCopyURL(bare) == nullptr);
+    Require(WKBackForwardListItemCopyOriginalURL(bare) == nullptr);
+    auto* bareTitle = WKBackForwardListItemCopyTitle(bare);
+    Require(WKStringIsEmpty(bareTitle));
+    WKRelease(bareTitle);
+    WKRelease(bare);
+
+    auto* notList = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a list"));
+    Require(Throws(WKBackForwardListGetCurrentItem, notList));
+    Require(Throws(WKBackForwardListItemCopyURL, notList));
+    Require(Throws(WKBackForwardListGetCurrentItem, nullptr));
+    Require(Throws(WKBackForwardListItemCopyTitle, nullptr));
+    WKRelease(notList);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -373,6 +518,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestBackForwardList();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
