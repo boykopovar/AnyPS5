@@ -92,8 +92,9 @@ std::string StoredGzip(const std::string& payload) {
 
 class Server {
 public:
-    explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302)
-        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus) {
+    explicit Server(Mode mode, std::string location = "/another", int redirectStatus = 302,
+        std::vector<std::string> responseCookies = {})
+        : mode(mode), location(std::move(location)), redirectStatus(redirectStatus), responseCookies(std::move(responseCookies)) {
         mbedtls_net_init(&listener);
         mbedtls_entropy_init(&entropy);
         mbedtls_ctr_drbg_init(&random);
@@ -159,6 +160,7 @@ private:
     const Mode mode;
     const std::string location;
     const int redirectStatus;
+    const std::vector<std::string> responseCookies;
     unsigned accepted = 0;
     mbedtls_net_context listener;
     mbedtls_entropy_context entropy;
@@ -408,6 +410,7 @@ private:
         if (mode == Mode::Http11BadLength) response += "Content-Length: 14\r\n";
         if (mode == Mode::Http11Ambiguous) response += "Transfer-Encoding: chunked\r\n";
         if (mode == Mode::Http11Redirect) response += "Location: " + location + "\r\n";
+        for (const auto& cookie : responseCookies) response += "Set-Cookie: " + cookie + "\r\n";
         response += "X-Loopback: yes\r\nConnection: close\r\n\r\n";
         if (mode == Mode::Http11StallBody) { write(response); Stage(2); Stall(); return; }
         if (headers.find(":method")->second != "HEAD") {
@@ -521,10 +524,85 @@ void CookieBox(int ssl) {
     Require(sceHttp2DeleteCookieBox(box) == 0, "delete cookie box");
 }
 
-void CookieBoxDelete(int ssl) {
-    std::fprintf(stderr, "HTTP2 cookie box delete scenario\n");
-    Server server(Mode::CookieFlood);
-    Client client(ssl);
+void Http1CookieBox(int ssl, Mode mode) {
+    std::fprintf(stderr, "HTTP1 cookie box scenario %d\n", static_cast<int>(mode));
+    Server server(mode, "/another", 302, {"first=one; Path=/", "second=two; Path=/"});
+    Client client(ssl, 1, 0, mode == Mode::Http10 ? 1 : 2);
+    const auto url = server.Url();
+    const auto secureUrl = mode == Mode::Http1Plain ? "https" + url.substr(4) : url;
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0, "HTTP1 cookie box");
+    for (const std::string cookie : {"stored=old; Path=/", "secure=secret; Path=/; Secure", "hidden=path; Path=/other"})
+        Require(sceHttp2AddCookie(box, secureUrl.c_str(), cookie.c_str(), cookie.size()) == 0, "HTTP1 seed cookie");
+    Require(sceHttp2SetCookieBox(client.tmpl, box) == 0, "HTTP1 bind template cookie box");
+    Require(sceHttp2AddRequestHeader(client.tmpl, "Cookie", "replaced=template", 0) == 0, "HTTP1 template cookie");
+    client.Create(url);
+    Require(sceHttp2AddRequestHeader(client.request, "Cookie", "manual=one", 0) == 0, "HTTP1 replace manual cookie");
+    Require(sceHttp2AddRequestHeader(client.request, "Cookie", "extra=two", 1) == 0, "HTTP1 append manual cookie");
+    Require(sceHttp2AddRequestHeader(client.request, "Host", "other.example", 0) == 0, "HTTP1 override host without changing cookie origin");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 send with cookie box");
+    std::array<char, 256> buffer{};
+    while (sceHttp2ReadData(client.request, buffer.data(), buffer.size()) > 0) {}
+    server.Join();
+    const auto& headers = server.Headers();
+    Require(headers.count("cookie") == 1, "HTTP1 exactly one cookie header");
+    const auto& sent = headers.find("cookie")->second;
+    Require(sent.starts_with("manual=one; extra=two; ") && sent.find("stored=old") != std::string::npos,
+        "HTTP1 manual and matching box cookies sent together");
+    Require((sent.find("secure=secret") != std::string::npos) == (mode != Mode::Http1Plain), "HTTP1 secure cookie follows URL scheme");
+    Require(sent.find("hidden=") == std::string::npos && sent.find("replaced=") == std::string::npos,
+        "HTTP1 path selection and manual replacement");
+    std::size_t required = 0;
+    Require(sceHttp2GetCookie(box, url.c_str(), buffer.data(), &required, buffer.size()) == 0, "HTTP1 response cookie lookup");
+    const std::string_view stored(buffer.data());
+    Require(stored.find("first=one") != std::string_view::npos && stored.find("second=two") != std::string_view::npos,
+        "HTTP1 each response cookie stored");
+    Require(sceHttp2DeleteCookieBox(box) == 0, "HTTP1 delete cookie box");
+}
+
+void Http1CookieRedirect(int ssl) {
+    Server target(Mode::Http1Plain);
+    Server redirect(Mode::Http11Redirect, target.Url(), 302, {"ordinary=next; Path=/", "secure=secret; Path=/; Secure"});
+    Client client(ssl, 1, 0, 2);
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0 && sceHttp2SetCookieBox(client.tmpl, box) == 0, "HTTP1 redirect bind cookie box");
+    client.Create(redirect.Url());
+    Require(sceHttp2AddRequestHeader(client.request, "Cookie", "manual=origin", 0) == 0, "HTTP1 origin manual cookie");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 cookie redirect");
+    std::array<char, 64> buffer;
+    while (sceHttp2ReadData(client.request, buffer.data(), buffer.size()) > 0) {}
+    redirect.Join();
+    target.Join();
+    const auto& headers = target.Headers();
+    Require(headers.count("cookie") == 1 && headers.find("cookie")->second == "ordinary=next",
+        "HTTP1 redirect stores cookies and excludes secure and origin-only manual cookies on plain target");
+    Require(sceHttp2DeleteCookieBox(box) == 0, "HTTP1 redirect delete cookie box");
+}
+
+void Http1EmptyCookie(int ssl, bool explicitCookie) {
+    Server server(Mode::Http1Plain);
+    Client client(ssl, 1, 0, 2);
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0 && sceHttp2SetCookieBox(client.tmpl, box) == 0, "HTTP1 empty bind cookie box");
+    client.Create(server.Url());
+    if (explicitCookie) Require(sceHttp2AddRequestHeader(client.request, "Cookie", "", 0) == 0, "HTTP1 explicit empty cookie");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 empty box send");
+    std::array<char, 64> buffer;
+    while (sceHttp2ReadData(client.request, buffer.data(), buffer.size()) > 0) {}
+    server.Join();
+    const auto& headers = server.Headers();
+    Require(headers.count("cookie") == (explicitCookie ? 1u : 0u), "HTTP1 empty box does not invent a cookie field");
+    if (explicitCookie) Require(headers.find("cookie")->second.empty(), "HTTP1 explicit empty cookie preserved");
+    Require(sceHttp2DeleteCookieBox(box) == 0, "HTTP1 empty delete cookie box");
+}
+
+void CookieBoxDelete(int ssl, Mode mode = Mode::CookieFlood) {
+    std::fprintf(stderr, "cookie box delete scenario %d\n", static_cast<int>(mode));
+    std::vector<std::string> responseCookies;
+    if (mode != Mode::CookieFlood)
+        for (int index = 0; index < 1500; ++index) responseCookies.push_back("item" + std::to_string(index) + "=value; Path=/");
+    Server server(mode, "/another", 302, std::move(responseCookies));
+    Client client(ssl, 4, 0, mode == Mode::CookieFlood ? 3 : 2);
     const std::string url = server.Url("127.0.0.1");
     const int box = sceHttp2CreateCookieBox(0x10000);
     Require(box > 0 && sceHttp2SetCookieBox(client.tmpl, box) == 0, "bind cookie box");
@@ -1427,6 +1505,12 @@ int main(int argc, char** argv) {
         Http1Policies(ssl);
         Http1Cancellation(ssl);
         Http1BufferedDeadline(ssl);
+    } else if (argc == 2 && std::string_view(argv[1]) == "--http1-cookies") {
+        for (const auto mode : {Mode::Http10, Mode::Http11, Mode::Http11Chunked, Mode::Http11Close, Mode::Http1Plain}) Http1CookieBox(ssl, mode);
+        Http1CookieRedirect(ssl);
+        for (const bool explicitCookie : {false, true}) Http1EmptyCookie(ssl, explicitCookie);
+        CookieBoxDelete(ssl, Mode::Http11);
+        CookieBoxDelete(ssl, Mode::Http1Plain);
     } else if (argc == 2 && std::string_view(argv[1]) == "--ssl-callbacks") {
         SslCallbacks(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--redirects") {
