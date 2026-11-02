@@ -174,11 +174,13 @@ int Close(std::int32_t handle) {
     return MOUSE_OK;
 }
 
+namespace {
 int checkRead(std::int32_t handle, const void* data, std::int32_t num) {
     if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
     if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
     if (data == nullptr || num <= 0 || num > MOUSE_MAX_DATA_NUM) return MOUSE_ERROR_INVALID_ARG;
     return MOUSE_OK;
+}
 }
 
 int CheckRead(std::int32_t handle, const void* data, std::int32_t num) {
