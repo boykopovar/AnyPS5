@@ -208,6 +208,8 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypegeERKS0_(const WTF::TimeWithDyn
 bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypegtERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other);
 bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other);
 WTF::Seconds APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF19mimeTypeFromDataURLENS_10StringViewE(NKWebKit::WtfAbi::StringView dataURL);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const NKWebKit::WtfAbi::URL* self, unsigned length);
 bool APS5_VABI _ZNK3WTF3URL10protocolIsENS_10StringViewE(const NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView protocol);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL11encodedUserEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL12isAboutBlankEv(const NKWebKit::WtfAbi::URL* self);
