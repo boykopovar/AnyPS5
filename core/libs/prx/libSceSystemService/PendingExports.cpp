@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -371,7 +372,7 @@ bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
 
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
     if (speculative == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
-    if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) NotImplemented_nid_no_patch("sceLncUtilIsSpeculativeLaunch: application other than the running title");
+    if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) throw std::runtime_error("sceLncUtilIsSpeculativeLaunch: application other than the running title");
     *speculative = false;
     return 0;
 }

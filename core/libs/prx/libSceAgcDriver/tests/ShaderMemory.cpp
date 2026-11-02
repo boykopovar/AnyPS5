@@ -997,6 +997,107 @@ void verifySignedMinimum() {
     }
 }
 
+void verifyWaterfallRuntimeValues() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    plan.userDataCount = 1u;
+    std::vector<std::unique_ptr<IrValue>> values;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, static_cast<std::uint32_t>(values.size())));
+        for (auto* argument : arguments) values.back()->AddArgument(argument);
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t bits) -> IrValue& {
+        auto& value = make(IrOpcode::Void, IrType::U32);
+        value.SetImmediateU32(bits);
+        return value;
+    };
+    auto& scalar = make(IrOpcode::Void, IrType::ScalarReg);
+    scalar.SetRegister({RegisterBank::Scalar, 0});
+    auto& vector = make(IrOpcode::Void, IrType::VectorReg);
+    vector.SetRegister({RegisterBank::Vector, 0});
+    auto& input = make(IrOpcode::GetUserData, IrType::U32, {&scalar});
+    auto& lane = make(IrOpcode::GetRegister, IrType::U32, {&vector});
+    auto& varying = make(IrOpcode::IEqual32, IrType::Bool, {&input, &lane});
+    auto& uniform = make(IrOpcode::IEqual32, IrType::Bool, {&input, &constant(4u)});
+    auto& other = make(IrOpcode::IEqual32, IrType::Bool, {&lane, &constant(5u)});
+    auto& selected = make(IrOpcode::SelectU32, IrType::U32, {&varying, &input, &lane});
+    const std::array<std::uint32_t, 1> data{4u};
+    SrtRuntime runtime{data};
+    for (const bool reverse : {false, true}) {
+        auto& mask = reverse ? make(IrOpcode::LogicalAnd, IrType::Bool, {&uniform, &varying}) : make(IrOpcode::LogicalAnd, IrType::Bool, {&varying, &uniform});
+        auto& first = make(IrOpcode::ReadFirstLane, IrType::U32, {&selected, &mask});
+        require(SrtWalker().ValidateRuntimeValue(plan, &first), "waterfall: an active-mask conjunct was rejected");
+        Detail::Evaluator evaluator(plan, runtime);
+        std::uint32_t result = 0;
+        require(evaluator.Evaluate(Detail::IrNode(&first), result) && result == data[0], "waterfall: the active select arm was not evaluated");
+        auto& unrelated = make(IrOpcode::SelectU32, IrType::U32, {&other, &input, &lane});
+        auto& invalid = make(IrOpcode::ReadFirstLane, IrType::U32, {&unrelated, &mask});
+        require(!SrtWalker().ValidateRuntimeValue(plan, &invalid), "waterfall: an unrelated condition was accepted");
+    }
+    auto& either = make(IrOpcode::LogicalOr, IrType::Bool, {&varying, &uniform});
+    auto& invalid = make(IrOpcode::ReadFirstLane, IrType::U32, {&selected, &either});
+    require(!SrtWalker().ValidateRuntimeValue(plan, &invalid), "waterfall: a disjunction was treated as an implication");
+    auto& nestedCondition = make(IrOpcode::LogicalAnd, IrType::Bool, {&varying, &uniform});
+    auto& next = make(IrOpcode::IAdd32, IrType::U32, {&input, &constant(1u)});
+    auto& nested = make(IrOpcode::SelectU32, IrType::U32, {&nestedCondition, &input, &next});
+    auto& nestedFirst = make(IrOpcode::ReadFirstLane, IrType::U32, {&nested, &varying});
+    require(SrtWalker().ValidateRuntimeValue(plan, &nestedFirst), "waterfall: the active condition was not propagated into a nested select");
+    require(Detail::Evaluator::MayEvaluate(plan, &nestedFirst), "waterfall: a nested masked condition was not evaluable");
+    for (const auto word : {4u, 7u}) {
+        const std::array<std::uint32_t, 1> inputData{word};
+        SrtRuntime nestedRuntime{inputData};
+        Detail::Evaluator evaluator(plan, nestedRuntime);
+        std::uint32_t result = 0;
+        require(evaluator.Evaluate(Detail::IrNode(&nestedFirst), result) && result == (word == 4u ? word : word + 1u), "waterfall: a nested select ignored its uniform condition");
+    }
+}
+
+void verifyUniformVectorComponents() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    plan.userDataCount = 1u;
+    std::vector<std::unique_ptr<IrValue>> values;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, static_cast<std::uint32_t>(values.size())));
+        for (auto* argument : arguments) values.back()->AddArgument(argument);
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t bits) -> IrValue& {
+        auto& value = make(IrOpcode::Void, IrType::U32);
+        value.SetImmediateU32(bits);
+        return value;
+    };
+    auto& scalar = make(IrOpcode::Void, IrType::ScalarReg);
+    scalar.SetRegister({RegisterBank::Scalar, 0});
+    auto& vector = make(IrOpcode::Void, IrType::VectorReg);
+    vector.SetRegister({RegisterBank::Vector, 0});
+    auto& input = make(IrOpcode::GetUserData, IrType::U32, {&scalar});
+    auto& lane = make(IrOpcode::GetRegister, IrType::U32, {&vector});
+    auto& tuple = make(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&constant(0u), &input, &lane, &constant(0xffffffffu)});
+    const std::array<std::uint32_t, 1> data{4u};
+    SrtRuntime runtime{data};
+    for (std::uint32_t component = 0; component <= 4u; ++component) {
+        auto& value = make(IrOpcode::CompositeExtractU32x4, IrType::U32, {&tuple, &constant(component)});
+        const bool expected = component != 2u && component < 4u;
+        require(SrtWalker().ValidateRuntimeValue(plan, &value) == expected, "uniform vector: component validation was wrong");
+        require(Detail::Evaluator::MayEvaluate(plan, &value) == expected, "uniform vector: component evaluability was wrong");
+        Detail::Evaluator evaluator(plan, runtime);
+        std::uint32_t result = 0;
+        require(evaluator.Evaluate(Detail::IrNode(&value), result) == expected, "uniform vector: component evaluation was wrong");
+        if (expected) require(result == (component == 0u ? 0u : component == 1u ? data[0] : 0xffffffffu), "uniform vector: the wrong component was read");
+    }
+    for (const auto a : {0u, 1u, 0x7fffffffu, 0x80000000u, 0xffffffffu}) {
+        for (const auto b : {0u, 1u, 0x7fffffffu, 0x80000000u, 0xffffffffu}) {
+            auto& value = make(IrOpcode::UGreaterThanEqual32, IrType::Bool, {&constant(a), &constant(b)});
+            require(SrtWalker().ValidateRuntimeValue(plan, &value) && Detail::Evaluator::MayEvaluate(plan, &value), "uniform comparison: unsigned greater-than-or-equal was rejected");
+            Detail::Evaluator evaluator(plan, runtime);
+            std::uint32_t result = 0;
+            require(evaluator.Evaluate(Detail::IrNode(&value), result) && result == static_cast<std::uint32_t>(a >= b), "uniform comparison: unsigned greater-than-or-equal was wrong");
+        }
+    }
+}
+
 void verifyMayEvaluate() {
     using namespace ShaderRecompiler;
     IrResourcePlan plan;
@@ -5172,6 +5273,35 @@ void verifyWaterfallImageTable() {
     auto& selectOther = make(IrOpcode::SelectU32, IrType::U32, {&otherCond, &input, &lane});
     auto& firstOther = make(IrOpcode::ReadFirstLane, IrType::U32, {&selectOther, &conjMask});
     require(!SrtWalker().ValidateRuntimeValue(planA, &firstOther), "waterfall image table: non-implied condition was accepted by validator");
+    auto scaledCode = code;
+    scaledCode[4] = 0x34020085u;
+    scaledCode[5] = 0x7e240501u;
+    auto scaledRequest = TableRequest(scaledCode, userData);
+    const auto scaledPlan = GetResourcePlan(scaledRequest);
+    require(scaledPlan->info.images.size() == 1u && scaledPlan->info.images[0].table == 0u, "waterfall image table: a scale before readfirstlane was not planned as a table");
+    const auto& scaledColumn = *scaledPlan->descriptorSources.at(scaledPlan->info.images[0].source).tableColumn;
+    require(scaledColumn.stride == 32u && scaledColumn.offset == 0x40u, "waterfall image table: scalarizing the offset changed its column");
+    const auto scaledCompiled = CompileTable(scaledRequest);
+    const auto& scaledSnapshot = scaledCompiled.capture->snapshot.tables.tables.at(0);
+    require(scaledSnapshot.keys == Abi::MaxKeys && (scaledSnapshot.codes[2] & Abi::PoisonFlag) == 0u && (scaledSnapshot.codes[4] & Abi::PoisonFlag) == 0u, "waterfall image table: scalarized offsets lost valid records");
+    scaledCode.insert(scaledCode.begin() + 4, {0x7d8a0080u, 0x7e020284u, 0x02000282u});
+    const auto boundedScaledPlan = GetResourcePlan(TableRequest(scaledCode, userData));
+    const auto& boundedScaledColumn = *boundedScaledPlan->descriptorSources.at(boundedScaledPlan->info.images[0].source).tableColumn;
+    require(boundedScaledColumn.maxKey == 6u && boundedScaledColumn.stride == 32u, "waterfall image table: scalarized offsets lost their key bound");
+    auto maskedRequest = TableRequest(scaledCode, userData);
+    maskedRequest.context.compute->numThreads = {1u, 1u, 1u};
+    const auto maskedPlan = GetResourcePlan(maskedRequest);
+    require(maskedPlan->info.images.size() == 1u && maskedPlan->info.images[0].table == 0u && maskedPlan->descriptorSources.at(maskedPlan->info.images[0].source).tableColumn->stride == 32u, "waterfall image table: an entry-lane mask hid the scalarized scale");
+    auto irregularCode = code;
+    irregularCode[4] = 0x34020100u;
+    irregularCode[5] = 0x7e240501u;
+    bool refused = false;
+    try {
+        static_cast<void>(GetResourcePlan(TableRequest(irregularCode, userData)));
+    } catch (const std::runtime_error& error) {
+        refused = std::string_view(error.what()).find("not a valid runtime value") != std::string_view::npos;
+    }
+    require(refused, "waterfall image table: a variable shift was accepted as a constant-stride column");
 }
 
 void verifySplitWaterfallImageTable() {
@@ -10131,6 +10261,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
+            verifyUniformVectorComponents();
+            verifyWaterfallRuntimeValues();
             verifySrtReadPatching();
             std::cout << "SRT read patching replaces repeated and multiple uses\n";
             return 0;
