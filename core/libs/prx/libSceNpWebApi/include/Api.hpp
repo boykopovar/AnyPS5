@@ -67,7 +67,7 @@ int APS5_VABI sceNpWebApiSendRequest(std::int64_t requestId, const void* data, s
 int APS5_VABI sceNpWebApiTerminate(int libCtxId);
 int APS5_VABI sceNpWebApiUnregisterPushEventCallback(int titleUserCtxId, int callbackId);
 int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback(int titleUserCtxId, int callbackId);
-int APS5_VABI sceNpWebApiUtilityParseNpId();
+int APS5_VABI sceNpWebApiUtilityParseNpId(const char* jsonNpId, NpId* npId);
 
 int APS5_VABI sceNpWebApiAbortHandle(int libCtxId, int handleId);
 int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char* fieldName, const char* value);
