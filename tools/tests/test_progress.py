@@ -22,6 +22,11 @@ def excessive_nesting():
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+SHADER_SOURCE = {"isa": "AMD RDNA 2", "instructions": {"total": 5, "decoded": 3, "translated": 1},
+                 "dpp": {"total": 2, "decoded": 1}, "unsupported_throws": 3, "forms": [], "untranslated": [],
+                 "throw_areas": [], "throw_sites": [], "formats": {"total": 0, "sampled": 0, "buffer": 0, "host": 0}}
+
+
 class ProgressSnapshotTests(unittest.TestCase):
     def test_library_counters_reject_invalid_types_and_negative_values(self):
         for field in ("done", "todo"):
@@ -682,6 +687,7 @@ class ProgressTests(unittest.TestCase):
         stdout = io.StringIO()
         with patch.object(progress, "collect_libraries", return_value=libraries), \
              patch.object(progress, "collect_shaders", return_value=shaders), \
+             patch.object(progress, "collect_shader_source", return_value=SHADER_SOURCE), \
              patch("sys.stdout", stdout):
             code = progress.main(argv)
         return code, stdout.getvalue()
@@ -708,7 +714,8 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(payload["shaders"], shaders)
         self.assertNotIn("libraries 1/2", output)
         code, output = self.run_main(["--module", "libScePad"], libraries, shaders)
-        self.assertEqual(output, "libraries 1/2 (50.0%)\nshaders 2/4 (50.0%)\n")
+        self.assertEqual(output, "libraries 1/2 (50.0%)\nshader opcode names declared 2/4 (50.0%)\n"
+                                 "shader forms decoded 3/5 (60.0%), translated 1, unsupported throws 3\n")
         stderr = io.StringIO()
         with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
             progress.main([])

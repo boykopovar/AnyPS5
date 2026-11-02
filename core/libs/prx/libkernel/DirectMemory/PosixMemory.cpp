@@ -281,7 +281,7 @@ int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protec
     if (start == 0 || length > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {
-        if (DoMprotect(address, length, protection & GuestDefinedProtection) != 0) return failed(GuestInvalid);
+        if (DoMprotect(address, length, protection & GuestDefinedProtection, false) != 0) return failed(GuestInvalid);
         return 0;
     } catch (const std::bad_alloc&) {
         return failed(GuestNoMemory);
@@ -312,8 +312,8 @@ int APS5_VABI mlockall_nid_postfix(int flags) {
         SetError(GuestInvalid);
         return -1;
     }
-    if ((flags & GuestLockFuture) != 0) throw std::runtime_error("mlockall: MCL_FUTURE is not implemented: later mappings are not locked");
-    throw std::runtime_error("mlockall: MCL_CURRENT is not implemented: the process also holds host stacks, heaps, modules and driver mappings");
+    NotImplemented_nid_no_patch("mlockall");
+    return 0;
 }
 
 int APS5_VABI munlockall_nid_postfix() {

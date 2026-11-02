@@ -21,6 +21,137 @@ static int InitializeParameter(void* self, const std::uint64_t* context, bool ar
 static int InitializeParameterWithBody(void* self, const std::uint64_t* context, bool textsPresent, const IntrusivePtr* body);
 static int TerminateParameter(void* self);
 
+static constexpr int ActivityInvalidArgument = static_cast<int>(0x80553503);
+static constexpr int ActivityOutOfMemory = static_cast<int>(0x80553504);
+static constexpr int ActivityAlreadyInitialized = static_cast<int>(0x8055350f);
+static constexpr int ActivityNotInitialized = static_cast<int>(0x80553510);
+
+struct ActivityParameter {
+    void* base;
+    void* state;
+};
+
+struct ActivityParameterState {
+    int limit;
+    int npServiceLabel;
+};
+
+static_assert(sizeof(ActivityParameter) == 0x10 && offsetof(ActivityParameter, state) == 0x08);
+
+static void DestroyActivityParameter(ActivityParameter* self) {
+    std::free(self->state);
+    self->state = nullptr;
+    self->base = nullptr;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivitiesC1Ev(void* rawSelf) {
+    auto* self = static_cast<ActivityParameter*>(rawSelf);
+    self->base = nullptr;
+    self->state = nullptr;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivitiesC2Ev(void* rawSelf) {
+    return _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivitiesC1Ev(rawSelf);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivitiesD1Ev(void* rawSelf) {
+    DestroyActivityParameter(static_cast<ActivityParameter*>(rawSelf));
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivitiesD2Ev(void* rawSelf) {
+    return _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivitiesD1Ev(rawSelf);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivities10initializeEPNS1_6Common10LibContextENS7_12IntrusivePtrINS7_6VectorINS7_6StringEEEEE(void* rawSelf, void* libContext, const IntrusivePtr* accountIds) {
+    (void)accountIds;
+    auto* self = static_cast<ActivityParameter*>(rawSelf);
+    if (libContext == nullptr) return ActivityInvalidArgument;
+    if (self->base != nullptr || self->state != nullptr) return ActivityAlreadyInitialized;
+    auto* state = static_cast<ActivityParameterState*>(std::malloc(sizeof(ActivityParameterState)));
+    if (state == nullptr) return ActivityOutOfMemory;
+    state->limit = 0;
+    state->npServiceLabel = 0;
+    self->base = libContext;
+    self->state = state;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivities9terminateEv(void* rawSelf) {
+    auto* self = static_cast<ActivityParameter*>(rawSelf);
+    if (self->base == nullptr) return ActivityNotInitialized;
+    DestroyActivityParameter(self);
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivities8setlimitEi(void* rawSelf, int limit) {
+    auto* self = static_cast<ActivityParameter*>(rawSelf);
+    auto* state = static_cast<ActivityParameterState*>(self->state);
+    if (state != nullptr) state->limit = limit;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi28ParameterToGetUserActivities17setnpServiceLabelEi(void* rawSelf, int label) {
+    auto* self = static_cast<ActivityParameter*>(rawSelf);
+    auto* state = static_cast<ActivityParameterState*>(self->state);
+    if (state != nullptr) state->npServiceLabel = label;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities11ActivityApi17getUserActivitiesEiRKNS5_28ParameterToGetUserActivitiesERNS1_6Common11TransactionINS9_12IntrusivePtrINS4_26GetUsersActivitiesResponseEEENSB_INS9_18ResponseHeaderBaseEEEEE(int user, const void* parameter, void* transaction) {
+    (void)user;
+    (void)parameter;
+    (void)transaction;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity13getActivityIdEv(const void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity7getNameEv(const void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity9getHiddenEv(const void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return false;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity12matchIdIsSetEv(const void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return false;
+}
+
+const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities8Activity10getMatchIdEv(const void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities26GetUsersActivitiesResponse8getUsersEv(const void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+const char* APS5_VABI _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivities12getAccountIdEv(const void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivities13getActivitiesEv(const void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE() {
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
@@ -1016,6 +1147,8 @@ static_assert(sizeof(IntrusivePtr) == 0x18);
 
 static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
+static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
 
 static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::size_t offset) {
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
@@ -1731,6 +1864,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibCont
     self->object = nullptr;
     self->deleter = nullptr;
     self->libContext = libContext;
+    ReferenceCount(self, StringVectorReferenceCountOffset).store(0);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120RequestPlayerSessionEEEE8pushBackERKS8_(IntrusivePtr* self, const void* element) {
@@ -1990,7 +2124,6 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
     ReleaseIntrusivePtr(self, 0x00, __func__);
 }
 
-
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEEdeEv(const void* self) {
     (void)self;
     NotImplemented_nid_no_patch(__func__);
@@ -2005,7 +2138,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15DefaultResponseD1Ev(void* self) {
     (void)self;
     return 0;
 }
-
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120RequestPlayerSessionEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext) {
     self->object = nullptr;
@@ -2083,7 +2215,6 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V154GetUsersAccountIdPlayerSessionsInvitationsResponseBodyEED1Ev(IntrusivePtr* self) {
     ReleaseIntrusivePtr(self, 0x00, __func__);
 }
-
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V154GetUsersAccountIdPlayerSessionsInvitationsResponseBody14getInvitationsEv(void* self) {
     (void)self;
@@ -3836,7 +3967,6 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEC1Ev(In
     *self = {};
 }
 
-
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_6StringEED2Ev(void* self) {
     (void)self;
     return 0;
@@ -3876,7 +4006,6 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqEPKc(const CommonString* self,
 std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE5getIdEv() {
     return 0;
 }
-
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE5abortEv() {
     return TransactionNotStarted;
@@ -5930,13 +6059,14 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14Sessio
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1ERS7_(IntrusivePtr* self, const IntrusivePtr* source) {
-    CopyIntrusivePtr(self, source, 0x30);
+    CopyIntrusivePtr(self, source, StringVectorReferenceCountOffset);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PFvS8_EPNS2_10LibContextE(IntrusivePtr* self, void* body, void (APS5_VABI* deleter)(void*), void* libContext) {
     self->object = body;
     self->deleter = deleter;
     self->libContext = libContext;
+    if (body) ReferenceCount(body, StringVectorReferenceCountOffset).fetch_add(1);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext) {
@@ -5946,7 +6076,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14Sessi
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(IntrusivePtr* self) {
-    ReleaseIntrusivePtr(self, 0x30, __func__);
+    ReleaseIntrusivePtr(self, StringVectorReferenceCountOffset, __func__);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv() {
@@ -5955,12 +6085,11 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserP
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev(IntrusivePtr* self) {
-    ReleaseIntrusivePtr(self, 0x30, __func__);
+    ReleaseIntrusivePtr(self, ScalarVectorReferenceCountOffset, __func__);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_(IntrusivePtr* self, const IntrusivePtr* source) {
-    ReleaseIntrusivePtr(self, 0x30, __func__);
-    CopyIntrusivePtr(self, source, 0x30);
+    AssignIntrusivePtr(self, source, ScalarVectorReferenceCountOffset, __func__);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5emptyEv(const CommonString* self) {
