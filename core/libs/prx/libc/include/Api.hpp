@@ -405,6 +405,7 @@ int APS5_VABI fputws_nid_postfix(const char16_t* str, FileStream* stream);
 int APS5_VABI putwc_nid_postfix(char16_t value, FileStream* stream);
 int APS5_VABI putwchar_nid_postfix(char16_t value);
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream);
+int APS5_VABI fwide_nid_postfix(FileStream* stream, int mode);
 int APS5_VABI chdir_nid_postfix(const char* path);
 char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size);
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName);

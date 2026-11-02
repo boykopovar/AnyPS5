@@ -273,6 +273,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_fwide_tests ${LIBS_INCLUDE_DIR}/tests/GuestFwide.cpp)
+    target_include_directories(guest_fwide_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fwide_tests PRIVATE libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_fwide_tests)
+    add_test(NAME guest_fwide COMMAND guest_fwide_tests $<TARGET_FILE:libc> guest_fwide.tmp)
+    set_tests_properties(guest_fwide PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_fwide PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_memccpy_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemccpyBounds.cpp)
     target_include_directories(guest_memccpy_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_memccpy_bounds_tests PRIVATE libc)
