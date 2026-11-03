@@ -1,11 +1,18 @@
 #include "prx/libfontconfig/include/Config.hpp"
 
 #include <array>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
 #include <vector>
+
+extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* name) {
+    throw std::runtime_error(name);
+}
 
 static_assert(std::is_same_v<decltype(FcConfigCreate()), FcConfig*>);
 static_assert(std::is_same_v<decltype(FcConfigReference(nullptr)), FcConfig*>);
@@ -17,7 +24,7 @@ int main() {
     bool unsupportedCurrent = false;
     try {
         FcConfigReference(nullptr);
-    } catch (const std::invalid_argument&) {
+    } catch (const std::runtime_error&) {
         unsupportedCurrent = true;
     }
     assert(unsupportedCurrent);
@@ -32,7 +39,8 @@ int main() {
     FcConfigDestroy(initial);
     for (int i = 0; i < kCopies - 1; ++i)
         FcConfigDestroy(copies[i]);
-    assert(FcConfigReference(copies.back()) == copies.back());
+    FcConfig* retained = FcConfigReference(copies.back());
+    assert(retained == copies.back());
     FcConfigDestroy(copies.back());
     FcConfigDestroy(copies.back());
 

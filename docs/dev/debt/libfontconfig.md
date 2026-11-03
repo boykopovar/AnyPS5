@@ -2,7 +2,7 @@
 
 ### Functional configuration lifetimes
 
-- [Explicit configuration handle lifetime](../../../core/libs/prx/libfontconfig/Config.cpp) follows Fontconfig 2.15.0 [fccfg.c](https://github.com/fontconfig/fontconfig/blob/72b9a48f57de6204d99ce1c217b5609ee92ece9b/src/fccfg.c) for create, atomic reference and final destroy of opaque handles; native concurrency comparisons passed. Unlike Fontconfig, these handles have no font directories, rules, cache paths or discovery state. `FcConfigReference(NULL)` **throws** instead of loading the global config, with unsupported SysV cross-ABI exception unwinding on Windows. `FcInit`, `FcConfigGetCurrent` and other configuration APIs still throw. The console module's ABI and version remain unverified.
+- [Explicit configuration handle lifetime](../../../core/libs/prx/libfontconfig/Config.cpp) follows Fontconfig 2.15.0 [fccfg.c](https://github.com/fontconfig/fontconfig/blob/72b9a48f57de6204d99ce1c217b5609ee92ece9b/src/fccfg.c) for create, atomic reference and final destroy of opaque handles; native concurrency comparisons passed. Unlike Fontconfig, these handles have no font directories, rules, cache paths or discovery state. `FcConfigReference(NULL)` calls `NotImplemented_nid_no_patch` instead of loading the global config; its exception cannot safely cross the Windows SysV ABI boundary. `FcInit`, `FcConfigGetCurrent` and other configuration APIs still throw. The console module's ABI and version remain unverified.
 
 ### Callable exports
 

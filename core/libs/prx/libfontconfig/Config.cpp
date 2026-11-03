@@ -1,8 +1,8 @@
 #include "prx/libfontconfig/include/Config.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <atomic>
 #include <new>
-#include <stdexcept>
 
 struct FcConfigState {
     std::atomic<unsigned> references{1};
@@ -18,10 +18,6 @@ FcConfig* Handle(FcConfigState* state) {
     return reinterpret_cast<FcConfig*>(state);
 }
 
-[[noreturn, gnu::noinline]] void UnsupportedCurrentConfig() {
-    throw std::invalid_argument("FcConfigReference: loading the global font configuration is not implemented");
-}
-
 }
 
 extern "C" {
@@ -31,7 +27,7 @@ FcConfig* APS5_VABI FcConfigCreate() {
 }
 
 FcConfig* APS5_VABI FcConfigReference(FcConfig* config) {
-    if (!config) UnsupportedCurrentConfig();
+    if (!config) NotImplemented_nid_no_patch(__func__);
     State(config)->references.fetch_add(1, std::memory_order_relaxed);
     return config;
 }
