@@ -212,6 +212,19 @@ static int TrailingSlashCreationError(const std::filesystem::path& native, int f
     return status.type() == std::filesystem::file_type::not_found ? 2 : 0;
 }
 
+#ifdef _WIN32
+static int CreationThroughSeparatorError(const std::filesystem::path& native, int flags) {
+    if ((flags & SCE_KERNEL_O_CREAT) == 0 || native.has_filename() || !native.has_relative_path()) return 0;
+    auto target = native;
+    while (!target.has_filename() && target.has_relative_path()) target = target.parent_path();
+    std::error_code error;
+    const auto status = std::filesystem::status(target, error);
+    if (status.type() == std::filesystem::file_type::not_found) return 2;
+    if (error) return FilesystemError(error);
+    return std::filesystem::is_directory(status) ? 0 : 20;
+}
+#endif
+
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
     if (AppArchiveHasDirectory_nid_no_patch(native)) {
         std::error_code error;
@@ -258,7 +271,11 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
 #endif
     }
 #ifdef _WIN32
-    int fd = NativeOpen(openNative, MapFlags(flags), mode);
+    const int separatorError = CreationThroughSeparatorError(native, flags);
+    if (separatorError != 0 && separatorError != 2) return SceKernelError(separatorError);
+    int fd = -1;
+    if (separatorError == 2) errno = ENOENT;
+    else fd = NativeOpen(openNative, MapFlags(flags), mode);
 #else
     int fd = NativeOpen(native, MapFlags(flags), mode);
 #endif
