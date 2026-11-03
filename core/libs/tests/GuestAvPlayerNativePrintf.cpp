@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include "prx/libc/include/WindowsFormatting.hpp"
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -15,19 +18,33 @@ struct CapturedLog {
 
 static CapturedLog Captured;
 
-static int APS5_VABI CaptureLog(void* user_data, const char* format, va_list arguments) {
+static int APS5_VABI CaptureLog(void* user_data, const char* format, VaList* arguments) {
     CapturedLog* log = static_cast<CapturedLog*>(user_data);
     log->userData = user_data;
     ++log->calls;
-    std::vsnprintf(log->message, sizeof(log->message), format, arguments);
+#ifdef _WIN32
+    LibcDetail::FormatWindows(log->message, sizeof(log->message), format, arguments);
+#else
+    std::va_list copy;
+    va_copy(copy, *reinterpret_cast<std::va_list*>(arguments));
+    std::vsnprintf(log->message, sizeof(log->message), format, copy);
+    va_end(copy);
+#endif
     return 42;
 }
 
-static int PrintFormatted(const char* format, ...) {
-    va_list arguments;
+static int APS5_VABI PrintFormatted(const char* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, format);
+    const int result = sceAvPlayerVprintf(format, reinterpret_cast<VaList*>(arguments));
+    __builtin_sysv_va_end(arguments);
+#else
+    std::va_list arguments;
     va_start(arguments, format);
-    const int result = sceAvPlayerVprintf(format, arguments);
+    const int result = sceAvPlayerVprintf(format, reinterpret_cast<VaList*>(arguments));
     va_end(arguments);
+#endif
     return result;
 }
 

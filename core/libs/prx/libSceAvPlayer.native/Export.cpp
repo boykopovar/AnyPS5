@@ -11,14 +11,21 @@ extern "C" {
 
 int APS5_VABI sceAvPlayerPrintf(const char* format, ...) {
     if (!format) return -1;
-    va_list arguments;
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, format);
+    const int result = SceAvPlayerWriteLog(format, reinterpret_cast<VaList*>(arguments));
+    __builtin_sysv_va_end(arguments);
+#else
+    std::va_list arguments;
     va_start(arguments, format);
-    const int result = SceAvPlayerWriteLog(format, arguments);
+    const int result = SceAvPlayerWriteLog(format, reinterpret_cast<VaList*>(arguments));
     va_end(arguments);
+#endif
     return result;
 }
 
-int APS5_VABI sceAvPlayerVprintf(const char* format, va_list arguments) {
+int APS5_VABI sceAvPlayerVprintf(const char* format, VaList* arguments) {
     if (!format) return -1;
     return SceAvPlayerWriteLog(format, arguments);
 }

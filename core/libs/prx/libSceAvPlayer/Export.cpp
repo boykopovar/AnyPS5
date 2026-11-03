@@ -11,6 +11,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libSceAvPlayer/include/LogCallback.hpp"
+#include "prx/libc/include/WindowsFormatting.hpp"
 
 using namespace AvPlayer;
 
@@ -40,11 +41,19 @@ void SceAvPlayerSetLogCallbackState(void* callback, void* user_data) {
     LogUserData = user_data;
 }
 
-int SceAvPlayerWriteLog(const char* format, va_list arguments) {
+int SceAvPlayerWriteLog(const char* format, VaList* arguments) {
     if (LogCallback) {
         return reinterpret_cast<SceAvPlayerLogCallback>(LogCallback)(LogUserData, format, arguments);
     }
-    return std::vprintf(format, arguments);
+#ifdef _WIN32
+    return LibcDetail::PrintWindows(format, arguments);
+#else
+    std::va_list copy;
+    va_copy(copy, *reinterpret_cast<std::va_list*>(arguments));
+    const int result = std::vprintf(format, copy);
+    va_end(copy);
+    return result;
+#endif
 }
 
 }
