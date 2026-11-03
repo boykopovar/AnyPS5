@@ -191,12 +191,13 @@ int main(int argc, char** argv) {
                 mutation.Remove(blocks);
                 mutation.Add(blocks, Block + PlaneBytes, true, true, true);
             }
-            Fill(plane, 0.75f);
+            FillUnit(plane, 0, 0.75f);
             auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
             Require(AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of a plane unmapped and mapped again stored the results drawn before the unmap");
             device->WaitIdle();
             Require(Since(before).stores == 0, "a read of a plane unmapped and mapped again counted a store");
-            for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.75f, UnitTexels, "after a read of a plane unmapped and mapped again");
+            RequireUnit(plane, 0, 0.75f, UnitTexels, "after a read of a plane unmapped and mapped again, the unit the CPU wrote");
+            for (std::size_t unit = 1; unit < Units; ++unit) RequireUnit(plane, unit, 1.0f, UnitTexels, "after a read of a plane unmapped and mapped again, a unit the CPU did not write");
             Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 after the unmap did not cover the plane");
             before = AgcDriver::Graphics::DepthPlaneStoreCounts();
             Require(!AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of the plane drawn after the unmap stored nothing");
