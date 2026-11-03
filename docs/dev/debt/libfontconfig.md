@@ -1,8 +1,8 @@
 # libfontconfig technical debt
 
-### Functional configuration lifetimes
+### Silent stubs (firmware 13.42 configuration exports)
 
-- [Explicit configuration handle lifetime](../../../core/libs/prx/libfontconfig/Config.cpp) follows Fontconfig 2.15.0 [fccfg.c](https://github.com/fontconfig/fontconfig/blob/72b9a48f57de6204d99ce1c217b5609ee92ece9b/src/fccfg.c) for create, atomic reference and final destroy of opaque handles; native concurrency comparisons passed. Unlike Fontconfig, these handles have no font directories, rules, cache paths or discovery state. `FcConfigReference(NULL)` calls `NotImplemented_nid_no_patch` instead of loading the global config; its exception cannot safely cross the Windows SysV ABI boundary. `FcInit`, `FcConfigGetCurrent` and other configuration APIs still throw. The console module's ABI and version remain unverified.
+- [FcConfigCreate, FcConfigReference and FcConfigDestroy](../../../core/libs/prx/libfontconfig/Config.cpp) follow the firmware 13.42 `system_ex/common_ex/lib/libfontconfig.sprx` disassembly reported in review (SHA-256 `74d7414445f8687c1d22a92fa3c994d2e5fa304e6699dc84dcc5459af7da8472`). Both creation and reference clear the return register, regardless of the reference argument, and destruction returns without dereferencing its argument. These exports intentionally differ from desktop Fontconfig reference-counted configuration objects. This is disassembly evidence, not measured execution on a PS5, and semantics on other firmware versions are unverified. `FcInit`, `FcConfigGetCurrent` and other configuration APIs still throw on this branch.
 
 ### Callable exports
 
