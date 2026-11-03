@@ -234,7 +234,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     Require(source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "texture detiling requires source and destination buffers");
     std::uint32_t columnEnd = 0, rowEnd = 0;
     checkWindow(layout, window, columnEnd, rowEnd);
-    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thick);
+    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thick && !(IsGcnThick(tileMode) && layout.gcnMicroTiled));
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;
     const auto destinationDescriptorOffset = destinationOffset - destinationOffset % alignment;

@@ -593,16 +593,20 @@ SurfaceGeometry describeGcnVolume(const GuestTextureResource& descriptor) {
             levelHeight = std::bit_ceil(levelHeight);
             levelDepth = std::bit_ceil(levelDepth);
         }
-        const auto rowElements = AlignUp(levelWidth, 8u);
+        const bool thin = level != 0 && levelDepth < 4u;
+        auto rowElements = AlignUp(levelWidth, 8u);
         const auto rows = AlignUp(levelHeight, 8u);
-        const auto slabs = (levelDepth + 3u) / 4u;
+        if (thin) while ((rowElements * rows * bytes) % 256u != 0) rowElements += 8u;
+        const auto thickness = thin ? 1u : 4u;
+        const auto slabs = (levelDepth + thickness - 1u) / thickness;
         if (level == 0) Require(rowElements == descriptor.gcnPitch, "PS4 volume pitch " + std::to_string(descriptor.gcnPitch) + " is not padded to the thick micro tile");
         auto& mip = geometry.mips[level];
         mip.width = TexelLevelDimension(descriptor.width, level, texelWidth);
         mip.height = TexelLevelDimension(descriptor.height, level, texelHeight);
         mip.blocksPerRow = rowElements / 8u;
         mip.pitchBytes = rowElements * bytes;
-        mip.tiledSize = static_cast<std::uint64_t>(rowElements) * rows * 4u * bytes;
+        mip.tiledSize = static_cast<std::uint64_t>(rowElements) * rows * thickness * bytes;
+        mip.gcnMicroTiled = thin;
         mip.linearSize = static_cast<std::uint64_t>(mip.pitchBytes) * mip.height;
         mip.tiledOffset = offset;
         mip.linearOffset = linearOffset;

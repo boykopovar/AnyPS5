@@ -258,6 +258,18 @@ void gcnThickTilingTests() {
     for (std::size_t i = 1; i < slabs.size(); ++i) Require(slabs[i].first >= slabs[i - 1].second, "PS4 thick volume slabs overlap");
     Require(slabs.size() == 8u + 4u + 2u + 1u && slabs.back().second == deepGeometry.guestBytes, "PS4 thick volume slab count or size changed");
     Require(deepGeometry.GuestOffset(4u, deepGeometry.mips[1]) == deepGeometry.mips[1].tiledOffset + deepGeometry.mips[1].tiledSize, "PS4 thick volume level 1 slab stride is not its own slab size");
+    deep.mipCount = 6u;
+    deep.lastLevel = 5u;
+    const auto full = DescribeSurface(deep);
+    Require(full.guestBytes == 151296u && full.mips[4].tiledOffset == 150528u && full.mips[5].tiledOffset == 151040u, "PS4 full volume mip chain differs from addrlib");
+    Require(full.mips[4].tiledSize == 256u && full.GuestOffset(1u, full.mips[4]) == 150784u, "PS4 two-slice mip must use separate thin slices");
+    Require(MipTileMode(deep.tileMode, full.mips[4]) == TextureTileMode::kGcnThin1D && MipTileMode(deep.tileMode, full.mips[3]) == deep.tileMode, "PS4 mip tile mode must degrade only below four slices");
+    for (const auto format : {1u, 12u}) {
+        deep.format = format;
+        const auto narrow = DescribeSurface(deep);
+        Require(narrow.mips[5].tiledSize == 256u && narrow.mips[5].pitchBytes == 32u, "PS4 thin volume mip needs SI slice alignment at small element sizes");
+    }
+
 }
 
 void gcnTilingTests() {
