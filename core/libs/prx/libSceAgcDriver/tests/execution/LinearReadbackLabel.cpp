@@ -37,17 +37,22 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Format8888Uint = 60;
 constexpr std::uint32_t TexelBytes = 4;
 constexpr std::uint32_t IdentitySwizzle = 0xfacu;
-constexpr std::size_t BlockBytes = 0x20000;
+constexpr std::size_t BlockBytes = 0x200000;
 constexpr std::size_t LabelOffset = 0x8000;
 constexpr std::uint32_t LabelValue = 0x5eedf00du;
 constexpr std::uint32_t TiledThreads = 8;
 constexpr std::uint32_t TiledSide = 16;
+constexpr std::uint32_t OccasionalSide = 256;
+constexpr std::size_t OccasionalOffset = 0x100000;
+constexpr std::size_t OccasionalLabelOffset = 0x8200;
 constexpr std::uint32_t Format32Uint = 20;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::size_t TiledOffset = 0x10000;
 constexpr std::size_t TiledLabelOffset = 0x8100;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t Written = 0x12345678u;
+constexpr std::uint32_t Rewritten = 0x0badcafeu;
+constexpr std::uint32_t WrittenAgain = 0x600dd00du;
 
 alignas(256) constexpr std::array<std::uint32_t, 24> StoreCode{
     0x4a500081, 0xd5690014, 0x0201ff28, 0x9e3779b1, 0x4a2a28ff, 0x7f4a7c15, 0x4a2c28ff, 0xfe94f82a,
@@ -57,6 +62,14 @@ alignas(256) constexpr std::array<std::uint32_t, 24> StoreCode{
 
 alignas(256) constexpr std::array<std::uint32_t, 7> TiledStoreCode{
     0x7e040300, 0x7e060280, 0x7e0202ff, Written, 0xf0200108, 0x00020102, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 7> RewriteStoreCode{
+    0x7e040300, 0x7e060280, 0x7e0202ff, Rewritten, 0xf0200108, 0x00020102, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 7> AgainStoreCode{
+    0x7e040300, 0x7e060280, 0x7e0202ff, WrittenAgain, 0xf0200108, 0x00020102, 0xbf810000,
 };
 
 class GuestBlock {
@@ -125,12 +138,12 @@ std::array<std::uint32_t, 16> UserData(const void* texels) {
     return data;
 }
 
-std::array<std::uint32_t, 8> TiledDescriptor(const void* texels) {
+std::array<std::uint32_t, 8> TiledDescriptor(const void* texels, std::uint32_t side = TiledSide) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32Uint << 20u) | (((TiledSide - 1u) & 3u) << 30u),
-        ((TiledSide - 1u) >> 2u) | ((TiledSide - 1u) << 14u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32Uint << 20u) | (((side - 1u) & 3u) << 30u),
+        ((side - 1u) >> 2u) | ((side - 1u) << 14u),
         IdentitySwizzle | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
         0u,
@@ -139,9 +152,9 @@ std::array<std::uint32_t, 8> TiledDescriptor(const void* texels) {
     };
 }
 
-std::array<std::uint32_t, 16> TiledUserData(const void* texels) {
+std::array<std::uint32_t, 16> TiledUserData(const void* texels, std::uint32_t side = TiledSide) {
     std::array<std::uint32_t, 16> data{};
-    const auto texture = TiledDescriptor(texels);
+    const auto texture = TiledDescriptor(texels, side);
     std::copy(texture.begin(), texture.end(), data.begin() + 8);
     return data;
 }
@@ -215,6 +228,36 @@ void ReadTiledAfterLabel(std::uint8_t* block) {
     Require(written == TiledThreads, "tiled readback label: " + std::to_string(written) + " texels of a small tiled image read after the label hold the value the dispatch before it stored, expected " + std::to_string(TiledThreads));
 }
 
+std::uint32_t CountHolding(const std::uint32_t* texels, std::size_t bytes, std::uint32_t value) {
+    const volatile std::uint32_t* cpu = texels;
+    std::uint32_t count = 0;
+    for (std::size_t index = 0; index < bytes / 4u; ++index) count += cpu[index] == value ? 1u : 0u;
+    return count;
+}
+
+void ReadOccasionalAfterLabel(std::uint8_t* block) {
+    using AgcDriver::Graphics::StorageTexture;
+    auto* texels = reinterpret_cast<std::uint32_t*>(block + OccasionalOffset);
+    auto* label = reinterpret_cast<std::uint32_t*>(block + OccasionalLabelOffset);
+    const auto bytes = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TiledDescriptor(texels, OccasionalSide))).guestBytes;
+    Require(bytes > StorageTexture::SmallStoreBytes && bytes <= StorageTexture::OccasionalStoreBytes && bytes <= BlockBytes - OccasionalOffset, "occasional readback label: the test image is not an occasional store's size");
+    std::fill(texels, texels + bytes / 4u, Untouched);
+    const auto userData = TiledUserData(texels, OccasionalSide);
+    const auto stored = StorageTexture::OccasionalLabelStores();
+    SubmitAndWait(Commands(TiledStoreCode, TiledThreads, userData, label), label, "occasional readback label");
+    Require(CountHolding(texels, bytes, Written) == TiledThreads, "occasional readback label: the first write of an image was not stored before its label");
+    Require(StorageTexture::OccasionalLabelStores() == stored + 1u, "occasional readback label: the first write of an image was not chosen for its label");
+    SubmitAndWait(Commands(RewriteStoreCode, TiledThreads, userData, label), label, "occasional readback label");
+    Require(StorageTexture::OccasionalLabelStores() == stored + 1u, "occasional readback label: a second write with no flip between was chosen for its label");
+    StorageTexture::NoteFlip();
+    SubmitAndWait(Commands(RewriteStoreCode, TiledThreads, userData, label), label, "occasional readback label");
+    Require(StorageTexture::OccasionalLabelStores() == stored + 1u, "occasional readback label: an image written on consecutive flips was chosen for its label");
+    for (std::uint64_t flip = 0; flip <= StorageTexture::OccasionalWriteFlips; ++flip) StorageTexture::NoteFlip();
+    SubmitAndWait(Commands(AgainStoreCode, TiledThreads, userData, label), label, "occasional readback label");
+    Require(CountHolding(texels, bytes, WrittenAgain) == TiledThreads, "occasional readback label: a write after a long gap was not stored before its label");
+    Require(StorageTexture::OccasionalLabelStores() == stored + 2u, "occasional readback label: a write after a long gap was not chosen for its label");
+}
+
 }
 
 int main() {
@@ -226,6 +269,7 @@ int main() {
         GuestBlock block;
         ReadAfterLabel(block.Data());
         ReadTiledAfterLabel(block.Data());
+        ReadOccasionalAfterLabel(block.Data());
         AgcDriverWaitIdle_nid_postfix();
         AgcDriverShutdown_nid_postfix();
         std::puts("linear readback label tests passed");
