@@ -201,6 +201,50 @@ void CheckStoredOverUsesPageEvidence() {
     Require(!StoredOver(base + Page, Page, before), "a page-local CPU write made an untouched page in the same block count as stored over");
 }
 
+void CheckRepeatedNeighbourStores() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto boundary = base + 2 * Block - 0x9000;
+    const auto sharedFirst = boundary - (base + Block);
+    const auto neighbourBytes = static_cast<std::size_t>(base + 3 * Block - boundary);
+    std::memset(memory, 0x11, 3 * Block);
+
+    const auto synced = CollectWrites(base, 3 * Block);
+    Require(synced != 0, "the test block is not collected");
+    for (int store = 0; store < 6; ++store) MarkWritten(boundary, neighbourBytes);
+    Require(!StoredOver(base + Block, static_cast<std::size_t>(sharedFirst), synced), "repeated stores of the neighbour's bytes count for the first surface's part of the shared block");
+    Require(StoredAllSince_nid_no_patch(boundary, neighbourBytes, synced), "repeated stores of the neighbour's bytes forget that they covered them");
+
+    const auto pieces = TrackerGeneration();
+    for (int store = 0; store < 3; ++store) MarkWritten(boundary + static_cast<std::uint64_t>(store) * 0x100, 4);
+    MarkWritten(boundary, 0x400);
+    Require(StoredOver(boundary + 0x200, 4, pieces) && !StoredOver(boundary + 0x400, 4, pieces), "a store over earlier pieces of the block answers for other bytes than its own");
+    MarkWritten(boundary + 0x800, 4);
+    MarkWritten(boundary + 0x900, 4);
+    Require(!StoredOver(base + Block, static_cast<std::size_t>(sharedFirst), pieces), "a store over earlier pieces counts for the first surface's part of the shared block");
+
+    void* fresh = AllocateWatched(2 * Block);
+    const auto freshBase = reinterpret_cast<std::uint64_t>(fresh);
+    std::memset(fresh, 0x11, 2 * Block);
+    const auto freshSynced = CollectWrites(freshBase, 2 * Block);
+    const auto neighbour = freshBase + Block - 0x9000;
+    MarkWritten(neighbour, 0x100);
+    const auto secondStored = MarkWritten(neighbour + 0x1000, 0x100);
+    const auto thirdStored = MarkWritten(neighbour + 0x2000, 0x100);
+    MarkWritten(neighbour + 0x3000, 0x100);
+    const auto settled = TrackerGeneration();
+    MarkWritten(neighbour, 0x100);
+    MarkWritten(neighbour, 0x100);
+    MarkWritten(neighbour + 0x5000, 0x100);
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), secondStored), "a full exact ring evicted a newer piece instead of its oldest");
+    Require(StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), freshSynced), "a forgotten store is not taken as a store over the rest of the block");
+
+    const auto partial = TrackerGeneration();
+    MarkWritten(neighbour + 0x5080, 0x100);
+    Require(StoredOver(neighbour + 0x5000, 0x10, settled) && StoredOver(neighbour + 0x5100, 0x10, partial), "a store that overlaps an earlier piece without containing it replaces it");
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), thirdStored), "a store that overlaps without containing evicted a newer piece instead of the oldest");
+}
+
 void CheckStoredAllSince() {
     constexpr std::size_t bytes = 4 * Block;
     auto* memory = static_cast<std::uint8_t*>(AllocateWatched(bytes));
@@ -2232,7 +2276,45 @@ void CheckAdoptLatestEpoch() {
     Require(keptOwn, "adopting the newest collect epoch moved a thread off its own");
 }
 
-int main() {
+void CheckGenerationWrap() {
+    constexpr std::uint64_t Wrap = std::uint64_t{1} << 32u;
+    constexpr std::size_t bytes = 192 * Block;
+    void* memory = AllocateWatched(bytes);
+    void* scratch = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto other = reinterpret_cast<std::uint64_t>(scratch);
+    std::memset(memory, 0x11, bytes);
+    std::memset(scratch, 0x11, Block);
+    BumpCollectEpoch();
+    Require(CollectWrites(base, bytes) != 0 && CollectWrites(other, Block) != 0, "the wrap fixture was not collected");
+    AdvanceTrackerGenerationForTest(Wrap - 4);
+    BumpCollectEpoch();
+    const auto before = CollectWritesUncached(base, bytes);
+    Require(before >= Wrap - 4 && before < Wrap, "the stamp before the crossing was not taken just below 2^32");
+    Require(UnchangedSince(base, bytes, before), "a range nothing wrote after its collect reports a change");
+    for (int store = 0; store < 8; ++store) MarkWritten(other, 4);
+    Require(TrackerGeneration() > Wrap, "the tracker generation did not cross 2^32");
+    const auto middle = base + bytes / 2;
+    const auto stored = MarkWritten(middle, 4);
+    Require(stored > Wrap && stored > before, "a driver store after 2^32 returned a stamp not newer than one taken before");
+    Require(!UnchangedSince(base, bytes, before), "a driver store after 2^32 was reported unchanged over whole coarse runs");
+    Require(!UnchangedSince(middle, Block, before), "a driver store after 2^32 was reported unchanged in its block");
+    Require(WrittenSince(base, bytes, before) && StoredOver(middle, 4, before), "a driver store after 2^32 was not seen as written since the earlier stamp");
+    Require(NewestStamp(middle, Block) > before, "the newest stamp after 2^32 is not newer than the earlier stamp");
+    Require(!StoredAllSince_nid_no_patch(middle, 4, stored) && StoredAllSince_nid_no_patch(middle, 4, before), "the driver piece of a store after 2^32 lost its generation");
+    Require(UnchangedSince(base, bytes / 2, before) && UnchangedSince(base, bytes, stored), "a store after 2^32 changed other blocks or a later stamp");
+    static_cast<volatile std::uint8_t*>(memory)[bytes - 1] = 0x22;
+    const auto last = base + bytes - Block;
+    Require(CollectWritesUncached(last, Block) > Wrap, "a collect after 2^32 returned a wrapped generation");
+    Require(!UnchangedSince(last, Block, before) && !UnchangedSinceCollected(last, Block, before), "a CPU store after 2^32 was reported unchanged");
+    std::array<std::uint64_t, 3> generations{before, before, before};
+    std::array<std::uint8_t, 3> changed{};
+    std::array<std::uint8_t, 3> cpu{};
+    Require(ChangedBlocks(base + bytes - 3 * Block, 3 * Block, generations, changed, cpu), "the changed-block query over the wrap fixture failed");
+    Require(changed[0] == BlockUnchanged && changed[2] == BlockWritten && cpu[0] == 0 && cpu[2] == 1, "per-block changes after 2^32 were misreported");
+}
+
+int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         if (std::wstring_view(GetCommandLineW()).ends_with(MetadataCommitMode)) {
@@ -2242,6 +2324,11 @@ int main() {
         if (!WriteWatched()) {
             std::cout << "no write watching: skipped\n";
             return 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--generation-wrap") {
+            CheckGenerationWrap();
+            std::cout << "generation wrap test passed\n";
+            return 0;
         }
 #ifdef _WIN32
         if (std::wstring_view(GetCommandLineW()).ends_with(HostHoleMode)) {
@@ -2276,6 +2363,7 @@ int main() {
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
+        CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
         CheckSharedBlockProofs();
         CheckRepeatedPossibleStores();
