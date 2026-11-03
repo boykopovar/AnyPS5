@@ -4,6 +4,7 @@
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
 #include <atomic>
@@ -281,12 +282,17 @@ int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) {
 }
 
 int APS5_VABI scePthreadMutexGetspinloops(PthreadMutex* mutex, int* count) {
+    if (mutex) {
+        PthreadMutex probe = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+            return SCE_KERNEL_ERROR_EFAULT;
+    }
     auto* current = resolveMutex(mutex, true);
     if (!current)
         return SCE_KERNEL_ERROR_EINVAL;
-    if (!count)
-        throw std::invalid_argument("Spin loop count pointer is null");
-    *count = current->_spinloops;
+    const int value = current->_spinloops;
+    if (!GuestCopyOut_nid_no_patch(count, &value, sizeof(value)))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -299,12 +305,17 @@ int APS5_VABI scePthreadMutexSetspinloops(PthreadMutex* mutex, int count) {
 }
 
 int APS5_VABI scePthreadMutexGetyieldloops(PthreadMutex* mutex, int* count) {
+    if (mutex) {
+        PthreadMutex probe = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&probe, mutex, sizeof(probe)))
+            return SCE_KERNEL_ERROR_EFAULT;
+    }
     auto* current = resolveMutex(mutex, true);
     if (!current)
         return SCE_KERNEL_ERROR_EINVAL;
-    if (!count)
-        throw std::invalid_argument("Yield loop count pointer is null");
-    *count = current->_yieldloops;
+    const int value = current->_yieldloops;
+    if (!GuestCopyOut_nid_no_patch(count, &value, sizeof(value)))
+        return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
