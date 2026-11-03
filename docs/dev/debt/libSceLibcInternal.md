@@ -6,7 +6,7 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/6bd58c3d7a0fa933dd4b524754c43265/e4e5dbc43890a24e35dc1c656135000210e28390) records module, library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp); it is a metadata summary rather than independent verification. One entry belongs to the logical library `libSceLibcInternalExt` within this module.
 
-- [Additional callable exports](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) - 297 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 291 match the public 3.20 catalogue and 6 do not. These are declarations only; neither image label authenticates a retail firmware version. Signatures and behavior are unverified; parameterless `int` declarations are placeholders. Every entry throws through `NotImplemented_nid_no_patch`. All declarations use literal NID aliases; the table records candidate names where known. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) - 295 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 289 match the public 3.20 catalogue and 6 do not. These are declarations only; neither image label authenticates a retail firmware version. Signatures and behavior are unverified; parameterless `int` declarations are placeholders. Every entry throws through `NotImplemented_nid_no_patch`. All declarations use literal NID aliases; the table records candidate names where known. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
@@ -295,8 +295,6 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_seekdir` | `Do3zPpsXj1o` |
 | `backtrace_game` | `jFSmlgyyEUg` |
 | `clock_1700` | `n8onIBR4Qdk` |
-| `devname_r` | `BIALMFTZ75I` |
-| `devname` | `fqLrWSWcGHw` |
 | `malloc_initialize` | `owT6zLJxrTs` |
 | `Unknown` | `GG6441JdYkA` |
 | `Unknown` | `QZ9YgTk+yrE` |
@@ -325,6 +323,8 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 
 - [_sceLibcInternalThreadAtexit, _sceLibcInternalThreadDtors](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - FreeBSD `__cxa_thread_atexit` semantics assumed; a null or non-image destructor and an allocation failure throw
 - [_sceLibcInternalForceTlsDestructor](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - behaviour follows `sceLibcForceTlsDestructor(int)` in a title's `libc.prx` (disassembly): the calling thread's destructors whose dso belongs to the module run newest first, only if the dso's module is loaded and the dso points to itself, in up to 4 passes. The return type is unknown (that function returns nothing), 0 is returned. The module of each dso is looked up when the destructors are forced, not when they are registered as `libc.prx` does
+
+- [Recovered inventory exports](../../../core/libs/prx/libSceLibcInternal/RecoveredInventory.cpp) (libSceLibcInternal) - all 40 parameterless `int` declarations are import-resolution placeholders with unverified parameter lists, return types and behavior; every call throws through `NotImplemented_nid_no_patch`. The names and NIDs are listed in the [PS5 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/226383a7fa4b1275d6cebf61eb1c1e7ca7b58bcb/data/firmware-13.60/libscelibcinternal-f9a6d6abff.jsonl), and the [physical-module map](https://github.com/boykopovar/ps5-nid-map/blob/cc1d586fddab576a520f226da6b2632b031e6d09/data/Modules/libSceLibcInternal.inc) assigns all 40 NIDs to libSceLibcInternal. Neither source establishes the ABI or behavior.
 
 ### Functional
 
