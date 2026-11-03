@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
@@ -10,10 +11,6 @@
 
 using Callback = int (APS5_VABI *)(void*, void*, void**);
 using ExecuteFunction = int (APS5_VABI *)(int*, Callback, void*);
-extern "C" {
-int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(int*, Callback, void*);
-int APS5_VABI std_execute_once_nid_postfix(int*, Callback, void*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

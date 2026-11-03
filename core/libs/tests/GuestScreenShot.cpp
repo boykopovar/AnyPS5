@@ -1,3 +1,4 @@
+#include "prx/libSceScreenShot/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "SceTypes.hpp"
 #include <array>
@@ -10,16 +11,6 @@
 #include <fstream>
 #include <random>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceScreenShotDisable();
-int APS5_VABI sceScreenShotEnable();
-int APS5_VABI sceScreenShotIsDisabled(int id, int* isDisabled);
-int APS5_VABI sceScreenShotDisableNotification();
-int APS5_VABI sceScreenShotEnableNotification();
-int APS5_VABI sceScreenShotSetOverlayImage(const char* path, int offsetX, int offsetY);
-int APS5_VABI sceScreenShotSetOverlayImageWithOrigin(const char* path, int offsetX, int offsetY, int origin);
-}
 
 namespace {
 
@@ -76,6 +67,8 @@ void TestDisableState() {
     Require(sceScreenShotIsDisabled(-1, &value) == ErrorArgument && value == 7, "id -1 is rejected");
     Require(sceScreenShotIsDisabled(0, nullptr) == ErrorArgument, "null result is rejected");
     Require(sceScreenShotDisableNotification() == 0 && sceScreenShotEnableNotification() == 0, "notification toggles");
+    Require(sceScreenShotIsDisabled(1, &value) == 0 && value == 0, "positive id 1 is accepted");
+    Require(sceScreenShotIsDisabled(2, &value) == 0 && value == 0, "positive id 2 is accepted");
 }
 
 void TestOverlay(bool large) {
@@ -89,6 +82,7 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImage(image.c_str(), maxX + 1, 0) == ErrorArgument, "x past the screen");
     Require(sceScreenShotSetOverlayImage(image.c_str(), 0, maxY + 1) == ErrorArgument, "y past the screen");
     Require(sceScreenShotSetOverlayImage(image.c_str(), -1, 0) == ErrorArgument, "negative x");
+    Require(sceScreenShotSetOverlayImage(image.c_str(), 0, -1) == ErrorArgument, "negative y");
     Require(sceScreenShotSetOverlayImage(nullptr, 0, 0) == ErrorArgument, "null path");
     const std::string longPath(1024, 'a');
     Require(sceScreenShotSetOverlayImage(longPath.c_str(), 0, 0) == ErrorArgument, "path of 1024 characters");
@@ -109,6 +103,11 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, 0, 0) == ErrorArgument, "origin 0");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, 0, 10) == ErrorArgument, "origin 10");
     Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 0) == ErrorArgument, "origin checked first");
+    Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 1) == ErrorArgument, "null path with valid origin");
+    Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), -1, 0, 1) == ErrorArgument, "negative x with valid origin");
+    Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, -1, 1) == ErrorArgument, "negative y with valid origin");
+    Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), maxX + 1, 0, 1) == ErrorArgument, "x past screen with valid origin");
+    Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, maxY + 1, 1) == ErrorArgument, "y past screen with valid origin");
 }
 
 }

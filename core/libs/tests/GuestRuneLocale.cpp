@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cctype>
 #include <cerrno>
@@ -11,43 +12,6 @@ extern "C" {
 extern const unsigned char _DefaultRuneLocale_nid_postfix[4224];
 extern const unsigned char* _CurrentRuneLocale_nid_postfix;
 extern int __mb_sb_limit_nid_postfix;
-int APS5_VABI isalpha_nid_postfix(int);
-int APS5_VABI iscntrl_nid_postfix(int);
-int APS5_VABI isdigit_nid_postfix(int);
-int APS5_VABI isgraph_nid_postfix(int);
-int APS5_VABI islower_nid_postfix(int);
-int APS5_VABI isprint_nid_postfix(int);
-int APS5_VABI ispunct_nid_postfix(int);
-int APS5_VABI isspace_nid_postfix(int);
-int APS5_VABI isupper_nid_postfix(int);
-int APS5_VABI isxdigit_nid_postfix(int);
-int APS5_VABI isblank_nid_postfix(int);
-int APS5_VABI tolower_nid_postfix(int);
-int APS5_VABI toupper_nid_postfix(int);
-int APS5_VABI iswalnum_nid_postfix(std::uint32_t);
-int APS5_VABI iswalpha_nid_postfix(std::uint32_t);
-int APS5_VABI iswblank_nid_postfix(std::uint32_t);
-int APS5_VABI iswcntrl_nid_postfix(std::uint32_t);
-int APS5_VABI iswdigit_nid_postfix(std::uint32_t);
-int APS5_VABI iswgraph_nid_postfix(std::uint32_t);
-int APS5_VABI iswlower_nid_postfix(std::uint32_t);
-int APS5_VABI iswprint_nid_postfix(std::uint32_t);
-int APS5_VABI iswpunct_nid_postfix(std::uint32_t);
-int APS5_VABI iswspace_nid_postfix(std::uint32_t);
-int APS5_VABI iswupper_nid_postfix(std::uint32_t);
-int APS5_VABI iswxdigit_nid_postfix(std::uint32_t);
-int APS5_VABI iswctype_nid_postfix(std::uint32_t, std::uint64_t);
-std::uint64_t APS5_VABI wctype_nid_postfix(const char*);
-std::uint32_t APS5_VABI towlower_nid_postfix(std::uint32_t);
-std::uint32_t APS5_VABI towupper_nid_postfix(std::uint32_t);
-std::uint64_t APS5_VABI wctrans_nid_postfix(const char*);
-std::uint32_t APS5_VABI towctrans_nid_postfix(std::uint32_t, std::uint64_t);
-std::uint32_t APS5_VABI _Towlower_nid_postfix(std::uint32_t, const void*);
-std::uint32_t APS5_VABI _Towupper_nid_postfix(std::uint32_t, const void*);
-int APS5_VABI _Tolower_nid_postfix(int, const void*);
-int APS5_VABI _Toupper_nid_postfix(int, const void*);
-std::uint32_t APS5_VABI btowc_nid_postfix(int);
-int APS5_VABI wctob_nid_postfix(std::uint32_t);
 }
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -120,6 +84,10 @@ int main() {
         }
         Require(entry.wide(0xffffffff) == 0 && iswctype_nid_postfix(0xffffffff, entry.mask) == 0);
     }
+    for (std::uint32_t c = 0; c < 300; ++c) {
+        Require((iswascii_nid_postfix(c) != 0) == (c <= 0x7f));
+    }
+    Require(iswascii_nid_postfix(0xffffffff) == 0);
     Require(wctype_nid_postfix("ideogram") == 0x80000 && wctype_nid_postfix("special") == 0x100000);
     Require(wctype_nid_postfix("phonogram") == 0x200000 && wctype_nid_postfix("number") == 0x400000);
     Require(wctype_nid_postfix("rune") == 0xffffff00 && wctype_nid_postfix("") == 0 && wctype_nid_postfix("Alpha") == 0);

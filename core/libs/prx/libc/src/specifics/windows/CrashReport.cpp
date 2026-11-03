@@ -4,6 +4,7 @@
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/CrashText.hpp"
 #include <algorithm>
@@ -32,8 +33,7 @@ void Report(const char* format, ...) {
     va_end(args);
     if (length <= 0) return;
     if (length > static_cast<int>(sizeof(buffer)) - 1) length = sizeof(buffer) - 1;
-    DWORD written = 0;
-    WriteFile(GetStdHandle(STD_ERROR_HANDLE), buffer, static_cast<DWORD>(length), &written, nullptr);
+    log_file::CrashWrite(log_file::StandardError, buffer, static_cast<std::size_t>(length));
 }
 
 void ReportAllThreads();
@@ -76,6 +76,7 @@ bool IsFatal(DWORD code) {
     case EXCEPTION_PRIV_INSTRUCTION:
     case EXCEPTION_STACK_OVERFLOW:
     case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case EXCEPTION_INT_OVERFLOW:
     case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
     case EXCEPTION_IN_PAGE_ERROR:
         return true;
@@ -372,7 +373,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     char line[MAX_PATH + 64];
     char threadName[128] = "";
     if (PWSTR description = ThreadDescription(GetCurrentThread())) {
-        WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName), nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, description, -1, threadName, sizeof(threadName) - 1, nullptr, nullptr);
         LocalFree(description);
     }
     Report("\nFATAL: unhandled exception 0x%08lx on thread %lu '%s'\n", record->ExceptionCode, GetCurrentThreadId(), threadName);
@@ -590,7 +591,7 @@ void ReportAllThreads() {
             ResumeThread(thread);
             char name[128] = "";
             if (PWSTR description = ThreadDescription(thread)) {
-                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name), nullptr, nullptr);
+                WideCharToMultiByte(CP_UTF8, 0, description, -1, name, sizeof(name) - 1, nullptr, nullptr);
                 LocalFree(description);
             }
             CloseHandle(thread);

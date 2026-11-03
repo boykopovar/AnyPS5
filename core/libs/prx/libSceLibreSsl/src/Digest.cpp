@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -7,40 +8,6 @@
 #include "prx/libc/include/General.hpp"
 
 namespace {
-struct Md4Context {
-    std::uint32_t A, B, C, D;
-    std::uint32_t Nl, Nh;
-    std::uint32_t data[16];
-    std::uint32_t num;
-};
-
-struct Md5Context {
-    std::uint32_t A, B, C, D;
-    std::uint32_t Nl, Nh;
-    std::uint32_t data[16];
-    std::uint32_t num;
-};
-
-struct Sha1Context {
-    std::uint32_t h[5];
-    std::uint32_t Nl, Nh;
-    std::uint32_t data[16];
-    std::uint32_t num;
-};
-
-struct Sha256Context {
-    std::uint32_t h[8];
-    std::uint32_t Nl, Nh;
-    std::uint32_t data[16];
-    std::uint32_t num, mdLength;
-};
-
-struct Sha512Context {
-    std::uint64_t h[8];
-    std::uint64_t Nl, Nh;
-    std::uint64_t data[16];
-    std::uint32_t num, mdLength;
-};
 
 static_assert(sizeof(Md4Context) == 92);
 static_assert(sizeof(Md5Context) == 92);
@@ -340,8 +307,6 @@ int Sha512Final(unsigned char* digest, Sha512Context& c) {
     StoreBig64(buffer + 120, c.Nl);
     Sha512Block(c, buffer);
     if (!digest) return 0;
-    if (c.mdLength == Sha224Length || c.mdLength == Sha256Length)
-        NotImplemented_nid_no_patch("SHA512_Final: SHA-512/224 and SHA-512/256 digest lengths");
     if (c.mdLength != Sha384Length && c.mdLength != Sha512Length) return 0;
     for (std::size_t i = 0; i < c.mdLength / 8; ++i) StoreBig64(digest + 8 * i, c.h[i]);
     return 1;
@@ -490,10 +455,12 @@ int APS5_VABI SHA224_Final_nid_postfix(unsigned char* digest, Sha256Context* con
 }
 
 unsigned char* APS5_VABI SHA256_nid_postfix(const unsigned char* data, std::size_t length, unsigned char* digest) {
+    static unsigned char buffer[Sha256Length];
     RequireInput(data, length, __func__);
-    if (!digest) NotImplemented_nid_no_patch("SHA256: null digest buffer");
+    if (!digest) digest = buffer;
     Sha256Context c;
     SHA256_Init_nid_postfix(&c);
+
     if (length) Update32(c, data, length, Sha256Block);
     Sha256Final(digest, c, __func__);
     return digest;
@@ -505,8 +472,10 @@ int APS5_VABI SHA384_Init_nid_postfix(Sha512Context* context) {
         0x67332667ffc00b31, 0x8eb44a8768581511, 0xdb0c2e0d64f98fa7, 0x47b5481dbefa4fa4,
     };
     auto& c = RequireContext(context, __func__);
-    std::memset(&c, 0, sizeof(c));
     std::memcpy(c.h, initial, sizeof(initial));
+    c.Nl = 0;
+    c.Nh = 0;
+    c.num = 0;
     c.mdLength = Sha384Length;
     return 1;
 }
@@ -517,8 +486,10 @@ int APS5_VABI SHA512_Init_nid_postfix(Sha512Context* context) {
         0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
     };
     auto& c = RequireContext(context, __func__);
-    std::memset(&c, 0, sizeof(c));
     std::memcpy(c.h, initial, sizeof(initial));
+    c.Nl = 0;
+    c.Nh = 0;
+    c.num = 0;
     c.mdLength = Sha512Length;
     return 1;
 }

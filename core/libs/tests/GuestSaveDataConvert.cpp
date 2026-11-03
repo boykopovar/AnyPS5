@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
@@ -6,17 +8,10 @@
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceSaveDataConvert(const SaveDataConvert*);
-int APS5_VABI sceSaveDataGetConvertProgress(float*);
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataTerminate();
-int APS5_VABI sceSaveDataGetEventResult(const void*, SaveDataEvent*);
-}
 
 namespace {
 
@@ -63,6 +58,9 @@ int main() {
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds");
     Check(progress == 0.0f, "convert progress reports 0.0f initially");
     Check(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
+    Check(sceSaveDataConvert(nullptr) == SaveDataErrorParameter, "null convert pointer is rejected");
+    SaveDataConvert nullDir{};
+    Check(sceSaveDataConvert(&nullDir) == SaveDataErrorParameter, "null dir_name pointer is rejected");
     Check(Convert("missing", sizeof("missing")) == SaveDataErrorNotFound, "a missing save is not found");
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after failed convert");
     Check(progress < 1.0f, "convert progress is below 1.0f after failed convert");
@@ -80,7 +78,7 @@ int main() {
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after subsequent failed convert");
     Check(progress < 1.0f, "convert progress drops below 1.0f after subsequent failed convert");
     Check(progress == 0.0f, "convert progress reports 0.0f after subsequent failed convert");
-    for (const char* invalid : {"../kept", "", ".", "..", "a\\b", "c:d"}) {
+    for (const char* invalid : {"../kept", "", ".", "..", "a/b", "a\\b", "c:d"}) {
         Check(Convert(invalid, std::strlen(invalid) + 1) == SaveDataErrorParameter, std::string("\"") + invalid + "\" is rejected");
     }
     char unterminated[sizeof(SceSaveDataDirName::data)];

@@ -153,6 +153,16 @@ void windowsStubInitializesMxcsrBeforeGuestEntry() {
     require(found, "the Windows stub does not call the guest entry point");
 }
 
+void windowsStubWaitsForTheParentAfterOpeningTheLog(const std::string& runPath) {
+    const auto nativeImports = Elfpatcher::Windows::WindowsImportBuilder().Build(0x1000);
+    const auto stub = windowsStub(nativeImports, runPath, {"libc.prx"});
+    const auto log = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("CreateFileW"), 0);
+    require(log != std::string::npos, runPath + ": the stub does not open anyps5.log");
+    const auto parent = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("GetEnvironmentVariableW"), 0);
+    require(parent != std::string::npos, runPath + ": the stub does not read ANYPS5_LOADEXEC_PARENT");
+    require(log < parent, runPath + ": the stub reads ANYPS5_LOADEXEC_PARENT before anyps5.log is opened");
+}
+
 void windowsLibSceAmprObjectImportsFallBackToTheLibcProvider() {
     using namespace Elfpatcher::Windows;
     const auto nativeImports = WindowsImportBuilder().Build(0x1000);
@@ -184,15 +194,26 @@ void windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant() 
 void windowsKernelVariantDependenciesLoadCanonicalKernel() {
     using namespace Elfpatcher::Windows;
     for (const auto& variant : {std::string("libkernel_sys.prx"), std::string("libkernel_web.prx")}) {
+        const auto other = variant == "libkernel_sys.prx" ? "libkernel_web.prx" : "libkernel_sys.prx";
         Domain::SysVDynamicSection dynamic;
         dynamic.DynStrData.insert(dynamic.DynStrData.end(), variant.begin(), variant.end());
         dynamic.DynStrData.push_back(0);
         dynamic.DynamicSegmentData.resize(16);
         Io::WriteU64(dynamic.DynamicSegmentData, 0, 1);
         Io::WriteU64(dynamic.DynamicSegmentData, 8, 0);
-        require(WindowsImportBuilder().ReadLibraries(dynamic) == std::vector<std::string>{variant, "libkernel.prx", "libc.prx"},
+        require(WindowsImportBuilder().ReadLibraries(dynamic) == std::vector<std::string>{variant, "libkernel.prx", other, "libc.prx"},
                 variant + ": canonical kernel fallback and its libc provider are not loaded after the requested module");
     }
+}
+
+void stubRejectsAnEntryBeyondTheWrapBoundary() {
+    bool threw = false;
+    try {
+        static_cast<void>(Elfpatcher::EntryStubBuilder().BuildEntryStub(0x1000, 0xFFFFFFFFFFFFF000));
+    } catch (const Domain::RelinkerException& error) {
+        threw = std::string(error.what()).find("rel32") != std::string::npos;
+    }
+    require(threw, "an entry point more than 2^63 from the stub was accepted with a wrapped displacement");
 }
 
 }
@@ -200,12 +221,15 @@ void windowsKernelVariantDependenciesLoadCanonicalKernel() {
 int main() {
     try {
         stubTerminatesTheFrameChain();
+        stubRejectsAnEntryBeyondTheWrapBoundary();
         windowsStubLoadsTheAllocatorFirst("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
         windowsStubLoadsTheAllocatorFirst("$ORIGIN/libs", u"libs\\", {0x48, 0x8d, 0x35});
         windowsStubLoadsTheAllocatorOnRequest("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
         windowsStubLoadsTheAllocatorOnRequest("$ORIGIN/libs", u"libs\\", {0x48, 0x8d, 0x35});
         windowsStubRejectsAnOverlongAllocatorPath();
         windowsStubInitializesMxcsrBeforeGuestEntry();
+        windowsStubWaitsForTheParentAfterOpeningTheLog("C:/Games/Title/libs");
+        windowsStubWaitsForTheParentAfterOpeningTheLog("$ORIGIN/libs");
         windowsLibSceAmprObjectImportsFallBackToTheLibcProvider();
         windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant();
         windowsKernelVariantDependenciesLoadCanonicalKernel();

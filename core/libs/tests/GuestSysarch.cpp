@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <cstdint>
@@ -5,13 +7,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI sysarch(int number, void* args);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -69,6 +64,17 @@ int main() {
     Require(sysarch(7, nullptr) == -1 && *__error_nid_postfix() == 14);
     *__error_nid_postfix() = 0;
     Require(sysarch(9, nullptr) == -1 && *__error_nid_postfix() == 14);
+    void* const bad = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+    *__error_nid_postfix() = 0;
+    Require(sysarch(7, bad) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(9, bad) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(128, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(128, bad) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(130, bad) == -1 && *__error_nid_postfix() == 14);
     std::uint64_t inherited = 0;
     Pthread child = nullptr;
     Require(scePthreadCreate(&child, nullptr, ReadGsBase, &inherited, "sysarch_gs") == 0);
@@ -79,6 +85,9 @@ int main() {
     Require(sysarch(130, &read) == 0 && read == base);
     *__error_nid_postfix() = 0;
     Require(sysarch(131, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(131, bad) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
     Require(sysarch(130, nullptr) == -1 && *__error_nid_postfix() == 14);
     std::uint64_t zero = 0;
     Require(sysarch(131, &zero) == 0 && sysarch(130, &read) == 0 && read == 0);

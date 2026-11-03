@@ -1,45 +1,11 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
-int APS5_VABI sceHttpTerm_nid_postfix(int);
-int APS5_VABI sceHttpCreateTemplate(int, const char*, int, int);
-int APS5_VABI sceHttpDeleteTemplate(int);
-int APS5_VABI sceHttpCreateConnectionWithURL(int, const char*, int);
-int APS5_VABI sceHttpDeleteConnection(int);
-int APS5_VABI sceHttpCreateRequestWithURL(int, int, const char*, std::uint64_t);
-int APS5_VABI sceHttpDeleteRequest(int);
-int APS5_VABI sceHttpSetAutoRedirect(int, int);
-int APS5_VABI sceHttpGetAutoRedirect(int, int*);
-int APS5_VABI sceHttpSetAuthEnabled(int, int);
-int APS5_VABI sceHttpGetAuthEnabled(int, int*);
-int APS5_VABI sceHttpSetCookieEnabled(int, int);
-int APS5_VABI sceHttpGetCookieEnabled(int, int*);
-int APS5_VABI sceHttpSetNonblock(int, int);
-int APS5_VABI sceHttpGetNonblock(int, int*);
-int APS5_VABI sceHttpTrySetNonblock(int, int);
-int APS5_VABI sceHttpTryGetNonblock(int, int*);
-int APS5_VABI sceHttpSetAcceptEncodingGZIPEnabled(int, int);
-int APS5_VABI sceHttpGetAcceptEncodingGZIPEnabled(int, int*);
-int APS5_VABI sceHttpSetDefaultAcceptEncodingGZIPEnabled(int, int);
-int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
-int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
-int APS5_VABI sceHttpSetEpoll(int, HttpEpollHandle, void*);
-int APS5_VABI sceHttpUnsetEpoll(int);
-int APS5_VABI sceHttpGetEpoll(int, HttpEpollHandle*, void**);
-int APS5_VABI sceHttpCacheRedirectedConnectionEnabled(int, int);
-int APS5_VABI sceHttpsEnableOptionPrivate(int, std::uint32_t);
-int APS5_VABI sceHttpsDisableOptionPrivate(int, std::uint32_t);
-int APS5_VABI sceHttpAbortRequestForce(int);
-int APS5_VABI sceHttpSetProxy(int, int, int, const char*, std::uint16_t);
-int APS5_VABI sceHttpAddRequestHeader(int, const char*, const char*, std::uint32_t);
-int APS5_VABI sceHttpRemoveRequestHeader(int, const char*);
-}
+#include <stdexcept>
 
 namespace {
 
@@ -201,6 +167,34 @@ void CheckTermEndsOptions() {
     Require(sceHttpTerm_nid_postfix(next) == 0, "sceHttpTerm failed");
 }
 
+bool RefusesNull(int context, int* netPoolId, int* sslContextId) {
+    try {
+        sceHttpGetRegisteredCtxIds(context, netPoolId, sslContextId);
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckRegisteredCtxIds() {
+    int netPoolId = -1;
+    int sslContextId = -1;
+    Require(sceHttpGetRegisteredCtxIds(UnknownId, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered before sceHttpInit");
+    const int first = sceHttpInit_nid_postfix(3, 7, 0x10000);
+    const int second = sceHttpInit_nid_postfix(5, 9, 0x20000);
+    Require(sceHttpGetRegisteredCtxIds(first, &netPoolId, &sslContextId) == 0 && netPoolId == 3 && sslContextId == 7, "the ids given to the first sceHttpInit were not reported");
+    Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == 0 && netPoolId == 5 && sslContextId == 9, "the ids given to the second sceHttpInit were not reported");
+    Require(RefusesNull(second, nullptr, &sslContextId) && RefusesNull(second, &netPoolId, nullptr), "a null output was taken");
+    netPoolId = -1;
+    sslContextId = -1;
+    Require(sceHttpGetRegisteredCtxIds(UnknownId, &netPoolId, &sslContextId) == InvalidId, "sceHttpGetRegisteredCtxIds took an unknown id");
+    Require(sceHttpTerm_nid_postfix(first) == 0, "sceHttpTerm failed");
+    Require(sceHttpGetRegisteredCtxIds(first, &netPoolId, &sslContextId) == InvalidId, "a terminated context still reported its ids");
+    Require(netPoolId == -1 && sslContextId == -1, "a refused query wrote its outputs");
+    Require(sceHttpTerm_nid_postfix(second) == 0, "sceHttpTerm failed");
+    Require(sceHttpGetRegisteredCtxIds(second, &netPoolId, &sslContextId) == BeforeInit, "sceHttpGetRegisteredCtxIds answered after the last sceHttpTerm");
+}
+
 void CheckUnobservedOptions(int context) {
     const int pattern = sceHttpCreateTemplate(context, "anyps5-test", 2, 0);
     const int connection = sceHttpCreateConnectionWithURL(pattern, "http://example.com/", 1);
@@ -241,6 +235,7 @@ int main() {
     Require(sceHttpTerm_nid_postfix(context) == 0, "sceHttpTerm failed");
     Require(sceHttpSetDefaultAcceptEncodingGZIPEnabled(context, 1) == BeforeInit, "a gzip default was taken before sceHttpInit");
     CheckTermEndsOptions();
+    CheckRegisteredCtxIds();
     std::puts("HTTP option tests passed");
     return 0;
 }

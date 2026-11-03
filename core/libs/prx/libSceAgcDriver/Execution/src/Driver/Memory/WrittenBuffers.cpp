@@ -48,17 +48,16 @@ void Driver::noteWrittenBuffers(std::uint64_t program, std::uint32_t queue, cons
     std::lock_guard lock(writtenBuffersMutex);
     const auto serial = ++writtenBufferSerial;
     forEachWrittenBuffer(compiled, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool atomic) {
-        writtenBuffers.push_back({program, begin, end, serial, queue, atomic});
+        writtenBuffers.Push({program, begin, end, serial, queue, atomic});
     });
-    while (writtenBuffers.size() > WrittenBufferRing) writtenBuffers.pop_front();
 }
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const ShaderRecompiler::RecompileResult& compiled, bool& bounded) {
-    bounded = compiled.bdaAbiVersion == 0;
+    bounded = compiled.bdaAbiVersion == 0 || std::any_of(compiled.bindings.begin(), compiled.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer; });
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     constexpr std::uint64_t UnknownImageBytes = 64ull * 1024 * 1024;
     for (const auto& binding : compiled.bindings) {
-        if (binding.role == ShaderRecompiler::DescriptorRole::Gds || binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer) bounded = false;
+        if (binding.role == ShaderRecompiler::DescriptorRole::Gds || binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable) bounded = false;
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
             const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
@@ -82,8 +81,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const S
 void Driver::noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint32_t queue) {
     if (!foreignWriters() || !(writeEvidenceEnabled() || traceCapSync()) || end <= begin) return;
     std::lock_guard lock(writtenBuffersMutex);
-    writtenBuffers.push_back({0, begin, end, ++writtenBufferSerial, queue, false});
-    while (writtenBuffers.size() > WrittenBufferRing) writtenBuffers.pop_front();
+    writtenBuffers.Push({0, begin, end, ++writtenBufferSerial, queue, false});
 }
 
 void Driver::noteDrawWriters(std::span<const Graphics::CompiledShader> stages, std::uint32_t queue) {
@@ -113,7 +111,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
                 const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
                 if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
-                if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
+                if (Graphics::IsNullTextureResource(words)) continue;
                 const auto resource = Graphics::DecodeTextureResource(words);
                 if (resource.baseAddress == 0) continue;
                 const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
@@ -196,10 +194,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const 
 }
 
 std::optional<WrittenBuffer> Driver::newestWriterLocked(std::uint64_t begin, std::uint64_t end) const {
-    for (auto it = writtenBuffers.rbegin(); it != writtenBuffers.rend(); ++it) {
-        if (begin < it->end && it->begin < end) return *it;
-    }
-    return std::nullopt;
+    return writtenBuffers.Newest(begin, end);
 }
 
 std::optional<WrittenBuffer> Driver::newestWriter(std::uint64_t begin, std::uint64_t end) {
@@ -211,7 +206,7 @@ std::string Driver::describeWriters(std::uint64_t begin, std::uint64_t end) {
     std::string text;
     std::lock_guard lock(writtenBuffersMutex);
     int shown = 0;
-    for (auto it = writtenBuffers.rbegin(); it != writtenBuffers.rend() && shown < 3; ++it) {
+    for (auto it = writtenBuffers.Entries().rbegin(); it != writtenBuffers.Entries().rend() && shown < 3; ++it) {
         if (begin >= it->end || it->begin >= end) continue;
         char item[128];
         if (it->program == 0) std::snprintf(item, sizeof(item), " [foreign q0x%x 0x%llx+0x%llx age %llu]", it->queue, static_cast<unsigned long long>(it->begin), static_cast<unsigned long long>(it->end - it->begin), static_cast<unsigned long long>(writtenBufferSerial - it->serial));

@@ -1,3 +1,5 @@
+#include "prx/libSceNpAuthAuthorizedAppDialog/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -5,8 +7,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libc/include/General.hpp"
-
-extern "C" int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* users);
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 
 namespace {
 
@@ -46,6 +47,7 @@ int APS5_VABI sceNpAuthAuthorizedAppDialogOpen(const NpAuthAuthorizedAppDialogPa
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status == COMMON_DIALOG_STATUS_RUNNING) return COMMON_DIALOG_ERROR_BUSY;
     g_status = COMMON_DIALOG_STATUS_FINISHED;
+    PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return 0;
 }
 

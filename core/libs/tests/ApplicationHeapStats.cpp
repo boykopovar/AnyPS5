@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -5,11 +6,6 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI malloc_stats_fast_nid_postfix(void*);
-std::size_t APS5_VABI malloc_usable_size_nid_postfix(void*);
-}
 
 namespace {
 

@@ -1,11 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-const char* APS5_VABI __inet_ntop_nid_postfix(int family, const void* source, char* destination, std::uint32_t capacity);
-}
 
 namespace {
 
@@ -94,6 +92,7 @@ std::uint32_t APS5_VABI inet_addr_nid_postfix(const char* text) {
 
 char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size) {
     __inet_ntop_nid_postfix(AddressFamilyInet, &address, buffer, size);
+
     return buffer;
 }
 
@@ -104,6 +103,7 @@ char* APS5_VABI __inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, s
 char* APS5_VABI inet_ntoa_nid_postfix(std::uint32_t address) {
     std::memcpy(g_ntoaBuffer, "[inet_ntoa error]", sizeof(g_ntoaBuffer));
     __inet_ntop_nid_postfix(AddressFamilyInet, &address, g_ntoaBuffer, sizeof(g_ntoaBuffer));
+
     return g_ntoaBuffer;
 }
 
