@@ -76,6 +76,8 @@ public:
     };
     DataSpan Allocate(std::size_t words, SpanMark& mark);
     bool Held(const SpanMark& mark);
+    std::uint32_t RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark);
+    static constexpr std::uint32_t BufferSlotBytes = 16u;
 
     static constexpr std::uint32_t SamplerKind = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Samplers);
     void Submitted(Recorder& recorder, std::uint64_t serial);
@@ -83,7 +85,7 @@ public:
     struct Counts {
         std::uint64_t ringWraps = 0, encodes = 0, encodedCopies = 0;
         std::uint64_t slotsFreed = 0, slotsReused = 0;
-        std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0;
+        std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0, bufferDescriptors = 0;
     };
     Counts Statistics() const;
     std::size_t RingChunkCount() const { return ringChunks.size(); }

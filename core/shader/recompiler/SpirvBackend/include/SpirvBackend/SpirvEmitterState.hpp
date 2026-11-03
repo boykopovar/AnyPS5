@@ -116,6 +116,7 @@ struct SpirvEmitterState {
     bool registrationModules = false;
     bool gpuResolvedImages = false;
     std::uint32_t heapDataUniformDwords = 0;
+    bool heapBufferDescriptors = false;
     bool addressedBuffers = false;
     std::optional<bool> guestBuffersWritten;
     bool fragmentDescriptorSet = false;

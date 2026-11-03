@@ -643,6 +643,11 @@ private:
     bool heapStage = false;
     std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> heapOffsets{};
     void writeHeapStage(const CompiledShader& shader);
+    struct RingDescriptors {
+        std::vector<VkDeviceAddressRangeEXT> ranges;
+        BindlessHeap::SpanMark mark;
+        std::uint32_t first = 0;
+    };
     struct HeapStageState {
         std::vector<std::uintptr_t> key;
         std::array<std::vector<std::uint32_t>, static_cast<std::size_t>(ShaderRecompiler::RuntimeAbi::Binding::Count)> slots;
@@ -657,6 +662,7 @@ private:
         };
         KeptSpan data, flat, map;
         std::vector<std::uint32_t> dataInput;
+        RingDescriptors descriptors;
     };
     std::array<HeapStageState, ShaderRecompiler::RuntimeAbi::StageCount> heapStages;
     std::uint32_t heapSpan(HeapStageState::KeptSpan& kept, std::span<const std::uint32_t> words);
@@ -700,7 +706,12 @@ private:
     std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMaps{};
     std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> heapTableMapSet{};
     void writeHeapTableMap(const CompiledShader& shader, std::size_t stageIndex);
-    void writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides) const;
+    void writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides,
+                              std::vector<VkDeviceAddressRangeEXT>* ranges = nullptr) const;
+    VkDeviceAddressRangeEXT srtRange(std::size_t stage) const;
+    std::uint32_t ringDescriptors(std::size_t stage, const std::vector<VkDescriptorBufferInfo>* overrides, RingDescriptors& kept) const;
+    std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::StageCount> heapSrtOffsets{};
+    std::array<bool, ShaderRecompiler::RuntimeAbi::StageCount> ringDescriptorStages{};
     std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> addressedOffsets(const std::vector<VkDescriptorBufferInfo>* overrides) const;
     struct FaultDescriptor {
         std::size_t write;

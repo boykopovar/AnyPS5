@@ -360,6 +360,7 @@ struct SpirvTarget {
     bool gpuResolvedImages = false;
     bool descriptorMemory = false;
     std::uint32_t heapDataUniformDwords = 0;
+    bool heapBufferDescriptors = false;
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;

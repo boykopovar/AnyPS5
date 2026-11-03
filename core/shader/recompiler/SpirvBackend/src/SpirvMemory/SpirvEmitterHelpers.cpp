@@ -508,8 +508,8 @@ void DefineDescriptors(SpirvEmitterState& state) {
             return state.module.Type(spv::OpTypeArray, type, length);
         };
         switch (binding.kind) {
-        case DescriptorBindingKind::Buffers:
-            if (layout.bufferAddressDwords != 0u) {
+        case DescriptorBindingKind::Buffers: {
+            if (layout.bufferAddressDwords != 0u && !state.heapBufferDescriptors) {
                 state.addressedBuffers = true;
                 break;
             }
@@ -526,6 +526,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 if (state.storageBufferU64Variable != 0u) state.module.AddAnnotation(spv::OpDecorate, state.storageBufferU64Variable, spv::DecorationCoherent);
             }
             break;
+        }
         case DescriptorBindingKind::BdaPagetable:
             if (layout.UsesDataAddress()) {
                 state.bdaPagetableVariable = state.module.AllocateId();
@@ -553,10 +554,10 @@ void DefineDescriptors(SpirvEmitterState& state) {
             }
             break;
         case DescriptorBindingKind::FlattenedSrt:
-            if (layout.UsesDataAddress()) state.flattenedSrtAddressed = true;
+            if (layout.UsesDataAddress() && !state.heapBufferDescriptors) state.flattenedSrtAddressed = true;
             else {
                 state.flattenedSrtVariable = Define(StorageBufferBlockType(state), "flattened_srt");
-                state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
+                if (!layout.UsesDataAddress()) state.module.AddAnnotation(spv::OpDecorate, state.flattenedSrtVariable, spv::DecorationNonWritable);
             }
             break;
         case DescriptorBindingKind::Samplers:

@@ -952,6 +952,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.deviceScopeLdsMemoryBarriers);
     writer.WriteBool(request.target.exactRobustLoads);
     writer.WriteBool(request.target.robustBufferAccess2);
+    writer.WriteBool(request.target.heapBufferDescriptors);
     return base64Encode(buffer);
 }
 
@@ -1033,6 +1034,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.deviceScopeLdsMemoryBarriers = reader.ReadBool();
         result.request.target.exactRobustLoads = reader.ReadBool();
         result.request.target.robustBufferAccess2 = reader.ReadBool();
+        result.request.target.heapBufferDescriptors = reader.ReadBool();
     }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;

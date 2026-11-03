@@ -112,10 +112,13 @@ std::uint32_t dataAddressLoad(SpirvEmitterState& state, RuntimeAbi::RootStageFie
         const auto u32 = TypeU32(state);
         const auto vector = Binary(state, spv::OpShiftRightLogical, u32, index, ConstantU32(state, 2u));
         const auto component = Binary(state, spv::OpBitwiseAnd, u32, index, ConstantU32(state, 3u));
+        const auto u32x4 = TypeU32Vector(state, 4);
         const auto element = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassUniform, u32), element, state.shaderDataUniformVariable, ConstantU32(state, 0u), vector, component);
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassUniform, u32x4), element, state.shaderDataUniformVariable, ConstantU32(state, 0u), vector);
+        const auto words = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, u32x4, words, element);
         const auto value = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, u32, value, element);
+        state.module.AddFunction(spv::OpVectorExtractDynamic, u32, value, words, component);
         return value;
     }
     const auto pointer = EmitStageRingWordPointer(state, field, index);

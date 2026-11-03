@@ -164,8 +164,6 @@ struct ResourceRing {
 };
 
 ResourceRing resourceRing(const VkPhysicalDeviceDescriptorHeapPropertiesEXT& properties, VkDeviceSize uniformAlignment) {
-    static const bool disabled = std::getenv("APS5_NO_HEAP_DATA_UNIFORM") != nullptr;
-    if (disabled) return {};
     const auto sizes = heapSizes(properties);
     const auto offset = alignUp(sizes.resourceUsed + properties.minResourceHeapReservedRange, std::max<VkDeviceSize>(uniformAlignment, properties.resourceHeapAlignment));
     if (offset >= properties.maxResourceHeapSize) return {};
@@ -641,6 +639,8 @@ struct HeapBindingRoots {
     bool scratchPool = false;
 };
 
+using SetAndBinding = std::pair<std::uint32_t, std::uint32_t>;
+
 struct HeapBindingUse {
     std::vector<std::uint32_t> imageBindings;
     bool workgroupMemory = false;
@@ -650,10 +650,9 @@ struct HeapBindingUse {
     bool meshWindowMemory = false;
     bool scratchPoolMemory = false;
     std::vector<std::uint32_t> dataUniforms;
+    std::vector<SetAndBinding> ringDescriptors;
     std::pair<std::uint32_t, std::uint32_t> refused{~0u, ~0u};
 };
-
-using SetAndBinding = std::pair<std::uint32_t, std::uint32_t>;
 
 std::optional<std::unordered_map<std::uint32_t, SetAndBinding>> decoratedVariables(std::span<const std::uint32_t> spirv) {
     constexpr std::size_t HeaderWords = 5u;
@@ -711,6 +710,12 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
             use.dataUniforms.push_back(binding);
             continue;
         }
+        const bool stageBinding = binding / bindingCount < Abi::StageCount;
+        if (roots.gdsAddress && stageBinding && ((set == Abi::DescriptorSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::Buffers)) ||
+                             (set == Abi::GpuDataSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::FlattenedSrt)))) {
+            if (std::find(use.ringDescriptors.begin(), use.ringDescriptors.end(), entry) == use.ringDescriptors.end()) use.ringDescriptors.push_back(entry);
+            continue;
+        }
         const bool heapImageOrSampler = set == Abi::FragmentDescriptorSet && binding >= firstImage && binding <= samplers;
         if (!heapImageOrSampler) {
             use.refused = entry;
@@ -749,6 +754,22 @@ VkDescriptorSetAndBindingMappingEXT pushAddressMapping(std::uint32_t set, std::u
 
 constexpr std::uint32_t rootAddressOffset(std::uint32_t rootField) {
     return (Abi::RootDword + rootField) * sizeof(std::uint32_t);
+}
+
+VkDescriptorSetAndBindingMappingEXT ringDescriptorMapping(std::uint32_t set, std::uint32_t binding, VkDeviceSize ringOffset) {
+    constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
+    const bool buffers = binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::Buffers);
+    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
+    mapping.descriptorSet = set;
+    mapping.firstBinding = binding;
+    mapping.bindingCount = 1;
+    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
+    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
+    mapping.sourceData.pushIndex.heapOffset = static_cast<std::uint32_t>(ringOffset + (buffers ? BindlessHeap::BufferSlotBytes : 0u));
+    mapping.sourceData.pushIndex.pushOffset = rootAddressOffset(Abi::RootStageDword(static_cast<Abi::Stage>(binding / bindingCount), Abi::RootStageField::FlattenedSrt));
+    mapping.sourceData.pushIndex.heapIndexStride = BindlessHeap::BufferSlotBytes;
+    mapping.sourceData.pushIndex.heapArrayStride = BindlessHeap::BufferSlotBytes;
+    return mapping;
 }
 
 VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, VkDeviceSize heapOffset) {
@@ -795,7 +816,8 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
         .workgroupAddress = workgroupAddressOffset != ~0u, .gdsAddress = rootGds, .faultAddress = rootFault, .pixelLds = pixelLds, .meshWindow = meshWindow,
         .scratchPool = scratchPool};
     if (!heapBindings(spirv, roots, use)) return false;
-    if (!use.dataUniforms.empty() && !ringInHeap) return false;
+    if ((!use.dataUniforms.empty() || !use.ringDescriptors.empty()) && !ringInHeap) return false;
+    if (!use.ringDescriptors.empty() && context.descriptorHeapProperties.bufferDescriptorSize != BufferSlotBytes) return false;
     constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
     constexpr VkSpirvResourceTypeFlagsEXT imageResources = VK_SPIRV_RESOURCE_TYPE_SAMPLED_IMAGE_BIT_EXT |
                                                            VK_SPIRV_RESOURCE_TYPE_READ_ONLY_IMAGE_BIT_EXT |
@@ -809,6 +831,8 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
         else mappings.push_back(heapMapping(Abi::FragmentDescriptorSet, binding, imageResources, 0, imageHeapStride));
     }
     for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, ringHeapOffset));
+    std::sort(use.ringDescriptors.begin(), use.ringDescriptors.end());
+    for (const auto& [set, binding] : use.ringDescriptors) mappings.push_back(ringDescriptorMapping(set, binding, ringHeapOffset));
     if (use.workgroupMemory)
         mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet, 0, workgroupAddressOffset));
     if (use.scratchPoolMemory)
@@ -824,6 +848,31 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
         mappings.push_back(heapMapping(ShaderRecompiler::MeshWindowDescriptorSet, 0,
                                        VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT, meshWindowHeapOffset, 0));
     return true;
+}
+
+std::uint32_t BindlessHeap::RingBufferDescriptors(std::span<const VkDeviceAddressRangeEXT> buffers, SpanMark& mark) {
+    Require(ringInHeap && context.descriptorHeapProperties.bufferDescriptorSize == BufferSlotBytes, "ring buffer descriptors need the shader-data ring inside the resource heap");
+    const auto span = Allocate(buffers.size() * (BufferSlotBytes / sizeof(std::uint32_t)), mark);
+    Require(span.offset % BufferSlotBytes == 0u, "a ring buffer descriptor span is misaligned");
+    thread_local std::vector<VkResourceDescriptorInfoEXT> resources;
+    thread_local std::vector<VkHostAddressRangeEXT> ranges;
+    resources.assign(buffers.size(), {VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT});
+    ranges.resize(buffers.size());
+    auto* bytes = reinterpret_cast<std::byte*>(span.words.data());
+    for (std::size_t index = 0; index < buffers.size(); ++index) {
+        resources[index].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        resources[index].data.pAddressRange = &buffers[index];
+        ranges[index] = {bytes + index * BufferSlotBytes, BufferSlotBytes};
+    }
+    PFN_vkWriteResourceDescriptorsEXT write = nullptr;
+    {
+        std::lock_guard lock(mutex);
+        if (writeResourceDescriptors == nullptr) writeResourceDescriptors = context.Function<PFN_vkWriteResourceDescriptorsEXT>("vkWriteResourceDescriptorsEXT");
+        write = writeResourceDescriptors;
+        counts.bufferDescriptors += buffers.size();
+    }
+    Check(write(context.device, static_cast<std::uint32_t>(buffers.size()), resources.data(), ranges.data()), "vkWriteResourceDescriptorsEXT ring buffers");
+    return static_cast<std::uint32_t>(span.offset / BufferSlotBytes);
 }
 
 void BindlessHeap::writeBufferDescriptor(VkDeviceSize offset, VkDeviceAddress address, VkDeviceSize bytes, const char* what) {
@@ -945,6 +994,7 @@ void reportHeapStatistics() {
             totals.spansExpired += counts.spansExpired;
             totals.encodes += counts.encodes;
             totals.encodedCopies += counts.encodedCopies;
+            totals.bufferDescriptors += counts.bufferDescriptors;
         }
     }
     const auto windowDelta = [](std::uint64_t now, std::uint64_t before) { return now >= before ? now - before : now; };
@@ -953,15 +1003,16 @@ void reportHeapStatistics() {
     const auto spansExpired = windowDelta(totals.spansExpired, lastTotals.spansExpired);
     const auto imageEncodes = windowDelta(totals.encodes, lastTotals.encodes);
     const auto imageCopies = windowDelta(totals.encodedCopies, lastTotals.encodedCopies);
+    const auto bufferDescriptors = windowDelta(totals.bufferDescriptors, lastTotals.bufferDescriptors);
     lastTotals = totals;
     const auto templates = ShaderRecompiler::HeapTemplateCounts();
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
                  "heap binds %llu over %llu command buffers; set binds:%s; fallbacks:%s; draw stages:%s; "
-                 "CPU buffer copies %llu (%llu MiB); ring spans %llu written / %llu kept / %llu expired; image descriptors %llu encoded / %llu copied; templates %llu (%llu MiB, %llu evicted)\n",
+                 "CPU buffer copies %llu (%llu MiB); ring spans %llu written / %llu kept / %llu expired; image descriptors %llu encoded / %llu copied; buffer descriptors %llu; templates %llu (%llu MiB, %llu evicted)\n",
                  printed(heapDraws), printed(plainDraws), printed(heapDispatches), printed(plainDispatches), printed(heapBindsSeen),
                  printed(commandBuffers), binds.c_str(), fallbacks.c_str(), stageReasons.c_str(), printed(copies), printed(copiedMiB),
-                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(imageEncodes), printed(imageCopies), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
+                 printed(spansWritten), printed(spansKept), printed(spansExpired), printed(imageEncodes), printed(imageCopies), printed(bufferDescriptors), printed(templates.entries), printed(templates.bytes >> 20u), printed(templates.evicted));
 }
 
 void forgetHeapBinding(VkCommandBuffer commands) {

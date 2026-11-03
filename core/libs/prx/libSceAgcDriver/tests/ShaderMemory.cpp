@@ -7878,10 +7878,15 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
             bytes.push_back(static_cast<std::uint8_t>((chunk >> bits) & 0xffu));
         }
     }
+    if (bytes.size() > 5u && bytes[4] == 55u) {
+        require(bytes.back() == 0u, "a version 55 request in these checks set the GPU heap buffer descriptors");
+        bytes.pop_back();
+    }
     return bytes;
 }
 
-std::string encodeBase64(const std::vector<std::uint8_t>& bytes) {
+std::string encodeBase64(std::vector<std::uint8_t> bytes) {
+    if (bytes.size() > 4u && bytes[4] == 55u) bytes.push_back(0u);
     constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string text;
     for (std::size_t index = 0; index < bytes.size(); index += 3u) {

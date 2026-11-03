@@ -6275,6 +6275,15 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     return result;
 }
 
+namespace {
+
+std::size_t DataOffsetIndex(std::size_t stage, ShaderRecompiler::RuntimeAbi::Binding binding) {
+    Require(binding == ShaderRecompiler::RuntimeAbi::Binding::ShaderData || binding == ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt, "only shader data and the flattened SRT have ring offsets");
+    return stage * 2u + (binding == ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt ? 1u : 0u);
+}
+
+}
+
 void ShaderResources::RefreshMovedAddresses(DrawBindings& rewritten) const {
     if (rewritten.addressOffsets) rewritten.heapOffsets = addressedOffsets(&rewritten.addressOverrides);
 }
@@ -6289,6 +6298,11 @@ std::array<std::uint32_t, 2u * ShaderRecompiler::RuntimeAbi::StageCount> ShaderR
         auto span = heap.Allocate(words.size());
         std::memcpy(span.words.data(), words.data(), words.size() * sizeof(std::uint32_t));
         offsets[stageDataIndex[stage]] = span.offset;
+    }
+    for (std::size_t stage = 0; stage < ringDescriptorStages.size(); ++stage) {
+        if (!ringDescriptorStages[stage]) continue;
+        RingDescriptors moved;
+        offsets[DataOffsetIndex(stage, ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt)] = ringDescriptors(stage, overrides, moved);
     }
     return offsets;
 }
@@ -6347,7 +6361,8 @@ void ShaderResources::RefreshHeapStage(std::span<const CompiledShader> shaders) 
     }
 }
 
-void ShaderResources::writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides) const {
+void ShaderResources::writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides,
+                                           std::vector<VkDeviceAddressRangeEXT>* ranges) const {
     for (const auto& binding : bindings) {
         if (!binding.addressed || binding.dataStage != dataStage) continue;
         for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
@@ -6369,6 +6384,8 @@ void ShaderResources::writeBufferAddresses(std::span<std::uint32_t> words, std::
                 address = base + info.offset;
                 range = info.range;
             }
+            if (ranges != nullptr) ranges->push_back({address, std::min<VkDeviceSize>(range, context.limits.maxStorageBufferRange)});
+            if (words.empty()) continue;
             const auto at = static_cast<std::size_t>(binding.addressDword) + element * 4u;
             Require(at + 3u < words.size(), "buffer address words lie outside the shader data");
             words[at] = static_cast<std::uint32_t>(address);
@@ -6379,13 +6396,29 @@ void ShaderResources::writeBufferAddresses(std::span<std::uint32_t> words, std::
     }
 }
 
-namespace {
-
-std::size_t DataOffsetIndex(std::size_t stage, ShaderRecompiler::RuntimeAbi::Binding binding) {
-    Require(binding == ShaderRecompiler::RuntimeAbi::Binding::ShaderData || binding == ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt, "only shader data and the flattened SRT have ring offsets");
-    return stage * 2u + (binding == ShaderRecompiler::RuntimeAbi::Binding::FlattenedSrt ? 1u : 0u);
+VkDeviceAddressRangeEXT ShaderResources::srtRange(std::size_t stage) const {
+    const auto bytes = static_cast<VkDeviceSize>(heapSrtDwords[stage]) * sizeof(std::uint32_t);
+    if (bytes == 0u || bytes > context.limits.maxStorageBufferRange) {
+        const auto empty = BufferDeviceAddress(context, context.emptyBuffer);
+        Require(empty != 0, "the empty buffer has no device address");
+        return {empty, EmptyBufferBytes};
+    }
+    return {BindlessHeap::For(context).RingAddress() + heapSrtOffsets[stage], bytes};
 }
 
+std::uint32_t ShaderResources::ringDescriptors(std::size_t stage, const std::vector<VkDescriptorBufferInfo>* overrides, RingDescriptors& kept) const {
+    struct RangeStorage {};
+    auto& ranges = HostThreadLocal<std::vector<VkDeviceAddressRangeEXT>, RangeStorage>();
+    ranges.clear();
+    ranges.push_back(srtRange(stage));
+    writeBufferAddresses({}, static_cast<std::uint32_t>(stage), overrides, &ranges);
+    auto& heap = BindlessHeap::For(context);
+    const auto equal = [](const VkDeviceAddressRangeEXT& a, const VkDeviceAddressRangeEXT& b) { return a.address == b.address && a.size == b.size; };
+    if (!std::ranges::equal(ranges, kept.ranges, equal) || !heap.Held(kept.mark)) {
+        kept.first = heap.RingBufferDescriptors(ranges, kept.mark);
+        kept.ranges.assign(ranges.begin(), ranges.end());
+    }
+    return kept.first;
 }
 
 std::pair<VkBuffer, VkDeviceSize> ShaderResources::shaderDataLocation(const CompiledShader& shader, const DrawBindings* rewritten) const {
@@ -6810,6 +6843,11 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     const std::size_t flatIndex = DataOffsetIndex(stageIndex, Abi::Binding::FlattenedSrt);
     const auto& program = *shader.program;
     if (program.dataAddressPush) writeHeapTableMap(shader, stageIndex);
+    const bool ringStage = context.heapBufferDescriptors && program.dataAddressPush;
+    ringDescriptorStages[stageIndex] = ringStage;
+    if (ringStage) stageDataWords[stageIndex].clear();
+    bool dataKept = false;
+    bool flattened = false;
     for (const auto& binding : program.bindings) {
         const bool shaderData = binding.role == ShaderRecompiler::DescriptorRole::ShaderData;
         if (!shaderData && binding.role != ShaderRecompiler::DescriptorRole::FlattenedSrt) continue;
@@ -6825,13 +6863,15 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
         if (sameInput && !verifySlots) {
             if (heap.Held(stageState.data.mark)) {
                 heapOffsets[dataIndex] = stageState.data.mark.offset;
+                dataKept = true;
                 continue;
             }
             stageState.data.mark.entry = 0;
         }
         if (!shaderData) {
-            heapOffsets[flatIndex] = heapSpan(stageState.flat, words);
+            (ringStage ? heapSrtOffsets[stageIndex] : heapOffsets[flatIndex]) = heapSpan(stageState.flat, words);
             heapSrtDwords[stageIndex] = static_cast<std::uint32_t>(words.size());
+            flattened = true;
             continue;
         }
         ValidateRuntimeResources(shader, words);
@@ -6845,7 +6885,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
             reinterpret_cast<std::byte*>(patched.data())[byte] = static_cast<std::byte>(adjustment);
         }
         patchHeapSlotWords(shader, stageState, patched, current);
-        if (addressedBuffers) {
+        if (addressedBuffers && !ringStage) {
             HeapCostScope bufferCost(HeapCost::BufferAddresses);
             writeBufferAddresses(patched, static_cast<std::uint32_t>(stageIndex), nullptr);
             bufferCost.Stop();
@@ -6858,6 +6898,12 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
         stageState.dataInput.assign(words.begin(), words.end());
         stageState.dataInput.insert(stageState.dataInput.end(), userData.begin(), userData.end());
     }
+    if (!ringStage) return;
+    if (!flattened) heapSrtDwords[stageIndex] = 0u;
+    auto& kept = stageState.descriptors;
+    const auto srt = srtRange(stageIndex);
+    const bool reuse = dataKept && !kept.ranges.empty() && kept.ranges.front().address == srt.address && kept.ranges.front().size == srt.size && heap.Held(kept.mark);
+    heapOffsets[flatIndex] = reuse ? kept.first : ringDescriptors(stageIndex, nullptr, kept);
 }
 
 namespace {
