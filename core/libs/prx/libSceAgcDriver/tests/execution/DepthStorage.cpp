@@ -35,7 +35,7 @@ constexpr std::uint32_t Format8Uint = 5;
 
 class Device {
 public:
-    Device() {
+    explicit Device(bool unrestrictedDepth) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #elif defined(__APPLE__)
@@ -93,6 +93,14 @@ public:
             enabled.shaderInt64 = VK_TRUE;
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            if (hasExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME) && (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
+                extensionsEnabled.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+                context.pushDescriptors = true;
+            }
+            if (unrestrictedDepth && hasExtension(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME)) {
+                extensionsEnabled.push_back(VK_EXT_DEPTH_RANGE_UNRESTRICTED_EXTENSION_NAME);
+                context.depthRangeUnrestricted = true;
+            }
             if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
                 extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
                 VkPhysicalDeviceExternalMemoryHostPropertiesEXT hostProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
@@ -336,13 +344,79 @@ void RunPairings(Context context, std::uint8_t* block) {
     ExpectFailure([&] { static_cast<void>(DepthSurfaceStoreBack(context, *depth)); }, "through a view that another view of the plane", "a store back through a replaced view was taken by an older pairing that covers the plane");
 }
 
+constexpr std::array<std::uint32_t, 16> RoundTripWords{0x3e800000u, 0x3f800000u, 0x00000000u, 0x80000000u, 0xbf000000u, 0x40000000u, 0x00000001u, 0x007fffffu, 0x807fffffu, 0x7f7fffffu, 0x7f800000u, 0xff800000u, 0x7fc00000u, 0x7fc12345u, 0x7f800001u, 0xffc00000u};
+
+std::vector<std::uint32_t> RoundTrip(Context context, std::uint8_t* block, VkFormat format) {
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto submit = [&](Recorder& recorder) {
+        recorder.Submit();
+        Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
+    };
+    Recorder recorder(context);
+    recorder.Activate();
+    constexpr std::uint32_t sentinel = 0x12345678u;
+    for (std::size_t texel = 0; texel < Side * Side; ++texel) std::memcpy(block + texel * 4, &RoundTripWords[texel % RoundTripWords.size()], 4);
+    const DepthTarget target{address, format == VK_FORMAT_D32_SFLOAT_S8_UINT ? address + BlockBytes / 2 : 0, {Side, Side}, format, 0.25f, 7};
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the round trip's depth surface was not created");
+    const auto stored = StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float), 0);
+    submit(recorder);
+    Require(DepthSurfaceStoreBack(context, *stored), "the round trip's storage image was not stored into the depth surface");
+    submit(recorder);
+    for (std::size_t texel = 0; texel < Side * Side; ++texel) std::memcpy(block + texel * 4, &sentinel, 4);
+    auto layered = PlaneResource(address, Format32Float);
+    layered.dimension = TextureDimension::k2DArray;
+    const auto read = DepthSurfaceStorage(context, {}, layered, 0);
+    Require(read != nullptr, "the round trip's depth plane has no storage image");
+    submit(recorder);
+    read->MarkDirty();
+    read->WriteBack();
+    submit(recorder);
+    std::vector<std::uint32_t> words(Side * Side);
+    std::memcpy(words.data(), block, words.size() * 4);
+    ClearDepthSurfaces(context.device);
+    return words;
 }
 
-int main() {
+void RunRoundTrips(Context context, std::uint8_t* block) {
+    const bool passesOff = std::getenv("APS5_NO_DEPTH_TRANSFER_PASS") != nullptr;
+    for (const auto format : {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT}) {
+        SetDepthTransferPasses(false);
+        const auto copied = RoundTrip(context, block, format);
+        SetDepthTransferPasses(true);
+        const auto before = DepthTransferPassCount();
+        const auto passed = RoundTrip(context, block, format);
+        Require(passesOff || !context.pushDescriptors || DepthTransferPassCount() > before, "the round trip did not read the depth plane in the shader pass");
+        Require(passed == copied, "the shader pass read the depth plane into the storage image differently from the copy");
+        const auto kept = [&](std::uint32_t word) {
+            for (std::size_t texel = 0; texel < copied.size(); ++texel) {
+                if (RoundTripWords[texel % RoundTripWords.size()] == word && copied[texel] != word) return false;
+            }
+            return true;
+        };
+        for (const auto word : {0x3e800000u, 0x3f800000u, 0x00000000u}) Require(kept(word), "a depth value in [0, 1] did not come back from the depth plane");
+        if (context.depthRangeUnrestricted) {
+            for (const auto word : {0xbf000000u, 0x40000000u}) Require(kept(word), "-0.5 or 2.0 did not come back from a depth plane with the depth range unrestricted");
+        }
+        std::string changed;
+        for (const auto word : RoundTripWords) {
+            if (kept(word)) continue;
+            char text[16];
+            std::snprintf(text, sizeof(text), " 0x%08x", word);
+            changed += text;
+        }
+        std::printf("depth round trip, vk format %d, depth range %s: the shader pass matches the copy; words the copy changed:%s\n", static_cast<int>(format), context.depthRangeUnrestricted ? "unrestricted" : "[0, 1]", changed.empty() ? " none" : changed.c_str());
+    }
+    SetDepthTransferPasses(true);
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
+        const bool restrictedDepth = argc > 1 && std::string(argv[1]) == "--restricted-depth";
         std::unique_ptr<Device> device;
         try {
-            device = std::make_unique<Device>();
+            device = std::make_unique<Device>(!restrictedDepth);
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
@@ -359,7 +433,10 @@ int main() {
             ClearDepthSurfaces(context.device);
             RunPairings(context, block);
             ClearDepthSurfaces(context.device);
+            RunRoundTrips(context, block);
         }
+        const bool passesOff = std::getenv("APS5_NO_DEPTH_TRANSFER_PASS") != nullptr;
+        Require(passesOff ? DepthTransferPassCount() == 0 : !context.pushDescriptors || DepthTransferPassCount() > 0, passesOff ? "a depth plane transfer ran in shader passes with APS5_NO_DEPTH_TRANSFER_PASS set" : "the device enables VK_KHR_push_descriptor but no depth plane transfer ran in shader passes");
         GuestAllocations::Mutation().Remove(block);
         std::cout << "depth surface storage access tests passed\n";
         return 0;

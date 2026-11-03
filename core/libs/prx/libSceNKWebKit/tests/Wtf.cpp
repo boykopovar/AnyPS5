@@ -802,11 +802,86 @@ const auto URLBlank = &_ZNK3WTF3URL12isAboutBlankEv;
 const auto URLSrcdoc = &_ZNK3WTF3URL13isAboutSrcDocEv;
 const auto URLJavaScript = &_ZNK3WTF3URL20protocolIsJavaScriptEv;
 const auto URLInvalidate = &_ZN3WTF3URL10invalidateEv;
+const auto URLEqualIgnoringFragment = &_ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_;
 const auto IsJavaScript = &_ZN3WTF20protocolIsJavaScriptENS_10StringViewE;
 const auto IsHTTP = &_ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE;
 const auto JSRealloc = &_ZN3WTF14jsValueReallocEPvm;
 
 std::string ViewText(StringView view) { return Bytes(ViewUTF8(&view, 1)); }
+
+const auto URLEllipsize = &_ZNK3WTF3URL30stringCenterEllipsizedToLengthEj;
+const auto DataURLMime = &_ZN3WTF19mimeTypeFromDataURLENS_10StringViewE;
+
+bool Is8Bit(const String& value) { return value.impl && (value.impl->hashAndFlags & 4); }
+
+StringView ViewOf(const String& value) {
+    return {value.impl->data, value.impl->length, !!(value.impl->hashAndFlags & 4)};
+}
+
+StringView Literal(const char* text) { return {text, static_cast<unsigned>(std::strlen(text)), true}; }
+
+void TestURLStringHelpers() {
+    auto narrow = FromUTF8Z(U8("http://example.com/abcdefghij"));
+    URL narrowURL{narrow.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (unsigned length : {29U, 30U, 40U, 0xFFFFFFFFU}) {
+        auto same = URLEllipsize(&narrowURL, length);
+        Check(same.impl == narrow.impl && narrow.impl->refCount == 4);
+    }
+    Check(narrow.impl->refCount == 2);
+    Text(URLEllipsize(&narrowURL, 28), "http://exampl...m/abcdefghij");
+    Text(URLEllipsize(&narrowURL, 10), "http...hij");
+    Text(URLEllipsize(&narrowURL, 11), "http...hij");
+    Text(URLEllipsize(&narrowURL, 6), "ht...j");
+    Text(URLEllipsize(&narrowURL, 5), "h...");
+    Text(URLEllipsize(&narrowURL, 4), "h...");
+    Text(URLEllipsize(&narrowURL, 3), "...");
+    Text(URLEllipsize(&narrowURL, 2), "...");
+    Text(URLEllipsize(&narrowURL, 1), "http://example.com/abcdefghij...");
+    Text(URLEllipsize(&narrowURL, 0), "http://example.com/abcdefghij...");
+    Check(Is8Bit(URLEllipsize(&narrowURL, 10)) && Is8Bit(URLEllipsize(&narrowURL, 3)));
+    Check(URLEllipsize(&narrowURL, 10).impl != narrow.impl);
+
+    auto wide = Create16(u"http://wide.test/path", 21);
+    URL wideURL{wide.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(URLEllipsize(&wideURL, 21).impl == wide.impl);
+    auto wideShort = URLEllipsize(&wideURL, 10);
+    Text(wideShort, "http...ath");
+    Check(!Is8Bit(wideShort));
+    auto wideDots = URLEllipsize(&wideURL, 3);
+    Text(wideDots, "...");
+    Check(!Is8Bit(wideDots));
+    auto wideLong = URLEllipsize(&wideURL, 1);
+    Text(wideLong, "http://wide.test/path...");
+    Check(!Is8Bit(wideLong));
+
+    URL absent{};
+    Check(URLEllipsize(&absent, 0).impl == nullptr && URLEllipsize(&absent, 10).impl == nullptr);
+    auto empty = Create8(U8(""), 0);
+    URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(URLEllipsize(&emptyURL, 0).impl == empty.impl && URLEllipsize(&emptyURL, 5).impl == empty.impl);
+    Throws([&] { URLEllipsize(nullptr, 10); });
+
+    Text(DataURLMime(Literal("data:text/HTML;base64,x")), "text/html");
+    Text(DataURLMime(Literal("data:Text/X,y")), "text/x");
+    Text(DataURLMime(Literal("data:,x")), "text/plain");
+    Text(DataURLMime(Literal("data:;base64,x")), "text/plain");
+    Check(Is8Bit(DataURLMime(Literal("data:,x"))));
+    Text(DataURLMime(Literal("data:a,b;c")), "a,b");
+    Text(DataURLMime(Literal("data:text/plain")), "");
+    Text(DataURLMime(Literal("data:")), "");
+    Text(DataURLMime(Literal("data")), "");
+    Text(DataURLMime(Literal("")), "");
+    Text(DataURLMime(StringView{nullptr, 0, true}), "");
+    Text(DataURLMime(Literal("http://a;b")), "//a");
+    auto wideData = Create16(u"data:TEXT/Plain;x", 17);
+    auto wideMime = DataURLMime(ViewOf(wideData));
+    Text(wideMime, "text/plain");
+    Check(!Is8Bit(wideMime));
+    auto accented = Create16(u"data:É/X,", 9);
+    Text(DataURLMime(ViewOf(accented)), "\xC3\x89/x");
+    auto widePlain = Create16(u"data:,x", 7);
+    Text(DataURLMime(ViewOf(widePlain)), "text/plain");
+}
 
 void TestURLsAndReallocation() {
     struct PinnedBits {
@@ -859,6 +934,101 @@ void TestURLsAndReallocation() {
     Check(!IsJavaScript({"javascriptx:", 12, true}) && !IsJavaScript({nullptr, 0, true}));
     Check(IsHTTP({"HTTP:", 5, true}) && IsHTTP({u"HtTpS:", 6, false}));
     Check(!IsHTTP({" https:", 7, true}) && !IsHTTP({"httpx:", 6, true}));
+    Check(URLEqualIgnoringFragment(&url, &url));
+    auto urlDiffFragStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#other"));
+    URL urlDiffFrag = url;
+    urlDiffFrag.impl = urlDiffFragStr.impl;
+    std::string rawDiffFrag = Bytes(UTF8(&urlDiffFragStr, 1));
+    urlDiffFrag.queryEnd = static_cast<unsigned>(rawDiffFrag.find('#'));
+    Check(URLEqualIgnoringFragment(&url, &urlDiffFrag));
+    auto urlNoFragStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1"));
+    URL urlNoFrag = url;
+    urlNoFrag.impl = urlNoFragStr.impl;
+    std::string rawNoFrag = Bytes(UTF8(&urlNoFragStr, 1));
+    urlNoFrag.queryEnd = static_cast<unsigned>(rawNoFrag.length());
+    Check(URLEqualIgnoringFragment(&url, &urlNoFrag));
+    auto urlEmptyFragStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#"));
+    URL urlEmptyFrag = url;
+    urlEmptyFrag.impl = urlEmptyFragStr.impl;
+    std::string rawEmptyFrag = Bytes(UTF8(&urlEmptyFragStr, 1));
+    urlEmptyFrag.queryEnd = static_cast<unsigned>(rawEmptyFrag.find('#'));
+    Check(URLEqualIgnoringFragment(&url, &urlEmptyFrag));
+    Check(URLEqualIgnoringFragment(&urlNoFrag, &urlEmptyFrag));
+    auto aboutNoFrag = FromUTF8Z(U8("about:blank"));
+    URL blankAbout{about.impl, 1U | 4U | (5U << 6), 6, 6, 6, 6, 6, 11, 11};
+    blankAbout.queryEnd = static_cast<unsigned>(Bytes(UTF8(&about, 1)).find('#'));
+    URL blankNoFrag = blankAbout;
+    blankNoFrag.impl = aboutNoFrag.impl;
+    blankNoFrag.queryEnd = static_cast<unsigned>(Bytes(UTF8(&aboutNoFrag, 1)).length());
+    Check(URLEqualIgnoringFragment(&blankAbout, &blankNoFrag));
+    auto urlDiffQueryStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=2#frag"));
+    URL urlDiffQuery = url;
+    urlDiffQuery.impl = urlDiffQueryStr.impl;
+    std::string rawDiffQuery = Bytes(UTF8(&urlDiffQueryStr, 1));
+    urlDiffQuery.queryEnd = static_cast<unsigned>(rawDiffQuery.find('#'));
+    Check(!URLEqualIgnoringFragment(&url, &urlDiffQuery));
+    auto urlDiffPathStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/c?q=1#frag"));
+    URL urlDiffPath = url;
+    urlDiffPath.impl = urlDiffPathStr.impl;
+    std::string rawDiffPath = Bytes(UTF8(&urlDiffPathStr, 1));
+    urlDiffPath.queryEnd = static_cast<unsigned>(rawDiffPath.find('#'));
+    Check(!URLEqualIgnoringFragment(&url, &urlDiffPath));
+    auto urlDiffHostStr = FromUTF8Z(U8("https://u%20:p%40@other.test:8443/a/b?q=1#frag"));
+    URL urlDiffHost = url;
+    urlDiffHost.impl = urlDiffHostStr.impl;
+    std::string rawDiffHost = Bytes(UTF8(&urlDiffHostStr, 1));
+    urlDiffHost.queryEnd = static_cast<unsigned>(rawDiffHost.find('#'));
+    Check(!URLEqualIgnoringFragment(&url, &urlDiffHost));
+    auto wideHash = [](const StringImpl* impl) {
+        if (!impl || !impl->data) return 0U;
+        const auto* chars = static_cast<const char16_t*>(impl->data);
+        for (unsigned i = 0; i < impl->length; ++i) {
+            if (chars[i] == u'#') return i;
+        }
+        return impl->length;
+    };
+    auto wide1 = Create16(u"http://wide.test/path#sec1", 26);
+    auto wide2 = Create16(u"http://wide.test/path#sec2", 26);
+    URL urlWide1 = wide;
+    urlWide1.impl = wide1.impl;
+    urlWide1.queryEnd = wideHash(urlWide1.impl);
+    URL urlWide2 = wide;
+    urlWide2.impl = wide2.impl;
+    urlWide2.queryEnd = wideHash(urlWide2.impl);
+    Check(URLEqualIgnoringFragment(&urlWide1, &urlWide2));
+    auto wideNoFrag = Create16(u"http://wide.test/path", 21);
+    URL urlWideNoFrag = wide;
+    urlWideNoFrag.impl = wideNoFrag.impl;
+    urlWideNoFrag.queryEnd = wideHash(urlWideNoFrag.impl);
+    auto narrow8Str = FromUTF8Z(U8("http://wide.test/path#other"));
+    URL urlNarrow8 = wide;
+    urlNarrow8.impl = narrow8Str.impl;
+    std::string rawNarrow8 = Bytes(UTF8(&narrow8Str, 1));
+    urlNarrow8.queryEnd = static_cast<unsigned>(rawNarrow8.find('#'));
+    Check(URLEqualIgnoringFragment(&urlWide1, &urlNarrow8));
+    Check(URLEqualIgnoringFragment(&urlNarrow8, &urlWideNoFrag));
+    auto narrow8DiffStr = FromUTF8Z(U8("http://wide.test/other#sec1"));
+    URL urlNarrow8Diff = wide;
+    urlNarrow8Diff.impl = narrow8DiffStr.impl;
+    std::string rawNarrow8Diff = Bytes(UTF8(&narrow8DiffStr, 1));
+    urlNarrow8Diff.queryEnd = static_cast<unsigned>(rawNarrow8Diff.find('#'));
+    Check(!URLEqualIgnoringFragment(&urlWide1, &urlNarrow8Diff));
+    Check(URLEqualIgnoringFragment(&absent, &absent));
+    Check(URLEqualIgnoringFragment(&javascript, &javascript));
+    Check(!URLEqualIgnoringFragment(&url, &absent));
+    Check(!URLEqualIgnoringFragment(&absent, &url));
+    auto jsFrag1 = FromUTF8Z(U8(" \tJaVa\nScRiPt:alert(1)#x"));
+    auto jsFrag2 = FromUTF8Z(U8(" \tJaVa\nScRiPt:alert(1)#y"));
+    URL urlJsFrag1{jsFrag1.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::string rawJsFrag1 = Bytes(UTF8(&jsFrag1, 1));
+    urlJsFrag1.queryEnd = static_cast<unsigned>(rawJsFrag1.find('#'));
+    URL urlJsFrag2{jsFrag2.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::string rawJsFrag2 = Bytes(UTF8(&jsFrag2, 1));
+    urlJsFrag2.queryEnd = static_cast<unsigned>(rawJsFrag2.find('#'));
+    Check(!URLEqualIgnoringFragment(&urlJsFrag1, &urlJsFrag2));
+    Check(!URLEqualIgnoringFragment(&absent, &javascript));
+    Throws([&] { URLEqualIgnoringFragment(nullptr, &url); });
+    Throws([&] { URLEqualIgnoringFragment(&url, nullptr); });
     URLInvalidate(&url);
     Check(url.impl == string.impl && url.bits == 0 && url.userStart == 0 && url.userEnd == 0);
     Check(url.passwordEnd == 0 && url.hostEnd == 0 && url.pathEnd == 0 && url.pathAfterLastSlash == 0 && url.queryEnd == 0);
@@ -871,6 +1041,7 @@ void TestURLsAndReallocation() {
     memory = static_cast<unsigned char*>(JSRealloc(memory, 2));
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
+    TestURLStringHelpers();
 }
 
 }  // namespace Wtf2Tests
