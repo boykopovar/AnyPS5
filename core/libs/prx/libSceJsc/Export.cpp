@@ -181,9 +181,7 @@ int APS5_VABI _ZN9Inspector24RuntimeBackendDispatcher8dispatchElRKN3WTF6StringEO
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC2VM10ClientDataD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI _ZN3JSC2VM10ClientDataD1Ev(void*) {}
 
 int APS5_VABI _ZN3JSC17JSArrayBufferView14finishCreationERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
@@ -409,13 +407,9 @@ int APS5_VABI _ZN9Inspector20DOMBackendDispatcher24setEventListenerDisabledElON3
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector32TimelineBackendDispatcherHandlerD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI _ZN9Inspector32TimelineBackendDispatcherHandlerD1Ev(void*) {}
 
-int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI _ZN9Inspector22InspectorDebuggerAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE(void*, void*, void*) {}
 
 int APS5_VABI _ZN3WTF7RunLoop6wakeUpEv() {
     NotImplemented_nid_no_patch(__func__);
@@ -605,9 +599,7 @@ int APS5_VABI _ZThn24_N9Inspector18InspectorHeapAgentD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector32DebuggerBackendDispatcherHandlerD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI _ZN9Inspector32DebuggerBackendDispatcherHandlerD2Ev(void*) {}
 
 int APS5_VABI _ZN9Inspector28DOMDebuggerBackendDispatcherD0Ev() {
     NotImplemented_nid_no_patch(__func__);
@@ -721,9 +713,7 @@ int APS5_VABI _ZN10Deprecated18ScriptFunctionCallC2ERKNS_12ScriptObjectERKN3WTF6
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc8FreeListD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+void APS5_VABI _ZN7bmalloc8FreeListD2Ev(void*) {}
 
 int APS5_VABI _ZThn16_N9Inspector21InspectorRuntimeAgent20getCollectionEntriesERN3WTF6StringERKS2_PS4_PKiS8_RNS1_6RefPtrINS1_8JSONImpl7ArrayOfINS_8Protocol7Runtime15CollectionEntryEEENS1_13DumbPtrTraitsISF_EEEE() {
     NotImplemented_nid_no_patch(__func__);
