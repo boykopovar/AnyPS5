@@ -420,7 +420,17 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
     return result;
 }
 
-std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral, std::uint32_t layers) {
+namespace {
+
+std::uint32_t GcnLevelSlices(std::uint32_t slices, std::uint32_t level, bool pow2Pad, bool volume) {
+    if (!volume || level == 0) return slices;
+    const auto levelSlices = std::max(slices >> level, 1u);
+    return pow2Pad ? std::bit_ceil(levelSlices) : levelSlices;
+}
+
+}
+
+std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral, std::uint32_t layers, bool volume) {
     Require(layers != 0, "a PS4 surface has at least one slice");
     Require(!linearGeneral || tileMode == TextureTileMode::kLinear, "LINEAR_GENERAL is a linear layout");
     Require(width != 0 && height != 0 && pitch >= width, "cannot compute the mip layout of an empty PS4 texture");
@@ -477,7 +487,7 @@ std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::ui
         mip.tail = false;
         mip.tailX = 0;
         mip.tailY = 0;
-        offset += mip.tiledSize * layers;
+        offset += mip.tiledSize * GcnLevelSlices(layers, level, pow2Pad, volume);
         linearOffset += mip.tiledSize;
     }
     return mips;
@@ -627,14 +637,16 @@ SurfaceGeometry describeGcnVolume(const GuestTextureResource& descriptor) {
 SurfaceGeometry describeGcnSurface(const GuestTextureResource& descriptor) {
     Require(!IsGcnThick(descriptor.tileMode) || descriptor.dimension == TextureDimension::k3D, "PS4 thick tile modes are only implemented for 3D textures");
     if (IsGcnThick(descriptor.tileMode)) return describeGcnVolume(descriptor);
-    Require(descriptor.dimension != TextureDimension::k3D && descriptor.dimension != TextureDimension::k2DMsaa, "PS4 3D and multisampled textures are not implemented");
-    const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
+    Require(descriptor.dimension != TextureDimension::k2DMsaa, "PS4 multisampled textures are not implemented");
+    const bool volume = descriptor.dimension == TextureDimension::k3D;
+    const bool layered = volume || descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
     SurfaceGeometry geometry;
     geometry.layers = layered ? descriptor.depthOrLastArray + 1u : 1u;
     geometry.levelMajor = geometry.layers > 1u && descriptor.mipCount > 1u;
-    geometry.mips = ComputeGcnMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.gcnPitch, descriptor.gcnPow2Pad, descriptor.mipCount, descriptor.gcnLinearGeneral, geometry.layers);
-    geometry.imageLayers = geometry.layers;
-    geometry.guestBytes = geometry.mips.back().tiledOffset + geometry.mips.back().tiledSize * geometry.layers;
+    geometry.mips = ComputeGcnMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.gcnPitch, descriptor.gcnPow2Pad, descriptor.mipCount, descriptor.gcnLinearGeneral, geometry.layers, volume);
+    geometry.imageLayers = volume ? 1u : geometry.layers;
+    geometry.imageDepth = volume ? geometry.layers : 1u;
+    geometry.guestBytes = geometry.mips.back().tiledOffset + geometry.mips.back().tiledSize * GcnLevelSlices(geometry.layers, descriptor.mipCount - 1u, descriptor.gcnPow2Pad, volume);
     geometry.layerBytes = geometry.guestBytes / geometry.layers;
     for (const auto& mip : geometry.mips) geometry.sliceLinearBytes = std::max(geometry.sliceLinearBytes, mip.linearOffset + mip.linearSize);
     return geometry;
