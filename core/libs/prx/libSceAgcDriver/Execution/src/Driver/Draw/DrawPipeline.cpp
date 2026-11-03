@@ -23,6 +23,7 @@ namespace {
 constexpr std::array<const char*, static_cast<std::size_t>(DrawPipeline::DrainReason::Count)> DrainNames{"packet", "flush", "labels", "capture", "indirect", "submission"};
 
 std::atomic<unsigned> runningCommitters{0};
+std::atomic<unsigned> runningFinishers{0};
 
 std::uint64_t elapsedNs(std::chrono::steady_clock::time_point since) {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count());
@@ -166,6 +167,10 @@ bool DrawFinisher::OnFinisherThread() {
     return finisherThread;
 }
 
+unsigned DrawFinisher::Finishers() {
+    return runningFinishers.load(std::memory_order_acquire);
+}
+
 void DrawFinisher::Enqueue(Job job) {
     Enqueue(std::move(job), Pending{});
 }
@@ -179,6 +184,11 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
     std::unique_lock lock(mutex);
     if (!ran.empty()) std::swap(ran, reclaim);
     if (failure != nullptr) std::rethrow_exception(std::exchange(failure, nullptr));
+    if (closing) {
+        lock.unlock();
+        job();
+        return;
+    }
     if (jobs.size() >= depth && GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw finisher full while the enqueuing thread holds the GPU lock");
     idle.wait(lock, [&] { return jobs.size() < depth; });
     jobs.push_back(std::move(job));
@@ -190,6 +200,7 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
             finisherThread = true;
             run();
         });
+        runningFinishers.fetch_add(1, std::memory_order_acq_rel);
     }
     if (sleeping) wake.notify_one();
 }
@@ -203,8 +214,9 @@ void DrawFinisher::run() {
         {
             std::unique_lock lock(mutex);
             sleeping = true;
-            wake.wait(lock, [&] { return !jobs.empty(); });
+            wake.wait(lock, [&] { return !jobs.empty() || closing; });
             sleeping = false;
+            if (jobs.empty()) break;
             job = &jobs.front();
             failed = failure != nullptr;
         }
@@ -222,6 +234,7 @@ void DrawFinisher::run() {
         outstanding.fetch_sub(1, std::memory_order_release);
         idle.notify_all();
     }
+    runningFinishers.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void DrawFinisher::Settle() {
@@ -238,6 +251,19 @@ void DrawFinisher::Drain() {
     std::unique_lock lock(mutex);
     if (!jobs.empty()) idle.wait(lock, [&] { return jobs.empty(); });
     if (failure != nullptr) std::rethrow_exception(std::exchange(failure, nullptr));
+}
+
+void DrawFinisher::Stop() {
+    std::thread finisher;
+    {
+        std::lock_guard lock(mutex);
+        closing = true;
+        finisher = std::move(thread);
+    }
+    wake.notify_all();
+    if (!finisher.joinable()) return;
+    if (finisher.get_id() == std::this_thread::get_id()) finisher.detach();
+    else finisher.join();
 }
 
 void DrawFinisher::ReleaseRan() {

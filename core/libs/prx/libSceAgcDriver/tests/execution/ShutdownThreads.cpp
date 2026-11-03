@@ -156,6 +156,43 @@ void ShutdownJoinsDrawCommitter() {
     Require(DrawPipeline::Committers() == 0, "a commit enqueued after the shutdown started a draw committer");
 }
 
+void ShutdownJoinsDrawFinisher() {
+    using namespace AgcDriver::DriverDetail;
+    struct ThreadState {
+        std::shared_ptr<std::promise<void>> released;
+        ~ThreadState() {
+            if (released != nullptr) released->set_value();
+        }
+    };
+    auto& finisher = DrawFinisher::Get();
+    const auto caller = std::this_thread::get_id();
+    std::promise<std::thread::id> started;
+    auto startedOn = started.get_future();
+    std::promise<void> gate;
+    auto opened = gate.get_future().share();
+    auto releasing = std::make_shared<std::promise<void>>();
+    auto released = releasing->get_future();
+    bool queuedRan = false;
+    finisher.Enqueue([&started, opened, releasing] {
+        thread_local ThreadState state;
+        state.released = releasing;
+        started.set_value(std::this_thread::get_id());
+        opened.wait();
+    });
+    finisher.Enqueue([&] { queuedRan = true; });
+    Require(startedOn.get() != caller, "a finished draw ran on the caller instead of the draw finisher");
+    Require(DrawFinisher::Finishers() == 1, "a finished draw started no draw finisher");
+    gate.set_value();
+    AgcDriverShutdown_nid_postfix();
+    Require(DrawFinisher::Finishers() == 0, "the driver's shutdown left the draw finisher running");
+    Require(queuedRan, "the driver's shutdown dropped a finished draw");
+    Require(released.wait_for(std::chrono::seconds(0)) == std::future_status::ready, "the driver's shutdown kept the draw finisher's thread-local state");
+    bool ranHere = false;
+    finisher.Enqueue([&] { ranHere = std::this_thread::get_id() == caller; });
+    Require(ranHere, "a draw finished after the shutdown ran on another thread");
+    Require(DrawFinisher::Finishers() == 0, "a draw finished after the shutdown started a draw finisher");
+}
+
 void ShutdownJoinsShaderCacheWriter(bool lateInitialization = false) {
     namespace Cache = ShaderRecompiler::ShaderDiskCache;
     const auto directory = std::filesystem::temp_directory_path() / ("aps5-shutdown-shader-cache-" + std::to_string(std::random_device{}()));
@@ -206,6 +243,7 @@ int main(int argc, char** argv) {
         else if (mode == "--queued-prebuilds") ClosingDropsQueuedPrebuilds();
         else if (mode == "--compare-helpers") StoppingJoinsCompareHelpers();
         else if (mode == "--draw-committer") ShutdownJoinsDrawCommitter();
+        else if (mode == "--draw-finisher") ShutdownJoinsDrawFinisher();
         else if (mode == "--shader-cache-writer") ShutdownJoinsShaderCacheWriter();
         else if (mode == "--late-shader-cache") ShutdownJoinsShaderCacheWriter(true);
         else if (mode == "--async-log-held") ShutdownPassesHeldAsyncLog();
