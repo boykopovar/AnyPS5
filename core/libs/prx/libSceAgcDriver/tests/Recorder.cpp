@@ -12062,6 +12062,56 @@ bool snapshotReadIntoStagingTests(const Device& device, Recorder& recorder) {
         mark(surface.data + geometry.mips[0].tiledOffset, geometry.mips[0], 0x40);
         dropped("partially committed", threeLevels(surface.Address()), {0x40, 0x00, 0x10});
     }
+    {
+        const auto limit = std::min<std::uint32_t>(context.limits.maxImageArrayLayers, 2048u);
+        const auto layers = limit + 1u + (limit & 1u);
+        if (!device.NullDescriptors() || layers > context.limits.maxImageDimension2D / 2u) {
+            std::cout << "nullDescriptor unavailable, or a 1D array past maxImageArrayLayers needs more than maxImageDimension2D rows: a dropped snapshot laid out as rows of a 2D image not tested\n";
+        } else {
+            const auto rowsWords = [&](std::uint64_t address) {
+                auto words = linearTextureWords(address, 8, 1, 56);
+                words[3] = (words[3] & 0x0fffffffu) | (12u << 28u);
+                words[4] = layers - 1u;
+                return words;
+            };
+            const auto resource = DecodeTextureResource(rowsWords(0x100000));
+            const auto geometry = DescribeSurface(resource);
+            const auto bytes = static_cast<std::size_t>(geometry.guestBytes);
+            Require(resource.dimension == TextureDimension::k1DArray && geometry.layers == layers && bytes > compareBytes, "the 1D array of " + std::to_string(layers) + " slices is not a 1D array of that many slices or is too small for its snapshot to be dropped");
+            auto& surface = allocate(bytes);
+            std::memset(surface.data, 0x10, bytes);
+            const auto centre = (layers - 1u) / 2u;
+            std::memset(surface.data + geometry.GuestOffset(centre, geometry.mips[0]), 0x40, geometry.mips[0].pitchBytes);
+            auto rowsContext = cacheContext;
+            rowsContext.limits.maxImageArrayLayers = limit;
+            TextureCache textureCache(rowsContext);
+            rowsContext.textureCache = &textureCache;
+            rowsContext.nullDescriptors = true;
+            ShaderRecompiler::RecompileResult rowsProgram;
+            ShaderRecompiler::DescriptorBinding binding;
+            binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+            binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+            binding.descriptorSet = 0;
+            binding.binding = 1;
+            binding.count = 1;
+            binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+            binding.imageSamplers = {0u};
+            const auto words = rowsWords(surface.Address());
+            binding.guestDescriptor.assign(words.begin(), words.end());
+            rowsProgram.bindings.push_back(binding);
+            const CompiledShader compiled{ShaderRecompiler::ShaderStage::Compute, &rowsProgram, 0};
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            const auto texture = [&] {
+                ShaderResources resources(rowsContext, compiled);
+                Require(resources.SampledTextures().size() == 1 && resources.SampledTextures().front() != nullptr, "the build that binds the 1D array as a 2D image has no sampled texture");
+                return resources.SampledTextures().front();
+            }();
+            Require(!texture->ViewsStorageImage(), "the 1D array bound as a 2D image was not sampled through a snapshot");
+            Require(spare(0, 0), "the dropped snapshot of the 1D array laid out as rows of a 2D image parked a vector in the spare pool");
+            expectRed(program.Red(texture->View(), texture->Layout(), 0.0f), 0x40 / 255.0f, "the dropped snapshot of the 1D array laid out as rows of a 2D image read into its staging buffer sampled the wrong slice at the centre of the image");
+            std::cout << "dropped snapshot read into its staging buffer, 1D array laid out as rows of a 2D image: passed\n";
+        }
+    }
     if (!context.textureCompressionBC) {
         std::cout << "BC compressed textures unavailable: dropped snapshots beside a spare snapshot vector not tested\n";
         return true;
