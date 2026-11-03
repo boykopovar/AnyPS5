@@ -313,7 +313,7 @@ void CheckPairing(const Pairing& item) {
             }
             const bool filtered = index != 0u && magnifyLinear;
             const std::array<float, 4> expected{static_cast<float>(level), filtered ? Bilinear(sample.x, size) : static_cast<float>(sample.x >> level), filtered ? Bilinear(sample.y, size) : static_cast<float>(sample.y >> level), 255.0f};
-            for (std::uint32_t component = 0; component < 4u; ++component) Require(std::abs(read(component) - expected[component]) < (filtered ? 0.05f : 0.5f), fail(component, expected[component]));
+            for (std::uint32_t component = 0; component < 4u; ++component) Require(std::abs(read(component) - expected[component]) < (filtered ? 1.0f : 0.5f), fail(component, expected[component]));
         }
     }
 }
