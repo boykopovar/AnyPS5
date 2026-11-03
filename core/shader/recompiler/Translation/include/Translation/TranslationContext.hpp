@@ -32,6 +32,8 @@ public:
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
+    IrValue* ReadOperand(const RdnaOperand& operand, IrType type) { return readOperand(operand, type); }
+    void WriteOperand(const RdnaOperand& operand, IrValue* value) { writeOperand(operand, value); }
 
 private:
     struct AddressOperands {

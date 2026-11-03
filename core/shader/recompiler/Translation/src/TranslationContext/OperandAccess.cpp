@@ -222,6 +222,16 @@ IrValue* TranslationContext::readOperand(const RdnaOperand& operand, IrType type
         const std::array<IrU32, 2> pair = readU32Pair(operand);
         return &ir.ConstructU64(pair[0].Value(), pair[1].Value());
     }
+    if (type == IrType::U32x2) {
+        const std::array<IrU32, 2> pair = readU32Pair(operand);
+        return &ir.Emit(IrOpcode::CompositeConstructU32x2, IrType::U32x2, {&pair[0].Value(), &pair[1].Value()});
+    }
+    if (type == IrType::U32x3) {
+        return &ir.Emit(IrOpcode::CompositeConstructU32x3, IrType::U32x3, {&readU32(operand).Value(), &readU32(offsetOperand(operand, 1u)).Value(), &readU32(offsetOperand(operand, 2u)).Value()});
+    }
+    if (type == IrType::U32x4) {
+        return &ir.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&readU32(operand).Value(), &readU32(offsetOperand(operand, 1u)).Value(), &readU32(offsetOperand(operand, 2u)).Value(), &readU32(offsetOperand(operand, 3u)).Value()});
+    }
     IrU32 bits = applyBitSourceModifiers(operand, readRawU32(operand));
     if (bits.Value().HasImmediate()) {
         const std::uint32_t value = bits.Value().ImmediateU32();
@@ -249,6 +259,9 @@ void TranslationContext::writeOperand(const RdnaOperand& operand, IrValue* value
         return;
     }
     IrType type = value->Type();
+    if (type == IrType::Void) {
+        return;
+    }
     if (type == IrType::F32) {
         if ((f32DenormalFlush & 2u) != 0u) value = &ir.BitCastF32(flushF32Denormal(IrU32(ir.BitCastU32(*value)), 2u).Value());
         value = &applyF32ResultModifiers(operand, IrF32(*value)).Value();
@@ -290,12 +303,25 @@ void TranslationContext::writeOperand(const RdnaOperand& operand, IrValue* value
         write16Bits(operand, IrU32(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&bits.Value()})));
         return;
     }
-    if (type == IrType::U64) {
+    if (type == IrType::U64 || type == IrType::U32x2) {
         writeU32Pair(operand, {IrU32(ir.CompositeExtract(*value, 0u)), IrU32(ir.CompositeExtract(*value, 1u))});
         return;
     }
     if (type == IrType::F32) {
         writeRawU32(operand, IrU32(ir.BitCastU32(*value)));
+        return;
+    }
+    if (type == IrType::U32x3) {
+        writeRawU32(operand, IrU32(ir.CompositeExtract(*value, 0u)));
+        writeRawU32(offsetOperand(operand, 1u), IrU32(ir.CompositeExtract(*value, 1u)));
+        writeRawU32(offsetOperand(operand, 2u), IrU32(ir.CompositeExtract(*value, 2u)));
+        return;
+    }
+    if (type == IrType::U32x4) {
+        writeRawU32(operand, IrU32(ir.CompositeExtract(*value, 0u)));
+        writeRawU32(offsetOperand(operand, 1u), IrU32(ir.CompositeExtract(*value, 1u)));
+        writeRawU32(offsetOperand(operand, 2u), IrU32(ir.CompositeExtract(*value, 2u)));
+        writeRawU32(offsetOperand(operand, 3u), IrU32(ir.CompositeExtract(*value, 3u)));
         return;
     }
     if (type != IrType::U32) {
