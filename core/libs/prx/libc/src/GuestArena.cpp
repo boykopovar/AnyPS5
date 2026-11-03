@@ -493,6 +493,171 @@ std::invalid_argument OutsideArena(const char* operation, const void* pointer, s
 }
 
 #ifdef _WIN32
+extern "C" {
+int GuardedCopy(std::uintptr_t source, void* destination, std::size_t bytes);
+int GuardedCompare(std::uintptr_t source, const void* expected, std::size_t bytes);
+int GuardedCopyAvx2(std::uintptr_t source, void* destination, std::size_t bytes);
+int GuardedCompareAvx2(std::uintptr_t source, const void* expected, std::size_t bytes);
+extern const char GuardedCopyAvx2Load[];
+extern const char GuardedCopyAvx2HighLoad[];
+extern const char GuardedCompareAvx2Load[];
+extern const char GuardedCompareAvx2HighLoad[];
+extern const char GuardedCopyWideLoad[];
+extern const char GuardedCopyByteLoad[];
+extern const char GuardedCompareWideLoad[];
+extern const char GuardedCompareByteLoad[];
+extern const char GuardedReadFailed[];
+extern const char GuardedReadFailedAvx2[];
+}
+
+asm(".text\n"
+    ".seh_proc GuardedCopy\n"
+    "GuardedCopy:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "GuardedCopyWideLoad:\n"
+    "1:  movdqu (%rcx), %xmm0\n"
+    "    movdqu %xmm0, (%rcx,%rdx)\n"
+    "    addq $16, %rcx\n"
+    "GuardedCopyTail:\n"
+    "2:  leaq 16(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    jmp 4f\n"
+    "GuardedCopyByteLoad:\n"
+    "3:  movzbl (%rcx), %eax\n"
+    "    movb %al, (%rcx,%rdx)\n"
+    "    incq %rcx\n"
+    "4:  cmpq %r9, %rcx\n"
+    "    jb 3b\n"
+    "    xorl %eax, %eax\n"
+    "    ret\n"
+    ".seh_endproc\n"
+    ".seh_proc GuardedCompare\n"
+    "GuardedCompare:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "GuardedCompareWideLoad:\n"
+    "1:  movdqu (%rcx), %xmm0\n"
+    "    movdqu (%rcx,%rdx), %xmm1\n"
+    "    pcmpeqb %xmm1, %xmm0\n"
+    "    pmovmskb %xmm0, %eax\n"
+    "    cmpl $0xffff, %eax\n"
+    "    jne 5f\n"
+    "    addq $16, %rcx\n"
+    "GuardedCompareTail:\n"
+    "2:  leaq 16(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    jmp 4f\n"
+    "GuardedCompareByteLoad:\n"
+    "3:  movzbl (%rcx), %eax\n"
+    "    cmpb (%rcx,%rdx), %al\n"
+    "    jne 5f\n"
+    "    incq %rcx\n"
+    "4:  cmpq %r9, %rcx\n"
+    "    jb 3b\n"
+    "    xorl %eax, %eax\n"
+    "    ret\n"
+    "5:  movl $1, %eax\n"
+    "    ret\n"
+    "GuardedReadFailed:\n"
+    "    movl $-1, %eax\n"
+    "    ret\n"
+    ".seh_endproc\n"
+    ".seh_proc GuardedCopyAvx2\n"
+    "GuardedCopyAvx2:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "GuardedCopyAvx2Load:\n"
+    "1:  vmovdqu (%rcx), %ymm0\n"
+    "GuardedCopyAvx2HighLoad:\n"
+    "    vmovdqu 32(%rcx), %ymm1\n"
+    "    vmovdqu %ymm0, (%rcx,%rdx)\n"
+    "    vmovdqu %ymm1, 32(%rcx,%rdx)\n"
+    "    addq $64, %rcx\n"
+    "2:  leaq 64(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    vzeroupper\n"
+    "    jmp GuardedCopyTail\n"
+    ".seh_endproc\n"
+    ".seh_proc GuardedCompareAvx2\n"
+    "GuardedCompareAvx2:\n"
+    ".seh_endprologue\n"
+    "    leaq (%rcx,%r8), %r9\n"
+    "    subq %rcx, %rdx\n"
+    "    jmp 2f\n"
+    "GuardedCompareAvx2Load:\n"
+    "1:  vmovdqu (%rcx), %ymm0\n"
+    "GuardedCompareAvx2HighLoad:\n"
+    "    vmovdqu 32(%rcx), %ymm1\n"
+    "    vpcmpeqb (%rcx,%rdx), %ymm0, %ymm0\n"
+    "    vpcmpeqb 32(%rcx,%rdx), %ymm1, %ymm1\n"
+    "    vpand %ymm1, %ymm0, %ymm0\n"
+    "    vpmovmskb %ymm0, %eax\n"
+    "    cmpl $-1, %eax\n"
+    "    jne 3f\n"
+    "    addq $64, %rcx\n"
+    "2:  leaq 64(%rcx), %rax\n"
+    "    cmpq %r9, %rax\n"
+    "    jbe 1b\n"
+    "    vzeroupper\n"
+    "    jmp GuardedCompareTail\n"
+    "3:  vzeroupper\n"
+    "    movl $1, %eax\n"
+    "    ret\n"
+    "GuardedReadFailedAvx2:\n"
+    "    vzeroupper\n"
+    "    movl $-1, %eax\n"
+    "    ret\n"
+    ".seh_endproc\n");
+
+namespace {
+
+bool HasAvx2() {
+    static const bool avx2 = __builtin_cpu_supports("avx2");
+    return avx2;
+}
+
+bool OwnedByGuest(std::uintptr_t address, std::size_t bytes) {
+    const auto& arena = Arena::Get();
+    return arena.Contains(reinterpret_cast<const void*>(address), bytes) && !arena.OverlapsHostRegion(address, bytes);
+}
+
+}
+
+bool GuestArenaCopyOwned_nid_no_patch(std::uintptr_t source, void* destination, std::size_t bytes) {
+    return OwnedByGuest(source, bytes) && (HasAvx2() ? GuardedCopyAvx2 : GuardedCopy)(source, destination, bytes) == 0;
+}
+
+bool GuestArenaCompareOwned_nid_no_patch(std::uintptr_t source, const void* expected, std::size_t bytes, bool* equal) {
+    if (!OwnedByGuest(source, bytes)) return false;
+    const auto result = (HasAvx2() ? GuardedCompareAvx2 : GuardedCompare)(source, expected, bytes);
+    *equal = result == 0;
+    return result >= 0;
+}
+
+bool GuestArenaRecoverRead_nid_no_patch(EXCEPTION_POINTERS* exception) {
+    const auto* record = exception->ExceptionRecord;
+    const auto code = record->ExceptionCode;
+    if ((code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_IN_PAGE_ERROR) || record->NumberParameters < 2 || record->ExceptionInformation[0] != 0) return false;
+    auto* context = exception->ContextRecord;
+    const auto at = reinterpret_cast<const char*>(context->Rip);
+    const bool avx2 = at == GuardedCopyAvx2Load || at == GuardedCopyAvx2HighLoad || at == GuardedCompareAvx2Load || at == GuardedCompareAvx2HighLoad;
+    if (!avx2 && at != GuardedCopyWideLoad && at != GuardedCopyByteLoad && at != GuardedCompareWideLoad && at != GuardedCompareByteLoad) return false;
+    const auto address = static_cast<std::uintptr_t>(record->ExceptionInformation[1]);
+    if (address < context->Rcx || address >= context->R9) return false;
+    context->Rip = reinterpret_cast<DWORD64>(avx2 ? GuardedReadFailedAvx2 : GuardedReadFailed);
+    return true;
+}
+
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     WindowsMappings::Get().SetProtection(address, bytes, protection);
     noteAccess(reinterpret_cast<const void*>(address), bytes);
