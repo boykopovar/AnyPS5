@@ -5719,7 +5719,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             std::memcpy(stageAddresses.data() + (ShaderRecompiler::GpuScratchPoolAddressPushByte - Graphics::ComputePushConstantBytes), &pool->address, sizeof(pool->address));
             std::memcpy(stageAddresses.data() + (ShaderRecompiler::GpuScratchPoolDwordsPushByte - Graphics::ComputePushConstantBytes), &dwords, sizeof(dwords));
         } else {
-            context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::ScratchPoolDescriptorSet, 1, &pool->set, 0, nullptr);
+            Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::ScratchPoolDescriptorSet, 1, &pool->set, Graphics::SetBindSite::Dispatch);
         }
         recorder.Keep(std::move(pool));
     }

@@ -343,7 +343,7 @@ void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipeline
     std::lock_guard lock(MeshWindowMutex());
     const auto& pool = MeshWindowPools().at(context.device);
     Require(pool.set != VK_NULL_HANDLE, "mesh window buffer was not prepared");
-    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::MeshWindowDescriptorSet, 1, &pool.set, 0, nullptr);
+    CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::MeshWindowDescriptorSet, 1, &pool.set, SetBindSite::Draw);
 }
 
 void ReleaseMeshWindow(VkDevice device) {
@@ -366,7 +366,7 @@ void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPi
     std::lock_guard lock(PixelLdsMutex());
     const auto& pool = PixelLdsPools().at(context.device);
     Require(pool.set != VK_NULL_HANDLE, "pixel function LDS buffer was not prepared");
-    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::PixelFunctionLdsDescriptorSet, 1, &pool.set, 0, nullptr);
+    CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::PixelFunctionLdsDescriptorSet, 1, &pool.set, SetBindSite::Draw);
 }
 
 void CheckPixelFunctionLds(const Context& context) {
