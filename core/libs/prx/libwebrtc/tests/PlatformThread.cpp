@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -23,9 +24,27 @@ template<typename TException, typename TAction> void RequireThrows(TAction actio
     Require(false, location);
 }
 
+const int vtable = 0;
+void* joined = nullptr;
+int joins = 0;
+int joinResult = 0;
+
+int APS5_VABI RecordJoin(void* thread, void**) {
+    joined = thread;
+    ++joins;
+    return joinResult;
+}
+
+void ResetJoins(int result) {
+    joined = nullptr;
+    joins = 0;
+    joinResult = result;
+}
+
 WebRtcPlatformThread Thread(void* handle, bool hasHandle, bool joinable) {
     WebRtcPlatformThread thread;
     std::memset(&thread, 0xA5, sizeof(thread));
+    thread.vtable = &vtable;
     thread.handle = handle;
     thread.hasHandle = hasHandle;
     thread.joinable = joinable;
@@ -44,10 +63,29 @@ void TestFinalize() {
     _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(&detached);
     Require(!detached.hasHandle);
 
+    ResetJoins(0);
+    _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(&detached);
+    Require(joins == 0 && detached.vtable == &vtable);
+}
+
+void TestJoin() {
+    int handle = 0;
+    ResetJoins(0);
     WebRtcPlatformThread joinable = Thread(&handle, true, true);
-    RequireThrows<std::runtime_error>([&] { _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(&joinable); });
-    Require(joinable.hasHandle && joinable.joinable);
-    RequireThrows<std::runtime_error>([&] { _ZN3rtc14PlatformThreadD1Ev_nid_postfix(&joinable); });
+    _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(&joinable);
+    Require(joins == 1 && joined == &handle && !joinable.hasHandle && joinable.joinable && joinable.vtable == &vtable);
+    _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(&joinable);
+    Require(joins == 1);
+
+    ResetJoins(0);
+    WebRtcPlatformThread destroyed = Thread(&handle, true, true);
+    _ZN3rtc14PlatformThreadD1Ev_nid_postfix(&destroyed);
+    Require(joins == 1 && joined == &handle && !destroyed.hasHandle);
+
+    ResetJoins(3);
+    WebRtcPlatformThread failing = Thread(&handle, true, true);
+    RequireThrows<std::runtime_error>([&] { _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(&failing); });
+    Require(joins == 1);
 }
 
 void TestDestructor() {
@@ -74,10 +112,14 @@ void TestMoveAssignment() {
     _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(&emptyTarget, &emptySource);
     Require(!emptyTarget.hasHandle && emptyTarget.joinable && !emptySource.hasHandle);
 
+    Require(target.vtable == &vtable && source.vtable == &vtable);
+
+    ResetJoins(0);
     WebRtcPlatformThread busy = Thread(&first, true, true);
     WebRtcPlatformThread other = Thread(&second, true, false);
-    RequireThrows<std::runtime_error>([&] { _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(&busy, &other); });
-    Require(busy.handle == &first && busy.hasHandle && other.hasHandle);
+    _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(&busy, &other);
+    Require(joins == 1 && joined == &first);
+    Require(busy.handle == &second && busy.hasHandle && !busy.joinable && !other.hasHandle);
 }
 
 void TestNullThreadsThrow() {
@@ -91,7 +133,9 @@ void TestNullThreadsThrow() {
 }
 
 int main() {
+    RegisterPthreadJoin_nid_no_patch(RecordJoin);
     TestFinalize();
+    TestJoin();
     TestDestructor();
     TestMoveAssignment();
     TestNullThreadsThrow();
