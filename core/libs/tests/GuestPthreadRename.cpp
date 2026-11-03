@@ -1,7 +1,9 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -76,6 +78,50 @@ static void CheckThreadRename(Pthread thread) {
     *__error_nid_postfix() = savedError;
 }
 
+static void CheckUnusableNames(Pthread thread) {
+    constexpr std::size_t Page = 0x4000;
+    auto* memory = static_cast<char*>(mmap_nid_postfix(nullptr, 2 * Page, 3, 0x1002, -1, 0));
+    Require(memory != reinterpret_cast<char*>(static_cast<std::uintptr_t>(-1)));
+    char* const end = memory + Page;
+    Require(mprotect_nid_postfix(end, Page, 0) == 0);
+    const std::string kept = "kept";
+    Require(pthread_rename_np_nid_postfix(thread, kept.c_str()) == 0);
+    const int savedError = *__error_nid_postfix();
+    char* const fits = end - 32;
+    std::memset(fits, 'a', 31);
+    fits[31] = '\0';
+    char* const noTerminator = end - 32;
+    char* const unterminated = end - 31;
+    char* const bad[] = {reinterpret_cast<char*>(0x10), end, unterminated};
+    for (char* name : bad) {
+        std::memset(memory, 'a', Page);
+        Require(pthread_rename_np_nid_postfix(thread, name) == 14);
+        Require(scePthreadRename(thread, name) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_rename_np_nid_postfix(nullptr, name) == 22);
+        Require(*__error_nid_postfix() == savedError);
+        CheckStoredName(thread, kept);
+    }
+    std::memset(memory, 'a', Page);
+    Require(pthread_rename_np_nid_postfix(thread, noTerminator) == 63);
+    CheckStoredName(thread, kept);
+    std::memset(memory, 'a', Page);
+    fits[31] = '\0';
+    Require(pthread_rename_np_nid_postfix(thread, fits) == 0);
+    CheckStoredName(thread, std::string(31, 'a'));
+    Require(scePthreadRename(thread, kept.c_str()) == 0);
+    Require(scePthreadRename(thread, fits) == 0);
+    CheckStoredName(thread, std::string(31, 'a'));
+    Require(scePthreadRename(reinterpret_cast<Pthread>(0x10), kept.c_str()) == SCE_KERNEL_ERROR_ESRCH);
+    Require(scePthreadRename(thread, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_rename_np_nid_postfix(thread, nullptr) == 22);
+    std::memset(memory, 'b', Page);
+    Require(scePthreadRename(thread, memory) == SCE_KERNEL_ERROR_ENAMETOOLONG);
+    CheckStoredName(thread, std::string(31, 'a'));
+    Require(mprotect_nid_postfix(end, Page, 3) == 0);
+    Require(munmap_nid_postfix(memory, 2 * Page) == 0);
+    Require(pthread_rename_np_nid_postfix(thread, kept.c_str()) == 0);
+}
+
 static void* APS5_VABI Worker(void*) {
     const Pthread self = scePthreadSelf();
     Require(self != nullptr);
@@ -92,6 +138,7 @@ int main() {
     const Pthread self = scePthreadSelf();
     Require(self != nullptr);
     CheckThreadRename(self);
+    CheckUnusableNames(self);
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, Worker, nullptr, "Z\xc3\xa4hler") == 0);
     Require(scePthreadJoin(thread, nullptr) == 0);
