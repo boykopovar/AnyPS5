@@ -19,6 +19,8 @@ unless --summary names another file.
 
 Buffer-full markers report lost events even without a summary. Slice-based timings, waits and batch
 inventories then describe retained events only; untraced time is not evidence of idle time.
+The gpu thread's busy time is the union of its retained ranges within the frame window; the producer's summary
+and the per-slice inventories retain accumulated durations and can count overlapping work separately.
 
 A summary file written by APS5_TRACE_SUMMARY_EVERY (aps5-summary.jsonl, or any .jsonl) is digested as a table with
 one row per interval and a text sparkline of the frame p99 and of the GPU busy time per present; the lines of
@@ -290,14 +292,20 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
         traced = 0.0
         waited = 0.0
         leaders = collections.Counter()
+        gpu = trace.name(tid) == "gpu"
+        covered_until = -math.inf
         for ts, dur, name, depth, nested in slices:
-            overlap = max(min(ts + dur, frames[-1][2]) - max(ts, frames[0][1]), 0.0) if frames else dur
+            begin = max(ts, frames[0][1]) if frames else ts
+            end = min(ts + dur, frames[-1][2]) if frames else ts + dur
+            overlap = max(end - begin, 0.0)
             if overlap > 0:
                 totals[name] += overlap
-                if depth == 0:
-                    traced += overlap
-                    if not is_wait(name):
-                        leaders[name] += overlap
+                if depth == 0 or gpu:
+                    contribution = max(end - max(begin, covered_until), 0.0) if gpu else overlap
+                    covered_until = max(covered_until, end)
+                    traced += contribution
+                    if contribution > 0 and not is_wait(name):
+                        leaders[name] += contribution
                 if is_wait(name) and not nested:
                     waited += overlap
             if is_wait(name) and not nested and (overlap > 0 or not frames):

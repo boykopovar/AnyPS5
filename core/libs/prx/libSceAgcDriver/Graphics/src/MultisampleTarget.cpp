@@ -17,6 +17,7 @@
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -885,14 +886,6 @@ struct GuardedRange {
     std::shared_ptr<std::atomic<bool>> metadataValid;
     std::shared_ptr<TargetUse> use;
     bool fmask = false;
-};
-
-class PrimedSharedMutex : public std::shared_mutex {
-public:
-    PrimedSharedMutex() {
-        lock();
-        unlock();
-    }
 };
 
 std::shared_mutex& guardedMutex() {
