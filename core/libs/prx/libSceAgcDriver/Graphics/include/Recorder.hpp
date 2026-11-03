@@ -244,6 +244,7 @@ public:
     void CountSamples();
     bool CountingSamples() const { return countingSamples; }
     bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
+    bool RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter = 0);
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
@@ -377,6 +378,7 @@ public:
     };
     static OwnLabel UnlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue);
     static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
+    static bool LookupStoredBytes(std::uint64_t address, std::span<std::byte> bytes);
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
     // enters the table with no batch, and only a lookup made on the noting thread (a WAIT_REG_MEM
     // of the same queue) takes its value, since that queue's later work follows the label in queue
@@ -394,6 +396,7 @@ public:
     // The function the flush hook calls, on the accessing thread (which may hold the GPU mutex),
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
     static void SetQueuedLabelRecorder(void (*recorder)());
+    static void FailNextSubmitsForTest(unsigned count);
     // Whether the lock-free pending-write snapshot (open, in-flight and finishing batches) overlaps
     // the range: false means no recorded work writes it, so a wait on it has nothing to submit.
     static bool SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes);
@@ -589,6 +592,14 @@ public:
     static bool FlipReadCheck();
 
 private:
+    struct Batch;
+    struct WideLabel {
+        std::uint64_t end;
+        std::vector<std::byte> bytes;
+        std::uint64_t sequence;
+        bool overwritten = false;
+        const Batch* batch = nullptr;
+    };
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -618,6 +629,7 @@ private:
         std::uint64_t serial = 0;
         std::uint64_t traceId = 0;
         bool submitted = false;
+        std::atomic<bool> submitStarted{false};
         // The GpuMutex queue tag of the thread that opened the batch, and when it was submitted
         // (the [syncwait] line reports what a wait's target and the batches ahead of it were).
         std::uint32_t queue = 0xffffffffu;
@@ -643,7 +655,7 @@ private:
         std::uint64_t readGeneration = 0;
         // Dword addresses this batch noted in the label table (removed when it finishes).
         std::vector<std::uint64_t> labelDwords;
-        std::vector<std::multimap<std::uint64_t, std::uint64_t>::iterator> wideLabels;
+        std::vector<std::multimap<std::uint64_t, WideLabel>::iterator> wideLabels;
         // Labels stored by this batch's completion actions (see AfterCompletions); subtracted from
         // the lock-free pending count when the batch finishes, whether or not its completions ran.
         std::uint32_t completionLabelCount = 0;
@@ -769,6 +781,9 @@ private:
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
     VkPipeline meshArgumentPipeline = VK_NULL_HANDLE;
+    int changedCopyState = 0;
+    VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
+    VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
@@ -860,6 +875,7 @@ private:
     std::uint64_t writtenBackSequence = 0;
     // PendingLabel without the table mutex (the caller holds it, or the GPU mutex).
     std::optional<LabelHit> lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const;
+    bool storedBytesLocked(std::uint64_t address, std::span<std::byte> bytes) const;
     OwnLabel unlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue) const;
     // Whether the in-flight batch with that serial has not signaled its fence (false when it is
     // not in flight any more): what makes a wait for it a real GPU wait (ThreadHookWaits).
@@ -881,8 +897,10 @@ private:
     // The queued entries (batch always null), by dword; a lookup on the noting queue's thread
     // prefers them (its newest store in program order), every other lookup sees `labels` alone.
     std::map<std::uint64_t, LabelEntry> queuedLabels;
-    std::multimap<std::uint64_t, std::uint64_t> wideLabels;
+    std::multimap<std::uint64_t, WideLabel> wideLabels;
     std::uint64_t wideLabelBytes = 0;
+    std::uint64_t wideLabelSequence = 0;
+    std::atomic<std::size_t> recordedWideLabels{0};
     bool wideLabelInLocked(std::uint64_t address, std::size_t bytes) const;
     // labels.size(), readable without the table mutex: a noted write skips the mutex while the
     // table is empty (most of the time between label groups).

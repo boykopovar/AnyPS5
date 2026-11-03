@@ -57,6 +57,15 @@ inline VkDeviceSize HostImportOffset(const HostImport& import, std::uint64_t add
     return address - import.base + import.lead;
 }
 
+struct HostImportStart {
+    std::uint64_t guest;
+    VkDeviceAddress device;
+};
+
+inline HostImportStart HostImportBufferStart(const HostImport& import) {
+    return {import.base - import.lead, import.address - import.lead};
+}
+
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
 
 struct ImportProbe {
@@ -109,6 +118,7 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
+std::shared_ptr<HostImport> UnregisteredHostImport(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
 void SetHostImportRangeWindow(std::uint64_t bytes);
@@ -194,6 +204,8 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
+void SetDeviceLocalFullForTests(bool full);
+std::uint64_t StagingShadowsRefused();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -467,7 +479,9 @@ private:
         bool gpuCopy = false;
         VkBuffer copySource = VK_NULL_HANDLE;
         std::uint64_t copySourceBase = 0;
+        VkDeviceAddress copySourceAddress = 0;
         bool copiedBack = false;
+        std::shared_ptr<Buffer> shadowCopy;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;
         bool swept = false;
