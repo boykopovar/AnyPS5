@@ -46,6 +46,8 @@ int APS5_VABI u_digit_nid_postfix(std::int32_t character, std::int8_t radix) {
     auto value = DecimalValue(character);
     if (value < 0 && character >= 'A' && character <= 'Z') value = character - 'A' + 10;
     if (value < 0 && character >= 'a' && character <= 'z') value = character - 'a' + 10;
+    if (value < 0 && character >= 0xff21 && character <= 0xff3a) value = character - 0xff17;
+    if (value < 0 && character >= 0xff41 && character <= 0xff5a) value = character - 0xff37;
     return value < radix ? value : -1;
 }
 

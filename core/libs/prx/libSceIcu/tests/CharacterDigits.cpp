@@ -24,6 +24,10 @@ int main() {
     Require(u_digit_nid_postfix('A', 10) == -1);
     Require(u_digit_nid_postfix('A', 16) == 10);
     Require(u_digit_nid_postfix('z', 36) == 35);
+    Require(u_digit_nid_postfix(0xff21, 10) == -1);
+    Require(u_digit_nid_postfix(0xff21, 16) == 10);
+    Require(u_digit_nid_postfix(0xff5a, 35) == -1);
+    Require(u_digit_nid_postfix(0xff5a, 36) == 35);
     Require(u_digit_nid_postfix('0', 1) == -1);
     Require(u_digit_nid_postfix('0', 37) == -1);
 }
