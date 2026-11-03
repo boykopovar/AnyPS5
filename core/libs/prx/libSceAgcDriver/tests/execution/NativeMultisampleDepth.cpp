@@ -1589,7 +1589,10 @@ bool CheckDrawFeedback(std::optional<bool> bufferFeedback = std::nullopt) {
         Require(value == 0x12345678u && DepthSurfaceAt(depth.address), "an adjacent shader buffer write disturbed native depth ownership");
         TargetRefuses([&] { device->Draw(onePixel, draw, writing); }, "a writable shader buffer overlaps a native depth attachment");
         device->WaitIdle();
-        std::puts("Native attachment buffer feedback refused; adjacent GPU writes left native depth active");
+        std::array<std::byte, 4> recovered{};
+        AgcDriver::GuestMemory::Read(depth.address, recovered);
+        Require(std::all_of(recovered.begin(), recovered.end(), [](std::byte value) { return value == std::byte{0}; }), "attachment feedback refusal changed published depth");
+        std::puts("Native attachment buffer feedback refused; adjacent GPU writes and published depth remained intact");
         return true;
     }
     device->Draw(state, draw, initial);
