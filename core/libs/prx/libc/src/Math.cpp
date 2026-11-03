@@ -2113,6 +2113,17 @@ float APS5_VABI ldexpf_nid_postfix(float x, int exp) {
     errno = saved_errno;
     return result;
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_fmod.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_fmod.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI fmod_nid_postfix(double x, double y) {
     const std::uint64_t ix = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
     const std::uint64_t iy = std::bit_cast<std::uint64_t>(y) & 0x7fffffffffffffffull;
