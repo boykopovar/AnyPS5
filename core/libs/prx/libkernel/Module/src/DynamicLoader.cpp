@@ -345,9 +345,9 @@ static void InitializeDeferredModule(HMODULE native, HMODULE initiator) {
         initializedChanged.notify_all();
         if (!restored) throw std::system_error(static_cast<int>(error), std::system_category(), "restore deferred module initialization metadata");
     };
-    std::fprintf(stderr, "[module] deferred start %s (%s)\n", ModuleFileName(native).c_str(),
-        initiator ? ("needed by " + ModuleFileName(initiator)).c_str() : "loaded by the title");
     try {
+        std::fprintf(stderr, "[module] deferred start %s (%s)\n", ModuleFileName(native).c_str(),
+            initiator ? ("needed by " + ModuleFileName(initiator)).c_str() : "loaded by the title");
         auto* base = reinterpret_cast<std::uint8_t*>(native);
         const auto* pending = static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());
         if (entry != 0) __aps5_set_module_init_result_nid_no_patch(reinterpret_cast<Entry>(base + entry)(pending->args, pending->argp, nullptr));
