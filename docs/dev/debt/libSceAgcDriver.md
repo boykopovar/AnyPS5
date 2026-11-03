@@ -360,6 +360,19 @@
 
 - [Draw](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) partitions layered mesh color draws into attachment windows within the host `maxMeshOutputLayers` limit, remaps output layers and reconstructs the guest layer for fragment ancillary input. Replay requires shaders without guest memory writes, clocks, GDS access or unproven side effects; those draws still throw until mesh output can be captured once and rasterized separately. Layered depth rendering remains unsupported. Vulkan layer-limit semantics follow [Layer](https://docs.vulkan.org/refpages/latest/refpages/source/Layer.html); PS5 behavior outside Vulkan’s defined layer range is unmeasured. Layered 2D array views remain unsupported by the existing color-view decoder.
 
+- [Owned draw input copies](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp) (libSceAgcDriver) - exact vertex/index copy fallbacks on untracked Windows arena memory can reuse libc write-watch tokens,
+  with driver write stamps and pending-write, registry and mapping checks. In-place inputs and zero-padded reads do not use this path; Linux and refused libc ranges copy normally. Tokens cover whole 64 KiB blocks and
+  every overlapping clearing collect or rearm can discard otherwise unchanged copies. Proofs are captured before reading and checked again when kept, but concurrent guest CPU stores still require the submission
+  synchronization expected by the ordinary copy path; this is not an atomic snapshot. The existing 1 GiB/16,384-entry input cache bounds buffers and token vectors together: a vector has one 8-byte word per covered block,
+  at most two boundary words per entry beyond the buffer-size bound. `APS5_NO_OWNED_DRAW_INPUTS` disables this reuse and `APS5_VERIFY_OWNED_DRAW_INPUTS` compares reused bytes. No title or performance result has been
+  measured.
+
+- [Owned storage snapshots](../../../core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp) (libSceAgcDriver) - ordinary read-only storage buffers above the draw upload limit can reuse exact owned proofs.
+  On hosts with native arena write watching, the selected untracked path bypasses the epoch memo even when arming is refused, so refused ranges lose same-epoch memo reuse and are copied again.
+  Hosts without native arena write watching, tracked ranges, small uploads, moved overrides, writable buffers and BDA paths retain their existing behavior.
+  Proofs cover the full adjusted copy range, share the existing 1 GiB/1,024-entry storage pool, and do not serve containing-range lookups. Guest CPU stores still follow the ordinary submission synchronization contract.
+  No title or performance result is measured. `APS5_NO_OWNED_DRAW_SNAPSHOTS` restores the previous path; the existing `APS5_VERIFY_OWNED_DRAW_INPUTS` verifier also checks owned storage hits.
+
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
