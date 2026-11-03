@@ -134,6 +134,14 @@ int main() {
         threw = true;
     }
     Require(threw, "null input", row);
+    double x[1] = {1.0};
+    threw = false;
+    try {
+        __kernel_rem_pio2_nid_postfix(x, nullptr, 0, 1, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null output", row);
     std::puts("__kernel_rem_pio2: ok");
     return 0;
 }
