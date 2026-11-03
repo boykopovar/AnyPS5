@@ -37,6 +37,7 @@ struct Push {
     std::uint32_t columnBegin;
     std::uint32_t rowBegin;
     std::uint32_t pipeBankXor;
+    std::uint32_t splitStride;
 };
 
 std::uint32_t BlockBytesFor(TextureTileMode tileMode) {
@@ -148,8 +149,18 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     }
     // Constants 0-3 select element size, block size, addressing family and direction; 4-19 carry the
     // per-bit XOR equation for the equation family (2); 20-21 override the block extent in elements.
-    std::array<std::uint32_t, 22> values{elementBytes, BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
-    if (thick) {
+    const bool gcn = IsGcnTiled(tileMode);
+    std::array<std::uint32_t, 26> values{elementBytes, gcn ? 0u : BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
+    if (gcn) {
+        Require(!thick, "PS4 tiled surfaces are detiled thin");
+        const auto geometry = GcnTiling(tileMode, elementBytes);
+        values[1] = geometry.blockBytes;
+        values[2] = 2u;
+        std::copy(geometry.equation.begin(), geometry.equation.end(), values.begin() + 4);
+        values[20] = geometry.blockWidth;
+        values[21] = geometry.blockHeight;
+        std::copy(geometry.splitMasks.begin(), geometry.splitMasks.end(), values.begin() + 22);
+    } else if (thick) {
         const auto thickMode = tileMode == TextureTileMode::kStandard4KB ? 0x105u : tileMode == TextureTileMode::kS4KBX ? 0x115u : tileMode == TextureTileMode::kStandard64KB ? 0x109u : tileMode == TextureTileMode::kS64KBX ? 0x119u : tileMode == TextureTileMode::kD64KBX ? 0x11au : 0u;
         Require(thickMode != 0, "3D textures are only detiled thick from SW_4KB_S, SW_4KB_S_X, SW_64KB_S, SW_64KB_S_X or SW_64KB_D_X");
         const auto* equation = FindTextureSwizzleEquation(thickMode, elementBytes);
@@ -168,7 +179,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     if (image && imageModule == VK_NULL_HANDLE) {
         imageModule = CreateShaderModule(context, TEXTURE_DETILE_IMAGE_SPV, sizeof(TEXTURE_DETILE_IMAGE_SPV), "vkCreateShaderModule");
     }
-    std::array<VkSpecializationMapEntry, 22> entries{};
+    std::array<VkSpecializationMapEntry, 26> entries{};
     for (std::uint32_t index = 0; index < entries.size(); ++index) entries[index] = {index, index * 4u, 4};
     VkSpecializationInfo specialization{};
     specialization.mapEntryCount = static_cast<std::uint32_t>(entries.size());
@@ -192,6 +203,15 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     return result;
 }
 
+std::uint32_t TextureDetiler::layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer) {
+    if (layer == 0 || layout.gcnMicroTiled || !IsGcnMacroTiled(tileMode)) return 0u;
+    const auto key = (static_cast<std::uint32_t>(tileMode) << 8u) | elementBytes;
+    for (const auto& entry : gcnGeometries) {
+        if (entry.first == key) return GcnLayerBankXor(entry.second, layer);
+    }
+    return GcnLayerBankXor(gcnGeometries.emplace_back(key, GcnTiling(tileMode, elementBytes)).second, layer);
+}
+
 void TextureDetiler::checkWindow(const TileMipLayout& layout, const DetileWindow& window, std::uint32_t& columnEnd, std::uint32_t& rowEnd) const {
     Require(layout.width != 0 && layout.height != 0, "texture detiling requires a non-empty mip layout");
     Require(layout.tiledSize != 0 && layout.linearSize != 0, "texture detiling requires a non-empty mip layout");
@@ -206,7 +226,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     Require(source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "texture detiling requires source and destination buffers");
     std::uint32_t columnEnd = 0, rowEnd = 0;
     checkWindow(layout, window, columnEnd, rowEnd);
-    const auto target = pipeline(tileMode, elementBytes, retile, thick);
+    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thick);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;
     const auto destinationDescriptorOffset = destinationOffset - destinationOffset % alignment;
@@ -236,9 +256,9 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     writes[1].descriptorCount = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writes[1].pBufferInfo = &destinationInfo;
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
     Push push{};
     push.srcBase = static_cast<std::uint32_t>(sourceBase);
     push.dstBase = static_cast<std::uint32_t>(destinationBase);
@@ -257,11 +277,12 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     push.linearBase = window.linearBase;
     push.columnBegin = window.columnBegin;
     push.rowBegin = window.rowBegin;
-    push.pipeBankXor = window.pipeBankXor;
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
+    push.pipeBankXor = window.pipeBankXor ^ layerBankXor(tileMode, elementBytes, layout, slice);
+    push.splitStride = layout.gcnSplitStride;
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;
     const auto groupsY = (rowEnd - window.rowBegin + 7u) / 8u;
-    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groupsX, groupsY, 1);
+    context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, groupsX, groupsY, 1);
 }
 
 void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes) {
@@ -301,12 +322,12 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
         writes[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[index].pBufferInfo = index == 0 ? &sourceInfo : &destinationInfo;
     }
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, repackPipeline);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, repackPipeline);
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
     const std::array<std::uint32_t, 4> push{static_cast<std::uint32_t>(sourceOffset - sourceDescriptorOffset), static_cast<std::uint32_t>(destinationOffset - destinationDescriptorOffset), static_cast<std::uint32_t>(words), static_cast<std::uint32_t>(std::min(words, rowWords))};
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
-    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
 }
 
 std::uint32_t TextureDetiler::CmaskErrors() {
@@ -374,24 +395,24 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
     writes[0].pBufferInfo = &cmaskInfo;
     writes[1].pBufferInfo = &errorInfo;
     writes[2].pImageInfo = &imageInfo;
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     const auto barrier = [&](VkPipelineStageFlags source, VkPipelineStageFlags destination, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) {
         VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         memory.srcAccessMask = sourceAccess;
         memory.dstAccessMask = destinationAccess;
-        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, source, destination, 0, 1, &memory, 0, nullptr, 0, nullptr);
+        context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, source, destination, 0, 1, &memory, 0, nullptr, 0, nullptr);
     };
     constexpr VkAccessFlags anyWrite = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT;
     constexpr VkAccessFlags anyAccess = anyWrite | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_HOST_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
     barrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, anyWrite, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipeline);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipelineLayout, 0, 1, &set, 0, nullptr);
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipeline);
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, cmaskPipelineLayout, 0, 1, &set, 0, nullptr);
     const std::uint32_t mask = elementBytes >= 4 ? 0xffffffffu : (1u << (elementBytes * 8u)) - 1u;
     const std::array<std::uint32_t, 7> push{static_cast<std::uint32_t>(base), width, height, (width + 1023u) / 1024u, clearWords[0] & mask, elementBytes == 8 ? clearWords[1] : 0u, write ? 1u : 0u};
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, cmaskPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
-    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, (width + 7u) / 8u, (height + 7u) / 8u, 1);
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, cmaskPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (width + 7u) / 8u, (height + 7u) / 8u, 1);
     barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT, anyAccess);
-    context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, cmask, cmaskOffset, cmaskBytes, 0xffffffffu);
+    context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, cmask, cmaskOffset, cmaskBytes, 0xffffffffu);
     barrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, anyAccess);
 }
 
@@ -402,7 +423,7 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     Require(ImageElementFormat(elementBytes) != VK_FORMAT_UNDEFINED, "unsupported element size for texture detiling through an image");
     std::uint32_t columnEnd = 0, rowEnd = 0;
     checkWindow(layout, window, columnEnd, rowEnd);
-    const auto target = pipeline(tileMode, elementBytes, retile, false, true);
+    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, false, true);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto descriptorOffset = tiledOffset - tiledOffset % alignment;
     const auto base = tiledOffset - descriptorOffset;
@@ -426,9 +447,9 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     writes[1].descriptorCount = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     writes[1].pImageInfo = &imageInfo;
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, imagePipelineLayout, 0, 1, &set, 0, nullptr);
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, target);
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, imagePipelineLayout, 0, 1, &set, 0, nullptr);
     Push push{};
     push.srcBase = static_cast<std::uint32_t>(retile ? 0 : base);
     push.dstBase = static_cast<std::uint32_t>(retile ? base : 0);
@@ -447,11 +468,12 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     push.linearBase = 0;
     push.columnBegin = window.columnBegin;
     push.rowBegin = window.rowBegin;
-    push.pipeBankXor = window.pipeBankXor;
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, imagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
+    push.pipeBankXor = window.pipeBankXor ^ layerBankXor(tileMode, elementBytes, layout, slice);
+    push.splitStride = layout.gcnSplitStride;
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, imagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;
     const auto groupsY = (rowEnd - window.rowBegin + 7u) / 8u;
-    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groupsX, groupsY, 1);
+    context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, groupsX, groupsY, 1);
 }
 
 }

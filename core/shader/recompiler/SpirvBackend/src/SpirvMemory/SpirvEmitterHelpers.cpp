@@ -69,6 +69,11 @@ std::array<std::uint32_t, 3> WorkgroupLocalSize(const SpirvEmitterState& state, 
     return size;
 }
 
+std::uint32_t MeshWindowInvocations(const SpirvEmitterState& state) {
+    const auto local = WorkgroupLocalSize(state, *ShaderWorkgroupInput(state));
+    return local[0] * local[1] * local[2];
+}
+
 namespace {
 
 constexpr std::uint32_t NoBuiltIn = std::numeric_limits<std::uint32_t>::max();
@@ -196,12 +201,12 @@ void DefineInputs(SpirvEmitterState& state) {
             addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
         }
     }
-    if (state.requirements.ldsLock && std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
+    if ((state.requirements.ldsLock || ScratchPoolActive(state)) && std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
         return input.kind == StageInputKind::LocalInvocationIndex;
     })) {
         state.inputs.push_back(SpirvInputBinding {{StageInputKind::LocalInvocationIndex, 0u, 1u, "gl_LocalInvocationIndex", false}});
     }
-    if (LdsInDeviceMemory(state)) {
+    if (LdsInDeviceMemory(state) || ScratchPoolActive(state)) {
         if (std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
             return input.kind == StageInputKind::WorkgroupId;
         })) {
@@ -578,6 +583,20 @@ void DefineDescriptors(SpirvEmitterState& state) {
             for (const auto variable : {state.ldsBufferVariable, state.ldsBufferU64Variable}) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
         }
     }
+    if (state.meshWindowBuffer) {
+        state.meshWindowBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
+        state.module.AddName(state.meshWindowBufferVariable, "mesh_window");
+        state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationDescriptorSet, MeshWindowDescriptorSet);
+        state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationBinding, 0u);
+        state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationRestrict);
+        state.meshWindowSlotVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassWorkgroup, TypeU32(state)), spv::StorageClassWorkgroup);
+        state.module.AddName(state.meshWindowSlotVariable, "mesh_window_slot");
+        state.meshWindowBaseVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), spv::StorageClassPrivate);
+        state.module.AddName(state.meshWindowBaseVariable, "mesh_window_base");
+        if (state.spirvVersion >= 0x00010400u) {
+            for (const auto variable : {state.meshWindowBufferVariable, state.meshWindowSlotVariable, state.meshWindowBaseVariable}) state.interfaceVariables.push_back(variable);
+        }
+    }
     if (state.pixelFunctionLdsBuffer) {
         state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
         state.module.AddName(state.ldsBufferVariable, "pixel_function_lds");
@@ -585,6 +604,22 @@ void DefineDescriptors(SpirvEmitterState& state) {
         state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationBinding, 0u);
         state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationCoherent);
         if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.ldsBufferVariable);
+    }
+    DefineScratchPool(state);
+}
+
+void DefineScratchPool(SpirvEmitterState& state) {
+    if (!ScratchPoolActive(state)) return;
+    state.scratchPoolVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
+    state.module.AddName(state.scratchPoolVariable, "scratch_pool");
+    state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationDescriptorSet, ScratchPoolDescriptorSet);
+    state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationBinding, 0u);
+    state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationCoherent);
+    state.scratchPoolSlotVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassWorkgroup, TypeU32(state)), spv::StorageClassWorkgroup);
+    state.module.AddName(state.scratchPoolSlotVariable, "scratch_pool_slot");
+    if (state.spirvVersion >= 0x00010400u) {
+        state.interfaceVariables.push_back(state.scratchPoolVariable);
+        state.interfaceVariables.push_back(state.scratchPoolSlotVariable);
     }
 }
 

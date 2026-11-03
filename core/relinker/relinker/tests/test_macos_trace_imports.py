@@ -34,7 +34,7 @@ def library(work, name, code):
     subprocess.run(["xcrun", "clang", "-arch", "x86_64", "-dynamiclib", str(source),
                     "-Wl,-install_name,@rpath/" + name + ".prx", "-o", str(output)],
                    check=True, capture_output=True, timeout=20)
-    return output.read_bytes()
+    return output
 
 
 def run_binary(output):
@@ -71,9 +71,9 @@ def main():
             if not runnable:
                 continue
             (case / "libs").mkdir()
-            (case / "libs" / "a.prx").write_bytes(libraries["a"])
-            (case / "libs" / "libc.prx").write_bytes(libraries[libc])
-            (case / "libs" / "libkernel.prx").write_bytes(libraries["libkernel"])
+            os.link(libraries["a"], case / "libs" / "a.prx")
+            os.link(libraries[libc], case / "libs" / "libc.prx")
+            os.link(libraries["libkernel"], case / "libs" / "libkernel.prx")
             output.chmod(0o755)
             run = run_binary(output)
             if run.returncode != expected and "Bad CPU type in executable" in run.stderr:
