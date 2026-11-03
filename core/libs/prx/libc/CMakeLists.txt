@@ -313,6 +313,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sce_v2_filesystem_calls PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_pmsw_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Pmsw.cpp)
+    target_include_directories(guest_sce_v2_pmsw_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_pmsw_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_pmsw_tests)
+    add_test(NAME guest_sce_v2_pmsw COMMAND guest_sce_v2_pmsw_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_pmsw PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 if(WIN32)

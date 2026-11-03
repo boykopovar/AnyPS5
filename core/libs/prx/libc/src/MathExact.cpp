@@ -508,6 +508,9 @@ short APS5_VABI _LDnorm_nid_postfix(std::uint16_t* words) {
 short APS5_VABI _ZNSt8__sce_v26_DtestEPd_nid_postfix(double* value) { return _Dtest_nid_postfix(value); }
 short APS5_VABI _ZNSt8__sce_v27_FDtestEPf_nid_postfix(float* value) { return _FDtest_nid_postfix(value); }
 short APS5_VABI _ZNSt8__sce_v27_LDtestEPe_nid_postfix(double* value) { return _Dtest_nid_postfix(value); }
+std::uint16_t* APS5_VABI _ZNSt8__sce_v25_PmswEPd_nid_postfix(double* value) { return reinterpret_cast<std::uint16_t*>(value) + 3; }
+std::uint16_t* APS5_VABI _ZNSt8__sce_v26_FPmswEPf_nid_postfix(float* value) { return reinterpret_cast<std::uint16_t*>(value) + 1; }
+std::uint16_t* APS5_VABI _ZNSt8__sce_v26_LPmswEPe_nid_postfix(double* value) { return reinterpret_cast<std::uint16_t*>(value) + 3; }
 short APS5_VABI _ZNSt8__sce_v25_DintEPds_nid_postfix(double* value, short scale) { return _Dint_nid_postfix(value, scale); }
 short APS5_VABI _ZNSt8__sce_v26_FDintEPfs_nid_postfix(float* value, short scale) { return _FDint_nid_postfix(value, scale); }
 short APS5_VABI _ZNSt8__sce_v26_LDintEPes_nid_postfix(double* value, short scale) { return _Dint_nid_postfix(value, scale); }
