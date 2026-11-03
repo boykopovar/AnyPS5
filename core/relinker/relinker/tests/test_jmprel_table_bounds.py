@@ -105,6 +105,9 @@ def main():
         work = Path(directory)
         run(relinker, work, "os-valid", fixture())
         run(relinker, work, "sysv-valid", fixture(os_tags=False))
+        run(relinker, work, "os-table-inside-sce-dynlibdata", fixture(sce_size=0x718))
+        run(relinker, work, "os-table-outside-sce-dynlibdata", fixture(sce_size=0x700),
+            "Jump relocation table is outside PT_SCE_DYNLIBDATA")
         run(relinker, work, "empty-table", fixture(pltrelsz=0))
         run(relinker, work, "symbol-entry-outside-sce-segment",
             fixture(symtab=0xFE0, symbol_bytes=None), "Symbol table entry out of bounds")
