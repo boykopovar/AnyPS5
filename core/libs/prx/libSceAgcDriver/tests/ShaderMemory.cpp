@@ -1467,8 +1467,6 @@ void verifySignedSrtComparison() {
     }
 }
 
-// A captured image view whose mapping changes while a disturbed attempt rechecks it must not be kept: the recheck is
-// accepted only when the generation held across it.
 void verifyImageViewChangeDuringRecheck() {
     using namespace ShaderRecompiler;
     struct Mappings {
@@ -1485,7 +1483,6 @@ void verifyImageViewChangeDuringRecheck() {
         const auto address = reinterpret_cast<std::uintptr_t>(data);
         return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
     };
-    // Load a coordinate, image_sample_lz a 1D array, store the result.
     const std::vector<std::uint32_t> code{0x34020084u, 0xe0381000u, 0x80000201u, 0xbf8c3f70u, 0xf09c0f20u, 0x00820602u, 0x34020085u, 0xbf8c3f70u, 0xe0781000u, 0x80010601u, 0xbf810000u};
     std::vector<std::uint32_t> userData(20, 0u);
     const auto load = buffer(input.data(), static_cast<std::uint32_t>(sizeof(input)));
@@ -1502,14 +1499,12 @@ void verifyImageViewChangeDuringRecheck() {
     SrtRuntime runtime{};
     runtime.userData = userData;
     runtime.shaderBase = request.shader.codeAddress;
-    // Every capture also adds an unrelated mapping, so each attempt rechecks its views.
     runtime.normalizeImageView = +[](void*, std::uint32_t, std::array<std::uint32_t, 8>&, SrtImageViewIdentity& identity) {
         identity = {mappings.generation, texels, texels, 0x10000u, texels, 0x10000u, mappings.serial, true, true, false, true};
         ++mappings.generation;
         return true;
     };
     runtime.imageViewGeneration = +[](void*) { return mappings.generation; };
-    // The first check sees the view current, then its mapping is replaced before the recheck ends.
     runtime.imageViewCurrent = +[](void*, const SrtImageViewIdentity& identity) {
         const bool current = identity.backingSerial == mappings.serial;
         if (std::exchange(mappings.changeOnCheck, false)) {

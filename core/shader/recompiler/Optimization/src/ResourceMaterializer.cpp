@@ -2766,8 +2766,6 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 const auto imagesMoved = [&] {
                     if (afterImageGeneration == beforeImageGeneration) return false;
                     if (runtime.imageViewCurrent == nullptr) return true;
-                    // A mapping can change while the views are checked; accept only a pass the generation held across, and
-                    // bind the snapshot to the generation the views were current at.
                     for (std::uint32_t pass = 0; pass < 2u; ++pass) {
                         const auto passGeneration = runtime.imageViewGeneration(runtime.userContext);
                         const bool current = std::all_of(nextSnapshot.registeredImages.begin(), nextSnapshot.registeredImages.end(), viewCurrent) &&
