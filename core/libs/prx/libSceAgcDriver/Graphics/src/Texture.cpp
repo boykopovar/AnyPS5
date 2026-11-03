@@ -1564,6 +1564,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         trackedLayers = blockUnits ? static_cast<std::uint32_t>((guestBytes + 65535) / 65536) : layered && LayerTrackingEnabled() ? geometry.layers : 1u;
         trackedLayerBytes = blockUnits ? 65536 : guestBytes / trackedLayers;
         layerGeneration.assign(trackedLayers, 0);
+        layerPendingSince.assign(trackedLayers, 0);
         unwatchHash.assign(trackedLayers, {});
         pendingMiss.assign(trackedLayers, BaselineMiss::None);
         layerPending.assign(trackedLayers, false);
@@ -2725,7 +2726,7 @@ bool StorageTexture::keepWrittenSince(std::uint32_t unit) {
         const auto from = std::max(at, begin);
         const auto to = std::min(at + block, end);
         const bool edge = from != at || to != at + block;
-        if (changedBlocks[static_cast<std::size_t>((at - spanBegin) / block)] == GuestMemory::BlockWritten && (!edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(unit, at))) && !unchangedSinceBaseline(from, to)) keptAtUnwatch.emplace(from, layerGeneration[unit]);
+        if (changedBlocks[static_cast<std::size_t>((at - spanBegin) / block)] == GuestMemory::BlockWritten && (!edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(unit, at))) && !cpuLeftUnchanged(unit, from, to, edge)) keptAtUnwatch.emplace(from, layerGeneration[unit]);
     }
     return true;
 }
@@ -4100,10 +4101,27 @@ void StorageTexture::noteLayersBehind(std::uint32_t firstLayer, std::uint32_t la
     if (std::none_of(layerBehind.begin(), layerBehind.end(), [](bool behind) { return behind; })) layerBehind.clear();
 }
 
+namespace {
+std::atomic<std::uint64_t> flipSerial{0};
+std::atomic<std::uint64_t> occasionalLabelStores{0};
+}
+
+void StorageTexture::NoteFlip() {
+    flipSerial.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t StorageTexture::OccasionalLabelStores() {
+    return occasionalLabelStores.load(std::memory_order_relaxed);
+}
+
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    if (const auto flip = flipSerial.load(std::memory_order_relaxed); writes == 1u || flip != writtenFlip) {
+        writtenOccasionally = writes == 1u || flip - writtenFlip > OccasionalWriteFlips;
+        writtenFlip = flip;
+    }
     std::optional<MapImportGate::PublishHold> publication;
     if (!layerPending.Any()) publication.emplace(descriptor.baseAddress, guestBytes);
     if (!layerPending.AllIn(first, count)) {
@@ -4111,7 +4129,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         bool anyUnsaved = false;
         const bool trims = CommitTrims();
         if (trims) {
-            for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || savedTicket[layer] == 0);
+            for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || savedTicket[layer] == 0 || keptForCpu(layer));
         }
         if (!trims || anyUnsaved) {
             unsaved.assign(trackedLayers, false);
@@ -4125,7 +4143,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
                 auto miss = BaselineMiss::LeftWatchWhilePending;
                 if (layerGeneration[layer] != 0 && savedTicket[layer] != 0) miss = BaselineMiss::SaveInFlight;
                 else if (layerGeneration[layer] != 0 && !GuestMemory::Watched(layerBegin(layer), static_cast<std::size_t>(layerBytes(layer)))) miss = baselineMiss(layer);
-                unsaved[layer] = miss == BaselineMiss::LeftWatchWhilePending || miss == BaselineMiss::None;
+                unsaved[layer] = keptForCpu(layer) || miss == BaselineMiss::LeftWatchWhilePending || miss == BaselineMiss::None;
                 pendingMiss[layer] = miss == BaselineMiss::None ? BaselineMiss::SavedBytesDropped : miss;
                 anyUnsaved = anyUnsaved || unsaved[layer];
             }
@@ -4140,6 +4158,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
                 if (unsaved[layer]) pendingMiss[layer] = BaselineMiss::SavedBytesDropped;
             }
         }
+        GuestMemory::CollectWritesUncached(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
         if (!completionKept.empty()) {
             for (std::uint32_t layer = first; layer < first + count; ++layer) {
                 if (layerPending[layer]) continue;
@@ -4148,6 +4167,10 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
             }
         }
         layerPending.SetRange(first, count, true);
+    }
+    const auto pendingSince = GuestMemory::TrackerGeneration();
+    for (std::uint32_t layer = first; layer < first + count; ++layer) {
+        if (!keptForCpu(layer)) layerPendingSince[layer] = pendingSince;
     }
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
@@ -4777,6 +4800,15 @@ bool StorageTexture::keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) 
     return found != keptAtUnwatch.end() && layerOriginal[unit] && found->second == layerGeneration[unit];
 }
 
+bool StorageTexture::keptForCpu(std::uint32_t unit) const {
+    const auto begin = layerBegin(unit);
+    const auto end = begin + layerBytes(unit);
+    for (auto it = keptAtUnwatch.lower_bound(begin); it != keptAtUnwatch.end() && it->first < end; ++it) {
+        if (it->second == layerGeneration[unit]) return true;
+    }
+    return false;
+}
+
 void StorageTexture::forgetSavedOver(std::uint64_t address, std::size_t bytes) {
     // Only these units' bytes changed under the saved copy. Units outside keep it: results still
     // pending there (the flush before the fill or copy stored only the units it overlaps) are
@@ -5047,10 +5079,11 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
     return stored;
 }
 
-void StorageTexture::StoreReadbackBeforeLabel(const char* reason) {
+void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice device) {
     static const bool disabled = std::getenv("APS5_NO_LABEL_READBACK_STORE") != nullptr;
     if (disabled) return;
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+    std::vector<std::pair<std::uint64_t, std::size_t>> occasional;
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
@@ -5076,8 +5109,16 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason) {
 #endif
             ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
+        for (auto* texture : pending.textures) {
+            if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes || texture->guestBytes > OccasionalStoreBytes) continue;
+            if (device != VK_NULL_HANDLE && texture->context.device != device) continue;
+            if (!texture->writtenOccasionally.exchange(false, std::memory_order_relaxed)) continue;
+            occasionalLabelStores.fetch_add(1, std::memory_order_relaxed);
+            occasional.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        }
     }
     for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
+    for (const auto& [address, bytes] : occasional) static_cast<void>(FlushPending(address, bytes, nullptr, reason, PublishScope::Whole, nullptr, false, device));
 }
 
 std::size_t StorageTexture::StoreDrawnLinear(const char* reason) {
@@ -6448,6 +6489,16 @@ bool StorageTexture::unchangedSinceBaseline(std::uint64_t from, std::uint64_t to
     return GuestMemory::EqualsCommittedUnsynced(from, std::span<const std::byte>(baseline).subspan(offset, static_cast<std::size_t>(to - from)));
 }
 
+bool StorageTexture::cpuLeftUnchanged(std::uint32_t layer, std::uint64_t from, std::uint64_t to, bool edge) const {
+    if (!unchangedSinceBaseline(from, to)) return false;
+    if (edge || layerPendingSince[layer] == 0) return true;
+    const std::array<std::uint64_t, 1> since{layerPendingSince[layer]};
+    std::array<std::uint8_t, 1> changed{};
+    std::array<std::uint8_t, 1> cpu{};
+    GuestMemory::ChangedBlocks(from, static_cast<std::size_t>(to - from), since, changed, cpu);
+    return cpu[0] == 0;
+}
+
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -6468,6 +6519,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // may have reused the memory for something else entirely (see layerGeneration). A generation of
     // zero means no tracking, and the layer is stored whole.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> keep;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> keptBlocks;
     std::vector<bool> skippedLayer(trackedLayers, false);
     bool skippedAny = false;
     std::size_t skipped = 0;
@@ -6540,10 +6592,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             const bool edge = from != at || to != at + block;
             const auto index = static_cast<std::size_t>((at - spanBegin) / block);
             const bool kept = keptAtUnwatchHolds(from, layer);
-            const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (compared[layer] || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !unchangedSinceBaseline(from, to));
+            const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (compared[layer] || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !cpuLeftUnchanged(layer, from, to, edge));
             if (written && (!drawn.rect || (tracked && !kept && !unknown && cpuBlocks[index] == 0))) {
                 skippedAny = true;
                 skippedLayer[layer] = true;
+                keptBlocks.emplace_back(from, layer);
                 ++skipped;
                 continue;
             }
@@ -6555,6 +6608,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (layers[layer]) forgetKeptAtUnwatch(layer);
     }
+    for (const auto& [from, layer] : keptBlocks) keptAtUnwatch.emplace(from, layerGeneration[layer]);
     // Debug aid: APS5_TRACE_FLUSH also names the blocks a write-back leaves to the CPU.
     static const bool traceKept = std::getenv("APS5_TRACE_FLUSH") != nullptr;
     if (traceKept && skippedAny) {
