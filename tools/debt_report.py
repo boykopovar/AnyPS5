@@ -16,6 +16,15 @@ LINK = re.compile(r"\[([^\]]+)\]\((?:\.\./)+core/[^)#\s]+")
 TICKED = re.compile(r"`([a-z_][A-Za-z0-9_]*)`")
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SEPARATOR = re.compile(r",\s*|\s+and\s+|\s+or\s+")
+CLOSES = re.compile(r"Closes when:(.*)", re.S)
+CLOSERS = (
+    ("console", re.compile(r"\b(?:measured|measurement)\b[^.]*\b(?:PS5|console)\b|\bunmeasured\b|\bnot measured\b", re.I)),
+    ("firmware", re.compile(r"firmware|disassembl|\.sprx\b", re.I)),
+    ("gpu", re.compile(r"\b(?:RDNA ?\d?|GCN|NVIDIA|Intel Arc|MoltenVK|RADV|lavapipe|Radeon|GeForce|RTX)\b")),
+)
+TITLE_CLOSE = re.compile(r"\b(?:PPSA|CUSA)\d{5}\b|\btitles?\b", re.I)
+TITLE_GAP = re.compile(r"\bno (?:game )?title\b|\bnot verified with a title\b", re.I)
+PLATFORMS = (("windows", re.compile(r"\bWindows\b")), ("macos", re.compile(r"\bmacOS\b")), ("linux", re.compile(r"\bLinux\b")))
 
 
 @dataclass
@@ -51,3 +60,17 @@ def subjects(text):
 
 def entry_names(text):
     return list(dict.fromkeys(subjects(text) + TICKED.findall(text)))
+
+
+def closer(text):
+    closes = CLOSES.search(text)
+    scope = closes.group(1) if closes else text
+    for label, pattern in CLOSERS:
+        if pattern.search(scope):
+            return label
+    return "title" if (TITLE_CLOSE if closes else TITLE_GAP).search(scope) else "code"
+
+
+def platforms(text):
+    found = [label for label, pattern in PLATFORMS if pattern.search(text)]
+    return found if len(found) < len(PLATFORMS) else []

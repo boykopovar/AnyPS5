@@ -40,5 +40,27 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(debt_report.entry_names(f"- [Nine unnamed exports]({LINK}) - return 0"), [])
 
 
+class LabelTests(unittest.TestCase):
+    def test_closer(self):
+        cases = {
+            "read from the firmware 13.42 disassembly, not measured on a console": "console",
+            "the argument lists need the firmware module": "firmware",
+            "fails on RADV before RDNA2": "gpu",
+            "works. Closes when: PPSA01234 reaches its menu": "title",
+            "no game title has been verified with it": "title",
+            "PPSA01234 calls it with a null pointer": "code",
+            "throws for a reason that no longer holds": "code",
+            "unmeasured. Closes when: a test pins the order": "code",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(debt_report.closer(f"- [sceA]({LINK}) - {text}"), expected)
+
+    def test_platforms(self):
+        self.assertEqual(debt_report.platforms("on Windows and macOS"), ["windows", "macos"])
+        self.assertEqual(debt_report.platforms("on Windows, macOS and Linux"), [])
+        self.assertEqual(debt_report.platforms("on a windows host"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
