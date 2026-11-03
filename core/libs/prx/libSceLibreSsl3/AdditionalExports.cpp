@@ -574,8 +574,4 @@ int APS5_VABI ECDSA_SIG_get0_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_MD_block_size_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }
