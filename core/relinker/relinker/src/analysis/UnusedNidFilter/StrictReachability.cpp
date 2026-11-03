@@ -232,8 +232,6 @@ std::vector<VirtualAddress> ReadRelativeTableTargets(const std::vector<StrictDat
         for (auto offset = static_cast<std::size_t>(base - region.Address); offset + 4 <= region.Bytes.size(); offset += 4) {
             std::int32_t displacement;
             std::memcpy(&displacement, region.Bytes.data() + offset, sizeof(displacement));
-            if (displacement < 0 && base < static_cast<std::uint64_t>(-static_cast<std::int64_t>(displacement))) break;
-            if (displacement > 0 && std::numeric_limits<VirtualAddress>::max() - base < static_cast<std::uint64_t>(displacement)) break;
             const auto target = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
             if (target < textVaddr || target - textVaddr >= textSize) break;
             targets.push_back(target);
