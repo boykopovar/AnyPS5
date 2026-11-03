@@ -407,6 +407,7 @@ std::optional<DepthPlaneOverwrite> decodeOverwrite(const StorageImageClear& clea
 class DepthSurface;
 std::pair<std::uint64_t, std::uint64_t> staleStencilRange(const DepthSurface& surface);
 void noteStalePlane(std::uint64_t begin, std::uint64_t end);
+std::uint64_t nextPlaneSerial();
 
 class DepthSurface {
 public:
@@ -730,6 +731,7 @@ public:
     void MarkStencilStale() {
         if (!StencilMirrorable()) return;
         stencilStale = true;
+        stencilMark = nextPlaneSerial();
         const auto [begin, end] = staleStencilRange(*this);
         noteStalePlane(begin, end);
     }
@@ -1104,6 +1106,7 @@ public:
 
     void MarkAllStale(std::uint64_t planeBytes) {
         SizeUnits(planeBytes);
+        depthMark = nextPlaneSerial();
         staleUnits.assign(staleUnits.size(), true);
         staleCount = staleUnits.size();
     }
@@ -1267,6 +1270,8 @@ public:
 
     std::vector<bool> staleUnits;
     std::size_t staleCount = 0;
+    std::uint64_t depthMark = 0;
+    std::uint64_t stencilMark = 0;
     std::vector<std::uint64_t> unitGeneration;
     std::uint64_t unitBytes = 0;
     bool syncing = false;
@@ -2288,10 +2293,15 @@ void publishStaleHull(StalePlanes& planes) {
 
 void noteStalePlane(std::uint64_t begin, std::uint64_t end) {
     auto& planes = stalePlanes();
-    std::lock_guard lock(planes.mutex);
-    if (std::find(planes.ranges.begin(), planes.ranges.end(), std::pair{begin, end}) != planes.ranges.end()) return;
-    planes.ranges.emplace_back(begin, end);
-    publishStaleHull(planes);
+    bool first = false;
+    {
+        std::lock_guard lock(planes.mutex);
+        if (std::find(planes.ranges.begin(), planes.ranges.end(), std::pair{begin, end}) != planes.ranges.end()) return;
+        first = planes.ranges.empty();
+        planes.ranges.emplace_back(begin, end);
+        publishStaleHull(planes);
+    }
+    if (first) UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
 bool overlapsStalePlane(std::uint64_t begin, std::uint64_t end) {
@@ -2299,6 +2309,50 @@ bool overlapsStalePlane(std::uint64_t begin, std::uint64_t end) {
     if (begin >= planes.end.load(std::memory_order_acquire) || planes.begin.load(std::memory_order_acquire) >= end) return false;
     std::lock_guard lock(planes.mutex);
     return std::any_of(planes.ranges.begin(), planes.ranges.end(), [&](const auto& range) { return begin < range.second && range.first < end; });
+}
+
+std::atomic<std::uint64_t>& planeSerial() {
+    static std::atomic<std::uint64_t> serial{0};
+    return serial;
+}
+
+std::uint64_t nextPlaneSerial() {
+    return planeSerial().fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+struct UnmappedPlane {
+    std::uint64_t begin;
+    std::uint64_t end;
+    std::uint64_t serial;
+};
+
+struct UnmappedPlanes {
+    std::mutex mutex;
+    std::vector<UnmappedPlane> ranges;
+};
+
+UnmappedPlanes& unmappedPlanes() {
+    static auto* unmapped = new UnmappedPlanes();
+    return *unmapped;
+}
+
+void noteUnmappedPlane(std::uint64_t begin, std::uint64_t end) {
+    if (!overlapsStalePlane(begin, end)) return;
+    auto& unmapped = unmappedPlanes();
+    std::lock_guard lock(unmapped.mutex);
+    unmapped.ranges.push_back({begin, end, nextPlaneSerial()});
+}
+
+bool unmappedSince(std::uint64_t begin, std::uint64_t end, std::uint64_t mark) {
+    auto& unmapped = unmappedPlanes();
+    std::lock_guard lock(unmapped.mutex);
+    return std::any_of(unmapped.ranges.begin(), unmapped.ranges.end(), [&](const auto& range) { return range.serial > mark && range.begin < end && begin < range.end; });
+}
+
+void pruneUnmappedPlanes(const std::vector<std::pair<std::uint64_t, std::uint64_t>>& stale) {
+    auto& unmapped = unmappedPlanes();
+    std::lock_guard lock(unmapped.mutex);
+    std::erase_if(unmapped.ranges, [&](const auto& range) { return std::none_of(stale.begin(), stale.end(), [&](const auto& plane) { return range.begin < plane.second && plane.first < range.end; }); });
 }
 
 bool mirrorable(const DepthTarget& target) {
@@ -2357,6 +2411,10 @@ void storeStaleStencil(DepthSurface& surface) {
     const auto [begin, end] = staleStencilRange(surface);
     const auto bytes = static_cast<std::size_t>(end - begin);
     if (GuestMemory::CommittedRanges(begin, bytes).empty()) return;
+    if (unmappedSince(begin, end, surface.stencilMark)) {
+        retireStencil(surface);
+        return;
+    }
     static_cast<void>(surface.StoreStencilPlane(stencilResource(surface.target)));
     forgetStaleStencil(surface);
     if (!StorageTexture::FlushPending(begin, bytes, nullptr, "stencil plane store")) return;
@@ -2388,6 +2446,10 @@ void retireStoringStale(DepthSurface& surface) {
     }
     const auto resource = mirrorResource(surface.target);
     const auto planeBytes = DescribeSurface(resource).guestBytes;
+    if (unmappedSince(surface.target.address, surface.target.address + planeBytes, surface.depthMark)) {
+        retire(surface);
+        return;
+    }
     std::uint64_t generation = 0;
     const auto written = surface.WrittenUnits(resource, generation);
     auto units = surface.staleUnits;
@@ -2483,9 +2545,11 @@ bool HasResidentDepthGuards_nid_no_patch() {
 }
 
 void RetireUnmappedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
-    if (bytes == 0u || !HasResidentDepthGuards_nid_no_patch()) return;
+    if (bytes == 0u) return;
     Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "native depth release range overflows");
     const auto end = address + bytes;
+    noteUnmappedPlane(address, end);
+    if (!HasResidentDepthGuards_nid_no_patch()) return;
     std::unique_lock lock(depthGuardMutex());
     for (auto& range : depthGuards()) {
         std::vector<GuestMemory::UnchangedQuery> remaining;
@@ -2716,7 +2780,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
             if (surface->stencilStale && !surface->syncing) {
                 const auto [stencilBegin, stencilEnd] = staleStencilRange(*surface);
                 if (stencilBegin < end && address < stencilEnd) {
-                    if (GuestMemory::CommittedRanges(stencilBegin, static_cast<std::size_t>(stencilEnd - stencilBegin)).empty()) {
+                    if (GuestMemory::CommittedRanges(stencilBegin, static_cast<std::size_t>(stencilEnd - stencilBegin)).empty() || unmappedSince(stencilBegin, stencilEnd, surface->stencilMark)) {
                         surface->stencilStale = false;
                     } else {
                         auto mirror = surface->StoreStencilPlane(stencilResource(surface->target));
@@ -2733,7 +2797,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
             const bool overlapped = !surface->syncing && plane < end && address < plane + planeBytes;
             if (overlapped && (surface->pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) surface->MarkAllStale(planeBytes);
             if (overlapped && (scope == DepthPlaneScope::Whole || anyUnit(surface->StaleUnitsIn(planeBytes, address, end)))) {
-                if (GuestMemory::CommittedRanges(plane, static_cast<std::size_t>(planeBytes)).empty()) {
+                if (GuestMemory::CommittedRanges(plane, static_cast<std::size_t>(planeBytes)).empty() || unmappedSince(plane, plane + planeBytes, surface->depthMark)) {
                     static std::atomic<bool> reported{false};
                     if (!reported.exchange(true)) std::fprintf(stderr, "[gpu] depth plane 0x%llx+0x%llx was unmapped with GPU results pending; they are dropped\n", static_cast<unsigned long long>(plane), static_cast<unsigned long long>(planeBytes));
                     surface->ClearStale();
@@ -2756,6 +2820,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
         std::lock_guard staleLock(planes.mutex);
         planes.ranges = std::move(remaining);
         publishStaleHull(planes);
+        pruneUnmappedPlanes(planes.ranges);
     }
     for (auto& entry : stored) entry.flushed = StorageTexture::FlushPending(entry.begin, static_cast<std::size_t>(entry.end - entry.begin), nullptr, "depth plane store");
     for (auto& entry : storedStencils) entry.flushed = StorageTexture::FlushPending(entry.begin, static_cast<std::size_t>(entry.end - entry.begin), nullptr, "stencil plane store");
