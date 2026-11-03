@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdarg>
@@ -12,12 +13,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length);
-int APS5_VABI vsnprintf_nid_postfix(char* buffer, std::size_t size, const char* format, VaList* args);
-}
 
 namespace {
 constexpr int priorityMask = 0x07;
@@ -57,6 +52,7 @@ std::string ExpandErrorText(const char* format, int error) {
         if (cursor[0] == '%' && cursor[1] == 'm') {
             char text[128];
             strerror_r_nid_postfix(error, text, sizeof(text));
+
             for (const char* character = text; *character; ++character) {
                 expanded += *character;
                 if (*character == '%') expanded += '%';
@@ -82,6 +78,7 @@ std::string Format(const char* format, VaList* args) {
     if (size <= 0) return {};
     std::string buffer(static_cast<std::size_t>(size) + 1, '\0');
     vsnprintf_nid_postfix(buffer.data(), buffer.size(), format, args);
+
     buffer.resize(static_cast<std::size_t>(size));
     return buffer;
 #endif
@@ -135,6 +132,7 @@ void APS5_VABI syslog_nid_postfix(int priority, const char* format, ...) {
     va_start(args, format);
 #endif
     vsyslog_nid_postfix(priority, format, reinterpret_cast<VaList*>(args));
+
 #ifdef _WIN32
     __builtin_sysv_va_end(args);
 #else

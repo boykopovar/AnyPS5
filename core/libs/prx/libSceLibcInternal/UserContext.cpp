@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/GuestStacks.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -6,8 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" int APS5_VABI setcontext_nid_postfix(const UserUcontext* context);
 
 namespace {
 
@@ -26,6 +26,7 @@ extern "C" {
 [[noreturn]] void APS5_VABI Aps5MakecontextFinish_nid_no_patch(UserUcontext* context) {
     if (context->link == nullptr) LibcExit_nid_no_patch(0);
     setcontext_nid_postfix(context->link);
+
     std::abort();
 }
 
@@ -62,6 +63,7 @@ Aps5MakecontextStart_nid_no_patch:
     function(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5]);
     if (context->link == nullptr) LibcExit_nid_no_patch(0);
     setcontext_nid_postfix(context->link);
+
     std::abort();
 }
 #endif

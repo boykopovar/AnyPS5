@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdint>
@@ -8,16 +10,10 @@ struct Timeval {
     std::int64_t tv_sec;
     std::int64_t tv_usec;
 };
-struct ResourceUsage {
-    Timeval ru_utime;
-    Timeval ru_stime;
-    std::int64_t rest[14];
-};
-extern "C" int APS5_VABI getrusage_nid_postfix(int who, ResourceUsage* usage);
-extern "C" int* APS5_VABI __error_nid_postfix();
+
 static void Require(bool value) { if (!value) std::abort(); }
 static std::int64_t CpuMicros(int who) {
-    ResourceUsage usage{};
+    GuestResourceUsage usage{};
     Require(getrusage_nid_postfix(who, &usage) == 0);
     return (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000000 + usage.ru_utime.tv_usec + usage.ru_stime.tv_usec;
 }
@@ -29,15 +25,15 @@ static void SpinUntil(int who, std::int64_t micros) {
         Require(std::chrono::steady_clock::now() < deadline);
     }
 }
-static void RequireFailure(int who, ResourceUsage* usage, int error) {
+static void RequireFailure(int who, GuestResourceUsage* usage, int error) {
     *__error_nid_postfix() = 0;
     Require(getrusage_nid_postfix(who, usage) == -1);
     Require(*__error_nid_postfix() == error);
 }
 int main() {
-    ResourceUsage untouched;
+    GuestResourceUsage untouched;
     std::memset(&untouched, 0x5a, sizeof(untouched));
-    const ResourceUsage pattern = untouched;
+    const GuestResourceUsage pattern = untouched;
     RequireFailure(2, &untouched, 22);
     RequireFailure(-2, &untouched, 22);
     Require(std::memcmp(&untouched, &pattern, sizeof(untouched)) == 0);
@@ -45,10 +41,15 @@ int main() {
     RequireFailure(0, nullptr, 14);
     RequireFailure(1, nullptr, 14);
     RequireFailure(-1, nullptr, 14);
-    ResourceUsage children;
+    auto* const invalid = reinterpret_cast<GuestResourceUsage*>(static_cast<std::uintptr_t>(1));
+    RequireFailure(2, invalid, 22);
+    RequireFailure(0, invalid, 14);
+    RequireFailure(1, invalid, 14);
+    RequireFailure(-1, invalid, 14);
+    GuestResourceUsage children;
     std::memset(&children, 0xff, sizeof(children));
     Require(getrusage_nid_postfix(-1, &children) == 0);
-    const ResourceUsage empty{};
+    const GuestResourceUsage empty{};
     Require(std::memcmp(&children, &empty, sizeof(children)) == 0);
     SpinUntil(0, 400000);
     const std::int64_t mainThread = CpuMicros(1);

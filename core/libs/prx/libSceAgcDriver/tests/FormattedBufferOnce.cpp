@@ -19,8 +19,8 @@ void Check(bool condition, const std::string& message) {
 }
 
 SpirvTarget Target() {
-    static constexpr std::array<std::uint32_t, 4> capabilities{
-        spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance,
+    static constexpr std::array<std::uint32_t, 5> capabilities{
+        spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance, spv::CapabilityInt64Atomics,
     };
     static constexpr std::array<std::string_view, 4> extensions{
         "SPV_EXT_descriptor_indexing", "SPV_KHR_8bit_storage", "SPV_KHR_float_controls", "SPV_KHR_physical_storage_buffer",
@@ -31,6 +31,7 @@ SpirvTarget Target() {
 
 struct Counts {
     std::size_t words = 0;
+    std::size_t arrayLengths = 0;
     std::size_t switches = 0;
     std::size_t calls = 0;
     std::size_t functions = 0;
@@ -46,6 +47,7 @@ Counts Count(std::span<const std::uint32_t> words) {
         Check(count != 0 && count <= words.size() - offset, "formatted buffer once: malformed SPIR-V instruction");
         const auto opcode = words[offset] & spv::OpCodeMask;
         if (opcode == spv::OpSwitch) ++counts.switches;
+        if (opcode == spv::OpArrayLength) ++counts.arrayLengths;
         if (opcode == spv::OpFunctionCall) ++counts.calls;
         if (opcode == spv::OpAtomicCompareExchange) ++counts.compareExchanges;
         if (opcode == spv::OpFunction) {
@@ -57,9 +59,10 @@ Counts Count(std::span<const std::uint32_t> words) {
     return counts;
 }
 
-Counts Compile(std::size_t loads, bool formattedStores = false, bool gpu = false, bool vertex = false, bool registration = false) {
+Counts Compile(std::size_t loads, bool formattedStores = false, bool gpu = false, bool vertex = false, bool registration = false, bool atomicBeforeLoads = false) {
     std::vector<std::uint32_t> code;
     if (gpu) code.push_back(0x7e160500u);
+    if (atomicBeforeLoads) code.insert(code.end(), {0xe1705000u, 0x80012803u, 0xbf8c3f70u});
     for (std::uint32_t load = 0; load < loads; ++load) code.insert(code.end(), {0xe0000000u | (load * 4u), 0x80020000u | ((10u + load) << 8u)});
     code.push_back(0xbf8c3f70u);
     for (std::uint32_t load = 0; load < loads; ++load) code.insert(code.end(), {(formattedStores ? 0xe0100000u : 0xe0700000u) | (load * 4u), 0x80010000u | ((10u + load) << 8u)});
@@ -83,6 +86,32 @@ Counts Compile(std::size_t loads, bool formattedStores = false, bool gpu = false
     return Count(Recompile(request).spirv.Words());
 }
 
+Counts CompileScalarReads(std::size_t loads) {
+    std::array<std::uint32_t, 8> userData{};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0u, {}, 0, {}};
+    request.target = Target();
+    request.layout = {0, 0, 0, 128};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.useCache = false;
+    std::vector<std::uint32_t> code;
+    for (std::uint32_t load = 0; load < loads; ++load) {
+        code.insert(code.end(), {0xf4000200u | (load * 4u), 0xfa000004u, 0x7e040208u | (load << 8u)});
+    }
+    code.push_back(0xbf8c3f70u);
+    for (std::uint32_t load = 0; load < loads; ++load) code.insert(code.end(), {0xe0701000u | (load * 4u), 0x80010000u | ((10u + load) << 8u)});
+    code.push_back(0xbf810000u);
+    const std::span<const std::uint32_t> words(code);
+    const std::array<MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(words.data()), std::as_bytes(words)}}};
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(words.data());
+    request.shader.code = words;
+    request.context.memory = memory;
+    return Count(Recompile(request).spirv.Words());
+}
+
 }
 
 int main() {
@@ -90,6 +119,9 @@ int main() {
         const auto none = Compile(0);
         const auto one = Compile(1);
         const auto three = Compile(3);
+        const auto scalarOne = CompileScalarReads(1);
+        const auto scalarThree = CompileScalarReads(3);
+        const auto atomicThenLoad = Compile(1, false, false, false, false, true);
         const auto gpuOne = Compile(1, false, true);
         const auto vertexSpecialized = Compile(1, false, false, true, false);
         const auto vertexRegistration = Compile(1, false, false, true, true);
@@ -105,6 +137,12 @@ int main() {
         Check(storeOne.functions == none.functions + 2 && storeOne.calls == none.calls + 2, "formatted buffer once: a formatted load and a formatted store to another resource emitted " + std::to_string(storeOne.functions - none.functions) + " functions and " + std::to_string(storeOne.calls - none.calls) + " calls more than none, expected one function and one call each");
         Check(storeThree.functions == storeOne.functions && storeThree.calls == storeOne.calls + 4 && storeThree.switches == storeOne.switches, "formatted buffer once: two more formatted loads and stores emitted " + std::to_string(storeThree.functions - storeOne.functions) + " functions, " + std::to_string(storeThree.calls - storeOne.calls) + " calls and " + std::to_string(storeThree.switches - storeOne.switches) + " switches more, expected four calls only");
         Check(three.words - one.words < (one.words - none.words) / 2u, "formatted buffer once: 2 more formatted loads added " + std::to_string(three.words - one.words) + " SPIR-V words, as many as the first one with its shared function (" + std::to_string(one.words - none.words) + ")");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        Check(atomicThenLoad.words > 5u, "a 64-bit buffer atomic followed by a buffer read did not produce a SPIR-V module");
+#else
+        Check(scalarOne.arrayLengths == 1u && scalarThree.arrayLengths == 3u, "scalar buffer reads across generated labels emitted " + std::to_string(scalarThree.arrayLengths) + " OpArrayLength instructions for 3 reads (expected one per label)");
+        Check(atomicThenLoad.arrayLengths > 1u, "a buffer query inside the 64-bit atomic path was reused after its merge (expected at least 2 OpArrayLength instructions, got " + std::to_string(atomicThenLoad.arrayLengths) + ")");
+#endif
         const auto gpuThree = Compile(3, false, true);
         Check(gpuThree.functions == gpuOne.functions && gpuThree.calls > gpuOne.calls, "formatted buffer once: two more formatted loads from a GPU-selected descriptor emitted " + std::to_string(gpuThree.functions - gpuOne.functions) + " more functions, expected calls to the shared one");
         Check(gpuThree.switches == gpuOne.switches, "formatted buffer once: two more formatted loads from a GPU-selected descriptor emitted " + std::to_string(gpuThree.switches - gpuOne.switches) + " more format switches");

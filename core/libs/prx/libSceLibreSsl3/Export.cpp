@@ -1,6 +1,8 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -31,9 +33,13 @@ int APS5_VABI BIO_vfree_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI CRYPTO_memcmp_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI CRYPTO_memcmp_nid_postfix(const void* first, const void* second, std::size_t length) {
+    const auto* firstBytes = static_cast<const volatile unsigned char*>(first);
+    const auto* secondBytes = static_cast<const volatile unsigned char*>(second);
+    unsigned int difference = 0;
+    for (std::size_t index = 0; index < length; ++index)
+        difference |= firstBytes[index] ^ secondBytes[index];
+    return static_cast<int>(difference);
 }
 
 int APS5_VABI DH_get0_key_nid_postfix(void) {
@@ -56,19 +62,11 @@ int APS5_VABI DSA_get0_pqg_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EC_KEY_up_ref_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI ERR_load_crypto_strings_nid_postfix() {
 }
 
-int APS5_VABI ERR_load_crypto_strings_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ERR_peek_last_error_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI ERR_peek_last_error_nid_postfix() {
+    return LibreSslPeekLastError_nid_no_patch();
 }
 
 int APS5_VABI ERR_print_errors_cb_nid_postfix(void) {
@@ -146,21 +144,6 @@ int APS5_VABI EVP_PKEY_encrypt_init_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_get0_DH_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKEY_get0_DSA_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKEY_get0_RSA_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -172,11 +155,6 @@ int APS5_VABI EVP_PKEY_set1_EC_KEY_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_PKEY_size_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKEY_up_ref_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -216,11 +194,6 @@ int APS5_VABI EVP_sha224_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI MD5_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OBJ_cmp_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -246,9 +219,16 @@ int APS5_VABI OCSP_resp_find_status_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OpenSSL_version_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI OpenSSL_version_nid_postfix(int type) {
+    switch (type) {
+    case 0: return "LibreSSL 4.0.0";
+    case 1: return "compiler: information not available";
+    case 2: return "built on: date not available";
+    case 3: return "platform: information not available";
+    case 4: return "OPENSSLDIR: \"/etc/ssl\"";
+    case 5: return "ENGINESDIR: N/A";
+    default: return "not available";
+    }
 }
 
 int APS5_VABI PKCS7_free_nid_postfix(void) {
@@ -272,16 +252,6 @@ int APS5_VABI RSA_get0_key_nid_postfix(void) {
 }
 
 int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RSA_up_ref_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SHA1_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -397,11 +367,6 @@ int APS5_VABI X509_getm_notBefore_nid_postfix(void) {
 }
 
 int APS5_VABI X509_up_ref_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

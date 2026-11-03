@@ -10,6 +10,7 @@ namespace ShaderRecompiler {
 class DeadCodeEliminator {
 public:
     void Eliminate(IrProgram& program) const;
+    void EliminateUnobservedPhis(IrProgram& program) const;
     void Eliminate(std::span<IrBlock* const> blocks) const;
     void RemoveIdentities(IrProgram& program) const;
     void RemoveIdentities(std::span<IrBlock* const> blocks) const;

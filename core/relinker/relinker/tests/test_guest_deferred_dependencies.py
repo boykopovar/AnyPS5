@@ -124,8 +124,8 @@ def main():
                                      env={**os.environ, "ANYPS5_GUEST_MODULE_ARGS": str(events)})
                 assert run.returncode == 42, (root, run.returncode, run.stdout, run.stderr)
                 recorded = events.read_text() if events.exists() else ""
-                assert recorded.count("args=") == (1 if root in ("executable", "bundled", "imported") else 0), (root, recorded)
-                load_and_record(case, libraries / "libc.prx", runtime / "plugin.prx.guest.prx")
+                assert recorded.count("args=") == 0, (root, recorded)
+                load_and_record(case, libraries / "libc.prx", runtime / "provider.prx.guest.prx")
     print("Guest deferred dependency tests passed")
 
 

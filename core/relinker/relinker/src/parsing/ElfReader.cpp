@@ -125,6 +125,10 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     if (header.ProgramHeaderCount != 0 && header.ProgramHeaderEntrySize != 56) {
         throw RelinkerException("Invalid ELF program header entry size: expected 56 bytes", 0x36);
     }
+    const ByteCount tableSize = static_cast<ByteCount>(header.ProgramHeaderCount) * header.ProgramHeaderEntrySize;
+    if (!_rangeFits(header.ProgramHeaderOffset, tableSize, _fileBuffer.size())) {
+        throw RelinkerException("FileByteOffset out of bounds", header.ProgramHeaderOffset);
+    }
 
     std::vector<ProgramHeader> headers;
     FileByteOffset offset = header.ProgramHeaderOffset;
@@ -220,6 +224,16 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
         sh.Info = _readU32At(offset + 0x2c);
         sh.EntrySize = _readU64At(offset + kShdrEntSizeOffset);
 
+        if (sh.Type == SHT_SYMTAB && sh.EntrySize != kSymEntrySize) {
+            throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);
+        }
+
+        if (sh.Type != SHT_NULL && sh.Type != SHT_NOBITS && sh.SectionSize != 0) {
+            if (!_rangeFits(sh.Offset, sh.SectionSize, _fileBuffer.size())) {
+                throw RelinkerException("Section offset out of bounds", sh.Offset);
+            }
+        }
+
         sh.Name = _resolveShdrName(nameOffset, header);
 
         headers.push_back(sh);
@@ -264,15 +278,11 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
     if (!_rangeFits(dynamicHeader.Offset, dynamicHeader.FileSize, _fileBuffer.size())) {
         throw RelinkerException("Dynamic segment out of bounds", dynamicHeader.Offset);
     }
-    if (dynamicHeader.FileSize % 16 != 0) {
-        throw RelinkerException("Invalid dynamic segment size", dynamicHeader.Offset);
-    }
-
     std::vector<DynamicTag> tags;
     FileByteOffset offset = dynamicHeader.Offset;
     const FileByteOffset end = dynamicHeader.Offset + dynamicHeader.FileSize;
 
-    while (offset < end) {
+    while (end - offset >= 16) {
         DynamicTag tag;
         tag.Tag = static_cast<std::int64_t>(_readU64At(offset));
         tag.Value = _readU64At(offset + 0x08);

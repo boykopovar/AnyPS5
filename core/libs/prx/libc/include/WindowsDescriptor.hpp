@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSDESCRIPTOR_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSDESCRIPTOR_HPP
 
+#include "GuestFileNumber.hpp"
 #include <cstdint>
 #include <io.h>
 #include <stdexcept>
@@ -29,8 +30,7 @@ static inline ACCESS_MASK WindowsHandleAccess_nid_no_patch(HANDLE handle, int de
 }
 
 static inline std::uint32_t WindowsFileNumber_nid_no_patch(std::uint64_t fileId) {
-    const std::uint32_t folded = static_cast<std::uint32_t>(fileId) ^ (static_cast<std::uint32_t>(fileId >> 32) * 0x9E3779B1u);
-    return folded == 0 ? 1 : folded;
+    return GuestFileNumber_nid_no_patch(fileId);
 }
 
 static inline std::uint32_t WindowsFileNumber_nid_no_patch(const BY_HANDLE_FILE_INFORMATION& identity) {

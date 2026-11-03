@@ -34,7 +34,7 @@ inline constexpr Opcode Opcodes[] = {
     {0x37, "WRITE_DATA"},
     {0x39, "MEM_SEMAPHORE"},
     {0x38, "DRAW_INDEX_INDIRECT_MULTI"},
-    {0x3A, "DISPATCH_DRAW_PREAMBLE"},
+    {0x3A, "DRAW_INDEX_MULTI_INST"},
     {0x3C, "WAIT_REG_MEM"},
     {0x3F, "INDIRECT_BUFFER"},
     {0x40, "COPY_DATA"},

@@ -17,7 +17,6 @@ namespace {
 constexpr std::size_t PeOffset = 0x40;
 constexpr std::size_t OptionalOffset = PeOffset + 24;
 constexpr std::size_t OptionalBytes = 240;
-constexpr std::size_t SectionTable = OptionalOffset + OptionalBytes;
 constexpr std::uint32_t SectionRva = 0x1000;
 constexpr std::size_t SectionOffset = 0x200;
 constexpr std::size_t SectionBytes = 0x200;
@@ -41,7 +40,7 @@ std::uint32_t get32(const std::vector<unsigned char>& bytes, std::size_t offset)
     return value;
 }
 
-std::vector<unsigned char> image(const std::vector<std::string>& dlls, std::uint16_t magic = 0x20b) {
+std::vector<unsigned char> image(const std::vector<std::string>& dlls, std::uint16_t magic = 0x20b, std::uint32_t directories = 16, std::uint16_t optionalBytes = OptionalBytes) {
     std::vector<unsigned char> bytes(SectionOffset + SectionBytes, 0);
     bytes[0] = 'M';
     bytes[1] = 'Z';
@@ -49,16 +48,17 @@ std::vector<unsigned char> image(const std::vector<std::string>& dlls, std::uint
     put32(bytes, PeOffset, 0x00004550u);
     put16(bytes, PeOffset + 4, 0x8664);
     put16(bytes, PeOffset + 6, 1);
-    put16(bytes, PeOffset + 20, OptionalBytes);
+    put16(bytes, PeOffset + 20, optionalBytes);
     put16(bytes, OptionalOffset, magic);
-    put32(bytes, OptionalOffset + 108, 16);
+    put32(bytes, OptionalOffset + 108, directories);
     put32(bytes, OptionalOffset + 112 + 8, SectionRva);
     put32(bytes, OptionalOffset + 112 + 12, static_cast<std::uint32_t>((dlls.size() + 1) * DescriptorBytes));
-    std::memcpy(bytes.data() + SectionTable, ".idata", 6);
-    put32(bytes, SectionTable + 8, SectionBytes);
-    put32(bytes, SectionTable + 12, SectionRva);
-    put32(bytes, SectionTable + 16, SectionBytes);
-    put32(bytes, SectionTable + 20, SectionOffset);
+    const auto sectionTable = OptionalOffset + optionalBytes;
+    std::memcpy(bytes.data() + sectionTable, ".idata", 6);
+    put32(bytes, sectionTable + 8, SectionBytes);
+    put32(bytes, sectionTable + 12, SectionRva);
+    put32(bytes, sectionTable + 16, SectionBytes);
+    put32(bytes, sectionTable + 20, SectionOffset);
     auto name = (dlls.size() + 1) * DescriptorBytes;
     for (std::size_t index = 0; index < dlls.size(); ++index) {
         const auto descriptor = SectionOffset + index * DescriptorBytes;
@@ -110,10 +110,32 @@ void movesTheNamedImportFirst() {
     require(unchanged == original, "moving the first import changed the image");
 }
 
+void movesTheImportFirstWithATwoDirectoryOptionalHeader(const std::filesystem::path& directory) {
+    const auto original = image({"kernel32.dll", "ucrtbase.dll", "mimalloc-redirect.dll", "advapi32.dll"}, 0x20b, 2, 128);
+    auto moved = original;
+    Allocator::MoveImportFirst(moved, "mimalloc-redirect.dll");
+    require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll" && importName(moved, 2) == "ucrtbase.dll" && importName(moved, 3) == "advapi32.dll",
+        "the import did not move first with a 128-byte optional header holding two directories");
+    require(descriptor(moved, 0) == descriptor(original, 2) && descriptor(moved, 1) == descriptor(original, 0) && descriptor(moved, 2) == descriptor(original, 1) && descriptor(moved, 3) == descriptor(original, 3),
+        "a descriptor did not move whole with a 128-byte optional header");
+    const auto directoryEnd = SectionOffset + 4 * DescriptorBytes;
+    require(std::equal(moved.begin(), moved.begin() + SectionOffset, original.begin()) && std::equal(moved.begin() + directoryEnd, moved.end(), original.begin() + directoryEnd),
+        "bytes outside the import descriptors changed with a 128-byte optional header");
+    auto repeated = moved;
+    Allocator::MoveImportFirst(repeated, "mimalloc-redirect.dll");
+    require(repeated == moved, "repeating the move changed the image with a 128-byte optional header");
+    const auto path = directory / "two-directory.dll";
+    writeFile(path, original);
+    Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
+    require(readFile(path) == moved, "the file move differs from the in-memory move with a 128-byte optional header");
+    Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
+    require(readFile(path) == moved, "repeating the move changed the file with a 128-byte optional header");
+}
+
 void movesTheImportInAFile(const std::filesystem::path& directory) {
     const auto path = directory / "moved.dll";
     writeFile(path, image({"kernel32.dll", "mimalloc-redirect.dll"}));
-    Allocator::MoveImportFirstInFile(path.string(), "mimalloc-redirect.dll");
+    Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
     const auto moved = readFile(path);
     require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll", "the file's import did not move first");
 }
@@ -122,7 +144,7 @@ void failsWithoutTouchingTheFile(const std::filesystem::path& directory, const s
     const auto path = directory / (what + ".dll");
     writeFile(path, bytes);
     try {
-        Allocator::MoveImportFirstInFile(path.string(), "mimalloc-redirect.dll");
+        Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
     } catch (const std::exception& error) {
         require(std::string(error.what()).find(expected) != std::string::npos, what + ": failed with another error: " + error.what());
         require(readFile(path) == bytes, what + ": the file changed although the move failed");
@@ -134,16 +156,37 @@ void failsWithoutTouchingTheFile(const std::filesystem::path& directory, const s
 }
 
 int main() {
-    const auto directory = std::filesystem::temp_directory_path() / ("aps5-pe-import-first-" + std::to_string(std::random_device{}()));
+    auto directory = std::filesystem::temp_directory_path() / std::filesystem::path(u8"aps5-pe-import-first-a\u00e7\u00e3o-\u65e5\u672c-");
+    directory += std::to_string(std::random_device{}());
     try {
         std::filesystem::create_directories(directory);
         movesTheNamedImportFirst();
+        movesTheImportFirstWithATwoDirectoryOptionalHeader(directory);
         movesTheImportInAFile(directory);
         failsWithoutTouchingTheFile(directory, "missing-import", image({"kernel32.dll", "ucrtbase.dll"}), "does not import mimalloc-redirect.dll");
         auto truncated = image({"kernel32.dll", "mimalloc-redirect.dll", "ucrtbase.dll"});
         truncated.resize(SectionOffset + DescriptorBytes + DescriptorBytes / 2);
         failsWithoutTouchingTheFile(directory, "truncated-directory", truncated, "truncated import directory");
         failsWithoutTouchingTheFile(directory, "pe32", image({"kernel32.dll", "mimalloc-redirect.dll"}, 0x10b), "not a PE32+ image");
+        auto undeclared = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        put32(undeclared, OptionalOffset + 108, 0);
+        failsWithoutTouchingTheFile(directory, "directory-count-zero", undeclared, "the image has no imports");
+        auto oneDirectory = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        put32(oneDirectory, OptionalOffset + 108, 1);
+        failsWithoutTouchingTheFile(directory, "directory-count-one", oneDirectory, "the image has no imports");
+        auto shortHeader = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        put16(shortHeader, PeOffset + 20, 112);
+        failsWithoutTouchingTheFile(directory, "optional-header-without-imports", shortHeader, "the image has no imports");
+        auto incompleteEntry = image({"kernel32.dll", "mimalloc-redirect.dll"}, 0x20b, 2, 128);
+        put16(incompleteEntry, PeOffset + 20, 127);
+        failsWithoutTouchingTheFile(directory, "optional-header-incomplete-import-entry", incompleteEntry, "the image has no imports");
+        auto unterminated = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        unterminated.resize(SectionOffset + 3 * DescriptorBytes + 13 + 21);
+        failsWithoutTouchingTheFile(directory, "unterminated-name", unterminated, "unterminated import name");
+        auto outsideFile = image({"kernel32.dll", "mimalloc-redirect.dll", "ucrtbase.dll"});
+        put32(outsideFile, SectionOffset + 2 * DescriptorBytes + 12, static_cast<std::uint32_t>(SectionRva + 0x1ff));
+        outsideFile.resize(0x300);
+        failsWithoutTouchingTheFile(directory, "name-past-the-file", outsideFile, "RVA outside the file data");
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         std::error_code ignored;

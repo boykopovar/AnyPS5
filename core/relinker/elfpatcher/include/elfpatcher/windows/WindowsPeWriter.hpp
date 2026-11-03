@@ -2,13 +2,12 @@
 #define ELFPATCHER_WINDOWS_PEWRITER_HPP
 
 #include <elfpatcher/windows/WindowsPeFormat.hpp>
-#include <optional>
 
 namespace Elfpatcher::Windows {
 
 class WindowsPeWriter {
 public:
-    std::vector<std::uint8_t> Write(const std::vector<PeSection>& sections, std::uint32_t entryRva, const std::array<PeDirectory, 16>& directories, bool windowsGui = false, std::optional<std::uint64_t> fixedImageBase = std::nullopt, bool dynamicBase = true) const;
+    std::vector<std::uint8_t> Write(const std::vector<PeSection>& sections, std::uint32_t entryRva, const std::array<PeDirectory, 16>& directories, bool windowsGui = false, std::uint64_t imageBase = ImageBase, bool fixedBase = false, bool dynamicBase = true) const;
 };
 
 }

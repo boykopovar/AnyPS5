@@ -1,3 +1,4 @@
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -6,9 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-extern "C" void APS5_VABI arc4random_buf_nid_postfix(void*, std::size_t);
-extern "C" std::uint32_t APS5_VABI arc4random_nid_postfix();
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -22,15 +20,18 @@ int main() {
     std::array<unsigned char, 4099> second{};
     first.fill(0xa5);
     arc4random_buf_nid_postfix(first.data(), 0);
+
     Require(std::all_of(first.begin(), first.end(), [](unsigned char value) { return value == 0xa5; }));
     for (const std::size_t size : {1u, 3u, 5u, 4098u}) {
         first.fill(0xa5);
         arc4random_buf_nid_postfix(first.data(), size);
+
         Require(std::all_of(first.begin() + static_cast<std::ptrdiff_t>(size), first.end(),
             [](unsigned char value) { return value == 0xa5; }));
     }
     arc4random_buf_nid_postfix(first.data(), first.size());
     arc4random_buf_nid_postfix(second.data(), second.size());
+
     Require(first != second);
     std::array<std::size_t, 256> counts{};
     for (const auto value : first) ++counts[value];
@@ -53,5 +54,20 @@ int main() {
     std::size_t repeats = 0;
     for (std::size_t index = 1; index < Draws; ++index) repeats += words[index] == words[index - 1];
     Require(repeats < 16);
+    Require(arc4random_uniform_nid_postfix(0) == 0);
+    Require(arc4random_uniform_nid_postfix(1) == 0);
+    for (std::size_t index = 0; index < 1000; ++index) {
+        Require(arc4random_uniform_nid_postfix(7) < 7);
+    }
+    std::array<std::size_t, 10> uniformCounts{};
+    for (std::size_t index = 0; index < 20000; ++index) {
+        const auto value = arc4random_uniform_nid_postfix(10);
+        Require(value < 10);
+        ++uniformCounts[value];
+    }
+    for (const auto count : uniformCounts) Require(count > 1500 && count < 2500);
+    for (std::size_t index = 0; index < 100; ++index) {
+        Require(arc4random_uniform_nid_postfix(0x80000000u) < 0x80000000u);
+    }
     return 0;
 }

@@ -77,6 +77,8 @@ public:
         };
         const auto smooth = barycentricOutput(layout.smoothLocation);
         const auto linear = barycentricOutput(layout.linearLocation);
+        const auto reciprocalW = barycentricOutput(layout.reciprocalWLocation);
+        if (reciprocalW != 0u) builder.AddAnnotation(spv::OpDecorate, reciprocalW, spv::DecorationNoPerspective);
         std::vector<std::uint32_t> perVertexOutputs;
         for (const auto& parameter : perVertex) {
             perVertexOutputs.push_back(addInterface(spv::StorageClassOutput, vertexArrayType));
@@ -94,11 +96,18 @@ public:
             for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) values[location][vertex] = load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, inputs[location], constant(intType, vertex)));
         }
         for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) {
-            store(position, load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, glIn, constant(intType, vertex), constant(intType, 0u))));
+            const auto clipPosition = load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, glIn, constant(intType, vertex), constant(intType, 0u)));
+            store(position, clipPosition);
             for (std::size_t i = 0; i < passed.size(); ++i) store(passedOutputs[i], values[passed[i]][vertex]);
             const auto weights = result(spv::OpCompositeConstruct, vec3FloatType, vertex == 0u ? one : zero, vertex == 1u ? one : zero, vertex == 2u ? one : zero);
             if (smooth != 0u) store(smooth, weights);
             if (linear != 0u) store(linear, weights);
+            if (reciprocalW != 0u) {
+                const auto clipW = result(spv::OpCompositeExtract, floatType, clipPosition, 3u);
+                const auto reciprocal = result(spv::OpFDiv, floatType, one, clipW);
+                const auto reciprocalWeights = result(spv::OpCompositeConstruct, vec3FloatType, vertex == 0u ? reciprocal : zero, vertex == 1u ? reciprocal : zero, vertex == 2u ? reciprocal : zero);
+                store(reciprocalW, reciprocalWeights);
+            }
             for (std::size_t i = 0; i < perVertex.size(); ++i) {
                 for (std::uint32_t source = 0; source < 3u; ++source) store(result(spv::OpAccessChain, ptrOutputVec4, perVertexOutputs[i], constant(intType, source)), values[perVertex[i].sourceLocation][source]);
             }
@@ -251,6 +260,8 @@ public:
         };
         const auto smooth = barycentricOutput(layout.smoothLocation);
         const auto linear = barycentricOutput(layout.linearLocation);
+        const auto reciprocalW = barycentricOutput(layout.reciprocalWLocation);
+        if (reciprocalW != 0u) builder.AddAnnotation(spv::OpDecorate, reciprocalW, spv::DecorationNoPerspective);
         std::vector<std::uint32_t> perVertexOutputs;
         for (const auto& parameter : perVertex) {
             perVertexOutputs.push_back(addInterface(spv::StorageClassOutput, vertexArrayType));
@@ -275,6 +286,16 @@ public:
         for (std::size_t i = 0; i < passed.size(); ++i) store(passedOutputs[i], load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, inputs[passed[i]], passedFlat[i] ? constant(intType, provokingVertex) : index)));
         if (smooth != 0u) store(smooth, weights);
         if (linear != 0u) store(linear, weights);
+        if (reciprocalW != 0u) {
+            std::array<std::uint32_t, 3> reciprocalWeights{};
+            for (std::uint32_t source = 0; source < 3u; ++source) {
+                const auto clipPosition = load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, glIn, constant(intType, source), constant(intType, 0u)));
+                const auto clipW = result(spv::OpCompositeExtract, floatType, clipPosition, 3u);
+                const auto inverseW = result(spv::OpFDiv, floatType, one, clipW);
+                reciprocalWeights[source] = result(spv::OpFMul, floatType, weight(source), inverseW);
+            }
+            store(reciprocalW, result(spv::OpCompositeConstruct, vec3FloatType, reciprocalWeights[0], reciprocalWeights[1], reciprocalWeights[2]));
+        }
         for (std::size_t i = 0; i < perVertex.size(); ++i) {
             for (std::uint32_t source = 0; source < 3u; ++source) store(result(spv::OpAccessChain, ptrOutputVec4, perVertexOutputs[i], constant(intType, source)), load(vec4FloatType, result(spv::OpAccessChain, ptrInputVec4, inputs[perVertex[i].sourceLocation], constant(intType, source))));
         }
@@ -370,6 +391,7 @@ BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentPa
     if (emulation.smooth) layout.smoothLocation = take(1u);
     if (emulation.linear) layout.linearLocation = take(1u);
     if (meshPositions) layout.positionsLocation = take(3u);
+    if (emulation.smoothOffset) layout.reciprocalWLocation = take(1u);
     for (const auto& parameter : parameters) {
         if (parameter.perVertex) layout.perVertexLocations.emplace_back(parameter.location, take(3u));
     }
@@ -404,9 +426,9 @@ RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, co
     const auto emulated = CollectEmulatedInterface(vertex, fragment);
     const auto passed = static_cast<std::uint32_t>(emulated.passed.size());
     const auto perVertex = static_cast<std::uint32_t>(emulated.perVertex.size());
-    const auto outputComponents = 4u + 4u * passed + 3u * emulated.barycentrics + 12u * perVertex;
+    const auto outputComponents = 4u + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
     const auto inputComponents = 4u + 4u * emulated.sources;
-    const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex);
+    const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u));
     require(limits->maxGeometryOutputVertices >= 3u && outputComponents <= limits->maxGeometryOutputComponents && 3u * outputComponents <= limits->maxGeometryTotalOutputComponents && inputComponents <= limits->maxGeometryInputComponents && fragmentComponents <= limits->maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
     BarycentricGeometryEmitter emitter(target.spirvVersion);
     RecompileResult result;
@@ -429,8 +451,8 @@ BarycentricTessellationShaders BuildBarycentricTessellationShaders(const Recompi
     const auto clipDistances = VertexClipDistanceCount(vertex.spirv.Words());
     require(clipDistances == 0u || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityClipDistance) != target.supportedCapabilities.end(), "the vertex clip distances need shaderClipDistance");
     const auto controlComponents = 4u + clipDistances + 4u * emulated.sources;
-    const auto evaluationOutputComponents = 4u + clipDistances + 4u * passed + 3u * emulated.barycentrics + 12u * perVertex;
-    const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex);
+    const auto evaluationOutputComponents = 4u + clipDistances + 4u * passed + 3u * (emulated.barycentrics + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u)) + 12u * perVertex;
+    const auto fragmentComponents = 4u * (passed + emulated.barycentrics + 3u * perVertex + (emulated.layout.reciprocalWLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u));
     const auto& limits = *target.tessellation;
     require(limits.maxPatchSize >= 3u && controlComponents <= limits.maxControlPerVertexInputComponents && controlComponents <= limits.maxControlPerVertexOutputComponents && 3u * controlComponents + 4u <= limits.maxControlTotalOutputComponents && limits.maxControlPerPatchOutputComponents >= 4u && controlComponents <= limits.maxEvaluationInputComponents && evaluationOutputComponents <= limits.maxEvaluationOutputComponents && fragmentComponents <= maxFragmentInputComponents, "the emulated barycentric interface exceeds device limits");
     std::set<std::uint32_t> sourceSet(emulated.passed.begin(), emulated.passed.end());

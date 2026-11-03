@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -149,17 +150,28 @@ char* APS5_VABI stpcpy_nid_postfix(char* destination, const char* source) {
     return destination + length;
 }
 
+char* APS5_VABI stpncpy_nid_postfix(char* destination, const char* source, std::size_t count) {
+    for (; count != 0; --count, ++destination, ++source) {
+        if ((*destination = *source) == '\0') {
+            char* result = destination;
+            while (--count != 0) *++destination = '\0';
+            return result;
+        }
+    }
+    return destination;
+}
+
 char* APS5_VABI strtok_r_nid_postfix(char* text, const char* delimiters, char** state) {
+    static const char exhausted[] = "";
     if (text == nullptr) text = *state;
     if (text == nullptr) return nullptr;
     text += std::strspn(text, delimiters);
     if (*text == '\0') {
-        *state = nullptr;
+        *state = const_cast<char*>(exhausted);
         return nullptr;
     }
     char* end = text + std::strcspn(text, delimiters);
     if (*end != '\0') *end++ = '\0';
-    else end = nullptr;
     *state = end;
     return text;
 }
@@ -169,8 +181,8 @@ char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters) {
     return strtok_r_nid_postfix(text, delimiters, &state);
 }
 
-
 int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address) {
+    if (text == nullptr) throw std::invalid_argument("__inet_aton: null text");
     std::uint8_t parts[3];
     std::size_t count = 0;
     std::uint64_t value = 0;
