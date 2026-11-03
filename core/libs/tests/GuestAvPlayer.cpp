@@ -1492,7 +1492,7 @@ void TestLoopWarningAtPlayback() {
         Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing frame missing");
         Check(FrameIndex(frame.timestamp) == index % FrameCount, "loop timing frame out of order");
         const int loops = index / FrameCount;
-        if (loops > 0) Check(WaitFor([&] { return events.Count(EventWarning, LoopingBack) >= loops; }), "loop timing warning missing");
+        Check(events.Count(EventWarning, LoopingBack) >= loops, "loop frame handed out before its warning");
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         Check(events.Count(EventWarning, LoopingBack) == loops, "loop warning did not match the playback boundary");
     }
