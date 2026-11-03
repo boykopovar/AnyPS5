@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -78,6 +79,22 @@ constexpr std::uint64_t WordWaitNanoseconds = 50000;
 
 std::uint64_t imageViewGeneration(void*) {
     return GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+}
+
+std::uint64_t PageBacking(std::uint64_t base, std::uint64_t bytes) {
+    std::uint64_t mix = 1469598103934665603ull;
+    const auto fold = [&](std::uint64_t value) { mix = (mix ^ value) * 1099511628211ull; };
+    for (auto cursor = base; cursor < base + bytes;) {
+        const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(cursor), true);
+        if (range == nullptr || range->address >= base + bytes) break;
+        fold(range->address);
+        fold(range->bytes);
+        fold(range->allocationAddress);
+        fold(range->backingSerial);
+        fold((range->readable ? 1u : 0u) | (range->writable ? 2u : 0u) | (range->gpu ? 4u : 0u));
+        cursor = range->address + range->bytes;
+    }
+    return mix;
 }
 
 bool normalizeImageView(void*, std::uint32_t maxArrayLayers, std::array<std::uint32_t, 8>& descriptor, ShaderRecompiler::SrtImageViewIdentity& identity) {
@@ -305,6 +322,7 @@ ShaderMemory::Page& ShaderMemory::addPage(std::size_t position, std::uint64_t ba
     owned->recent.Reset();
     owned->wordwise = false;
     owned->lazy = false;
+    owned->backing = PageBacking(base, PageBytes);
     pages.insert(pages.begin() + static_cast<std::ptrdiff_t>(position), {base, owned.get()});
     lastBase = base;
     lastPage = owned.release();
@@ -321,13 +339,18 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
     }
     auto& page = addPage(position, base);
     if (CaptureProfiled()) ++CaptureTotals().pages;
+    preparePage(page, base);
+    return page;
+}
+
+void ShaderMemory::preparePage(Page& page, std::uint64_t base) {
     // A page is either mapped whole or read word by word where the guest mapped less than a page,
     // or where recorded GPU work writes into it (a whole-page read would wait for that work).
     if (GuestMemory::Accessible(reinterpret_cast<const void*>(base), PageBytes)) {
         if (WordwisePages() && pendingWrite != nullptr && pendingWrite(base, PageBytes, {}) != PendingWrite::None) {
             page.wordwise = true;
             ++CaptureTotals().pagesWordwise;
-            return page;
+            return;
         }
         const auto started = CaptureProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         GuestMemory::GuardRead(base, PageBytes);
@@ -335,7 +358,6 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
         if (CaptureProfiled()) CaptureTotals().pageReadNanoseconds += NanosecondsSince(started);
         page.lazy = true;
     }
-    return page;
 }
 
 bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* value) {
@@ -469,6 +491,27 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     page.recent.Set(index);
     *value = page.words[index];
     return true;
+}
+
+bool ShaderMemory::pagesCurrent() {
+    bool current = true;
+    for (auto& [pageBase, existing] : pages) {
+        const auto backing = PageBacking(pageBase, PageBytes);
+        if (backing == existing->backing) continue;
+        existing->valid.Reset();
+        existing->raw.Reset();
+        existing->backing = backing;
+        existing->wordwise = false;
+        existing->lazy = false;
+        preparePage(*existing, pageBase);
+        current = false;
+    }
+    return current;
+}
+
+bool ShaderMemory::snapshotCurrent(void* context, std::span<const ShaderRecompiler::RegisteredImageView> views) {
+    const bool pages = static_cast<ShaderMemory*>(context)->pagesCurrent();
+    return pages && DriverDetail::CaptureRegisteredViewsCurrent(views);
 }
 
 bool ShaderMemory::invalidateRawPages() {
@@ -835,6 +878,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.descriptorScope = &descriptorScope;
     runtime.normalizeImageView = &normalizeImageView;
     runtime.imageViewGeneration = &imageViewGeneration;
+    runtime.snapshotCurrent = &snapshotCurrent;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
