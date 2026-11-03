@@ -845,6 +845,18 @@ private:
     std::vector<VkPipeline> pipelines;
 };
 
+std::vector<std::uint32_t> SingleSampleFetchShader(std::uint32_t width, std::uint32_t height) {
+    auto code = FetchShader(width, height, 1u, false, true);
+    for (std::size_t word = 5u; word < code.size();) {
+        const auto count = code[word] >> 16u;
+        const auto opcode = code[word] & 0xffffu;
+        if (opcode == spv::OpTypeImage && count > 6u) code[word + 6u] = 0u;
+        if (opcode == spv::OpImageFetch && count > 5u && code[word + 5u] == spv::ImageOperandsSampleMask) code[word + 5u] = spv::ImageOperandsLodMask;
+        word += count != 0u ? count : 1u;
+    }
+    return code;
+}
+
 std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     const auto base = (target.address | target.pipeBankXor) >> 8u;
     const auto metadata = target.htileAddress >> 8u;
@@ -1194,6 +1206,25 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
             RecordMemoryBarrier(context, arrayBatch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
             arrayBatch.SubmitAndWait();
             check(true, offset);
+            const auto firstSample = DepthSurfaceFirstSample(context, words, DecodeTextureResource(words), VkComponentMapping{});
+            Require(firstSample != nullptr && DepthSurfaceFirstSample(context, words, DecodeTextureResource(words), VkComponentMapping{}) == firstSample, "sample 0 of the native depth target was not read into one reused 2D image");
+            recorder.Sync();
+            std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+            {
+                const Fetch firstFetch(context, *firstSample, output, SingleSampleFetchShader(extent.width, extent.height));
+                CommandBatch firstBatch(context);
+                firstFetch.Run(firstBatch.Handle(), extent.width * extent.height);
+                RecordMemoryBarrier(context, firstBatch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                firstBatch.SubmitAndWait();
+            }
+            output.Invalidate();
+            for (std::uint32_t index = 0u; index < extent.width * extent.height; ++index) {
+                std::array<float, 4> result{};
+                std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+                const auto expected = offset + 1.0f / 16.0f;
+                const auto tolerance = format == VK_FORMAT_D16_UNORM ? 1.0f / 65535.0f : 0.0f;
+                Require(std::abs(result[0] - expected) <= tolerance && result[1] == 0.0f && result[2] == 0.0f && result[3] == 1.0f, "a 2D read of the native depth target did not return its sample 0 at pixel " + std::to_string(index) + ": " + std::to_string(result[0]) + ", expected " + std::to_string(expected));
+            }
         }
         if (clearing) {
             for (std::uint32_t iteration = 0u; iteration < 3u; ++iteration) {
@@ -1880,8 +1911,10 @@ void CheckAliasedStencil(Context context, std::uint32_t fragments, AliasCase whi
         read(std::nullopt);
         const auto stencilWords = StencilSampleWords(target);
         TargetRefuses([&] { DepthSurfaceView(context, target, true, true); }, stencilAliasRefusal);
+        TargetRefuses([&] { DepthSurfaceViewWithStencilWriteIntent(context, target, true, true, false); }, stencilAliasRefusal);
         TargetRefuses([&] { CachedSampledTexture(context, stencilWords); }, stencilAliasRefusal);
         Require(DepthSurfaceView(context, target) == view && CachedSampledTexture(context, words) == texture, "a depth-only use of a target whose stencil plane is unproven was refused or replaced its view");
+        Require(DepthSurfaceViewWithStencilWriteIntent(context, target, true, false, false) == view, "a depth-only bind of an unproven stencil plane was refused or replaced its view");
         if (!filled) {
             recorder.Sync();
             std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
@@ -2541,6 +2574,97 @@ int CheckDriverPath(bool queued) {
 
 }
 
+void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{129u, 67u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    TargetMemory memory(depthBytes), stencil(stencilBytes);
+    const auto fill = [&](float depth, std::uint8_t value) {
+        const auto word = std::bit_cast<std::uint32_t>(depth);
+        for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &word, 4u);
+        std::memset(stencil.Data(), value, stencilBytes);
+    };
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    Recorder recorder(context);
+    recorder.Activate();
+    auto words = DepthSampleWords(target);
+    words[6] &= ~((1u << 19u) | (1u << 21u));
+    auto stencilTarget = target;
+    stencilTarget.address = target.stencilAddress;
+    auto stencilWords = DepthSampleWords(stencilTarget);
+    stencilWords[1] = (stencilWords[1] & ~(0x1ffu << 20u)) | (5u << 20u);
+    stencilWords[6] &= ~((1u << 19u) | (1u << 21u));
+    const auto lookup = [&] { return DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}); };
+    const auto clear = [&] {
+        recorder.Sync();
+        ClearCachedTextures(context.device);
+        ClearDepthSurfaces(context.device);
+    };
+    struct Cleanup {
+        decltype(clear)& action;
+        ~Cleanup() { action(); }
+    } cleanup{clear};
+    for (std::uint32_t field = 0u; field < 5u; ++field) {
+        fill(0.25f, 0x5au);
+        auto invalid = target;
+        std::string_view reason;
+        switch (field) {
+            case 0u: memory.Data()[depthBytes - 1u] = std::byte{0x3f}; reason = "does not hold one depth value"; break;
+            case 1u: fill(2.0f, 0x5au); reason = "does not hold one depth value"; break;
+            case 2u: stencil.Data()[stencilBytes - 1u] = std::byte{0x5b}; reason = "does not hold one stencil value"; break;
+            case 3u: invalid.htileStencil = true; reason = "stencil import"; break;
+            case 4u: invalid.stencilAddress = memory.Address() + 65536u; reason = "overlap"; break;
+        }
+        Require(DepthSurfaceView(context, invalid) != VK_NULL_HANDLE, "a refused uniform-plane import must preserve attachment rendering");
+        TargetRefuses([&] { DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}); }, reason);
+        clear();
+    }
+    for (const auto& [depth, value] : std::array{std::pair{0.0f, std::uint8_t{0xc3u}}, std::pair{0.25f, std::uint8_t{0x5au}}}) {
+        fill(depth, value);
+        Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a uniform-plane D32S8 target without HTILE has no attachment view");
+        auto texture = lookup();
+        Require(texture != nullptr && texture->View() != VK_NULL_HANDLE, "a uniform-plane D32S8 target without HTILE was not sampled natively");
+        Buffer output(context, (extent.width * extent.height * samples + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        {
+            const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+            CommandBatch batch(context);
+            fetch.Run(batch.Handle(), extent.width * extent.height * samples);
+            RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            batch.SubmitAndWait();
+            output.Invalidate();
+            for (std::uint32_t i = 0u; i < extent.width * extent.height * samples; ++i) {
+                std::array<float, 4> sampled{};
+                std::memcpy(sampled.data(), output.Bytes().data() + (i + 1u) * 16u, 16u);
+                Require(sampled == std::array<float, 4>{depth, 0.0f, 0.0f, 1.0f}, "a uniform depth plane without HTILE was not imported into every sample");
+            }
+        }
+        auto stencilTexture = DepthSurfaceTexture(context, stencilWords, DecodeTextureResource(stencilWords), VkComponentMapping{});
+        Require(stencilTexture != nullptr && stencilTexture->View() != VK_NULL_HANDLE, "the stencil plane of a uniform-plane D32S8 target without HTILE was not sampled natively");
+        {
+            std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+            const Fetch fetch(context, *stencilTexture, output, FetchShader(extent.width, extent.height, samples, false, false));
+            CommandBatch batch(context);
+            fetch.Run(batch.Handle(), extent.width * extent.height * samples);
+            RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            batch.SubmitAndWait();
+            output.Invalidate();
+            for (std::uint32_t i = 0u; i < extent.width * extent.height * samples; ++i) {
+                std::array<std::uint32_t, 4> sampled{};
+                std::memcpy(sampled.data(), output.Bytes().data() + (i + 1u) * 16u, 16u);
+                Require(sampled[0] == value, "a uniform stencil plane without HTILE was not imported into every sample: sample " + std::to_string(i) + " holds " + std::to_string(sampled[0]) + ", the plane " + std::to_string(value));
+            }
+        }
+        stencilTexture.reset();
+        texture.reset();
+        stencil.Data()[0] = std::byte{static_cast<std::uint8_t>(value + 1u)};
+        TargetRefuses([&] { lookup(); }, "guest writes");
+        clear();
+    }
+    std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef __linux__
@@ -2584,6 +2708,16 @@ int main(int argc, char** argv) {
                 std::printf("Native depth queued fill fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--uniform-planes") {
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(context, HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), samples)) { ++unavailable; continue; }
+                CheckUniformPlanesWithoutHtile(context, samples);
+                ++checked;
+            }
+            std::printf("Native depth uniform-plane cases checked=%u unavailable=%u\n", checked, unavailable);
+            return checked != 0u ? 0 : VulkanTestSkipped;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--clears") {
             CheckClearDispatch();

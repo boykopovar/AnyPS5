@@ -302,6 +302,8 @@ include(prx/libSceFreeType/BuildInfo.cmake)
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 include(prx/libSceLibreSsl/ErrorQueue.cmake)
+include(prx/libSceLibreSsl/MemoryBio.cmake)
+include(prx/libSceLibreSsl/Cmac.cmake)
 
 include(prx/libSceLibreSsl/ProtocolSelection.cmake)
 
@@ -359,6 +361,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_kernel_sys_neo_mode PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_neo_mode PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_constant_unknowns_tests tests/GuestKernelSysConstantUnknowns.cpp)
+    target_include_directories(guest_kernel_sys_constant_unknowns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_constant_unknowns_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_constant_unknowns_tests)
+    add_test(NAME guest_kernel_sys_constant_unknowns COMMAND guest_kernel_sys_constant_unknowns_tests)
+    set_tests_properties(guest_kernel_sys_constant_unknowns PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_constant_unknowns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
     add_test_executable(nid_buffer_validation_tests nid/tests/BufferValidation.cpp)
@@ -687,6 +699,13 @@ if(BUILD_TESTING)
     endif()
 
     if(WIN32)
+        add_test_executable(windows_crash_thread_name_tests tests/WindowsCrashThreadName.cpp)
+        add_dependencies(windows_crash_thread_name_tests libc)
+        configure_host_test_executable(windows_crash_thread_name_tests)
+        add_test(NAME windows_crash_thread_name COMMAND windows_crash_thread_name_tests $<TARGET_FILE:libc>)
+        set_tests_properties(windows_crash_thread_name PROPERTIES TIMEOUT 20
+            PASS_REGULAR_EXPRESSION "on thread [0-9]+ 'a+Z'[^~]*thread [0-9]+ 'c+Y':"
+            FAIL_REGULAR_EXPRESSION "Zb|Yd|did not fault")
         add_test_executable(windows_crash_text_tests tests/WindowsCrashText.cpp)
         add_dependencies(windows_crash_text_tests libc)
         if(MINGW)
@@ -696,6 +715,13 @@ if(BUILD_TESTING)
         set_tests_properties(windows_crash_text PROPERTIES TIMEOUT 20
             PASS_REGULAR_EXPRESSION "faulting[^~]*FATAL: unhandled exception 0xc0000005[^~]*  \\[r12\\] \"allocation failed in the heap\"[\r\n]+  \\[r13\\] u\"LowLevelFatalError \\[File:Unknown\\] \\[Line: 42\\] Out of memory\"[\r\n]+  \\[r14\\] \"PAGE END\"[.][.][.]"
             FAIL_REGULAR_EXPRESSION "\\[rbx\\] u?\"|did not fault")
+        add_test_executable(windows_integer_overflow_report_tests tests/WindowsIntegerOverflowReport.cpp)
+        add_dependencies(windows_integer_overflow_report_tests libc)
+        configure_host_test_executable(windows_integer_overflow_report_tests)
+        add_test(NAME windows_integer_overflow_report COMMAND windows_integer_overflow_report_tests $<TARGET_FILE:libc>)
+        set_tests_properties(windows_integer_overflow_report PROPERTIES TIMEOUT 20
+            PASS_REGULAR_EXPRESSION "dividing[^~]*FATAL: unhandled exception 0xc0000095"
+            FAIL_REGULAR_EXPRESSION "did not fault")
     endif()
 
     add_test_executable(guest_voice_port_attr_tests tests/GuestVoicePortAttr.cpp)
@@ -793,7 +819,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_np_common_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_np_common_tests PRIVATE libSceNpCommon libkernel libc)
     configure_windows_unwind(guest_np_common_tests)
-    foreach(testCase IN ITEMS ids sync clock)
+    foreach(testCase IN ITEMS ids sync clock wake)
         add_test(NAME guest_np_common_${testCase} COMMAND guest_np_common_tests ${testCase})
         set_tests_properties(guest_np_common_${testCase} PROPERTIES TIMEOUT 20)
         if(WIN32)
@@ -1116,6 +1142,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCppWebApi>")
     endif()
 
+    add_test_executable(guest_np_cpp_web_api_matches_tests tests/GuestNpCppWebApiMatches.cpp)
+    target_include_directories(guest_np_cpp_web_api_matches_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_matches_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_matches_tests)
+    add_test(NAME guest_np_cpp_web_api_matches COMMAND guest_np_cpp_web_api_matches_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_matches PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCppWebApi>")
+    endif()
+
     add_test_executable(savedata_native_write_replacement_tests tests/SaveDataWriteReplacement.cpp)
     target_include_directories(savedata_native_write_replacement_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(savedata_native_write_replacement_tests PRIVATE libSceSaveData.native)
@@ -1304,6 +1340,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_gnm_neo_default_state PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
+    add_test_executable(guest_division_prx_abi_tests tests/GuestDivisionPrxAbi.cpp nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(guest_division_prx_abi_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    configure_host_test_executable(guest_division_prx_abi_tests)
+    target_link_libraries(guest_division_prx_abi_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_custom_target(guest_division_prx_library DEPENDS ${LIBC_PATCHED})
+    add_dependencies(guest_division_prx_abi_tests guest_division_prx_library)
+    add_test(NAME guest_division_prx_abi COMMAND guest_division_prx_abi_tests $<TARGET_FILE:libc> ${PATCHED_DIR}/libc.prx)
+    set_tests_properties(guest_division_prx_abi PROPERTIES TIMEOUT 20)
+
 endif()
 
 include(prx/libSceFreeType/CurveBounds.cmake)
