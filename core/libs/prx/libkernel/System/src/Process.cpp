@@ -1028,7 +1028,7 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     }
     std::uint64_t base = 0;
     if (operation == setGsBase) {
-        if (!ReadGuest(&base, parameters, sizeof(base))) {
+        if (!GuestCopyIn_nid_no_patch(&base, parameters, sizeof(base))) {
             *__error_nid_postfix() = guestFault;
             return -1;
         }
@@ -1053,13 +1053,13 @@ int APS5_VABI sysarch(int operation, void* parameters) {
 #endif
     if (i386) {
         const auto low = static_cast<std::uint32_t>(base);
-        if (!WriteGuest(parameters, &low, sizeof(low))) {
+        if (!GuestCopyOut_nid_no_patch(parameters, &low, sizeof(low))) {
             *__error_nid_postfix() = guestFault;
             return -1;
         }
         return 0;
     }
-    if (!WriteGuest(parameters, &base, sizeof(base))) {
+    if (!GuestCopyOut_nid_no_patch(parameters, &base, sizeof(base))) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
