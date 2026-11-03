@@ -172,6 +172,16 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     return result;
 }
 
+bool HoldsLodAtZero(std::span<const std::uint32_t, 4> words) {
+    return (words[0] & (1u << 15u)) == 0u && (((words[2] >> 26u) & 3u) == 0u || ((words[1] >> 12u) & 0xfffu) == 0u);
+}
+
+std::array<std::uint32_t, 4> PinnedLodSamplerWords(std::span<const std::uint32_t, 4> words, std::uint32_t lod) {
+    std::array<std::uint32_t, 4> pinned{words[0], (words[1] & ~0xffffffu) | lod | (lod << 12u), words[2], words[3]};
+    if (((pinned[2] >> 26u) & 3u) == 0u) pinned[2] |= 1u << 26u;
+    return pinned;
+}
+
 std::optional<std::array<std::uint32_t, 4>> SingleLevelSamplerWords(std::span<const std::uint32_t, 4> words, bool singleLevelImage, bool mipmappedImage) {
     const auto filters = words[2];
     if (((filters >> 29u) & 1u) == 0 || !singleLevelImage || (!isAnisoFilter((filters >> 20u) & 3u) && !isAnisoFilter((filters >> 22u) & 3u))) return std::nullopt;
