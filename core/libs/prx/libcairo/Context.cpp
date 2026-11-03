@@ -227,4 +227,4 @@ void APS5_VABI cairo_device_to_user_distance(CairoContext* context, double* dx, 
     cairo_matrix_transform_distance(&inverse, dx, dy);
 }
 
-} // extern "C"
+}
