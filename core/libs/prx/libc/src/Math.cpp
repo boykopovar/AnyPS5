@@ -1155,6 +1155,17 @@ float APS5_VABI expm1f_nid_postfix(float x) {
     return result;
 }
 float APS5_VABI erff_nid_postfix(float x) { return std::erf(x); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_erf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_erf.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static double ErfSmallRatio(double z) {
     const double pp0 = 1.28379167095512558561e-01;
     const double pp1 = -3.25042107247001499370e-01;
