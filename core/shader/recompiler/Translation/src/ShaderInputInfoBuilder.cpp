@@ -170,12 +170,16 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psIteratesSamples = pixel.iteratesSamples;
         pixelStorage.psPositionLocation = pixel.positionLocation;
         pixelStorage.sampleLocations = pixel.sampleLocations;
-        if (pixel.targetMerge.mask != 0u && (pixel.targetMerge.target >= 8u || (pixel.targetMerge.samples != 1u && pixel.targetMerge.samples != 2u && pixel.targetMerge.samples != 4u && pixel.targetMerge.samples != 8u))) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target merge");
-        pixelStorage.mergeTarget = pixel.targetMerge.target;
-        pixelStorage.mergeMask = pixel.targetMerge.mask;
-        pixelStorage.mergeSamples = pixel.targetMerge.samples;
-        pixelStorage.mergeDepthStencilWrites = pixel.targetMerge.depthStencilWrites;
-        pixelStorage.mergeDepthStencilTests = pixel.targetMerge.depthStencilTests;
+        for (const auto& merge : pixel.targetMerges) {
+            const auto& first = pixel.targetMerges.front();
+            if (merge.mask == 0u || merge.target >= 8u || std::ranges::count(pixel.targetMerges, merge.target, &TargetMerge::target) != 1 || (merge.samples != 1u && merge.samples != 2u && merge.samples != 4u && merge.samples != 8u) || merge.samples != first.samples || merge.depthStencilWrites != first.depthStencilWrites || merge.depthStencilTests != first.depthStencilTests) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target merge");
+            const auto& blend = merge.blend;
+            if (blend.enabled && (merge.samples != 1u || blend.colorSource > 14u || blend.colorDestination > 14u || blend.alphaSource > 14u || blend.alphaDestination > 14u || blend.colorOperation > 4u || blend.alphaOperation > 4u || blend.writeMask > 0xfu)) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target blend");
+            pixelStorage.merges.push_back(merge);
+            pixelStorage.mergeSamples = merge.samples;
+            pixelStorage.mergeDepthStencilWrites = merge.depthStencilWrites;
+            pixelStorage.mergeDepthStencilTests = merge.depthStencilTests;
+        }
         pixelStorage.sampleOrder = pixel.sampleOrder;
         ShaderStageInputInfo result;
         result.pixel = &pixelStorage;
