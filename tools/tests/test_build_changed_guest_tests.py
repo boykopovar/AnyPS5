@@ -290,7 +290,8 @@ class Main(unittest.TestCase):
                 return run_result()
             return real_run(cmd, **{**kwargs, "capture_output": True})
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
-            build_changed_guest_tests.run(build, ["python_target"], {Path(sys.executable).stem: "python_target"})
+            target = {"name": "python_target", "artifacts": [{"path": python}]}
+            build_changed_guest_tests.run(build, ["python_target"], build_changed_guest_tests.target_artifact_names(target))
         self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
         self.assertFalse((build / "unrelated").exists())
 
