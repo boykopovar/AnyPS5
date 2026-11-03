@@ -22,7 +22,22 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
+static void CheckFseekBounds() {
+    FileStream file(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("0123456789", 1, 10, &file) == 10);
+    rewind_nid_postfix(&file);
+    errno = 0;
+    Require(fseek_nid_postfix(&file, -1, SEEK_SET) == -1 && errno == EINVAL);
+    Require(ftello_nid_postfix(&file) == 0);
+    Require(fseek_nid_postfix(&file, -3, SEEK_END) == 0 && ftello_nid_postfix(&file) == 7);
+    Require(fgetc_nid_postfix(&file) == '7');
+    Require(fseek_nid_postfix(&file, 100, SEEK_SET) == 0 && ftello_nid_postfix(&file) == 100);
+    Require(fgetc_nid_postfix(&file) == EOF && feof_nid_postfix(&file) != 0);
+    file.Close();
+}
+
 int main() {
+    CheckFseekBounds();
     FileStream file(TemporaryFile::Open());
     Require(std::fputs("position", file.GetHandle()) >= 0);
     std::int64_t position = -1;
@@ -33,6 +48,23 @@ int main() {
     Require(std::fgetc(file.GetHandle()) == 'p');
     Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 1);
     file.Close();
+
+    FileStream reread(std::tmpfile());
+    Require(std::fputs("position", reread.GetHandle()) >= 0);
+    Require(fsetpos_nid_postfix(&reread, &beginning) == 0);
+    for (const char expected : {'p', 'o', 's'}) Require(fgetc_nid_postfix(&reread) == expected);
+    Require(fgetpos_nid_postfix(&reread, &position) == 0 && position == 3);
+    const std::int64_t third = position;
+    while (fgetc_nid_postfix(&reread) != EOF) {}
+    Require(feof_nid_postfix(&reread) != 0);
+    Require(fsetpos_nid_postfix(&reread, &third) == 0);
+    Require(feof_nid_postfix(&reread) == 0);
+    Require(fgetc_nid_postfix(&reread) == 'i');
+    const std::int64_t negative = -1;
+    errno = 0;
+    Require(fsetpos_nid_postfix(&reread, &negative) != 0);
+    Require(errno == EINVAL);
+    reread.Close();
 
     int descriptors[2];
 #ifdef _WIN32

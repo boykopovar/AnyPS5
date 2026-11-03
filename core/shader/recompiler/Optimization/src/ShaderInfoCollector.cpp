@@ -621,12 +621,11 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
             return inst->Opcode() == IrOpcode::BitwiseXor32;
         });
     });
-    const bool ldsAtomic64 = std::ranges::any_of(program.Blocks(), [](const auto& block) {
+    next.usesFaultBuffer = next.usesFaultBuffer || std::ranges::any_of(program.Blocks(), [](const auto& block) {
         return std::ranges::any_of(block->Instructions(), [](const IrValue* inst) {
             return SharedAccessOf(inst->Opcode()) == SharedAccess::Atomic && inst->Type() == IrType::U64;
         });
     });
-    next.usesFaultBuffer = next.usesFaultBuffer || ldsAtomic64;
     switch (program.Resources().stage) {
         case IrShaderStage::Vertex:
         case IrShaderStage::Local:
