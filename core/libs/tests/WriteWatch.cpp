@@ -509,6 +509,49 @@ void CheckReadTrapFaults() {
     }
 }
 
+std::mutex holderLock;
+thread_local bool holding = false;
+
+void ResolveHeldTrap(std::uintptr_t begin, std::uintptr_t end) {
+    {
+        const std::lock_guard lock(Traps().mutex);
+        Traps().calls.emplace_back(begin, end);
+    }
+    const std::lock_guard held(holderLock);
+    std::memset(reinterpret_cast<void*>(begin), Traps().fill.load(), end - begin);
+    GuestWriteWatchReleaseReads_nid_postfix(begin, end - begin);
+}
+
+void CheckReadTrapHolder() {
+    ::alarm(20);
+    Region region(1);
+    GuestWriteWatchRegister_nid_postfix(region.base, region.bytes);
+    static_cast<void>(region.Collect());
+    Require(GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveHeldTrap), "cannot set the read trap resolver");
+    GuestWriteWatchSetReadTrapBypass_nid_postfix(+[] { return holding; });
+    Traps().fill = 0x5a;
+    Require(GuestWriteWatchTrapReads_nid_postfix(region.Address(0), region.page), "cannot set a read trap");
+    std::unique_lock gate(holderLock);
+    holding = true;
+    std::uint8_t seen = 0;
+    std::thread reader([&] { seen = *reinterpret_cast<const volatile std::uint8_t*>(region.base); });
+    for (;;) {
+        {
+            const std::lock_guard lock(Traps().mutex);
+            if (!Traps().calls.empty()) break;
+        }
+        std::this_thread::yield();
+    }
+    const auto before = *reinterpret_cast<const volatile std::uint8_t*>(region.base + 1);
+    Require(before == 0, "a read by the holder of the resolver's lock saw bytes the resolver had not stored");
+    holding = false;
+    gate.unlock();
+    reader.join();
+    Require(seen == 0x5a, "a read of a trapped page did not wait for the resolver");
+    Require(TakeTrapCalls().size() == 1, "the trap was not resolved exactly once");
+    ::alarm(0);
+}
+
 void CheckReadTrapThreads() {
     ::alarm(20);
     constexpr std::size_t Threads = 4;
@@ -810,6 +853,7 @@ int main(int argc, char** argv) {
         else if (mode == "fault-ahead-off") CheckFaultAhead(false);
         else if (mode == "read-trap") CheckReadTrap();
         else if (mode == "read-trap-threads") CheckReadTrapThreads();
+        else if (mode == "read-trap-holder") CheckReadTrapHolder();
         else if (mode == "read-trap-fault") CheckReadTrapFaults();
         else if (mode == "read-trap-late") CheckReadTrapLateFaults();
         else if (mode == "read-trap-fault-bound") CheckReadTrapFaultBound();
