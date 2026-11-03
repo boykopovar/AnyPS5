@@ -4,7 +4,9 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
@@ -93,6 +95,68 @@ static void* APS5_VABI returnTicket(void* arg) {
     return reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(arg) + 1);
 }
 
+struct Wakeup {
+    PthreadCond cond = nullptr;
+    PthreadMutex mutex = nullptr;
+    bool lightweight = false;
+    int waiting = 0;
+    int woken = 0;
+    bool ready = false;
+};
+
+static void* APS5_VABI waitUntilReady(void* arg) {
+    auto* wakeup = static_cast<Wakeup*>(arg);
+    sceNpMutexLock(&wakeup->mutex);
+    ++wakeup->waiting;
+    int result = 0;
+    while (!wakeup->ready && result == 0) result = wakeup->lightweight ? sceNpLwCondWait(&wakeup->cond, &wakeup->mutex) : sceNpCondWait(&wakeup->cond, &wakeup->mutex);
+    if (result == 0) ++wakeup->woken;
+    sceNpMutexUnlock(&wakeup->mutex);
+    return nullptr;
+}
+
+enum class Wake { One, All, To };
+
+static bool wakeWaiters(bool lightweight, int count, Wake wake) {
+    Wakeup wakeup;
+    wakeup.lightweight = lightweight;
+    bool ok = expect(sceNpMutexInit(&wakeup.mutex, "np-wake", 0) == 0, "the wake mutex was not created");
+    ok &= expect((lightweight ? sceNpLwCondInit(&wakeup.cond, "np-lw-wake") : sceNpCondInit(&wakeup.cond, "np-wake", 0)) == 0 && wakeup.cond, "the wake condition was not created");
+    if (!ok) return false;
+    Pthread threads[2] = {};
+    for (int index = 0; index < count; ++index)
+        if (!expect(scePthreadCreate(&threads[index], nullptr, waitUntilReady, &wakeup, "np-waiter") == 0, "a waiter was not created")) std::abort();
+    for (;;) {
+        sceNpMutexLock(&wakeup.mutex);
+        const bool waiting = wakeup.waiting == count;
+        if (waiting) break;
+        sceNpMutexUnlock(&wakeup.mutex);
+        scePthreadYield();
+    }
+    wakeup.ready = true;
+    int signalled = 0;
+    if (wake == Wake::All) signalled = lightweight ? sceNpLwCondSignalAll(&wakeup.cond) : sceNpCondSignalAll(&wakeup.cond);
+    else if (wake == Wake::To) signalled = lightweight ? sceNpLwCondSignalTo(&wakeup.cond, threads[0]) : sceNpCondSignalTo(&wakeup.cond, threads[0]);
+    else signalled = lightweight ? sceNpLwCondSignal(&wakeup.cond) : sceNpCondSignal(&wakeup.cond);
+    sceNpMutexUnlock(&wakeup.mutex);
+    if (!expect(signalled == 0, "signalling the waiters failed")) std::abort();
+    for (int index = 0; index < count; ++index) ok &= expect(scePthreadJoin(threads[index], nullptr) == 0, "a waiter was not joined");
+    ok &= expect(wakeup.woken == count, "not every waiter returned from its wait");
+    ok &= expect((lightweight ? sceNpLwCondDestroy(&wakeup.cond) : sceNpCondDestroy(&wakeup.cond)) == 0, "the wake condition was not destroyed");
+    ok &= expect(sceNpMutexDestroy(&wakeup.mutex) == 0, "the wake mutex was not destroyed");
+    return ok;
+}
+
+static int testWake() {
+    bool ok = true;
+    for (const bool lightweight : {false, true}) {
+        ok &= expect(wakeWaiters(lightweight, 1, Wake::One), lightweight ? "sceNpLwCondSignal did not wake its waiter" : "sceNpCondSignal did not wake its waiter");
+        ok &= expect(wakeWaiters(lightweight, 2, Wake::All), lightweight ? "sceNpLwCondSignalAll did not wake both waiters" : "sceNpCondSignalAll did not wake both waiters");
+        ok &= expect(wakeWaiters(lightweight, 1, Wake::To), lightweight ? "sceNpLwCondSignalTo did not wake its thread" : "sceNpCondSignalTo did not wake its thread");
+    }
+    return ok ? 0 : 1;
+}
+
 static int testSync() {
     PthreadMutex plain = nullptr;
     PthreadMutex recursive = nullptr;
@@ -152,6 +216,7 @@ int main(int argc, char** argv) {
     if (std::strcmp(argv[1], "ids") == 0) status = testIds();
     else if (std::strcmp(argv[1], "sync") == 0) status = testSync();
     else if (std::strcmp(argv[1], "clock") == 0) status = testClock();
+    else if (std::strcmp(argv[1], "wake") == 0) status = testWake();
     if (status == 0) std::printf("NpCommon %s tests passed\n", argv[1]);
     return status;
 }
