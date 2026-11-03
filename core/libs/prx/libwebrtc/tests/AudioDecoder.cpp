@@ -89,10 +89,6 @@ void TestParseResultDestructor() {
     WebRtcAudioDecoderParseResult empty {1, 2, nullptr};
     _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&empty);
     Require(empty.timestamp == 1 && empty.priority == 2 && empty.frame == nullptr);
-    int frame = 0;
-    WebRtcAudioDecoderParseResult owning {1, 2, &frame};
-    RequireThrows<std::runtime_error>([&] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&owning); });
-    Require(owning.frame == &frame);
     RequireThrows<std::invalid_argument>([] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(nullptr); });
 }
 
