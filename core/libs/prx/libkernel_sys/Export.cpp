@@ -10,12 +10,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <vector>
 #include <sys/stat.h>
 #include <cerrno>
 #include <ctime>
@@ -86,6 +84,7 @@ constexpr int GuestEloop = 62;
 constexpr int GuestEnametoolong = 63;
 constexpr int GuestEnotempty = 66;
 constexpr int GuestEoverflow = 84;
+constexpr std::uint64_t TerminalSetControlling = 0x20007461;
 constexpr int GuestAtFdcwd = -100;
 constexpr int GuestAtRemovedir = 0x800;
 constexpr std::size_t GuestPathMax = 1024;
@@ -143,24 +142,6 @@ constexpr int KenvSet = 1;
 constexpr int KenvUnset = 2;
 constexpr int KenvDump = 3;
 constexpr std::size_t KenvNameLength = 128;
-constexpr std::size_t KenvValueLength = 128;
-constexpr std::size_t KenvEntries = 512;
-
-struct KernelEnvironment {
-    std::mutex mutex;
-    std::vector<std::string> entries;
-};
-
-KernelEnvironment& KernelEnv() {
-    static auto* environment = new KernelEnvironment;
-    return *environment;
-}
-
-std::vector<std::string>::iterator FindKernelEnv(std::vector<std::string>& entries, const std::string& name) {
-    return std::find_if(entries.begin(), entries.end(), [&](const std::string& entry) {
-        return entry.size() > name.size() && entry.compare(0, name.size(), name) == 0 && entry[name.size()] == '=';
-    });
-}
 
 int CopyKernelEnvString(const char* source, std::size_t limit, std::string& destination) {
     if (const int error = CopyGuestPath_nid_no_patch(source, destination)) return error;
@@ -243,6 +224,56 @@ bool IsSymbolicLink(const std::filesystem::path& native) {
     std::error_code error;
     return std::filesystem::is_symlink(std::filesystem::symlink_status(native, error));
 #endif
+}
+
+bool ReadSymbolicLinkTarget(const std::filesystem::path& native, std::filesystem::path& target) {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(native.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
+    std::string text;
+    if (!File::WindowsSymbolicLink::Read(native, text, "link")) return false;
+    target = std::filesystem::path(reinterpret_cast<const char8_t*>(text.c_str()));
+    return true;
+#else
+    std::error_code error;
+    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(native, error))) return false;
+    target = std::filesystem::read_symlink(native, error);
+    if (error) throw std::system_error(error, "link: read_symlink");
+    return true;
+#endif
+}
+
+int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast) {
+    constexpr int MaxSymbolicLinks = 32;
+    std::vector<std::filesystem::path> pending;
+    const auto push = [&pending](const std::filesystem::path& path) {
+        const std::vector<std::filesystem::path> parts(path.begin(), path.end());
+        pending.insert(pending.end(), parts.rbegin(), parts.rend());
+    };
+    push(native.relative_path());
+    std::filesystem::path current = native.root_path();
+    int links = 0;
+    while (!pending.empty()) {
+        const auto part = pending.back();
+        pending.pop_back();
+        if (part.empty() || part == ".") continue;
+        if (part == "..") {
+            std::error_code error;
+            if (!std::filesystem::is_directory(current, error)) return 0;
+            current = current.parent_path();
+            continue;
+        }
+        const auto next = current / part;
+        std::filesystem::path target;
+        if ((followLast || !pending.empty()) && ReadSymbolicLinkTarget(next, target)) {
+            if (++links > MaxSymbolicLinks) return GuestEloop;
+            if (target.has_root_path()) current = target.root_path();
+            push(target.relative_path());
+            continue;
+        }
+        current = next;
+    }
+    return 0;
 }
 
 std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
@@ -384,6 +415,14 @@ int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
     return 0;
 }
 
+int APS5_VABI is_in_sandbox_nid_postfix(void) {
+    return 1;
+}
+
+int APS5_VABI sceKernelIsInSandbox(void) {
+    return is_in_sandbox_nid_postfix();
+}
+
 int APS5_VABI fork_nid_postfix(void) {
     NotImplemented_nid_no_patch("fork: child processes");
     return -1;
@@ -497,58 +536,14 @@ int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
 }
 
 int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len) {
-    auto& environment = KernelEnv();
-    if (what == KenvDump) {
-        std::size_t capacity = len > 0 ? static_cast<std::size_t>(len) : 0;
-        if (capacity > KenvEntries * (KenvNameLength + KenvValueLength + 2)) capacity = KenvEntries * (KenvNameLength + KenvValueLength + 2);
-        const bool copy = len > 0 && value != nullptr;
-        std::string buffer;
-        std::size_t needed = 0;
-        {
-            const std::lock_guard lock(environment.mutex);
-            for (const auto& entry : environment.entries) {
-                const std::size_t size = entry.size() + 1;
-                needed += size;
-                if (copy) {
-                    const std::size_t taken = std::min(size, capacity - buffer.size());
-                    buffer.append(entry.c_str(), taken);
-                }
-            }
-        }
-        if (copy && !GuestCopyOut_nid_no_patch(value, buffer.data(), buffer.size())) return static_cast<int>(Fail(GuestEfault));
-        return buffer.size() == needed ? 0 : static_cast<int>(needed);
-    }
+    static_cast<void>(value);
+    static_cast<void>(len);
+    if (what == KenvDump) return 0;
+    if (what == KenvSet || what == KenvUnset) return static_cast<int>(Fail(GuestEperm));
     std::string key;
     if (const int error = CopyKernelEnvString(name, KenvNameLength + 1, key)) return static_cast<int>(Fail(error));
-    const std::lock_guard lock(environment.mutex);
-    auto& entries = environment.entries;
-    switch (what) {
-    case KenvGet: {
-        const auto found = FindKernelEnv(entries, key);
-        if (found == entries.end()) return static_cast<int>(Fail(GuestEnoent));
-        const std::size_t size = found->size() - key.size();
-        const std::size_t limit = static_cast<std::size_t>(static_cast<std::int64_t>(len));
-        const std::size_t taken = std::min(size, limit);
-        if (!GuestCopyOut_nid_no_patch(value, found->c_str() + key.size() + 1, taken)) return static_cast<int>(Fail(GuestEfault));
-        return static_cast<int>(taken);
-    }
-    case KenvSet: {
-        if (len == 0) return static_cast<int>(Fail(GuestEinval));
-        std::string text;
-        if (const int error = CopyKernelEnvString(value, std::min<std::size_t>(len, KenvValueLength + 1), text)) return static_cast<int>(Fail(error));
-        const auto found = FindKernelEnv(entries, key);
-        if (found != entries.end()) *found = key + "=" + text;
-        else if (entries.size() < KenvEntries) entries.push_back(key + "=" + text);
-        return 0;
-    }
-    case KenvUnset: {
-        const auto found = FindKernelEnv(entries, key);
-        if (found == entries.end()) return static_cast<int>(Fail(GuestEnoent));
-        entries.erase(found);
-        return 0;
-    }
-    default: return static_cast<int>(Fail(GuestEinval));
-    }
+    if (what == KenvGet) return static_cast<int>(Fail(GuestEnoent));
+    return static_cast<int>(Fail(GuestEinval));
 }
 
 int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info);
@@ -730,9 +725,11 @@ int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
     if (const int error = CopyPath(existing, existingCopy)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolvePathError_nid_no_patch(existing, source)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(source, true)) return static_cast<int>(Fail(error));
     if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
     if (const int error = ResolvePathError_nid_no_patch(created, destination)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(destination, false)) return static_cast<int>(Fail(error));
     return LinkNative(source, destination);
 }
 
@@ -752,11 +749,13 @@ int APS5_VABI linkat_nid_postfix(int fd1, const char* path1, int fd2, const char
     if (const int error = CopyPath(path1, copy1)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolveAtPath(fd1, path1, source)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(source, flag != 0)) return static_cast<int>(Fail(error));
     const bool linkItself = flag == 0 && IsSymbolicLink(source);
     if (!linkItself)
         if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(path2, copy2)) return static_cast<int>(Fail(error));
     if (const int error = ResolveAtPath(fd2, path2, destination)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(destination, false)) return static_cast<int>(Fail(error));
     if (linkItself) return LinkSymbolicLinkItself(source, destination);
     return LinkNative(source, destination);
 }
@@ -1296,6 +1295,22 @@ int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* wo
 int APS5_VABI sceKernelGetProcessType(int pid) {
     if (pid != getpid_nid_postfix() && pid != -1 && pid != 0) return static_cast<int>(0x80020003);
     return 0;
+}
+
+int APS5_VABI scePthreadMutexIsowned(PthreadMutex* mutex) {
+    const int owned = pthread_mutex_isowned_np_nid_postfix(mutex);
+    return owned == 0 ? 0 : SceKernelError(owned);
+}
+
+int APS5_VABI utrace_nid_postfix(const void* address, std::size_t length) {
+    (void)address;
+    (void)length;
+    return 0;
+}
+
+int APS5_VABI tcsetsid_nid_postfix(int fd, int pid) {
+    if (pid != getsid_nid_postfix(0)) return static_cast<int>(Fail(GuestEinval));
+    return ioctl_nid_postfix(fd, TerminalSetControlling, nullptr);
 }
 
 }
