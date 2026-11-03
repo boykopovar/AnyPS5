@@ -17,6 +17,7 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "AudioOut2Internal.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "AudioOutShutdown.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -56,6 +57,10 @@ bool AudioOut2TraceEnabled() {
 double AudioOut2TraceSeconds() {
     static const auto start = Clock::now();
     return std::chrono::duration<double>(Clock::now() - start).count();
+}
+
+static Clock::time_point Now(const AudioOut2Context& context) {
+    return context.clockForTest ? *context.clockForTest : Clock::now();
 }
 
 static std::mutex g_contextsLock;
@@ -259,6 +264,7 @@ static void DeviceCallback(void* userdata, Uint8* stream, int length) {
     std::copy_n(context.output.begin(), count, out);
     context.output.erase(context.output.begin(), context.output.begin() + static_cast<std::ptrdiff_t>(count));
     std::fill(out + count, out + samples, 0.0f);
+    context.hostGain.Apply(out, samples / AUDIO_OUT2_OUTPUT_CHANNELS, AUDIO_OUT2_OUTPUT_CHANNELS, HostVolumeGain_nid_no_patch());
     if (count < samples && !context.priming) {
         context.priming = true;
         context.primes++;
@@ -283,6 +289,18 @@ static void TraceSummary(AudioOut2Context& context, Clock::time_point now) {
     context.summaryAdvances = 0;
     context.summaryPolls = 0;
     context.summaryPeak = 0.0f;
+}
+
+static Clock::time_point WaitForRoom(AudioOut2Context& context, std::unique_lock<std::mutex>& lock) {
+    auto now = Now(context);
+    const auto waitStart = now;
+    while (QueueLevel(context, now) >= context.queueDepth && now - waitStart <= FULL_WAIT_TIMEOUT) {
+        lock.unlock();
+        PreciseSleepUs(std::chrono::microseconds(FULL_WAIT_STEP).count());
+        lock.lock();
+        now = Now(context);
+    }
+    return now;
 }
 
 extern "C" {
@@ -368,7 +386,7 @@ int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint3
         return 0;
     }
     std::lock_guard lock(context->lock);
-    const auto level = std::min(context->queueDepth, QueueLevel(*context, Clock::now()) + static_cast<std::uint32_t>(context->advancedGrains.size()));
+    const auto level = std::min(context->queueDepth, QueueLevel(*context, Now(*context)) + static_cast<std::uint32_t>(context->advancedGrains.size()));
     if (queue_level) *queue_level = level;
     if (available_queue) *available_queue = context->queueDepth - level;
     context->queueLevelPolls++;
@@ -383,24 +401,17 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     std::unique_lock lock(context->lock);
     const QueueLevelPublisher publication{*context, lock};
-    auto now = Clock::now();
-    const auto waitStart = now;
-    while (QueueLevel(*context, now) >= context->queueDepth) {
-        if (!blocking) {
-            context->fullRejects++;
-            if (context->fullRejects <= CALL_TRACE_FULL) AUDIOOUT2_TRACE("t=%.3f Push ctx %p non-blocking on a full queue (%u): rejected\n", AudioOut2TraceSeconds(), static_cast<void*>(context), context->queueDepth);
-            return SCE_AUDIO_OUT2_ERROR_QUEUE_FULL;
-        }
-        if (now - waitStart > FULL_WAIT_TIMEOUT) break;
-        lock.unlock();
-        PreciseSleepUs(std::chrono::microseconds(FULL_WAIT_STEP).count());
-        lock.lock();
-        now = Clock::now();
+    auto now = Now(*context);
+    if (!blocking && QueueLevel(*context, now) >= context->queueDepth) {
+        context->fullRejects++;
+        if (context->fullRejects <= CALL_TRACE_FULL) AUDIOOUT2_TRACE("t=%.3f Push ctx %p non-blocking on a full queue (%u): rejected\n", AudioOut2TraceSeconds(), static_cast<void*>(context), context->queueDepth);
+        return SCE_AUDIO_OUT2_ERROR_QUEUE_FULL;
     }
+    if (blocking) now = WaitForRoom(*context, lock);
     if (context->advancedMode && context->advancedGrains.empty()) {
         if (!blocking) throw std::runtime_error("AudioOut2: a non-blocking push without a rendered grain is not implemented");
         if (!context->grainReady.wait(lock, LibcShutdownToken_nid_postfix(), [&] { return !context->advancedGrains.empty(); })) throw ProcessShutdown{};
-        now = Clock::now();
+        now = Now(*context);
         Drain(*context, now);
     }
     context->queued++;
@@ -437,6 +448,7 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
             context->output.insert(context->output.end(), context->mix.begin(), context->mix.end());
         }
     }
+    if (blocking) now = WaitForRoom(*context, lock);
     context->pushes++;
     context->summaryPushes++;
     if (blocking) context->blockingPushes++;

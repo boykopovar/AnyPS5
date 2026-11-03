@@ -269,7 +269,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
             return entryIr.ISub(lhs, minimum(lhs, rhs));
         };
         IrValue& local = builtin(StageInputKind::LocalInvocationIndex);
-        IrValue& firstPrimitive = entryIr.IMul(builtin(StageInputKind::WorkgroupId, 0u), u32(mesh.primitivesPerGroup));
+        IrValue& indexWord = draw(3u);
+        IrValue& group = entryIr.IAdd(builtin(StageInputKind::WorkgroupId, 0u), entryIr.IMul(builtin(StageInputKind::WorkgroupId, 2u), entryIr.ShiftRightLogical(indexWord, u32(MeshLayerStrideShift))));
+        IrValue& firstPrimitive = entryIr.IMul(group, u32(mesh.primitivesPerGroup));
         IrValue& step = u32(stepCount);
         IrValue& firstVertex = entryIr.IMul(firstPrimitive, step);
         IrValue& indirect = entryIr.INotEqual(entryIr.BitwiseOr(draw(MeshArgumentAddressDword), draw(MeshArgumentAddressDword + 1u)), u32(0u));
@@ -285,7 +287,6 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         IrValue& waveInfo = entryIr.BitwiseOr(entryIr.ShiftLeftLogical(wave, u32(24u)), u32((totalThreads / options.waveSize) << 28u));
         entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.BitwiseOr(waveInfo, entryIr.BitwiseOr(entryIr.ShiftLeftLogical(primitiveCount, u32(8u)), vertexCount)));
         const bool strip = mesh.inputPrimitive == kTriStripPrimitiveType;
-        IrValue& indexWord = draw(3u);
         IrValue& stripPosition = entryIr.IAdd(entryIr.IAdd(firstPrimitive, local), firstIndex);
         IrValue& restartTable = entryIr.INotEqual(entryIr.BitwiseAnd(indexWord, u32(MeshIndexRestartTable)), u32(0u));
         IrValue& stripStart = strip ? entryIr.Emit(IrOpcode::MeshRestartStart, IrOpcodeType(IrOpcode::MeshRestartStart), {&entryIr.IAdd(stripPosition, u32(2u)), &restartTable}) : u32(0u);
@@ -295,9 +296,12 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         const auto unlessRestarted = [&](IrValue& offset) -> IrValue& {
             return strip ? entryIr.Select(entryIr.ULessThan(stripPosition, stripStart), entryIr.IMul(vertex, item), offset) : offset;
         };
-        IrValue& first = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item) : unlessRestarted(entryIr.IMul(entryIr.IAdd(vertex, parity), item));
-        IrValue& second = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item) : size >= 2u ? unlessRestarted(entryIr.IMul(entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity), item)) : u32(0u);
-        IrValue& third = fan ? u32(0u) : size == 3u ? unlessRestarted(entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item)) : u32(0u);
+        const bool last = mesh.provokingVertex != 0u;
+        IrValue& fanSecond = entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item);
+        IrValue& fanThird = entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item);
+        IrValue& first = fan ? (last ? u32(0u) : fanSecond) : unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, parity) : vertex, item));
+        IrValue& second = fan ? (last ? fanSecond : fanThird) : size >= 2u ? unlessRestarted(entryIr.IMul(last ? entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity) : entryIr.IAdd(entryIr.IAdd(vertex, u32(1u)), parity), item)) : u32(0u);
+        IrValue& third = fan ? (last ? fanThird : u32(0u)) : size == 3u ? unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, u32(2u)) : entryIr.ISub(entryIr.IAdd(vertex, u32(2u)), parity), item)) : u32(0u);
         setVector(static_cast<VectorReg>(0), entryIr.BitwiseOr(entryIr.BitwiseAnd(first, u32(0xffffu)), entryIr.ShiftLeftLogical(second, u32(16u))));
         setVector(static_cast<VectorReg>(1), entryIr.BitwiseAnd(third, u32(0xffffu)));
         setVector(static_cast<VectorReg>(2), entryIr.IAdd(firstPrimitive, local));
@@ -622,6 +626,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
         context.SetFloat32FlushDeclared(options.float32FlushDeclared);
+        context.SetFloat64(options.float64);
         context.SetEntryRounding(entryRounding.at(cfgBlock.id));
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
