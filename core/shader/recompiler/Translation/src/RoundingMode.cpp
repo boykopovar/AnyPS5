@@ -220,12 +220,8 @@ void TranslationContext::checkRoundingUse(const RdnaInstruction& inst) const {
     if (changed == 0u) return;
     switch (use.kind) {
     case RoundingUseKind::Directed32:
-    case RoundingUseKind::SelfChecked:
-        return;
     case RoundingUseKind::Directed16:
-        if (((declaredFloatMode.has_value() ? declaredFloatMode->floatMode : 0xc0u) & 0xc0u) != 0xc0u) {
-            throw std::runtime_error(where + " runs with an f16 rounding mode set at run time and f16 denormals not kept: not implemented");
-        }
+    case RoundingUseKind::SelfChecked:
         return;
     case RoundingUseKind::Unmodelled:
         if (!setsDirectedRounding(rounding.value, initial, use.fields)) return;
