@@ -53,7 +53,9 @@ void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t
 // guest writes made meanwhile to untouched bytes survive. Compares in 256-byte blocks.
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit);
+std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint64_t unchangedSince);
 std::uint32_t ChangedByteStoreLimit();
+void WriteChangedKeepingGuest(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 
 // Write tracking. The guest arena is reserved with page write watching, so CollectWrites learns which
 // pages of a range the CPU wrote since they were last collected, stamps their 64 KiB blocks with a new
@@ -126,6 +128,7 @@ std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);
 // tracker mutex, so every collect that bumped before it has finished its walk and every later
 // collect stamps newer.
 std::uint64_t TrackerGeneration();
+void AdvanceTrackerGenerationForTest(std::uint64_t generation);
 std::uint64_t NewestStamp(std::uint64_t address, std::size_t bytes);
 std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes);
 // Whether no CPU write touched the range since `generation`: an uncached resetting collect of the
@@ -133,6 +136,7 @@ std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes);
 // the stamps collects make (dirty pages), not the MarkWritten stamps of the driver's own GPU label
 // records, which share the title's label blocks. False when the arena is not write-watched.
 bool UnchangedSinceCollected(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool UnchangedSinceLastCollect(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
 // Per 64 KiB tracker block of [address, address + bytes) (block 0 holds `address`): `changed[k]`
 // receives whether the block was stamped after generations[k] (UnchangedSince over that block
 // alone), `cpu[k]`, when given, whether a collect stamped it after (a CPU store, as

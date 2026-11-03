@@ -10,6 +10,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/Kqueue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/DirectoryDescriptor.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/FileLock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/File/src/FilesystemForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/NativeStat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Terminal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Open.cpp
@@ -226,6 +227,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_posix_sem_post COMMAND guest_posix_sem_tests post)
     if(WIN32)
         set_tests_properties(guest_posix_sem_init guest_posix_sem_post PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_sem_getvalue_uninit_tests ${LIBS_INCLUDE_DIR}/tests/GuestSemGetvalueUninit.cpp)
+    target_include_directories(guest_sem_getvalue_uninit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sem_getvalue_uninit_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_sem_getvalue_uninit_tests)
+    add_test(NAME guest_sem_getvalue_uninit COMMAND guest_sem_getvalue_uninit_tests)
+    set_tests_properties(guest_sem_getvalue_uninit PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_sem_getvalue_uninit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_posix_named_sem_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixNamedSem.cpp)
@@ -609,6 +620,14 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_kernel_is_stack PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_main_stack_tests ${LIBS_INCLUDE_DIR}/tests/GuestMainStack.cpp)
+        target_include_directories(guest_main_stack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_main_stack_tests PRIVATE libkernel libc)
+        add_test(NAME guest_main_stack COMMAND guest_main_stack_tests)
+        add_test(NAME guest_main_stack_adopted COMMAND guest_main_stack_tests adopted)
+        set_tests_properties(guest_main_stack guest_main_stack_adopted PROPERTIES TIMEOUT 20)
     endif()
     if(APPLE)
         add_test_executable(guest_main_stack_move_tests ${LIBS_INCLUDE_DIR}/tests/GuestMainStackMove.cpp)
@@ -1235,6 +1254,12 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_signals PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    else()
+        add_test_executable(guest_broken_pipe_tests ${LIBS_INCLUDE_DIR}/tests/GuestBrokenPipe.cpp)
+        target_include_directories(guest_broken_pipe_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_broken_pipe_tests PRIVATE libkernel libc)
+        add_test(NAME guest_broken_pipe COMMAND guest_broken_pipe_tests)
+        set_tests_properties(guest_broken_pipe PROPERTIES TIMEOUT 20)
     endif()
     add_test_executable(guest_signal_handler_mask_tests ${LIBS_INCLUDE_DIR}/tests/GuestSignalHandlerMask.cpp)
     target_include_directories(guest_signal_handler_mask_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1701,6 +1726,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_thread_sanitizer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDbgThreadSanitizer>")
+    endif()
+    add_test_executable(guest_sanitizer_replace_tables_tests ${LIBS_INCLUDE_DIR}/tests/GuestSanitizerReplaceTables.cpp)
+    target_include_directories(guest_sanitizer_replace_tables_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sanitizer_replace_tables_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_sanitizer_replace_tables_tests)
+    add_test(NAME guest_sanitizer_replace_tables COMMAND guest_sanitizer_replace_tables_tests)
+    if(WIN32)
+        set_tests_properties(guest_sanitizer_replace_tables PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_system_command_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemCommand.cpp)
     target_include_directories(guest_system_command_tests PRIVATE ${LIBS_INCLUDE_DIR})
