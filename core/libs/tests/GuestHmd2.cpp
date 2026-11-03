@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 
 namespace Hmd2 {
 
@@ -275,6 +276,33 @@ void SizeQueriesReturnTheConsoleSizes() {
     Require(work.size == 0x4000 && work.align == 0x100, "mirroring work memory size");
 }
 
+template <typename Call>
+bool AnswersNoSession(Call call) {
+    try {
+        return call() == Hmd2::ReprojectionNotInitialized;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void TestGatedCallsInsideReprojectionSession() {
+    std::array<std::uint8_t, 64> memory;
+    memory.fill(0xaa);
+    const Hmd2::MirroringParameter mirroring{memory.data(), memory.data() + 32};
+    std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionEnableMirroring(&mirroring); }), "mirroring inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionGetPredictedDisplayTime(1, &time); }), "predicted display time inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1, 0, 0); }), "render config inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1ull << 32, 0, 0); }), "render config with the second accepted bit inside a reprojection session answered as without one");
+    for (const std::uint64_t frameId : {0ull, 1ull, 0x123456789ull}) {
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ParameterNull, "predicted display time into a null output inside a reprojection session");
+    }
+    Require(sceHmd2ReprojectionSetRenderConfig(0, 1, 1) == Hmd2::ParameterInvalid, "render config with nonzero reserved arguments inside a reprojection session");
+    Require(sceHmd2ReprojectionSetRenderConfig(2, 0, 0) == Hmd2::ParameterInvalid, "render config with a bit outside the accepted ones inside a reprojection session");
+    Require(sceHmd2ReprojectionSetRenderConfig(1, 1, 0) == Hmd2::ParameterInvalid && sceHmd2ReprojectionSetRenderConfig(1, 0, 1) == Hmd2::ParameterInvalid, "render config with one nonzero reserved argument inside a reprojection session");
+    Require(sceHmd2ReprojectionSetRenderConfig(~0ull, 0, 0) == Hmd2::ParameterInvalid && sceHmd2ReprojectionSetRenderConfig(3, 0, 0) == Hmd2::ParameterInvalid, "render config with several bits inside a reprojection session");
+}
+
 void TestReprojection() {
     Require(sceHmd2ReprojectionSetAllowPositionalReprojection(2) == 0,
             "the positional setting without a session did not succeed");
@@ -356,7 +384,9 @@ void TestReprojection() {
     const Hmd2::SizeAlign cleared = sceHmd2ReprojectionQueryBufferSizeAlign();
     Require(cleared.size == Hmd2::ReprojectionBufferSize && cleared.align == Hmd2::ReprojectionBufferAlign,
             "clearing the positional setting did not restore the work-size answer");
+    TestGatedCallsInsideReprojectionSession();
     Require(sceHmd2ReprojectionTerminate() == 0, "terminate did not succeed");
+    TestCallsWithoutReprojectionSession();
     Require(sceHmd2ReprojectionSetTiming(3000) == Hmd2::ReprojectionNotInitialized,
             "setting the timing after terminate");
     Require(sceHmd2ReprojectionEnableVrMode(Hmd2::OutputMode89_91Hz) == Hmd2::ReprojectionNotInitialized,

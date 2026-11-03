@@ -1574,11 +1574,6 @@ int APS5_VABI _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc23GetAvailableCpuFeaturesEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
