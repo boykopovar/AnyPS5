@@ -69,6 +69,36 @@ class AuditDumpTests(unittest.TestCase):
         with self.assertRaises(unwrap_self.Refused):
             audit_dump.prepare(self.dump, self.root / "source", log=lambda text: None)
 
+    def test_extended_module_suffixes_are_staged_at_every_module_location(self):
+        locations = (*audit_dump.STANDARD_DIRECTORIES, *audit_dump.EXTRA_DIRECTORIES, ".")
+        names = ("plain.prx", "shared.sprx", "user.suprx", "debug.debug_prx", "upper.SUPRX", "upper.DEBUG_PRX")
+        staged = []
+        for location in locations:
+            for index, name in enumerate(names):
+                relative = Path(location) / name
+                self.module(relative, ELF if index % 2 else SELF)
+                staged.append(relative)
+            for name in ("backup.suprx.bak", "debug.debug_prx.txt"):
+                self.module(Path(location) / name, b"not a module")
+        original = {path: path.read_bytes() for path in self.dump.rglob("*") if path.is_file()}
+        source = self.root / "source"
+        directories, extra = audit_dump.prepare(self.dump, source, log=lambda text: None)
+        for relative in staged:
+            self.assertTrue((source / relative).read_bytes().startswith(ELF), str(relative))
+        copied = {path.relative_to(source) for path in source.rglob("*") if path.is_file()}
+        self.assertEqual(copied, {Path("eboot.elf"), *staged})
+        self.assertEqual(directories, [source / location for location in locations])
+        self.assertEqual(extra, [*audit_dump.EXTRA_DIRECTORIES, "."])
+        self.assertEqual({path: path.read_bytes() for path in original}, original)
+
+    def test_invalid_extended_modules_are_not_silently_skipped(self):
+        for name in ("bad.suprx", "bad.debug_prx"):
+            with self.subTest(name=name):
+                self.module("sce_module/" + name, b"MZ" + b"\0" * 62)
+                with self.assertRaises(unwrap_self.Refused):
+                    audit_dump.prepare(self.dump, self.root / "source", log=lambda text: None)
+                (self.dump / "sce_module" / name).unlink()
+
     def test_the_relinker_gets_the_registry_windows_and_module_dir_options(self):
         with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
             audit_dump.convert(self.relinker, self.root / "source", self.root / "out" / "app.exe", ["Media/Modules", "."], True)
@@ -456,6 +486,77 @@ class AuditDumpTests(unittest.TestCase):
                 self.assert_report_rejected(report)
                 self.assertEqual(module.read_bytes(), ELF)
         self.assertFalse((modules / "new-report.json").exists())
+
+    def test_json_output_cannot_replace_files_in_a_junction_dump_directory(self):
+        if os.name != "nt":
+            self.skipTest("junctions are Windows-only")
+        modules = self.root / "shared modules \u00e9\u754c"
+        modules.mkdir()
+        module = modules / "libc.prx"
+        module.write_bytes(ELF)
+        junction = self.dump / "sce_module"
+        env = dict(os.environ, TARGET=str(modules), LINK=str(junction))
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        command = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            "New-Item -ItemType Junction -Path $env:LINK -Value $env:TARGET",
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                creationflags=flags,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            self.skipTest(f"powershell unavailable: {error}")
+        if result.returncode != 0 or not junction.is_dir():
+            self.skipTest(f"junction creation unavailable: {result.stderr.strip()}")
+        def cleanup_junction():
+            if junction.is_dir():
+                junction.rmdir()
+        self.addCleanup(cleanup_junction)
+        try:
+            self.assertTrue(self.root.is_dir())
+            self.assertTrue(junction.is_relative_to(self.root))
+            self.assertTrue(modules.is_relative_to(self.root))
+            stat = os.lstat(junction)
+            self.assertEqual(getattr(stat, "st_reparse_tag", 0), 0xa0000003)
+            self.assertFalse(junction.is_symlink())
+            self.assertTrue(junction.is_dir())
+            self.assertEqual(audit_dump.comparison_path(junction), audit_dump.comparison_path(modules))
+            unrelated = self.root / "outside" / "allowed.json"
+            self.assertFalse(audit_dump.report_overlaps_dump(unrelated, self.dump))
+            self.assertFalse(unrelated.exists())
+            nested = modules / "nested" / "report.json"
+            future = modules / "new-report.json"
+            for report in (module, future, nested):
+                with self.subTest(report=report):
+                    errors = io.StringIO()
+                    with mock.patch.object(audit_dump, "prepare", return_value=([], [])) as prepare, mock.patch.object(audit_dump, "convert", return_value=subprocess.CompletedProcess([], 0)) as convert, mock.patch.object(audit_dump.import_audit, "main", return_value=0) as audit:
+                        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                            audit_dump.main([str(self.dump), "--relinker", str(self.relinker), "--libs", "libs", "--json", str(report)])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn("JSON output overlaps the input dump", errors.getvalue())
+                    prepare.assert_not_called()
+                    convert.assert_not_called()
+                    audit.assert_not_called()
+                    self.assert_report_rejected(report)
+                    self.assertEqual(module.read_bytes(), ELF)
+            self.assertFalse(future.exists())
+            self.assertFalse(nested.exists())
+            self.assertFalse(unrelated.exists())
+        finally:
+            cleanup_junction()
 
     def test_a_dump_alias_still_protects_an_outward_report_link(self):
         original = self.dump

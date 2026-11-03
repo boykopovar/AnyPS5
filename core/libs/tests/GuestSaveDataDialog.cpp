@@ -34,6 +34,7 @@ int main() {
     Require(sceSaveDataDialogGetResult(&uninitResult) == SAVE_DATA_DIALOG_ERROR_NOT_FINISHED, "get result before init");
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc before init");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value before init");
+    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "isReadyToDisplay before init");
 
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
@@ -129,4 +130,5 @@ int main() {
 
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc after terminate");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value after terminate");
+    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "isReadyToDisplay after terminate");
 }

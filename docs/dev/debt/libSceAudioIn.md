@@ -3,6 +3,7 @@
 ### Silent stubs
 
 - [sceAudioInInit](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - returns 0 without library-wide setup, as `sceAudioOutInit` does; each `sceAudioInOpen` opens its own SDL capture device
+- [sceAudioInSetCompressorPreGain, sceAudioInSetNoiseGateThreshold](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signatures; the PS5 13.60 module returns 0 without reading any argument, and so do these stubs
 
 ### Unknown function info
 
@@ -20,8 +21,6 @@
 - [sceAudioInChangeAppModuleState](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the export throws through `NotImplemented_nid_no_patch`, and this parameterless declaration is for import resolution only. The closest signed sibling, `sceMbusChangeAppModuleState` (`std::uint32_t deviceClass`, `std::int32_t moduleId`, `std::uint32_t state`), takes three arguments, so this shape is probably not the real one. What the console notifies and whether a title calls it is unmeasured
 - [sceAudioInSetSparkParam](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetSparkSideTone](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInSetCompressorPreGain](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the PS5 13.60 module returns 0 without reading any argument, and so does this one
-- [sceAudioInSetNoiseGateThreshold](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the PS5 13.60 module returns 0 without reading any argument, and so does this one
 - [sceAudioInSetMicLevel](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetDeviceMuteStatus](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetDevConnection](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
