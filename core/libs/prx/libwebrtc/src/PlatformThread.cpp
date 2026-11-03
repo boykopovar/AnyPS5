@@ -42,7 +42,7 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Api.hpp"
 
 #include <stdexcept>
 
@@ -57,8 +57,8 @@ WebRtcPlatformThread& Checked(WebRtcPlatformThread* thread, const char* function
 void Finalize(WebRtcPlatformThread& thread) {
     if (!thread.hasHandle)
         return;
-    if (thread.joinable)
-        NotImplemented_nid_no_patch("PlatformThread::Finalize of a joinable thread: pthread_join on the guest thread");
+    if (thread.joinable && _Thrd_join_nid_postfix(thread.handle, nullptr) != 0)
+        throw std::runtime_error("PlatformThread::Finalize: pthread_join failed");
     thread.hasHandle = false;
 }
 
