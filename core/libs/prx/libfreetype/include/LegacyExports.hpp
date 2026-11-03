@@ -11,8 +11,6 @@ int APS5_VABI freetypeLegacyStreamOpenGzip_nid_no_patch();
 int APS5_VABI freetypeLegacyStreamOpenBzip2_nid_no_patch();
 int APS5_VABI freetypeLegacyGetBDFCharsetID_nid_no_patch();
 int APS5_VABI freetypeLegacyGetSfntLangTag_nid_no_patch();
-int APS5_VABI freetypeLegacySetMMWeightVector_nid_no_patch();
-int APS5_VABI freetypeLegacySetNamedInstance_nid_no_patch();
 int APS5_VABI freetypeLegacyLibrarySetLcdGeometry_nid_no_patch();
 int APS5_VABI freetypeLegacyErrorString_nid_no_patch();
 int APS5_VABI freetypeLegacyStreamOpenLZW_nid_no_patch();

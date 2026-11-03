@@ -1,6 +1,6 @@
 add_library(libfreetype SHARED EXCLUDE_FROM_ALL Export.cpp src/Gzip.cpp src/MultipleMasters.cpp src/FaceSettings.cpp)
 target_include_directories(libfreetype PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libfreetype PRIVATE freetype)
+target_link_libraries(libfreetype PRIVATE freetype libSceFreeType)
 configure_windows_unwind(libfreetype)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libfreetype PRIVATE LINKER:--exclude-libs,ALL)
