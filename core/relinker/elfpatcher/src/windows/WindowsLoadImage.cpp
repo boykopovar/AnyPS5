@@ -1,6 +1,7 @@
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
+#include <bit>
 #include <limits>
 
 namespace Elfpatcher::Windows {
@@ -22,6 +23,8 @@ WindowsLoadImage::WindowsLoadImage(const std::vector<std::uint8_t>& source, cons
             throw Domain::RelinkerException("PT_LOAD address overflow", header.MappedAddress);
         if ((header.Flags & ~7u) != 0)
             throw Domain::RelinkerException("Unsupported PT_LOAD permission flags", header.Offset);
+        if (header.Alignment > 1 && !std::has_single_bit(header.Alignment))
+            throw Domain::RelinkerException("Invalid PT_LOAD alignment", header.Offset);
         segments.push_back(header);
     }
     if (segments.empty())
