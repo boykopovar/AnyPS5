@@ -65,6 +65,10 @@ alignas(256) constexpr std::array<std::uint32_t, 7> StoreCode{
     0x7e020d00u, 0x082802f7u, 0x7e3c0300u, 0x7e3e0280u, 0xf0201108u, 0x0001141eu, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 7> RestoreCode{
+    0x7e020d00u, 0x082802f6u, 0x7e3c0300u, 0x7e3e0280u, 0xf0201108u, 0x0001141eu, 0xbf810000u,
+};
+
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 
 std::uint64_t AddressOf(const void* data) {
@@ -162,11 +166,10 @@ void SetOutput(const void* output) {
     std::copy(view.begin(), view.end(), Srt.begin() + 8);
 }
 
-void Store(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32_t texture) {
+void Store(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::uint32_t texture, std::span<const std::uint32_t> code = StoreCode) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto image = Image(block.Texels(texture));
     std::copy(image.begin(), image.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(StoreCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{AddressOf(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -288,6 +291,38 @@ void RunPendingWriteBack(AgcDriver::VulkanDevice& device, const GuestBlock& bloc
     Expect(before, 3 - CpuWriteResolutions, CpuWriteResolutions + 1, "a write-back pending over an entry when its table is used again");
 }
 
+void RunViewedStore(AgcDriver::VulkanDevice& device, const GuestBlock& block) {
+    const auto& context = device.graphicsContext();
+    if (context.hostImportAlignment == 0 || AgcDriver::Graphics::HostImportFor(context, AddressOf(block.Table()), BlockBytes) == nullptr) {
+        Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "image table reuse: storage-viewed entries require host imports");
+        std::puts("host imports are unavailable: a table of storage-viewed entries is not tested");
+        return;
+    }
+    for (std::uint32_t texture = 0; texture < Records; ++texture) {
+        Fill(block, texture, 0.375f);
+        SetRecord(block, texture, texture);
+    }
+    const auto srt = Buffer(block.Table(), Records * Stride);
+    std::copy(srt.begin(), srt.end(), Srt.begin());
+    const auto result = Compile(device, block);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(Dispatch(device, result, 23) == Row(block.Texels(23)), "image table reuse: a table of storage-viewed entries sampled the wrong entry");
+    Store(device, block, 23);
+    std::vector<float> stored(Width);
+    for (std::uint32_t x = 0; x < Width; ++x) stored[x] = -4.0f - static_cast<float>(x);
+    const auto before = AgcDriver::Graphics::ImageTableReuses();
+    Require(Dispatch(device, result, 23) == Row(stored.data()), "image table reuse: a table reused over a storage-viewed entry an image store left pending sampled the old texels");
+    Store(device, block, 23, RestoreCode);
+    std::vector<float> restored(Width);
+    for (std::uint32_t x = 0; x < Width; ++x) restored[x] = 4.0f - static_cast<float>(x);
+    Require(Dispatch(device, result, 23) == Row(restored.data()), "image table reuse: a reused table kept the old texels of a storage-viewed entry a second image store left pending");
+    Require(Dispatch(device, result, 21) == Row(block.Texels(21)), "image table reuse: a reused table of storage-viewed entries sampled the wrong entry");
+    Expect(before, 3, 0, "a table of storage-viewed entries, image stores leaving results pending over one between dispatches");
+    AgcDriver::Graphics::StorageTexture::FlushPending(AddressOf(block.Texels(23)), TextureBytes, nullptr, "test");
+    device.WaitIdle();
+    Require(Row(block.Texels(23)) == Row(restored.data()), "image table reuse: the image stores over a storage-viewed entry wrote the wrong values");
+}
+
 void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const GuestBlock& stores) {
     for (std::uint32_t texture = 0; texture < Records; ++texture) {
         Fill(block, texture, 0.25f);
@@ -401,10 +436,12 @@ int main() {
         GuestBlock block;
         GuestBlock stores(UnimportableBytes);
         GuestBlock pending(UnimportableBytes);
+        GuestBlock viewed;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         RunTests(*device, block, stores);
         RunPendingWriteBack(*device, pending);
+        RunViewedStore(*device, viewed);
         std::puts("image table reuse tests passed");
         return 0;
     } catch (const std::exception& error) {
