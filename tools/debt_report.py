@@ -26,6 +26,8 @@ CLOSERS = (
 TITLE_CLOSE = re.compile(r"\b(?:PPSA|CUSA)\d{5}\b|\btitles?\b", re.I)
 TITLE_GAP = re.compile(r"\bno (?:game )?title\b|\bnot verified with a title\b", re.I)
 PLATFORMS = (("windows", re.compile(r"\bWindows\b")), ("macos", re.compile(r"\bmacOS\b")), ("linux", re.compile(r"\bLinux\b")))
+THROWS = re.compile(r"\bthrows?\b|NotImplemented|\bunimplemented\b|\bnot implemented\b", re.I)
+THROW = re.compile(r"\bthrow\b")
 
 
 @dataclass
@@ -88,3 +90,38 @@ def test_words(root):
 def untested(text, words):
     found = entry_names(text)
     return None if not found else not any(name in words for name in found)
+
+
+@lru_cache(maxsize=None)
+def file_definitions(path):
+    text = progress.code(path.read_text(encoding="utf-8", errors="ignore"))
+    bodies = {}
+    for match in progress.DEFINITION.finditer(text):
+        start = match.end() - 1
+        bodies[match.group(1)] = text[start:progress.body_end(text, start) + 1]
+    return bodies
+
+
+def definitions(root, paths, wanted):
+    bodies = {}
+    for relative in paths:
+        path = root / relative
+        if path.is_file() and path.suffix in SOURCES:
+            bodies.update({name: body for name, body in file_definitions(path).items() if name in wanted})
+    return bodies
+
+
+def stale(entry, root):
+    paths = DEBT_TARGET.findall(entry.text)
+    missing = [path for path in paths if not (root / path).exists()]
+    if missing:
+        return f"missing link {missing[0]}"
+    bodies = definitions(root, paths, set(subjects(entry.text)))
+    throwing = {name: progress.STUB in body or THROW.search(body) is not None for name, body in bodies.items()}
+    if entry.section == "Silent stubs":
+        now = [name for name, value in throwing.items() if value]
+        return f"stub now throws: {now[0]}" if now else None
+    if THROWS.search(entry.text):
+        quiet = [name for name, value in throwing.items() if not value]
+        return f"no longer throws: {quiet[0]}" if quiet else None
+    return None

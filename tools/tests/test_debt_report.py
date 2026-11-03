@@ -80,5 +80,31 @@ class LabelTests(unittest.TestCase):
         self.assertIsNone(debt_report.untested(f"- [Nine unnamed exports]({LINK}) - x", words))
 
 
+SOURCE = (
+    "int APS5_VABI sceQuiet(int a) { return a; }\n"
+    "int APS5_VABI sceLoud(int a) { NotImplemented_nid_no_patch(__func__); }\n"
+    "int APS5_VABI sceThrow(int a) { if (a) throw std::runtime_error(\"x\"); return 0; }\n"
+)
+
+
+class StaleTests(unittest.TestCase):
+    def check(self, section, text):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root, {"core/libs/prx/libSceExample/Export.cpp": SOURCE})
+            debt_report.file_definitions.cache_clear()
+            return debt_report.stale(debt_report.Entry(DEBT, 1, section, text), root)
+
+    def test_reasons(self):
+        self.assertEqual(self.check("Functional", "- [sceA](../../../core/libs/prx/libSceExample/Gone.cpp) - x"),
+                         "missing link core/libs/prx/libSceExample/Gone.cpp")
+        self.assertEqual(self.check("Unknown function info", f"- [sceQuiet]({LINK}) - throws until measured"), "no longer throws: sceQuiet")
+        self.assertIsNone(self.check("Unknown function info", f"- [sceLoud, sceThrow]({LINK}) - throws until measured"))
+        self.assertEqual(self.check("Silent stubs", f"- [sceLoud]({LINK}) - returns 0"), "stub now throws: sceLoud")
+        self.assertIsNone(self.check("Silent stubs", f"- [sceQuiet]({LINK}) - returns 0"))
+        self.assertIsNone(self.check("Unknown function info", f"- [sceMissing]({LINK}) - throws"))
+        self.assertIsNone(self.check("Functional", f"- [sceQuiet]({LINK}) - layout unknown"))
+
+
 if __name__ == "__main__":
     unittest.main()
