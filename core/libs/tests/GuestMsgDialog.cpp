@@ -68,6 +68,9 @@ void Shown() {
     Require(ModalDialogReadView_nid_postfix(view) && view.message == u"Continue?" && view.buttons.size() == 2, "the shown dialog is not the message");
     for (int poll = 0; poll < 5; ++poll) Require(sceMsgDialogGetStatus() == StatusRunning && sceMsgDialogUpdateStatus() == StatusRunning, "a shown dialog finished before it was answered");
     Require(sceMsgDialogOpen(&param) == ErrBusy, "a second open was accepted while the dialog ran");
+    Require(sceMsgDialogProgressBarInc(0, 10) == ErrNotRunning, "progress bar inc during running user message dialog");
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == ErrNotRunning, "progress bar set value during running user message dialog");
+    Require(sceMsgDialogProgressBarSetMsg(0, "test") == ErrNotRunning, "progress bar set msg during running user message dialog");
     ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Next);
     ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Confirm);
     Require(sceMsgDialogGetStatus() == StatusFinished, "an answered dialog did not finish");
