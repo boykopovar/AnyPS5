@@ -150,6 +150,21 @@ int main() {
             Write<std::uint64_t>(bytes, 104, 0xd0);
             RejectProgramHeaders(std::move(bytes));
         }},
+        {"covered SCE RELRO file size exceeds memory size", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 64, 0x61000010);
+            Write<std::uint64_t>(bytes, 96, 64);
+            Write<std::uint64_t>(bytes, 104, 32);
+            RejectProgramHeaders(std::move(bytes));
+        }},
+        {"covered SCE RELRO file range past end of file", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 64, 0x61000010);
+            Write<std::uint64_t>(bytes, 72, 0x2f0);
+            Write<std::uint64_t>(bytes, 96, 64);
+            Write<std::uint64_t>(bytes, 104, 64);
+            RejectProgramHeaders(std::move(bytes));
+        }},
         {"TLS image inside load memory and empty TLS placeholders", [] {
             for (const auto& [address, fileSize, memorySize, alignment] : {std::tuple<std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t>{0x1008, 8, 16, 8}, {0x1030, 16, 16, 16}, {0x9000, 0, 0, 0}, {0x9000, 0, 16, 16}}) {
                 const auto headers = Relinker::ElfReader(TlsFixture(address, fileSize, memorySize, alignment)).ReadProgramHeaders();
