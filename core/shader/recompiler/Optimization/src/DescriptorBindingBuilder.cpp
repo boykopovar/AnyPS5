@@ -19,6 +19,11 @@
 
 namespace ShaderRecompiler {
 
+static_assert(PipelineSpecialization::VolumeGatherBase + ShaderInfo::MaxImages <= PipelineSpecialization::GatherLodBase);
+static_assert(PipelineSpecialization::GatherLodBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::GatherLodBiasBase);
+static_assert(PipelineSpecialization::GatherLodBiasBase + ShaderInfo::MaxSamplers <= PipelineSpecialization::GatherImageMinLodBase);
+static_assert(PipelineSpecialization::GatherImageMinLodBase + ShaderInfo::MaxImages <= PipelineSpecialization::ImageComponentBase);
+
 namespace {
 
 [[noreturn]] void fail(const std::string& message) {
