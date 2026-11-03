@@ -112,8 +112,8 @@ int APS5_VABI GetPosWS_Memory_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI IDPEmpty_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI IDPEmpty_nid_postfix(void* codec) {
+    return 0;
 }
 
 int APS5_VABI InitZigzagScan_nid_postfix() {
@@ -160,8 +160,8 @@ int APS5_VABI PKCreateFactory_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_Convert_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_Convert_nid_postfix(void* converter, const void* rect, std::uint8_t* pixels, std::uint32_t stride) {
+    return WmpErrSuccess;
 }
 
 int APS5_VABI PKFormatConverter_Copy_nid_postfix() {
@@ -248,12 +248,12 @@ int APS5_VABI PKImageDecode_Release_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageDecode_SelectFrame_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageDecode_SelectFrame_nid_postfix(void* decoder, std::uint32_t frame) {
+    return WmpErrSuccess;
 }
 
-int APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix(void* encoder, void* param, std::size_t paramSize) {
+    return WmpErrSuccess;
 }
 
 int APS5_VABI PKImageEncode_Create_WMP_nid_postfix() {
@@ -312,8 +312,8 @@ int APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKImageEncode_Terminate_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKImageEncode_Terminate_nid_postfix(void* encoder) {
+    return WmpErrSuccess;
 }
 
 int APS5_VABI PKImageEncode_Transcode_nid_postfix() {
