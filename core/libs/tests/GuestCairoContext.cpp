@@ -1,8 +1,12 @@
 #include "prx/libcairo/include/Context.hpp"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <type_traits>
 
 static_assert(std::is_same_v<decltype(cairo_create(nullptr)), CairoContext*>);
@@ -48,9 +52,9 @@ void CheckContextLifetime() {
     CairoSurface* invalid = cairo_image_surface_create(-1, 2, 2);
     CairoContext* erroneous = cairo_create(invalid);
     assert(erroneous);
-    assert(cairo_get_target(erroneous) == invalid);
+    assert(cairo_get_target(erroneous) != invalid);
     cairo_surface_destroy(invalid);
-    assert(cairo_surface_status(cairo_get_target(erroneous)) == 16);
+    assert(cairo_surface_status(cairo_get_target(erroneous)) == 1);
     cairo_destroy(erroneous);
 }
 
@@ -143,7 +147,8 @@ void CheckMatrixAliasingAndErrorState() {
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
     cairo_surface_destroy(surface);
-    cairo_scale(context, 0, 1); // Noninvertible CTM is a sticky context error.
+    cairo_scale(context, 0, 1);
+    assert(cairo_surface_status(cairo_get_target(context)) == 1);
     CairoMatrix failedMatrix{42, 42, 42, 42, 42, 42};
     cairo_get_matrix(context, &failedMatrix);
     Near(failedMatrix.xx, 1);
@@ -156,7 +161,8 @@ void CheckMatrixAliasingAndErrorState() {
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
     cairo_surface_destroy(surface);
-    cairo_restore(context); // Empty save stack is a sticky context error.
+    cairo_restore(context);
+    assert(cairo_surface_status(cairo_get_target(context)) == 1);
     cairo_get_matrix(context, &failedMatrix);
     Near(failedMatrix.xx, 1);
     Near(failedMatrix.yy, 1);

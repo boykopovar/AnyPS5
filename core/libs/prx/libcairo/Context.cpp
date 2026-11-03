@@ -135,7 +135,9 @@ void APS5_VABI cairo_restore(CairoContext* context) {
 }
 
 CairoSurface* APS5_VABI cairo_get_target(CairoContext* context) {
-    return context ? State(context)->target : nullptr;
+    if (!context) return nullptr;
+    const auto* state = State(context);
+    return state->status == kSuccess ? state->target : CairoSurfaceError(kNoMemory);
 }
 
 void APS5_VABI cairo_translate(CairoContext* context, double tx, double ty) {
