@@ -1,3 +1,13 @@
+/* Derived from FreeBSD lib/libc/stdlib/a64l.c and lib/libc/stdlib/l64a.c (8c639945a445) */
+/*-
+ * Written by J.T. Conklin <jtc@netbsd.org>.
+ * Public domain.
+ */
+/*
+ * Written by J.T. Conklin <jtc@NetBSD.org>.
+ * Public domain.
+ */
+
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
