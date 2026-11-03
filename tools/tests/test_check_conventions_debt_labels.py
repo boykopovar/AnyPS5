@@ -39,7 +39,7 @@ class DebtLabelTests(unittest.TestCase):
             write(f"# libSceExample technical debt\n\n### Functional\n\n{SHORT}\n")
             git("add", ".")
             git("commit", "-qm", "docs: add base")
-            write(f"# libSceExample technical debt\n\n### Functional\n\n{SHORT}\n{LABELLED}\n")
+            write(f"# libSceExample technical debt\n\nAn entry may end with `Labels:` and labels such as these.\n\n### Functional\n\n{SHORT}\n{LABELLED}\n")
             git("commit", "-qam", "docs(debt): label an entry")
             head = git("rev-parse", "HEAD").strip()
             base = git("rev-parse", "HEAD~1").strip()
@@ -54,7 +54,7 @@ class DebtLabelTests(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
-        self.assertEqual(check.findings, [("debt-labels", DEBT, 6, "nightly")])
+        self.assertEqual(check.findings, [("debt-labels", DEBT, 8, "nightly")])
         self.assertEqual(status, 0)
 
 

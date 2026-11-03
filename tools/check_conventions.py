@@ -347,7 +347,7 @@ class Check:
             for number, text in lines:
                 if long_debt_entry(text):
                     self.report("debt-length", path, number, f"{len(text)} characters")
-                for label in debt_labels(text):
+                for label in debt_labels(text) if text.startswith("- ") else []:
                     if label not in known:
                         self.report("debt-labels", path, number, label)
 
