@@ -3,11 +3,13 @@
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -6982,6 +6984,161 @@ void resourceTests() {
     }
 }
 
+void unsetFormatStorageImageTests() {
+    using ShaderRecompiler::DescriptorBinding;
+    using ShaderRecompiler::DescriptorImageShape;
+    using ShaderRecompiler::DescriptorKind;
+    using ShaderRecompiler::DescriptorRole;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    alignas(256) std::array<std::byte, 4096> guest{};
+    const auto base = reinterpret_cast<std::uint64_t>(guest.data());
+    const auto words = [](std::uint32_t format, std::uint64_t baseAddress) {
+        return std::vector<std::uint32_t>{
+            static_cast<std::uint32_t>(baseAddress >> 8u),
+            static_cast<std::uint32_t>((baseAddress >> 40u) & 0xffu) | ((format & 0x1ffu) << 20u) | (3u << 30u),
+            3u | (15u << 14u),
+            0xfacu | (Type2D << 28u),
+            0u,
+            0u,
+            0u,
+            0u,
+        };
+    };
+    const auto storage = [&](std::uint32_t format, std::uint64_t baseAddress) {
+        DescriptorBinding binding{};
+        binding.kind = DescriptorKind::StorageImage;
+        binding.role = DescriptorRole::GuestImages;
+        binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
+        binding.count = 1;
+        binding.imageWritten = {true};
+        binding.guestDescriptor = words(format, baseAddress);
+        return binding;
+    };
+    for (const std::uint32_t format : {0u, 0x1ffu}) {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorStorageImages = 8;
+        context.limits.maxDescriptorSetStorageImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(storage(format, base));
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }, "unsupported guest texture format");
+        }
+        Require(mock.live == 0, "a rejected unset-format storage image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(0u, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image2D;
+        sampled.imageSamplers = {0};
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a sampled unset-format image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(0u, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image1DArray;
+        sampled.imageSamplers = {0};
+        sampled.guestDescriptor[3] = (sampled.guestDescriptor[3] & ~(0xfu << 28u)) | (12u << 28u);
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a sampled TYPE 12 image with an unset format leaked Vulkan objects");
+    }
+    for (const std::uint32_t format : {0u, 0x1ffu}) {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(format, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image2D;
+        sampled.imageSamplers = {0};
+        sampled.guestDescriptor[3] = (sampled.guestDescriptor[3] & ~(0xfu << 28u)) | (2u << 28u);
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }, "unsupported image type 2");
+        }
+        Require(mock.live == 0, "a rejected reserved-type sampled image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorStorageImages = 8;
+        context.limits.maxDescriptorSetStorageImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(storage(0u, 0));
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a null storage image with an unset format leaked Vulkan objects");
+    }
+    {
+        ShaderRecompiler::RecompileResult compiled;
+        compiled.bindings.push_back(storage(Format8888UNorm, base));
+        bool bounded = false;
+        const auto ranges = AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded);
+        Require(ranges.size() == 1 && ranges[0].first == base && ranges[0].second == base + 4096u, "a written storage image did not contribute its whole surface to the dispatch write ranges");
+        compiled.bindings.front().guestDescriptor = words(0u, base);
+        expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded)); }, "unsupported guest texture format");
+        compiled.bindings.front().guestDescriptor = words(0u, 0u);
+        Require(AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded).empty(), "a null written storage image contributed dispatch write ranges");
+    }
+}
+
 void descriptorCacheTests() {
     mock = MockVulkan{};
     auto context = mockContext();
@@ -7349,6 +7506,49 @@ void hostImportBudgetTests() {
     Require(HostImportBudget(memory, 16 * GiB) == 4064 * MiB, "a device-local heap counted as the host heap");
     memory.memoryHeapCount = 1;
     Require(HostImportBudget(memory, 16 * GiB) == 8 * GiB, "a host heap past memoryHeapCount limits the import budget");
+}
+
+void unifiedHeapImportBudgetTests() {
+    using AgcDriver::Graphics::HostImportBudgetFor;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    VkPhysicalDeviceMemoryProperties unified{};
+    unified.memoryHeapCount = 1;
+    unified.memoryHeaps[0] = {24 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    unified.memoryTypeCount = 3;
+    unified.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    unified.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+    unified.memoryTypes[2] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, 0};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT report{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    report.heapBudget[0] = 18 * GiB;
+    report.heapUsage[0] = 0;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 12 * GiB, "an idle unified heap lowered the import budget");
+    report.heapUsage[0] = 8 * GiB;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 7936 * MiB, "a unified heap used by other allocations did not lower the import budget");
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 4 * GiB) == 12032 * MiB, "a unified heap counted its own imports as other allocations");
+    report.heapUsage[0] = 17 * GiB;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 0, "a unified heap past its budget left room for imports");
+    Require(HostImportBudgetFor(unified, nullptr, 12 * GiB, 0) == 12 * GiB, "a missing budget report lowered the import budget");
+    auto deviceOnly = unified;
+    deviceOnly.memoryTypeCount = 2;
+    deviceOnly.memoryTypes[1].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    report.heapUsage[0] = 8 * GiB;
+    Require(HostImportBudgetFor(deviceOnly, &report, 12 * GiB, 0) == 12 * GiB, "a heap without host-coherent memory was taken as the host heap");
+
+    VkPhysicalDeviceMemoryProperties discrete{};
+    discrete.memoryHeapCount = 2;
+    discrete.memoryHeaps[0] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    discrete.memoryHeaps[1] = {16 * GiB, 0};
+    discrete.memoryTypeCount = 3;
+    discrete.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    discrete.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0};
+    discrete.memoryTypes[2] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT split{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    split.heapBudget[0] = 6 * GiB;
+    split.heapUsage[0] = 6 * GiB;
+    split.heapBudget[1] = 12 * GiB;
+    split.heapUsage[1] = 0;
+    Require(HostImportBudgetFor(discrete, &split, 20 * GiB, 0) == 10752 * MiB, "a device with a separate host heap used its device-local heap for the import budget");
 }
 
 void tableUpdateAfterBindTests() {
@@ -10359,7 +10559,7 @@ void ProvokingVertexTests() {
     ValidateProvokingVertex(supported, meshDraw, shaders);
     expectFailure([&] { ValidateProvokingVertex(supported, meshDraw, slotShaders); }, "last provoking vertex with explicit per-vertex triangle-strip interpolation is unsupported");
     meshDraw.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
-    expectFailure([&] { ValidateProvokingVertex(supported, meshDraw, flatShaders); }, "last provoking vertex is unsupported for triangle fans assembled for a geometry program");
+    for (const auto& drawn : {std::span<const CompiledShader>{}, std::span<const CompiledShader>(flatShaders), std::span<const CompiledShader>(flatP10Shaders), std::span<const CompiledShader>(smoothShaders), std::span<const CompiledShader>(slotShaders)}) ValidateProvokingVertex(supported, meshDraw, drawn);
     for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN}) {
         auto firstDraw = meshDraw;
         firstDraw.topology = topology;
@@ -10682,7 +10882,11 @@ void uintTargetTests() {
     Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
     auto halves = queue;
     halves.context[0x1c5] = 4u;
-    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(halves)); }, "color export format 4 into an unsigned integer target is unsupported");
+    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 5>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}}}) {
+        halves.context[0x31c] = (queue.context.at(0x31c) & ~0x1f7cu) | (format << 2u) | (4u << 8u);
+        const auto half = AgcDriver::Graphics::DecodeState(halves);
+        Require(half.color.format == vkFormat && half.color.packing == packing && !half.color.uintExport && AgcDriver::Graphics::ExportPackings(half)[0] == packing && !half.blends.at(0).blendEnable, "an FP16_ABGR export into a UINT target did not get the packing that clamps to its channel width");
+    }
     auto unorm = queue;
     unorm.context[0x31c] = (unorm.context.at(0x31c) & ~0x1f7cu) | (4u << 2u) | (7u << 8u);
     Require(AgcDriver::Graphics::DecodeState(unorm).color.packing == ColorExportPacking::None, "a 32-bit float target got the unsigned integer export packing");
@@ -11179,7 +11383,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(5);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(7);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
@@ -11661,6 +11865,15 @@ void validationTests() {
         const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported device capability 12");
         AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, true);
+    }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        vertex.spirv = makeModule({});
+        vertex.spirv.insert(vertex.spirv.begin() + 5, {(2u << 16u) | spv::OpCapability, static_cast<std::uint32_t>(spv::CapabilityMinLod)});
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported device capability 42");
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, false, false, false, false, true, true);
     }
     {
         ShaderRecompiler::RecompileResult vertex;
@@ -12711,6 +12924,18 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         mappedState.colors[0].componentMapping = 0x24;
         BuildPipelineStoreKey(mapped, context, mappedState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
         Require(mapped != original, "the component mapping did not enter the key");
+        auto legacyState = state;
+        legacyState.stages.legacyVertex = true;
+        auto legacyVertex = module(4);
+        legacyVertex.bindings = vertex.bindings;
+        const std::array<CompiledShader, 2> legacyShaders{{{Stage::Vertex, &legacyVertex, 0}, {Stage::Fragment, &fragment, PipelinePushSlotBytes}}};
+        GraphicsPipelineRecipe legacyDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL)), legacyDecoded), "the legacy vertex recipe does not decode");
+        std::vector<std::byte> legacyFlag, legacyKey, legacyReplayed;
+        BuildPipelineStoreKey(legacyFlag, context, legacyState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(legacyKey, context, legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(legacyReplayed, context, legacyDecoded.state, legacyDecoded.vertexInput, layouts.View(), legacyShaders, legacyDecoded.attachmentLayout);
+        Require(legacyFlag == original && legacyKey != original && legacyKey == legacyReplayed, "the legacy vertex selection keyed a pipeline by the state flag instead of by its vertex module");
         std::vector<std::byte> unclamped, clamped, biased;
         auto clampedState = state;
         clampedState.depthBiasClamp = 1.0f;
@@ -13278,6 +13503,7 @@ int main(int argc, char** argv) {
         descriptorPoolTests();
         pushConstantTests();
         resourceTests();
+        unsetFormatStorageImageTests();
         oversizedDescriptorTests();
         viewAtRangeLimitTests();
         guestBufferViewBytesTests();
@@ -13294,6 +13520,7 @@ int main(int argc, char** argv) {
         imageTableTemplateRefreshTests();
         debugBranchTests();
         hostImportBudgetTests();
+        unifiedHeapImportBudgetTests();
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();

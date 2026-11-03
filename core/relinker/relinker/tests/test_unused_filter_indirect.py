@@ -79,7 +79,7 @@ def run(relinker, work, name, image, level=1):
     return kept == 1
 
 
-def exported_fixture(binding, defined, sections):
+def exported_fixture(binding, defined, sections, section=1, section_type=11):
     image = build(at_offset([(0, b"\xc3"), (0x40, load_slot(FUNCTION))]))
     strings = b"\0foo\0lib.so\0exported\0"
     image[0x600:0x600 + len(strings)] = strings
@@ -90,14 +90,14 @@ def exported_fixture(binding, defined, sections):
     export_index = 1 if binding == 0 else 2
     struct.pack_into("<IBBHQQ", image, 0x620 + import_index * 24, 1, 0x12, 0, 0, 0, 0)
     struct.pack_into("<IBBHQQ", image, 0x620 + export_index * 24, 12, (binding << 4) | 2, 0,
-                     1 if defined else 0, FUNCTION if defined else 0, 8 if defined else 0)
+                     section if defined else 0, FUNCTION if defined else 0, 8 if defined else 0)
     struct.pack_into("<Q", image, 0x708, (import_index << 32) | 6)
     if sections:
         image.extend(bytes(4 * 64))
         struct.pack_into("<Q", image, 40, 0x1200)
         struct.pack_into("<H", image, 60, 4)
         struct.pack_into("<IIQQQQIIQQ", image, 0x1240, 0, 1, 6, CODE, CODE, 0x200, 0, 0, 16, 0)
-        struct.pack_into("<IIQQQQIIQQ", image, 0x1280, 0, 11, 2, 0x620, 0x620, 72, 3, import_index, 8, 24)
+        struct.pack_into("<IIQQQQIIQQ", image, 0x1280, 0, section_type, 2, 0x620, 0x620, 72, 3, import_index, 8, 24)
         struct.pack_into("<IIQQQQIIQQ", image, 0x12c0, 0, 3, 2, 0x600, 0x600, len(strings), 0, 0, 1, 0)
     return image
 
@@ -156,6 +156,15 @@ def main():
                     expected = level != 1 or (binding in (1, 2) and defined)
                     if run(relinker, Path(directory), name, exported_fixture(binding, defined, sections), level) != expected:
                         failures.append(name)
+        for kind, binding in (("global", 1), ("weak", 2)):
+            if run(relinker, Path(directory), f"exported-abs-{kind}-no-sections",
+                   exported_fixture(binding, True, False, section=0xfff1), 1):
+                failures.append(f"exported-abs-{kind}-no-sections")
+            for section_name, section_type in (("dynsym", 11), ("symtab", 2)):
+                name = f"exported-abs-{kind}-{section_name}"
+                if run(relinker, Path(directory), name,
+                       exported_fixture(binding, True, True, section=0xfff1, section_type=section_type), 1):
+                    failures.append(name)
         assert not failures, failures
     print("Unused filter indirect tests passed")
 
