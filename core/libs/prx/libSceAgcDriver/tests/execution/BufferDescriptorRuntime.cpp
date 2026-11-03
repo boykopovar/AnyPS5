@@ -201,6 +201,15 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
     auto oversized = BufferDescriptor(reinterpret_cast<const void*>(std::uintptr_t{0x10000000000u}), 0xffffffffu);
     oversized[1] |= 2u << 16u;
     std::copy(oversized.begin(), oversized.end(), userData.begin());
+    for (const auto code : {std::span<const std::uint32_t>(scalarCode), std::span<const std::uint32_t>(Code)}) {
+        request.shader.code = code;
+        request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+        Output.fill(Fill);
+        const auto readResult = ShaderRecompiler::Recompile(request);
+        device.Dispatch(readResult, 1, 1, 1);
+        device.WaitIdle();
+        Require(std::all_of(Output.begin(), Output.end(), [](std::uint32_t word) { return word == 0u; }), "read through an oversized V# before any store returned " + Hex(Output[0]));
+    }
     request.shader.code = storeCode;
     request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(storeCode.data());
     const auto storeResult = ShaderRecompiler::Recompile(request);
