@@ -1,0 +1,1 @@
+target_include_directories(agc_driver_color_logic_op_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
