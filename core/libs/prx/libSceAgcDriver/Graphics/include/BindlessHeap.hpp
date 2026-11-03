@@ -41,7 +41,7 @@ public:
     void BindDescriptorHeaps(VkCommandBuffer commands) const;
     bool DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings,
                                 std::uint32_t workgroupAddressOffset = ~0u, bool rootGds = false, bool rootFault = false,
-                                bool pixelLds = false, bool meshWindow = false) const;
+                                bool pixelLds = false, bool meshWindow = false, bool scratchPool = false) const;
     void WritePixelLdsBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     void WriteMeshWindowBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     VkDeviceAddress RingAddress() const;
@@ -204,7 +204,7 @@ private:
 bool GpuHeapEnabled();
 void SetDescriptorHeapDevice(bool available);
 bool DescriptorHeapEnabled();
-bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds = false, bool meshWindow = false);
+bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds = false, bool meshWindow = false, bool scratchPool = false);
 void NoteHeapComputeStage();
 std::uint64_t HeapComputeStages();
 void NoteImageTableBuild();

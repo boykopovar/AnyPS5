@@ -440,6 +440,9 @@ inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
 inline constexpr std::uint32_t ScratchPoolDescriptorSet = 2;
 inline constexpr std::uint32_t GpuWorkgroupMemoryDescriptorSet = 3;
+inline constexpr std::uint32_t GpuScratchPoolDescriptorSet = 5;
+inline constexpr std::uint32_t GpuScratchPoolAddressPushByte = 136;
+inline constexpr std::uint32_t GpuScratchPoolDwordsPushByte = 144;
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;
     std::uint32_t indexCount;

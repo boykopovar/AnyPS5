@@ -638,6 +638,7 @@ struct HeapBindingRoots {
     bool faultAddress = false;
     bool pixelLds = false;
     bool meshWindow = false;
+    bool scratchPool = false;
 };
 
 struct HeapBindingUse {
@@ -647,6 +648,7 @@ struct HeapBindingUse {
     bool faultMemory = false;
     bool pixelLdsMemory = false;
     bool meshWindowMemory = false;
+    bool scratchPoolMemory = false;
     std::vector<std::uint32_t> dataUniforms;
     std::pair<std::uint32_t, std::uint32_t> refused{~0u, ~0u};
 };
@@ -701,6 +703,10 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
             use.meshWindowMemory = true;
             continue;
         }
+        if (roots.scratchPool && set == ShaderRecompiler::GpuScratchPoolDescriptorSet && binding == 0u) {
+            use.scratchPoolMemory = true;
+            continue;
+        }
         if (set == Abi::GpuDataSet && binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::ShaderData) && binding / bindingCount < Abi::StageCount) {
             use.dataUniforms.push_back(binding);
             continue;
@@ -714,7 +720,7 @@ bool heapBindings(std::span<const std::uint32_t> spirv, const HeapBindingRoots& 
             use.imageBindings.push_back(binding);
     }
     return (!roots.workgroupAddress || use.workgroupMemory) && (!roots.faultAddress || use.faultMemory) &&
-           (!roots.pixelLds || use.pixelLdsMemory) && (!roots.meshWindow || use.meshWindowMemory);
+           (!roots.pixelLds || use.pixelLdsMemory) && (!roots.meshWindow || use.meshWindowMemory) && (!roots.scratchPool || use.scratchPoolMemory);
 }
 
 VkDescriptorSetAndBindingMappingEXT heapMapping(std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources,
@@ -760,9 +766,9 @@ VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, Vk
 
 }
 
-bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds, bool meshWindow) {
+bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroupAddress, bool gdsAddress, bool pixelLds, bool meshWindow, bool scratchPool) {
     HeapBindingUse use;
-    const bool mappable = heapBindings(spirv, {.workgroupAddress = workgroupAddress, .gdsAddress = gdsAddress, .pixelLds = pixelLds, .meshWindow = meshWindow}, use);
+    const bool mappable = heapBindings(spirv, {.workgroupAddress = workgroupAddress, .gdsAddress = gdsAddress, .pixelLds = pixelLds, .meshWindow = meshWindow, .scratchPool = scratchPool}, use);
     if (!mappable && pipelineStats()) {
         static std::mutex causesMutex;
         static std::map<SetAndBinding, std::uint64_t> causes;
@@ -780,12 +786,14 @@ bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroup
 }
 
 bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings,
-                                          std::uint32_t workgroupAddressOffset, bool rootGds, bool rootFault, bool pixelLds, bool meshWindow) const {
+                                          std::uint32_t workgroupAddressOffset, bool rootGds, bool rootFault, bool pixelLds, bool meshWindow,
+                                          bool scratchPool) const {
     mappings.clear();
     if (resourceHeap == nullptr) return false;
     HeapBindingUse use;
     const HeapBindingRoots roots{
-        .workgroupAddress = workgroupAddressOffset != ~0u, .gdsAddress = rootGds, .faultAddress = rootFault, .pixelLds = pixelLds, .meshWindow = meshWindow};
+        .workgroupAddress = workgroupAddressOffset != ~0u, .gdsAddress = rootGds, .faultAddress = rootFault, .pixelLds = pixelLds, .meshWindow = meshWindow,
+        .scratchPool = scratchPool};
     if (!heapBindings(spirv, roots, use)) return false;
     if (!use.dataUniforms.empty() && !ringInHeap) return false;
     constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
@@ -803,6 +811,8 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
     for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, ringHeapOffset));
     if (use.workgroupMemory)
         mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet, 0, workgroupAddressOffset));
+    if (use.scratchPoolMemory)
+        mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuScratchPoolDescriptorSet, 0, ShaderRecompiler::GpuScratchPoolAddressPushByte));
     if (use.gdsBinding != ~0u)
         mappings.push_back(pushAddressMapping(Abi::GpuGdsSet, use.gdsBinding, rootAddressOffset(Abi::RootGdsAddress)));
     if (use.faultMemory)

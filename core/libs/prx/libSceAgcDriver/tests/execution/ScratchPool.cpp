@@ -246,7 +246,7 @@ struct Facts {
 
 Facts Inspect(const ShaderRecompiler::RecompileResult& result) {
     const std::span<const std::uint32_t> words(result.spirv.data(), result.spirv.size());
-    const auto poolSet = result.gpuResolvedImages ? ~0u : ShaderRecompiler::ScratchPoolDescriptorSet;
+    const auto poolSet = result.gpuResolvedImages ? ShaderRecompiler::GpuScratchPoolDescriptorSet : ShaderRecompiler::ScratchPoolDescriptorSet;
     Facts facts;
     std::set<std::uint32_t> arrays, pointers, variables;
     for (std::size_t cursor = 5; cursor < words.size();) {
@@ -305,9 +305,8 @@ void RunAlias(AgcDriver::VulkanDevice& device, Form form, bool atomic, std::uint
     const auto code = AliasKernel(form, atomic);
     const auto result = Compile(device, code, userData, waveSize, waveSize, false, AliasScratchDwords);
     const auto facts = Inspect(result);
-    const bool pooled = !result.gpuResolvedImages;
-    Require(facts.poolBinding == pooled && (result.scratchPoolSlotDwords != 0u) == pooled, name + ": the scratch pool binding does not match the stage's mode");
-    Require(!pooled || !facts.functionArrayAccess, name + ": the scratch program indexes a Function array");
+    Require(facts.poolBinding && result.scratchPoolSlotDwords != 0u, name + ": the scratch program has no scratch pool binding");
+    Require(!facts.functionArrayAccess, name + ": the scratch program indexes a Function array");
     const auto heapPipelines = device.DescriptorHeapComputePipelines();
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -338,7 +337,7 @@ void RunCallee(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     std::copy(tableDescriptor.begin(), tableDescriptor.end(), userData.begin() + 4);
     const auto code = CalleeKernel();
     const auto result = Compile(device, code, userData, waveSize, waveSize, false, AliasScratchDwords);
-    Require((result.scratchPoolSlotDwords != 0u) == !result.gpuResolvedImages, name + ": the scratch pool binding does not match the stage's mode");
+    Require(result.scratchPoolSlotDwords != 0u, name + ": the scratch program has no scratch pool binding");
     const auto heapPipelines = device.DescriptorHeapComputePipelines();
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -492,12 +491,9 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool wave64 = device->Target().subgroupSize >= 32u;
-        const bool pooled = !device->ComputeTarget(32u).gpuResolvedImages;
         RunPlain(*device);
-        if (pooled) {
-            RunDiscardedInitialization(*device);
-            RunEviction(*device);
-        }
+        RunDiscardedInitialization(*device);
+        RunEviction(*device);
         for (const std::uint32_t waveSize : {32u, 64u}) {
             if (waveSize == 64u && !wave64) continue;
             for (const Form form : {Form::Table, Form::Literal, Form::Computed}) {
@@ -505,7 +501,6 @@ int main() {
                 RunAlias(*device, form, true, waveSize);
             }
             RunCallee(*device, waveSize);
-            if (!pooled) continue;
             RunContention(*device, "isolation", ContentionKernel(waveSize), waveSize, false);
             RunContention(*device, "divergent exit", DivergentExitKernel(waveSize), waveSize, true);
         }

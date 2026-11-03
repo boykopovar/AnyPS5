@@ -266,6 +266,10 @@ const wchar_t* ComputePipelineDumpDirectory() { return _wgetenv(L"APS5_DUMP_COMP
 const char* ComputePipelineDumpDirectory() { return std::getenv("APS5_DUMP_COMPUTE_PIPELINES"); }
 #endif
 
+static_assert(Graphics::ComputePushConstantBytes + sizeof(VkDeviceAddress) == ShaderRecompiler::GpuScratchPoolAddressPushByte &&
+              ShaderRecompiler::GpuScratchPoolAddressPushByte + sizeof(VkDeviceAddress) <= ShaderRecompiler::GpuScratchPoolDwordsPushByte &&
+              ShaderRecompiler::GpuScratchPoolDwordsPushByte + sizeof(std::uint32_t) <= ShaderRecompiler::RuntimeAbi::RootDword * sizeof(std::uint32_t));
+
 void CreateComputeHeapPipeline(VkDevice device, PFN_vkCreateComputePipelines create, VkPipelineCache cache, VkShaderModule module, VkPipelineCreateFlags flags, VkPipelineShaderStageCreateFlags stageFlags, const VkSpecializationInfo* specialization, std::uint32_t subgroupSize, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings, VkPipeline* pipeline, Graphics::PipelineCacheSynchronization* synchronization) {
     auto flags2 = Graphics::DescriptorHeapFlags(static_cast<VkPipelineCreateFlags2KHR>(flags));
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, &flags2};
@@ -437,6 +441,7 @@ struct ScratchPool {
     std::unique_ptr<Graphics::DeviceBuffer> buffer;
     VkDescriptorPool pool = VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE;
+    VkDeviceAddress address = 0;
     std::uint64_t slots = 0;
     std::uint64_t headerBytes = 0;
     std::uint64_t bytes = 0;
@@ -845,7 +850,7 @@ struct VulkanDevice::State {
         created->headerBytes = wanted * 2u * 4u;
         created->bytes = size;
         created->lastUse = use;
-        created->buffer = std::make_unique<Graphics::DeviceBuffer>(context, static_cast<std::size_t>(size), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        created->buffer = std::make_unique<Graphics::DeviceBuffer>(context, static_cast<std::size_t>(size), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (context.descriptorHeap ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u));
         const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         poolInfo.maxSets = 1;
@@ -865,6 +870,7 @@ struct VulkanDevice::State {
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         write.pBufferInfo = &described;
         DeviceFunction<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(device, 1, &write, 0, nullptr);
+        if (context.descriptorHeap) created->address = Graphics::BufferDeviceAddress(context, created->buffer->Handle());
         ZeroScratchPoolHeader(context, *created);
         scratchPools[identity] = created;
         return created;
@@ -5677,18 +5683,26 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         const auto workgroupSet = record.shader->program->gpuResolvedImages ? ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet : ShaderRecompiler::WorkgroupMemoryDescriptorSet;
         if (record.objects->descriptorHeap) {
             workgroupAddress = memory->address;
-            if (record.pushStages == 0) {
-                const VkPushDataInfoEXT push{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, Graphics::ComputePushConstantBytes, {&memory->address, sizeof(memory->address)}};
-                context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &push);
-            }
         } else {
             Graphics::CmdBindDescriptorSets(context, commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, workgroupSet, 1, &memory->set, Graphics::SetBindSite::Dispatch);
         }
         recorder.Keep(std::move(memory));
     }
+    std::array<std::byte, ShaderRecompiler::GpuScratchPoolDwordsPushByte + sizeof(std::uint32_t) - Graphics::ComputePushConstantBytes> stageAddresses{};
+    std::memcpy(stageAddresses.data(), &workgroupAddress, sizeof(workgroupAddress));
     if (pool != nullptr) {
-        context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::ScratchPoolDescriptorSet, 1, &pool->set, 0, nullptr);
+        if (record.objects->descriptorHeap) {
+            const auto dwords = static_cast<std::uint32_t>(pool->bytes / sizeof(std::uint32_t));
+            std::memcpy(stageAddresses.data() + (ShaderRecompiler::GpuScratchPoolAddressPushByte - Graphics::ComputePushConstantBytes), &pool->address, sizeof(pool->address));
+            std::memcpy(stageAddresses.data() + (ShaderRecompiler::GpuScratchPoolDwordsPushByte - Graphics::ComputePushConstantBytes), &dwords, sizeof(dwords));
+        } else {
+            context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::ScratchPoolDescriptorSet, 1, &pool->set, 0, nullptr);
+        }
         recorder.Keep(std::move(pool));
+    }
+    if (record.objects->descriptorHeap && record.pushStages == 0 && (workgroupAddress != 0 || record.shader->program->scratchPoolSlotDwords != 0)) {
+        const VkPushDataInfoEXT push{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, Graphics::ComputePushConstantBytes, {stageAddresses.data(), stageAddresses.size()}};
+        context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &push);
     }
     if (record.pushStages != 0) {
         std::array<std::byte, Graphics::PipelinePushConstantBytes> patchedBytes;
@@ -5699,7 +5713,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             pushed = patchedBytes.data();
         }
         if (record.objects->descriptorHeap) {
-            std::memcpy(patchedBytes.data() + Graphics::ComputePushConstantBytes, &workgroupAddress, sizeof(workgroupAddress));
+            std::memcpy(patchedBytes.data() + Graphics::ComputePushConstantBytes, stageAddresses.data(), stageAddresses.size());
             const VkPushDataInfoEXT push{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {patchedBytes.data(), patchedBytes.size()}};
             context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &push);
         } else {
@@ -5847,7 +5861,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     const bool heapDevice = gpuMode && context.descriptorHeap && Graphics::DescriptorHeapEnabled();
     const auto workgroupAddressOffset = workgroupAddress ? Graphics::ComputePushConstantBytes : ~0u;
     const std::span<const std::uint32_t> spirv(shader.spirv.data(), shader.spirv.size());
-    objects->descriptorHeap = heapDevice && Graphics::BindlessHeap::For(context).DescriptorHeapMappings(spirv, heapMappings, workgroupAddressOffset, shader.dataAddressPush);
+    objects->descriptorHeap = heapDevice && Graphics::BindlessHeap::For(context).DescriptorHeapMappings(spirv, heapMappings, workgroupAddressOffset, shader.dataAddressPush, false, false, false, scratchPool);
     require(!gpuMode || objects->descriptorHeap, "a GPU-mode compute stage does not map onto VK_EXT_descriptor_heap");
     const auto createPipelines = state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
     if (objects->descriptorHeap) CreateComputeHeapPipeline(state->device, createPipelines, context.pipelineCache, objects->module, pipelineFlags, stageFlags, specialization.Info(), subgroupSize, heapMappings, &objects->pipeline, context.pipelineCacheSynchronization);

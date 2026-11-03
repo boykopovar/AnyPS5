@@ -30,6 +30,7 @@ std::uint32_t LdsMemorySemantics(const SpirvEmitterState& state);
 std::uint32_t LdsMemoryBarrierScope(const SpirvEmitterState& state);
 void EmitLdsBufferBase(SpirvEmitterState& state);
 bool ScratchPoolActive(const SpirvEmitterState& state);
+bool GpuScratchPool(const SpirvEmitterState& state);
 std::uint32_t ScratchPoolSlotDwords(const SpirvEmitterState& state);
 void DefineScratchPool(SpirvEmitterState& state);
 void EmitScratchPoolAcquire(SpirvEmitterState& state);

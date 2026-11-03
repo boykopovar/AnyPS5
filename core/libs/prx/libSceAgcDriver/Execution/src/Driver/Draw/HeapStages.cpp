@@ -263,7 +263,7 @@ bool HeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool wor
     if (const auto found = known.find(key); found != known.end()) return found->second;
     if (known.size() >= ThreadCacheLimit) known.clear();
     const bool mappable = heapClassesAllowed(result) &&
-                          Graphics::DescriptorHeapMappable(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()), workgroupAddress, result.dataAddressPush, result.functionLdsBuffer, result.meshWindowBuffer);
+                          Graphics::DescriptorHeapMappable(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()), workgroupAddress, result.dataAddressPush, result.functionLdsBuffer, result.meshWindowBuffer, result.scratchPoolSlotDwords != 0u);
     known.emplace(key, mappable);
     return mappable;
 }
