@@ -49,7 +49,7 @@ std::uint32_t LinearWorkgroupId(SpirvEmitterState& state) {
 }
 
 bool ScratchPoolActive(const SpirvEmitterState& state) {
-    return state.requirements.functionScratch && state.program.Resources().stage == IrShaderStage::Compute;
+    return state.requirements.functionScratch && state.program.Resources().stage == IrShaderStage::Compute && !state.gpuResolvedImages;
 }
 
 std::uint32_t ScratchPoolSlotDwords(const SpirvEmitterState& state) {
