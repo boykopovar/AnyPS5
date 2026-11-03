@@ -1,4 +1,5 @@
 #include "prx/libSceNpManager/include/Api.hpp"
+#include "prx/libSceNpManager/include/AdditionalExports.hpp"
 #include "prx/libSceNpManager/include/InGameMessageIds.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
@@ -632,7 +633,25 @@ static void CheckSandboxInfo() {
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
 }
 
+void CheckEmptyDestructors() {
+    unsigned char object[0x40];
+    unsigned char untouched[sizeof(object)];
+    std::memset(object, 0xa5, sizeof(object));
+    std::memcpy(untouched, object, sizeof(object));
+    for (auto destructor : {_ZN3sce2np10NpOnlineIdD1Ev, _ZN3sce2np10NpOnlineIdD2Ev, _ZN3sce2np12NpTitleTokenD1Ev, _ZN3sce2np12NpTitleTokenD2Ev,
+                            _ZN3sce2np13NpAccessTokenD1Ev, _ZN3sce2np13NpAccessTokenD2Ev, _ZN3sce2np4NpIdD1Ev, _ZN3sce2np4NpIdD2Ev,
+                            _ZN3sce2np4UserD1Ev, _ZN3sce2np4UserD2Ev}) {
+        destructor(object);
+        Require(std::memcmp(object, untouched, sizeof(object)) == 0, "an empty destructor wrote the object");
+    }
+    libSceNpManagerUnknown_3sU9cWXBN98_nid_no_patch();
+    libSceNpManagerUnknown_7d3y0wXbeGY_nid_no_patch();
+    libSceNpManagerUnknown_vWxlv7_minus_lH78_nid_no_patch();
+    libSceNpManagerUnknown_z8eiw8_plus_UfEo_nid_no_patch();
+}
+
 int main() {
+    CheckEmptyDestructors();
     CheckSandboxInfo();
     CheckUnregisteredClientError();
     CheckAccountQueriesAndPremiumCallback();
