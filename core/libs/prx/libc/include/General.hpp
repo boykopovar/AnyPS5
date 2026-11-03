@@ -16,6 +16,7 @@ extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
 extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 extern "C" bool StopAtPrefixLetter_nid_no_patch(const char* str, char** endptr, int base);
+extern "C" const char* NanSubjectEnd_nid_no_patch(const char* text);
 extern "C" bool RejectIntegerBase_nid_no_patch(const char* str, char** endptr, int base, bool setError);
 extern "C" int KeepHostStandardError_nid_no_patch();
 extern "C" int KeepHostStandardOutput_nid_no_patch();
@@ -63,6 +64,9 @@ using PthreadJoinFn_nid_no_patch = int (APS5_VABI*)(void*, void**);
 using PthreadDetachFn_nid_no_patch = int (APS5_VABI*)(void*);
 extern "C" void RegisterPthreadCreate_nid_no_patch(PthreadCreateFn_nid_no_patch fn);
 extern "C" void RegisterPthreadJoin_nid_no_patch(PthreadJoinFn_nid_no_patch fn);
+using GuestWriteHook_nid_no_patch = std::int64_t (APS5_VABI *)(int descriptor, const void* buffer, std::size_t count);
+extern "C" void LibcSetGuestWriteHook_nid_no_patch(GuestWriteHook_nid_no_patch hook);
+extern "C" GuestWriteHook_nid_no_patch LibcGetGuestWriteHook_nid_no_patch();
 extern "C" void RegisterPthreadDetach_nid_no_patch(PthreadDetachFn_nid_no_patch fn);
 extern "C" void RegisterProcessorCount_nid_no_patch(unsigned count);
 struct ThreadForwards_nid_no_patch {

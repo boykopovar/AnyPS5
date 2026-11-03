@@ -116,10 +116,21 @@ void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
     voice.atrac9.window.reserve(static_cast<std::size_t>(info.frameSamples) * info.channels);
 }
 
-std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block) {
+bool Ngs2Atrac9FrameInfo(const Ngs2WaveformFormat& format, Ngs2Atrac9Frame& frame) {
+    Atrac9CodecInfo info{};
+    if (!MatchingCodecInfo(format, info)) return false;
+    frame = {static_cast<std::uint32_t>(info.frameSamples), static_cast<std::uint32_t>(info.framesInSuperframe), static_cast<std::uint32_t>(info.superframeSize)};
+    return true;
+}
+
+std::size_t Ngs2Atrac9BlockBytes(const Ngs2Atrac9Frame& frame, const Ngs2WaveformBlock& block) {
     const std::uint64_t samples = static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples;
-    const std::uint64_t superframeSamples = static_cast<std::uint64_t>(voice.atrac9.frameSamples) * voice.atrac9.framesInSuperframe;
-    return static_cast<std::size_t>((samples + superframeSamples - 1) / superframeSamples * voice.atrac9.superframeBytes);
+    const std::uint64_t superframeSamples = static_cast<std::uint64_t>(frame.frameSamples) * frame.framesInSuperframe;
+    return static_cast<std::size_t>((samples + superframeSamples - 1) / superframeSamples * frame.superframeBytes);
+}
+
+std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block) {
+    return Ngs2Atrac9BlockBytes(Ngs2Atrac9Frame{voice.atrac9.frameSamples, voice.atrac9.framesInSuperframe, voice.atrac9.superframeBytes}, block);
 }
 
 void Ngs2RestartAtrac9(Ngs2Voice& voice) {
@@ -366,6 +377,29 @@ static int ParseAtrac9(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
     return ParseAtrac9Loop(chunks, info);
 }
 
+static void AddPcmBlock(Ngs2WaveformInfo& info, std::uint32_t begin, std::uint32_t samples, std::uint32_t repeats) {
+    auto& block = info.block[info.num_blocks++];
+    block = {info.data_offset + static_cast<std::uint64_t>(begin) * info.audio_frame_size, static_cast<std::uint64_t>(samples) * info.audio_frame_size, repeats, 0, samples, 0, 0};
+}
+
+static int ParsePcmLoop(const RiffChunks& chunks, Ngs2WaveformInfo& info) {
+    if (chunks.sampler == nullptr) return SCE_NGS2_OK;
+    if (chunks.samplerSize < 32) throw std::runtime_error("NGS2: a smpl chunk too short for its loop count is not implemented");
+    if (ReadLe32(chunks.sampler + 28) == 0) return SCE_NGS2_OK;
+    if (chunks.samplerSize < 52) throw std::runtime_error("NGS2: a smpl chunk too short for its first loop is not implemented");
+    const std::uint32_t begin = ReadLe32(chunks.sampler + 44);
+    const std::uint32_t end = ReadLe32(chunks.sampler + 48) + 1u;
+    info.loop_begin_position = begin;
+    info.loop_end_position = end;
+    if (end <= begin) return SCE_NGS2_OK;
+    if (end > info.num_samples) throw std::runtime_error("NGS2: a waveform loop ending past the last sample is not implemented");
+    info.num_blocks = 0;
+    if (begin != 0) AddPcmBlock(info, 0, begin, 0);
+    AddPcmBlock(info, begin, end - begin, UINT32_MAX);
+    if (end != info.num_samples) AddPcmBlock(info, end, info.num_samples - end, 0);
+    return SCE_NGS2_OK;
+}
+
 static std::uint32_t PcmWaveformType(std::uint32_t bits, bool floating) {
     if (floating) return bits == 32 ? 0x18 : bits == 64 ? 0x1a : 0;
     return bits == 8 ? 0x11 : bits == 16 ? SCE_NGS2_WAVEFORM_TYPE_PCM_I16L : bits == 24 ? 0x14 : bits == 32 ? 0x16 : 0;
@@ -383,7 +417,6 @@ static int ParsePcm(const RiffChunks& chunks, std::size_t size, Ngs2WaveformInfo
     if (channels == 0 || channels > NGS2_MAX_CHANNELS || sampleRate == 0 || sampleRate > MAX_SAMPLE_RATE || ReadLe16(format + 12) != bytesPerFrame) {
         return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     }
-    if (chunks.sampler != nullptr && chunks.samplerSize >= 32 && ReadLe32(chunks.sampler + 28) != 0) throw std::runtime_error("NGS2: parsing looped waveforms is not implemented");
     if (chunks.dataSize > size - chunks.dataOffset || chunks.dataSize % bytesPerFrame != 0) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     const std::size_t dataSize = chunks.dataSize;
     info.format = {type, channels, sampleRate, 0, 0, 0};
@@ -399,7 +432,7 @@ static int ParsePcm(const RiffChunks& chunks, std::size_t size, Ngs2WaveformInfo
     info.block[0].data_offset = chunks.dataOffset;
     info.block[0].data_size = dataSize;
     info.block[0].num_samples = info.num_samples;
-    return SCE_NGS2_OK;
+    return ParsePcmLoop(chunks, info);
 }
 
 static int ParseWaveform(const RiffChunks& chunks, std::size_t size, Ngs2WaveformInfo& info) {
@@ -484,14 +517,13 @@ int APS5_VABI sceNgs2GetWaveformFrameInfo(const Ngs2WaveformFormat* format, uint
     if (format == nullptr || format->num_channels == 0 || format->num_channels > NGS2_MAX_CHANNELS || format->sample_rate == 0 || format->sample_rate > MAX_SAMPLE_RATE) {
         return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     }
-    if (format->waveform_type == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) {
-        *out_frame_size = format->num_channels * sizeof(std::int16_t);
+    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+        *out_frame_size = static_cast<std::uint32_t>(format->num_channels * Ngs2PcmSampleBytes(format->waveform_type));
         *out_num_frame_samples = 1;
         *out_units_per_frame = 1;
         *out_num_delay_samples = 0;
         return SCE_NGS2_OK;
     }
-    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) throw std::runtime_error("NGS2: the frame info of waveform type " + Ngs2Hex(format->waveform_type) + " is not implemented");
     Atrac9CodecInfo codec{};
     if (!MatchingCodecInfo(*format, codec)) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     *out_frame_size = static_cast<std::uint32_t>(codec.superframeSize);

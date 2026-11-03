@@ -27,8 +27,11 @@ int main() {
         require(!coverage.ExcludedSpan(base - block, block, &spanBegin, &spanEnd) && !coverage.ExcludedSpan(base + 5 * block, block, &spanBegin, &spanEnd) && !coverage.ExcludedSpan(base, 0, &spanBegin, &spanEnd), "an outside or empty import has a span");
         require(coverage.Exclude(base + block + 4096, 1), "an imported page was not excluded");
         require(!coverage.Covers(base + block, block), "the imported block is still watched");
-        require(!coverage.Covers(base + block - 1, 2), "a range crossing into the import is watched");
+        require(coverage.Covers(base + block, 4096) && coverage.Covers(base + block + 2 * 4096, block - 2 * 4096), "an import unwatched pages of its block outside it");
+        require(!coverage.Covers(base + block + 4095, 2) && !coverage.Covers(base + block + 2 * 4096 - 1, 2), "a range crossing into the import is watched");
         require(coverage.Covers(base, block) && coverage.Covers(base + 2 * block, 2 * block + 1), "unrelated blocks lost write watching");
+        require(!coverage.Exclude(base + block + 4096, 1), "excluding an imported page again reports a change");
+        require(coverage.Exclude(base + block, block) && !coverage.Covers(base + block, 4096), "excluding the rest of an imported block reports no change");
         require(!coverage.Exclude(base + block, block), "excluding an imported block again reports a change");
         require(coverage.Exclude(base + 3 * block - 1, 2), "an import across a block boundary was not excluded");
         require(!coverage.Covers(base + 2 * block, block) && !coverage.Covers(base + 3 * block, block), "a boundary import left one block watched");
@@ -69,9 +72,9 @@ int main() {
         require(!coverage.Covers(base + 16383, 2) && !coverage.Covers(base + 32767, 2), "a boundary query included excluded pages");
         require(!coverage.Restore(base + 32768, 4096, 10), "a stale partial mapping restored an exclusion");
         coverage.Exclude(base + 4096, 1, 12);
-        require(!coverage.Covers(base + 16384, 16384), "a repeated import kept partial coverage from an older mapping");
-        require(!coverage.Restore(base + 16384, 16384, 11), "a delayed partial mapping restored a newer import");
-        require(coverage.Restore(base + 16384, 16384, 13), "fresh partial coverage was not restored after re-import");
+        require(!coverage.Covers(base + 4096, 4096) && coverage.Covers(base + 16384, 16384), "a re-import of one page changed the coverage of other pages");
+        require(!coverage.Restore(base + 4096, 4096, 11), "a delayed partial mapping restored a newer import");
+        require(coverage.Restore(base + 4096, 4096, 13) && coverage.Covers(base + 4096, 4096), "a fresh mapping did not restore a re-imported page");
         constexpr std::size_t page = 4096;
         for (std::size_t first = 0; first < block / page; ++first) {
             for (std::size_t count = 1; count <= block / page - first; ++count) {
@@ -104,12 +107,28 @@ int main() {
         coverage.Exclude(base, tail, 50);
         require(coverage.Restore(base, tail, 51), "an import ending inside a block did not restore its pages");
         require(coverage.Covers(base, tail) && coverage.Covers(base + 12 * block, tail - 12 * block), "an import ending inside a block is not watched");
-        require(!coverage.Covers(base, tail + 1) && !coverage.Covers(base + tail - 1, 2) && !coverage.Covers(base + tail, page) && !coverage.Covers(base, 13 * block), "a range past an import ending inside a block is watched");
-        require(coverage.Covers(base + tail - page, page) && !coverage.Covers(base + 13 * block - page, page) && coverage.Covers(base + 13 * block, block), "an import ending inside a block changed the pages after it");
+        require(coverage.Covers(base, 13 * block) && coverage.Covers(base + tail, page), "a restored import ending inside a block left pages excluded");
+        coverage.Exclude(base, tail, 52);
+        require(!coverage.Covers(base + tail - page, page) && !coverage.Covers(base + tail - 1, 2), "a range ending inside an import is watched");
+        require(coverage.Covers(base + tail, 13 * block - tail) && coverage.Covers(base + 13 * block, block), "an import ending inside a block unwatched the pages after it");
         coverage.Initialize(base, 14 * block);
         coverage.Exclude(base + page, tail, 60);
         require(coverage.Restore(base + page, tail, 61) && coverage.Covers(base + page, tail), "an import starting and ending inside blocks is not watched");
-        require(!coverage.Covers(base, page) && !coverage.Covers(base, tail) && !coverage.Covers(base + page + tail, page) && !coverage.Covers(base + page, tail + 1), "an import starting and ending inside blocks watched pages outside it");
+        coverage.Exclude(base + page, tail, 62);
+        require(coverage.Covers(base, page) && coverage.Covers(base + page + tail, page), "an import starting and ending inside blocks unwatched pages outside it");
+        require(!coverage.Covers(base, 2 * page) && !coverage.Covers(base + page + tail - 1, 2), "a range reaching into an import starting and ending inside blocks is watched");
+        coverage.Initialize(base, 2 * block);
+        coverage.Exclude(base + page, page, 70);
+        coverage.Exclude(base + 5 * page, page, 75);
+        require(coverage.Restore(base + page, page, 72) && coverage.Covers(base + page, page), "a newer import of another page in the block kept an older page excluded");
+        require(!coverage.Covers(base + 5 * page, page), "restoring an older page restored a newer import in the same block");
+        require(!coverage.Restore(base + 5 * page, page, 74) && !coverage.Covers(base + 5 * page, page), "a stale mapping restored a newer page in the same block");
+        require(coverage.Restore(base + 5 * page, page, 76) && coverage.Covers(base, 2 * block), "a fresh mapping did not restore the newer page");
+        coverage.Exclude(base + 3 * page, page, 80);
+        for (std::size_t index = 0; index < 2 * block / page; ++index) {
+            require(coverage.Covers(base + index * page, page) == (index != 3), "excluding one page changed another page of the arena");
+        }
+        require(coverage.ExcludedSpan(base + 3 * page, page, &spanBegin, &spanEnd) && spanBegin == base && spanEnd == base + block, "the span of an excluded page is not its whole block");
         std::cout << "write watch coverage passed\n";
         return 0;
     } catch (const std::exception& error) {
