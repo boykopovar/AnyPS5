@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceJxr/GuestPixelInfo.h"
 #include "prx/libSceJxr/Stream.hpp"
+#include "prx/libSceJxr/include/Metadata.hpp"
 
 extern "C" {
 
@@ -17,7 +18,7 @@ int APS5_VABI CreateWS_List_nid_postfix();
 int APS5_VABI CreateWS_Memory_nid_postfix();
 int APS5_VABI EOSWS_File_nid_postfix();
 int APS5_VABI EOSWS_Memory_nid_postfix();
-int APS5_VABI FreeDescMetadata_nid_postfix();
+void APS5_VABI FreeDescMetadata_nid_postfix(Jxr::MetadataVariant* value);
 int APS5_VABI GetImageDecodeIID_nid_postfix();
 int APS5_VABI GetImageEncodeIID_nid_postfix();
 int APS5_VABI GetPixelFormatFromHash_nid_postfix();

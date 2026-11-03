@@ -10,6 +10,8 @@ endif()
 target_include_directories(libSceJxr PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceJxr)
 
+include(Metadata.cmake)
+
 if(BUILD_TESTING)
     add_library(jxr_lookup_reference STATIC ${LIBS_INCLUDE_DIR}/tests/GuestJxrLookupReference.c)
     configure_jxr_native(jxr_lookup_reference)
