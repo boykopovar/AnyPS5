@@ -105,6 +105,8 @@ int main() try {
     Reject([](auto& input) { input.SetWords({0x200, 0x206}); }, "Overlapping RELR targets");
     Reject([](auto& input) { input.SetWords({0x3000}); }, "target exceeds load");
     Reject([](auto& input) { input.SetWords({0x2ffc}); }, "target exceeds load");
+    Reject([](auto& input) { input.SetWords({0x4000}); }, "target exceeds load");
+    Reject([](auto& input) { input.SetWords({0x2ff8, 3}); }, "target exceeds load");
     Reject([](auto& input) { input.Tags[0].Value = 0x2000; }, "table exceeds file-backed");
     Reject([](auto& input) { input.Tags[0].Value = 0x1ffc; }, "table exceeds file-backed");
     Reject([](auto& input) { input.Tags[1].Value = 0xfffffffffffffff8ull; }, "table exceeds file-backed");
