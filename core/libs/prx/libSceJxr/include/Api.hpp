@@ -24,7 +24,7 @@ int APS5_VABI GetPixelFormatFromHash_nid_postfix();
 int APS5_VABI GetPosWS_File_nid_postfix();
 int APS5_VABI GetPosWS_List_nid_postfix();
 int APS5_VABI GetPosWS_Memory_nid_postfix();
-int APS5_VABI IDPEmpty_nid_postfix(void* codec);
+int APS5_VABI IDPEmpty_nid_postfix();
 int APS5_VABI InitZigzagScan_nid_postfix();
 int APS5_VABI PKAllocAligned_nid_postfix();
 int APS5_VABI PKAlloc_nid_postfix();

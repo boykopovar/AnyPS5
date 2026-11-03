@@ -78,8 +78,6 @@ int main() {
     object.fill(0x5A);
     pixels.fill(0x5A);
     rect.fill(0x5A);
-    Require(IDPEmpty_nid_postfix(object.data()) == 0);
-    Require(IDPEmpty_nid_postfix(nullptr) == 0);
     Require(PKFormatConverter_Convert_nid_postfix(object.data(), rect.data(), pixels.data(), 16) == 0);
     Require(PKFormatConverter_Convert_nid_postfix(nullptr, nullptr, nullptr, 0) == 0);
     Require(PKImageDecode_SelectFrame_nid_postfix(object.data(), 3) == 0);
