@@ -895,6 +895,73 @@ void CheckConcurrentSpecialOpens() {
     }
 }
 
+static void CheckPortIsolationOrder() {
+    constexpr int noHandle = static_cast<int>(0x80920008);
+    constexpr int user0 = 0x10000000;
+    constexpr int user1 = 0x10000001;
+    constexpr std::uint32_t triangle = static_cast<std::uint32_t>(Pad::PadButton::Triangle);
+    const int handle0 = scePadOpen_nid_postfix(user0, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+    const int handle1 = scePadOpen_nid_postfix(user1, PAD_PORT_TYPE_STANDARD, 0, nullptr);
+    Require(handle0 == PAD_HANDLE_BASE);
+    Require(handle1 == PAD_HANDLE_BASE + 1);
+
+    PadInputState neutral;
+    PadPublishInputForPort_nid_postfix(0, neutral);
+    PadPublishInputForPort_nid_postfix(1, neutral);
+    PadData drained[64]{};
+    scePadRead_nid_postfix(handle0, drained, 64);
+    scePadRead_nid_postfix(handle1, drained, 64);
+
+    PadData firstRead{};
+    PadData repeatedRead{};
+    Require(scePadReadState(handle1, &firstRead) == PAD_OK);
+    Require(scePadReadState(handle1, &repeatedRead) == PAD_OK);
+    Require(repeatedRead.timestamp == firstRead.timestamp);
+
+    PadInputState pressed;
+    pressed.buttons = triangle;
+    PadPublishInputForPort_nid_postfix(1, pressed);
+
+    PadData pressedSample{};
+    Require(scePadReadState(handle1, &pressedSample) == PAD_OK);
+    Require((pressedSample.buttons & triangle) != 0);
+    Require(pressedSample.timestamp >= repeatedRead.timestamp);
+
+    PadData port0State{};
+    Require(scePadReadState(handle0, &port0State) == PAD_OK);
+    Require((port0State.buttons & triangle) == 0);
+    PadData port0Queue[4]{};
+    Require(scePadRead_nid_postfix(handle0, port0Queue, 4) == 1);
+    Require((port0Queue[0].buttons & triangle) == 0);
+
+    PadPublishInputForPort_nid_postfix(1, neutral);
+    PadData port1Queue[4]{};
+    Require(scePadRead_nid_postfix(handle1, port1Queue, 4) == 2);
+    Require((port1Queue[0].buttons & triangle) != 0);
+    Require((port1Queue[1].buttons & triangle) == 0);
+    Require(port1Queue[0].timestamp != 0);
+    Require(port1Queue[0].timestamp <= port1Queue[1].timestamp);
+
+    PadPublishInputForPort_nid_postfix(0, pressed);
+    Require(scePadRead_nid_postfix(handle1, port1Queue, 4) == 1);
+    Require((port1Queue[0].buttons & triangle) == 0);
+    PadPublishInputForPort_nid_postfix(0, neutral);
+    Require(scePadRead_nid_postfix(handle0, port0Queue, 4) == 2);
+    Require((port0Queue[0].buttons & triangle) != 0);
+    Require((port0Queue[1].buttons & triangle) == 0);
+
+    PadPublishInputForPort_nid_postfix(0, neutral);
+    PadPublishInputForPort_nid_postfix(1, neutral);
+    scePadRead_nid_postfix(handle0, drained, 64);
+    scePadRead_nid_postfix(handle1, drained, 64);
+    Require(scePadClose_nid_postfix(handle0) == PAD_OK);
+    Require(scePadClose_nid_postfix(handle1) == PAD_OK);
+    Require(!scePadIsValidHandle(handle0, PAD_PORT_TYPE_STANDARD));
+    Require(!scePadIsValidHandle(handle1, PAD_PORT_TYPE_STANDARD));
+    Require(scePadGetHandle(user0, PAD_PORT_TYPE_STANDARD, 0) == noHandle);
+    Require(scePadGetHandle(user1, PAD_PORT_TYPE_STANDARD, 0) == noHandle);
+}
+
 static void CheckPortZeroWithdrawn() {
     constexpr int user = 0x10000000;
     constexpr int noHandle = static_cast<int>(0x80920008);
@@ -1262,4 +1329,5 @@ int main() {
     Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
     CheckPortZeroWithdrawn();
+    CheckPortIsolationOrder();
 }
