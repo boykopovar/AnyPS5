@@ -68,6 +68,12 @@ int main() {
     }
     Require(handle > 0);
 
+    VideoOutOutputStatus colorOut{};
+    Require(sceVideoOutGetOutputStatus(handle, &colorOut) == 0);
+    Require(colorOut.refreshRate == 3 || colorOut.refreshRate == 13);
+    Require(colorOut.resolution == 1 || colorOut.resolution == 2);
+    Require(colorOut.dynamicRange == 1 || colorOut.dynamicRange == 2);
+
     Require(sceVideoOutAdjustColorSpaceConversion(handle, &settings) == 0);
     Require(sceVideoOutAdjustColorSpaceConversion_(handle, &settings, sizeof(settings)) == 0);
     Require(sceVideoOutSetGlobalBlendSpace(handle, 0, 0) == 0);

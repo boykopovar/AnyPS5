@@ -38,6 +38,14 @@ int main(int argc, char** argv) {
         return 77;
     }
     const int supported = sceVideoOutIsOutputSupported(handle, 15, nullptr, nullptr, 0);
+    Require(sceVideoOutConfigureOutput(handle, 1, nullptr, nullptr, 0) == 0, "default mode failed");
+    VideoOutOutputStatus baselineOutput{};
+    VideoOutResolutionStatus baselineResolution{};
+    Require(sceVideoOutGetOutputStatus(handle, &baselineOutput) == 0 && baselineOutput.refreshRate == 3, "wrong baseline output refresh rate");
+    Require(sceVideoOutGetResolutionStatus(handle, &baselineResolution) == 0 && baselineResolution.refreshRate == 3, "wrong baseline resolution refresh rate");
+    Require(baselineResolution.fullWidth == 1920 && baselineResolution.fullHeight == 1080, "wrong baseline dimensions");
+    Require(sceVideoOutConfigureOutput(handle, 0, nullptr, nullptr, 0) == static_cast<int>(0x8029001Eu), "unknown mode 0 did not fail");
+    Require(sceVideoOutConfigureOutput(handle, 4, nullptr, nullptr, 0) == static_cast<int>(0x80290016u), "unsupported mode 4 did not fail");
     if (supported == 0 && !requireDisplay) {
         Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 0) == Unavailable, "an output without 120 Hz accepted high-frame-rate output");
         Require(sceVideoOutClose(handle) == 0, "close failed");
@@ -46,16 +54,17 @@ int main(int argc, char** argv) {
         return 77;
     }
     Require(supported == 1, "120 Hz output not reported as supported");
-    Require(sceVideoOutConfigureOutput(handle, 1, nullptr, nullptr, 0) == 0, "default mode failed");
     const double normal = Measure(handle);
     Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 0) == 0, "permitted high-frame-rate mode failed");
     VideoOutOutputStatus output{};
     VideoOutResolutionStatus resolution{};
     Require(sceVideoOutGetOutputStatus(handle, &output) == 0 && output.refreshRate == 13, "wrong output refresh rate");
     Require(sceVideoOutGetResolutionStatus(handle, &resolution) == 0 && resolution.refreshRate == 13, "wrong resolution refresh rate");
+    Require(resolution.fullWidth == 1920 && resolution.fullHeight == 1080, "wrong high-frame-rate dimensions");
     const double fast = Measure(handle);
     Require(sceVideoOutConfigureOutput(handle, 1, nullptr, nullptr, 0) == 0, "default mode restore failed");
     Require(sceVideoOutGetOutputStatus(handle, &output) == 0 && output.refreshRate == 3, "default output refresh rate not restored");
+    Require(sceVideoOutGetResolutionStatus(handle, &resolution) == 0 && resolution.refreshRate == 3, "default resolution refresh rate not restored");
     const double restored = Measure(handle);
     std::printf("60 vblanks: default=%.3f s high=%.3f s restored=%.3f s\n", normal, fast, restored);
     Require(normal > 0.8 && normal < 1.3 && fast > 0.4 && fast < 0.7 && restored > 0.8 && restored < 1.3, "incorrect vblank periods");

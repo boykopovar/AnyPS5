@@ -70,8 +70,30 @@ int main() {
 
     auto status = Status(handle);
     Require(status.dynamicRange == 1 && status.flags == 0, "an SDR host reports HDR output");
+    Require(status.refreshRate == 3, "default SDR refresh rate must be 59.94Hz");
     auto luminance = ToneMap();
     Require(luminance.max_tone_map_luminance == 100.0f && luminance.max_full_frame_tone_map_luminance == 100.0f && luminance.min_tone_map_luminance == 0.0f, "an SDR host does not report SDR reference white");
+
+    const auto nonHdr = AgcDriver::DisplayHdrFromOutput(false, 1000.0f, 0.001f, 800.0f);
+    Require(!nonHdr.hdr && nonHdr.maxLuminance == 0.0f && nonHdr.minLuminance == 0.0f && nonHdr.maxFullFrameLuminance == 0.0f, "non-HDR color space must produce empty display HDR");
+
+    const auto invalidMax = AgcDriver::DisplayHdrFromOutput(true, 0.5f, 0.0f, 0.5f);
+    Require(invalidMax.hdr && invalidMax.maxLuminance == 1000.0f && invalidMax.minLuminance == 0.0f && invalidMax.maxFullFrameLuminance == 1000.0f, "invalid max luminance must fall back to UndescribedHdrDisplay");
+
+    const auto negativeMax = AgcDriver::DisplayHdrFromOutput(true, -50.0f, 0.0f, 0.0f);
+    Require(negativeMax.hdr && negativeMax.maxLuminance == 1000.0f && negativeMax.maxFullFrameLuminance == 1000.0f, "negative max luminance must fall back to UndescribedHdrDisplay");
+
+    const auto badMin = AgcDriver::DisplayHdrFromOutput(true, 600.0f, 700.0f, 500.0f);
+    Require(badMin.minLuminance == 0.0f, "min luminance >= max luminance must clamp to 0");
+
+    const auto negativeMin = AgcDriver::DisplayHdrFromOutput(true, 600.0f, -0.5f, 500.0f);
+    Require(negativeMin.minLuminance == 0.0f, "negative min luminance must clamp to 0");
+
+    const auto overFull = AgcDriver::DisplayHdrFromOutput(true, 600.0f, 0.01f, 800.0f);
+    Require(overFull.maxFullFrameLuminance == 600.0f, "full frame luminance > max luminance must clamp to max luminance");
+
+    const auto underFull = AgcDriver::DisplayHdrFromOutput(true, 600.0f, 0.01f, 0.5f);
+    Require(underFull.maxFullFrameLuminance == 600.0f, "full frame luminance < 1.0f must clamp to max luminance");
 
     KernelEqueue queue = 0;
     Require(sceKernelCreateEqueue(&queue, "HDR test") == 0, "event queue creation failed");
@@ -96,6 +118,14 @@ int main() {
     AgcDriverSetHostDisplayHdr_nid_postfix(AgcDriver::DisplayHdrFromOutput(true, 400.0f, 0.05f, 300.0f));
     Require(OutputModeEventArrives(queue, 2'000'000), "a new display luminance does not fire the output mode event");
     Require(ToneMap().max_tone_map_luminance == 400.0f && Status(handle).dynamicRange == 2, "the new display luminance is not reported");
+
+    AgcDriverSetHostDisplayHdr_nid_postfix(invalidMax);
+    Require(OutputModeEventArrives(queue, 2'000'000), "an undescribed HDR display luminance does not fire the output mode event");
+    Require(ToneMap().max_tone_map_luminance == 1000.0f && Status(handle).dynamicRange == 2, "the undescribed display luminance is not reported");
+    VideoOutResolutionStatus hdrResolution{};
+    Require(sceVideoOutGetResolutionStatus(handle, &hdrResolution) == 0, "sceVideoOutGetResolutionStatus failed in HDR mode");
+    Require(hdrResolution.fullWidth == 1920 && hdrResolution.fullHeight == 1080, "resolution dimensions changed in HDR mode");
+    Require(hdrResolution.refreshRate == 3, "resolution refresh rate changed in HDR mode");
 
     AgcDriverSetHostDisplayHdr_nid_postfix({});
     Require(OutputModeEventArrives(queue, 2'000'000), "HDR output going away does not fire the output mode event");
