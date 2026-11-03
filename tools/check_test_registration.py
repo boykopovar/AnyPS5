@@ -1,20 +1,25 @@
 import argparse
+import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 TEST_OUTPUT = r"tests[\\/]"
-COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|subdirs)\s*\(", re.M | re.I)
+SCOPE_START = {"if", "foreach", "while", "function", "macro", "block"}
+COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
 ARGUMENT = re.compile(r'"(?:\\.|[^"\\])*"|\[(?P<equals>=*)\[.*?\](?P=equals)\]|[^\s()]+', re.S)
 LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=literal_equals)\]'
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
 
 KNOWN_UNRUN = set()
 SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
+EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
+COMPILE_FLAG = re.compile(r"(?:^|\s)[-/]c(?:\s|$)")
 
 
-def built(build):
+def ninja(build):
     program, generator = None, None
     for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("CMAKE_MAKE_PROGRAM:"):
@@ -33,6 +38,11 @@ def built(build):
         if codepage not in encodings:
             raise ValueError(f"unsupported Ninja build-file encoding: {codepage!r}")
         encoding = encodings[codepage]
+    return program, encoding
+
+
+def built(build):
+    program, encoding = ninja(build)
     listed = subprocess.run([program, "-C", str(build), "-t", "targets", "all"],
                             capture_output=True, text=True, encoding=encoding, check=True).stdout
     names = set()
@@ -51,6 +61,49 @@ def built(build):
     return names
 
 
+def compiled(build):
+    program, encoding = ninja(build)
+    database = subprocess.run([program, "-C", str(build), "-t", "compdb"],
+                              capture_output=True, text=True, encoding=encoding, check=True).stdout
+    sources = set()
+    for entry in json.loads(database):
+        command = entry.get("command") or " ".join(entry.get("arguments", []))
+        if not COMPILE_FLAG.search(command):
+            continue
+        file = Path(entry["file"])
+        if not file.is_absolute():
+            file = Path(entry["directory"]) / file
+        sources.add(file.resolve())
+    return sources
+
+
+def unbuilt_exports(root, sources):
+    prx = (Path(root) / "core" / "libs" / "prx").resolve()
+    built_sources = {source for source in sources if prx in source.parents}
+    if not built_sources:
+        return None
+    pending = list(built_sources)
+    while pending:
+        source = pending.pop()
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name in INCLUDED_SOURCE.findall(text):
+            included = (source.parent / name).resolve()
+            if included not in built_sources and included.is_file():
+                built_sources.add(included)
+                pending.append(included)
+    unbuilt = []
+    for file in sorted(prx.glob("*/**/*.cpp")):
+        relative = file.relative_to(prx)
+        if any(part in ("tests", "test") for part in relative.parts[1:-1]) or file.resolve() in built_sources:
+            continue
+        if EXPORTED.search(file.read_text(encoding="utf-8", errors="replace")):
+            unbuilt.append(Path("core/libs/prx") / relative)
+    return unbuilt
+
+
 def commands(content):
     content = content.removeprefix("\ufeff")
     content = LEXICAL.sub(lambda match: re.sub(r"[^\n]", " ", match.group())
@@ -59,6 +112,17 @@ def commands(content):
     parsed_until = 0
     for command in COMMAND.finditer(code):
         if command.start() < parsed_until:
+            continue
+        name = command.group(1).lower()
+        if name in SCOPE_START or name.removeprefix("end") in SCOPE_START or name in {"else", "elseif"}:
+            depth, position = 1, command.end()
+            while position < len(code) and depth:
+                depth += (code[position] == "(") - (code[position] == ")")
+                position += 1
+            if depth:
+                raise ValueError(f"unterminated {name} command at position {command.start()}")
+            parsed_until = position
+            yield name, []
             continue
         position, arguments = command.end(), []
         while position < len(content):
@@ -72,7 +136,7 @@ def commands(content):
             if content[position] == "#":
                 position = content.find("\n", position)
                 if position < 0:
-                    break
+                    position = len(content)
                 continue
             token = ARGUMENT.match(content, position)
             if token is None:
@@ -87,14 +151,19 @@ def commands(content):
                 argument = argument[width:-width].removeprefix("\n")
             arguments.append(argument)
             position = token.end()
+        else:
+            raise ValueError(f"unterminated {command.group(1)} command at position {command.start()}")
 
 
 def registered(build):
     names = set()
-    pending = [Path(build).resolve()]
+    pending = [Path(build)]
     visited = set()
     while pending:
-        directory = pending.pop().resolve()
+        try:
+            directory = pending.pop().resolve()
+        except RuntimeError:
+            continue
         file = directory / "CTestTestfile.cmake"
         if directory in visited or not file.is_file():
             continue
@@ -180,17 +249,53 @@ def run_scripts(root, files):
     for name in files:
         if name.endswith("CMakeLists.txt") or name.endswith(".cmake"):
             content = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
-            for command, arguments in commands(content):
-                if command == "add_test":
+            tests = []
+            scopes = []
+            for index, (command, arguments) in enumerate(commands(content)):
+                if command in SCOPE_START:
+                    scopes.append((index, index, command))
+                elif command.removeprefix("end") in SCOPE_START:
+                    if scopes:
+                        scopes.pop()
+                elif command in {"else", "elseif"}:
+                    if scopes:
+                        scopes[-1] = (scopes[-1][0], index, scopes[-1][2])
+                elif command == "add_test" and arguments:
                     if arguments and arguments[0] == "NAME":
                         if "COMMAND" not in arguments[2:]:
                             continue
+                        test_name = arguments[1]
                         start = arguments.index("COMMAND", 2) + 1
                         end = next((index for index in range(start, len(arguments))
                                     if arguments[index] in ("CONFIGURATIONS", "WORKING_DIRECTORY", "COMMAND_EXPAND_LISTS", "BUILD_DEPENDS")), len(arguments))
                         arguments = arguments[start:end]
                     else:
+                        test_name = arguments[0]
                         arguments = arguments[1:]
+                    tests.append([test_name, arguments, False, scopes[:]])
+                elif command == "set_tests_properties" and "PROPERTIES" in arguments:
+                    properties = arguments.index("PROPERTIES")
+                    values = arguments[properties + 1:]
+                    for key, value in zip(values[::2], values[1::2]):
+                        if key == "DISABLED":
+                            for test in tests:
+                                if test[0] in arguments[:properties]:
+                                    exclusive = False
+                                    for left, right in zip(test[3], scopes):
+                                        if left[0] != right[0] or left[2] in {"foreach", "while", "function", "macro"}:
+                                            break
+                                        if left[1] != right[1]:
+                                            exclusive = True
+                                            break
+                                    if exclusive:
+                                        continue
+                                    disabled = value.upper() in ("1", "ON", "YES", "TRUE", "Y")
+                                    if test[3][:len(scopes)] == scopes:
+                                        test[2] = disabled
+                                    elif not disabled:
+                                        test[2] = False
+            for _, arguments, disabled, _ in tests:
+                if not disabled:
                     run.update(argument.rpartition("}")[2].lstrip("/") for argument in arguments)
         elif name.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
             for line in workflow_run_lines((Path(root) / name).read_text(encoding="utf-8", errors="replace")):
@@ -213,7 +318,7 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs")
+    parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs, or a library source that defines exports is never compiled")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
     parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
     parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
@@ -230,6 +335,7 @@ def main(argv=None):
     try:
         every = sorted(built(args.build))
         run = registered(args.build)
+        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:
@@ -250,9 +356,17 @@ def main(argv=None):
         print(f"error: {name} is built but no ctest test runs it")
     if fresh:
         print(f"{len(fresh)} test executable(s) would never run: ctest reports a full pass over what it knows, so a test nobody registered is invisible in CI")
-    if stale or fresh:
+    for path in unbuilt or []:
+        print(f"error: {path.as_posix()} defines APS5_VABI functions but no target compiles it")
+    if unbuilt:
+        print(f"{len(unbuilt)} library source(s) are never built: their exports are counted but never exported; list each in its library's add_library or target_sources")
+    if stale or fresh or unbuilt:
         return 1
     print(f"{len(every)} test executable(s), {len(unrun)} built and not run as recorded, none new")
+    if unbuilt is None:
+        print("no core/libs/prx source is compiled in this build; library sources were not checked")
+    else:
+        print("every core/libs/prx source that defines an APS5_VABI function is compiled")
     return 0
 
 

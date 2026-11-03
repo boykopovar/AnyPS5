@@ -31,6 +31,9 @@ static void RequireFailure(int descriptor, int error) {
     Require(fstatvfs_nid_postfix(descriptor, reinterpret_cast<LibcStatvfs*>(output.data())) == -1);
     Require(*__error_nid_postfix() == error);
     Require(output == saved);
+    *__error_nid_postfix() = 0;
+    Require(fstatvfs_nid_postfix(descriptor, nullptr) == -1);
+    Require(*__error_nid_postfix() == error);
 }
 
 static void RequireVolume(int descriptor, const std::filesystem::path& path) {
@@ -48,6 +51,18 @@ static void RequireVolume(int descriptor, const std::filesystem::path& path) {
     Require(fields[3] == fields[4]);
     Require((fields[7] & ~std::uint64_t{3}) == 0);
     Require(fields[9] == 0 && fields[10] >= 255);
+}
+
+static void RequireDevice(int descriptor) {
+    std::array<std::uint64_t, 13> guarded;
+    guarded.fill(0xA5A5A5A5A5A5A5A5ull);
+    *__error_nid_postfix() = 12345;
+    Require(fstatvfs_nid_postfix(descriptor, reinterpret_cast<LibcStatvfs*>(guarded.data() + 1)) == 0);
+    Require(*__error_nid_postfix() == 12345);
+    Require(guarded.front() == 0xA5A5A5A5A5A5A5A5ull && guarded.back() == guarded.front());
+    const auto* fields = guarded.data() + 1;
+    const std::array<std::uint64_t, 11> expected{0, 0, 2, 0, 0, 0, 512, 0, 512, 0, 255};
+    Require(std::memcmp(fields, expected.data(), sizeof(expected)) == 0);
 }
 
 int main() {
@@ -71,20 +86,46 @@ int main() {
     const int directory = sceKernelOpen("/anyps5-fstatvfs-test", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     RequireVolume(directory, root);
+    Require(fstatvfs_nid_postfix(directory, nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(close_nid_postfix(directory) == 0);
+    RequireFailure(directory, 9);
+
+    const int random = sceKernelOpen("/dev/urandom", SCE_KERNEL_O_RDONLY, 0);
+    Require(random >= 0);
+    RequireDevice(random);
+    Require(fstatvfs_nid_postfix(random, nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(close_nid_postfix(random) == 0);
+    RequireFailure(random, 9);
+
+    const int queue = kqueue_nid_postfix();
+    Require(queue >= 0);
+    RequireFailure(queue, 22);
+    Require(close_nid_postfix(queue) == 0);
+    RequireFailure(queue, 9);
 
     int pipes[2];
     Require(pipe_nid_postfix(pipes) == 0);
     RequireFailure(pipes[0], 22);
     RequireFailure(pipes[1], 22);
     for (int fd : pipes) Require(close_nid_postfix(fd) == 0);
+    RequireFailure(pipes[0], 9);
+    RequireFailure(pipes[1], 9);
+
     int sockets[2];
     Require(socketpair_nid_postfix(1, 1, 0, sockets) == 0);
     RequireFailure(sockets[0], 22);
+    RequireFailure(sockets[1], 22);
     for (int fd : sockets) Require(close_nid_postfix(fd) == 0);
     RequireFailure(sockets[0], 9);
+    RequireFailure(sockets[1], 9);
+
     RequireFailure(-1, 9);
+    RequireFailure(-100, 9);
+    RequireFailure(1024, 9);
+
     Require(close_nid_postfix(file) == 0);
+    RequireFailure(file, 9);
+
     RemovePathAlias_nid_no_patch("/anyps5-fstatvfs-test");
     Require(std::filesystem::remove(filePath));
     Require(std::filesystem::remove(root));
