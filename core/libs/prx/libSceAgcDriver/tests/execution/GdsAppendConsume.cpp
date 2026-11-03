@@ -317,11 +317,12 @@ void CheckBoundary(AgcDriver::VulkanDevice& device, AgcDriver::QueueState& queue
     Require(OrderedTimeouts() == timeouts, what + ": a write or atomic past the guest GDS changed the ordered-append timeout count");
 }
 
-void CheckChunkedRecovery(AgcDriver::VulkanDevice& device, AgcDriver::QueueState& queue) {
+std::string CheckChunkedRecovery(AgcDriver::VulkanDevice& device, AgcDriver::QueueState& queue) {
     const auto limit = device.graphicsContext().limits.maxComputeWorkGroupCount[1];
     if (limit >= ChunkOutput.size() / OrderedGroupLanes) {
-        std::printf("split-dispatch case skipped: the device dispatches %u workgroups along y in one chunk\n", limit);
-        return;
+        const auto note = "split-dispatch case skipped: the device dispatches " + std::to_string(limit) + " workgroups along y in one chunk";
+        std::puts(note.c_str());
+        return note;
     }
     const std::uint32_t rows = limit + 2u;
     const std::string what = std::to_string(rows) + " single-wave groups along y in chunks of " + std::to_string(limit) + ", row " + std::to_string(ChunkSkippedRow) + " skips ds_ordered_count";
@@ -345,24 +346,28 @@ void CheckChunkedRecovery(AgcDriver::VulkanDevice& device, AgcDriver::QueueState
     device.WaitIdle();
     const auto start = Starts[0];
     const auto rowZero = ChunkOutput[0];
-    if (rowZero != start && rowZero > start + limit / 2u && rowZero < start + rows) {
-        std::uint32_t firstRow = rows;
-        for (std::uint32_t row = 0; row < rows && firstRow == rows; ++row) {
-            if (ChunkOutput[row * OrderedGroupLanes] == start) firstRow = row;
-        }
-        std::printf("split-dispatch case skipped: row 0 started late on this driver (it returned %u, %u values were handed out before it, the first went to row %u, %u waves ran unordered); the ordering assumes waves start in WorkgroupId order, which Vulkan does not guarantee\n", rowZero, rowZero - start, firstRow, OrderedTimeouts() - timeouts);
-        return;
-    }
-    Require(rowZero == start, what + ": row 0 returned " + std::to_string(rowZero) + ", expected " + std::to_string(start));
+    const bool lateStart = rowZero != start && rowZero > start + limit / 2u && rowZero < start + rows;
+    if (!lateStart) Require(rowZero == start, what + ": row 0 returned " + std::to_string(rowZero) + ", expected " + std::to_string(start));
     Require(ChunkOutput[ChunkSkippedRow * OrderedGroupLanes] == UntouchedOrdered, what + ": the skipped row was written");
     for (std::uint32_t row = limit; row < rows; ++row) {
         const auto expected = start + row - 1u;
-        Require(ChunkOutput[row * OrderedGroupLanes] == expected, what + ": row " + std::to_string(row) + " in the second chunk returned " + std::to_string(ChunkOutput[row * OrderedGroupLanes]) + ", expected " + std::to_string(expected) + " (the second chunk in launch order after the first abandoned the turn)");
+        Require(ChunkOutput[row * OrderedGroupLanes] == expected, what + ": row " + std::to_string(row) + " in the second chunk returned " + std::to_string(ChunkOutput[row * OrderedGroupLanes]) + ", expected " + std::to_string(expected) + " (the second chunk is ordered after the reset)");
     }
     const auto counters = ReadCounters(queue);
     Require(counters[0] == start + rows - 1u, what + ": GDS counter 0 is " + std::to_string(counters[0]) + ", expected " + std::to_string(start + rows - 1u));
     const auto unordered = OrderedTimeouts() - timeouts;
-    Require(unordered == limit - ChunkSkippedRow - 1u, what + ": " + std::to_string(unordered) + " waves ran unordered, expected " + std::to_string(limit - ChunkSkippedRow - 1u) + " (the first chunk's rows after the skipped one, none of the second chunk's)");
+    if (!lateStart) {
+        Require(unordered == limit - ChunkSkippedRow - 1u, what + ": " + std::to_string(unordered) + " waves ran unordered, expected " + std::to_string(limit - ChunkSkippedRow - 1u) + " (the first chunk's rows after the skipped one, none of the second chunk's)");
+        return {};
+    }
+    std::uint32_t firstRow = rows;
+    for (std::uint32_t row = 0; row < rows && firstRow == rows; ++row) {
+        if (ChunkOutput[row * OrderedGroupLanes] == start) firstRow = row;
+    }
+    char note[320];
+    std::snprintf(note, sizeof(note), "split-dispatch row 0 and unordered-count checks skipped: row 0 was served late (it returned %u, %u values were handed out before it, the first went to row %u, %u waves ran unordered); the ordering assumes waves start in WorkgroupId order, which Vulkan does not guarantee", rowZero, rowZero - start, firstRow, unordered);
+    std::puts(note);
+    return note;
 }
 
 void CheckWaves(const Workgroup& workgroup, std::uint32_t result, std::uint32_t start, bool append, bool masked) {
@@ -519,13 +524,14 @@ int main() {
         timeouts = OrderedTimeouts();
         RunGroups(*device, OrderedGroupCode);
         CheckOrderedGroups(std::to_string(OrderedGroups) + " single-wave groups after a dispatch whose waves timed out, ds_ordered_count", Starts[0], ReadCounters(queue), timeouts);
-        CheckChunkedRecovery(*device, queue);
+        const auto chunkNote = CheckChunkedRecovery(*device, queue);
         SetCounters(queue);
         timeouts = OrderedTimeouts();
         RunGroups(*device, OrderedGroupCode);
         CheckOrderedGroups(std::to_string(OrderedGroups) + " single-wave groups after a split dispatch whose first chunk abandoned the turn, ds_ordered_count", Starts[0], ReadCounters(queue), timeouts);
         CheckBoundary(*device, queue);
-        std::puts("gds append consume tests passed");
+        if (chunkNote.empty()) std::puts("gds append consume tests passed");
+        else std::printf("gds append consume tests passed (%s)\n", chunkNote.c_str());
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
