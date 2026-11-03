@@ -594,6 +594,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
         state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationDescriptorSet, MeshWindowDescriptorSet);
         state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationBinding, 0u);
         state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationRestrict);
+        state.module.AddAnnotation(spv::OpDecorate, state.meshWindowBufferVariable, spv::DecorationCoherent);
         state.meshWindowSlotVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassWorkgroup, TypeU32(state)), spv::StorageClassWorkgroup);
         state.module.AddName(state.meshWindowSlotVariable, "mesh_window_slot");
         state.meshWindowBaseVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), spv::StorageClassPrivate);
