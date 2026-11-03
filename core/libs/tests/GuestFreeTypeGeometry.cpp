@@ -114,7 +114,8 @@ int main(int argc, char** argv) {
     FT_Matrix_Multiply_nid_postfix(nullptr, &unchanged);
     if (!Equal(unchanged, original) || untouched.x != 123 || untouched.y != -456 ||
         FT_Matrix_Invert_nid_postfix(nullptr) != FT_Err_Invalid_Argument) std::abort();
-    std::cout << "FT_GEOMETRY " << sizeof(FT_Long) << '\n';
+    constexpr bool nativeReference = sizeof(FT_Long) == 8 && FREETYPE_MAJOR == 2 && FREETYPE_MINOR == 13 && FREETYPE_PATCH == 3;
+    std::cout << "FT_GEOMETRY " << sizeof(FT_Long) << ' ' << nativeReference << '\n';
     GuestVector input{};
     GuestMatrix a{}, b{};
     while (std::cin >> input.x >> input.y >> a.xx >> a.xy >> a.yx >> a.yy >> b.xx >> b.xy >> b.yx >> b.yy) {
@@ -142,7 +143,7 @@ int main(int argc, char** argv) {
         Print(square);
         std::cout << ' ' << error;
         Print(inverse);
-        if constexpr (sizeof(FT_Long) == 8) {
+        if constexpr (nativeReference) {
             FT_Vector hostVector{static_cast<FT_Pos>(input.x), static_cast<FT_Pos>(input.y)};
             const FT_Matrix hostA{static_cast<FT_Fixed>(a.xx), static_cast<FT_Fixed>(a.xy), static_cast<FT_Fixed>(a.yx), static_cast<FT_Fixed>(a.yy)};
             FT_Matrix hostB{static_cast<FT_Fixed>(b.xx), static_cast<FT_Fixed>(b.xy), static_cast<FT_Fixed>(b.yx), static_cast<FT_Fixed>(b.yy)};

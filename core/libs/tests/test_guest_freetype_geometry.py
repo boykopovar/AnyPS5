@@ -65,17 +65,19 @@ def main():
     if not marker:
         raise AssertionError(result.stdout)
     lines = payload.splitlines()
-    width = int(lines.pop(0))
-    if width not in (4, 8) or len(lines) != len(cases):
-        raise AssertionError((width, len(lines), len(cases)))
+    width, native_reference = map(int, lines.pop(0).split())
+    if width not in (4, 8) or native_reference not in (0, 1) or len(lines) != len(cases):
+        raise AssertionError((width, native_reference, len(lines), len(cases)))
     for case, line in zip(cases, lines):
         actual = tuple(map(int, line.split()))
         expected = oracle(case)
-        if actual != expected * (2 if width == 8 else 1):
+        if actual != expected * (2 if native_reference else 1):
             raise AssertionError((case, actual, expected))
     print(f'{len(cases)} cases: vector transform, matrix multiply, aliased multiply and inversion match the arbitrary-precision oracle')
-    if width == 8:
-        print('All results also match bundled native LP64 FreeType')
+    if native_reference:
+        print('All results also match bundled native LP64 FreeType 2.13.3')
+    else:
+        print('Native comparison requires the FreeType 2.13.3 LP64 behavioral baseline')
 
 
 if __name__ == '__main__':
