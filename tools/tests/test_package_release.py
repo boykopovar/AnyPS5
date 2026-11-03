@@ -203,6 +203,23 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertEqual(list(self.output.iterdir()), [previous])
                 self.assertEqual(previous.read_bytes(), b"previous release")
 
+    def test_harfbuzz_release_includes_both_redistribution_notices(self):
+        (self.source / "core/libs/prx/libharfbuzz").mkdir()
+        (self.unpatched.parent / "libharfbuzz.prx").write_bytes(b"unpatched library")
+        (self.library.parent / "libharfbuzz.prx").write_bytes(b"HarfBuzz library bytes")
+        notices = {"COPYING": ("harfbuzz.txt", b"HarfBuzz notice"), "src/ms-use/COPYING": ("harfbuzz-ms-use.txt", b"Microsoft USE notice")}
+        for source, (_, content) in notices.items():
+            path = self.source / "3rdparty/harfbuzz" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            for name, content in notices.values():
+                self.assertEqual(archive.read("libs/licenses/" + name), content)
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            for name, content in notices.values():
+                self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
+
     def test_ajm_vibration_decoder_license_in_archives(self):
         (self.source / "core/libs/prx/libSceAjm.native").mkdir()
         (self.unpatched.parent / "libSceAjm.native.prx").write_bytes(b"unpatched library")

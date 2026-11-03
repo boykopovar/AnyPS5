@@ -2,7 +2,7 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libharfbuzz/Export.cpp) - 35 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libharfbuzz.c) and the [selected export metadata](https://gist.github.com/kyon-eth/510aa3fcaf09cbe8b52048b44e4e67c0/b909f17c99ecd6323c085f70064548789062d57e) from an older `libharfbuzz` image and a later `libSceVshHarfBuzz` image (SHA-256 `25af97e02c1fa8d318ff3697eb8a79057ee9b8c5e5e4ec321f25114aceb05628`). The later image has a different module and library identity; matching NIDs do not establish forwarding or equivalent behavior. The version labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Callable exports](../../../core/libs/prx/libharfbuzz/Export.cpp) - 35 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libharfbuzz.c) and the [selected export metadata](https://gist.github.com/kyon-eth/510aa3fcaf09cbe8b52048b44e4e67c0/b909f17c99ecd6323c085f70064548789062d57e) from an older `libharfbuzz` image and a later `libSceVshHarfBuzz` image (SHA-256 `25af97e02c1fa8d318ff3697eb8a79057ee9b8c5e5e4ec321f25114aceb05628`). The later image has a different module and library identity; matching NIDs do not establish forwarding or equivalent behavior. The version labels are not authenticated. The 21 exports still in `Export.cpp` retain unverified placeholder prototypes and throw through `NotImplemented_nid_no_patch`; the font APIs below have public-contract implementations.
 
 | Name | NID |
 | --- | --- |
@@ -41,3 +41,9 @@
 | `hb_ot_layout_table_get_script_tags` | `wf6CfVJj9PQ` |
 | `hb_ot_tag_to_script` | `uKjh3hI1npw` |
 | `hb_shape` | `dM3hP4y99rM` |
+
+
+### Font callbacks
+
+- [Font functions](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp): Console ABI, HarfBuzz version and behavior have not been measured. Fourteen font lifecycle, callback-table, immutability, scale and ppem APIs follow source-built [HarfBuzz 10.0.1](https://github.com/harfbuzz/harfbuzz/blob/a1d9bfe62818ef0fa9cf63b6e6d51436b1c93cbc/src/hb-font.h). They use backend-owned opaque handles and bridge native callbacks and destruction to guest System V callbacks. Callback data and font data are distinct; replacement and final release follow the backend's reference counting. Foreign object layouts and forwarding from `libSceVshHarfBuzz` are not established. Bridge allocation failure throws `std::bad_alloc`; no console allocation-failure equivalence is claimed.
+- [Font callbacks](../../../core/libs/prx/libharfbuzz/FontFunctions.cpp) are exercised by runtime tests using actual exports before and after NID patching and through native shaping with guest callbacks. They establish adapter behavior only. Null destruction and null-face construction follow the backend; other null font/function-table operations throw because no console contract is established. The other 21 exports, including guest shaping, buffers, faces and blobs, remain throwing placeholders. No title compatibility is claimed.
