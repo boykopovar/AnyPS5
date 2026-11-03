@@ -2054,6 +2054,17 @@ float APS5_VABI expf_nid_postfix(float x) {
     return y * twopk * twom100;
 }
 
+/* Adapted from FreeBSD 59bc2f095289a10b8cfa55cbb2b45c3bd6c2d4ae lib/msun/src/s_erff.c: https://github.com/freebsd/freebsd-src/blob/59bc2f095289a10b8cfa55cbb2b45c3bd6c2d4ae/lib/msun/src/s_erff.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static float ErffSmallRatio(float z) {
     const float r = 1.2837916613e-01f + z * (-3.2504209876e-01f + z * (-2.8481749818e-02f + z * (-5.7702702470e-03f + z * -2.3763017452e-05f)));
     const float s = 1.0f + z * (3.9791721106e-01f + z * (6.5022252500e-02f + z * (5.0813062117e-03f + z * (1.3249473704e-04f + z * -3.9602282413e-06f))));
