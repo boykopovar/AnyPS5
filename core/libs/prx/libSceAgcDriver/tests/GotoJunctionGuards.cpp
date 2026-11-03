@@ -172,6 +172,43 @@ void CheckJunctionRerunBeforeUse() {
     require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi was narrowed at a use the junction can reach again without the goto branch");
 }
 
+void CheckLoopHeaderInnerJunction() {
+    Graph graph;
+    MakeBlocks(graph, 8u);
+    IrBlock* entry = graph.blocks[0];
+    IrBlock* header = graph.blocks[1];
+    IrBlock* body = graph.blocks[2];
+    IrBlock* latch = graph.blocks[3];
+    IrBlock* exit = graph.blocks[4];
+    IrBlock* junction = graph.blocks[5];
+    IrBlock* below = graph.blocks[6];
+    IrBuilder builder(graph.program);
+    builder.SetInsertionPoint(*entry);
+    auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+    auto& initial = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&lane, &builder.Constant(2u)});
+    auto& yes = builder.ConstantBool(true);
+    auto& no = builder.ConstantBool(false);
+    Branch(graph, 0u, 1u);
+    auto& innerGuard = Phi(builder, *header, IrType::Bool, {{entry, &no}});
+    auto& innerPhi = Phi(builder, *header, IrType::U32, {{entry, &initial}});
+    Branch(graph, 1u, 2u);
+    builder.SetInsertionPoint(*body);
+    auto& counter = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&innerPhi, &builder.Constant(1u)});
+    auto& leave = builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&counter, &builder.Constant(16u)});
+    BranchIf(graph, 2u, leave, 4u, 3u);
+    Branch(graph, 3u, 1u);
+    innerGuard.AddPhiOperand(latch, &yes);
+    innerPhi.AddPhiOperand(latch, &counter);
+    Branch(graph, 4u, 5u);
+    auto& guard = Phi(builder, *junction, IrType::Bool, {{exit, &innerGuard}});
+    auto& merged = Phi(builder, *junction, IrType::U32, {{exit, &innerPhi}});
+    BranchIf(graph, 5u, guard, 6u, 7u);
+    builder.SetInsertionPoint(*below);
+    auto& use = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&merged});
+    const auto replaced = Refine(graph);
+    require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi was narrowed to a loop value redefined after the inner junction it came through");
+}
+
 }
 
 int main() {
@@ -181,6 +218,7 @@ int main() {
         {"entry value across the loop", [] { CheckNestedJunctionAfterJunction(false); }},
         {"nested junction value after the junction", [] { CheckNestedJunctionAfterJunction(true); }},
         {"junction rerun before the use", CheckJunctionRerunBeforeUse},
+        {"loop header inner junction", CheckLoopHeaderInnerJunction},
     };
     int failures = 0;
     for (const auto& [name, check] : checks) {

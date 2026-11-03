@@ -253,9 +253,16 @@ private:
                 if (guard->ImmediateBool() != expected) continue;
                 kept = RefineValue(arm, facts, factSet, relied, depth + 1u);
             } else if (guard->IsPhi() && arm->IsPhi() && guard->Parent() == arm->Parent()) {
-                kept = Restrict(*arm, *guard, expected, facts, factSet, relied, depth + 1u);
                 const auto block = m_index.find(arm->Parent());
-                if (kept == nullptr || block == m_index.end()) return nullptr;
+                const auto from = m_index.find(predecessor);
+                if (block == m_index.end() || from == m_index.end() || !Dominates(block->second, from->second)) return nullptr;
+                kept = Restrict(*arm, *guard, expected, facts, factSet, relied, depth + 1u);
+                if (kept == nullptr) return nullptr;
+                kept = kept->Resolve();
+                if (!kept->HasImmediate() && kept->Parent() != nullptr) {
+                    const auto defined = m_index.find(kept->Parent());
+                    if (defined == m_index.end() || defined->second == block->second || !Dominates(defined->second, block->second)) return nullptr;
+                }
                 relied.insert(block->second);
             } else {
                 kept = RefineValue(arm, facts, factSet, relied, depth + 1u);
