@@ -111,6 +111,7 @@ struct DepthTarget {
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
+    bool gcn = false;
 };
 
 struct State {
@@ -146,6 +147,8 @@ struct State {
     std::uint32_t reversedBlend = 0;
     VkExtent2D renderExtent;
     std::uint32_t renderLayers = 1;
+    std::uint32_t meshLayerBase = 0;
+    std::uint32_t meshLayerCount = 0xffffffffu;
     std::uint32_t layerExports = 0;
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;
@@ -256,6 +259,12 @@ struct DepthCopyPass {
 std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);
 bool DepthResummarizeDrawsNothing(const QueueState& queue);
+struct DepthRenderControl {
+    std::uint64_t address;
+    std::uint32_t samples;
+    std::uint32_t control;
+};
+std::optional<DepthRenderControl> DecodeDepthRenderControl(const QueueState& queue);
 // The message DecodeState (or the pixel stage decode after it) would throw for the register rules
 // this precheck covers, evaluated without exceptions before the draw is decoded; empty when they
 // pass (DecodeState still checks everything). A register a rule needs that is absent is no verdict.
