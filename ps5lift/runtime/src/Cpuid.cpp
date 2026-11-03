@@ -68,3 +68,15 @@ extern "C" std::uint64_t ps5lift_xgetbv(const std::uint64_t address, const std::
     if (index > 1) ps5lift_fail("xgetbv register 0x%" PRIx32 " at 0x%" PRIx64 " has no PS5 value", index, address);
     return EnabledState;
 }
+
+extern "C" void GuestCpuCpuid_nid_no_patch(const std::uint32_t leaf, const std::uint32_t subleaf, std::uint32_t* const registers) {
+    const auto answer = Identify(0, leaf, subleaf);
+    registers[0] = answer.Eax;
+    registers[1] = answer.Ebx;
+    registers[2] = answer.Ecx;
+    registers[3] = answer.Edx;
+}
+
+extern "C" std::uint64_t GuestCpuXgetbv_nid_no_patch(const std::uint32_t index) {
+    return ps5lift_xgetbv(0, index);
+}
