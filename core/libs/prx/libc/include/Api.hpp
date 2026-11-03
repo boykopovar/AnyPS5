@@ -1626,6 +1626,15 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v218_Xinvalid_argumentEPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v215_Xruntime_errorEPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Xoverflow_errorEPKc_nid_postfix(const char* message);
+extern std::int32_t _ZNSt8__sce_v26_Winit9_Init_cntE_nid_postfix;
+extern std::int32_t _ZNSt8__sce_v28ios_base4Init9_Init_cntE_nid_postfix;
+void APS5_VABI _ZNSt8__sce_v26_WinitC1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v26_WinitC2Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v26_WinitD1Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v26_WinitD2Ev_nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v28ios_base4Init10_Init_ctorEPS1__nid_postfix(void* self);
+void APS5_VABI _ZNSt8__sce_v28ios_base4Init10_Init_dtorEPS1__nid_postfix(void* self);
+std::int32_t* APS5_VABI _ZNSt8__sce_v28ios_base4Init14_Init_cnt_funcEv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v211_Xbad_allocEv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_19bad_optional_accessE_nid_postfix(const LibcException::ExceptionObject*);
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v26_ThrowERKNS_12bad_weak_ptrE_nid_postfix(const LibcException::ExceptionObject*);
