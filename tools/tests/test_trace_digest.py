@@ -60,6 +60,66 @@ def excessive_trace_json(opening, closing):
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+class GpuOccupancyTests(unittest.TestCase):
+    def trace(self, ranges, begin=0, end=15000, thread="gpu"):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": thread}},
+                  {"name": "present", "ph": "i", "ts": begin, "args": {"present": 1}},
+                  {"name": "present", "ph": "i", "ts": end, "args": {"present": 2}}]
+        for index, (start, duration) in enumerate(ranges):
+            events.append(dict(complete(1, "batch", start, duration), args={"batch": index}))
+        return trace_digest.Trace(events)
+
+    def test_gpu_occupancy_is_the_union_of_clipped_ranges(self):
+        for ranges, expected in (([(0, 10000), (5000, 10000)], 15),
+                                 ([(0, 15000), (3000, 2000)], 15),
+                                 ([(1000, 2000), (6000, 3000)], 5),
+                                 ([(0, 5000), (5000, 10000)], 15),
+                                 ([(-5000, 10000), (3000, 20000)], 15),
+                                 ([(-10000, 5000), (20000, 5000)], 0)):
+            with self.subTest(ranges=ranges):
+                result = trace_digest.digest(self.trace(ranges))
+                gpu = result["threads"][0]
+                self.assertAlmostEqual(gpu["busy_ms_per_frame"], expected)
+                self.assertAlmostEqual(gpu["busy_pct"], expected / 15 * 100)
+                self.assertAlmostEqual(gpu["untraced_ms_per_frame"], 15 - expected)
+                self.assertEqual(gpu["wait_ms_per_frame"], 0)
+
+    def test_overlap_keeps_individual_batch_and_inclusive_slice_durations(self):
+        result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)]))
+        self.assertEqual([batch["ms"] for batch in result["largest_gpu_batches"]], [10, 10])
+        self.assertEqual(result["top_slices_ms_per_frame"], [{"name": "batch", "ms": 20}])
+        self.assertEqual(result["threads"][0]["top"], [{"name": "batch", "ms_per_frame": 15}])
+
+    def test_no_present_bounds_still_union_gpu_ranges(self):
+        trace = self.trace([(0, 10000), (5000, 10000)])
+        trace.presents.clear()
+        self.assertEqual(trace_digest.digest(trace)["threads"][0]["busy_ms_per_frame"], 15)
+
+    def test_cpu_scope_accounting_is_unchanged(self):
+        result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)], thread="worker"))
+        self.assertEqual(result["threads"][0]["busy_ms_per_frame"], 10)
+
+    def test_cli_reports_overlapping_gpu_batches_in_json_and_markdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.json"
+            events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}},
+                      complete(1, "batch", 0, 10000), complete(1, "batch", 5000, 10000),
+                      {"name": "present", "ph": "i", "ts": 0, "args": {"present": 1}},
+                      {"name": "present", "ph": "i", "ts": 15000, "args": {"present": 2}}]
+            path.write_text(json.dumps(events), encoding="utf-8")
+            for output in ([], ["--json"]):
+                with self.subTest(output=output):
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *output],
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if output:
+                        gpu = json.loads(result.stdout)["threads"][0]
+                        self.assertEqual(gpu["busy_pct"], 100)
+                        self.assertEqual(gpu["untraced_ms_per_frame"], 0)
+                    else:
+                        self.assertIn("| gpu | 15.0 (100 %) | 0.0 (0 %) | 0.0 |", result.stdout)
+
+
 class TraceEventLossTests(unittest.TestCase):
     def marker(self, tid=1, lost=8):
         return {"name": "trace buffer full", "ph": "i", "ts": 1500, "pid": 7, "tid": tid,
