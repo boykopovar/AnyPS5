@@ -35,12 +35,12 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 using AgcDriver::Graphics::StorageTexture;
-constexpr std::uint32_t Side = 256;
+constexpr std::uint32_t Side = 128;
 constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t Block = 0x10000;
-constexpr std::size_t SurfaceBytes = 4 * Block;
+constexpr std::size_t SurfaceBytes = Block;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t Stored = 0x12345678u;
 
@@ -164,6 +164,11 @@ int main() {
         struct ShutdownGuard {
             ~ShutdownGuard() { try { AgcDriverShutdown_nid_postfix(); } catch (...) {} }
         } shutdown;
+        {
+            Surface probe;
+            const auto described = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(probe.Texels()))).guestBytes;
+            Require(described == SurfaceBytes && described <= StorageTexture::SmallStoreBytes, "label ordered flush: the surface is not a small storage image");
+        }
         alignas(256) static std::uint32_t words[64]{};
         GuestAllocations::Mutation().Add(words, sizeof(words), true, true, true);
         struct Unregister {
