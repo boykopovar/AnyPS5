@@ -998,6 +998,7 @@ if(BUILD_TESTING)
         if(WIN32)
             add_test(NAME windows_extended_paths COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_extended_paths.py $<TARGET_FILE:relinker>)
+            set_tests_properties(windows_extended_paths PROPERTIES SKIP_RETURN_CODE 77)
         endif()
         add_test(NAME string_table_bounds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_string_table_bounds.py $<TARGET_FILE:relinker>)
