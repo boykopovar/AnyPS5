@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -21,8 +22,14 @@ GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates);
 bool GuestBytesZero(std::uint64_t begin, std::uint64_t end);
 void SetResidentAddressSpaceLimit(std::uint64_t bytes);
 void SetHeapMirrorBudget(std::uint64_t bytes);
+void SetDeviceHeapFullForTests(bool full);
 std::uint64_t HeapMirrorSlabBudget();
 std::shared_ptr<void> HoldHeapMirror(std::uint64_t address);
+
+class HeapMirrorSlabRefused : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 class ResidentBuffer : public std::enable_shared_from_this<ResidentBuffer> {
 public:

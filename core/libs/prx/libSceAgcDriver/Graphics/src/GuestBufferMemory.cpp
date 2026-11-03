@@ -2713,8 +2713,14 @@ bool mirrorsEnabled() {
 
 std::atomic<std::uint64_t> heapMirrorMemoryLimit{std::numeric_limits<std::uint64_t>::max()};
 
+std::atomic<std::int64_t> heapMirrorLimitLoweredMs{0};
+
 std::uint64_t heapMirrorBudget() {
-    const auto limit = heapMirrorMemoryLimit.load(std::memory_order_acquire);
+    auto limit = heapMirrorMemoryLimit.load(std::memory_order_acquire);
+    if (limit != std::numeric_limits<std::uint64_t>::max()) {
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (nowMs - heapMirrorLimitLoweredMs.load(std::memory_order_acquire) >= 30000 && heapMirrorMemoryLimit.compare_exchange_strong(limit, std::numeric_limits<std::uint64_t>::max(), std::memory_order_acq_rel)) limit = std::numeric_limits<std::uint64_t>::max();
+    }
     if (const auto test = testHeapMirrorBudget.load(std::memory_order_acquire); test != 0) return std::min(test, limit);
     static const std::uint64_t bytes = [] {
         const char* value = std::getenv("APS5_HEAP_MIRROR_MIB");
@@ -2813,7 +2819,7 @@ void reserveHeapBytes(std::uint64_t address, std::uint64_t bytes, std::uint64_t 
 
 bool shrinkHeapMirrorBudget(const std::runtime_error& error) {
     constexpr std::uint64_t step = std::uint64_t{256} << 20u;
-    if (std::string_view(error.what()).find("of a heap mirror slab") == std::string_view::npos) return false;
+    if (dynamic_cast<const HeapMirrorSlabRefused*>(&error) == nullptr) return false;
     auto& state = Mirrors();
     std::uint64_t held = 0;
     {
@@ -2821,6 +2827,7 @@ bool shrinkHeapMirrorBudget(const std::runtime_error& error) {
         held = state.heapBytes;
     }
     if (held <= step) return false;
+    heapMirrorLimitLoweredMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_release);
     heapMirrorMemoryLimit.store(held - step, std::memory_order_release);
     std::fprintf(stderr, "[gpu] device memory refused a heap mirror slab; heap mirror budget lowered to %llu MiB\n", static_cast<unsigned long long>((held - step) >> 20u));
     return true;

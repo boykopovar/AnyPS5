@@ -36,6 +36,8 @@ constexpr VkDeviceSize StagingChunkBytes = VkDeviceSize{32} << 20u;
 constexpr std::uint64_t SlabBytes = std::uint64_t{16} << 20u;
 constexpr std::uint32_t SlabBlocks = static_cast<std::uint32_t>(SlabBytes / BlockSize);
 constexpr std::uint64_t ZeroBytes = SlabBytes;
+
+std::atomic<bool> deviceHeapFullForTests{false};
 constexpr VkAccessFlags TransferredAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
 
 [[noreturn]] void fail(const char* step, VkResult result) {
@@ -152,7 +154,11 @@ public:
         }
         refuseSlab();
         auto slab = std::make_unique<Slab>();
-        slab->memory = allocate(SlabBytes, "vkAllocateMemory of a heap mirror slab");
+        try {
+            slab->memory = allocate(SlabBytes, "vkAllocateMemory of a heap mirror slab");
+        } catch (const std::runtime_error& error) {
+            throw HeapMirrorSlabRefused(error.what());
+        }
         slab->host = std::unique_ptr<std::byte[]>(new std::byte[SlabBytes]);
         for (std::uint32_t index = SlabBlocks; index-- > 1;) slab->free.push_back(index);
         slabs.push_back(std::move(slab));
@@ -178,20 +184,22 @@ public:
 private:
     void refuseSlab() {
         constexpr std::uint64_t Reserve = std::uint64_t{256} << 20u;
-        const auto held = (Slabs().slabs.load(std::memory_order_relaxed) + 1) * SlabBytes;
+        const auto live = Slabs().slabs.load(std::memory_order_relaxed) * SlabBytes;
+        if (live <= Reserve) return;
+        const auto held = live + SlabBytes;
         const char* reason = nullptr;
         const auto limit = std::max((HeapMirrorSlabBudget() + SlabBytes - 1) / SlabBytes, std::uint64_t{1}) * SlabBytes;
         if (held > limit) reason = "the heap mirrors' slabs would pass APS5_HEAP_MIRROR_MIB";
         thread_local std::chrono::steady_clock::time_point lastHeadroomRefusal{};
         const auto now = std::chrono::steady_clock::now();
-        const auto heap = context.ReportedHeap(context.memory.memoryTypes[type].heapIndex);
-        if (reason == nullptr && heap.budget != 0 && (heap.usage + SlabBytes + Reserve > heap.budget) && now - lastHeadroomRefusal > std::chrono::seconds(2)) {
+        const auto heap = deviceHeapFullForTests.load(std::memory_order_relaxed) ? Context::HeapReport{SlabBytes, SlabBytes} : context.ReportedHeap(context.memory.memoryTypes[type].heapIndex);
+        if (reason == nullptr && !heap.Fits(SlabBytes + Reserve) && now - lastHeadroomRefusal > std::chrono::seconds(2)) {
             reason = "its device heap would keep less than 256 MiB of its reported budget";
             lastHeadroomRefusal = now;
         }
         if (reason == nullptr) return;
         reportSlabs("refused");
-        throw std::runtime_error(std::string("vkAllocateMemory of a heap mirror slab refused: ") + reason);
+        throw HeapMirrorSlabRefused(std::string("vkAllocateMemory of a heap mirror slab refused: ") + reason);
     }
 
     VkDeviceMemory allocate(std::uint64_t bytes, const char* operation) {
@@ -418,6 +426,10 @@ GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates) {
         }
     }
     return runs;
+}
+
+void SetDeviceHeapFullForTests(bool full) {
+    deviceHeapFullForTests.store(full, std::memory_order_relaxed);
 }
 
 void SetResidentAddressSpaceLimit(std::uint64_t bytes) {
