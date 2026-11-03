@@ -128,6 +128,8 @@ RelinkResult RelinkerPipeline::Relink() {
     if (!hasDynamicSegment)
         throw RelinkerException("No PT_DYNAMIC segment found");
 
+    const std::vector<std::uint8_t>& raw = elfReader->GetRawBytes();
+
     bool hasEhFrameSegment = false;
     for (const auto& ph : programHeaders) {
         if (ph.Type != PT_GNU_EH_FRAME)
@@ -216,6 +218,7 @@ RelinkResult RelinkerPipeline::Relink() {
 
     auto validateSceTableRange = [&](const std::int64_t osTag, const FileByteOffset offset, const ByteCount size, const char* name) {
         if (!hasSceDynlibData || !hasTag(osTag)) return;
+        if (size == 0 || offset > raw.size() || size > raw.size() - offset) return;
         if (offset < sceTableBase || offset - sceTableBase > sceTableSize || size > sceTableSize - (offset - sceTableBase))
             throw RelinkerException(std::string(name) + " is outside PT_SCE_DYNLIBDATA", offset);
     };
@@ -283,10 +286,17 @@ RelinkResult RelinkerPipeline::Relink() {
     std::vector<NidReference> nidRefs;
     std::vector<std::string> neededLibraries;
 
-    const std::vector<std::uint8_t>& raw = elfReader->GetRawBytes();
     const auto relrRelocations = ReadRelrRelocations(raw, programHeaders, dynTags);
     const std::optional<ByteCount> dynSymTabSize = hasTag(DT_OS_SYMTABSZ)
         ? std::optional<ByteCount>(getTagValue(DT_OS_SYMTABSZ)) : std::nullopt;
+    std::optional<ByteCount> dynSymTabBound = dynSymTabSize;
+    if (hasSceDynlibData && hasTag(DT_OS_SYMTAB)) {
+        if (dynSymTabOffset < sceTableBase || dynSymTabOffset - sceTableBase > sceTableSize)
+            throw RelinkerException("Dynamic symbol table is outside PT_SCE_DYNLIBDATA", dynSymTabOffset);
+        const ByteCount sceSymTabSize = sceTableSize - (dynSymTabOffset - sceTableBase);
+        if (!dynSymTabBound || sceSymTabSize < *dynSymTabBound)
+            dynSymTabBound = sceSymTabSize;
+    }
     validateSceTableRange(DT_OS_SYMTAB, dynSymTabOffset, dynSymTabSize.value_or(0), "Dynamic symbol table");
 
     if (dynStrTabOffset > raw.size() || dynStrTabSize > raw.size() - dynStrTabOffset)
@@ -341,7 +351,7 @@ RelinkResult RelinkerPipeline::Relink() {
         const ByteCount off = static_cast<ByteCount>(symIdx) * symEntSize;
         const FileByteOffset symOff = dynSymTabOffset + off;
         if (symOff < dynSymTabOffset || symOff > raw.size() || raw.size() - symOff < symEntSize
-            || (dynSymTabSize && (off > *dynSymTabSize || symEntSize > *dynSymTabSize - off)))
+            || (dynSymTabBound && (off > *dynSymTabBound || symEntSize > *dynSymTabBound - off)))
             throw RelinkerException("Symbol table entry out of bounds", symOff);
         if (symIdx == 0 && std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                        [](const std::uint8_t byte) { return byte != 0; }))
