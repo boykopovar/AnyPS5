@@ -48,11 +48,9 @@
 
 extern "C" {
 
-WebRtcAudioOptions* APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(WebRtcAudioOptions* result, const void* source) {
+WebRtcAudioOptions* APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(WebRtcAudioOptions* result, const void*) {
     if (!result)
         throw std::invalid_argument("AudioSourceInterface::options requires a result");
-    if (!source)
-        throw std::invalid_argument("AudioSourceInterface::options requires a source");
     std::memset(result, 0, sizeof(WebRtcAudioOptions));
     return result;
 }
