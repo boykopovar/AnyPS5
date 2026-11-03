@@ -3023,12 +3023,16 @@ int main(int argc, char** argv) {
             std::printf("Native D32S8 stencil view cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--aliased-depth") {
+        if (argc == 3 && std::string_view(argv[1]) == "--aliased-depth") {
+            const std::string_view layoutName(argv[2]);
+            Require(layoutName == "depth-only" || layoutName == "stencil" || layoutName == "no-stencil", "--aliased-depth takes depth-only, stencil or no-stencil");
+            const auto wanted = layoutName == "depth-only" ? HtileLayout::DepthOnly : layoutName == "stencil" ? HtileLayout::Stencil : HtileLayout::NoStencil;
             const auto supported = [&](std::uint32_t samples, HtileLayout layout) { return DepthSupported(context, layout == HtileLayout::NoStencil ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D32_SFLOAT_S8_UINT, samples) && (layout == HtileLayout::NoStencil || (context.limits.framebufferStencilSampleCounts & samples) != 0u) && (context.limits.framebufferColorSampleCounts & samples) != 0u; };
             Require(supported(4u, HtileLayout::DepthOnly), "the aliased depth plane regression requires sampled D32S8 and multisampled colour with four samples");
             std::uint32_t checked = 0u, unavailable = 0u;
             for (const auto samples : {2u, 4u, 8u}) {
                 for (const auto& htile : aliasedDepthHtiles) {
+                    if (htile.layout != wanted) continue;
                     const bool stencilInHtile = htile.layout == HtileLayout::Stencil;
                     if (!supported(samples, htile.layout)) { unavailable += stencilInHtile ? 29u : 27u; continue; }
                     for (const auto which : {DepthAliasCase::Mismatched, DepthAliasCase::Matching, DepthAliasCase::Partial, DepthAliasCase::Unchanged, DepthAliasCase::DrawnBeforeImport, DepthAliasCase::DrawnAfterImport, DepthAliasCase::NewTargetAfterImport, DepthAliasCase::SameFillAfterImport, DepthAliasCase::OtherFillAfterImport, DepthAliasCase::PartialFillAfterImport, DepthAliasCase::DrawnThenSameFill, DepthAliasCase::HtileWordThenSameFill, DepthAliasCase::NegativeZeroFill, DepthAliasCase::NanFill, DepthAliasCase::FillShortOfAlias, DepthAliasCase::PartialThenSameFill, DepthAliasCase::OtherThenSameFill, DepthAliasCase::DoubleSameFill, DepthAliasCase::TripleSameFill, DepthAliasCase::SameOtherSameFill, DepthAliasCase::SamePartialSameFill, DepthAliasCase::SameDrawSameFill, DepthAliasCase::UnknownThenPartialFill}) { CheckAliasedDepth(context, samples, htile, which); ++checked; }
@@ -3053,7 +3057,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            std::printf("Native depth with an aliased depth plane cases checked=%u unavailable=%u\n", checked, unavailable);
+            std::printf("Native depth with an aliased depth plane, %s HTILE, cases checked=%u unavailable=%u\n", argv[2], checked, unavailable);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--expand-gate") {
