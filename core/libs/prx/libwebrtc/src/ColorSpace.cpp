@@ -42,8 +42,15 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
+
+namespace {
+
+constexpr std::size_t ColorSpaceCopySize = offsetof(WebRtcColorSpace, hasHdrMetadata) + sizeof(bool);
+
+}
 
 extern "C" {
 
@@ -52,7 +59,7 @@ void APS5_VABI _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(WebRtcColorSpace* colo
         throw std::invalid_argument("ColorSpace copy constructor requires a color space");
     if (!other)
         throw std::invalid_argument("ColorSpace copy constructor requires a source");
-    std::memmove(colorSpace, other, sizeof(WebRtcColorSpace));
+    std::memmove(colorSpace, other, ColorSpaceCopySize);
 }
 
 WebRtcColorSpace* APS5_VABI _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(WebRtcColorSpace* colorSpace, const WebRtcColorSpace* other) {
@@ -60,7 +67,7 @@ WebRtcColorSpace* APS5_VABI _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(WebRtcCol
         throw std::invalid_argument("ColorSpace::operator= requires a color space");
     if (!other)
         throw std::invalid_argument("ColorSpace::operator= requires a source");
-    std::memmove(colorSpace, other, sizeof(WebRtcColorSpace));
+    std::memmove(colorSpace, other, ColorSpaceCopySize);
     return colorSpace;
 }
 
