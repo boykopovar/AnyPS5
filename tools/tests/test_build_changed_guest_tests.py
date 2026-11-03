@@ -372,6 +372,21 @@ class Main(unittest.TestCase):
         self.assertNotIn("Traceback", errors.getvalue())
 
 
+class ArtifactOwnerNames(unittest.TestCase):
+    def test_dotted_artifact_names_keep_non_executable_suffixes(self):
+        target = {"name": "guest_target", "artifacts": [{"path": "tests/guest.check"}]}
+        aliases = build_changed_guest_tests.target_artifact_names(target)
+        self.assertEqual(build_changed_guest_tests.test_owner(["/build/tests/guest.check"], aliases), "guest_target")
+        self.assertIsNone(build_changed_guest_tests.test_owner(["/build/tests/guest.other"], aliases))
+        self.assertIsNone(build_changed_guest_tests.test_owner(["/build/tests/guest.check"], {"guest": "unrelated"}))
+
+    def test_dotted_windows_artifact_names_remove_only_exe(self):
+        target = {"name": "guest_target", "artifacts": [{"path": "tests/guest.check.EXE"}]}
+        aliases = build_changed_guest_tests.target_artifact_names(target)
+        self.assertEqual(build_changed_guest_tests.test_owner(["C:/build/tests/guest.check.EXE"], aliases), "guest_target")
+        self.assertEqual(build_changed_guest_tests.test_owner(["python", "C:/build/tests/guest.check.EXE"], aliases), "guest_target")
+
+
 if __name__ == "__main__":
     with contextlib.redirect_stdout(io.StringIO()):
         unittest.main()
