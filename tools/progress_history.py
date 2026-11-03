@@ -14,7 +14,7 @@ from pathlib import Path
 
 import progress
 
-SERIES = (("libraries", "System library functions", "#2f81f7"), ("shaders", "GPU shader instructions", "#2ea043"))
+SERIES = (("libraries", "System library functions", "#2f81f7"), ("shaders", "Decoded shader forms", "#2ea043"))
 WIDTH, LEFT, RIGHT, TITLE, PANEL, GAP, AXIS = 900, 56, 190, 34, 150, 16, 32
 MAX_DOTS = 45
 BACKGROUND, GRID, TEXT, MUTED = "#0d1117", "#30363d", "#c9d1d9", "#8b949e"
@@ -38,7 +38,14 @@ def daily_commits(ref):
 
 
 def measure(sha):
-    paths = [progress.PRX.relative_to(progress.ROOT).as_posix(), progress.OPCODES.relative_to(progress.ROOT).as_posix()]
+    paths = [
+        progress.PRX.relative_to(progress.ROOT).as_posix(),
+        progress.OPCODES.relative_to(progress.ROOT).as_posix(),
+        progress.shader_scan.RECOMPILER.rstrip("/"),
+        progress.shader_scan.AGC_DRIVER.rstrip("/"),
+        "tools/rdna2_isa_forms.txt",
+    ]
+    paths = [path for path in paths if (progress.ROOT / path).exists()]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         try:
@@ -52,23 +59,51 @@ def measure(sha):
         saved = progress.PRX, progress.OPCODES
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
         try:
-            libraries, shaders = progress.collect_libraries(), progress.collect_shaders()
+            libraries = progress.collect_libraries()
+            try:
+                shader_source = progress.collect_shader_source(root)
+            except (OSError, AttributeError, progress.shader_scan.ScanError):
+                shader_source = None
         except (OSError, AttributeError):
             return None
         finally:
             progress.PRX, progress.OPCODES = saved
-    return {name: {key: data[key] for key in ("done", "total", "percent")}
-            for name, data in (("libraries", libraries), ("shaders", shaders))}
+    if shader_source:
+        instructions = shader_source["instructions"]
+        shaders = {
+            "done": instructions["decoded"],
+            "total": instructions["total"],
+            "percent": progress.shader_source_percent(shader_source),
+        }
+    else:
+        legacy = progress.collect_shaders()
+        shaders = {key: legacy[key] for key in ("done", "total", "percent")}
+    return {
+        "libraries": {key: libraries[key] for key in ("done", "total", "percent")},
+        "shaders": shaders,
+    }
 
 
 def cache_signature():
     digest = hashlib.sha256(repr(sys.version_info[:3]).encode("ascii"))
-    for path in (Path(__file__), Path(progress.__file__), Path(progress.tokenizer_spec.origin), progress.ISA):
+    for path in (
+        Path(__file__),
+        Path(progress.__file__),
+        Path(progress.shader_scan.__file__),
+        Path(progress.tokenizer_spec.origin),
+        progress.ISA,
+        progress.ISA_FORMS,
+    ):
         content = path.read_bytes()
         digest.update(len(content).to_bytes(8, "little"))
         digest.update(content)
-    digest.update(repr((progress.PRX.relative_to(progress.ROOT).as_posix(),
-                        progress.OPCODES.relative_to(progress.ROOT).as_posix())).encode("utf-8"))
+    digest.update(repr((
+        progress.PRX.relative_to(progress.ROOT).as_posix(),
+        progress.OPCODES.relative_to(progress.ROOT).as_posix(),
+        progress.shader_scan.RECOMPILER,
+        progress.shader_scan.AGC_DRIVER,
+        "tools/rdna2_isa_forms.txt",
+    )).encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -275,10 +310,11 @@ def page(points):
         chart(points),
         daily(points),
         f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is declared. Library '
-        'functions are declared in the <code>prx</code> sources; the shader total is the AMD RDNA 1 + RDNA 2 instruction list '
-        f'(<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
+        'functions are declared in the <code>prx</code> sources; the shader total is the decoded AMD RDNA 2 instruction forms '
+        f'(<a href="{progress.SOURCE}/tools/rdna2_isa_forms.txt">tools/rdna2_isa_forms.txt</a>). '
         'One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point is measured '
-        f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> rules and instruction list, '
+        f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> and '
+        f'<a href="{progress.SOURCE}/tools/shader_scan.py">tools/shader_scan.py</a> rules, '
         'so the series is comparable across days. The bars are the change in implemented library functions from one point to the next. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
         '<table><tr><th>Date</th>' + "".join(f'<th>{escape(label)}</th><th>%</th>' for _, label, _ in SERIES) + '</tr>',
