@@ -112,6 +112,24 @@ int APS5_VABI ASN1_STRING_length_nid_postfix(const Asn1String* value) {
     return value->length;
 }
 
+int APS5_VABI ASN1_STRING_print_nid_postfix(LibreSsl::Bio* bio, const Asn1String* value) {
+    if (!value) return 0;
+    if (value->length > 0 && !value->data) APS5_INVALID_ARG_EX;
+    char buffer[80];
+    int used = 0;
+    for (int index = 0; index < value->length; ++index) {
+        const unsigned char character = value->data[index];
+        const bool printable = (character >= ' ' && character <= '~') || character == '\n' || character == '\r';
+        buffer[used++] = printable ? static_cast<char>(character) : '.';
+        if (used == sizeof(buffer)) {
+            if (LibreSslBioWrite_nid_no_patch(bio, buffer, used) <= 0) return 0;
+            used = 0;
+        }
+    }
+    if (used > 0 && LibreSslBioWrite_nid_no_patch(bio, buffer, used) <= 0) return 0;
+    return 1;
+}
+
 int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value) {
     if (!value) APS5_INVALID_ARG_EX;
     return value->type;
