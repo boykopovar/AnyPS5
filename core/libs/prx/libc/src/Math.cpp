@@ -490,6 +490,17 @@ float APS5_VABI acosf_nid_postfix(float x) {
     return 2.0f * (high + (AcosfRational(z) * s + correction));
 }
 float APS5_VABI hypotf_nid_postfix(float x, float y) { return static_cast<float>(std::hypot(static_cast<double>(x), static_cast<double>(y))); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_hypot.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_hypot.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI hypot_nid_postfix(double x, double y) {
     const auto highWord = [](double value) { return static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(value) >> 32); };
     const auto lowWord = [](double value) { return static_cast<std::uint32_t>(std::bit_cast<std::uint64_t>(value)); };
