@@ -1,0 +1,6 @@
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(agc_driver_linear_target_import_creation_tests PRIVATE libkernel)
+    add_test(NAME agc_driver_linear_target_dma_buf_creation COMMAND agc_driver_linear_target_import_creation_tests --dma-buf-created)
+    add_test(NAME agc_driver_linear_target_dma_buf_refusal COMMAND agc_driver_linear_target_import_creation_tests --dma-buf-refused)
+    set_tests_properties(agc_driver_linear_target_dma_buf_creation agc_driver_linear_target_dma_buf_refusal PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_WRITE_WATCH_IMPORTS=probe" SKIP_RETURN_CODE 77 TIMEOUT 30)
+endif()
