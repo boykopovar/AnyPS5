@@ -8,6 +8,7 @@
 #include "Recompiler.hpp"
 #include "RuntimeAbi.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -854,8 +855,10 @@ std::uint32_t BindlessHeap::RingBufferDescriptors(std::span<const VkDeviceAddres
     Require(ringInHeap && context.descriptorHeapProperties.bufferDescriptorSize == BufferSlotBytes, "ring buffer descriptors need the shader-data ring inside the resource heap");
     const auto span = Allocate(buffers.size() * (BufferSlotBytes / sizeof(std::uint32_t)), mark);
     Require(span.offset % BufferSlotBytes == 0u, "a ring buffer descriptor span is misaligned");
-    thread_local std::vector<VkResourceDescriptorInfoEXT> resources;
-    thread_local std::vector<VkHostAddressRangeEXT> ranges;
+    struct ResourcesStorage {};
+    struct RangesStorage {};
+    auto& resources = HostThreadLocal<std::vector<VkResourceDescriptorInfoEXT>, ResourcesStorage>();
+    auto& ranges = HostThreadLocal<std::vector<VkHostAddressRangeEXT>, RangesStorage>();
     resources.assign(buffers.size(), {VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT});
     ranges.resize(buffers.size());
     auto* bytes = reinterpret_cast<std::byte*>(span.words.data());

@@ -10,6 +10,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -258,9 +259,9 @@ void SubmittedPatches(bool geometry) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
-        bool geometry = false;
+        const bool geometry = argc > 1 && std::string_view(argv[1]) == "--geometry";
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
@@ -268,17 +269,19 @@ int main() {
                 std::cout << "skipped, the device has no tessellation shaders\n";
                 return VulkanTestSkipped;
             }
-            geometry = device->GeometryLimits().has_value() && (device->SubgroupStages() & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT) != 0;
+            if (geometry && (!device->GeometryLimits().has_value() || (device->SubgroupStages() & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT) == 0)) {
+                std::cout << "skipped, the device has no geometry shaders or no subgroup operations in tessellation-evaluation shaders\n";
+                return VulkanTestSkipped;
+            }
         }
         Register(LocalHeader, LocalCode.data(), sizeof(LocalCode), 5);
         Register(HullHeader, HullCode.data(), sizeof(HullCode), 7);
         Register(DomainHeader, DomainCode.data(), sizeof(DomainCode), 2);
         Register(DomainGeometryHeader, DomainGeometryCode.data(), sizeof(DomainGeometryCode), 2);
         Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
-        SubmittedPatches(false);
-        if (geometry) SubmittedPatches(true);
+        SubmittedPatches(geometry);
         AgcDriverShutdown_nid_postfix();
-        std::cout << (geometry ? "Submitted tessellation and tessellation-and-geometry draws drew their patches\n" : "A submitted tessellation draw drew its patches; the device has no geometry shaders or subgroup operations in tessellation-evaluation shaders, so the geometry draw was skipped\n");
+        std::cout << (geometry ? "A submitted tessellation and geometry draw drew its patches\n" : "A submitted tessellation draw drew its patches\n");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

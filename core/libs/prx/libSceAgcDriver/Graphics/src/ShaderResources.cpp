@@ -6847,6 +6847,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     ringDescriptorStages[stageIndex] = ringStage;
     if (ringStage) stageDataWords[stageIndex].clear();
     bool dataKept = false;
+    bool inputsKept = false;
     bool flattened = false;
     for (const auto& binding : program.bindings) {
         const bool shaderData = binding.role == ShaderRecompiler::DescriptorRole::ShaderData;
@@ -6860,6 +6861,7 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
             stageState.dataInput.size() == words.size() + userData.size() &&
             std::equal(words.begin(), words.end(), stageState.dataInput.begin()) &&
             std::equal(userData.begin(), userData.end(), stageState.dataInput.begin() + static_cast<std::ptrdiff_t>(words.size()));
+        if (sameInput && verifySlots && heap.Held(stageState.data.mark)) inputsKept = true;
         if (sameInput && !verifySlots) {
             if (heap.Held(stageState.data.mark)) {
                 heapOffsets[dataIndex] = stageState.data.mark.offset;
@@ -6902,8 +6904,20 @@ void ShaderResources::writeHeapStage(const CompiledShader& shader) {
     if (!flattened) heapSrtDwords[stageIndex] = 0u;
     auto& kept = stageState.descriptors;
     const auto srt = srtRange(stageIndex);
-    const bool reuse = dataKept && !kept.ranges.empty() && kept.ranges.front().address == srt.address && kept.ranges.front().size == srt.size && heap.Held(kept.mark);
-    heapOffsets[flatIndex] = reuse ? kept.first : ringDescriptors(stageIndex, nullptr, kept);
+    const bool keepable = !kept.ranges.empty() && kept.ranges.front().address == srt.address && kept.ranges.front().size == srt.size && heap.Held(kept.mark);
+    if (dataKept && keepable) {
+        heapOffsets[flatIndex] = kept.first;
+        return;
+    }
+    if (!(inputsKept && keepable)) {
+        heapOffsets[flatIndex] = ringDescriptors(stageIndex, nullptr, kept);
+        return;
+    }
+    const std::vector<VkDeviceAddressRangeEXT> before(kept.ranges.begin(), kept.ranges.end());
+    const auto first = kept.first;
+    heapOffsets[flatIndex] = ringDescriptors(stageIndex, nullptr, kept);
+    if (kept.first != first || !std::ranges::equal(before, kept.ranges, [](const auto& a, const auto& b) { return a.address == b.address && a.size == b.size; }))
+        throw std::runtime_error("AGC graphics: a GPU-mode stage's kept buffer descriptor run would bind other buffers although its inputs did not change");
 }
 
 namespace {
