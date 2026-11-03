@@ -88,9 +88,15 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     unsigned char serverRequest[32] = {1};
     unsigned char roomRequest[64] = {5};
     unsigned char zeroed[64] = {};
+    unsigned char highServerByte[32] = {0, 0, 1};
+    unsigned char highRoomByte[64] = {0, 0, 0, 0, 0, 0, 0, 1};
     std::uint32_t requestId = 77;
 
     Require(getWorldInfoList(1, serverRequest, nullptr, &requestId) == NotInitialized && requestId == 77, "sceNpMatching2GetWorldInfoList", "a request before initialization did not return NOT_INITIALIZED");
+    Require(leaveRoom(1, nullptr, nullptr, &requestId) == NotInitialized && requestId == 77, "sceNpMatching2LeaveRoom", "a null request before initialization did not return NOT_INITIALIZED");
+    Require(getServerId(1, nullptr) == NotInitialized, "sceNpMatching2GetServerId", "a null output before initialization did not return NOT_INITIALIZED");
+    Require(getSlotMask(1, 5, nullptr) == NotInitialized, "sceNpMatching2GetRoomJoinedSlotMaskLocal", "a null mask before initialization did not return NOT_INITIALIZED");
+    Require(getWorldIds(1, nullptr, 0, nullptr) == NotInitialized, "sceNpMatching2GetWorldIdArrayForAllServers", "a call before initialization did not return NOT_INITIALIZED");
     NpMatching2InitializeParameter init{};
     init.size = 0x30;
     NpMatching2CreateContextParameter create{};
@@ -107,12 +113,14 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
     for (const RequestFn request : {getWorldInfoList, setUserInfo}) {
         Require(request(context, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "server id 0 did not return INVALID_SERVER_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "the server id was not checked before the context");
+        Require(request(99, highServerByte, nullptr, &requestId) == InvalidServerId, "server request", "the server id was read past its 16 bits");
         Require(request(99, serverRequest, nullptr, &requestId) == ContextNotFound && request(0, serverRequest, nullptr, &requestId) == ContextNotFound, "server request", "an unknown context did not return CONTEXT_NOT_FOUND");
     }
     for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
         Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
         Require(request(99, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "the room id was not checked before the context");
         Require(request(99, roomRequest, nullptr, &requestId) == ContextNotFound, "room request", "an unknown context did not return CONTEXT_NOT_FOUND");
+        Require(request(99, highRoomByte, nullptr, &requestId) == ContextNotFound, "room request", "a room id with only its top byte set was taken as room 0");
     }
     Require(requestId == 77, "request", "a refused request wrote a request id");
     Require(leaveRoom(context, roomRequest, nullptr, &requestId) == SessionNotFound && leaveRoom(contextA, roomRequest, nullptr, &requestId) == SessionNotFound && requestId == 77, "sceNpMatching2LeaveRoom", "leaving with no room joined did not return SESSION_NOT_FOUND");
@@ -191,6 +199,7 @@ int main() {
     init.size = 0x30;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initialization failed");
     Require(sceNpMatching2Initialize(&init) == AlreadyInitialized, "sceNpMatching2Initialize", "initializing when already initialized did not return ALREADY_INITIALIZED");
+    Require(sceNpMatching2Initialize(nullptr) == AlreadyInitialized, "sceNpMatching2Initialize", "the parameter was checked before the initialization state");
 
     Require(sceNpMatching2CreateContext(nullptr, &context) == InvalidArgument, "sceNpMatching2CreateContext", "a null parameter was taken");
     create.size = 0x30;
