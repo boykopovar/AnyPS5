@@ -327,6 +327,17 @@ void Draw(AgcDriver::VulkanDevice& device, const Variant& variant) {
     device.WaitIdle();
 }
 
+void RequireNoSignedRemainder(std::span<const std::uint32_t> words, const std::string& name) {
+    constexpr std::uint32_t OpSRem = 138, OpSMod = 139;
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> 16u;
+        const auto opcode = words[offset] & 0xffffu;
+        Require(count != 0u && offset + count <= words.size(), name + ": the SPIR-V module is malformed");
+        Require(opcode != OpSRem && opcode != OpSMod, name + ": a signed remainder, whose result Vulkan leaves undefined for a negative operand, reduces the gather's texel index");
+        offset += count;
+    }
+}
+
 void Dispatch(AgcDriver::VulkanDevice& device, const Variant& variant) {
     FillTexels(variant.volume);
     FillInput(variant.volume, variant.inputs);
@@ -336,6 +347,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, const Variant& variant) {
         return;
     }
     const auto result = Compile(device, variant);
+    RequireNoSignedRemainder(result.spirv.Words(), variant.name);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(variant.code.data()));
     device.WaitIdle();
 }
