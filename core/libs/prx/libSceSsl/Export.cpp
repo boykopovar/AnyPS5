@@ -1311,8 +1311,9 @@ void* APS5_VABI sceSslGetSubjectName(int sslCtxId, void* sslCert) {
     return ExtractCertName(__func__, sslCtxId, sslCert, true);
 }
 
-int APS5_VABI CA_MGMT_extractKeyBlobEx() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI CA_MGMT_extractKeyBlobEx(int, const void* keyBlob, std::uint32_t, void* key) {
+    if (key == nullptr || keyBlob == nullptr) return ErrorInvalidArg;
+    std::memcpy(static_cast<unsigned char*>(key) + 8, &keyBlob, sizeof(keyBlob));
     return 0;
 }
 
@@ -1326,8 +1327,9 @@ int APS5_VABI CA_MGMT_freeKeyBlob() {
     return 0;
 }
 
-int APS5_VABI CRYPTO_initAsymmetricKey() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI CRYPTO_initAsymmetricKey(void* key) {
+    const std::uint32_t initialized = 1;
+    std::memcpy(key, &initialized, sizeof(initialized));
     return 0;
 }
 
@@ -1384,8 +1386,8 @@ int APS5_VABI sceSslEnableOptionInternal() {
     return 0;
 }
 
-int APS5_VABI sceSslGetNanoSSLModuleId() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSslGetNanoSSLModuleId(int sslCtxId, int* moduleId) {
+    if (moduleId != nullptr) *moduleId = sslCtxId;
     return 0;
 }
 
