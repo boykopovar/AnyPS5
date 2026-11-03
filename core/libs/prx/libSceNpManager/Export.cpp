@@ -1,4 +1,7 @@
+#include "prx/libSceNpManager/include/LegacyExports.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpManager/include/Api.hpp"
+#include "prx/libSceNpManager/include/InGameMessageIds.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -8,6 +11,8 @@
 #include <cstring>
 #include <atomic>
 #include <mutex>
+#include <map>
+#include <set>
 #include <unordered_set>
 
 // PSN is not emulated: the user is reported as signed out and online queries fail.
@@ -33,6 +38,25 @@ static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
 static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
 static std::atomic<int> g_nextRequest{1};
+
+static constexpr int NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND = static_cast<int>(0x80552B03);
+static constexpr int NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND = static_cast<int>(0x80552B05);
+
+namespace {
+struct InGameMessageContext {
+    std::set<std::int32_t> handles;
+};
+
+std::mutex inGameMessageMutex;
+std::map<std::int32_t, InGameMessageContext> inGameMessageContexts;
+std::int32_t nextInGameMessageContext = 1;
+std::int32_t nextInGameMessageHandle = 1;
+
+InGameMessageContext* FindInGameMessageContext(std::int32_t libCtxId) {
+    const auto found = inGameMessageContexts.find(libCtxId);
+    return found == inGameMessageContexts.end() ? nullptr : &found->second;
+}
+}
 
 namespace {
 std::mutex reachabilityMutex;
@@ -339,9 +363,11 @@ int APS5_VABI sceNpIdMapperOnlineIdToAccountId(int reqId, int userId, const void
     if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpInGameMessageAbortHandle(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpInGameMessageAbortHandle(std::int32_t libCtxId, std::int32_t handleId) {
+    std::lock_guard lock(inGameMessageMutex);
+    InGameMessageContext* context = FindInGameMessageContext(libCtxId);
+    if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    return context->handles.count(handleId) == 1 ? 0 : NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
 }
 int APS5_VABI sceNpInGameMessageCheckCallback(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -696,9 +722,8 @@ int APS5_VABI sceNpManagerIntIsTemporarySignout(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntIsUnregisteredClientError(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceNpManagerIntIsUnregisteredClientError(int error) {
+    return static_cast<std::uint32_t>(error) == 0x82e0104d;
 }
 int APS5_VABI sceNpManagerIntLoginAuthenticate(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -832,6 +857,12 @@ int APS5_VABI sceNpSetGamePresenceOnline(int req_id, const NpOnlineId* online_id
         if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     }
     return SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int APS5_VABI sceNpSetGamePresenceOnlineA(int reqId, int userId, uint32_t presence) {
+    (void)presence;
+    if (userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SignedOutRequest(reqId);
 }
 
 int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code) {
@@ -1059,19 +1090,29 @@ int APS5_VABI sceNpCheckCallbackForLib() {
 
 extern "C" {
 
-int APS5_VABI sceNpInGameMessageCreateHandle() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpInGameMessageCreateHandle(std::int32_t libCtxId) {
+    std::lock_guard lock(inGameMessageMutex);
+    InGameMessageContext* context = FindInGameMessageContext(libCtxId);
+    if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    const std::int32_t handleId = TakeInGameMessageId(nextInGameMessageHandle, __func__);
+    context->handles.insert(handleId);
+    return handleId;
 }
 
-int APS5_VABI sceNpInGameMessageDeleteHandle() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpInGameMessageDeleteHandle(std::int32_t libCtxId, std::int32_t handleId) {
+    std::lock_guard lock(inGameMessageMutex);
+    InGameMessageContext* context = FindInGameMessageContext(libCtxId);
+    if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    return context->handles.erase(handleId) == 1 ? 0 : NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
 }
 
-int APS5_VABI sceNpInGameMessageInitialize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpInGameMessageInitialize(std::size_t poolSize, void* option) {
+    (void)poolSize;
+    (void)option;
+    std::lock_guard lock(inGameMessageMutex);
+    const std::int32_t libCtxId = TakeInGameMessageId(nextInGameMessageContext, __func__);
+    inGameMessageContexts.emplace(libCtxId, InGameMessageContext{});
+    return libCtxId;
 }
 
 int APS5_VABI sceNpInGameMessagePrepare() {
@@ -1084,9 +1125,9 @@ int APS5_VABI sceNpInGameMessageSendData() {
     return 0;
 }
 
-int APS5_VABI sceNpInGameMessageTerminate() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpInGameMessageTerminate(std::int32_t libCtxId) {
+    std::lock_guard lock(inGameMessageMutex);
+    return inGameMessageContexts.erase(libCtxId) == 1 ? 0 : NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
 }
 
 int APS5_VABI sceNpSnsFacebookCreateRequest() {
@@ -1103,5 +1144,44 @@ int APS5_VABI sceNpSnsFacebookGetAccessToken() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI npManagerLegacyUnknown_70N4VzVCpQg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("70N4VzVCpQg", npManagerLegacyUnknown_70N4VzVCpQg_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_SSuF3qPYjgA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SSuF3qPYjgA", npManagerLegacyUnknown_SSuF3qPYjgA_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_ZKqJVpTOtW0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZKqJVpTOtW0", npManagerLegacyUnknown_ZKqJVpTOtW0_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_jBLJpaqaV1A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jBLJpaqaV1A", npManagerLegacyUnknown_jBLJpaqaV1A_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_mtowPSR0JN8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mtowPSR0JN8", npManagerLegacyUnknown_mtowPSR0JN8_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_qp_minus_DvqvPOYM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qp-DvqvPOYM", npManagerLegacyUnknown_qp_minus_DvqvPOYM_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_tmnDjDmI3AI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tmnDjDmI3AI", npManagerLegacyUnknown_tmnDjDmI3AI_nid_no_patch);
 
 }

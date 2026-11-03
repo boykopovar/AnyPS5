@@ -1,5 +1,20 @@
 # libSceAudioPropagation technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceAudioPropagation/InventoryExports.cpp) - 8 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `sceAudioPropagationSourceQueryAudioPaths` | `yW8FldaufkU` |
+| `Unknown` | `TrQMW7ARZXY` |
+| `Unknown` | `ZSdiF+pXrF8` |
+| `Unknown` | `fOTrQvqzABM` |
+| `Unknown` | `fhMkXxnE8aw` |
+| `Unknown` | `laU0fM-tTsc` |
+| `Unknown` | `mdH4mANi9GI` |
+| `Unknown` | `o0gGIp1vd6A` |
+
 ### Silent stubs
 
 - [libSceAudioPropagation](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) lacks acoustic propagation: attributes have no effect, sources expose 36 initially empty, invalid path slots and no rays, rendering preserves the destination mix without adding path contributions, and allocated CPU work memory is mostly unused. Ray results and audio paths accept empty lists and throw otherwise; `sceAudioPropagationSourceCalculateAudioPaths` returns the initial native validation errors, then goes through `NotImplemented_nid_no_patch`, as propagation is not implemented. Room, portal, source and material handles are tracked, but destruction after their system is destroyed silently succeeds without native lifetime semantics being confirmed. Occlusion, reflections and reverb are absent.

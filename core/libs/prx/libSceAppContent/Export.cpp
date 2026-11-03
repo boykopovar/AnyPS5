@@ -70,20 +70,31 @@ static void ClearDirectory(const std::filesystem::path& directory) {
 
 extern "C" {
 
-int APS5_VABI sceAppContentCheckBundleLicenseOnDisc() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
 int APS5_VABI sceAppContentDownloadDataGetBlockSize() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAppContentGetGameTrialsFlag() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!gameTrialsFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    *gameTrialsFlag = 0;
+    return 0;
 }
 
-int APS5_VABI sceAppContentGetPlayableStatus() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentGetPlayableStatus(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, uint32_t* playableStatus) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel || !playableStatus) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
 
@@ -297,6 +308,22 @@ int APS5_VABI sceAppContentDownload1Expand(void) {
 }
 
 int APS5_VABI sceAppContentDownload1Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Expand(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
