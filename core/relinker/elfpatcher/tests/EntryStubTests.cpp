@@ -149,15 +149,26 @@ void windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant() 
 void windowsKernelVariantDependenciesLoadCanonicalKernel() {
     using namespace Elfpatcher::Windows;
     for (const auto& variant : {std::string("libkernel_sys.prx"), std::string("libkernel_web.prx")}) {
+        const auto other = variant == "libkernel_sys.prx" ? "libkernel_web.prx" : "libkernel_sys.prx";
         Domain::SysVDynamicSection dynamic;
         dynamic.DynStrData.insert(dynamic.DynStrData.end(), variant.begin(), variant.end());
         dynamic.DynStrData.push_back(0);
         dynamic.DynamicSegmentData.resize(16);
         Io::WriteU64(dynamic.DynamicSegmentData, 0, 1);
         Io::WriteU64(dynamic.DynamicSegmentData, 8, 0);
-        require(WindowsImportBuilder().ReadLibraries(dynamic) == std::vector<std::string>{variant, "libkernel.prx", "libc.prx"},
+        require(WindowsImportBuilder().ReadLibraries(dynamic) == std::vector<std::string>{variant, "libkernel.prx", other, "libc.prx"},
                 variant + ": canonical kernel fallback and its libc provider are not loaded after the requested module");
     }
+}
+
+void stubRejectsAnEntryBeyondTheWrapBoundary() {
+    bool threw = false;
+    try {
+        static_cast<void>(Elfpatcher::EntryStubBuilder().BuildEntryStub(0x1000, 0xFFFFFFFFFFFFF000));
+    } catch (const Domain::RelinkerException& error) {
+        threw = std::string(error.what()).find("rel32") != std::string::npos;
+    }
+    require(threw, "an entry point more than 2^63 from the stub was accepted with a wrapped displacement");
 }
 
 }
@@ -165,6 +176,7 @@ void windowsKernelVariantDependenciesLoadCanonicalKernel() {
 int main() {
     try {
         stubTerminatesTheFrameChain();
+        stubRejectsAnEntryBeyondTheWrapBoundary();
         windowsStubLoadsTheAllocatorFirst("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
         windowsStubLoadsTheAllocatorFirst("$ORIGIN/libs", u"libs\\", {0x48, 0x8d, 0x35});
         windowsStubLoadsTheAllocatorOnRequest("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});

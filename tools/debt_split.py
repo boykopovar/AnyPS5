@@ -333,12 +333,15 @@ def command_resolve(root):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=f"Split {INDEX} into one file per library or component, and move entries of a change made before the split")
     parser.add_argument("command", choices=("split", "resolve"),
                         help=f"split: move the entries of {INDEX} into {DEBT_DIR}/; resolve: during a rebase stopped on {INDEX}, apply the stopped commit's entry changes to {DEBT_DIR}/ and stage them")
     args = parser.parse_args(argv)
-    root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+    try:
+        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+    except subprocess.CalledProcessError as error:
+        parser.error(f"not a git repository: {error}")
     command_split(root) if args.command == "split" else command_resolve(root)
 
 

@@ -87,7 +87,7 @@ test('server retains GET HEAD allowlist and method behavior', {timeout: 15000}, 
 });
 
 test('invalid configured ports fail without leaking a stack trace', {timeout: 15000}, async () => {
-    for (const invalidPort of ['abc', '-1', '65536', '1.5']) {
+    for (const invalidPort of ['abc', '-1', '65536', '1.5', ' ', '\t']) {
         const child = spawn(process.execPath, [fileURLToPath(new URL('../serve.js', import.meta.url))], {
             env: {...process.env, PORT: invalidPort}, stdio: ['ignore', 'pipe', 'pipe']
         });

@@ -201,6 +201,50 @@ void CheckStoredOverUsesPageEvidence() {
     Require(!StoredOver(base + Page, Page, before), "a page-local CPU write made an untouched page in the same block count as stored over");
 }
 
+void CheckRepeatedNeighbourStores() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto boundary = base + 2 * Block - 0x9000;
+    const auto sharedFirst = boundary - (base + Block);
+    const auto neighbourBytes = static_cast<std::size_t>(base + 3 * Block - boundary);
+    std::memset(memory, 0x11, 3 * Block);
+
+    const auto synced = CollectWrites(base, 3 * Block);
+    Require(synced != 0, "the test block is not collected");
+    for (int store = 0; store < 6; ++store) MarkWritten(boundary, neighbourBytes);
+    Require(!StoredOver(base + Block, static_cast<std::size_t>(sharedFirst), synced), "repeated stores of the neighbour's bytes count for the first surface's part of the shared block");
+    Require(StoredAllSince_nid_no_patch(boundary, neighbourBytes, synced), "repeated stores of the neighbour's bytes forget that they covered them");
+
+    const auto pieces = TrackerGeneration();
+    for (int store = 0; store < 3; ++store) MarkWritten(boundary + static_cast<std::uint64_t>(store) * 0x100, 4);
+    MarkWritten(boundary, 0x400);
+    Require(StoredOver(boundary + 0x200, 4, pieces) && !StoredOver(boundary + 0x400, 4, pieces), "a store over earlier pieces of the block answers for other bytes than its own");
+    MarkWritten(boundary + 0x800, 4);
+    MarkWritten(boundary + 0x900, 4);
+    Require(!StoredOver(base + Block, static_cast<std::size_t>(sharedFirst), pieces), "a store over earlier pieces counts for the first surface's part of the shared block");
+
+    void* fresh = AllocateWatched(2 * Block);
+    const auto freshBase = reinterpret_cast<std::uint64_t>(fresh);
+    std::memset(fresh, 0x11, 2 * Block);
+    const auto freshSynced = CollectWrites(freshBase, 2 * Block);
+    const auto neighbour = freshBase + Block - 0x9000;
+    MarkWritten(neighbour, 0x100);
+    const auto secondStored = MarkWritten(neighbour + 0x1000, 0x100);
+    const auto thirdStored = MarkWritten(neighbour + 0x2000, 0x100);
+    MarkWritten(neighbour + 0x3000, 0x100);
+    const auto settled = TrackerGeneration();
+    MarkWritten(neighbour, 0x100);
+    MarkWritten(neighbour, 0x100);
+    MarkWritten(neighbour + 0x5000, 0x100);
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), secondStored), "a full exact ring evicted a newer piece instead of its oldest");
+    Require(StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), freshSynced), "a forgotten store is not taken as a store over the rest of the block");
+
+    const auto partial = TrackerGeneration();
+    MarkWritten(neighbour + 0x5080, 0x100);
+    Require(StoredOver(neighbour + 0x5000, 0x10, settled) && StoredOver(neighbour + 0x5100, 0x10, partial), "a store that overlaps an earlier piece without containing it replaces it");
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), thirdStored), "a store that overlaps without containing evicted a newer piece instead of the oldest");
+}
+
 void CheckStoredAllSince() {
     constexpr std::size_t bytes = 4 * Block;
     auto* memory = static_cast<std::uint8_t*>(AllocateWatched(bytes));
@@ -820,14 +864,16 @@ void CheckRewatchImportTail() {
     constexpr std::size_t bytes = 0xc4000;
     ImportFixture fixture(13 * Block, bytes);
     const auto import = fixture.Base();
+    const bool pastWatched = Watched(import + bytes, 4096);
     UnwatchImport(import, bytes);
+    Require(Watched(import + bytes, 4096) == pastWatched, "unwatching an import ending inside a block changed the page past it");
     PrintPageState("page past a 0xc4000-byte import", fixture.memory + bytes);
     const auto unwatched = UnwatchSerial();
     Rewatch(BlockSpan(import, bytes));
     Require(!Watched(import, bytes) && UnwatchSerial() == unwatched, "the 64 KiB span past the import's committed pages returned to the write watch");
     Rewatch(PageSpan(import, bytes));
     Require(Watched(import, bytes), "a settled import whose size is not a whole block did not return to the write watch");
-    Require(Watched(import + 12 * Block, bytes - 12 * Block) && !Watched(import, bytes + 1) && !Watched(import + bytes - 1, 2) && !Watched(import + bytes, 4096), "rewatching an import ending inside a block did not return exactly its pages");
+    Require(Watched(import + 12 * Block, bytes - 12 * Block) && Watched(import + bytes, 4096) == pastWatched && Watched(import, bytes + 1) == pastWatched, "rewatching an import ending inside a block changed the page past it");
     Require(UnwatchSerial() != unwatched && UntrackedHint(import, bytes) == 0, "a rewatched import still reads as unwatched");
     RequireRewatchedStores(import, bytes);
 }
@@ -838,13 +884,16 @@ void CheckRewatchUnalignedImport() {
     constexpr std::size_t committed = 0xc8000;
     ImportFixture fixture(13 * Block, committed);
     const auto import = fixture.Base() + offset;
+    const bool beforeWatched = Watched(fixture.Base(), offset);
+    const bool pastWatched = Watched(import + bytes, 4096);
     UnwatchImport(import, bytes);
+    Require(Watched(fixture.Base(), offset) == beforeWatched && Watched(import + bytes, 4096) == pastWatched, "unwatching an import inside its blocks changed the pages around it");
     PrintPageState("page past an import at block offset 0x1000", fixture.memory + committed);
     Rewatch(BlockSpan(import, bytes));
     Require(!Watched(import, bytes), "the 64 KiB span past the committed pages around an import returned to the write watch");
     Rewatch(PageSpan(import, bytes));
     Require(Watched(import, bytes), "a settled import that does not start on a block did not return to the write watch");
-    Require(!Watched(fixture.Base(), offset) && !Watched(import + bytes, 4096), "rewatching an import returned pages outside it");
+    Require(Watched(fixture.Base(), offset) == beforeWatched && Watched(import + bytes, 4096) == pastWatched, "rewatching an import changed the pages around it");
     RequireRewatchedStores(import, bytes);
 }
 
@@ -1348,10 +1397,12 @@ std::uint64_t failedCollectBegin = 0;
 std::uint64_t failedCollectEnd = 0;
 std::uint64_t unwatchHookBegin = 0;
 std::uint64_t unwatchHookEnd = 0;
+bool unwatchHookProven = true;
 
 void RecordUnwatch(std::uint64_t address, std::size_t bytes) {
     unwatchHookBegin = address;
     unwatchHookEnd = address + bytes;
+    unwatchHookProven = UnwatchWritesProven();
 }
 
 bool FailFreshCollect(std::uintptr_t address, std::size_t bytes, void (*)(void*, std::uintptr_t, std::uintptr_t), void*) {
@@ -1375,6 +1426,7 @@ void CheckFailedCollectUnwatch() {
     Require(Watched(base, Block) && Watched(base + 2 * Block, Block), "a failed collect unwatched unrelated blocks");
     Require(failedCollectBegin == base + Block && failedCollectEnd == base + 2 * Block, "the failed fresh collect did not cover its block");
     Require(unwatchHookBegin <= base + Block && unwatchHookEnd >= base + 2 * Block, "a failed collect did not run the unwatch hook over its block");
+    Require(!unwatchHookProven, "a failed collect ran the unwatch hook as if the CPU writes to its block were proven");
 }
 
 struct CpuWritePinProbe;
@@ -1890,6 +1942,106 @@ void CheckUnwatchedImport() {
 #endif
 }
 
+struct ImportHookCall {
+    std::uint64_t begin;
+    std::uint64_t end;
+    bool watched;
+    bool proven;
+};
+
+std::vector<ImportHookCall> importHookCalls;
+std::uint64_t importHookProbe = 0;
+
+void RecordImportHook(std::uint64_t address, std::size_t bytes) {
+    importHookCalls.push_back({address, address + bytes, Watched(importHookProbe, Block), UnwatchWritesProven()});
+}
+
+void CheckImportWalkUnwatchHooks() {
+    void* memory = AllocateWatched(4 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, 4 * Block);
+    Require(CollectWritesUncached(base, 4 * Block) != 0, "the import walk block is not collected");
+    struct Reset {
+        ~Reset() {
+            SetImportWalkFailureForTest(0);
+            SetUnwatchHook(nullptr);
+        }
+    } reset;
+    SetUnwatchHook(&RecordImportHook);
+    for (const int walk : {1, 2}) {
+        const std::string what = walk == 1 ? "an import that stays watched whose page walk failed before the import" : "an import that stays watched whose page walk failed after the import";
+        const auto imported = base + static_cast<std::uint64_t>(walk - 1) * 2 * Block;
+        Require(Watched(imported, Block), what + ": its block was not watched before the import");
+        importHookCalls.clear();
+        importHookProbe = imported;
+        bool hookedBeforeImport = false;
+        SetImportWalkFailureForTest(walk);
+        Require(ImportWatched(imported, Block, [&] {
+            hookedBeforeImport = !importHookCalls.empty();
+            return true;
+        }), what + ": the import failed");
+        SetImportWalkFailureForTest(0);
+        Require(importHookCalls.size() == 1, what + " did not run the unwatch hook once");
+        const auto& call = importHookCalls.front();
+        Require(call.begin <= imported && imported + Block <= call.end, what + " gave the unwatch hook a range that misses its block");
+        Require(call.watched, what + " ran the unwatch hook after its block left the write watch");
+        Require(!call.proven, what + " ran the unwatch hook as if the CPU writes to its block were proven");
+        Require(hookedBeforeImport == (walk == 1), what + (walk == 1 ? " ran the unwatch hook after the import" : " ran the unwatch hook before the import"));
+        Require(!Watched(imported, Block), what + " left its block watched");
+    }
+    importHookCalls.clear();
+    importHookProbe = base + 3 * Block;
+    Unwatch(base + 3 * Block, Block);
+    Require(importHookCalls.size() == 1 && importHookCalls.front().watched && importHookCalls.front().proven, "Unwatch did not run the unwatch hook once, while watched, with its CPU writes proven");
+}
+
+std::uint64_t collectDuringHookAddress = 0;
+std::size_t collectDuringHookBytes = 0;
+std::size_t collectDuringHookCalls = 0;
+
+void CollectDuringHook(std::uint64_t, std::size_t) {
+    if (collectDuringHookCalls++ == 0) static_cast<void>(CollectWritesUncached(collectDuringHookAddress, collectDuringHookBytes));
+}
+
+void CheckImportWalkHookKeepsLaterWindows() {
+    void* memory = AllocateWatched(4 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, 4 * Block);
+    Unwatch(base + Block, Block);
+    const auto synced = CollectWritesUncached(base + 2 * Block, 2 * Block);
+    Require(synced != 0 && CollectWritesUncached(base, Block) != 0, "the blocks around the unwatched one are not collected");
+    struct Reset {
+        ~Reset() {
+            SetImportWalkFailureForTest(0);
+            SetUnwatchHook(nullptr);
+        }
+    } reset;
+    collectDuringHookAddress = base + 2 * Block;
+    collectDuringHookBytes = 2 * Block;
+    collectDuringHookCalls = 0;
+    SetUnwatchHook(&CollectDuringHook);
+    SetImportWalkFailureForTest(2, base);
+    Require(ImportWatched(base, 4 * Block, [&] {
+        bytes[0x100] = 0x11;
+        bytes[2 * Block + 0x100] = 0x11;
+        bytes[3 * Block + 0x2000] = 0x22;
+        return true;
+    }), "the import whose first span failed its page walk failed");
+    SetImportWalkFailureForTest(0);
+    SetUnwatchHook(nullptr);
+    Require(collectDuringHookCalls == 1, "the span whose page walk failed after the import did not run the unwatch hook once");
+    Require(!Watched(base, Block), "the span whose page walk failed after the import stayed watched");
+    Require(Watched(base + 2 * Block, 2 * Block), "the span whose page walk succeeded left the write watch");
+    const std::array<std::uint64_t, 2> generations{synced, synced};
+    std::array<std::uint8_t, 2> changed{};
+    std::array<std::uint8_t, 2> cpu{};
+    Require(ChangedBlocks(base + 2 * Block, 2 * Block, generations, changed, cpu), "the span after the failed one is not tracked");
+    Require(changed[0] == BlockUnchanged && UnchangedSince(base + 2 * Block, Block, synced), "a collect run by the unwatch hook of an earlier span counted a page the import touched without changing it as a CPU write");
+    Require(cpu[0] == 1, "a page the import touched lost its import window walk to the unwatch hook of an earlier span");
+    Require(changed[1] == BlockWritten && WrittenSince(base + 3 * Block, Block, synced), "a store of new bytes within the import was missed after the unwatch hook of an earlier span");
+}
+
 struct HookCall {
     std::uint64_t address;
     std::size_t bytes;
@@ -2168,6 +2320,7 @@ int main() {
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
+        CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
         CheckSharedBlockProofs();
         CheckRepeatedPossibleStores();
@@ -2200,6 +2353,8 @@ int main() {
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
         CheckUnwatchedImport();
+        CheckImportWalkUnwatchHooks();
+        CheckImportWalkHookKeepsLaterWindows();
         CheckUnwatchHooks();
         CheckCommittedRanges();
         CheckAdoptLatestEpoch();
