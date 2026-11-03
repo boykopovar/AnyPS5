@@ -12,6 +12,7 @@ import debt_report
 
 DEBT = "docs/dev/debt/libSceExample.md"
 LINK = "../../../core/libs/prx/libSceExample/Export.cpp"
+GONE = "../../../core/libs/prx/libSceExample/Gone.cpp"
 
 
 def write(root, files):
@@ -39,18 +40,33 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(debt_report.entry_names(text), ["sceA", "sceB", "sceC", "fchmodat"])
         self.assertEqual(debt_report.entry_names(f"- [Nine unnamed exports]({LINK}) - return 0"), [])
 
+    def test_generic_words_are_not_names(self):
+        text = f"- [libSceExample]({LINK}) - parameterless `int` declarations through `_nid_postfix`, see `sceD`"
+        self.assertEqual(debt_report.entry_names(text), ["sceD"])
+
 
 class LabelTests(unittest.TestCase):
     def test_closer(self):
         cases = {
             "read from the firmware 13.42 disassembly, not measured on a console": "console",
+            "unverified on a PS5. `(uint16_t mss)` follows Vita3K": "console",
+            "the console's answer for an unwritable output is not known": "console",
+            "the native behavior have not been measured": "console",
+            "on firmware 13.42 both return 0x802A00FF, measured in an emulator": "console",
+            "unknown signature (NID GKMjPmDls-w)": "firmware",
+            "signature and behavior are unverified, so this parameterless declaration is for import resolution only": "firmware",
+            "no credible prototype was found; it is declared without parameters": "firmware",
             "the argument lists need the firmware module": "firmware",
             "fails on RADV before RDNA2": "gpu",
+            "not measured on other drivers, and lavapipe hangs": "gpu",
             "works. Closes when: PPSA01234 reaches its menu": "title",
             "no game title has been verified with it": "title",
             "PPSA01234 calls it with a null pointer": "code",
             "throws for a reason that no longer holds": "code",
             "unmeasured. Closes when: a test pins the order": "code",
+            "as a payload process on a PS5 (firmware 13.60) answered them; the host send is unbounded": "code",
+            "a dispatch takes 13 ms on an RTX 4090": "code",
+            "No title use of the fix is established": "code",
         }
         for text, expected in cases.items():
             with self.subTest(text=text):
@@ -79,31 +95,12 @@ class LabelTests(unittest.TestCase):
         self.assertTrue(debt_report.untested(f"- [sceB]({LINK}) - x", words))
         self.assertIsNone(debt_report.untested(f"- [Nine unnamed exports]({LINK}) - x", words))
 
-
-SOURCE = (
-    "int APS5_VABI sceQuiet(int a) { return a; }\n"
-    "int APS5_VABI sceLoud(int a) { NotImplemented_nid_no_patch(__func__); }\n"
-    "int APS5_VABI sceThrow(int a) { if (a) throw std::runtime_error(\"x\"); return 0; }\n"
-)
-
-
-class StaleTests(unittest.TestCase):
-    def check(self, section, text):
+    def test_stale_is_a_link_to_a_file_that_is_gone(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            write(root, {"core/libs/prx/libSceExample/Export.cpp": SOURCE})
-            debt_report.file_definitions.cache_clear()
-            return debt_report.stale(debt_report.Entry(DEBT, 1, section, text), root)
-
-    def test_reasons(self):
-        self.assertEqual(self.check("Functional", "- [sceA](../../../core/libs/prx/libSceExample/Gone.cpp) - x"),
-                         "missing link core/libs/prx/libSceExample/Gone.cpp")
-        self.assertEqual(self.check("Unknown function info", f"- [sceQuiet]({LINK}) - throws until measured"), "no longer throws: sceQuiet")
-        self.assertIsNone(self.check("Unknown function info", f"- [sceLoud, sceThrow]({LINK}) - throws until measured"))
-        self.assertEqual(self.check("Silent stubs", f"- [sceLoud]({LINK}) - returns 0"), "stub now throws: sceLoud")
-        self.assertIsNone(self.check("Silent stubs", f"- [sceQuiet]({LINK}) - returns 0"))
-        self.assertIsNone(self.check("Unknown function info", f"- [sceMissing]({LINK}) - throws"))
-        self.assertIsNone(self.check("Functional", f"- [sceQuiet]({LINK}) - layout unknown"))
+            write(root, {"core/libs/prx/libSceExample/Export.cpp": "int APS5_VABI sceA() { return 0; }\n"})
+            self.assertEqual(debt_report.stale(f"- [sceA]({GONE}) - throws", root), "missing link core/libs/prx/libSceExample/Gone.cpp")
+            self.assertIsNone(debt_report.stale(f"- [sceA]({LINK}) - throws", root))
 
 
 class ReportTests(unittest.TestCase):
@@ -113,8 +110,9 @@ class ReportTests(unittest.TestCase):
             "# libSceExample technical debt\n\n### Unknown function info\n\n"
             f"- [sceQuiet]({LINK}) - throws until measured on a PS5, on Windows\n"
             f"- [sceLoud]({LINK}) - layout unknown. Labels: firmware, tested, linux\n"
+            f"- [sceGone]({GONE}) - layout unknown\n"
         ),
-        "core/libs/prx/libSceExample/Export.cpp": SOURCE,
+        "core/libs/prx/libSceExample/Export.cpp": "int APS5_VABI sceQuiet() { return 0; }\n",
         "core/libs/prx/libSceExample/tests/Example.cpp": "int main() { return sceLoud(0); }\n",
     }
 
@@ -122,7 +120,6 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write(root, self.FILES)
-            debt_report.file_definitions.cache_clear()
             output = io.StringIO()
             with mock.patch.object(debt_report, "ROOT", root), contextlib.redirect_stdout(output):
                 code = debt_report.main(argv)
@@ -133,16 +130,18 @@ class ReportTests(unittest.TestCase):
         rows = json.loads(output)
         self.assertEqual(code, 0)
         self.assertEqual([(r["line"], r["labels"], r["reason"]) for r in rows], [
-            (5, ["console", "no-test", "windows", "stale?"], "no longer throws: sceQuiet"),
+            (5, ["console", "no-test", "windows"], None),
             (6, ["firmware", "linux"], None),
+            (7, ["code", "no-test", "stale?"], "missing link core/libs/prx/libSceExample/Gone.cpp"),
         ])
 
     def test_text_filter_and_counts(self):
         code, output = self.run_main(["libSceExample", "--label", "no-test"])
         self.assertEqual(code, 0)
-        self.assertIn(f"{DEBT}:5: sceQuiet: console, no-test, windows, stale? (no longer throws: sceQuiet)", output)
+        self.assertIn(f"{DEBT}:5: sceQuiet: console, no-test, windows", output)
+        self.assertIn(f"{DEBT}:7: sceGone: code, no-test, stale? (missing link core/libs/prx/libSceExample/Gone.cpp)", output)
         self.assertNotIn(f"{DEBT}:6:", output)
-        self.assertIn("1 entries: 1 console, 1 no-test, 1 windows, 1 stale?", output)
+        self.assertIn("2 entries: 2 no-test, 1 console, 1 windows, 1 code, 1 stale?", output)
 
     def test_unknown_debt_file_is_a_usage_error(self):
         with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as raised:

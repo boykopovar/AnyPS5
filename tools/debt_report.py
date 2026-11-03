@@ -4,11 +4,9 @@ import re
 import sys
 from collections import Counter
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import progress
 from check_conventions import DEBT, DEBT_DIR, DEBT_LABELS, DEBT_TARGET, debt_entries, debt_labels
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,17 +15,25 @@ LINK = re.compile(r"\[([^\]]+)\]\((?:\.\./)+core/[^)#\s]+")
 TICKED = re.compile(r"`([a-z_][A-Za-z0-9_]*)`")
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SEPARATOR = re.compile(r",\s*|\s+and\s+|\s+or\s+")
+GENERIC = {"int", "void", "char", "bool", "float", "double", "size_t", "ssize_t", "off_t", "uintptr_t", "intptr_t",
+           "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+           "nullptr", "true", "false", "errno", "main", "this"}
 CLOSES = re.compile(r"Closes when:(.*)", re.S)
+GPU_NAME = r"(?:an? )?(?:RADV|AMD|NVIDIA|Intel|MoltenVK|lavapipe|Radeon|RTX|GeForce|RDNA ?\d?|GCN)"
 CLOSERS = (
-    ("console", re.compile(r"\b(?:measured|measurement)\b[^.]*\b(?:PS5|console)\b|\bunmeasured\b|\bnot measured\b", re.I)),
-    ("firmware", re.compile(r"firmware|disassembl|\.sprx\b", re.I)),
-    ("gpu", re.compile(r"\b(?:RDNA ?\d?|GCN|NVIDIA|Intel Arc|MoltenVK|RADV|lavapipe|Radeon|GeForce|RTX)\b")),
+    ("gpu", re.compile(rf"\bother (?:GPUs|drivers|devices|vendors)\b|\bfails on {GPU_NAME}|\bonly (?:measured|tested|verified) on {GPU_NAME}|\b(?:not|never) (?:measured|tested|verified) on {GPU_NAME}")),
+    ("firmware", re.compile(r"\bunknown signatures?\b|\bsignatures?(?: and behaviou?r)? (?:are |is )?(?:unknown|unverified)\b|\bprototypes?(?: and behaviou?r)? (?:are |is )?(?:unknown|unverified)\b"
+                            r"|\bno credible prototype|\bparameter lists?\b[^.]*\b(?:unverified|unknown)\b|\bimport[- ]resolution\b|\bdeclared without parameters\b|\bparameterless\b"
+                            r"|\bunidentified export\b|\bsignature\b[^.]*\binferred from\b|\bmeanings? (?:remain |are |is )?(?:unresolved|unknown)\b", re.I)),
+    ("console", re.compile(r"\b(?:measured|measurement)\b[^.]*\b(?:PS5|console)\b|\bunmeasured\b|\bnot (?:been )?measured\b|\bunverified on (?:a |the )?(?:PS5|console)\b"
+                           r"|\b(?:not|never) (?:confirmed|verified|checked) on (?:a |the )?(?:PS5|console|hardware)\b|\bnothing is checked on the console\b|\bno console\b"
+                           r"|\bconsole's\b[^.]*\b(?:not known|unknown|unverified)\b|\b(?:not known|unknown|unresolved|unverified)\b[^.]*\bon (?:a |the )?console\b"
+                           r"|\bmeasured in an emulator\b|\bneither documented nor measured\b|\bunverified console\b|\buncited assumption\b", re.I)),
+    ("firmware", re.compile(r"\bneeds? (?:the |a )?(?:firmware|module|disassembly)\b|\bfirmware (?:module )?readings?\b|\bfrom the firmware module\b|\bread from the module\b", re.I)),
 )
 TITLE_CLOSE = re.compile(r"\b(?:PPSA|CUSA)\d{5}\b|\btitles?\b", re.I)
-TITLE_GAP = re.compile(r"\bno (?:game )?title\b|\bnot verified with a title\b", re.I)
+TITLE_GAP = re.compile(r"\bno (?:game )?title (?:has been|was|is) verified\b|\bnot verified with a title\b|\bno title (?:calls|uses|exercises) (?:it|them)\b", re.I)
 PLATFORMS = (("windows", re.compile(r"\bWindows\b")), ("macos", re.compile(r"\bmacOS\b")), ("linux", re.compile(r"\bLinux\b")))
-THROWS = re.compile(r"\bthrows?\b|NotImplemented|\bunimplemented\b|\bnot implemented\b", re.I)
-THROW = re.compile(r"\bthrow\b")
 
 
 @dataclass
@@ -62,7 +68,8 @@ def subjects(text):
 
 
 def entry_names(text):
-    return list(dict.fromkeys(subjects(text) + TICKED.findall(text)))
+    found = subjects(text) + TICKED.findall(text)
+    return [name for name in dict.fromkeys(found) if name not in GENERIC and not name.startswith(("lib", "_nid"))]
 
 
 def closer(text):
@@ -92,39 +99,9 @@ def untested(text, words):
     return None if not found else not any(name in words for name in found)
 
 
-@lru_cache(maxsize=None)
-def file_definitions(path):
-    text = progress.code(path.read_text(encoding="utf-8", errors="ignore"))
-    bodies = {}
-    for match in progress.DEFINITION.finditer(text):
-        start = match.end() - 1
-        bodies[match.group(1)] = text[start:progress.body_end(text, start) + 1]
-    return bodies
-
-
-def definitions(root, paths, wanted):
-    bodies = {}
-    for relative in paths:
-        path = root / relative
-        if path.is_file() and path.suffix in SOURCES:
-            bodies.update({name: body for name, body in file_definitions(path).items() if name in wanted})
-    return bodies
-
-
-def stale(entry, root):
-    paths = DEBT_TARGET.findall(entry.text)
-    missing = [path for path in paths if not (root / path).exists()]
-    if missing:
-        return f"missing link {missing[0]}"
-    bodies = definitions(root, paths, set(subjects(entry.text)))
-    throwing = {name: progress.STUB in body or THROW.search(body) is not None for name, body in bodies.items()}
-    if entry.section == "Silent stubs":
-        now = [name for name, value in throwing.items() if value]
-        return f"stub now throws: {now[0]}" if now else None
-    if THROWS.search(entry.text):
-        quiet = [name for name, value in throwing.items() if not value]
-        return f"no longer throws: {quiet[0]}" if quiet else None
-    return None
+def stale(text, root):
+    missing = [path for path in DEBT_TARGET.findall(text) if not (root / path).exists()]
+    return f"missing link {missing[0]}" if missing else None
 
 
 def labels(entry, root, words):
@@ -135,7 +112,7 @@ def labels(entry, root, words):
         if given:
             chosen[family] = [label for label in given if label != "tested"]
     found = [label for family in DEBT_LABELS for label in chosen[family]]
-    reason = stale(entry, root)
+    reason = stale(entry.text, root)
     return (found + ["stale?"] if reason else found), reason
 
 
@@ -149,7 +126,7 @@ def report(root, libraries=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Label technical debt entries: who can close them (console, firmware, gpu, title or code), no-test when no test names what they name, stale? when the code may no longer match them, and the platforms they name. A Labels: trailer on an entry replaces the inferred labels of its family. A report, not a gate: it always exits 0.")
+    parser = argparse.ArgumentParser(description="Label technical debt entries: who can close them (console, firmware, gpu, title or code), no-test when no test names what they name, stale? when they link a file that no longer exists, and the platforms they name. A Labels: trailer on an entry replaces the inferred labels of its family. A report, not a gate: it always exits 0.")
     parser.add_argument("libraries", nargs="*", help="debt file names without .md, such as libkernel or TechnicalDebt (default: all)")
     parser.add_argument("--label", action="append", default=[], help="show only entries with this label; repeat to require several")
     parser.add_argument("--json", action="store_true", help="print the rows as JSON")
