@@ -6304,6 +6304,101 @@ bool untrackedRevalidateTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool untrackedReproofTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (!context.nullDescriptors) {
+        std::cout << "null descriptors unavailable: untracked snapshot reproofs not tested\n";
+        return false;
+    }
+    constexpr std::size_t bytes = 2 * 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the untracked reproof block");
+    std::memset(block, 0x40, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        void* block;
+        ~Unregister() {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block);
+        }
+    } unregister{block};
+    if (AgcDriver::GuestMemory::Watched(address, bytes) || AgcDriver::GuestMemory::UntrackedHint(address, bytes) != 0) {
+        std::cout << "the block is write-watched or hinted: untracked snapshot reproofs not tested\n";
+        return false;
+    }
+    TextureDetiler detiler(context);
+    auto imageContext = context;
+    imageContext.detiler = &detiler;
+    TextureCache textureCache(imageContext);
+    imageContext.textureCache = &textureCache;
+    struct Clear {
+        const Context& context;
+        Recorder& recorder;
+        ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+    } clear{context, recorder};
+    ShaderRecompiler::RecompileResult imageProgram;
+    ShaderRecompiler::DescriptorBinding imageBinding;
+    imageBinding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+    imageBinding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    imageBinding.descriptorSet = 0;
+    imageBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+    imageBinding.count = 1;
+    imageBinding.imageSamplers = {0};
+    imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+    imageProgram.bindings.push_back(imageBinding);
+    const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
+    const bool enabled = std::getenv("APS5_NO_UNTRACKED_REPROOF") == nullptr;
+    const bool verified = std::getenv("APS5_VERIFY_UNTRACKED_PROOFS") != nullptr;
+    const auto counts = [] { return ShaderResources::UntrackedReproofCounts(); };
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto initial = counts();
+    auto first = std::make_shared<ShaderResources>(imageContext, imageCompute);
+    auto second = std::make_shared<ShaderResources>(imageContext, imageCompute);
+    recorder.Sync();
+    Require(first->SampledTextures().size() == 1 && second->SampledTextures() == first->SampledTextures(), "two templates over one surface did not share its cached texture");
+    Require(StorageTexture::FindLive(address, bytes) == nullptr, "the sampled surface is viewed through a storage image instead of a snapshot");
+    const auto built = counts();
+    Require(built.stamped - initial.stamped == (enabled && !verified ? 1u : 0u) && built.compared == initial.compared, !enabled ? "a lookup took an untracked snapshot by its stamp with reproofs disabled" : verified ? "a lookup took an untracked snapshot by its stamp while the proofs are verified" : "the second lookup in the snapshot's own collect epoch did not take it by its stamp");
+    ShaderResources::ProofReport report;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(first->Revalidate(std::span(&imageCompute, 1), &report), "a template over unchanged untracked memory did not revalidate in a new collect epoch");
+    Require((report.path == ShaderResources::ProofPath::Fast) == enabled, enabled ? "a template over unchanged untracked memory took the full walk in a new collect epoch" : "a template over untracked memory kept its fast proof across collect epochs with reproofs disabled");
+    const auto reproved = counts();
+    Require(reproved.compared - built.compared == (enabled ? 1u : 0u) && reproved.stamped == built.stamped, enabled ? "the first proof in a new collect epoch did not compare the snapshot exactly once" : "a proof compared an untracked snapshot with reproofs disabled");
+    Require(second->Revalidate(std::span(&imageCompute, 1), &report), "a second template over unchanged untracked memory did not revalidate in the new collect epoch");
+    Require((report.path == ShaderResources::ProofPath::Fast) == enabled, enabled ? "a second template over unchanged untracked memory took the full walk in the new collect epoch" : "a second template over untracked memory kept its fast proof across collect epochs with reproofs disabled");
+    const auto shared = counts();
+    Require(shared.stamped - reproved.stamped == (enabled ? 1u : 0u) && shared.compared == reproved.compared, enabled ? "a second proof in the same collect epoch did not take the snapshot by the first proof's stamp" : "a second proof took an untracked snapshot by its stamp with reproofs disabled");
+    std::memset(block, 0x41, 4096);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(first->Revalidate(std::span(&imageCompute, 1), &report));
+    Require(report.path != ShaderResources::ProofPath::Fast, "a template over untracked memory kept its fast proof across a store and a new collect epoch");
+    Require(counts().compared - shared.compared == (enabled ? 1u : 0u), enabled ? "the proof after the store did not compare the snapshot once" : "a proof compared an untracked snapshot with reproofs disabled");
+    auto third = std::make_shared<ShaderResources>(imageContext, imageCompute);
+    recorder.Sync();
+    Require(third->SampledTextures().size() == 1 && third->SampledTextures() != first->SampledTextures(), "a lookup after the store kept the stale snapshot");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 65536);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto forgotten = counts();
+    static_cast<void>(third->Revalidate(std::span(&imageCompute, 1), &report));
+    Require(report.path != ShaderResources::ProofPath::Fast && counts().compared == forgotten.compared, "a proof compared or kept an untracked snapshot across a forget of its memory");
+    first.reset();
+    second.reset();
+    third.reset();
+    std::cout << "untracked snapshot reproofs" << (enabled ? "" : " (disabled)") << ": ok\n";
+    return true;
+}
+
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -15030,6 +15125,9 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-revalidate-only") {
             return untrackedRevalidateTests(device, recorder) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-reproof-only") {
+            return untrackedReproofTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
             return untrackedForgetTests(device, recorder) ? 0 : 77;
