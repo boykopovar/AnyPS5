@@ -112,6 +112,7 @@ struct DepthTarget {
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
     std::optional<TextureTileMode> gcnTileMode;
+    bool gcn = false;
 };
 
 struct State {
