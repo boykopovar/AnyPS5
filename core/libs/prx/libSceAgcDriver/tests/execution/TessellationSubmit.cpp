@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <initializer_list>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -42,6 +43,26 @@ alignas(256) constexpr std::array<std::uint32_t, 30> DomainCode{
     0x040a0d05, 0x102424ff, 0x40400000, 0x7e260280, 0x7e2802f2, 0xf80008cf, 0x14131110, 0xf800020f, 0x14131214, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 133> DomainGeometryCode{
+    0x8f6a9003, 0x94fe6ac1, 0xbf880028, 0x342a0e84, 0x162a2a83, 0xe0341000, 0x04030a15, 0xe0341010,
+    0x04030c15, 0xe0341020, 0x04030e15, 0xbf8c3f70, 0x082c0af2, 0x082c0d16, 0x10201505, 0x3e201906,
+    0x3e201d16, 0x10221705, 0x3e221b06, 0x3e221f16, 0xd5510012, 0x045a0d05, 0x102424ff, 0x40400000,
+    0x7e260280, 0x7e2802f2, 0xd7650009, 0x000100c1, 0xd7660009, 0x000212c1, 0x93ebff03, 0x00040018,
+    0xd7460009, 0x04250c6b, 0x34121285, 0xd8380100, 0x00111009, 0xd8380302, 0x00141309, 0xd8380504,
+    0x00121409, 0xd8380706, 0x00141309, 0xbf8cc07f, 0xbefe04c1, 0xbf8a0000, 0x938dff02, 0x00090016,
+    0x9382ff03, 0x00040018, 0x938cff03, 0x00080008, 0xd7650009, 0x000100c1, 0xd7660009, 0x000212c1,
+    0xd746000a, 0x04250c02, 0x7da8120c, 0xbf88002e, 0x361600ff, 0x0000ffff, 0x34161682, 0x2c180090,
+    0x34181882, 0x361a02ff, 0x0000ffff, 0x341a1a82, 0xdbfc0000, 0x1000000b, 0xdbfc0010, 0x1400000b,
+    0xdbfc0000, 0x1800000c, 0xdbfc0010, 0x1c00000c, 0xdbfc0000, 0x2000000d, 0xdbfc0010, 0x2400000d,
+    0xbf8cc07f, 0xbf800000, 0xbf800000, 0xbf800000, 0x161c1483, 0x161e14ff, 0x00000060, 0xbf8c3f70,
+    0xdb7c0400, 0x0000100f, 0xdb7c0410, 0x0000140f, 0xdb7c0420, 0x0000180f, 0xdb7c0430, 0x00001c0f,
+    0xdb7c0440, 0x0000200f, 0xdb7c0450, 0x0000240f, 0x4a501c81, 0x4a521c82, 0x3450508a, 0x34525294,
+    0xd772002a, 0x04a6510e, 0xbf8cc07f, 0xbefe04c1, 0xbf8a0000, 0x930e830d, 0xbf078002, 0xbf850003,
+    0x8f0f8c0d, 0x887c0f0e, 0xbf900009, 0x7da8140d, 0xbf880002, 0xf8000941, 0x0000002a, 0xbefe04c1,
+    0x7da8140e, 0xbf88000a, 0x34561485, 0xdbfc0400, 0x2c00002b, 0xdbfc0410, 0x3000002b, 0xbf8cc07f,
+    0xf80008cf, 0x2f2e2d2c, 0xf800020f, 0x33323130, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 7> PixelCode{
     0xc8020002, 0xc8060102, 0xc80a0202, 0xc80e0302, 0xf800180f, 0x03020100, 0xbf810000,
 };
@@ -65,6 +86,7 @@ struct Header {
 Header LocalHeader{};
 Header HullHeader{};
 Header DomainHeader{};
+Header DomainGeometryHeader{};
 Header PixelHeader{};
 
 void Register(Header& header, const std::uint32_t* code, std::size_t size, std::uint8_t type) {
@@ -90,10 +112,10 @@ std::uint32_t Hi(const void* address) {
     return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(address) >> 40u);
 }
 
-std::vector<std::uint32_t> Commands() {
+std::vector<std::uint32_t> Commands(bool geometry) {
     const auto color = reinterpret_cast<std::uintptr_t>(Pixels.data());
     const auto users = reinterpret_cast<std::uintptr_t>(HullUserMemory.data());
-    const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{{0x2d5, 0x0200210du},
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{{0x2d5, geometry ? 0x0000212du : 0x0200210du},
                                                                        {0x2d6, 128u | (3u << 8u) | (3u << 14u)},
                                                                        {0x2db, 1u | (2u << 2u) | (2u << 5u)},
                                                                        {0x286, std::bit_cast<std::uint32_t>(64.0f)},
@@ -158,15 +180,20 @@ std::vector<std::uint32_t> Commands() {
                                                                        {0x102, static_cast<std::uint32_t>(users)},
                                                                        {0x103, static_cast<std::uint32_t>(users >> 32u)},
                                                                        {0x10b, 0},
-                                                                       {0xc8, Lo(DomainCode.data())},
-                                                                       {0xc9, Hi(DomainCode.data())},
-                                                                       {0x8b, 0},
+                                                                       {0xc8, geometry ? Lo(DomainGeometryCode.data()) : Lo(DomainCode.data())},
+                                                                       {0xc9, geometry ? Hi(DomainGeometryCode.data()) : Hi(DomainCode.data())},
+                                                                       {0x8a, 0},
+                                                                       {0x8b, geometry ? 0x400010u : 0u},
                                                                        {0x8, Lo(PixelCode.data())},
                                                                        {0x9, Hi(PixelCode.data())},
                                                                        {0xb, 0}};
     std::vector<std::uint32_t> commands;
     Write(commands, 0x79, 0x242, 9);
     for (const auto& [offset, value] : context) Write(commands, 0x69, offset, value);
+    if (geometry) {
+        for (const auto& [offset, value] : std::initializer_list<std::pair<std::uint32_t, std::uint32_t>>{{0x1ff, 12u}, {0x2ce, 3u}, {0x2ab, 8u}, {0x29b, 2u}}) Write(commands, 0x69, offset, value);
+        Write(commands, 0x79, 0x25b, 0x1804u);
+    }
     for (const auto& [offset, value] : shaders) Write(commands, 0x76, offset, value);
     commands.insert(commands.end(), {0xc0002a00u, 0u});
     const auto address = reinterpret_cast<std::uintptr_t>(Indices.data());
@@ -208,30 +235,32 @@ std::uint32_t CoveredPixels(std::uint32_t patch, bool interior) {
     return count;
 }
 
-void SubmittedPatches() {
+void SubmittedPatches(bool geometry) {
     for (std::size_t i = 0; i < Pixels.size(); i += 4) {
         for (std::size_t c = 0; c < 4; ++c) Pixels[i + c] = std::byte{Background[c]};
     }
     const auto pushes = AgcDriver::Graphics::DataAddressPushes();
-    auto commands = Commands();
+    auto commands = Commands(geometry);
+    const std::string path = geometry ? "tessellation and geometry" : "tessellation";
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-    Require(sceAgcDriverSubmitDcb(&packet) == 0, "tessellation submission failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, path + " submission failed");
     AgcDriverWaitIdle_nid_postfix();
     const auto center = Row(-0.5f + 1.0f / 3.0f);
     Require(CoveredPixels(0, false) > 100 && CoveredPixels(0, true) == 0,
-            "the level-1 patch was not drawn as one flat triangle, centre " + PixelText(PixelAt(Column(0, 0.25f), center)));
-    Require(CoveredPixels(1, false) == 0, "the patch with level 0 was not culled");
+            path + ": the level-1 patch was not drawn as one flat triangle, centre " + PixelText(PixelAt(Column(0, 0.25f), center)));
+    Require(CoveredPixels(1, false) == 0, path + ": the patch with level 0 was not culled");
     Require(CoveredPixels(2, false) > 100 && PixelAt(Column(2, 0.25f), center)[1] > 32,
-            "the level-5 patch has no interior domain points at its centre, " + PixelText(PixelAt(Column(2, 0.25f), center)));
-    Require(PixelAt(0, 0) == Background && PixelAt(Width - 1, Height - 1) == Background, "the corners changed");
+            path + ": the level-5 patch has no interior domain points at its centre, " + PixelText(PixelAt(Column(2, 0.25f), center)));
+    Require(PixelAt(0, 0) == Background && PixelAt(Width - 1, Height - 1) == Background, path + ": the corners changed");
     Require(!AgcDriver::Graphics::DescriptorHeapEnabled() || AgcDriver::Graphics::DataAddressPushes() > pushes,
-            "the submitted tessellation draw did not take the descriptor heap");
+            "the submitted " + path + " draw did not take the descriptor heap");
 }
 
 }
 
 int main() {
     try {
+        bool geometry = false;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
@@ -239,14 +268,17 @@ int main() {
                 std::cout << "skipped, the device has no tessellation shaders\n";
                 return VulkanTestSkipped;
             }
+            geometry = device->GeometryLimits().has_value() && (device->SubgroupStages() & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT) != 0;
         }
         Register(LocalHeader, LocalCode.data(), sizeof(LocalCode), 5);
         Register(HullHeader, HullCode.data(), sizeof(HullCode), 7);
         Register(DomainHeader, DomainCode.data(), sizeof(DomainCode), 2);
+        Register(DomainGeometryHeader, DomainGeometryCode.data(), sizeof(DomainGeometryCode), 2);
         Register(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
-        SubmittedPatches();
+        SubmittedPatches(false);
+        if (geometry) SubmittedPatches(true);
         AgcDriverShutdown_nid_postfix();
-        std::cout << "A submitted tessellation draw drew its patches\n";
+        std::cout << (geometry ? "Submitted tessellation and tessellation-and-geometry draws drew their patches\n" : "A submitted tessellation draw drew its patches; the device has no geometry shaders or subgroup operations in tessellation-evaluation shaders, so the geometry draw was skipped\n");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
