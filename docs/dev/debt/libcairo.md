@@ -22,11 +22,13 @@
 
 - [Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements seventeen Cairo context lifecycle, nested matrix save/restore, and user/device coordinate transform exports, with an owned surface reference, a sticky invalid-matrix/invalid-restore state and System V guest ABI. Graphics state beyond the CTM, drawing, clipping, path construction and rasterization remain pending; this does not provide a functioning Cairo renderer. The context code depends on the image/surface lifecycles above and shares the affine matrix primitives.
 
-- [Path data in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements eleven path lifecycle and current-point exports with Cairo 24.8 device-coordinate quantization, target device scale, forward-collinear line canonicalization, move/line/cubic/close elements, deep-copied public cairo_path_t arrays, and guest ABI ownership. Append converts user paths through the current CTM and target device scale, while save/restore preserves the independent path. Rendering and path extents are not yet implemented; arc/rectangle constructors remain pending.
+- [Path data in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements eleven path lifecycle and current-point exports with Cairo 24.8 device-coordinate quantization, target device scale, forward-collinear line canonicalization, move/line/cubic/close elements, deep-copied public cairo_path_t arrays, and guest ABI ownership. Append converts user paths through the current CTM and target device scale, while save/restore preserves the independent path. Rendering and path extents are not yet implemented; arc constructors remain pending.
+
+- [Operator state and rectangle paths in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implement the Cairo OVER-default composition operator getter/setter, including its save/restore state, and the rectangle path constructor using the existing quantized move/line/close implementation. The renderer does not yet consume the stored operator, and the function cannot draw a filled rectangle; arc, clipping and stroke/fill remain throwing. This follows the public Cairo 1.18 C API and native path comparisons, not hardware-confirmed firmware behavior.
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 89 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior of these remaining declarations are unverified; they still throw through `NotImplemented_nid_no_patch`.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 86 remaining callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. This NID map includes previously implemented functions; unsupported functions still throw through `NotImplemented_nid_no_patch` and their prototypes and behavior remain unverified.
 
 | Name | NID |
 | --- | --- |
@@ -51,7 +53,6 @@
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
 | `cairo_mask` | `D1KYCZ80Sac` |
-| `cairo_rectangle` | `E5LkpnAY7po` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
 | `cairo_show_glyphs` | `FnhwGKKZOjU` |
 | `cairo_mesh_pattern_curve_to` | `H9bwCsWw7LA` |
@@ -81,7 +82,6 @@
 | `cairo_font_face_get_user_data` | `bXupa3+NYIs` |
 | `cairo_pattern_create_mesh` | `bz5MfOeWZw4` |
 | `cairo_stroke` | `cdr2T4SoIyU` |
-| `cairo_set_operator` | `dc4bb-f5YEE` |
 | `cairo_fill_preserve` | `dewyjTlk+u8` |
 | `cairo_fill_extents` | `dkoQNd4kBlQ` |
 | `cairo_ft_font_face_create_for_ft_face` | `dqEhIWRTjuo` |
@@ -98,7 +98,6 @@
 | `cairo_scaled_font_glyph_extents` | `oy7NcAkex1I` |
 | `cairo_show_text` | `psdqLsaPnkk` |
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
-| `cairo_get_operator` | `tYTJIi4s6t0` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
 | `cairo_set_source_surface` | `vcN1gg+gWRg` |
