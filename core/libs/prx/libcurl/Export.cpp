@@ -1,4 +1,6 @@
 #include "prx/libcurl/include/InventoryExports.hpp"
+#include <cstddef>
+#include <cstdint>
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 
@@ -76,8 +78,18 @@ int APS5_VABI curl_multi_socket_all() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI curl_strequal() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI curl_strequal(const char* s1, const char* s2) {
+    if (!s1 || !s2) return !s1 && !s2;
+    while (*s1 && *s2) {
+        unsigned char c1 = static_cast<unsigned char>(*s1);
+        unsigned char c2 = static_cast<unsigned char>(*s2);
+        if (c1 >= 'A' && c1 <= 'Z') c1 = static_cast<unsigned char>(c1 + ('a' - 'A'));
+        if (c2 >= 'A' && c2 <= 'Z') c2 = static_cast<unsigned char>(c2 + ('a' - 'A'));
+        if (c1 != c2) return 0;
+        ++s1;
+        ++s2;
+    }
+    return *s1 == *s2;
 }
 
 int APS5_VABI curl_url_get() {
@@ -160,8 +172,20 @@ int APS5_VABI curl_easy_init() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI curl_strnequal() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI curl_strnequal(const char* s1, const char* s2, size_t n) {
+    if (n == 0) return 1;
+    if (!s1 || !s2) return !s1 && !s2;
+    while (n > 0 && *s1 && *s2) {
+        unsigned char c1 = static_cast<unsigned char>(*s1);
+        unsigned char c2 = static_cast<unsigned char>(*s2);
+        if (c1 >= 'A' && c1 <= 'Z') c1 = static_cast<unsigned char>(c1 + ('a' - 'A'));
+        if (c2 >= 'A' && c2 <= 'Z') c2 = static_cast<unsigned char>(c2 + ('a' - 'A'));
+        if (c1 != c2) return 0;
+        ++s1;
+        ++s2;
+        --n;
+    }
+    return n == 0 || *s1 == *s2;
 }
 
 int APS5_VABI curl_mime_data_cb() {

@@ -838,6 +838,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
     endif()
 
+    add_test_executable(guest_curl_tests tests/GuestCurl.cpp)
+    target_include_directories(guest_curl_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_curl_tests PRIVATE libcurl libkernel libc)
+    configure_windows_unwind(guest_curl_tests)
+    add_test(NAME guest_curl COMMAND guest_curl_tests)
+    set_tests_properties(guest_curl PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_curl PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcurl>")
+    endif()
+
     add_test_executable(guest_offline_imports_tests tests/GuestOfflineImports.cpp)
     target_include_directories(guest_offline_imports_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_offline_imports_tests PRIVATE libSceHttp libSceNpEntitlementAccess libSceRudp libSceVideoRecordingP libc)
