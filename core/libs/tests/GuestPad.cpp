@@ -290,17 +290,26 @@ static void CheckLatchedPressLifetime(int handle) {
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     Require(scePadReadState(handle, &data) == PAD_OK);
     Require((data.buttons & cross) == 0);
-    while (!ReadTwiceWithin(handle, std::chrono::milliseconds(50))) {}
-    pressed.buttons = cross;
-    PadPublishInput_nid_postfix(pressed);
-    PadPublishInput_nid_postfix(PadInputState{});
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-    pressed.buttons = circle;
-    PadPublishInput_nid_postfix(pressed);
-    Require(scePadReadState(handle, &data) == PAD_OK);
+    bool readInTime = false;
+    for (int attempt = 0; attempt < 50 && !readInTime; ++attempt) {
+        const bool closeReads = ReadTwiceWithin(handle, std::chrono::milliseconds(50));
+        pressed.buttons = cross;
+        PadPublishInput_nid_postfix(pressed);
+        PadPublishInput_nid_postfix(PadInputState{});
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        pressed.buttons = circle;
+        const auto tap = std::chrono::steady_clock::now();
+        PadPublishInput_nid_postfix(pressed);
+        PadPublishInput_nid_postfix(PadInputState{});
+        Require(scePadReadState(handle, &data) == PAD_OK);
+        readInTime = closeReads && std::chrono::steady_clock::now() - tap < std::chrono::milliseconds(50);
+    }
+    if (!readInTime) {
+        std::fputs("released circle tap was not read within 50 ms of a close read pair in 50 attempts\n", stderr);
+        std::abort();
+    }
     Require((data.buttons & cross) == 0);
     Require((data.buttons & circle) != 0);
-    PadPublishInput_nid_postfix(PadInputState{});
 }
 
 static void CheckLatchedPressAtSlowReads(int handle) {
