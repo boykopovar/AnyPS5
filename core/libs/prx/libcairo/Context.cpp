@@ -21,6 +21,7 @@ constexpr int kInvalidPathData = 9;
 constexpr CairoMatrix kIdentity{1, 0, 0, 1, 0, 0};
 
 struct GraphicsStyle {
+    int compositionOperator{2};
     int antialias{};
     int fillRule{};
     int lineCap{};
@@ -491,6 +492,38 @@ void APS5_VABI cairo_get_dash(CairoContext* context, double* dashes, double* off
 int APS5_VABI cairo_get_dash_count(CairoContext* context) {
     auto* state = Valid(context);
     return state ? state->style.dashCount : 0;
+}
+
+void APS5_VABI cairo_set_operator(CairoContext* context, int operation) {
+    auto* state = Valid(context);
+    if (state) state->style.compositionOperator = operation;
+}
+
+int APS5_VABI cairo_get_operator(CairoContext* context) {
+    auto* state = Valid(context);
+    return state ? state->style.compositionOperator : 2;
+}
+
+void APS5_VABI cairo_rectangle(CairoContext* context, double x, double y,
+                               double width, double height) {
+    auto* state = Valid(context);
+    if (!state) return;
+    double wx = width, wy = 0;
+    double hx = 0, hy = height;
+    cairo_matrix_transform_distance(&state->matrix, &wx, &wy);
+    cairo_matrix_transform_distance(&state->matrix, &hx, &hy);
+    double sx = 1, sy = 1;
+    cairo_surface_get_device_scale(state->target, &sx, &sy);
+    wx = Fixed(wx * sx);
+    wy = Fixed(wy * sy);
+    hx = Fixed(hx * sx);
+    hy = Fixed(hy * sy);
+    DevicePoint(state, x, y);
+    if (!AppendMove(state, x, y)) return;
+    if (width != 0) AppendLine(state, x + wx, y + wy);
+    if (height != 0) AppendLine(state, x + wx + hx, y + wy + hy);
+    if (width != 0 && height != 0) AppendLine(state, x + hx, y + hy);
+    cairo_close_path(context);
 }
 
 void APS5_VABI cairo_new_path(CairoContext* context) {

@@ -104,9 +104,6 @@ int APS5_VABI cairo_mask() {
 
 
 
-int APS5_VABI cairo_rectangle() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 
@@ -270,9 +267,6 @@ int APS5_VABI cairo_stroke() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_set_operator() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_fill_preserve() {
     NotImplemented_nid_no_patch(__func__);
@@ -370,9 +364,6 @@ int APS5_VABI cairo_set_font_face() {
 
 
 
-int APS5_VABI cairo_get_operator() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI cairo_scaled_font_create() {
     NotImplemented_nid_no_patch(__func__);
