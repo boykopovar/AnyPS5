@@ -1741,7 +1741,8 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
         }
     }
     const TimedAccess timed(CounterCollect, bytes);
-#ifndef _WIN32
+    const auto requestedFirst = first;
+    const auto requestedStop = stop;
     if (useMemo && HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() != 0 && bytes <= WriteBlockBytes) {
         const auto begin = first & ~(WriteBlockBytes - 1);
         const auto end = (stop + WriteBlockBytes - 1) & ~(WriteBlockBytes - 1);
@@ -1750,8 +1751,16 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             stop = end;
         }
     }
+    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) {
+#ifdef _WIN32
+        if (first == requestedFirst && stop == requestedStop) return 0;
+        first = requestedFirst;
+        stop = requestedStop;
+        if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return 0;
+#else
+        return 0;
 #endif
-    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return 0;
+    }
     // Only a completed walk is remembered; a failed one (uncommitted pages) returned 0 above.
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
@@ -2896,6 +2905,7 @@ void visitReadablePages(std::byte* destination, std::uint64_t source, std::size_
 
 void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_t bytes) {
 #ifdef _WIN32
+    if (GuestArena::GuestArenaCopyOwned_nid_no_patch(source, destination, bytes)) return;
     visitReadablePages(destination, source, bytes, [&](std::size_t offset, std::size_t count, bool read) {
         if (!read) std::memset(destination + offset, 0, count);
     });
@@ -2906,6 +2916,8 @@ void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_
 
 bool equalsCommittedBytes(std::uint64_t address, const std::byte* expected, std::size_t bytes) {
 #ifdef _WIN32
+    bool same = false;
+    if (GuestArena::GuestArenaCompareOwned_nid_no_patch(address, expected, bytes, &same)) return same;
     constexpr std::size_t ChunkBytes = 64 * PageBytes;
     struct CompareChunkStorage {};
     auto& current = HostThreadLocal<std::vector<std::byte>, CompareChunkStorage>();

@@ -1356,13 +1356,6 @@ void EmitMeshWindowClaim(SpirvEmitterState& state, std::uint32_t firstInvocation
     state.module.AddFunction(spv::OpLoad, TypeU32(state), invocation, InputVariableForKind(state, StageInputKind::LocalInvocationIndex));
     const auto base = EmitAddU32(state, EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, slot, ConstantU32(state, MeshWindowSlotDwords)), ConstantU32(state, MeshWindowHeaderDwords)), invocation);
     state.module.AddFunction(spv::OpStore, state.meshWindowBaseVariable, base);
-    const auto invocations = MeshWindowInvocations(state);
-    const auto window = state.program.Metadata().vectorWindowSize;
-    const auto indexed = state.vectorWindowIndexed != 0u ? state.vectorWindowIndexed : window;
-    for (std::uint32_t entry = 0; entry < state.laneCount * indexed; entry++) {
-        if (entry / state.laneCount < state.meshWindowEntryLive.size() && !state.meshWindowEntryLive[entry / state.laneCount]) continue;
-        state.module.AddFunction(spv::OpStore, MeshWindowWord(state, EmitAddU32(state, base, ConstantU32(state, entry * invocations))), ConstantU32(state, 0u));
-    }
 }
 
 void EmitMeshWindowRelease(SpirvEmitterState& state, std::uint32_t firstInvocation) {
