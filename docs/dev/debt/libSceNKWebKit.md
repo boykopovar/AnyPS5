@@ -22,6 +22,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF language exports](../../../core/libs/prx/libSceNKWebKit/src/WtfLanguage.cpp) call language change observers in registration order; the console iterates a `HashMap` keyed by context in hash-table order. The 16-byte `Vector<String>` layout and the rest of the behavior follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Language.cpp) and have no console verification. Null and `-1` contexts and null observers throw instead of reproducing undefined behavior. Closes when: compared with a console module.
 
 ### Functional
+- [RFC 2822 date formatting](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - `WTF::makeRFC2822DateString` follows [DateMath.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/DateMath.cpp#L1033-L1051) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. The output formats using a local stack buffer and constructs a `WTF::String` via `String::fromUTF8`. Out-of-range parameters (`dayOfWeek > 6`, `day == 0 || day > 31`, `month > 11`, `hours > 23`, `minutes > 59`, `seconds > 59`, or `|utcOffset| > 5999`) throw `std::invalid_argument` to prevent array bounds violations and enforce the two-digit hour boundary (`number < 100`) of `appendTwoDigitNumber`. Runtime behavior on PS5 hardware has not been measured.
+
 - [WTF ICU version queries](../../../core/libs/prx/libSceNKWebKit/src/WtfPrimitives.cpp) (libSceNKWebKit) - `WTF::ICU::majorVersion` and `WTF::ICU::minorVersion` follow [ICUHelpers.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/unicode/icu/ICUHelpers.cpp) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. Both functions query the underlying ICU version via `u_getVersion_nid_postfix` with `std::call_once` synchronization and return version components `[0]` and `[1]`. Runtime version values reflect `libSceIcu`'s reported ICU 78.1 release and have not been measured against console hardware traces.
 
 - [WKURL URL component and comparison helpers](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKURLCopyHostName`, `WKURLCopyPath`, `WKURLCopyScheme`, `WKURLCopyLastPathComponent`, `WKURLCreateWithBaseURL` and `WKURLIsEqual` create and inspect `WKURLRef` host objects, resolving relative URLs against base URLs and comparing canonical URL strings; console execution is unverified.
@@ -1608,7 +1610,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF21RefCountedLeakCounterC2EPKc` | `opqf3CJzhms` |
 | `_ZN3WTF21bootSessionUUIDStringEv` | `8Wal1MC0Llo` |
 | `_ZN3WTF21currentSearchLocaleIDEv` | `D0gLApZm36c` |
-| `_ZN3WTF21makeRFC2822DateStringEjjjjjjji` | `uj+HLgqmsTY` |
 | `_ZN3WTF21sentenceBreakIteratorENS_10StringViewE` | `poSZevJzCfA` |
 | `_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE` | `ygkwGUwd8fE` |
 | `_ZN3WTF22CrossThreadTaskHandler21setCompletionCallbackEONS_8FunctionIFvvEEE` | `3QQmCLX9eCA` |

@@ -128,6 +128,7 @@ void APS5_VABI _ZN3WTF20initializeMainThreadEv();
 bool APS5_VABI _ZN3WTF20protocolIsJavaScriptENS_10StringViewE(NKWebKit::WtfAbi::StringView view);
 void APS5_VABI _ZN3WTF20setProcessPrivilegesENS_9OptionSetINS_16ProcessPrivilegeEEE(NKWebKit::WtfAbi::ProcessPrivileges privileges);
 void* APS5_VABI _ZN3WTF20tryFastAlignedMallocEmm(std::size_t alignment, std::size_t size);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF21makeRFC2822DateStringEjjjjjjji(unsigned dayOfWeek, unsigned day, unsigned month, unsigned year, unsigned hours, unsigned minutes, unsigned seconds, int utcOffset);
 bool APS5_VABI _ZN3WTF22equalIgnoringASCIICaseEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);
 bool APS5_VABI _ZN3WTF22equalRespectingNullityENS_10StringViewES0_(NKWebKit::WtfAbi::StringView a, NKWebKit::WtfAbi::StringView b);
 bool APS5_VABI _ZN3WTF22isMainThreadOrGCThreadEv();
