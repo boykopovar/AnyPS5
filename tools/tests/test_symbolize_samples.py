@@ -761,6 +761,59 @@ class MappedExportTests(unittest.TestCase):
         self.assertEqual(module.name(0x1021), "~first_func")
         self.assertEqual(module.name(0x1061), "~second_func")
 
+    def overlapping_section(self, rva, size=0x10, raw_size=0x10, first=False):
+        struct.pack_into("<H", self.data, 0x46, 3)
+        entry = 0x148 + 80
+        struct.pack_into("<8sIIII", self.data, entry, b".overlap", size, rva, raw_size, 0xA00)
+        struct.pack_into("<I", self.data, entry + 36, 0x40000040)
+        if first:
+            original = bytes(self.data[0x148 + 40:0x148 + 80])
+            self.data[0x148 + 40:0x148 + 80] = self.data[entry:entry + 40]
+            self.data[entry:entry + 40] = original
+
+    def test_overlapping_export_metadata_is_rejected_in_either_section_order(self):
+        original = bytes(self.data)
+        for first in (False, True):
+            for rva in (0x2000, 0x2040, 0x2048, 0x2050, 0x2060):
+                with self.subTest(first=first, rva=rva):
+                    self.data = bytearray(original)
+                    self.overlapping_section(rva, first=first)
+                    with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+                        self.module()
+
+    def test_export_reads_cannot_cross_into_an_overlapping_mapping(self):
+        original = bytes(self.data)
+        for first in (False, True):
+            for rva in (0x2016, 0x2042, 0x204A, 0x2051, 0x2062):
+                with self.subTest(first=first, rva=rva):
+                    self.data = bytearray(original)
+                    self.overlapping_section(rva, first=first)
+                    with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+                        self.module()
+
+    def test_virtual_and_raw_overlap_is_rejected(self):
+        self.overlapping_section(0x2060, raw_size=0)
+        with self.assertRaisesRegex(ValueError, "overlapping PE sections"):
+            self.module()
+
+    def test_unrelated_overlap_does_not_discard_valid_exports(self):
+        self.overlapping_section(0x21F0)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_export_name_can_terminate_immediately_before_an_overlap(self):
+        struct.pack_into("<I", self.data, 0x600 + 24, 1)
+        self.overlapping_section(0x206B)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_ambiguous_exports_preserve_frames_with_a_warning(self):
+        self.overlapping_section(0x2060)
+        self.path.write_bytes(self.data)
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.path.parent], {}, unverified=True, warn=warnings.append)
+        frame = "mapped.dll+0x1021"
+        self.assertEqual(symbolizer.frame(frame), frame)
+        self.assertTrue(any("overlapping PE sections" in warning for warning in warnings))
+
     def test_virtual_tail_name_matches_backed_empty_control(self):
         self.data[0x660] = 0
         expected = self.module().name(0x1021)
