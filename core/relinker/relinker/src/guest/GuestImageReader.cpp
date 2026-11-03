@@ -94,13 +94,17 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     for (const auto unsupported : {15u, 16u, 22u}) {
         if (tags.contains(unsupported)) fail("Unsupported dynamic tag " + std::to_string(unsupported));
     }
-    if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull)) != 0) fail("Unsupported guest dynamic flags");
+    if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull | 16ull)) != 0) fail("Unsupported guest dynamic flags");
     image.Symbolic = tags.contains(30) && (tags.at(30) & 2ull) != 0;
     const auto mapped = [&](std::uint64_t address, std::uint64_t size, std::uint32_t flags) {
         for (const auto& header : image.Headers) {
             if (header.Type == 1 && (header.Flags & flags) == flags && address >= header.MappedAddress && address - header.MappedAddress <= header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress)) return;
         }
         fail("Unmapped or inaccessible guest address " + std::to_string(address));
+    };
+    const auto relativeAddress = [&](std::uint64_t address) {
+        if (address < loads.begin()->first || address > loads.rbegin()->second)
+            fail("Relative relocation addend is outside the ELF image " + std::to_string(address));
     };
     const auto translate = [&](std::uint64_t address, std::uint64_t size) {
         for (const auto& header : image.Headers) {
@@ -262,7 +266,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (tag >= 35 && tag <= 37) relrTags.push_back({static_cast<std::int64_t>(tag), value});
     for (const auto& [target, addend] : ReadRelrRelocations(bytes, image.Headers, relrTags)) {
         mapped(target, 8, 2);
-        mapped(addend, 0, 0);
+        relativeAddress(addend);
         relocationTargets.emplace(target, target + 8);
         Io::AppendU64(image.Dynamic.RelaData, target);
         Io::AppendU64(image.Dynamic.RelaData, 8);
@@ -285,7 +289,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             mapped(target, 8, 2);
             const bool relative = !plt && relocation == 8 && (info >> 32) == 0;
             if (const auto earlier = relativeEntries.find(target); relative && earlier != relativeEntries.end()) {
-                mapped(addend, 0, 0);
+                relativeAddress(addend);
                 Io::WriteU64(output, earlier->second + 16, addend);
                 continue;
             }
@@ -300,13 +304,13 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                         if (symbol.Value != 0) fail("RELATIVE relocation has a symbol");
                     } else if (symbol.Section == 0 || addend > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) || symbol.Value != addend)
                         fail("RELATIVE relocation has a symbol");
-                    mapped(addend, 0, 0);
+                    relativeAddress(addend);
                     Io::AppendU64(output, target);
                     Io::AppendU64(output, relocation);
                     Io::AppendU64(output, addend);
                     continue;
                 }
-                mapped(addend, 0, 0);
+                relativeAddress(addend);
             } else if (relocation == 1 || relocation == 6 || relocation == 7) {
                 const auto& symbol = image.Symbols[info >> 32];
                 if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation != 1 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");

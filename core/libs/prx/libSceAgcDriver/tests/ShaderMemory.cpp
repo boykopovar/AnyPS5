@@ -2104,7 +2104,7 @@ void verifyTypeZeroImageMaterialization() {
 
     {
         auto tornT = oldT;
-        tornT[1] &= ~(0x1ffu << 20u);
+        tornT[3] = (tornT[3] & ~(0xfu << 28u)) | (2u << 28u);
         srt.fill(0u);
         std::copy(tornT.begin(), tornT.end(), srt.begin());
         std::copy(outputV.begin(), outputV.end(), srt.begin() + 16u);
@@ -2145,7 +2145,7 @@ void verifyTypeZeroImageMaterialization() {
 
     {
         auto tornT = oldT;
-        tornT[1] &= ~(0x1ffu << 20u);
+        tornT[3] = (tornT[3] & ~(0xfu << 28u)) | (2u << 28u);
         srt.fill(0u);
         std::copy(tornT.begin(), tornT.end(), srt.begin());
         std::copy(outputV.begin(), outputV.end(), srt.begin() + 16u);
@@ -2364,6 +2364,145 @@ void verifyTypeZeroImageMaterialization() {
         require(fillSnapshot.uniformFill.value == fillState.settledFill && fillState.fillReads == 2u,
                 "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
     }
+}
+
+void verifyUnsetFormatImageMaterialization() {
+    using namespace ShaderRecompiler;
+    constexpr std::array<std::uint32_t, 8> measuredImage{0xffffffffu, 0xffffffffu, 0x00000019u, 0xc0017901u, 0x00000342u, 0xc8000000u, 0xc0064900u, 0x0000062fu};
+    const auto materialize = [](const std::array<std::uint32_t, 8>& words, const ImageResource& image) {
+        IrResourcePlan plan;
+        plan.srtPlanComplete = true;
+        plan.resourceTrackingComplete = true;
+        plan.userDataCount = 0u;
+        plan.materializationSources = {0u};
+        std::vector<std::unique_ptr<IrValue>> values;
+        DescriptorSource source;
+        source.dwordCount = static_cast<std::uint32_t>(words.size());
+        for (std::uint32_t i = 0u; i < words.size(); ++i) {
+            auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, i);
+            value->SetImmediateU32(words[i]);
+            source.dwords[i] = value.get();
+            values.push_back(std::move(value));
+        }
+        plan.descriptorSources.push_back(source);
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        ResourceSnapshot snapshot;
+        ResourceMaterializer{}.Materialize(plan, SrtRuntime{}, snapshot);
+        return snapshot;
+    };
+    ImageResource sampled;
+    sampled.source = 0u;
+    sampled.resourceClass = ImageResourceClass::Sampled;
+    sampled.dimension = RdnaImageDimension::Dim1DArray;
+    sampled.read = true;
+    for (const std::uint32_t format : {0u, 0x1ffu}) {
+        auto words = measuredImage;
+        words[1] = (words[1] & ~(0x1ffu << 20u)) | (format << 20u);
+        const auto snapshot = materialize(words, sampled);
+        require(snapshot.images.size() == 1u && snapshot.images[0].dwordCount == 8u && snapshot.images[0].dwords == words,
+                "an unset-format measured image-type T# was rejected or altered during materialization");
+        for (const bool atomic : {false, true}) {
+            auto storage = sampled;
+            storage.resourceClass = ImageResourceClass::Storage;
+            storage.read = false;
+            storage.written = !atomic;
+            storage.atomic = atomic;
+            bool rejected = false;
+            try {
+                static_cast<void>(materialize(words, storage));
+            } catch (const std::runtime_error& error) {
+                rejected = std::string_view(error.what()).find("image descriptor") != std::string_view::npos;
+            }
+            require(rejected, atomic ? "an unset-format atomic image descriptor was accepted" : "an unset-format writable image descriptor was accepted");
+        }
+    }
+    const auto expectInvalidType = [&](std::uint32_t type, const char* message) {
+        auto words = measuredImage;
+        words[1] &= ~(0x1ffu << 20u);
+        words[3] = (words[3] & ~(0xfu << 28u)) | (type << 28u);
+        expectFailure([&] { static_cast<void>(materialize(words, sampled)); }, "runtime image descriptor is invalid", message);
+    };
+    expectInvalidType(2u, "a reserved TYPE 2 T# with an unset format was accepted as a null image");
+    expectInvalidType(7u, "a reserved TYPE 7 T# with an unset format was accepted as a null image");
+    expectInvalidType(15u, "an unimplemented TYPE 15 T# with an unset format was accepted as a null image");
+}
+
+void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* message, std::ptrdiff_t optionalImages = 2) {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture textures[2];
+    const auto imageDescriptor = [&](const Texture& texture) {
+        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    };
+    std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    std::array<std::uint32_t, 32> srt{};
+    const auto first = imageDescriptor(textures[0]);
+    const auto second = imageDescriptor(textures[1]);
+    std::copy(first.begin(), first.end(), srt.begin());
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0x30027facu};
+    std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+    srt[20] = 1u;
+    std::copy(second.begin(), second.end(), srt.begin() + 24);
+    const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, address, code, 0, {}};
+    request.context.waveSize = 32u;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.usesFaultBuffer && plan->info.images.size() >= 2u && std::ranges::count_if(plan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }) >= optionalImages, message);
+    AgcDriver::ShaderMemory memory({});
+    const auto capture = memory.Capture(request);
+    const auto memoryRegions = memory.Regions();
+    request.context.memory = memoryRegions;
+    static_cast<void>(Recompile(request, *capture));
+}
+
+
+void verifyDescriptorWebLaneIndexFold() {
+    const std::vector<std::uint32_t> code{
+        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850005u, 0xbf068110u,
+        0xbf85000cu, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
+        0xbf820009u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0xd7650009u, 0x000100c1u, 0x7e100502u, 0x7e120503u,
+        0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    CompileDescriptorWeb(code, 0x24000u, "descriptor web lane index: the path whose T# holds the lane index was not folded beside the two T#s into faulting arms");
+}
+
+void verifyDescriptorWebTexelFold() {
+    const std::vector<std::uint32_t> code{
+        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xf0000108u, 0x00020900u, 0xbf8c3f70u,
+        0xbf068010u, 0xbf850005u, 0xbf068110u, 0xbf85000cu, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu,
+        0x7e0e020du, 0x7e10020eu, 0x7e12020fu, 0xbf820007u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e100502u,
+        0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u,
+        0xbf810000u};
+    CompileDescriptorWeb(code, 0x26000u, "descriptor web texel: the path whose T# holds a texel from an image read was not folded beside the read's T# into a faulting arm", 1);
+}
+
+void verifyDescriptorWebSelectOrder() {
+    const std::vector<std::uint32_t> code{
+        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xf40c0700u, 0xfa000060u, 0xbf8cc07fu, 0x7d880090u,
+        0x7e14021cu, 0x02041408u, 0x7e16021du, 0x02061609u, 0x7e18021eu, 0x0208180au, 0x7e1a021fu, 0x020a1a0bu, 0xbf068010u, 0xbf85000au, 0x7d880088u, 0x7e1c0220u,
+        0x020c1c0cu, 0x7e1e0221u, 0x020e1e0du, 0x7e200222u, 0x0210200eu, 0x7e220223u, 0x0212220fu, 0xbf820004u, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
+        0x7e100502u, 0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u,
+        0x80060000u, 0xbf810000u};
+    CompileDescriptorWeb(code, 0x25000u, "descriptor web select order: per-lane T# selects in two blocks were not split into arms");
 }
 
 void verifyOutOfRangeConstantReads() {
@@ -2772,6 +2911,22 @@ void verifyGuardedDescriptorSources() {
     {
         AgcDriver::ShaderMemory memory({});
         expectFailure([&] { static_cast<void>(memory.Capture(request)); }, "runtime image descriptor is invalid", "guarded sources: an invalid T# behind a taken branch was accepted");
+    }
+    auto unsetFormat = valid;
+    unsetFormat[1] = valid[1] & ~(0x1ffu << 20u);
+    fill(unsetFormat, 1u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(capture->snapshot.images.size() == 1u && capture->snapshot.images[0].dwords == unsetFormat, "guarded sources: a T# with an unset format behind a taken branch was rejected or altered");
+    }
+    auto filledFormat = valid;
+    filledFormat[1] = valid[1] | (0x1ffu << 20u);
+    fill(filledFormat, 1u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(capture->snapshot.images.size() == 1u && capture->snapshot.images[0].dwords == filledFormat, "guarded sources: a T# with an all-ones format behind a taken branch was rejected or altered");
     }
     auto typeOne = valid;
     typeOne[3] = 0xfacu | (1u << 28u);
@@ -11195,7 +11350,11 @@ int main(int argc, char** argv) {
         verifyLayoutPair();
         verifySignedSrtComparison();
         verifyTypeZeroImageMaterialization();
+        verifyUnsetFormatImageMaterialization();
         verifyOutOfRangeConstantReads();
+        verifyDescriptorWebLaneIndexFold();
+        verifyDescriptorWebTexelFold();
+        verifyDescriptorWebSelectOrder();
         verifySignedMinimum();
         verifyMayEvaluate();
         verifyMayDecideSharedConditions();
