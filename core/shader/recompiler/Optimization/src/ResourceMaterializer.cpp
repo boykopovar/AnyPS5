@@ -34,6 +34,8 @@
 
 namespace ShaderRecompiler {
 
+static_assert(ShaderInfo::MaxSamplers <= std::numeric_limits<std::uint64_t>::digits);
+
 namespace {
 
 using ImageTableAbi::PoisonReason;
@@ -77,13 +79,20 @@ bool nullImageDescriptor(const DescriptorValue& descriptor) {
     return descriptor.dwords[0] == 0u && (descriptor.dwords[1] & 0xffu) == 0u;
 }
 
+bool imageFormatUnset(const DescriptorValue& descriptor) {
+    const auto format = (descriptor.dwords[1] >> 20u) & 0x1ffu;
+    return format == 0u || format == 0x1ffu;
+}
+
 ImageType rawImageType(const DescriptorValue& descriptor) {
     return static_cast<ImageType>((descriptor.dwords[3] >> 28u) & 0xfu);
 }
 
 bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor) {
     if (nullImageDescriptor(descriptor)) return true;
-    return static_cast<std::uint32_t>(rawImageType(descriptor)) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
+    const auto type = rawImageType(descriptor);
+    if (image.table == NoTable && image.resourceClass == ImageResourceClass::Sampled && image.read && !image.written && !image.atomic && type >= ImageType::Color1D && type <= ImageType::Color2DMsaa && imageFormatUnset(descriptor)) return true;
+    return static_cast<std::uint32_t>(type) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
 }
 
 IrBufferFormat rawImageFormat(const DescriptorValue& descriptor) {
@@ -1881,9 +1890,9 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
     HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
-    std::vector<std::uint32_t> directSamplers(info.images.size(), 0u);
+    std::vector<std::uint64_t> directSamplers(info.images.size(), 0u);
     for (const auto& pair : info.sampledPairs) {
-        if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= 1u << pair.sampler;
+        if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= std::uint64_t{1} << pair.sampler;
     }
     const auto reducingSampler = reducingSamplers(info, snapshot);
     const auto imageRecord = [&](std::uint32_t resource, const DescriptorValue& words) {
@@ -2368,6 +2377,35 @@ std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image,
     const auto match = TryRuntimeImageMode(image, descriptor, modes);
     if (!match.mode.has_value()) throw std::runtime_error(match.detail);
     return *match.mode;
+}
+
+std::uint32_t ResourceMaterializer::VolumeGatherState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
+    const auto& image = info.images[index];
+    const auto& descriptor = snapshot.images[index];
+    if (image.table != NoTable) throw std::runtime_error("a 3D gather of an image table entry is not implemented");
+    if (descriptor.dwordCount != 8u) throw std::runtime_error("a 3D gather of an image without an 8-dword descriptor is not implemented");
+    if (nullImageDescriptor(image, descriptor)) return 0u;
+    std::optional<std::uint32_t> samplerState;
+    for (const auto& pair : info.sampledPairs) {
+        if (pair.image != index || !pair.volumeGather) continue;
+        if (pair.sampler >= info.samplers.size() || info.samplers[pair.sampler].table != NoTable) throw std::runtime_error("a 3D gather through a sampler table is not implemented");
+        if (pair.sampler >= snapshot.samplers.size() || snapshot.samplers[pair.sampler].dwordCount != 4u) throw std::runtime_error("a 3D gather has no sampler descriptor");
+        const auto& words = snapshot.samplers[pair.sampler].dwords;
+        if (((words[0] >> 15u) & 0x1u) != 0u) throw std::runtime_error("a 3D gather with unnormalized coordinates is not implemented");
+        const auto clampX = words[0] & 0x7u;
+        const auto clampY = (words[0] >> 3u) & 0x7u;
+        const auto clampZ = (words[0] >> 6u) & 0x7u;
+        const auto border = (words[3] >> 30u) & 0x3u;
+        const bool bordered = clampX >= 4u || clampY >= 4u || clampZ >= 6u;
+        if (bordered && border == 3u) throw std::runtime_error("a 3D gather with a border color table is not implemented");
+        if (bordered && (image.numericClass == IrTextureNumericClass::Uint || image.numericClass == IrTextureNumericClass::Sint)) throw std::runtime_error("a 3D gather of an integer texture with border addressing is not implemented");
+        if (bordered && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle) throw std::runtime_error("a 3D gather of a swizzled texture with border addressing is not implemented");
+        const auto state = (clampX << VolumeGather::ClampXShift) | (clampY << VolumeGather::ClampYShift) | (clampZ << VolumeGather::ClampZShift) | ((bordered ? border : 0u) << VolumeGather::BorderShift);
+        if (samplerState.has_value() && *samplerState != state) throw std::runtime_error("a 3D gather through samplers that disagree is not implemented");
+        samplerState = state;
+    }
+    if (!samplerState.has_value()) throw std::runtime_error("a 3D gather has no paired sampler");
+    return *samplerState;
 }
 
 std::uint32_t ResourceMaterializer::EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {

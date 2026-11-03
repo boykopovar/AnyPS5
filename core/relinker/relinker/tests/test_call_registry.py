@@ -49,6 +49,9 @@ def main():
         for segment in (0x2e, 0x26, 0x36, 0x3e):
             instructions = [
                 (bytes([segment, 0xff, 0x15]), True),
+                (bytes([segment, 0x67, 0xff, 0x15]), True),
+                (bytes([0x67, segment, 0xff, 0x25]), True),
+                (bytes([0x67, segment, 0x48, 0x8b, 0x05]), True),
                 (bytes([segment, 0xff, 0x25]), True),
                 (bytes([segment, 0xff, 0x35]), True),
                 (bytes([segment, 0x48, 0x8b, 0x05]), True),

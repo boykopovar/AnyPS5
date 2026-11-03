@@ -14,6 +14,8 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 
 namespace {
@@ -176,6 +178,7 @@ void TestStreams(const Fixture& fixture) {
 void TestQueries() {
     constexpr int GuestEinval = 22;
     constexpr int GuestEnoent = 2;
+    constexpr int GuestEfault = 14;
     const char* names[] = {"generated.bin", "missing.bin"};
     std::array<std::uint32_t, 2> ids{0, 0};
     std::array<std::uint64_t, 2> sizes{1, 1};
@@ -193,6 +196,28 @@ void TestQueries() {
     FileStat stat{};
     Require(sceKernelAprGetFileStat(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file stat");
     Require(sceKernelAprGetFileStat(id, &stat) == 0 && stat.st_size == static_cast<std::int64_t>(FileBytes), "APR reported a wrong file stat size");
+    for (const bool readable : {true, false}) {
+#ifdef _WIN32
+        void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);
+        Require(page != nullptr, "cannot map an unwritable APR destination");
+#else
+        void* page = mmap(nullptr, 4096, readable ? PROT_READ : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED, "cannot map an unwritable APR destination");
+#endif
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileSize(id, static_cast<std::uint64_t*>(page)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable file size");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileStat(id, static_cast<FileStat*>(page)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable file stat");
+        if (readable) {
+            const auto* bytes = static_cast<const std::uint8_t*>(page);
+            Require(std::all_of(bytes, bytes + 4096, [](std::uint8_t byte) { return byte == 0; }), "APR wrote into an unwritable destination");
+        }
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, 4096);
+#endif
+    }
     std::vector<std::uint8_t> data(4096, 0xCC);
     const Apr::ReadFileCommand command{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, id, 0, reinterpret_cast<std::uint64_t>(data.data()), data.size(), 100};
     alignas(8) std::array<std::uint8_t, sizeof(command)> memory{};
