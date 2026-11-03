@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -85,7 +86,7 @@ struct DepthGuard {
 };
 
 std::shared_mutex& depthGuardMutex() {
-    static std::shared_mutex mutex;
+    static PrimedSharedMutex mutex;
     return mutex;
 }
 
@@ -337,6 +338,10 @@ std::optional<DepthPlaneOverwrite> decodeOverwrite(const StorageImageClear& clea
     overwrite.height = clear.height;
     return overwrite;
 }
+
+class DepthSurface;
+std::pair<std::uint64_t, std::uint64_t> staleStencilRange(const DepthSurface& surface);
+void noteStalePlane(std::uint64_t begin, std::uint64_t end);
 
 class DepthSurface {
 public:
@@ -652,15 +657,26 @@ public:
         if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0) stencilFill.reset();
     }
 
+    void MarkStencilStale() {
+        if (!StencilMirrorable()) return;
+        stencilStale = true;
+        const auto [begin, end] = staleStencilRange(*this);
+        noteStalePlane(begin, end);
+    }
+
     void NoteHtileClear(VkImageAspectFlags aspects) {
         ForgetClear(aspects);
         pendingClear |= aspects;
+        if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0u) MarkStencilStale();
     }
 
     void NotePlaneFill(VkImageAspectFlagBits aspect, float depth, std::uint8_t stencil) {
         pendingClear |= aspect;
         if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) depthFill = depth;
-        else stencilFill = stencil;
+        else {
+            stencilFill = stencil;
+            MarkStencilStale();
+        }
     }
 
     void CopyAspectFrom(const DepthSurface& source, VkImageAspectFlagBits aspect) {
@@ -2466,6 +2482,10 @@ float HostDepthBiasConstant(const Context& context, VkFormat format, float const
 }
 
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested) {
+    return DepthSurfaceViewWithStencilWriteIntent(context, target, depthWritten, stencilTested, true);
+}
+
+VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten) {
     const auto planeBytes = [&](std::uint32_t bytesPerTexel) { return target.samples == 1u ? DepthSliceBytes(target.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(target.extent, bytesPerTexel, target.samples); };
     ClaimMultisampleTargetMemory(target.address, planeBytes(target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u));
     if (target.stencilAddress != 0u) ClaimMultisampleTargetMemory(target.stencilAddress, planeBytes(1u));
@@ -2516,6 +2536,8 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
     const bool inherits = owner != depthOwners().end() && owner->second.surface->active->load(std::memory_order_acquire) && !owner->second.surface->retired;
     surface->clearDepth = target.clearDepth;
     surface->clearStencil = target.clearStencil;
+    const auto stencilOwner = stencilOwners().find({context.device, target.stencilAddress});
+    const bool stencilRebound = stencilOwner == stencilOwners().end() || stencilOwner->second.surface != surface;
     takePlanes(*surface, created, htileCleared | (cleared ? VK_IMAGE_ASPECT_DEPTH_BIT : 0u));
     if (cleared || htileCleared != 0u) surface->expanded = false;
     if (created && !inherits && target.htileAddress == 0) surface->TakeStorage();
@@ -2548,11 +2570,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
         surface->MarkAllStale(planeBytes);
         noteStalePlane(plane, plane + planeBytes);
     }
-    if (surface->StencilMirrorable()) {
-        surface->stencilStale = true;
-        const auto [begin, end] = staleStencilRange(*surface);
-        noteStalePlane(begin, end);
-    }
+    if (stencilWritten || created || stencilRebound) surface->MarkStencilStale();
     drawnDepth = surface;
     return surface->view;
 }
