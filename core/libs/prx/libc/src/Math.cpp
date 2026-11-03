@@ -809,6 +809,17 @@ double APS5_VABI atan_nid_postfix(double x) {
     return hx < 0 ? -z : z;
 }
 double APS5_VABI tan_nid_postfix(double x) { return std::tan(x); }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_log.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_log.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI log_nid_postfix(double x) {
     const double ln2_hi = 6.93147180369123816490e-01;
     const double ln2_lo = 1.90821492927058770002e-10;
