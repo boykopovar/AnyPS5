@@ -1,5 +1,8 @@
 #include "prx/libfontconfig/include/Sets.hpp"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstddef>
 #include <cstring>
@@ -24,7 +27,8 @@ void CheckFonts() {
     assert(set && set->nfont == 0 && set->sfont == 0 && set->fonts == nullptr);
     for (int j = 0; j < 100; ++j) {
         auto* pattern = reinterpret_cast<FcPattern*>(new int(j + 1));
-        assert(FcFontSetAdd(set, pattern) == 1);
+        const int added = FcFontSetAdd(set, pattern);
+        assert(added == 1);
         assert(set->nfont == j + 1);
         assert(set->sfont == ((j / 32) + 1) * 32);
         assert(set->fonts[j] == pattern);
@@ -34,7 +38,8 @@ void CheckFonts() {
     assert(destroyed == 0);
     FcFontSetDestroy(set);
     assert(destroyed == 100 && destroyedSum == 5050);
-    assert(FcFontSetAdd(nullptr, nullptr) == 0);
+    const int invalidAdd = FcFontSetAdd(nullptr, nullptr);
+    assert(invalidAdd == 0);
 }
 
 void CheckObjects() {
