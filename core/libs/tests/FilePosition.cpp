@@ -45,9 +45,15 @@ static void CheckWideScanRejectedByteIsKept() {
     Require(std::fgetc(input.GetHandle()) == 0xff);
 }
 
+static void CheckFdopenNegativeDescriptor() {
+    errno = 0;
+    Require(fdopen_nid_postfix(-1, "r") == nullptr && errno == EBADF);
+}
+
 int main() {
     CheckFseekBounds();
     CheckWideScanRejectedByteIsKept();
+    CheckFdopenNegativeDescriptor();
     FileStream file(TemporaryFile::Open());
     Require(std::fputs("position", file.GetHandle()) >= 0);
     std::int64_t position = -1;
