@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include <limits>
 #include <source_location>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -183,6 +185,50 @@ void SyncOrder(int file) {
     Require(aio_waitcomplete_nid_postfix(&done, &badTime) == -1 && Error() == Einval);
 }
 
+void TimedWaits(int file) {
+    using Clock = std::chrono::steady_clock;
+    char buffer[4] = {};
+    AioHoldWorkerForTest_nid_no_patch(true);
+    auto held = Request(file, buffer, sizeof(buffer));
+    Require(aio_read_nid_postfix(&held) == 0);
+    const GuestAiocb* list[] = {&held};
+    const KernelTimespec millisecond{0, 1000000};
+    auto start = Clock::now();
+    for (int round = 0; round < 20; ++round) Require(aio_suspend_nid_postfix(list, 1, &millisecond) == -1 && Error() == Eagain);
+    auto elapsed = Clock::now() - start;
+    Require(elapsed >= std::chrono::milliseconds(20) && elapsed < std::chrono::milliseconds(200));
+
+    GuestAiocb* done = nullptr;
+    start = Clock::now();
+    for (int round = 0; round < 20; ++round) Require(aio_waitcomplete_nid_postfix(&done, &millisecond) == -1 && Error() == Eagain);
+    elapsed = Clock::now() - start;
+    Require(elapsed >= std::chrono::milliseconds(20) && elapsed < std::chrono::milliseconds(200));
+
+    std::atomic<bool> stop{false};
+    std::thread waker([&] {
+        char other[4] = {};
+        const auto end = Clock::now() + std::chrono::milliseconds(600);
+        while (!stop.load() && Clock::now() < end) {
+            auto request = Request(file, other, sizeof(other));
+            Require(aio_read_nid_postfix(&request) == 0);
+            Require(aio_cancel_nid_postfix(file, &request) == AioCanceled);
+            Require(aio_return_nid_postfix(&request) == -1 && Error() == Ecanceled);
+            std::this_thread::yield();
+        }
+    });
+    const KernelTimespec brief{0, 30000000};
+    start = Clock::now();
+    Require(aio_suspend_nid_postfix(list, 1, &brief) == -1 && Error() == Eagain);
+    elapsed = Clock::now() - start;
+    stop = true;
+    waker.join();
+    Require(elapsed >= std::chrono::milliseconds(30) && elapsed < std::chrono::milliseconds(300));
+
+    Require(aio_cancel_nid_postfix(file, &held) == AioCanceled);
+    Require(aio_return_nid_postfix(&held) == -1 && Error() == Ecanceled);
+    AioHoldWorkerForTest_nid_no_patch(false);
+}
+
 }
 
 int main() {
@@ -195,6 +241,7 @@ int main() {
     ReadAndWrite(file);
     Cancel(file);
     SyncOrder(file);
+    TimedWaits(file);
     Require(close_nid_postfix(readOnly) == 0 && close_nid_postfix(file) == 0);
     Require(std::filesystem::remove(path));
     std::puts("guest_kernel_sys_aio passed");
