@@ -302,6 +302,8 @@ include(prx/libSceFreeType/BuildInfo.cmake)
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 include(prx/libSceLibreSsl/ErrorQueue.cmake)
+include(prx/libSceLibreSsl/MemoryBio.cmake)
+include(prx/libSceLibreSsl/Cmac.cmake)
 
 include(prx/libSceLibreSsl/ProtocolSelection.cmake)
 
