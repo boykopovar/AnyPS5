@@ -165,8 +165,7 @@ int Transfer(Socket& socket, bool send, int flags, int length, TOperation operat
         timeout = timed ? (send ? socket.options.sendTimeout : socket.options.receiveTimeout) : 0;
     }
     if (!send && socket.type == 1 && !nonblocking && (flags & (GuestWaitAll | GuestPeek)) == (GuestWaitAll | GuestPeek)) {
-        WSASetLastError(WSAEOPNOTSUPP);
-        return -1;
+        NotImplemented_nid_no_patch("recv: MSG_PEEK | MSG_WAITALL on a blocking stream socket");
     }
     const bool complete = socket.type == 1 && !nonblocking &&
         (send || ((flags & GuestWaitAll) != 0 && (flags & GuestPeek) == 0));
@@ -1071,14 +1070,24 @@ int SocketSendFlags(Socket& socket, int flags) {
     std::lock_guard lock(socket.modeMutex);
     return NativeSendFlags(socket.options.noSignal ? flags | GuestNoSignal : flags);
 }
-int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr* address, socklen_t* addressLength) {
+int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr* address, socklen_t* addressLength, bool partialBuffer = false) {
 #ifdef _WIN32
     return Transfer(socket, false, flags, length, [&](int offset) {
+        if (partialBuffer && offset == 0) {
+            int error = 0;
+            if (!PendingFits(socket, buffer, length, flags, error)) {
+                DropDatagram(socket, flags);
+                WSASetLastError(WSAEFAULT);
+                return -1;
+            }
+            if (error != 0) return -1;
+        }
         auto* destination = offset == 0 ? static_cast<char*>(buffer) : static_cast<char*>(buffer) + offset;
         return address ? ::recvfrom(socket.value, destination, length - offset, NativeReceiveFlags(flags, socket.type), address, addressLength)
                        : ::recv(socket.value, destination, length - offset, NativeReceiveFlags(flags, socket.type));
     });
 #else
+    static_cast<void>(partialBuffer);
     return ThreadCancel::Native([&] { return address
         ? static_cast<int>(::recvfrom(socket.value, buffer, length, NativeReceiveFlags(flags, socket.type), address, addressLength))
         : static_cast<int>(::recv(socket.value, buffer, length, NativeReceiveFlags(flags, socket.type))); });
@@ -1998,16 +2007,9 @@ static std::int64_t ReceiveFrom(int descriptor, void* buffer, std::uint64_t leng
     if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
     std::uint64_t limit = length;
 #ifdef _WIN32
-    if (length != 0 && (limit = GuestPrefix(buffer, length, WritableProtection)) < length) {
-        int error = 0;
-        if (!PendingFits(*socket, buffer, limit, flags, error)) {
-            DropDatagram(*socket, flags);
-            return Fail(14);
-        }
-        if (error) return Fail(error);
-    }
+    if (length != 0) limit = GuestPrefix(buffer, length, WritableProtection);
 #endif
-    auto result = ReceiveNative(*socket, buffer, static_cast<int>(limit), flags, reinterpret_cast<sockaddr*>(&native), &size);
+    auto result = ReceiveNative(*socket, buffer, static_cast<int>(limit), flags, reinterpret_cast<sockaddr*>(&native), &size, limit < length);
 
 #ifdef _WIN32
     if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(limit);

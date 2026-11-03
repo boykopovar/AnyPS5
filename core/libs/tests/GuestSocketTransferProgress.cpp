@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -171,6 +172,28 @@ void ReceiveNoProgress() {
     Require(std::all_of(call.bytes.begin(), call.bytes.end(), [](auto value) { return value == 0xe7; }), "empty WAITALL modified its buffer");
 }
 
+void ReceivePeekWaitAll() {
+    auto pair = TcpPair();
+    SetTimeout(pair->Receiver(), false, 300ms);
+    std::array<char, 8> buffer{};
+    for (const bool from : {false, true}) {
+        const auto calls = NotImplementedCalls_nid_no_patch();
+        bool threw = false;
+        try {
+            if (from) recvfrom_nid_postfix(pair->Receiver(), buffer.data(), buffer.size(), WaitAll | 2, nullptr, nullptr);
+            else recv_nid_postfix(pair->Receiver(), buffer.data(), buffer.size(), WaitAll | 2);
+        } catch (const std::runtime_error& error) {
+            threw = std::strstr(error.what(), "MSG_PEEK | MSG_WAITALL on a blocking stream socket") != nullptr;
+        }
+        Require(threw && NotImplementedCalls_nid_no_patch() == calls + 1, "blocking PEEK/WAITALL did not report its unimplemented contract");
+    }
+    Require(recv_nid_postfix(pair->Receiver(), buffer.data(), buffer.size(), WaitAll | 2 | DontWait) == -1 &&
+        *__error_nid_postfix() == WouldBlock, "DONTWAIT PEEK/WAITALL did not preserve EAGAIN");
+    Require(fcntl_nid_postfix(pair->Receiver(), 4, std::uint64_t{4}) == 0, "cannot make the peek receiver nonblocking");
+    Require(recv_nid_postfix(pair->Receiver(), buffer.data(), buffer.size(), WaitAll | 2) == -1 &&
+        *__error_nid_postfix() == WouldBlock, "nonblocking PEEK/WAITALL did not preserve EAGAIN");
+}
+
 void ReceiveProgress(bool complete) {
     auto pair = TcpPair();
     SetTimeout(pair->Receiver(), false, 300ms);
@@ -269,8 +292,10 @@ int main(int argc, char** argv) {
         if (std::strcmp(mode, "all") == 0 || std::strcmp(mode, "receive-empty") == 0) ReceiveNoProgress();
         if (std::strcmp(mode, "all") == 0 || std::strcmp(mode, "receive-partial") == 0) ReceiveProgress(false);
         if (std::strcmp(mode, "all") == 0 || std::strcmp(mode, "receive-complete") == 0) ReceiveProgress(true);
+        if (std::strcmp(mode, "all") == 0 || std::strcmp(mode, "receive-peek-waitall") == 0) ReceivePeekWaitAll();
         Require(std::strcmp(mode, "all") == 0 || std::strcmp(mode, "send") == 0 || std::strcmp(mode, "receive-empty") == 0 ||
-            std::strcmp(mode, "receive-partial") == 0 || std::strcmp(mode, "receive-complete") == 0, "unknown transfer progress mode");
+            std::strcmp(mode, "receive-partial") == 0 || std::strcmp(mode, "receive-complete") == 0 ||
+            std::strcmp(mode, "receive-peek-waitall") == 0, "unknown transfer progress mode");
         std::puts("socket transfer progress preserves payloads and inactivity timeouts");
         return 0;
     } catch (const std::exception& error) {
