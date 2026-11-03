@@ -259,6 +259,94 @@ class AuditDumpTests(unittest.TestCase):
         convert.assert_not_called()
         audit.assert_not_called()
 
+    def directory_link(self, target, link):
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+
+    def test_work_cleanup_preserves_modules_in_outward_directory_links(self):
+        for generated in ("source", "output"):
+            for relative in audit_dump.STANDARD_DIRECTORIES + audit_dump.EXTRA_DIRECTORIES:
+                with self.subTest(generated=generated, relative=relative):
+                    work = self.root / "work"
+                    target = work / generated / "shared"
+                    target.mkdir(parents=True, exist_ok=True)
+                    module = target / "libc.prx"
+                    module.write_bytes(SELF)
+                    link = self.dump / relative
+                    self.directory_link(target, link)
+                    try:
+                        with mock.patch.object(audit_dump, "convert") as convert, mock.patch.object(audit_dump.import_audit, "main") as audit:
+                            with self.assertRaises(SystemExit) as error:
+                                self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+                        self.assertEqual(error.exception.code, 2)
+                        self.assertEqual(module.read_bytes(), SELF)
+                        convert.assert_not_called()
+                        audit.assert_not_called()
+                    finally:
+                        link.rmdir() if os.name == "nt" else link.unlink()
+
+    def test_work_cleanup_preserves_outward_module_file_links(self):
+        for relative in ("eboot.bin", "original.prx", "sce_module/original.prx"):
+            with self.subTest(relative=relative):
+                work = self.root / "work"
+                target = work / "output" / "original.prx"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(SELF)
+                link = self.dump / relative
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.unlink(missing_ok=True)
+                try:
+                    link.symlink_to(target)
+                except OSError:
+                    self.skipTest("symbolic links unavailable")
+                try:
+                    with self.assertRaises(SystemExit) as error:
+                        self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertEqual(target.read_bytes(), SELF)
+                finally:
+                    link.unlink()
+                    if relative == "eboot.bin":
+                        link.write_bytes(SELF)
+
+    def test_work_cleanup_preserves_nested_contents_of_linked_module_directories(self):
+        shared = self.root / "shared"
+        marker = shared / "work" / "source" / "original.dat"
+        marker.parent.mkdir(parents=True)
+        marker.write_bytes(b"original")
+        link = self.dump / "sce_module"
+        self.directory_link(shared, link)
+        try:
+            with self.assertRaises(SystemExit) as error:
+                self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", shared / "work")
+            self.assertEqual(error.exception.code, 2)
+            self.assertEqual(marker.read_bytes(), b"original")
+        finally:
+            link.rmdir() if os.name == "nt" else link.unlink()
+
+    def test_independent_outward_module_directory_links_are_staged(self):
+        shared = self.root / "shared"
+        shared.mkdir()
+        original = shared / "libc.prx"
+        original.write_bytes(SELF)
+        link = self.dump / "sce_module"
+        self.directory_link(shared, link)
+        work = self.root / "work"
+        try:
+            with mock.patch.object(audit_dump, "convert", return_value=subprocess.CompletedProcess([], 0)) as convert, \
+                    mock.patch.object(audit_dump.import_audit, "main", return_value=0):
+                code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+            self.assertEqual(code, 0, errors)
+            self.assertEqual(original.read_bytes(), SELF)
+            self.assertEqual((work / "source" / "sce_module" / "libc.prx").read_bytes(), ELF + b"libc.prx")
+            convert.assert_called_once()
+        finally:
+            link.rmdir() if os.name == "nt" else link.unlink()
+
     def test_work_cleanup_refuses_relinker_or_libraries_in_generated_directories(self):
         for generated in ("source", "output"):
             for kind in ("relinker", "libs"):
