@@ -42,6 +42,13 @@ void Write(const Environment& value) {
     _mm_setcsr(value.mxcsr);
 }
 bool Same(const Environment& a,const Environment& b){return a.x87==b.x87 && a.mxcsr==b.mxcsr;}
+bool HostKeepsSseTraps() {
+    const unsigned saved=_mm_getcsr();
+    _mm_setcsr(saved&~(0x01u<<7));
+    const bool kept=(_mm_getcsr()&(0x01u<<7))==0;
+    _mm_setcsr(saved);
+    return kept;
+}
 void Matrix() {
     const auto original=Read();
     auto clean=original;
@@ -173,6 +180,7 @@ void MasksAndThreads() {
     auto clean=original;
     clean.x87[0]|=0x3f; clean.x87[1]&=~0xffu;
     clean.mxcsr=(clean.mxcsr&~0x3fu)|(0x3f<<7);
+    const bool sseKept=HostKeepsSseTraps();
     for(unsigned a=0;a<64;++a) for(unsigned b=0;b<64;++b) {
         auto desired=clean;
         desired.x87[0]=(desired.x87[0]&~0x3fu)|a;
@@ -180,7 +188,9 @@ void MasksAndThreads() {
         Write(clean);
         Require(updateEnvironment(&desired)==0,"independent exception masks");
         const auto actual=Read(); Write(clean);
-        Require(Same(actual,desired),"exception masks preserved");
+        auto expected=desired;
+        if(!sseKept) expected.mxcsr|=0x3fu<<7;
+        Require(Same(actual,expected),"exception masks preserved");
     }
     alignas(16) std::array<std::uint32_t,128> state;
     asm volatile("fxsave %0" : "=m"(state));
@@ -231,6 +241,7 @@ void Trap(int){std::_Exit(entered?0:1);}
 #endif
 void Pending(unsigned bit,unsigned source) {
     Require(bit<6 && source<3,"trap arguments");
+    if(!HostKeepsSseTraps()) { std::fprintf(stderr,"feupdateenv: the host keeps no unmasked floating-point exception\n"); std::exit(77); }
 #ifdef _WIN32
     constexpr DWORD codes[]{EXCEPTION_FLT_INVALID_OPERATION,EXCEPTION_FLT_DENORMAL_OPERAND,EXCEPTION_FLT_DIVIDE_BY_ZERO,EXCEPTION_FLT_OVERFLOW,EXCEPTION_FLT_UNDERFLOW,EXCEPTION_FLT_INEXACT_RESULT};
     expectedFlag=1u<<bit;expectedException=codes[bit];
@@ -282,6 +293,9 @@ int main(int argc,char** argv) {
     updateEnvironment=reinterpret_cast<UpdateEnvironment>(dlsym(library,"feupdateenv_nid_postfix"));
 #endif
     Require(updateEnvironment!=nullptr,"export is missing");
+#ifdef __APPLE__
+    { const std::invalid_argument first("feupdateenv"); }
+#endif
 #ifdef _WIN32
     const auto fallback=reinterpret_cast<const Environment*>(GetProcAddress(library,"__fe_dfl_env_nid_postfix"));
 #else

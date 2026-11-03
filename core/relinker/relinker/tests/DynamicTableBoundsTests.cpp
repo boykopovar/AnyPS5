@@ -17,8 +17,12 @@ const Bytes kCode = {0xC3};
 
 constexpr std::size_t kTagStride = 16;
 constexpr std::size_t kTagBase = kCodeOffset + kDynamicVaddr;
+constexpr std::size_t kStrTabTag = 0;
 constexpr std::size_t kSymTabTag = 2;
+constexpr std::size_t kRelaTag = 4;
 constexpr std::size_t kRelaSzTag = 5;
+constexpr std::int64_t kDtStrTab = 5;
+constexpr std::int64_t kDtRela = 7;
 constexpr std::int64_t kDtOsSymtab = 0x61000039;
 constexpr std::int64_t kDtRelaSz = 8;
 constexpr std::uint64_t kBogusOffset = 0xFFFFFFFFFFFFFFFEull;
@@ -45,16 +49,41 @@ int main(const int argc, char** argv) {
         const auto input = directory.Path() / "input.elf";
         const auto output = directory.Path() / "output.elf";
 
-        Bytes image = MakeExecutable(kCode);
-        WriteRelaEntry(image, (1ull << 32) | 6ull);
-        WriteTag(image, kRelaSzTag, kDtRelaSz, 24);
-        WriteTag(image, kSymTabTag, kDtOsSymtab, kBogusOffset);
-        WriteFile(input, image);
+        {
+            Bytes image = MakeExecutable(kCode);
+            WriteRelaEntry(image, (1ull << 32) | 6ull);
+            WriteTag(image, kRelaSzTag, kDtRelaSz, 24);
+            WriteTag(image, kSymTabTag, kDtOsSymtab, kBogusOffset);
+            WriteFile(input, image);
 
-        const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
-        require(run.ExitCode != 0, "Relinker read a symbol table outside the file and exited 0:\n" + run.Output);
-        require(run.Output.find("Symbol table entry out of bounds") != std::string::npos,
-                "Relinker did not report the symbol table entry as out of bounds:\n" + run.Output);
+            const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
+            require(run.ExitCode != 0, "Relinker read a symbol table outside the file and exited 0:\n" + run.Output);
+            require(run.Output.find("Symbol table entry out of bounds") != std::string::npos,
+                    "Relinker did not report the symbol table entry as out of bounds:\n" + run.Output);
+        }
+
+        {
+            Bytes image = MakeExecutable(kCode);
+            WriteTag(image, kRelaTag, kDtRela, kBogusOffset);
+            WriteFile(input, image);
+
+            const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
+            require(run.ExitCode != 0, "Relinker read a relocation table outside the file and exited 0:\n" + run.Output);
+            require(run.Output.find("Virtual address not mapped by any PT_LOAD segment") != std::string::npos,
+                    "Relinker did not report the relocation table entry as out of bounds:\n" + run.Output);
+        }
+
+        {
+            Bytes image = MakeExecutable(kCode);
+            WriteTag(image, kStrTabTag, kDtStrTab, kBogusOffset);
+            WriteFile(input, image);
+
+            const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
+            require(run.ExitCode != 0, "Relinker read a string table outside the file and exited 0:\n" + run.Output);
+            require(run.Output.find("Virtual address not mapped by any PT_LOAD segment") != std::string::npos,
+                    "Relinker did not report the string table entry as out of bounds:\n" + run.Output);
+        }
+
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "dynamic_table_bounds_tests: " << error.what() << '\n';

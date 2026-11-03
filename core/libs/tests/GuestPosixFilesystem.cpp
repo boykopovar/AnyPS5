@@ -173,6 +173,36 @@ int main() {
     Require(mmap_nid_postfix(nullptr, page, 8, 0x1002, -1, 0) == failed && *__error_nid_postfix() == 22);
     *__error_nid_postfix() = 0;
     Require(__wrap_mmap(nullptr, page, 8, 0x1002, -1, 0) == failed && *__error_nid_postfix() == 22);
+    Require(opendir_nid_disambig1_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 14);
+    Require(opendir_nid_disambig1_nid_postfix("") == nullptr && *__error_nid_postfix() == 2);
+    Require(opendir_nid_disambig1_nid_postfix("/anyps5-posix-test/missing-directory") == nullptr && *__error_nid_postfix() == 2);
+    void* const testDirectory = opendir_nid_disambig1_nid_postfix("/anyps5-posix-test");
+    Require(testDirectory != nullptr);
+    bool foundDot = false;
+    bool foundDotDot = false;
+    bool foundFixed = false;
+    while (auto* const entry = readdir_nid_disambig1_nid_postfix(testDirectory)) {
+        Require(entry->nameLength == std::strlen(entry->name));
+        Require(entry->recordLength >= 8 + entry->nameLength);
+        Require(entry->fileNumber != 0);
+        if (std::strcmp(entry->name, ".") == 0) foundDot = true;
+        if (std::strcmp(entry->name, "..") == 0) foundDotDot = true;
+        if (std::strcmp(entry->name, "fixed") == 0) foundFixed = true;
+    }
+    Require(foundDot && foundDotDot && foundFixed);
+    Require(readdir_nid_disambig1_nid_postfix(testDirectory) == nullptr);
+    Require(readdir_nid_disambig1_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 9);
+    Require(closedir_nid_disambig1_nid_postfix(testDirectory) == 0);
+    Require(closedir_nid_disambig1_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
+    void* const readdirDirectory = opendir_nid_disambig1_nid_postfix("/anyps5-posix-test");
+    Require(readdirDirectory != nullptr);
+    GuestDirectoryEntry readdirEntry{};
+    GuestDirectoryEntry* readdirResult = nullptr;
+    Require(readdir_r_nid_disambig1_nid_postfix(readdirDirectory, &readdirEntry, &readdirResult) == 0);
+    Require(readdirResult == &readdirEntry);
+    Require(readdirEntry.nameLength == std::strlen(readdirEntry.name));
+    Require(closedir_nid_disambig1_nid_postfix(readdirDirectory) == 0);
+    Require(readdir_r_nid_disambig1_nid_postfix(nullptr, &readdirEntry, &readdirResult) == 9);
     RemovePathAlias_nid_no_patch("/anyps5-posix-test");
     Require(std::filesystem::remove_all(root) > 0);
 }

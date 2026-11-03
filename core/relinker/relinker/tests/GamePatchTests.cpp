@@ -167,6 +167,42 @@ void grammarAccepted() {
     require(!ParsePatchFile("format = 1\n").MainTarget && ParsePatchFile("format = 1\n").Entries.empty(), "empty file");
 }
 
+void stringControls() {
+    const std::string del(1, '\x7f');
+    rejectsText(header("main_target = \"bad" + del + "text\"\n"), 2, "control characters");
+    rejectsText(header("[[patch]]\ndescription = \"bad" + del + "text\"\n"), 3, "control characters");
+    for (unsigned character = 0; character < 0x20; ++character) {
+        if (character == '\t' || character == '\n') continue;
+        rejectsText(header("[[patch]]\ndescription = \"bad" + std::string(1, static_cast<char>(character)) + "text\"\n"), 3, "control characters");
+    }
+    rejectsText(header("[[patch]]\ndescription = 'bad" + del + "text'\n"), 3, "single-quoted");
+    rejectsText(header("[[patch]]\ndescription = \"\"\"bad" + del + "text\"\"\"\n"), 3, "multiline");
+    rejectsText(header("[[patch]]\ndescription = '''bad" + del + "text'''\n"), 3, "single-quoted");
+}
+
+void commentControls() {
+    for (unsigned character = 0; character <= 0x7f; ++character) {
+        if (character == '\t' || character == '\n' || (character >= 0x20 && character < 0x7f)) continue;
+        const auto bad = "bad" + std::string(1, static_cast<char>(character)) + "text";
+        rejectsText(header("# " + bad + "\n"), 2, "control characters");
+        rejectsText("format = 1 # " + bad + "\n", 1, "control characters");
+    }
+    rejectsText(header("# trailing carriage return\r"), 2, "control characters");
+}
+
+void stringControlRoundTrip() {
+    for (const std::string description : {std::string("tab\ttext"), std::string("caf\xc3\xa9 \xe6\x97\xa5 \xf0\x9f\x98\x80 # text")}) {
+        const auto file = ParsePatchFile("# \t" + description + "\r\nformat = 1 # \t" + description + "\r\n[[patch]]\r\n"
+            "target = \"main.elf\"\r\nva = 4096\r\nexpected = \"00\"\r\nvalue = \"01\"\r\ndescription = \"" + description + "\"\r\n");
+        require(file.Entries.size() == 1 && file.Entries.front().Description == description, "valid tab or Unicode was not preserved");
+        const auto& parsed = file.Entries.front();
+        const AppliedPatch applied{parsed.Target, parsed.VirtualAddress, 0x1000, parsed.Expected, parsed.Value, parsed.Description, parsed.Name};
+        const auto reparsed = ParsePatchFile(WriteManifest({applied}, "main.elf", ""));
+        require(reparsed.Entries.size() == 1 && reparsed.Entries.front().Description == description, "valid patch string did not round-trip through the manifest");
+        require(reparsed.Entries.front().Expected == parsed.Expected && reparsed.Entries.front().Value == parsed.Value, "patch bytes changed during the string round trip");
+    }
+}
+
 void grammarRejected() {
     rejects([] { ParsePatchFile(""); }, "format = 1");
     rejectsText("format = 2\n", 1, "unsupported format");
@@ -632,6 +668,9 @@ int main() {
     try {
         grammarAccepted();
         grammarRejected();
+        stringControls();
+        commentControls();
+        stringControlRoundTrip();
         integerRanges();
         boundsAndWidth();
         names();

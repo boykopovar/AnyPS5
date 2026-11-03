@@ -1,3 +1,4 @@
+#include "prx/libSceAppContent/include/InventoryExports.hpp"
 #include "prx/libSceAppContent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -10,6 +11,7 @@
 #include <atomic>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -68,6 +70,34 @@ static void ClearDirectory(const std::filesystem::path& directory) {
 }
 
 extern "C" {
+
+int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
+}
+
+int APS5_VABI sceAppContentDownloadDataGetBlockSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!gameTrialsFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    *gameTrialsFlag = 0;
+    return 0;
+}
+
+int APS5_VABI sceAppContentGetPlayableStatus(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, uint32_t* playableStatus) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel || !playableStatus) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
+}
+
 
 int APS5_VABI sceAppContentAddcontMount(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, AppContentMountPoint* mount_point) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
@@ -128,7 +158,9 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!mountPoint || !availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
     if (std::strncmp(mountPoint->data, DOWNLOAD_MOUNT_POINT, sizeof(mountPoint->data)) != 0) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const std::uint64_t quotaKb = GetAppDownloadDataSizeMiB_nid_postfix() * 1024u;
+    const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
+    if (quotaMiB > std::numeric_limits<std::uint64_t>::max() / 1024u) throw std::overflow_error("AppContent download quota exceeds KiB range");
+    const std::uint64_t quotaKb = quotaMiB * 1024u;
     if (quotaKb == 0) {
         *availableSpaceKb = 0;
         return 0;
@@ -279,6 +311,22 @@ int APS5_VABI sceAppContentDownload1Expand(void) {
 }
 
 int APS5_VABI sceAppContentDownload1Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Expand(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -193,8 +193,8 @@ bool IsPinned(std::uint32_t bits, std::uint32_t width) {
     return magnitude == 0u || magnitude >= infinity;
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
+void Run(AgcDriver::VulkanDevice& device, const std::uint32_t (&rows)[Threads][Inputs] = Rows) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(rows[tid]), std::end(rows[tid]), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -235,6 +235,22 @@ void Check() {
     }
 }
 
+void CheckBoundaries(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint32_t cases[][3] = {
+        {0x3f5fffffu, 0xbe4544c7u, 12u},
+        {0x3f600001u, 0xbe4544bau, 6u},
+        {0x3f8fffffu, 0x3e2e00c8u, 6u},
+        {0x3f900001u, 0x3e2e00dcu, 12u}
+    };
+    std::uint32_t rows[Threads][Inputs]{};
+    for (std::size_t lane = 0; lane < std::size(cases); ++lane) rows[lane][0] = cases[lane][0];
+    Run(device, rows);
+    for (std::size_t lane = 0; lane < std::size(cases); ++lane) {
+        const auto actual = Output[lane * Results];
+        Require(Distance(actual, cases[lane][1], 32u) <= cases[lane][2], "log near-one boundary: input " + Hex(cases[lane][0]) + " is " + Hex(actual) + ", expected " + Hex(cases[lane][1]));
+    }
+}
+
 }
 
 int main() {
@@ -243,6 +259,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         Run(*device);
         Check();
+        CheckBoundaries(*device);
         std::puts("log near one tests passed");
         return 0;
     } catch (const std::exception& error) {

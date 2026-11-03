@@ -581,6 +581,9 @@ std::atomic<int> g_hostStandardError{-1};
 }
 
 extern "C" int KeepHostStandardError_nid_no_patch() {
+#ifdef __EMSCRIPTEN__
+    return 2;
+#else
     const std::lock_guard lock(g_hostStandardErrorMutex);
     if (const int kept = g_hostStandardError.load(); kept >= 0) return kept;
     const int kept = ::fcntl(2, F_DUPFD_CLOEXEC, 3);
@@ -599,6 +602,7 @@ extern "C" int KeepHostStandardError_nid_no_patch() {
     stderr = stream;
     g_hostStandardError.store(kept);
     return kept;
+#endif
 }
 
 extern "C" int HostStandardError_nid_no_patch() {
@@ -611,6 +615,9 @@ std::atomic<int> g_hostStandardOutput{-1};
 }
 
 extern "C" int KeepHostStandardOutput_nid_no_patch() {
+#ifdef __EMSCRIPTEN__
+    NotImplemented_nid_no_patch(__func__);
+#else
     const std::lock_guard lock(g_hostStandardOutputMutex);
     if (const int kept = g_hostStandardOutput.load(); kept >= 0) return kept;
     const int kept = ::fcntl(1, F_DUPFD_CLOEXEC, 3);
@@ -629,6 +636,7 @@ extern "C" int KeepHostStandardOutput_nid_no_patch() {
     stdout = stream;
     g_hostStandardOutput.store(kept);
     return kept;
+#endif
 }
 
 extern "C" int DuplicateHostDescriptor_nid_no_patch(int descriptor) {
@@ -843,6 +851,13 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #else
     throw std::runtime_error("GuestCopyOut: no checked write is available on this host");
 #endif
+}
+
+extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    return CopyGuestBytes(destination, source, bytes);
 }
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {

@@ -115,6 +115,11 @@ void testErrors() {
     const ConfigInfo shortConfig{sizeof(ConfigInfo) - 8};
     check(sceVideodecCreateDecoder(&shortConfig, &resource, &ctrl) == ErrorStructSize, "a short configuration was accepted");
     check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
+    check(sceVideodecDeleteDecoder(nullptr) == ErrorArgumentPointer, "a null control block was accepted by delete");
+    Ctrl shortCtrl{sizeof(Ctrl) - 8};
+    check(sceVideodecDeleteDecoder(&shortCtrl) == ErrorStructSize, "a short control block was accepted by delete");
+    check(sceVideodecReset(nullptr) == ErrorArgumentPointer, "a null control block was accepted by reset");
+    check(sceVideodecReset(&shortCtrl) == ErrorStructSize, "a short control block was accepted by reset");
     Ctrl foreign{sizeof(Ctrl)};
     foreign.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
     check(sceVideodecDeleteDecoder(&foreign) == ErrorHandle, "an unknown decoder was deleted");
@@ -140,8 +145,14 @@ void testErrors() {
         if (status == ErrorFrameBufferSize) ++refusals;
     }
     check(refusals > 0, "no picture was refused for the short frame buffer");
+    FrameBuffer shortFrame{sizeof(FrameBuffer) - 8, storage.data(), FrameBytes};
+    check(sceVideodecDecode(&ctrl, &input, &shortFrame, &picture) == ErrorStructSize, "a short frame buffer structure was accepted");
+    PictureInfo shortPicture{sizeof(PictureInfo) - 8};
+    check(sceVideodecDecode(&ctrl, &input, &frame, &shortPicture) == ErrorStructSize, "a short picture information structure was accepted");
     check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
     check(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "the decoder was deleted twice");
+    check(sceVideodecReset(&ctrl) == ErrorHandle, "a deleted decoder was reset");
+    check(sceVideodecDecode(&ctrl, &input, &frame, &picture) == ErrorHandle, "a decode succeeded on a deleted decoder");
 }
 
 void testReset() {
@@ -154,6 +165,60 @@ void testReset() {
     check(sceVideodecReset(&session.ctrl) == 0, "reset failed");
     check(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush failed");
     check(!picture.isValid, "a reset decoder produced a picture");
+}
+
+constexpr std::uint8_t High10Picture[] = {
+    0x00, 0x00, 0x00, 0x01, 0x67, 0x6e, 0x10, 0x0a, 0xa6, 0xcb, 0x88, 0xf6, 0x02, 0x20, 0x00, 0x00,
+    0x03, 0x00, 0x20, 0x00, 0x00, 0x03, 0x00, 0x40, 0x80, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x0f,
+    0xc8, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x3a, 0x26, 0x28, 0x0c, 0x9c, 0x9c, 0x9d, 0x75, 0xd7,
+    0x5d, 0x75, 0xd7, 0x5e
+};
+
+void testDeepPicture() {
+    Session session;
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), High10Picture, sizeof(High10Picture), 1000, 0, 0xa0};
+    bool refused = false;
+    std::size_t pictures = 0;
+    try {
+        auto target = session.MakeTarget();
+        PictureInfo picture{sizeof(PictureInfo)};
+        check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode of the 10-bit picture failed");
+        if (picture.isValid) ++pictures;
+        for (;;) {
+            check(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush of the 10-bit picture failed");
+            if (!picture.isValid) break;
+            ++pictures;
+        }
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()).find("deeper than 8 bits") == std::string::npos) throw;
+        refused = true;
+    }
+    check(refused, "10-bit pictures copied as 8-bit pictures: " + std::to_string(pictures));
+}
+
+constexpr std::uint8_t High10ReorderedPicture[] = {
+    0x00, 0x00, 0x00, 0x01, 0x67, 0x6e, 0x00, 0x0a, 0xa6, 0xce, 0x41, 0x1e, 0xc0, 0x44, 0x00, 0x00,
+    0x03, 0x00, 0x04, 0x00, 0x00, 0x03, 0x00, 0xc8, 0x3c, 0x48, 0x94, 0x48, 0x00, 0x00, 0x00, 0x01,
+    0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0, 0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00, 0x43, 0xff,
+    0xfe, 0xf7, 0x81, 0xbf, 0x32, 0x7d, 0xaa, 0xb2, 0x5c, 0x7e, 0x79, 0xdf, 0x14, 0x3f, 0x28, 0x74,
+    0xab, 0x06, 0xa2, 0xac, 0xeb, 0x0d
+};
+
+void testDeepReorderedPicture() {
+    Session session;
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), High10ReorderedPicture, sizeof(High10ReorderedPicture), 1000, 0, 0xa0};
+    auto target = session.MakeTarget();
+    PictureInfo picture{sizeof(PictureInfo)};
+    check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode of the reordered 10-bit picture failed");
+    check(!picture.isValid, "the reordered 10-bit picture was not held for the flush");
+    bool refused = false;
+    try {
+        sceVideodecFlush(&session.ctrl, &target, &picture);
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()).find("deeper than 8 bits") == std::string::npos) throw;
+        refused = true;
+    }
+    check(refused, "a flushed 10-bit picture was copied as an 8-bit picture");
 }
 
 void testQueryResourceInfo(std::int32_t width, std::int32_t height, std::uint32_t profile, std::uint32_t level) {
@@ -208,6 +273,8 @@ int main() {
         testDecodeCropped();
         testErrors();
         testReset();
+        testDeepPicture();
+        testDeepReorderedPicture();
         testQueryResourceInfo();
         std::puts("Videodec tests passed");
         return 0;

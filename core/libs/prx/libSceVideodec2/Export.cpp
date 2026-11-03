@@ -17,6 +17,7 @@
 #include <limits>
 #include <stdexcept>
 #include "prx/libc/include/General.hpp"
+#include "AvcMetadata.hpp"
 #include "HevcMetadata.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 
@@ -196,6 +197,7 @@ struct Picture {
     bool hevcIdr = false;
     std::uint8_t bitDepthMinus8 = 0;
     Videodec2Hevc::Metadata hevc;
+    Videodec2Avc::Metadata avc;
 };
 
 struct FrameDeleter {
@@ -226,6 +228,7 @@ struct Decoder {
     std::array<Vp9PictureInfo, 8> vp9References{};
     Vp9PictureInfo vp9Colors{};
     Videodec2Hevc::State hevc;
+    Videodec2Avc::State avc;
 
     ~Decoder() {
         sws_freeContext(scaler);
@@ -522,6 +525,14 @@ int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* con
     return 0;
 }
 
+int APS5_VABI sceVideodec2CreateHevcDecoder(const DecoderConfigInfo* config, const DecoderMemoryInfo* memory, std::uint64_t* handle) {
+    return sceVideodec2CreateDecoder_nid_postfix(config, memory, handle);
+}
+
+int APS5_VABI sceVideodec2QueryHevcDecoderMemoryInfo(const DecoderConfigInfo* config, DecoderMemoryInfo* memory) {
+    return sceVideodec2QueryDecoderMemoryInfo_nid_postfix(config, memory);
+}
+
 int APS5_VABI sceVideodec2DeleteDecoder_nid_postfix(std::uint64_t handle) {
     std::lock_guard guard(lock);
     if (decoders.erase(handle) == 0) throw std::runtime_error("Videodec2: invalid decoder handle");
@@ -576,6 +587,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
         return 0;
     }
     const auto* unit = ToAnnexB(decoder, input->auData, static_cast<std::size_t>(input->auSize));
+    auto avc = decoder.codec == CodecAvc ? Videodec2Avc::Parse_nid_no_patch(decoder.avc, *unit) : Videodec2Avc::Metadata{};
     if (decoder.codec == CodecAvc && !CarriesAvcSlice(*unit)) {
         decoder.parameterSets.insert(decoder.parameterSets.end(), unit->begin(), unit->end());
         EmitDecoded(handle, decoder, frame, output);
@@ -598,6 +610,12 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
         tagged.hevc.info.ptsData = picture.pts;
         tagged.hevc.info.dtsData = picture.dts;
         tagged.hevc.info.attachedData = picture.attached;
+    }
+    if (decoder.codec == CodecAvc) {
+        tagged.avc = std::move(avc);
+        tagged.avc.info.ptsData = picture.pts;
+        tagged.avc.info.dtsData = picture.dts;
+        tagged.avc.info.attachedData = picture.attached;
     }
     decoder.inputs.emplace(decoder.nextKey++, tagged);
     Send(decoder, packet);
@@ -709,6 +727,14 @@ static int GetPictureInfo(const OutputInfo* output, void* first, void* second) {
             GuestArena::HostWrite access(first, sizeof(Videodec2Hevc::PictureInfo));
             if (!access.Open()) throw UnsupportedHevcMetadata{};
             std::memcpy(first, &found->second.hevc.info, sizeof(Videodec2Hevc::PictureInfo));
+            std::memcpy(first, &size, sizeof(size));
+            return 0;
+        }
+        if (decoder->codec == CodecAvc && size == sizeof(Videodec2Avc::PictureInfo)) {
+            if (!found->second.avc.unsupported.empty()) throw UnsupportedHevcMetadata{};
+            GuestArena::HostWrite access(first, sizeof(Videodec2Avc::PictureInfo));
+            if (!access.Open()) throw UnsupportedHevcMetadata{};
+            std::memcpy(first, &found->second.avc.info, sizeof(Videodec2Avc::PictureInfo));
             std::memcpy(first, &size, sizeof(size));
             return 0;
         }

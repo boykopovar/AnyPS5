@@ -90,18 +90,36 @@ void Arguments(const std::uintptr_t* block, const std::vector<std::string>& expe
     Require(argv[expected.size()] == nullptr && kernel[expected.size()] == nullptr, "argument terminator");
 }
 
+bool Utf8Environment(const char* name, std::string& value) {
+#ifdef _WIN32
+    const std::wstring wideName = std::filesystem::path(name).wstring();
+    std::wstring wide(32768, L'\0');
+    const auto length = GetEnvironmentVariableW(wideName.c_str(), wide.data(), static_cast<DWORD>(wide.size()));
+    if (length == 0 || length >= wide.size()) return false;
+    wide.resize(length);
+    const auto converted = std::filesystem::path(wide).u8string();
+    value.assign(reinterpret_cast<const char*>(converted.data()), converted.size());
+    return true;
+#else
+    const auto* found = std::getenv(name);
+    if (found == nullptr) return false;
+    value = found;
+    return true;
+#endif
+}
+
 std::string LoaderEnvironment() {
-    const auto* value = std::getenv("LD_LIBRARY_PATH");
-    return value != nullptr ? std::string("LD_LIBRARY_PATH=") + value : std::string();
+    std::string value;
+    return Utf8Environment("LD_LIBRARY_PATH", value) ? "LD_LIBRARY_PATH=" + value : std::string();
 }
 
 std::vector<std::string> SecondEnvironment() {
     std::vector<std::string> entries{"EXEC_SECOND=stage2"};
     auto loader = LoaderEnvironment();
     if (!loader.empty()) entries.push_back(loader);
-    const auto* root = std::getenv("ANYPS5_LOADEXEC_TEST_ROOT");
-    Require(root != nullptr, "missing fixture directory for the environment");
-    entries.emplace_back(std::string("ANYPS5_LOADEXEC_TEST_ROOT=") + root);
+    std::string root;
+    Require(Utf8Environment("ANYPS5_LOADEXEC_TEST_ROOT", root), "missing fixture directory for the environment");
+    entries.emplace_back("ANYPS5_LOADEXEC_TEST_ROOT=" + root);
     return entries;
 }
 
