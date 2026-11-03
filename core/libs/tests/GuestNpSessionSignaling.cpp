@@ -29,6 +29,8 @@ void Require(bool condition, const char* message) {
 int main() {
     alignas(8) unsigned char initializeParam[40] = {};
     Require(sceNpSessionSignalingTerminate() == NotInitialized, "terminate before initialize");
+    Require(sceNpSessionSignalingGetMemoryInfo(nullptr) == NotInitialized, "get memory info before initialize");
+    Require(sceNpSessionSignalingGetConnectionStatistics(nullptr) == NotInitialized, "get statistics before initialize");
     Require(sceNpSessionSignalingCreateContext2(nullptr, nullptr) == NotInitialized, "initialization check precedes context arguments");
     Require(sceNpSessionSignalingGetConnectionStatus(0, 0, nullptr, nullptr, nullptr) == NotInitialized, "status before initialize");
     Require(sceNpSessionSignalingInitialize(nullptr) == InvalidArgument, "null initialize parameter");
@@ -37,6 +39,14 @@ int main() {
     std::memcpy(initializeParam + 8, &poolSize, sizeof(poolSize));
     Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam)) == 0, "initialize failed");
     Require(sceNpSessionSignalingInitialize(nullptr) == AlreadyInitialized, "initialization check precedes initialize arguments");
+    SessionSignalingMemoryInfo memInfo{};
+    Require(sceNpSessionSignalingGetMemoryInfo(nullptr) == InvalidArgument, "null memory info");
+    Require(sceNpSessionSignalingGetMemoryInfo(&memInfo) == 0, "get memory info failed");
+    Require(memInfo.poolSize == poolSize && memInfo.usedSize == 0 && memInfo.peakUsedSize == 0, "unexpected memory info values");
+    SessionSignalingConnectionStatistics stats{};
+    Require(sceNpSessionSignalingGetConnectionStatistics(nullptr) == InvalidArgument, "null connection statistics");
+    Require(sceNpSessionSignalingGetConnectionStatistics(&stats) == 0, "get connection statistics failed");
+    Require(stats.peakConnectionCount == 0 && stats.connectionCount == 0 && stats.connectingCount == 0 && stats.connectedCount == 0, "unexpected connection statistics values");
     alignas(8) unsigned char contextParam[56] = {};
     std::uint32_t contextId = 0;
     Require(sceNpSessionSignalingCreateContext(nullptr, &contextId) == InvalidArgument, "null context parameter");
@@ -156,6 +166,8 @@ int main() {
     Require(sceNpSessionSignalingGetConnectionFromPeerAddress(netContextId, nullptr, nullptr) == NotInitialized, "connection from peer address after terminate");
     Require(sceNpSessionSignalingGetConnectionFromPeerAddress2(netContextId, 1, nullptr, nullptr) == NotInitialized, "connection from peer address 2 after terminate");
     Require(sceNpSessionSignalingActivateSession(contextId, nullptr, 0, nullptr, nullptr) == NotInitialized, "activate after terminate");
+    Require(sceNpSessionSignalingGetMemoryInfo(&memInfo) == NotInitialized, "get memory info after terminate");
+    Require(sceNpSessionSignalingGetConnectionStatistics(&stats) == NotInitialized, "get statistics after terminate");
     Require(sceNpSessionSignalingTerminate() == NotInitialized, "repeated terminate");
     Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam)) == 0, "reinitialize");
     Require(sceNpSessionSignalingRequestPrepare(contextId, &requestId) == ContextNotFound, "reinitialize retained a context");

@@ -24,6 +24,7 @@ struct SessionSignalingContext {
 
 static std::mutex g_mutex;
 static bool g_initialized = false;
+static std::uint64_t g_poolSize = 0;
 static std::array<SessionSignalingContext, 10> g_contexts{};
 
 static_assert(sizeof(SessionSignalingMemoryInfo) == 24);
@@ -89,6 +90,7 @@ int APS5_VABI sceNpSessionSignalingInitialize(const SessionSignalingInitParam* p
     std::lock_guard lock(g_mutex);
     if (g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_ALREADY_INITIALIZED;
     if (!param || !param->poolSize) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    g_poolSize = param->poolSize;
     for (std::uint32_t index = 0; index < g_contexts.size(); ++index) {
         g_contexts[index] = {1000 + index, 0, false};
     }
@@ -158,6 +160,7 @@ int APS5_VABI sceNpSessionSignalingGetConnectionFromPeerAddress2(std::uint32_t c
 int APS5_VABI sceNpSessionSignalingTerminate(void) {
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+    g_poolSize = 0;
     g_initialized = false;
     for (auto& context : g_contexts) context.active = false;
     return 0;
@@ -191,12 +194,23 @@ int APS5_VABI sceNpSessionSignalingRequestPrepare(uint32_t contextId, uint32_t* 
 }
 
 int APS5_VABI sceNpSessionSignalingGetMemoryInfo(SessionSignalingMemoryInfo* memoryInfo) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!memoryInfo) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    memoryInfo->poolSize = g_poolSize;
+    memoryInfo->usedSize = 0;
+    memoryInfo->peakUsedSize = 0;
     return 0;
 }
 
 int APS5_VABI sceNpSessionSignalingGetConnectionStatistics(SessionSignalingConnectionStatistics* statistics) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!statistics) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    statistics->peakConnectionCount = 0;
+    statistics->connectionCount = 0;
+    statistics->connectingCount = 0;
+    statistics->connectedCount = 0;
     return 0;
 }
 
