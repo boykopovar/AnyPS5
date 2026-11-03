@@ -7397,4 +7397,31 @@ int APS5_VABI libSceNKWebKitUnknown_zdn8pgeNnEY_nid_no_patch();
 int APS5_VABI libSceNKWebKitUnknown_ziXF7YQDRhY_nid_no_patch();
 int APS5_VABI libSceNKWebKitUnknown_zpeJoENXwDY_nid_no_patch();
 
+int APS5_VABI WKBundlePageCopyRenderTree();
+int APS5_VABI WKBundlePageCopyRenderLayerTree();
+int APS5_VABI WKRenderLayerGetRenderer();
+int APS5_VABI WKRenderLayerGetFrameContentsLayer();
+int APS5_VABI WKRenderLayerCopyRendererName();
+int APS5_VABI WKRenderLayerCopyElementTagName();
+int APS5_VABI WKRenderLayerCopyElementID();
+int APS5_VABI WKRenderObjectCopyElementID();
+int APS5_VABI WKRenderObjectCopyElementTagName();
+int APS5_VABI WKRenderObjectCopyName();
+int APS5_VABI WKRenderObjectCopyTextSnippet();
+int APS5_VABI WKRenderLayerGetElementClassNames();
+int APS5_VABI WKRenderObjectGetElementClassNames();
+int APS5_VABI WKRenderLayerGetNegativeZOrderList();
+int APS5_VABI WKRenderLayerGetPositiveZOrderList();
+int APS5_VABI WKRenderLayerGetNormalFlowList();
+int APS5_VABI WKRenderObjectGetChildren();
+int APS5_VABI WKRenderLayerIsClipping();
+int APS5_VABI WKRenderLayerIsClipped();
+int APS5_VABI WKRenderLayerIsReflection();
+int APS5_VABI WKRenderLayerGetCompositingLayerType();
+int APS5_VABI WKRenderLayerGetBackingStoreMemoryEstimate();
+int APS5_VABI WKRenderLayerGetAbsoluteBounds();
+int APS5_VABI WKRenderObjectGetFrameRect();
+int APS5_VABI WKRenderObjectGetAbsolutePosition();
+int APS5_VABI WKRenderObjectGetTextLength();
+
 }

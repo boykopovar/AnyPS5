@@ -14,12 +14,6 @@ void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled() {
 void APS5_VABI WKBundlePageClickMenuItem() {
 }
 
-void APS5_VABI WKBundlePageCopyRenderLayerTree() {
-}
-
-void APS5_VABI WKBundlePageCopyRenderTree() {
-}
-
 void APS5_VABI WKBundlePageSetBottomOverhangImage() {
 }
 
@@ -111,78 +105,6 @@ void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled() {
 }
 
 void APS5_VABI WKPreferencesSetQTKitEnabled() {
-}
-
-void APS5_VABI WKRenderLayerCopyElementID() {
-}
-
-void APS5_VABI WKRenderLayerCopyElementTagName() {
-}
-
-void APS5_VABI WKRenderLayerCopyRendererName() {
-}
-
-void APS5_VABI WKRenderLayerGetAbsoluteBounds() {
-}
-
-void APS5_VABI WKRenderLayerGetBackingStoreMemoryEstimate() {
-}
-
-void APS5_VABI WKRenderLayerGetCompositingLayerType() {
-}
-
-void APS5_VABI WKRenderLayerGetElementClassNames() {
-}
-
-void APS5_VABI WKRenderLayerGetFrameContentsLayer() {
-}
-
-void APS5_VABI WKRenderLayerGetNegativeZOrderList() {
-}
-
-void APS5_VABI WKRenderLayerGetNormalFlowList() {
-}
-
-void APS5_VABI WKRenderLayerGetPositiveZOrderList() {
-}
-
-void APS5_VABI WKRenderLayerGetRenderer() {
-}
-
-void APS5_VABI WKRenderLayerIsClipped() {
-}
-
-void APS5_VABI WKRenderLayerIsClipping() {
-}
-
-void APS5_VABI WKRenderLayerIsReflection() {
-}
-
-void APS5_VABI WKRenderObjectCopyElementID() {
-}
-
-void APS5_VABI WKRenderObjectCopyElementTagName() {
-}
-
-void APS5_VABI WKRenderObjectCopyName() {
-}
-
-void APS5_VABI WKRenderObjectCopyTextSnippet() {
-}
-
-void APS5_VABI WKRenderObjectGetAbsolutePosition() {
-}
-
-void APS5_VABI WKRenderObjectGetChildren() {
-}
-
-void APS5_VABI WKRenderObjectGetElementClassNames() {
-}
-
-void APS5_VABI WKRenderObjectGetFrameRect() {
-}
-
-void APS5_VABI WKRenderObjectGetTextLength() {
 }
 
 void APS5_VABI WKWebsiteDataStoreClearAllDeviceOrientationPermissions() {
