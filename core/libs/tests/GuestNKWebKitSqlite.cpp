@@ -1,4 +1,7 @@
 #include "prx/libSceNKWebKitRequirements/include/Sqlite.hpp"
+#include "prx/libc/include/General.hpp"
+
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -13,12 +16,14 @@ constexpr int SQLITE_OK = 0;
 constexpr int SQLITE_ERROR = 1;
 constexpr int SQLITE_BUSY = 5;
 constexpr int SQLITE_INTERRUPT = 9;
+constexpr int SQLITE_MISUSE = 21;
 constexpr int SQLITE_AUTH = 23;
 constexpr int SQLITE_ROW = 100;
 constexpr int SQLITE_DONE = 101;
 constexpr int SQLITE_CONSTRAINT_UNIQUE = 2067;
 constexpr int SQLITE_OPEN_READWRITE = 0x2;
 constexpr int SQLITE_OPEN_CREATE = 0x4;
+constexpr int SQLITE_OPEN_URI = 0x40;
 constexpr int SQLITE_UTF8 = 1;
 constexpr int SQLITE_UTF16LE = 2;
 constexpr int SQLITE_INTEGER = 1;
@@ -264,6 +269,8 @@ void CheckCollation(sqlite3* db) {
     Require(sqlite3_finalize_nid_postfix(ordered) == SQLITE_OK, "finalize collation");
     Require(sqlite3_create_collation_v2_nid_postfix(db, "reverse", SQLITE_UTF16LE, &argument, ReverseCompare,
         DestroyCollation) == SQLITE_OK, "second encoding");
+    Require(sqlite3_create_collation_v2_nid_postfix(db, "invalid", 99, &argument, ReverseCompare, DestroyCollation) ==
+        SQLITE_MISUSE, "invalid collation encoding");
     Require(destroyedCollations == 0, "collations live until close");
 }
 
@@ -335,6 +342,11 @@ int main() {
     CheckExtendedCodes(db);
     Require(sqlite3_close_nid_postfix(db) == SQLITE_OK, "close");
     Require(destroyedCollations == 2, "collation destructors on close");
+    sqlite3* memory = nullptr;
+    Require(sqlite3_open_v2_nid_postfix("file::memory:", &memory, SQLITE_OPEN_READWRITE | SQLITE_OPEN_URI, nullptr) ==
+        SQLITE_OK, "memory URI");
+    Execute(memory, "CREATE TABLE t(v)");
+    Require(sqlite3_close_nid_postfix(memory) == SQLITE_OK, "close memory URI");
 
     std::random_device random;
     const auto directory = std::filesystem::temp_directory_path() / ("nk_sqlite_" + std::to_string(random()));
@@ -342,6 +354,12 @@ int main() {
     std::filesystem::current_path(directory);
     CheckFileDatabase(directory);
     Require(std::filesystem::is_regular_file(directory / "wal.db"), "guest path maps into the root");
+    const auto written = WrittenPaths_nid_no_patch();
+    for (const char* name : {"wal.db", "wal.db-wal", "wal.db-shm", "wal.db-journal"}) {
+        Require(std::any_of(written.begin(), written.end(), [&](const std::filesystem::path& path) {
+            return path.filename() == name && std::filesystem::equivalent(path.parent_path(), directory);
+        }), "database files recorded for sceKernelSync");
+    }
     std::filesystem::current_path(directory.parent_path());
     std::filesystem::remove_all(directory);
     return 0;

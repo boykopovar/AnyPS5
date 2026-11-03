@@ -4,6 +4,7 @@
 #include <sqlite3.h>
 
 #include <cstring>
+#include <filesystem>
 #include <new>
 #include <string>
 
@@ -287,13 +288,25 @@ sqlite3_stmt* APS5_VABI sqlite3_next_stmt_nid_postfix(sqlite3* db, sqlite3_stmt*
 
 int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, int flags, const char* vfs) {
     static_cast<void>(vfs);
-    const bool unmapped = !filename || !*filename || std::strcmp(filename, ":memory:") == 0 ||
-        (flags & SQLITE_OPEN_MEMORY) || ((flags & SQLITE_OPEN_URI) && std::strncmp(filename, "file:", 5) == 0);
-    if (unmapped) {
+    const bool uri = filename && (flags & SQLITE_OPEN_URI) && std::strncmp(filename, "file:", 5) == 0;
+    const bool memory = !filename || !*filename || std::strcmp(filename, ":memory:") == 0 || (flags & SQLITE_OPEN_MEMORY) ||
+        (uri && (std::strncmp(filename, "file::memory:", 13) == 0 || std::strstr(filename, "mode=memory")));
+    if (memory) {
         return sqlite3_open_v2(filename, db, flags, nullptr);
     }
-    const std::u8string host = ResolvePath_nid_no_patch(filename).u8string();
-    return sqlite3_open_v2(reinterpret_cast<const char*>(host.c_str()), db, flags, nullptr);
+    if (uri) {
+        NotImplemented_nid_no_patch("sqlite3_open_v2 file URI");
+    }
+    const std::filesystem::path host = ResolvePath_nid_no_patch(filename);
+    const int result = sqlite3_open_v2(reinterpret_cast<const char*>(host.u8string().c_str()), db, flags, nullptr);
+    if (result == SQLITE_OK && (flags & SQLITE_OPEN_READWRITE)) {
+        for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
+            std::filesystem::path file = host;
+            file += suffix;
+            RecordWrittenPath_nid_no_patch(file);
+        }
+    }
+    return result;
 }
 
 int APS5_VABI sqlite3_prepare_v2_nid_postfix(sqlite3* db, const char* sql, int size, sqlite3_stmt** statement,
