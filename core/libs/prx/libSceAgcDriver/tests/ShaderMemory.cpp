@@ -2090,6 +2090,30 @@ void verifyTypeZeroImageMaterialization() {
         std::copy(oldT.begin(), oldT.end(), srt.begin());
         std::copy(outputV.begin(), outputV.end(), srt.begin() + 16u);
         srt[20] = 1u;
+        phase = 0u;
+        static std::array<std::byte, 64> unrelatedStorage{};
+        static std::uint32_t unrelatedMappings = 0;
+        unrelatedMappings = 0;
+        const auto churningPending = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+            using Pending = AgcDriver::ShaderMemory::PendingWrite;
+            GuestAllocations::Mutation().Add(unrelatedStorage.data(), unrelatedStorage.size(), true, false, false);
+            GuestAllocations::Mutation().Remove(unrelatedStorage.data());
+            ++unrelatedMappings;
+            if (bytes >= 4096u) return address <= srtAddress && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+            return Pending::Raw;
+        };
+        AgcDriver::ShaderMemory churningMemory({}, churningPending, nullptr, hookWaits);
+        const auto churnedCapture = churningMemory.Capture(request);
+        require(unrelatedMappings != 0u && std::ranges::any_of(churnedCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }), "unrelated guest mappings: a snapshot whose captured image views were untouched did not stabilize");
+    }
+
+    {
+        srt.fill(0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin());
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16u);
+        srt[20] = 1u;
         phase = 1u;
         waits = 0u;
         flushed = true;

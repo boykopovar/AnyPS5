@@ -2748,7 +2748,28 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
                 const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
-                if ((runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) || afterImageGeneration != beforeImageGeneration) {
+                const auto viewCurrent = [&](const RegisteredImageView& view) {
+                    SrtImageViewIdentity identity{};
+                    identity.address = view.address;
+                    identity.rangeAddress = view.rangeAddress;
+                    identity.rangeBytes = view.rangeBytes;
+                    identity.allocationAddress = view.allocationAddress;
+                    identity.allocationBytes = view.allocationBytes;
+                    identity.backingSerial = view.backingSerial;
+                    identity.hasRange = view.hasRange;
+                    identity.readable = view.readable;
+                    identity.writable = view.writable;
+                    identity.gpu = view.gpu;
+                    return runtime.imageViewCurrent(runtime.userContext, identity);
+                };
+                const auto imagesMoved = [&] {
+                    if (afterImageGeneration == beforeImageGeneration) return false;
+                    if (runtime.imageViewCurrent == nullptr || !std::all_of(nextSnapshot.registeredImages.begin(), nextSnapshot.registeredImages.end(), viewCurrent)) return true;
+                    return !std::all_of(nextSnapshot.tables.tables.begin(), nextSnapshot.tables.tables.end(), [&](const auto& table) {
+                        return std::all_of(table.resourceViews.begin(), table.resourceViews.end(), [&](const auto& view) { return std::all_of(view.identities.begin(), view.identities.end(), viewCurrent); });
+                    });
+                };
+                if ((runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) || imagesMoved()) {
                     continue;
                 }
                 for (const auto& table : nextSnapshot.tables.tables) {

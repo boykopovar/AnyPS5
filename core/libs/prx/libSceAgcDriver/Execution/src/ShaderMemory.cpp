@@ -80,6 +80,14 @@ std::uint64_t imageViewGeneration(void*) {
     return GuestAllocations::GuestAllocationsGeneration_nid_postfix();
 }
 
+bool imageViewCurrent(void*, const ShaderRecompiler::SrtImageViewIdentity& identity) {
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(identity.address), false);
+    if (range == nullptr) return !identity.hasRange;
+    return identity.hasRange && identity.readable == range->readable && identity.writable == range->writable && identity.gpu == range->gpu && identity.rangeAddress == range->address &&
+           identity.rangeBytes == range->bytes && identity.allocationAddress == range->allocationAddress && identity.allocationBytes == range->allocationBytes &&
+           identity.backingSerial == range->backingSerial;
+}
+
 bool normalizeImageView(void*, std::uint32_t maxArrayLayers, std::array<std::uint32_t, 8>& descriptor, ShaderRecompiler::SrtImageViewIdentity& identity) {
     identity.generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     if (((descriptor[3] >> 28u) & 0xfu) != 12u) return false;
@@ -835,6 +843,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.descriptorScope = &descriptorScope;
     runtime.normalizeImageView = &normalizeImageView;
     runtime.imageViewGeneration = &imageViewGeneration;
+    runtime.imageViewCurrent = &imageViewCurrent;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
