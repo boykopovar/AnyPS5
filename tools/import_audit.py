@@ -79,10 +79,16 @@ def elf_program_dynamic_symbols(path, data):
     def file_offset(address, size, what):
         for segment in loads:
             _, _, offset, virtual, _, file_size, _, _ = segment
-            if address >= virtual and address - virtual <= file_size and size <= file_size - (address - virtual):
+            if address >= virtual and address - virtual <= file_size:
                 result = offset + address - virtual
-                take(data, result, size, path, what)
-                return result
+                covered = virtual + file_size
+                for following in sorted(loads, key=lambda item: item[3]):
+                    next_offset, next_virtual, next_size = following[2], following[3], following[5]
+                    if next_virtual <= covered and next_offset - next_virtual == offset - virtual:
+                        covered = max(covered, next_virtual + next_size)
+                if address + size <= covered:
+                    take(data, result, size, path, what)
+                    return result
         raise AuditError(f"{path}: {what} address 0x{address:x} is outside file-backed load segments")
 
     dynamic_segments = [segment for segment in segments if segment[0] == 2]
@@ -253,6 +259,8 @@ def pe_headers(path, data):
     count = unpack("<I", data, optional + directory - 4, path, "data directory count")[0]
     if count == 0:
         raise AuditError(f"{path}: PE file declares no data directories")
+    if count > (optional_size - directory) // 8:
+        raise AuditError(f"{path}: PE data directory count {count} exceeds optional header size {optional_size}")
     headers_size = unpack("<I", data, optional + 60, path, "header size")[0]
     sections = [unpack("<8sIIIIIIHHI", data, optional + optional_size + index * 40, path, f"PE section {index}") for index in range(section_count)]
 
@@ -759,9 +767,9 @@ class ModuleNames(set):
         return filename in self.files or module_stem(library, self.fold) in self.stems
 
 
-def classify(nid, library, providers, stubs, modules, partial=frozenset()):
-    if library and library in modules:
-        return "module"
+def classify(nid, library, providers, stubs, guest_providers, partial=frozenset()):
+    if guest_providers:
+        return "module" if library else "implemented"
     if not providers:
         return "absent"
     if all((provider, nid) in stubs for provider in providers):
@@ -796,6 +804,32 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
     def available(name):
         return name in modules or system_library(name) in libraries
 
+    guest_names = {}
+    for provider in modules:
+        names = {provider, provider.removesuffix(".guest.prx")}
+        guest_names[provider] = ModuleNames(names, fold=getattr(modules, "fold", False))
+
+    def guest_matches(name):
+        filename = name.lower() if getattr(modules, "fold", False) else name
+        exact = {provider for provider, names in guest_names.items() if filename in names.files}
+        return exact or {provider for provider, names in guest_names.items() if name in names}
+
+    def resolve(symbol, record):
+        library = record["library"]
+        hosts = exports.get(symbol, [])
+        guests = (module_exports or {}).get(symbol, [])
+        if library:
+            selected = guest_matches(library)
+            guests = [provider for provider in guests if provider in selected]
+            if library in modules:
+                hosts = []
+        elif hosts:
+            module = record.get("module")
+            needed = (module_imports or {})[module][1] if module else needed_libraries
+            selected = {provider for name in needed for provider in guest_matches(name)}
+            guests = [provider for provider in guests if provider == module or provider in selected]
+        return sorted(set(hosts) | set(guests)), guests
+
     records = {}
     for nid, library, weak in imports:
         record = records.setdefault((nid, library), {"nid": nid, "library": library, "references": 0, "weak": weak})
@@ -808,18 +842,14 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
             record["weak"] = record["weak"] and weak
     for record in records.values():
         nid, library = record["nid"], record["library"]
-        providers = exports.get(nid, [])
-        if not library:
-            providers = sorted(set(providers) | set((module_exports or {}).get(nid, [])))
+        providers, guest_providers = resolve(nid, record)
         resolved_nid = nid
         record["symbol_mismatch"] = False
         if not providers:
             resolved_nid = nid_names.compute_nid(nid)
-            providers = exports.get(resolved_nid, [])
+            providers, guest_providers = resolve(resolved_nid, record)
             record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
-            if not library:
-                providers = sorted(set(providers) | set((module_exports or {}).get(resolved_nid, [])))
-        kind = classify(resolved_nid, library, providers, stubs, modules, partial)
+        kind = classify(resolved_nid, library, providers, stubs, guest_providers, partial)
         record["class"] = kind
         record["providers"] = providers
         record["library_mismatch"] = kind in ("implemented", "partial", "stub") and bool(library) and system_library(library) not in providers and "libc.prx" not in providers
@@ -924,6 +954,13 @@ def label(record):
     if record["weak"]:
         text += "  (weak import)"
     return f"{text}  (imported by {record['module']})" if record.get("module") else text
+
+
+def locate_search_root(path):
+    resolved = Path(os.path.realpath(path))
+    if resolved.is_symlink():
+        raise AuditError(f"{path}: registry path is a symbolic link loop")
+    return resolved.parent
 
 
 def locate_missing(names, roots, depth=4):
@@ -1040,13 +1077,13 @@ def main(argv=None):
                            "name": entry["stop"]["name"] if entry["stop"] else None} for entry in stops]
             result = {"source_commit": commit, "source_dirty": dirty, "registries": [str(path) for path in args.registries], "dependency_registries": [str(path) for path in dependency_registries], "needed_libraries": needed, **summary, "stops": json_stops, "imports": records}
             write_json(args.json, result)
+        located = locate_missing(missing, {locate_search_root(path) for path in args.registries}) if missing else None
     except AuditError as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 2
     except OSError as error:
         print(f"FAIL: {error.strerror}: {error.filename}" if error.filename else f"FAIL: {error}", file=sys.stderr)
         return 2
-    located = locate_missing(missing, {path.resolve().parent for path in args.registries}) if missing else None
     print(render(summary, records, missing, stops, missing_hosts, located))
     return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
 
