@@ -126,7 +126,7 @@ bool IsRuntimeUniformOp(IrOpcode opcode) {
 
 namespace {
 
-bool holdsControlValue(IrValue* value, std::uint32_t depth, std::vector<const IrValue*>& seen) {
+bool holdsFoldableValue(IrValue* value, std::uint32_t depth, std::vector<const IrValue*>& seen) {
     value = value->Resolve();
     if (value->HasImmediate()) {
         return false;
@@ -136,7 +136,12 @@ bool holdsControlValue(IrValue* value, std::uint32_t depth, std::vector<const Ir
         case IrOpcode::GetExec:
         case IrOpcode::GetExecLo:
         case IrOpcode::GetExecHi:
-        case IrOpcode::Ballot: return true;
+        case IrOpcode::Ballot:
+        case IrOpcode::LaneId:
+        case IrOpcode::ImageRead:
+        case IrOpcode::ImageSampleExplicitLod:
+        case IrOpcode::ImageSampleImplicitLod:
+        case IrOpcode::ImageSampleRaw: return true;
         default: break;
     }
     if (depth == 0u) {
@@ -151,7 +156,7 @@ bool holdsControlValue(IrValue* value, std::uint32_t depth, std::vector<const Ir
         return false;
     }
     for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
-        if (holdsControlValue(value->Argument(index), depth - 1u, seen)) {
+        if (holdsFoldableValue(value->Argument(index), depth - 1u, seen)) {
             return true;
         }
     }
@@ -160,9 +165,9 @@ bool holdsControlValue(IrValue* value, std::uint32_t depth, std::vector<const Ir
 
 }
 
-bool HoldsControlValue(IrValue* value, std::uint32_t depth) {
+bool HoldsFoldableValue(IrValue* value, std::uint32_t depth) {
     std::vector<const IrValue*> seen;
-    return holdsControlValue(value, depth, seen);
+    return holdsFoldableValue(value, depth, seen);
 }
 
 }
