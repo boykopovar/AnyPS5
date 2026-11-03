@@ -191,8 +191,9 @@ public:
         bool continued = false;
         bool barrier = true;
         PassBreak reason = PassBreak::Continued;
+        VkCommandBuffer prologue = VK_NULL_HANDLE;
     };
-    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
+    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool wantPrologue = false);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(CommandState&)> afterPass = {});
     void AfterRenderPass(std::function<void(Recorder&)> work);
     void SealPassWriteOnly();
@@ -797,6 +798,8 @@ private:
         std::vector<SampleSegment> foldedSamples;
         VkCommandBuffer commands = VK_NULL_HANDLE;
         CommandState graphicsState;
+        std::vector<VkCommandBuffer> chain;
+        VkCommandBuffer prologue = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
@@ -1036,6 +1039,8 @@ private:
     void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
     // Opens a batch when none is open, without closing a store run (Commands() does both).
     void ensureOpen();
+    VkCommandBuffer beginChainBuffer();
+    void splitForPrologue();
     void flushDeferredDispatch();
     bool runConflict(std::span<const RunAccess> accesses) const;
     bool joinsRun(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) const;
