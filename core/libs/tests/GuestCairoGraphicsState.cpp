@@ -1,6 +1,9 @@
 #include "prx/libcairo/include/Context.hpp"
 
 #include <array>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -109,13 +112,28 @@ void CheckDashValidationAndStress() {
         cairo_set_dash(context, valid.data(), 2, 0);
         cairo_save(context);
         cairo_set_dash(context, bad.data(), 2, 0); // Sticky INVALID_DASH.
+        assert(cairo_surface_status(cairo_get_target(context)) == 1);
+        assert(cairo_get_dash_count(context) == 0);
         cairo_destroy(context); // Must free the saved and current dash buffers.
     }
     CairoSurface* surface = cairo_image_surface_create(0, 1, 1);
     CairoContext* nullDash = cairo_create(surface);
     cairo_surface_destroy(surface);
     cairo_set_dash(nullDash, nullptr, 1, 0); // Invalid, no pointer dereference.
+    assert(cairo_surface_status(cairo_get_target(nullDash)) == 1);
     cairo_destroy(nullDash);
+
+    surface = cairo_image_surface_create(0, 1, 1);
+    CairoContext* nanDash = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    const double notANumber = std::numeric_limits<double>::quiet_NaN();
+    cairo_set_dash(nanDash, &notANumber, 1, 0);
+    assert(cairo_get_dash_count(nanDash) == 1);
+    double actualDash = 0;
+    double actualOffset = 0;
+    cairo_get_dash(nanDash, &actualDash, &actualOffset);
+    assert(std::isnan(actualDash) && std::isnan(actualOffset));
+    cairo_destroy(nanDash);
 }
 
 } // namespace
