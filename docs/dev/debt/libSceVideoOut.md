@@ -253,6 +253,24 @@
 
 - [Older callable NIDs](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary library qualifier and one uses the nosubmission qualifier; qualified guest import resolution is unverified.
 
+- [Qualified later callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 13 function exports observed only in the 13.60-labelled image under logical libraries other than the primary one: 12 under `libSceVideoOut_nosubmission` and `-7inAKRfvfE` under `libSceVideoOutHdrScopes_nosubmission`. Both logical libraries belong to this module in the revision-pinned identity inventory. Import resolution uses the module, so each NID is exported once from this library; qualified guest import resolution is unverified. Three names match the public symbol database and two were found by hashing candidates; each hashes exactly to its NID. The other eight are unidentified and use literal NID aliases. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`.
+
+| Name | NID |
+| --- | --- |
+| `sceVideoOutLatencyMeasureSetStartPointAuto` | `owjymCzlZSE` |
+| `sceVideoOutSetDrrMonitorCapability` | `dcIKDMzAcUQ` |
+| `sceVideoOutSysAddFlipEvent` | `NMhOpB9KTqA` |
+| `sceVideoOutSysDeleteFlipEvent` | `agXH3kcyi+A` |
+| `sceVideoOutSysSetBusTransfer` | `UgFHQ3TjeXQ` |
+| `Unknown` | `-7inAKRfvfE` |
+| `Unknown` | `24GHCH4jyzU` |
+| `Unknown` | `9jqDAT2tPAg` |
+| `Unknown` | `DFNafp+tWs8` |
+| `Unknown` | `G0FPxnpizUc` |
+| `Unknown` | `JpVPYbAVxRQ` |
+| `Unknown` | `KEOpdUvfQHQ` |
+| `Unknown` | `koLWa3yaO-8` |
+
 - [Later callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 13 function exports of the primary logical library observed only in the 13.60-labelled image; no matching NIDs were found in the older inventory. Each name hashes to its NID and matches the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. `sceVideoOutSysGetMonitorInfo` is a separate export from `sceVideoOutSysGetMonitorInfo_`. `sceVideoOutDebugLatencyMeasureGetLatestLatency` is also exported under the `libSceVideoOut_nosubmission` and `libSceVideoOutLatency_nosubmission` qualifiers; qualified guest import resolution is unverified.
 
 | Name | NID |
