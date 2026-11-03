@@ -319,7 +319,13 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
         if (!sweeping) resolving.push_back(native);
         try {
             for (const auto& name : names) {
-                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && (sweeping || dependency != native)) InitializeDeferredModule(dependency, why);
+                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && sweeping) {
+                    try {
+                        InitializeDeferredModule(dependency, why);
+                    } catch (const std::exception& error) {
+                        std::fprintf(stderr, "[module] deferred sweep module %s failed to start and is skipped: %s\n", name.c_str(), error.what());
+                    }
+                } else if (dependency && dependency != native) InitializeDeferredModule(dependency, why);
                 else if (!dependency) std::fprintf(stderr, "[module] deferred %s %s of %s is not mapped and is not started\n", kind, name.c_str(), ModuleFileName(native).c_str());
                 *pendingArgs = initiating;
             }
