@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -294,6 +295,44 @@ void Sparse(bool expected) {
         Require(live.currentSystemSize - before.currentSystemSize <= sizes.size() * 65536, "lightly used classes commit whole spans");
 }
 
+void DoubleFree() {
+    auto blocks = Allocate(512, 4096);
+    auto* freed = blocks[blocks.size() - 2];
+    for (std::size_t index = 0; index + 1 < blocks.size(); ++index) {
+        GuestHeap::GuestHeapFree_nid_postfix(blocks[index]);
+        blocks[index] = nullptr;
+    }
+    const auto before = Stats();
+    bool rejected = false;
+    try { GuestHeap::GuestHeapFree_nid_postfix(freed); }
+    catch (const std::runtime_error&) { rejected = true; }
+    Require(rejected, "a second free reached the span allocator");
+    const auto after = Stats();
+    Require(after.currentSystemSize == before.currentSystemSize && after.currentInuseSize == before.currentInuseSize, "a rejected free changed heap accounting");
+    Check(blocks.back(), 4096, static_cast<unsigned char>((blocks.size() - 1) % 251 + 1));
+    Release(blocks, 4096);
+}
+
+void Churn() {
+    constexpr std::size_t Count = 256;
+    constexpr std::size_t Bytes = 4096;
+    constexpr unsigned Iterations = 128;
+    const auto before = Stats();
+    for (unsigned iteration = 0; iteration < 4; ++iteration) {
+        auto blocks = Allocate(Count, Bytes);
+        Release(blocks, Bytes);
+    }
+    const auto start = std::chrono::steady_clock::now();
+    for (unsigned iteration = 0; iteration < Iterations; ++iteration) {
+        auto blocks = Allocate(Count, Bytes);
+        Release(blocks, Bytes);
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+    const auto after = Stats();
+    Require(after.currentInuseSize == before.currentInuseSize, "churn left live allocations");
+    std::printf("{\"iterations\":%u,\"payload_bytes\":%zu,\"elapsed_ns\":%lld,\"after_free\":%zu,\"inuse\":%zu}\n", Iterations, Count * Bytes, static_cast<long long>(elapsed), after.currentSystemSize, after.currentInuseSize);
+}
+
 void GrowthRollback() {
     auto blocks = Allocate(8, 4096);
     GuestArena::GuestArenaSetAccessObserver_nid_postfix(FailCommit);
@@ -373,6 +412,8 @@ int main(int argc, char** argv) {
         else if (mode == "phases") Phases();
         else if (mode == "sparse") Sparse(true);
         else if (mode == "sparse-probe") Sparse(false);
+        else if (mode == "churn") Churn();
+        else if (mode == "double-free") DoubleFree();
         else if (mode == "growth-rollback") GrowthRollback();
         else if (mode == "growth-quarantine") GrowthQuarantine();
         else throw std::runtime_error("unknown small-span test mode");
