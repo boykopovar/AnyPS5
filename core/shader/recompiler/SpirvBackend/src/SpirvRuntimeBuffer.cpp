@@ -1017,9 +1017,9 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     const auto byte = EmitAndConstant(state, address, ~3u);
     const auto offset = Unary(state, spv::OpUConvert, u64, byte);
     const auto u32 = TypeU32(state);
-    const auto words = Binary(state, spv::OpShiftRightLogical, u32, Unary(state, spv::OpUConvert, u32, size), ConstantU32(state, 2u));
     const auto large = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), size, BdaConstant(state, std::uint64_t{1u} << 32u));
-    const auto limit = Select(state, u32, large, ConstantU32(state, 1u << 30u), words);
+    const auto boundedSize = Select(state, u64, large, BdaConstant(state, std::uint64_t{1u} << 32u), size);
+    const auto limit = Unary(state, spv::OpUConvert, u32, Binary(state, spv::OpShiftRightLogical, u64, boundedSize, BdaConstant(state, 2u)));
     const auto word = Binary(state, spv::OpShiftRightLogical, u32, byte, ConstantU32(state, 2u));
     const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThan, TypeBool(state), word, limit)));
     if (!context.Memory(instruction).gpuDescriptor) return readBuffer(context, instruction, byte, 32u, inBounds);
