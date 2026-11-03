@@ -2247,6 +2247,13 @@ bool StorageTexture::RefreshLayers(std::uint32_t first, std::uint32_t count) {
     return refresh(firstLayer, lastLayer);
 }
 
+namespace {
+
+bool& GpuOrderedFlush();
+bool& GpuOrderedSkipped();
+
+}
+
 bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) {
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -2311,7 +2318,20 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     handedOver.clear();
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr && !scoped ? clearHandOver() : std::nullopt;
-    const bool flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
+    static const bool refreshOrdered = std::getenv("APS5_NO_REFRESH_GPU_ORDERED") == nullptr;
+    const bool orderedEligible = refreshOrdered && !scoped && alias == nullptr && !handOverKeys.has_value() && descriptor.dccAddress == 0 && !layerPending.Any() && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
+    bool orderedSkipped = false;
+    bool flushed = false;
+    {
+        const bool previousOrdered = GpuOrderedFlush();
+        const bool previousSkipped = GpuOrderedSkipped();
+        GpuOrderedFlush() = previousOrdered || orderedEligible;
+        GpuOrderedSkipped() = false;
+        flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
+        orderedSkipped = orderedEligible && GpuOrderedSkipped();
+        GpuOrderedFlush() = previousOrdered;
+        GpuOrderedSkipped() = previousSkipped || GpuOrderedSkipped();
+    }
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
     // guest memory and the DCC keys still match, the image content is current. Pages nobody wrote
@@ -2434,7 +2454,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (changed[layer] && layerPending[layer]) pendingChanged = true;
         }
-        if (!unchanged && !keysChanged && !pendingChanged && (scoped ? originalHolds(scopeBegin, scopeBytes) : originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) && equalsOriginal()) {
+        if (!orderedSkipped && !unchanged && !keysChanged && !pendingChanged && (scoped ? originalHolds(scopeBegin, scopeBytes) : originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) && equalsOriginal()) {
             unchanged = true;
             stamped = false;
             if (!scoped) outside.clear();
@@ -2462,6 +2482,12 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
                 borrowedUnits.clear();
             }
         }
+    }
+    if (orderedSkipped) {
+        changed.assign(trackedLayers, true);
+        unchanged = false;
+        anyBorrowed = false;
+        borrowed.clear();
     }
     const bool outsideChanged = std::any_of(outside.begin(), outside.end(), [](bool value) { return value; });
     if (scoped) noteLayersBehind(firstLayer, lastLayer, outside);
@@ -4538,6 +4564,20 @@ void waitForIdlePublish(const char* reason) {
 
 }
 
+namespace {
+
+bool& GpuOrderedFlush() {
+    thread_local bool flag = false;
+    return flag;
+}
+
+bool& GpuOrderedSkipped() {
+    thread_local bool flag = false;
+    return flag;
+}
+
+}
+
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited, VkDevice device) {
     static_cast<void>(FlushDepthPlanes(address, bytes));
     if (published != nullptr) *published = false;
@@ -4646,7 +4686,9 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
     if (!ownNotes.empty() && (flush.size() != 1 || std::any_of(flush.begin(), flush.end(), [](const std::shared_ptr<StorageTexture>& texture) { return ExistingHostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) == nullptr; }))) ownNotes.clear();
-    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
+    const bool orderedSkip = GpuOrderedFlush() && Recorder::Active() != nullptr && !Recorder::InCompletion() && !flush.empty() && std::all_of(flush.begin(), flush.end(), [](const std::shared_ptr<StorageTexture>& texture) { return HostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) != nullptr; });
+    if (orderedSkip) GpuOrderedSkipped() = true;
+    if (auto* recorder = Recorder::Active(); !orderedSkip && recorder != nullptr && !Recorder::InCompletion()) {
         try {
             static const bool wholeRange = std::getenv("APS5_FLUSH_WAIT_WHOLE_RANGE") != nullptr;
             const bool publishes = !wholeRange && scope != PublishScope::None;
@@ -5078,6 +5120,12 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
 void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice device) {
     static const bool disabled = std::getenv("APS5_NO_LABEL_READBACK_STORE") != nullptr;
     if (disabled) return;
+    static const bool gpuOrdered = std::getenv("APS5_NO_FLUSH_GPU_ORDERED") == nullptr;
+    struct OrderedScope {
+        bool previous;
+        explicit OrderedScope(bool on) : previous(GpuOrderedFlush()) { GpuOrderedFlush() = previous || on; }
+        ~OrderedScope() { GpuOrderedFlush() = previous; }
+    } ordered{gpuOrdered};
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
     std::vector<std::pair<std::uint64_t, std::size_t>> occasional;
     {
