@@ -156,6 +156,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcPackedMergeShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/PackedMerge.comp)
+set(agcPackedMergeShaderSpv ${agcTextureDetileGeneratedDir}/PackedMerge.spv)
+set(agcPackedMergeShaderHeader ${agcTextureDetileGeneratedDir}/PackedMerge_spv.h)
+add_custom_command(
+        OUTPUT "${agcPackedMergeShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcPackedMergeShaderSpv}" "${agcPackedMergeShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcPackedMergeShaderSpv} -DOUTPUT=${agcPackedMergeShaderHeader}
+        -DSYMBOL=PACKED_MERGE_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcPackedMergeShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcStagingCopyBackShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/StagingCopyBack.comp)
 set(agcStagingCopyBackShaderSpv ${agcTextureDetileGeneratedDir}/StagingCopyBack.spv)
 set(agcStagingCopyBackShaderHeader ${agcTextureDetileGeneratedDir}/StagingCopyBack_spv.h)
@@ -446,6 +459,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Texture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PassHazards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/SampleOrder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/StagedMerge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BarrierBatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
@@ -454,6 +468,7 @@ set(agcDriverSources
         ${agcReadbackHeaders}
         ${agcMultisampleUploadHeader}
         ${agcCmaskClearShaderHeader}
+        ${agcPackedMergeShaderHeader}
         ${agcMeshArgumentsShaderHeader}
         ${agcStagingCopyBackShaderHeader}
         ${agcTextureDetileImageShaderHeader}

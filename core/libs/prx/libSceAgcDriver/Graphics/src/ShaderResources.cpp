@@ -2954,7 +2954,7 @@ bool LabelShaderKey(std::span<const std::uint32_t> key, std::size_t at, std::siz
             labels[at + i] = static_cast<std::uint8_t>(component);
         }
         at += words;
-        for (int flags = 0; flags < 9; ++flags) {
+        for (int flags = 0; flags < 10; ++flags) {
             if (at >= end) return false;
             const auto count = 1 + (static_cast<std::size_t>(key[at]) + 31) / 32;
             if (!label(at, count, Component::Other)) return false;
@@ -4040,8 +4040,8 @@ ChurnProfile& Churn() {
 
 // Charges word `diff` of `key` to the binding of the ContentKey that starts at `at` (the layout of
 // ShaderResources::ContentKey), moving `at` past that key; false when `diff` lies beyond it.
-bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::size_t& at, std::size_t diff) {
-    if (at + 5 > key.size() || diff < at + 5) {
+bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::size_t& at, std::size_t end, std::size_t diff) {
+    if (at + 5 > end || diff < at + 5) {
         ++profile.layout;
         return true;
     }
@@ -4049,7 +4049,7 @@ bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::s
     const auto bindings = key[at + 4];
     at += 5;
     for (std::uint32_t binding = 0; binding < bindings; ++binding) {
-        if (at + 8 > key.size() || diff < at + 8) {
+        if (at + 8 > end || diff < at + 8) {
             ++profile.layout;
             return true;
         }
@@ -4065,14 +4065,26 @@ bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::s
             return true;
         }
         at += descriptorWords;
-        for (int flags = 0; flags < 4; ++flags) {
-            if (at >= key.size()) {
+        for (int flags = 0; flags < 10; ++flags) {
+            if (at >= end) {
                 ++profile.layout;
                 return true;
             }
             const auto words = 1 + (static_cast<std::size_t>(key[at]) + 31) / 32;
             if (diff < at + words) {
                 ++profile.layout;
+                return true;
+            }
+            at += words;
+        }
+        for (const auto listRole : {ShaderRecompiler::DescriptorRole::GuestSamplers, ShaderRecompiler::DescriptorRole::GuestImages}) {
+            if (at >= end) {
+                ++profile.layout;
+                return true;
+            }
+            const auto words = 1 + static_cast<std::size_t>(key[at]);
+            if (diff < at + words) {
+                ++profile.roles[static_cast<std::size_t>(listRole)];
                 return true;
             }
             at += words;
@@ -4201,15 +4213,24 @@ void ResourceCache::noteMiss(const Key& key) {
             ++counts.sameKey;
         } else if (draw) {
             std::size_t at = 4;
-            bool charged = false;
+            bool charged = diff < at;
+            if (charged) ++counts.layout;
             for (std::uint32_t stage = 0; stage < key[3] && at < key.size() && !charged; ++stage) {
-                ++at;
-                charged = chargeShaderKey(counts, key, at, diff);
+                const auto end = std::min(key.size(), at + 1 + static_cast<std::size_t>(key[at]));
+                if (diff == at) {
+                    ++counts.layout;
+                    charged = true;
+                } else if (diff < end) {
+                    ++at;
+                    if (!chargeShaderKey(counts, key, at, end, diff)) ++counts.layout;
+                    charged = true;
+                }
+                at = end;
             }
             if (!charged) ++counts.drawWords;
         } else {
             std::size_t at = 0;
-            if (!chargeShaderKey(counts, key, at, diff)) ++counts.layout;
+            if (!chargeShaderKey(counts, key, at, key.size(), diff)) ++counts.layout;
         }
         if (trace) {
             ContentKeyDiff parts;
@@ -4671,6 +4692,7 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     const auto byteSize = guestBufferBytes(words);
     if (byteSize == 0 || address == 0) {
         allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
+        allocations.back().oversized = address != 0 && descriptor.GetSize() != 0;
         return allocations.size() - 1;
     }
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
