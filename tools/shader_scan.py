@@ -153,6 +153,8 @@ TABLE_KEYS = ("vop3encodedvop1", "vop3p", "vop3", "vopc", "vop2", "vop1", "vintr
 TABLE_ENCODING = {"vop3encodedvop1": "VOP3:VOP1", "image": "MIMG"}
 BLOCK = re.compile(r"^(?![\s}#])(?:[\w:<>&*,]+[ \t]+)*?(\w+)\s*(?:\[\]\s*=|\()", re.M)
 PAIR = re.compile(r"(?:\{\s*|case\s+)0x([0-9a-fA-F]+)u?\s*(?:,|:\s*return)\s*RdnaOpcode::(\w+)")
+CASE_RUN = re.compile(r"((?:\bcase\s+0x[0-9a-fA-F]+u?\s*:\s*)+)return\s+RdnaOpcode::(\w+)")
+CASE_NUMBER = re.compile(r"0x([0-9a-fA-F]+)u?")
 REQUIRED_TABLES = ("SOP1", "SOP2", "SOPC", "SOPK", "SOPP", "VOP1", "VOP2", "VOPC", "VOP3", "VOP3:VOP1", "VOP3P",
                    "SMEM", "MUBUF", "MTBUF", "FLAT", "DS", "MIMG")
 
@@ -180,6 +182,9 @@ def scan_decoder(files):
             table = next((k for k in TABLE_KEYS if key.startswith(k)), None)
             if table:
                 entries = d.tables.setdefault(TABLE_ENCODING.get(table, table.upper()), {})
+                for m in CASE_RUN.finditer(block):
+                    for number in CASE_NUMBER.finditer(m.group(1)):
+                        entries[int(number.group(1), 16)] = m.group(2)
                 for m in PAIR.finditer(block):
                     entries[int(m.group(1), 16)] = m.group(2)
             else:

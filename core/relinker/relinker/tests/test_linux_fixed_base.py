@@ -1,4 +1,4 @@
-"""Check that the Linux executable is placed at 0x400000 by default or at the --linux-fixed-base address, with every address it holds rebased, that --lazy-binding keeps it position independent and warns, and that the largest image the relinker accepts ends below the guest arena."""
+"""Check that the Linux executable is placed at 0x400000 by default or at the --linux-fixed-base address, with every address it holds rebased and p_paddr set to p_vaddr whatever the input held, that --lazy-binding keeps it position independent and warns, and that the largest image the relinker accepts ends below the guest arena."""
 
 from pathlib import Path
 import platform
@@ -151,6 +151,17 @@ def main():
         assert entry_offset < len(relocated_fixed), ("the entry's mapping lies outside the output file", entry_offset)
         covering = next(header for header in relocated_fixed_headers if header[0] == PT_LOAD and header[3] <= relocated_entry < header[3] + header[5])
         assert covering[1] & 1, "the segment covering the entry is not executable"
+
+        unused_physical = fixture()
+        struct.pack_into("<Q", unused_physical, 64 + 24, 0xFFFFFFFFFFFFFFFF)
+        result, output = relink(relinker, work, "physical-lazy", unused_physical, "--lazy-binding")
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert [header[4] for header in headers(output.read_bytes()) if header[0] == PT_LOAD and header[3] == 0] == [0xFFFFFFFFFFFFFFFF], "--lazy-binding did not copy p_paddr unchanged"
+        for name, options in (("physical-default", ()), ("physical-high", ("--linux-fixed-base", hex(HIGH_BASE)))):
+            result, output = relink(relinker, work, name, unused_physical, *options)
+            assert result.returncode == 0, (name, result.stdout, result.stderr)
+            for header in headers(output.read_bytes()):
+                assert header[0] in (PT_NULL, PT_GNU_STACK) or header[4] == header[3], ("p_paddr is not the rebased p_vaddr", name, header)
 
         large_path = None
         for far, accepted in ((0x7F000000, True), (0x80000000, False), (GUEST_ARENA_START - BASE - 0x1000, False)):
