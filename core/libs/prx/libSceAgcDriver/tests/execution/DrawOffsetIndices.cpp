@@ -458,8 +458,8 @@ std::string PathName(const std::optional<Path>& path) {
     return path ? "the CPU path (" + std::string(AgcDriver::Graphics::IndirectDrawPathName(*path)) + ")" : std::string("the GPU");
 }
 
-std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule, bool rectList = false) {
-    const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, fixture.State(rectList), Program(userData), fixture.device, draw, false);
+std::string Classified(Fixture& fixture, const std::string& what, const ShaderRecompiler::RecompileResult& vertex, const std::vector<std::uint32_t>& userData, AgcDriver::Pm4::DrawParameters& draw, std::optional<Path> expectedPath, Rule expectedRule, bool rectList = false, const ShaderRecompiler::HeapStageWords* heap = nullptr) {
+    const auto path = AgcDriver::DriverDetail::Driver::ClassifyIndirectDraw(vertex, fixture.State(rectList), Program(userData), fixture.device, draw, false, heap);
     const auto& indirect = *draw.indirect;
     const bool rules = expectedPath || (indirect.vertexRule == expectedRule && indirect.instanceRule == expectedRule);
     std::cout << what << ": classified to " << PathName(path) << '\n';
@@ -614,6 +614,13 @@ std::string Run(Fixture& fixture) {
             AgcDriver::Pm4::DrawParameters draw{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
             draw.indirect = indexedIndirect;
             failures += Classified(fixture, what, vertex, staleUserData, draw, std::nullopt, Rule::InPlace);
+            if (code == &PostAddCode) {
+                ShaderRecompiler::HeapStageWords words;
+                words.vertexAttributes = vertex.vertexAttributes;
+                for (auto& attribute : words.vertexAttributes) attribute.resource.fields[2] = 0x2000000u;
+                auto heapDraw = draw;
+                failures += Classified(fixture, what + ", with a 128 MiB vertex buffer in its heap words", vertex, staleUserData, heapDraw, Path::VertexRange, Rule::InPlace, false, &words);
+            }
             fixture.Place(indexedRecord[3], bufferIndices, indexedRecord[4]);
             fixture.Draw(vertex, draw);
             failures += fixture.Check(what + ", drawn in place on the GPU", bufferIndices, indexedRecord[3], indexedRecord[4], false);

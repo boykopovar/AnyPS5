@@ -1060,7 +1060,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             }
             const auto& result = *programResults[i];
             if (i == 0 && drawParameters.indirect) {
-                indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
+                indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect, stageCaptures[0].heapWords.get());
                 if (EmptyIndirectSkip()) CpuIndirectPrograms()[programs.front().binary.codeAddress] = indirectCpu.has_value();
             } else if (i == 0) {
                 fold(result, drawParameters);
