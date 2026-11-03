@@ -202,12 +202,15 @@ void VisitBases(const std::type_info* type, BaseLocation location, bool publicPa
 
 void Bases(const std::type_info* type, void* object, Search& search) {
     std::uintptr_t identity = 0;
+    bool reachedPublicly = false;
     auto visitor = [&](const std::type_info* candidate, BaseLocation location, bool publicPath) {
-        if (!publicPath || !Equal(candidate, search.wanted)) return;
-        if (!search.count) { search.found = location.object; identity = location.identity; search.count = 1; }
+        if (!Equal(candidate, search.wanted)) return;
+        if (!search.count) { search.found = location.object; identity = location.identity; search.count = 1; reachedPublicly = publicPath; }
         else if (search.found != location.object || identity != location.identity) search.count = 2;
+        else if (publicPath) reachedPublicly = true;
     };
     VisitBases(type, {object, 0}, true, visitor);
+    if (search.count == 1 && !reachedPublicly) search.count = 0;
 }
 
 bool PointerMatch(const __cxxabiv1::__pbase_type_info* caught, const __cxxabiv1::__pbase_type_info* thrown,

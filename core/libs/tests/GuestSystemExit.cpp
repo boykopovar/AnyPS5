@@ -324,16 +324,24 @@ int main(int argc, char** argv) {
             LibcRequestExit_nid_postfix(7);
             LibcAwaitExit_nid_postfix();
         }
+        if (std::strcmp(argv[firstArgument], "--lnc-exit") == 0) sceLncUtilLoadExec("exit", nullptr);
         sceSystemServiceLoadExec("exit", nullptr);
         return 2;
     }
     Require(sceSystemServiceLoadExec(nullptr, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     Require(sceSystemServiceLoadExec("", nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
-    for (const char* path : {"/app0/another.bin", "/data/eboot.bin", "/app0/../eboot.bin", "/app0//eboot.bin"}) {
-        bool rejected = false;
-        try { sceSystemServiceLoadExec(path, nullptr); }
-        catch (const std::runtime_error& error) { rejected = std::string(error.what()).find(path) != std::string::npos; }
-        Require(rejected);
+    Require(sceLncUtilLoadExec(nullptr, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    bool emptyRejected = false;
+    try { sceLncUtilLoadExec("", nullptr); }
+    catch (const std::runtime_error&) { emptyRejected = true; }
+    Require(emptyRejected);
+    for (const auto loadExec : {sceSystemServiceLoadExec, sceLncUtilLoadExec}) {
+        for (const char* path : {"/app0/another.bin", "/data/eboot.bin", "/app0/../eboot.bin", "/app0//eboot.bin"}) {
+            bool rejected = false;
+            try { loadExec(path, nullptr); }
+            catch (const std::runtime_error& error) { rejected = std::string(error.what()).find(path) != std::string::npos; }
+            Require(rejected);
+        }
     }
 #ifdef _WIN32
     Require(GetEnvironmentVariableA("APS5_EBOOT", nullptr, 0) == 0);

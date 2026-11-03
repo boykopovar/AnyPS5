@@ -12,7 +12,6 @@ extern "C" {
 extern const unsigned char _DefaultRuneLocale_nid_postfix[4224];
 extern const unsigned char* _CurrentRuneLocale_nid_postfix;
 extern int __mb_sb_limit_nid_postfix;
-
 }
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -85,6 +84,10 @@ int main() {
         }
         Require(entry.wide(0xffffffff) == 0 && iswctype_nid_postfix(0xffffffff, entry.mask) == 0);
     }
+    for (std::uint32_t c = 0; c < 300; ++c) {
+        Require((iswascii_nid_postfix(c) != 0) == (c <= 0x7f));
+    }
+    Require(iswascii_nid_postfix(0xffffffff) == 0);
     Require(wctype_nid_postfix("ideogram") == 0x80000 && wctype_nid_postfix("special") == 0x100000);
     Require(wctype_nid_postfix("phonogram") == 0x200000 && wctype_nid_postfix("number") == 0x400000);
     Require(wctype_nid_postfix("rune") == 0xffffff00 && wctype_nid_postfix("") == 0 && wctype_nid_postfix("Alpha") == 0);

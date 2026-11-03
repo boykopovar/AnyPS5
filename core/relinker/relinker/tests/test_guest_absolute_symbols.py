@@ -15,6 +15,7 @@ VALUE = 0x1234
 SIZE = 0x10
 ADDEND = 0x10
 TARGET = 0x2320
+TLS_SECTIONS = (ABSOLUTE, COMMON, 0xFF00, 0xFFFF)
 
 
 def module_with_section(section, size=0):
@@ -22,6 +23,16 @@ def module_with_section(section, size=0):
     struct.pack_into("<HQQ", image, 0x898 + 6, section, VALUE, size)
     struct.pack_into("<Q", image, 0x668, 24)
     struct.pack_into("<QQq", image, 0x900, TARGET, (1 << 32) | 1, ADDEND)
+    return image
+
+
+def tls_module(section, binding):
+    image = module_with_symbol(True)
+    struct.pack_into("<H", image, 56, 4)
+    struct.pack_into("<IIQQQQQQ", image, 232, 7, 4, 0x980, 0x2380, 0x2380, 8, 0x40, 16)
+    struct.pack_into("<BBHQQ", image, 0x898 + 4, binding << 4 | 6, 0, section, 0, 8)
+    struct.pack_into("<Q", image, 0x668, 24)
+    struct.pack_into("<QQq", image, 0x900, TARGET, (1 << 32) | 17, 0)
     return image
 
 
@@ -74,10 +85,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-absolute-") as directory:
         work = Path(directory)
 
-        def convert(name, system, section, size=0):
+        def convert(name, system, image):
             case = work / f"{name}-{system}"
             (case / "sce_module").mkdir(parents=True)
-            (case / "sce_module" / "module.prx").write_bytes(module_with_section(section, size))
+            (case / "sce_module" / "module.prx").write_bytes(image)
             source = case / "input.elf"
             source.write_bytes(main_fixture())
             output = case / ("output.exe" if system == "windows" else "output.elf")
@@ -88,7 +99,7 @@ def main():
 
         for system in ("linux", "windows", "macos"):
             for size in (0, SIZE):
-                result, artifact = convert(f"absolute-{size}", system, ABSOLUTE, size)
+                result, artifact = convert(f"absolute-{size}", system, module_with_section(ABSOLUTE, size))
                 assert result.returncode == 0, (system, size, result.stdout, result.stderr)
                 data = artifact.read_bytes()
                 if system == "windows":
@@ -98,9 +109,17 @@ def main():
                 else:
                     assert elf_relocation(data) == (1, ABSOLUTE, VALUE, ADDEND)
 
-            result, artifact = convert("common", system, COMMON)
+            result, artifact = convert("common", system, module_with_section(COMMON))
             assert result.returncode == 2 and "Unsupported special symbol section" in result.stderr, result.stderr
             assert not artifact.exists(), artifact
+
+            for binding in (0, 1):
+                result, artifact = convert(f"tls-1-{binding}", system, tls_module(1, binding))
+                assert result.returncode == 0 and artifact.exists(), (system, binding, result.stderr)
+                for section in TLS_SECTIONS:
+                    result, artifact = convert(f"tls-{section:x}-{binding}", system, tls_module(section, binding))
+                    assert result.returncode == 2 and "Unsupported special symbol section" in result.stderr, (system, hex(section), binding, result.stderr)
+                    assert not artifact.exists(), artifact
     print("Guest absolute symbol tests passed")
 
 

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -30,8 +31,13 @@ static void Require(bool value, const char* message) {
 }
 
 int main() {
-    const auto path = std::filesystem::temp_directory_path() / ("anyps5-heap-report-" + std::to_string(std::rand()) + ".txt");
-    const auto outputPath = std::filesystem::temp_directory_path() / ("anyps5-heap-report-out-" + std::to_string(std::rand()) + ".txt");
+#ifdef _WIN32
+    const unsigned long pid = static_cast<unsigned long>(_getpid());
+#else
+    const unsigned long pid = static_cast<unsigned long>(getpid());
+#endif
+    const auto path = std::filesystem::temp_directory_path() / ("anyps5-heap-report-" + std::to_string(pid) + ".txt");
+    const auto outputPath = std::filesystem::temp_directory_path() / ("anyps5-heap-report-out-" + std::to_string(pid) + ".txt");
 #ifdef _WIN32
     Require(_wfreopen(path.wstring().c_str(), L"w", stderr) != nullptr, "stderr redirection failed");
     Require(_wfreopen(outputPath.wstring().c_str(), L"w", stdout) != nullptr, "stdout redirection failed");
@@ -58,10 +64,20 @@ int main() {
         threw = true;
     }
     Require(threw, "null heap accepted");
+    std::fflush(stdout);
+    const bool closed = _Stdout_nid_postfix.Close() == 0;
+    bool closedThrew = false;
+    try {
+        sceLibcInternalHeapErrorReportForGame_nid_postfix(heap, &block, 1);
+    } catch (const std::exception&) {
+        closedThrew = true;
+    }
+    if (!closed || closedThrew) {
+        std::fputs("heap error report on a closed standard output\n", stderr);
+        std::abort();
+    }
     std::fflush(stderr);
     std::fclose(stderr);
-    std::fflush(stdout);
-    std::fclose(stdout);
 
     const std::string report = ReadAll(path);
     const std::string output = ReadAll(outputPath);
@@ -76,11 +92,6 @@ int main() {
     Require(report.find("[SceLibcHeap] backtrace requested from guest 0x") != std::string::npos, "heap name not reported");
     Require(report.find("[] backtrace requested from guest 0x") != std::string::npos, "null heap name not reported");
     Require(report.find("[libc] heap error 0x1: heap ") != std::string::npos, "host diagnostic missing");
-#ifdef _WIN32
-    const unsigned long pid = static_cast<unsigned long>(_getpid());
-#else
-    const unsigned long pid = static_cast<unsigned long>(getpid());
-#endif
     char pidText[32];
     std::snprintf(pidText, sizeof(pidText), "pid:<0x%lx> tid:<0x", pid);
     Require(output.find(pidText) != std::string::npos, "pid differs");

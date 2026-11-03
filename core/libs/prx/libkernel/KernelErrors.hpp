@@ -99,5 +99,10 @@ inline constexpr int SCE_KERNEL_ERROR_ENOLINK = SceKernelError(91);
 inline constexpr int SCE_KERNEL_ERROR_EPROTO = SceKernelError(92);
 inline constexpr int SCE_KERNEL_ERROR_ENOTCAPABLE = SceKernelError(93);
 inline constexpr int SCE_KERNEL_ERROR_ECAPMODE = SceKernelError(94);
+inline constexpr int SCE_KERNEL_ERROR_ENOTRECOVERABLE = SceKernelError(95);
+inline constexpr int SCE_KERNEL_ERROR_EOWNERDEAD = SceKernelError(96);
+inline constexpr int SCE_KERNEL_ERROR_ELAST = SceKernelError(96);
+inline constexpr int SCE_KERNEL_ERROR_EWOULDBLOCK = SCE_KERNEL_ERROR_EAGAIN;
+inline constexpr int SCE_KERNEL_ERROR_ENOTSUP = SCE_KERNEL_ERROR_EOPNOTSUPP;
 
 #endif

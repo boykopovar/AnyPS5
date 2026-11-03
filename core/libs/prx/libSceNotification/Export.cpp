@@ -5,10 +5,10 @@
 
 extern "C" {
 
-int APS5_VABI sceNotificationSend(int type, std::uint8_t flag, std::uint8_t* message) {
-    (void)type;
-    (void)flag;
-    (void)message;
+int APS5_VABI sceNotificationSend(int userId, bool logged, const char* payload) {
+    (void)userId;
+    (void)logged;
+    (void)payload;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

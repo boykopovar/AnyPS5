@@ -21,7 +21,7 @@ def main():
 
         def check(input_path, offset, options):
             result = subprocess.run([str(relinker), "--windows", *options, str(source), str(output)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
             assert result.returncode == 2, result
             assert "Unsupported Windows guest TLS instruction" in result.stderr, result.stderr
             assert f"(bytes: {TLS_INSTRUCTION.hex(' ')})" in result.stderr, result.stderr

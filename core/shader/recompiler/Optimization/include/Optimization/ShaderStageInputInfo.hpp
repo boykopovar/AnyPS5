@@ -60,15 +60,6 @@ struct ShaderVertexDestination {
     std::uint32_t fetchIndex = 0;
 };
 
-struct ShaderStageRuntime {
-    const CompiledShaderInfo* program = nullptr;
-    ResourceSnapshot resources;
-
-    [[nodiscard]] explicit operator bool() const {
-        throw std::runtime_error("shader input helper not implemented");
-    }
-};
-
 struct ShaderDepthRemap {
     std::uint32_t mode = 0;
 };
@@ -97,6 +88,7 @@ struct ShaderMeshInputInfo: ShaderWorkgroupInputInfo {
     std::uint32_t provokingVertex = 0;
     std::uint32_t esgsItemSize = 0;
     std::uint32_t outputPrimitiveSize = 3;
+    bool capturedInput = false;
 
     [[nodiscard]] std::uint32_t InputPrimitiveSize() const {
         return inputPrimitive == 1u ? 1u : inputPrimitive == 2u ? 2u : 3u;
@@ -124,6 +116,7 @@ struct ShaderTessellationInputInfo {
     std::uint32_t instancePatches = 0;
     bool drawParameters = false;
     bool mergedHull = false;
+    std::uint32_t geometryItemDwords = 0;
 };
 
 struct ShaderVertexInputInfo {
@@ -132,7 +125,6 @@ struct ShaderVertexInputInfo {
     ShaderBufferResource resources[MaxResources];
     ShaderVertexDestination resourcesDst[MaxResources];
     ShaderVertexInputBuffer buffers[MaxResources];
-    ShaderStageRuntime stage;
     IrShaderStage logicalStage = IrShaderStage::Vertex;
     int resourcesNum = 0;
     int fetchAttribReg = 0;
@@ -159,7 +151,6 @@ struct ShaderComputeInputInfo: ShaderWorkgroupInputInfo {
     int threadIdsNum = 0;
     int workgroupRegister = 0;
     bool tgSizeEn = false;
-    ShaderStageRuntime stage;
 };
 
 struct ShaderPixelInputInfo {
@@ -184,6 +175,8 @@ struct ShaderPixelInputInfo {
     bool psNoPerspective = false;
     bool psPixelKillEnable = false;
     bool psDepthExportEnable = false;
+    float psDepthExportMin = 0.0f;
+    float psDepthExportMax = 1.0f;
     bool psSampleMaskExportEnable = false;
     bool psStencilRefExportEnable = false;
     bool psStencilOperationValueExport = false;
@@ -194,18 +187,17 @@ struct ShaderPixelInputInfo {
     bool psOrderedPixelShader = false;
     bool psAlphaToCoverage = false;
     bool psDitheredAlphaToCoverage = false;
+    std::uint8_t psDitheredAlphaSamples = 8;
     std::uint8_t quadPixelMask = 0xf;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     bool psIteratesSamples = false;
     PixelPositionLocation psPositionLocation = PixelPositionLocation::Center;
     std::array<std::uint8_t, 32> sampleLocations{};
-    std::uint8_t mergeTarget = 0;
-    std::uint16_t mergeMask = 0;
+    std::vector<TargetMerge> merges;
     std::uint8_t mergeSamples = 1;
     bool mergeDepthStencilWrites = false;
     bool mergeDepthStencilTests = false;
     std::array<std::uint32_t, 4> sampleOrder{};
-    ShaderStageRuntime stage;
 
     bool HasPositionInput() const {
         return psPosX || psPosY || psPosZ || psPosW;

@@ -2,7 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
-#include "prx/libSceSaveData/SaveDataCore.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -26,6 +26,7 @@ static constexpr std::uint32_t EVF_WAITMODE_OR = 0x02;
 static constexpr std::uint32_t EVF_WAITMODE_CLEAR_ALL = 0x10;
 static constexpr std::uint32_t EVF_WAITMODE_CLEAR_PAT = 0x20;
 static constexpr int MUTEX_TYPE_ERRORCHECK = 1;
+static constexpr int MUTEX_TYPE_NORMAL = 3;
 static constexpr int PRIO_NONE = 0;
 static constexpr int PRIO_INHERIT = 1;
 static constexpr int PRIO_PROTECT = 2;
@@ -42,7 +43,50 @@ static void WaitForEventFlagWaiters(KernelEventFlag handle, int expected) {
     }
 }
 
+template <typename TLock>
+static void RequireTimesOut(TLock lock) {
+    const auto start = std::chrono::steady_clock::now();
+    Require(lock(20000) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
+}
+
+struct ReaderHold {
+    PthreadRwlock* lock;
+    std::atomic<bool> held{false};
+    std::atomic<bool> release{false};
+};
+
+static void* APS5_VABI HoldRead(void* argument) {
+    auto& hold = *static_cast<ReaderHold*>(argument);
+    Require(scePthreadRwlockRdlock(hold.lock) == SCE_OK);
+    hold.held.store(true);
+    while (!hold.release.load()) std::this_thread::yield();
+    Require(scePthreadRwlockUnlock(hold.lock) == SCE_OK);
+    return nullptr;
+}
+
+static void CheckTimedRwlockWithReader() {
+    PthreadRwlock rwlock = nullptr;
+    Require(scePthreadRwlockInit(&rwlock, nullptr, nullptr) == SCE_OK);
+    ReaderHold hold{&rwlock};
+    Pthread reader = nullptr;
+    Require(scePthreadCreate(&reader, nullptr, HoldRead, &hold, "reader-hold") == SCE_OK);
+    while (!hold.held.load()) std::this_thread::yield();
+    Require(scePthreadRwlockTimedrdlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadRwlockTimedwrlock(&rwlock, usec); });
+    Require(scePthreadRwlockTrywrlock(&rwlock) == SCE_KERNEL_ERROR_EBUSY);
+    hold.release.store(true);
+    Require(scePthreadJoin(reader, nullptr) == SCE_OK);
+    Require(scePthreadRwlockTimedwrlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockTimedrdlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&rwlock) == SCE_OK);
+}
+
 int main() {
+    CheckTimedRwlockWithReader();
     constexpr int maximum = std::numeric_limits<int>::max();
     KernelSema semaphore = nullptr;
     Require(sceKernelCreateSema(&semaphore, "overflow", 1, maximum - 1, maximum, nullptr) == SCE_OK);
@@ -76,6 +120,7 @@ int main() {
     Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
     PthreadMutexattr attr = nullptr;
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
@@ -90,6 +135,7 @@ int main() {
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_KERNEL_ERROR_EDEADLK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadMutexTimedlock(&mutex, usec); });
     Require(scePthreadMutexDestroy(&mutex) == SCE_KERNEL_ERROR_EBUSY);
     Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
@@ -101,8 +147,40 @@ int main() {
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
     Require(scePthreadMutexLock(&adaptive) == SCE_OK);
     Require(scePthreadMutexLock(&adaptive) == SCE_KERNEL_ERROR_EDEADLK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadMutexTimedlock(&adaptive, usec); });
     Require(scePthreadMutexUnlock(&adaptive) == SCE_OK);
     Require(scePthreadMutexDestroy(&adaptive) == SCE_OK);
+
+    PthreadMutex timedDefault = nullptr;
+    Require(scePthreadMutexInit(&timedDefault, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadMutexLock(&timedDefault) == SCE_OK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadMutexTimedlock(&timedDefault, usec); });
+    Require(scePthreadMutexUnlock(&timedDefault) == SCE_OK);
+    Require(scePthreadMutexTimedlock(&timedDefault, 20000) == SCE_OK);
+    Require(scePthreadMutexUnlock(&timedDefault) == SCE_OK);
+    Require(scePthreadMutexDestroy(&timedDefault) == SCE_OK);
+
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_NORMAL) == SCE_OK);
+    PthreadMutex normal = nullptr;
+    Require(scePthreadMutexInit(&normal, &attr, nullptr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(scePthreadMutexLock(&normal) == SCE_OK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadMutexTimedlock(&normal, usec); });
+    Require(scePthreadMutexUnlock(&normal) == SCE_OK);
+    Require(scePthreadMutexDestroy(&normal) == SCE_OK);
+
+    PthreadRwlock rwlock = nullptr;
+    Require(scePthreadRwlockInit(&rwlock, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadRwlockWrlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&rwlock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockWrlock(&rwlock) == SCE_KERNEL_ERROR_EDEADLK);
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadRwlockTimedrdlock(&rwlock, usec); });
+    RequireTimesOut([&](KernelUseconds usec) { return scePthreadRwlockTimedwrlock(&rwlock, usec); });
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockTimedwrlock(&rwlock, 20000) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&rwlock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&rwlock) == SCE_OK);
 
     PthreadMutex adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
     Require(scePthreadMutexLock(&adaptiveStatic) == SCE_OK);

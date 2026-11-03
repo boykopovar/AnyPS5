@@ -40,6 +40,7 @@ struct Virtual : virtual Base {};
 struct Left : Base {};
 struct Right : Base {};
 struct Repeated : Left, Right {};
+struct MixedRepeated : Left, private Right {};
 struct LeftVirtual : virtual Base {};
 struct RightVirtual : virtual Base {};
 struct Diamond : LeftVirtual, RightVirtual {};
@@ -59,6 +60,9 @@ void CheckRtti() {
     try { throw static_cast<Repeated*>(nullptr); }
     catch (Base*) { assert(false); }
     catch (Repeated* p) { assert(p == nullptr); }
+    try { throw MixedRepeated(); }
+    catch (Base&) { assert(false); }
+    catch (MixedRepeated&) {}
     try { throw static_cast<Diamond*>(nullptr); }
     catch (Base* p) { assert(p == nullptr); }
     try { throw nullptr; }

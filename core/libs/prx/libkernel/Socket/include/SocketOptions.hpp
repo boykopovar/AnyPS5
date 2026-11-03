@@ -23,6 +23,8 @@ struct SocketOptionState {
     unsigned int tcpKeepInterval = 0;
     unsigned int tcpKeepCount = 0;
     int keptFlags = 0;
+    int tcpFlags = 0;
+    int ipReceiveOptions = 0;
     std::uint32_t multicastInterface = 0;
     std::vector<std::uint64_t> memberships;
 };
@@ -38,3 +40,6 @@ int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void*
 int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length);
 
 }
+
+extern "C" int GuestSocketSetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, const void* value, std::uint32_t length);
+extern "C" int GuestSocketGetIpv6LevelOption_nid_no_patch(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length);

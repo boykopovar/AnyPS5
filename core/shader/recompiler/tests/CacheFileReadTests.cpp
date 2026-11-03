@@ -39,16 +39,26 @@ static void VerifyCachePaths(const std::filesystem::path& root) {
     const auto extended = [](const std::filesystem::path& path) {
         auto native = path;
         native.make_preferred();
-        return std::filesystem::path(L"\\\\?\\" + native.native());
+        const auto& text = native.native();
+        if (text.starts_with(L"\\\\")) return std::filesystem::path(L"\\\\?\\UNC\\" + text.substr(2));
+        return std::filesystem::path(L"\\\\?\\" + text);
     };
     const std::vector<std::byte> original{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
     const std::vector<std::byte> replacement{std::byte{5}, std::byte{6}};
     const auto verify = [&](const std::filesystem::path& path) {
+        std::filesystem::create_directories(extended(path).parent_path());
+        const bool retainedReplace = !ShaderRecompiler::PosixReplaceUnsupported(path.parent_path());
+        if (!retainedReplace) std::cerr << "cache file read: no POSIX rename (ERROR_INVALID_PARAMETER) under the test directory; skipping replacement with a retained reader\n";
         for (const auto& alias : {path, extended(path)}) {
             Require(ShaderRecompiler::WriteFileAtomically(alias, original), "cannot write cache path");
             std::vector<std::byte> bytes;
             Require(ShaderRecompiler::ReadWholeFile(path, bytes) && bytes == original, "cannot read ordinary cache path");
             Require(ShaderRecompiler::ReadWholeFile(extended(path), bytes) && bytes == original, "cannot read extended cache path");
+            if (!retainedReplace) {
+                Require(ShaderRecompiler::WriteFileAtomically(alias, replacement), "cannot replace cache path");
+                Require(ShaderRecompiler::ReadWholeFile(alias, bytes) && bytes == replacement, "replacement cache bytes do not match");
+                continue;
+            }
             const auto old = CreateFileW(extended(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                          nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
             Require(old != INVALID_HANDLE_VALUE, "cannot retain the original cache reader");
