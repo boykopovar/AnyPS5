@@ -5,6 +5,7 @@
 #include <cstdio>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceAvPlayer/include/LogCallback.hpp"
 
 extern "C" {
 
@@ -12,14 +13,14 @@ int APS5_VABI sceAvPlayerPrintf(const char* format, ...) {
     if (!format) return -1;
     va_list arguments;
     va_start(arguments, format);
-    const int result = std::vprintf(format, arguments);
+    const int result = SceAvPlayerWriteLog(format, arguments);
     va_end(arguments);
     return result;
 }
 
 int APS5_VABI sceAvPlayerVprintf(const char* format, va_list arguments) {
     if (!format) return -1;
-    return std::vprintf(format, arguments);
+    return SceAvPlayerWriteLog(format, arguments);
 }
 
 }

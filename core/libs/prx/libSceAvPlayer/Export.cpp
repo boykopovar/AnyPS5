@@ -5,14 +5,19 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "prx/libSceAvPlayer/include/LogCallback.hpp"
 
 using namespace AvPlayer;
 
 namespace {
+
+void* LogCallback = nullptr;
+void* LogUserData = nullptr;
 
 Player* ToPlayer(AvPlayerInternal* h) {
     return static_cast<Player*>(h);
@@ -25,6 +30,22 @@ std::uint32_t VideoBufferCount(std::int32_t requested) {
 constexpr std::size_t Ps5InitDataExSize = 0x230;
 constexpr std::size_t Ps5AutoStartOffset = 0x74;
 constexpr std::size_t Ps5VideoFrameBuffersOffset = 0x228;
+
+}
+
+extern "C" {
+
+void SceAvPlayerSetLogCallbackState(void* callback, void* user_data) {
+    LogCallback = callback;
+    LogUserData = user_data;
+}
+
+int SceAvPlayerWriteLog(const char* format, va_list arguments) {
+    if (LogCallback) {
+        return reinterpret_cast<SceAvPlayerLogCallback>(LogCallback)(LogUserData, format, arguments);
+    }
+    return std::vprintf(format, arguments);
+}
 
 }
 
@@ -156,8 +177,7 @@ int APS5_VABI sceAvPlayerSetAvailableBandwidth(AvPlayerInternal* h, uint32_t sta
 }
 
 int APS5_VABI sceAvPlayerSetLogCallback(void* callback, void* user_data) {
-    (void)callback;
-    (void)user_data;
+    SceAvPlayerSetLogCallbackState(callback, user_data);
     return SCE_OK;
 }
 

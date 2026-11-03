@@ -17,4 +17,8 @@ if(BUILD_TESTING)
     target_link_libraries(guest_avplayer_native_printf_tests PRIVATE libSceAvPlayer.native libc)
     configure_windows_unwind(guest_avplayer_native_printf_tests)
     add_test(NAME guest_avplayer_native_printf COMMAND guest_avplayer_native_printf_tests)
+    if(WIN32)
+        set_tests_properties(guest_avplayer_native_printf PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer.native>")
+    endif()
 endif()
