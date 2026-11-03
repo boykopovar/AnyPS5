@@ -370,3 +370,7 @@
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
 - [Multi-submit count overflow and buffer validation](../../../core/libs/prx/libSceAgcDriver/Submit/src/Dcb.cpp) (libSceAgcDriver) - whether the console driver imposes an architectural submission packet limit or allows null buffer pointers with non-zero sizes in multi-submit arrays is unmeasured; AgcDriver::SubmitMany validates count against 32-bit pointer array bounds overflow and rejects null addresses for non-empty command buffers with a runtime exception.
+
+### Guest memory read lifetime
+
+- [Guest memory reads](../../../core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp) - `CopyMapped` uses the native checked-copy API, so stale readable-page metadata cannot turn a failed speculative copy into a host fault. A successful copy does not pin the range or provide an atomic snapshot against concurrent writes or remaps. `CompareMapped` and other direct reads still require the caller to keep their mappings alive.
