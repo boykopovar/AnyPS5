@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -419,14 +420,13 @@ int APS5_VABI sceNpTrophyConfigGetTrophyTitleDetails(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTrophyConfigHasGroupFeature(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyConfigHasGroupFeature(const std::uint8_t* config) {
+    if (!config) return 0;
+    return config[0x90] & 1;
 }
 
-int APS5_VABI sceNpTrophyGroupArrayGetNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyGroupArrayGetNum(const std::uint32_t* groupArray) {
+    return std::popcount(groupArray[0]);
 }
 
 int APS5_VABI sceNpTrophyIntAbortHandle(void) {
@@ -484,19 +484,23 @@ int APS5_VABI sceNpTrophyIntNetSyncTitles(void) {
     return 0;
 }
 
-int APS5_VABI sceNpTrophyNumInfoGetTotal(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo) {
+    return static_cast<int>(numInfo[0] + numInfo[1] + numInfo[2] + numInfo[3]);
 }
 
-int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray) {
+    int count = 0;
+    for (std::size_t index = 0; index < 16; ++index) {
+        flagArray[index] = setInfo[index] | setInfo[16 + index] | setInfo[32 + index] | setInfo[48 + index];
+        count += std::popcount(flagArray[index]);
+    }
+    return count;
 }
 
-int APS5_VABI sceNpTrophySetInfoGetTrophyNum(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo) {
+    int count = 0;
+    for (std::size_t index = 0; index < 64; ++index) count += std::popcount(setInfo[index]);
+    return count;
 }
 
 int APS5_VABI sceNpTrophyShowTrophyList(void) {

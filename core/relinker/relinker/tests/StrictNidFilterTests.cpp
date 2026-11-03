@@ -32,6 +32,18 @@ void requireFailure(const std::function<void()>& operation, const char* message)
     throw std::runtime_error(message);
 }
 
+void requireFailureMessage(const std::function<void()>& operation, const std::string& expectedSubstring, const char* message) {
+    try {
+        operation();
+    } catch (const Relinker::RelinkerException& ex) {
+        if (std::string(ex.what()).find(expectedSubstring) != std::string::npos) {
+            return;
+        }
+        throw std::runtime_error(std::string("Wrong exception message: ") + ex.what() + ", expected: " + expectedSubstring);
+    }
+    throw std::runtime_error(message);
+}
+
 template<typename TValue>
 void write(std::vector<std::uint8_t>& bytes, std::size_t offset, TValue value) {
     if (offset > bytes.size() || sizeof(value) > bytes.size() - offset) throw std::runtime_error("Test fixture write is out of bounds");
@@ -113,6 +125,124 @@ void addressSizeOverrideImport() {
     input.Text.assign(32, 0);
     emit(input, 0, {0xFF, 0x15, 0xFA, 0x0F, 0x00, 0x00, 0xC3});
     require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x100002000ull}, "RIP-relative import lost its full 64-bit address");
+}
+
+std::vector<std::uint8_t> elfFixture(const StrictReachabilityInput& input);
+
+void ripDisplacementOverflowUnderflowBounds() {
+    constexpr auto maxVaddr = std::numeric_limits<std::uint64_t>::max();
+
+    auto input = fixture();
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x2000));
+    emit(input, 6, {0xC3});
+    const auto callUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {callUnderflow};
+    const std::vector<Relinker::NidReference> callUnderflowRefs = {{"live", {}, 7, 0x300, callUnderflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{callUnderflow}, "Call RIP-relative displacement underflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(callUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed call RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(0x1000));
+    emit(input, 6, {0xC3});
+    const auto callOverflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {callOverflow};
+    const std::vector<Relinker::NidReference> callOverflowRefs = {{"live", {}, 7, 0x300, callOverflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{callOverflow}, "Call RIP-relative displacement overflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(callOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed call RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x25});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x2000));
+    emit(input, 6, {0xC3});
+    const auto jmpUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {jmpUnderflow};
+    const std::vector<Relinker::NidReference> jmpUnderflowRefs = {{"live", {}, 7, 0x300, jmpUnderflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{jmpUnderflow}, "Jump RIP-relative displacement underflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(jmpUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed jump RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x25});
+    write(input.Text, 2, static_cast<std::int32_t>(0x1000));
+    emit(input, 6, {0xC3});
+    const auto jmpOverflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {jmpOverflow};
+    const std::vector<Relinker::NidReference> jmpOverflowRefs = {{"live", {}, 7, 0x300, jmpOverflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{jmpOverflow}, "Jump RIP-relative displacement overflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(jmpOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed jump RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x48, 0x8D, 0x05});
+    write(input.Text, 3, static_cast<std::int32_t>(-0x2000));
+    emit(input, 7, {0xC3});
+    const auto leaUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {leaUnderflow};
+    const std::vector<Relinker::NidReference> leaUnderflowRefs = {{"live", {}, 7, 0x300, leaUnderflow, 0}};
+    const auto leaUnderflowResult = AnalyzeStrictReachability(input);
+    require(leaUnderflowResult.ImportSlots == std::set<std::uint64_t>{leaUnderflow}, "LEA RIP-relative displacement underflow did not retain its import");
+    require(leaUnderflowResult.AddressTakenRoots == 1, "LEA RIP-relative displacement underflow did not add an address-taken root");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(leaUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed LEA RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x48, 0x8D, 0x05});
+    write(input.Text, 3, static_cast<std::int32_t>(0x1000));
+    emit(input, 7, {0xC3});
+    const auto leaOverflow = static_cast<std::uint64_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {leaOverflow};
+    const std::vector<Relinker::NidReference> leaOverflowRefs = {{"live", {}, 7, 0x300, leaOverflow, 0}};
+    const auto leaOverflowResult = AnalyzeStrictReachability(input);
+    require(leaOverflowResult.ImportSlots == std::set<std::uint64_t>{leaOverflow}, "LEA RIP-relative displacement overflow did not retain its import");
+    require(leaOverflowResult.AddressTakenRoots == 1, "LEA RIP-relative displacement overflow did not add an address-taken root");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(leaOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed LEA RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x1006));
+    emit(input, 6, {0xC3});
+    input.ImportSlots = {0};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0}, "RIP-relative displacement to address 0 was not resolved");
+
+    constexpr auto maxTarget = std::numeric_limits<std::uint64_t>::max();
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxTarget - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(26));
+    emit(input, 6, {0xC3});
+    input.ImportSlots = {maxTarget};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{maxTarget}, "RIP-relative displacement to maximum address was not resolved");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x67, 0xFF, 0x15});
+    write(input.Text, 3, static_cast<std::int32_t>(-0x2000));
+    emit(input, 7, {0xC3});
+    const auto eipWrappedTarget = static_cast<std::uint32_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {eipWrappedTarget};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{eipWrappedTarget}, "EIP-relative displacement underflow did not wrap modulo 2^32");
 }
 
 void callbackAndRelocationRoots() {
@@ -568,6 +698,154 @@ void relativeRelocationTableBounds() {
     write<std::uint64_t>(badSize, 0x118, 25);
     requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(badSize); }, "Unaligned relocation table size was accepted");
 
+    auto validRelaEnt = bytes;
+    write<std::int64_t>(validRelaEnt, 0x120, 9);
+    write<std::uint64_t>(validRelaEnt, 0x128, 24);
+    write<std::int64_t>(validRelaEnt, 0x130, 0);
+    write<std::uint64_t>(validRelaEnt, 0x138, 0);
+    auto indexRelaEnt = Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(validRelaEnt);
+    require(indexRelaEnt->TargetOfSlot(0x5000) == 0x6000, "Valid DT_RELAENT = 24 was not accepted");
+
+    auto badRelaEnt = bytes;
+    write<std::int64_t>(badRelaEnt, 0x120, 9);
+    write<std::uint64_t>(badRelaEnt, 0x128, 16);
+    write<std::int64_t>(badRelaEnt, 0x130, 0);
+    write<std::uint64_t>(badRelaEnt, 0x138, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(badRelaEnt); }, "Unsupported DT_RELAENT value: 16", "Invalid DT_RELAENT was accepted");
+
+    auto conflictingRelaEnt = bytes;
+    write<std::int64_t>(conflictingRelaEnt, 0x120, 9);
+    write<std::uint64_t>(conflictingRelaEnt, 0x128, 24);
+    write<std::int64_t>(conflictingRelaEnt, 0x130, 9);
+    write<std::uint64_t>(conflictingRelaEnt, 0x138, 32);
+    write<std::int64_t>(conflictingRelaEnt, 0x140, 0);
+    write<std::uint64_t>(conflictingRelaEnt, 0x148, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(conflictingRelaEnt); }, "Conflicting duplicate DT_RELAENT tags", "Conflicting DT_RELAENT was accepted");
+
+    auto relaEntConflictLastValid = bytes;
+    write<std::int64_t>(relaEntConflictLastValid, 0x100, 0x9);
+    write<std::uint64_t>(relaEntConflictLastValid, 0x108, 32);
+    write<std::int64_t>(relaEntConflictLastValid, 0x110, 0x9);
+    write<std::uint64_t>(relaEntConflictLastValid, 0x118, 24);
+    write<std::int64_t>(relaEntConflictLastValid, 0x120, 0x0);
+    write<std::uint64_t>(relaEntConflictLastValid, 0x128, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(relaEntConflictLastValid); }, "Conflicting duplicate DT_RELAENT tags", "Conflicting DT_RELAENT ending in 24 was accepted");
+
+    auto osRelaEntConflictLastValid = bytes;
+    write<std::int64_t>(osRelaEntConflictLastValid, 0x100, 0x61000033);
+    write<std::uint64_t>(osRelaEntConflictLastValid, 0x108, 32);
+    write<std::int64_t>(osRelaEntConflictLastValid, 0x110, 0x61000033);
+    write<std::uint64_t>(osRelaEntConflictLastValid, 0x118, 24);
+    write<std::int64_t>(osRelaEntConflictLastValid, 0x120, 0x0);
+    write<std::uint64_t>(osRelaEntConflictLastValid, 0x128, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(osRelaEntConflictLastValid); }, "Conflicting duplicate DT_OS_RELAENT tags", "Conflicting DT_OS_RELAENT ending in 24 was accepted");
+
+    auto bothRelaEntVariants = bytes;
+    write<std::int64_t>(bothRelaEntVariants, 0x120, 9);
+    write<std::uint64_t>(bothRelaEntVariants, 0x128, 24);
+    write<std::int64_t>(bothRelaEntVariants, 0x130, 0x61000033);
+    write<std::uint64_t>(bothRelaEntVariants, 0x138, 24);
+    write<std::int64_t>(bothRelaEntVariants, 0x140, 0);
+    write<std::uint64_t>(bothRelaEntVariants, 0x148, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(bothRelaEntVariants); }, "Both DT_OS_ and DT_ variants present for DT_RELAENT", "Both DT_OS_ and DT_ variants for DT_RELAENT was accepted");
+
+    auto relaEntBothVariantsWithoutTable = bytes;
+    write<std::int64_t>(relaEntBothVariantsWithoutTable, 0x100, 0x9);
+    write<std::uint64_t>(relaEntBothVariantsWithoutTable, 0x108, 24);
+    write<std::int64_t>(relaEntBothVariantsWithoutTable, 0x110, 0x61000033);
+    write<std::uint64_t>(relaEntBothVariantsWithoutTable, 0x118, 24);
+    write<std::int64_t>(relaEntBothVariantsWithoutTable, 0x120, 0x0);
+    write<std::uint64_t>(relaEntBothVariantsWithoutTable, 0x128, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(relaEntBothVariantsWithoutTable); }, "Both DT_OS_ and DT_ variants present for DT_RELAENT", "Both DT_RELAENT variants without a RELA table were accepted");
+
+    auto mismatchedRelaEnt = bytes;
+    write<std::int64_t>(mismatchedRelaEnt, 0x120, 0x61000033);
+    write<std::uint64_t>(mismatchedRelaEnt, 0x128, 24);
+    write<std::int64_t>(mismatchedRelaEnt, 0x130, 0);
+    write<std::uint64_t>(mismatchedRelaEnt, 0x138, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(mismatchedRelaEnt); }, "Mismatched DT_RELA and DT_RELAENT tag variants", "Mismatched DT_RELA and DT_RELAENT was accepted");
+
+    auto validPltRel = bytes;
+    write<std::int64_t>(validPltRel, 0x100, 23);
+    write<std::uint64_t>(validPltRel, 0x108, 0x10E8);
+    write<std::int64_t>(validPltRel, 0x110, 2);
+    write<std::uint64_t>(validPltRel, 0x118, 24);
+    write<std::int64_t>(validPltRel, 0x120, 20);
+    write<std::uint64_t>(validPltRel, 0x128, 7);
+    write<std::int64_t>(validPltRel, 0x130, 0);
+    write<std::uint64_t>(validPltRel, 0x138, 0);
+    auto indexPltRel = Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(validPltRel);
+    require(indexPltRel->TargetOfSlot(0x5000) == 0x6000, "Valid DT_PLTREL = 7 was not accepted");
+
+    auto badPltRel = bytes;
+    write<std::int64_t>(badPltRel, 0x100, 23);
+    write<std::uint64_t>(badPltRel, 0x108, 0x10E8);
+    write<std::int64_t>(badPltRel, 0x110, 2);
+    write<std::uint64_t>(badPltRel, 0x118, 24);
+    write<std::int64_t>(badPltRel, 0x120, 20);
+    write<std::uint64_t>(badPltRel, 0x128, 17);
+    write<std::int64_t>(badPltRel, 0x130, 0);
+    write<std::uint64_t>(badPltRel, 0x138, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(badPltRel); }, "Unsupported DT_PLTREL type: 17; expected DT_RELA (7)", "Unsupported DT_PLTREL type was accepted");
+
+    auto pltRelConflictLastValid = bytes;
+    write<std::int64_t>(pltRelConflictLastValid, 0x100, 0x14);
+    write<std::uint64_t>(pltRelConflictLastValid, 0x108, 17);
+    write<std::int64_t>(pltRelConflictLastValid, 0x110, 0x14);
+    write<std::uint64_t>(pltRelConflictLastValid, 0x118, 7);
+    write<std::int64_t>(pltRelConflictLastValid, 0x120, 0x0);
+    write<std::uint64_t>(pltRelConflictLastValid, 0x128, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(pltRelConflictLastValid); }, "Conflicting duplicate DT_PLTREL tags", "Conflicting DT_PLTREL ending in DT_RELA was accepted");
+
+    auto osPltRelConflictLastValid = bytes;
+    write<std::int64_t>(osPltRelConflictLastValid, 0x100, 0x6100002B);
+    write<std::uint64_t>(osPltRelConflictLastValid, 0x108, 17);
+    write<std::int64_t>(osPltRelConflictLastValid, 0x110, 0x6100002B);
+    write<std::uint64_t>(osPltRelConflictLastValid, 0x118, 7);
+    write<std::int64_t>(osPltRelConflictLastValid, 0x120, 0x0);
+    write<std::uint64_t>(osPltRelConflictLastValid, 0x128, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(osPltRelConflictLastValid); }, "Conflicting duplicate DT_OS_PLTREL tags", "Conflicting DT_OS_PLTREL ending in DT_RELA was accepted");
+
+    auto pltRelBothVariantsWithoutTable = bytes;
+    write<std::int64_t>(pltRelBothVariantsWithoutTable, 0x100, 0x14);
+    write<std::uint64_t>(pltRelBothVariantsWithoutTable, 0x108, 7);
+    write<std::int64_t>(pltRelBothVariantsWithoutTable, 0x110, 0x6100002B);
+    write<std::uint64_t>(pltRelBothVariantsWithoutTable, 0x118, 7);
+    write<std::int64_t>(pltRelBothVariantsWithoutTable, 0x120, 0x0);
+    write<std::uint64_t>(pltRelBothVariantsWithoutTable, 0x128, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(pltRelBothVariantsWithoutTable); }, "Both DT_OS_ and DT_ variants present for DT_PLTREL", "Both DT_PLTREL variants without a PLT table were accepted");
+
+    auto jmprelWithOsPltRel = bytes;
+    write<std::int64_t>(jmprelWithOsPltRel, 0x100, 0x17);
+    write<std::uint64_t>(jmprelWithOsPltRel, 0x108, 0x10E8);
+    write<std::int64_t>(jmprelWithOsPltRel, 0x110, 0x2);
+    write<std::uint64_t>(jmprelWithOsPltRel, 0x118, 24);
+    write<std::int64_t>(jmprelWithOsPltRel, 0x120, 0x6100002B);
+    write<std::uint64_t>(jmprelWithOsPltRel, 0x128, 7);
+    write<std::int64_t>(jmprelWithOsPltRel, 0x130, 0x0);
+    write<std::uint64_t>(jmprelWithOsPltRel, 0x138, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(jmprelWithOsPltRel); }, "Mismatched DT_JMPREL and DT_PLTREL tag variants", "Mismatched DT_JMPREL and DT_PLTREL variants were accepted");
+
+    auto consistentEntryTagsWithoutTables = bytes;
+    write<std::int64_t>(consistentEntryTagsWithoutTables, 0x100, 0x9);
+    write<std::uint64_t>(consistentEntryTagsWithoutTables, 0x108, 24);
+    write<std::int64_t>(consistentEntryTagsWithoutTables, 0x110, 0x9);
+    write<std::uint64_t>(consistentEntryTagsWithoutTables, 0x118, 24);
+    write<std::int64_t>(consistentEntryTagsWithoutTables, 0x120, 0x14);
+    write<std::uint64_t>(consistentEntryTagsWithoutTables, 0x128, 7);
+    write<std::int64_t>(consistentEntryTagsWithoutTables, 0x130, 0x14);
+    write<std::uint64_t>(consistentEntryTagsWithoutTables, 0x138, 7);
+    write<std::int64_t>(consistentEntryTagsWithoutTables, 0x140, 0x0);
+    write<std::uint64_t>(consistentEntryTagsWithoutTables, 0x148, 0);
+    (void)Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(consistentEntryTagsWithoutTables);
+
+    auto unsupportedRel = bytes;
+    write<std::int64_t>(unsupportedRel, 0x120, 17);
+    write<std::uint64_t>(unsupportedRel, 0x128, 0x10E8);
+    write<std::int64_t>(unsupportedRel, 0x130, 0);
+    write<std::uint64_t>(unsupportedRel, 0x138, 0);
+    requireFailureMessage([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(unsupportedRel); }, "DT_REL relocations are not supported", "DT_REL relocations were accepted");
+
     auto pltOverextended = bytes;
     write<std::int64_t>(pltOverextended, 0x100, 23);
     write<std::uint64_t>(pltOverextended, 0x108, 0x10E8);
@@ -688,6 +966,17 @@ void sceDynlibDataOffsets() {
     requireFailure([&] { (void)Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(emptyJmprel); },
                    "Empty SCE JMPREL table with overflowing offset was accepted");
 
+    auto validOsPltRel = jmprel;
+    write<std::uint64_t>(validOsPltRel, 0x338, 0x430);
+    write<std::uint64_t>(validOsPltRel, 208, 0x80);
+    write<std::uint64_t>(validOsPltRel, 216, 0x80);
+    write<std::int64_t>(validOsPltRel, 0x350, 0x6100002B);
+    write<std::uint64_t>(validOsPltRel, 0x358, 7);
+    write<std::int64_t>(validOsPltRel, 0x360, 0);
+    write<std::uint64_t>(validOsPltRel, 0x368, 0);
+    require(Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(validOsPltRel)->TargetOfSlot(0x2050) == 0x1010,
+            "Valid DT_OS_PLTREL = 7 was not accepted");
+
     auto emptyRela = bytes;
     write<std::uint64_t>(emptyRela, 0x318, 0);
     require(!Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(emptyRela)->TargetOfSlot(0x2040),
@@ -713,6 +1002,40 @@ void sceDynlibDataOffsets() {
                    "Duplicate PT_SCE_DYNLIBDATA segments were accepted");
     requireFailure([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, duplicate, input.Text, input.TextVaddr); },
                    "Strict filter accepted duplicate PT_SCE_DYNLIBDATA segments");
+
+    auto overflowSce = bytes;
+    write<std::uint64_t>(overflowSce, 240, ~std::uint64_t{0} - 16);
+    requireFailure([&] { (void)Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowSce); },
+                   "PT_SCE_DYNLIBDATA offset near UINT64_MAX was accepted");
+
+    auto sceOverextended = bytes;
+    write<std::uint64_t>(sceOverextended, 0x318, 0);
+    write<std::uint64_t>(sceOverextended, 264, sceOverextended.size() - 0x500 + 1);
+    requireFailureMessage([&] { (void)Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(sceOverextended); },
+                          "PT_SCE_DYNLIBDATA segment out of bounds",
+                          "PT_SCE_DYNLIBDATA extending beyond file was accepted");
+
+    auto strictRel = bytes;
+    write<std::int64_t>(strictRel, 0x320, 17);
+    write<std::uint64_t>(strictRel, 0x328, 0);
+    requireFailureMessage([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, strictRel, input.Text, input.TextVaddr); },
+                          "Strict filter: DT_REL relocations are not supported",
+                          "Strict filter accepted DT_REL dynamic tag");
+
+    auto strictBadRelaEnt = bytes;
+    write<std::int64_t>(strictBadRelaEnt, 0x300, 0x61000021);
+    write<std::int64_t>(strictBadRelaEnt, 0x310, 0x61000021);
+    write<std::uint64_t>(strictBadRelaEnt, 0x328, 16);
+    requireFailureMessage([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, strictBadRelaEnt, input.Text, input.TextVaddr); },
+                          "Strict filter: invalid RELA entry size",
+                          "Strict filter accepted invalid DT_OS_RELAENT value");
+
+    auto strictValidRelaEntNoTable = bytes;
+    write<std::int64_t>(strictValidRelaEntNoTable, 0x300, 0x61000021);
+    write<std::int64_t>(strictValidRelaEntNoTable, 0x310, 0x61000021);
+    write<std::uint64_t>(strictValidRelaEntNoTable, 0x328, 24);
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, strictValidRelaEntNoTable, input.Text, input.TextVaddr).empty(),
+            "Strict filter failed to filter without relocations");
 
     auto sectionRelative = bytes;
     write<std::uint64_t>(sectionRelative, 208, 0x70);
@@ -913,6 +1236,54 @@ void constructorArrayBounds() {
     }
 }
 
+void negativeRelativeRelocationTarget() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    importThunk(input, 16, 0x2000);
+    auto bytes = elfFixture(input);
+    bytes.resize(0xA00);
+    write<std::uint16_t>(bytes, 56, 4);
+    write<std::uint32_t>(bytes, 176, 2);
+    write<std::uint32_t>(bytes, 180, 6);
+    write<std::uint64_t>(bytes, 184, 0x300);
+    write<std::uint64_t>(bytes, 192, 0x2000);
+    write<std::uint64_t>(bytes, 208, 0x40);
+    write<std::uint64_t>(bytes, 216, 0x40);
+    write<std::uint64_t>(bytes, 224, 8);
+    write<std::uint32_t>(bytes, 232, 0x61000000);
+    write<std::uint32_t>(bytes, 236, 4);
+    write<std::uint64_t>(bytes, 240, 0x500);
+    write<std::uint64_t>(bytes, 264, 0x500);
+    write<std::uint64_t>(bytes, 272, 0x500);
+    write<std::uint64_t>(bytes, 280, 0x10);
+    write<std::int64_t>(bytes, 0x300, 0x6100002F);
+    write<std::uint64_t>(bytes, 0x308, 0x400);
+    write<std::int64_t>(bytes, 0x310, 0x61000031);
+    write<std::uint64_t>(bytes, 0x318, 24);
+    write<std::int64_t>(bytes, 0x320, 0x61000033);
+    write<std::uint64_t>(bytes, 0x328, 24);
+    write<std::uint64_t>(bytes, 0x900, 0x2040);
+    write<std::uint64_t>(bytes, 0x908, 8);
+    write<std::uint64_t>(bytes, 0x910, static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + 1);
+    const std::vector<Relinker::NidReference> references = {{"live", {}, 6, 0x900, 0x2000, 0}};
+    try {
+        (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr);
+        require(false, "Strict filter accepted a negative relative relocation target address");
+    } catch (const Relinker::RelinkerException& error) {
+        require(std::string(error.what()).find("relative relocation target address is negative") != std::string::npos,
+                "Unexpected error message for negative relative relocation target");
+        require(error.FailureOffset == 0x2040, "Unexpected failure offset for negative relative relocation target");
+    }
+    write<std::uint64_t>(bytes, 0x910, std::numeric_limits<std::uint64_t>::max());
+    requireFailure([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr); },
+                   "Strict filter accepted UINT64_MAX as relative relocation target address");
+    write<std::uint64_t>(bytes, 0x910, static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
+    (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr);
+    write<std::uint64_t>(bytes, 0x910, 0x1010);
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).size() == 1,
+            "Strict filter rejected a valid relative relocation target address");
+}
+
 }
 
 int main() {
@@ -922,6 +1293,7 @@ int main() {
         conditionalTailCall();
         fallthroughAfterZeroPadding();
         addressSizeOverrideImport();
+        ripDisplacementOverflowUnderflowBounds();
         callbackAndRelocationRoots();
         registerImportCall();
         mergedJumpTable();
@@ -941,6 +1313,7 @@ int main() {
         sceDynlibDataOffsets();
         duplicatePointerRelocations();
         constructorArrayBounds();
+        negativeRelativeRelocationTarget();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

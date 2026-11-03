@@ -23,6 +23,21 @@ void Require(bool value, int line) {
 }
 #define Check(value) Require((value), __LINE__)
 
+int violations = 0;
+std::string violation;
+
+void APS5_VABI RecordViolation(const char* message, void* pointer, int) {
+    Check(pointer == nullptr);
+    ++violations;
+    violation = message;
+}
+
+bool Reported(const char* message) {
+    const bool matched = violations == 1 && violation == message;
+    violations = 0;
+    return matched;
+}
+
 constexpr int GuestEnoent = 2;
 constexpr int GuestEisdir = 21;
 constexpr int GuestEinval = 22;
@@ -108,12 +123,14 @@ void CheckedReopen() {
     FileStream* result = sentinel;
     FileStream* stream = fopen_nid_postfix("plain.txt", "r");
     Check(stream != nullptr);
-    Check(freopen_s_nid_postfix(nullptr, "plain.txt", "r", stream) == GuestEinval);
-    Check(freopen_s_nid_postfix(&result, nullptr, "r", stream) == GuestEnotsup && result == nullptr);
+    void* const previousHandler = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&RecordViolation));
+    Check(freopen_s_nid_postfix(nullptr, "plain.txt", "r", stream) == GuestEinval && Reported("fopen_s: bad FILE ** argument"));
+    Check(freopen_s_nid_postfix(&result, nullptr, "r", stream) == GuestEnotsup && result == nullptr && violations == 0);
     result = sentinel;
-    Check(freopen_s_nid_postfix(&result, "plain.txt", nullptr, stream) == GuestEinval && result == nullptr);
+    Check(freopen_s_nid_postfix(&result, "plain.txt", nullptr, stream) == GuestEinval && result == nullptr && Reported("fopen_s: bad argument"));
     result = sentinel;
-    Check(freopen_s_nid_postfix(&result, "plain.txt", "r", nullptr) == GuestEinval && result == nullptr);
+    Check(freopen_s_nid_postfix(&result, "plain.txt", "r", nullptr) == GuestEinval && result == nullptr && Reported("fopen_s: bad argument"));
+    set_constraint_handler_s_nid_postfix(previousHandler);
     result = sentinel;
     Check(freopen_s_nid_postfix(&result, "plain.txt", "z", stream) == GuestEinval && result == nullptr);
     Check(freopen_s_nid_postfix(&result, "reopened.txt", "w", stream) == 0 && result == stream);

@@ -137,7 +137,7 @@ if(BUILD_TESTING)
 
         add_test_executable(audio_out_resampling_tests tests/AudioOutResampling.cpp)
         target_include_directories(audio_out_resampling_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
-        target_link_libraries(audio_out_resampling_tests PRIVATE libSceAudioOut libc)
+        target_link_libraries(audio_out_resampling_tests PRIVATE libSceAudioOut libc SDL2-static)
         set_target_properties(audio_out_resampling_tests PROPERTIES ENABLE_EXPORTS ON)
         add_test(NAME audio_out_resampling COMMAND audio_out_resampling_tests)
         set_tests_properties(audio_out_resampling PROPERTIES TIMEOUT 10)
@@ -243,6 +243,16 @@ if(BUILD_TESTING)
     add_test(NAME audio_out2_latency COMMAND audio_out2_latency_tests)
     if(WIN32)
         set_tests_properties(audio_out2_latency PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
+    add_test_executable(audio_out2_speaker_array_tests tests/AudioOut2SpeakerArray.cpp)
+    target_include_directories(audio_out2_speaker_array_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out2_speaker_array_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out2_speaker_array_tests)
+    add_test(NAME audio_out2_speaker_array COMMAND audio_out2_speaker_array_tests)
+    if(WIN32)
+        set_tests_properties(audio_out2_speaker_array PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 

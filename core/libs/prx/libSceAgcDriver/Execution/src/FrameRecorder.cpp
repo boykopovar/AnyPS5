@@ -285,6 +285,8 @@ void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Sh
 void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders) {
     if (state == State::Waiting) {
         if (!prologueCall) return;
+        std::set<std::uint64_t> blocks;
+        collectShaderPages(shaders, blocks, prologueHostPages);
         call.ordinal = ++ordinal;
         prologue.push_back(std::move(call));
         return;
@@ -363,9 +365,7 @@ std::vector<FrameRecorder::Range> FrameRecorder::newRanges() {
     return added;
 }
 
-void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
-    std::set<std::uint64_t> blocks;
-    std::set<std::uint64_t> hostPages;
+void FrameRecorder::collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages) {
     std::uintptr_t arenaBase = 0;
     std::size_t arenaBytes = 0;
     GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
@@ -393,6 +393,12 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
         note(shader->user_data->direct_resource_offset);
         for (const auto* sharps : shader->user_data->sharp_resource_offset) note(sharps);
     }
+}
+
+void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
+    std::set<std::uint64_t> blocks;
+    std::set<std::uint64_t> hostPages;
+    collectShaderPages(shaders, blocks, hostPages);
     if (blocks.empty() && hostPages.empty()) return;
     std::vector<Span> spans;
     for (const auto block : blocks) spans.push_back({block, FrameCaptureWriter::BlockBytes, blockSince(block)});
@@ -552,6 +558,21 @@ void FrameRecorder::start() {
         snapshot(range);
         if (!writer) return;
     }
+    for (const auto page : prologueHostPages) {
+        const auto* address = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(page));
+        if (!GuestMemory::Accessible(address, HostPageBytes)) continue;
+        const bool covered = std::ranges::any_of(ranges, [&](const auto& range) {
+            return range.readable && range.address <= page && page - range.address <= range.bytes && HostPageBytes <= range.bytes - (page - range.address);
+        });
+        if (covered) continue;
+        const bool writable = GuestMemory::Accessible(address, HostPageBytes, true);
+        Range range{page, HostPageBytes, FrameRangeKind::Host, writable ? 0x04u : 0x02u,
+            FrameRangeAccess::Readable | (writable ? FrameRangeAccess::Writable : 0u), true};
+        snapshot(range);
+        if (!writer) return;
+        ranges.push_back(range);
+    }
+    prologueHostPages.clear();
     for (const auto& call : prologue) writer->WriteCall(call);
     std::uintptr_t ringBase = 0;
     std::uint32_t ringSize = 0;

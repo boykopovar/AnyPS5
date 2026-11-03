@@ -13,6 +13,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
 
+    add_test_executable(ime_host_text_tests tests/HostText.cpp)
+    target_include_directories(ime_host_text_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(ime_host_text_tests)
+    add_test(NAME ime_host_text COMMAND ime_host_text_tests)
+
+    add_test_executable(ime_composition_tests tests/Composition.cpp)
+    target_include_directories(ime_composition_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(ime_composition_tests)
+    add_test(NAME ime_composition COMMAND ime_composition_tests)
+
     add_test_executable(guest_ime_pad_route_tests ${LIBS_INCLUDE_DIR}/tests/GuestImePadRoute.cpp)
     target_include_directories(guest_ime_pad_route_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_ime_pad_route_tests PRIVATE libSceIme libc)
@@ -65,6 +75,26 @@ if(BUILD_TESTING)
     add_test(NAME psn_dialog_notice COMMAND psn_dialog_notice_tests)
     if(WIN32)
         set_tests_properties(psn_dialog_notice PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+    endif()
+
+    add_test_executable(guest_ime_composition_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeComposition.cpp)
+    target_include_directories(guest_ime_composition_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_composition_tests PRIVATE libSceIme libc)
+    configure_windows_unwind(guest_ime_composition_tests)
+    add_test(NAME guest_ime_composition COMMAND guest_ime_composition_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_composition PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+    endif()
+
+    add_test_executable(guest_ime_paste_tests ${LIBS_INCLUDE_DIR}/tests/GuestImePaste.cpp)
+    target_include_directories(guest_ime_paste_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_paste_tests PRIVATE libSceIme libc)
+    configure_windows_unwind(guest_ime_paste_tests)
+    add_test(NAME guest_ime_paste COMMAND guest_ime_paste_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_paste PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
 

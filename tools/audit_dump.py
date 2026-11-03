@@ -11,7 +11,7 @@ import import_audit
 import unwrap_self
 
 DESCRIPTION = """Audit the imports of an extracted title before it is launched. Unwraps the dump's eboot.bin and the modules
-it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and .prx files beside
+it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and module files beside
 eboot.bin) into a work directory, converts them with relinker --registry, and runs tools/import_audit.py on the
 registries with the unwrapped modules as --modules. The dump is only read; the source/ and output/ directories of a
 reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
@@ -19,7 +19,7 @@ when unwrapping or conversion fails."""
 
 STANDARD_DIRECTORIES = ("sce_module", "sce_modules", "prx")
 EXTRA_DIRECTORIES = ("Media/Modules", "Media/Plugins")
-MODULE_SUFFIXES = (".prx", ".sprx")
+MODULE_SUFFIXES = import_audit.MODULE_FILE_SUFFIXES
 ELF_MAGIC = b"\x7fELF"
 
 
