@@ -15,7 +15,7 @@ struct CapturedLog {
 
 static CapturedLog Captured;
 
-static int CaptureLog(void* user_data, const char* format, va_list arguments) {
+static int APS5_VABI CaptureLog(void* user_data, const char* format, va_list arguments) {
     CapturedLog* log = static_cast<CapturedLog*>(user_data);
     log->userData = user_data;
     ++log->calls;
