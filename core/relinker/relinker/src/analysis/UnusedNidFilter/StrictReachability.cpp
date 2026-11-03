@@ -161,6 +161,9 @@ private:
                 const auto offset = static_cast<std::size_t>(address - input.TextVaddr);
                 region.Instructions.push_back(address);
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
+                    if ((info.BranchDisp < 0 && next < static_cast<VirtualAddress>(-info.BranchDisp))
+                        || (info.BranchDisp > 0 && std::numeric_limits<VirtualAddress>::max() - next < static_cast<VirtualAddress>(info.BranchDisp)))
+                        throw RelinkerException("Strict filter: direct branch leaves code", address);
                     const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
                     if (!isCode(target)) throw RelinkerException("Strict filter: direct branch leaves code", address);
                     region.Edges.insert(target);
@@ -229,6 +232,8 @@ std::vector<VirtualAddress> ReadRelativeTableTargets(const std::vector<StrictDat
         for (auto offset = static_cast<std::size_t>(base - region.Address); offset + 4 <= region.Bytes.size(); offset += 4) {
             std::int32_t displacement;
             std::memcpy(&displacement, region.Bytes.data() + offset, sizeof(displacement));
+            if (displacement < 0 && base < static_cast<std::uint64_t>(-static_cast<std::int64_t>(displacement))) break;
+            if (displacement > 0 && std::numeric_limits<VirtualAddress>::max() - base < static_cast<std::uint64_t>(displacement)) break;
             const auto target = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
             if (target < textVaddr || target - textVaddr >= textSize) break;
             targets.push_back(target);
