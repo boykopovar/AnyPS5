@@ -4,9 +4,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -21,7 +23,14 @@ GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates);
 bool GuestBytesZero(std::uint64_t begin, std::uint64_t end);
 void SetResidentAddressSpaceLimit(std::uint64_t bytes);
 void SetHeapMirrorBudget(std::uint64_t bytes);
+void SetDeviceHeapFullForTests(bool full);
+std::uint64_t HeapMirrorSlabBudget();
 std::shared_ptr<void> HoldHeapMirror(std::uint64_t address);
+
+class HeapMirrorSlabRefused : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 class ResidentBuffer : public std::enable_shared_from_this<ResidentBuffer> {
 public:
@@ -37,26 +46,29 @@ public:
     std::uint64_t Origin() const { return origin; }
     std::uint64_t BoundBytes() const { return bound * BlockBytes; }
     std::uint32_t MemoryType() const { return type; }
-    std::byte* Block(std::uint64_t guest) const;
+    bool Bound(std::uint64_t guest) const;
     std::uint64_t UnboundBytes(const GuestRuns& runs) const;
     void Bind(const GuestRuns& runs);
-    void MarkChanged(std::uint64_t begin, std::uint64_t end);
-    void Read(std::uint64_t guest, std::span<std::byte> out) const;
-    void Store(std::uint64_t guest, std::span<const std::byte> bytes);
+    void MarkChanged(std::uint64_t begin, std::uint64_t end, bool zero = false);
     std::shared_ptr<Buffer> RecordReadback(VkCommandBuffer commands, std::uint64_t guest, std::uint64_t bytes) const;
+    std::shared_ptr<Buffer> RecordReference(std::uint64_t guest, std::uint64_t bytes);
     void ReadDevice(std::uint64_t guest, std::span<std::byte> out);
-    static void FlushChanged(const Context& context);
+    static void FlushChanged(const Context& context, bool mayWait = false);
 
 private:
     struct Slot {
         void* slab = nullptr;
         std::uint32_t index = 0;
-        std::byte* host = nullptr;
+        bool bound = false;
+    };
+    struct Change {
+        std::uint64_t end = 0;
+        bool zero = false;
     };
     ResidentBuffer(const Context& context, std::uint64_t base, std::uint64_t bytes, const GuestRuns& backed);
     std::size_t blockIndex(std::uint64_t guest) const;
     void submit(const std::vector<VkSparseMemoryBind>& binds);
-    void flush();
+    void flush(bool mayWait);
     std::shared_ptr<Buffer> readbackBatch(std::uint64_t guest, std::uint64_t bytes);
     void release() noexcept;
 
@@ -71,7 +83,7 @@ private:
     std::uint64_t bound = 0;
     std::vector<Slot> slots;
     std::mutex changedMutex;
-    GuestRuns changed;
+    std::map<std::uint64_t, Change> changed;
 };
 
 }

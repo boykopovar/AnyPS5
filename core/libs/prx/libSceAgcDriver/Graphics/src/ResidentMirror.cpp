@@ -13,26 +13,30 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 
 namespace AgcDriver::Graphics {
 
 namespace {
 
 constexpr std::uint64_t BlockSize = ResidentBuffer::BlockBytes;
-constexpr VkDeviceSize StagingChunkBytes = VkDeviceSize{32} << 20u;
 constexpr std::uint64_t SlabBytes = std::uint64_t{16} << 20u;
 constexpr std::uint32_t SlabBlocks = static_cast<std::uint32_t>(SlabBytes / BlockSize);
 constexpr std::uint64_t ZeroBytes = SlabBytes;
+
+std::atomic<bool> deviceHeapFullForTests{false};
 constexpr VkAccessFlags TransferredAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
 
 [[noreturn]] void fail(const char* step, VkResult result) {
@@ -70,23 +74,43 @@ void recordTransfer(const Context& context, Work&& work) {
     batch.SubmitAndWait();
 }
 
+struct SlabCounters {
+    std::atomic<std::uint64_t> slabs{0};
+    std::atomic<std::uint64_t> freeBlocks{0};
+    std::atomic<std::uint64_t> buffers{0};
+    std::atomic<std::uint64_t> boundBlocks{0};
+};
+
+SlabCounters& Slabs() {
+    static SlabCounters counters;
+    return counters;
+}
+
+void reportSlabs(const char* what) {
+    auto& counters = Slabs();
+    std::fprintf(stderr, "[heap-mirror] %s: slabs %llu (%llu MiB), free slots %llu MiB, live mirrors %llu bound %llu MiB, budget %llu MiB\n", what, static_cast<unsigned long long>(counters.slabs.load()), static_cast<unsigned long long>(counters.slabs.load() * SlabBytes >> 20u), static_cast<unsigned long long>(counters.freeBlocks.load() * BlockSize >> 20u), static_cast<unsigned long long>(counters.buffers.load()), static_cast<unsigned long long>(counters.boundBlocks.load() * BlockSize >> 20u), static_cast<unsigned long long>(HeapMirrorSlabBudget() >> 20u));
+}
+
 }
 
 class ResidentMemory {
 public:
     struct Slab {
         VkDeviceMemory memory = VK_NULL_HANDLE;
-        std::unique_ptr<std::byte[]> host;
         std::vector<std::uint32_t> free;
     };
 
-    ResidentMemory(const Context& context, std::uint32_t type) : context(context), type(type) {
+    ResidentMemory(const Context& context, std::uint32_t type, std::uint32_t mask) : context(context), type(type), mask(mask) {
         zero = allocate(ZeroBytes, "vkAllocateMemory of the heap mirrors' zero block");
     }
 
     ~ResidentMemory() {
         const auto freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
-        for (auto& slab : slabs) MemoryAccounting::Free(freeMemory, context.device, slab->memory);
+        for (auto& slab : slabs) {
+            MemoryAccounting::Free(freeMemory, context.device, slab->memory);
+            Slabs().slabs.fetch_sub(1, std::memory_order_relaxed);
+            Slabs().freeBlocks.fetch_sub(slab->free.size(), std::memory_order_relaxed);
+        }
         MemoryAccounting::Free(freeMemory, context.device, zero);
     }
 
@@ -115,36 +139,72 @@ public:
 
     std::tuple<Slab*, std::uint32_t> Take() {
         std::lock_guard lock(mutex);
+        Slab* fullest = nullptr;
         for (auto& slab : slabs) {
             if (slab->free.empty()) continue;
-            const auto index = slab->free.back();
-            slab->free.pop_back();
-            return {slab.get(), index};
+            if (fullest == nullptr || slab->free.size() < fullest->free.size()) fullest = slab.get();
         }
+        if (fullest != nullptr) {
+            const auto index = fullest->free.back();
+            fullest->free.pop_back();
+            Slabs().freeBlocks.fetch_sub(1, std::memory_order_relaxed);
+            return {fullest, index};
+        }
+        refuseSlab();
         auto slab = std::make_unique<Slab>();
-        slab->memory = allocate(SlabBytes, "vkAllocateMemory of a heap mirror slab");
-        slab->host = std::unique_ptr<std::byte[]>(new std::byte[SlabBytes]);
+        try {
+            slab->memory = allocate(SlabBytes, "vkAllocateMemory of a heap mirror slab");
+        } catch (const std::runtime_error& error) {
+            throw HeapMirrorSlabRefused(error.what());
+        }
         for (std::uint32_t index = SlabBlocks; index-- > 1;) slab->free.push_back(index);
         slabs.push_back(std::move(slab));
+        const auto count = Slabs().slabs.fetch_add(1, std::memory_order_relaxed) + 1;
+        Slabs().freeBlocks.fetch_add(SlabBlocks - 1, std::memory_order_relaxed);
+        if (count % 32 == 0) reportSlabs("grew");
         return {slabs.back().get(), 0u};
     }
 
     void Put(Slab* slab, std::uint32_t index) noexcept {
         std::lock_guard lock(mutex);
         slab->free.push_back(index);
+        Slabs().freeBlocks.fetch_add(1, std::memory_order_relaxed);
         if (slab->free.size() != SlabBlocks) return;
         const auto found = std::find_if(slabs.begin(), slabs.end(), [&](const auto& held) { return held.get() == slab; });
         MemoryAccounting::Free(context, slab->memory);
         slabs.erase(found);
+        const auto count = Slabs().slabs.fetch_sub(1, std::memory_order_relaxed) - 1;
+        Slabs().freeBlocks.fetch_sub(SlabBlocks, std::memory_order_relaxed);
+        if (count % 32 == 0) reportSlabs("shrank");
     }
 
 private:
+    void refuseSlab() {
+        constexpr std::uint64_t Reserve = std::uint64_t{256} << 20u;
+        const auto live = Slabs().slabs.load(std::memory_order_relaxed) * SlabBytes;
+        if (live <= Reserve) return;
+        const auto held = live + SlabBytes;
+        const char* reason = nullptr;
+        const auto limit = std::max((HeapMirrorSlabBudget() + SlabBytes - 1) / SlabBytes, std::uint64_t{1}) * SlabBytes;
+        if (held > limit) reason = "the heap mirrors' slabs would pass APS5_HEAP_MIRROR_MIB";
+        thread_local std::chrono::steady_clock::time_point lastHeadroomRefusal{};
+        const auto now = std::chrono::steady_clock::now();
+        const auto heap = deviceHeapFullForTests.load(std::memory_order_relaxed) ? Context::HeapReport{SlabBytes, SlabBytes} : context.ReportedHeap(context.memory.memoryTypes[type].heapIndex);
+        if (reason == nullptr && !heap.Fits(SlabBytes + Reserve) && now - lastHeadroomRefusal > std::chrono::seconds(2)) {
+            reason = "its device heap would keep less than 256 MiB of its reported budget";
+            lastHeadroomRefusal = now;
+        }
+        if (reason == nullptr) return;
+        reportSlabs("refused");
+        throw HeapMirrorSlabRefused(std::string("vkAllocateMemory of a heap mirror slab refused: ") + reason);
+    }
+
     VkDeviceMemory allocate(std::uint64_t bytes, const char* operation) {
         const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
         VkMemoryAllocateInfo info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, context.bufferDeviceAddress ? &flags : nullptr};
         info.allocationSize = bytes;
         info.memoryTypeIndex = type;
-        if (context.bufferPool != nullptr) return context.bufferPool->AllocateMemory(info, operation);
+        if (context.bufferPool != nullptr) return context.bufferPool->AllocateMemory(info, operation, context.RefusedDeviceMemoryFallback(mask, type));
         VkDeviceMemory memory = VK_NULL_HANDLE;
         if (const auto result = MemoryAccounting::Allocate(context, info, "heap mirror", &memory); result != VK_SUCCESS) fail(operation, result);
         return memory;
@@ -152,6 +212,7 @@ private:
 
     Context context;
     std::uint32_t type;
+    std::uint32_t mask;
     VkDeviceMemory zero = VK_NULL_HANDLE;
     std::atomic<bool> zeroed{false};
     std::mutex mutex;
@@ -174,12 +235,12 @@ ResidentDevices& Devices() {
     return devices;
 }
 
-std::shared_ptr<ResidentMemory> residentMemory(const Context& context, std::uint32_t type) {
+std::shared_ptr<ResidentMemory> residentMemory(const Context& context, std::uint32_t type, std::uint32_t mask) {
     auto& devices = Devices();
     std::lock_guard lock(devices.mutex);
     auto& slot = devices.memories[{context.device, type}];
     if (auto held = slot.lock()) return held;
-    auto made = std::make_shared<ResidentMemory>(context, type);
+    auto made = std::make_shared<ResidentMemory>(context, type, mask);
     slot = made;
     return made;
 }
@@ -318,20 +379,43 @@ bool GuestBytesZero(std::uint64_t begin, std::uint64_t end) {
 }
 
 GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates) {
+    struct Scanned {
+        std::uint64_t generation = 0;
+        bool nonzero = false;
+    };
+    static std::mutex scannedMutex;
+    static auto& scanned = *new std::unordered_map<std::uint64_t, Scanned>();
+    constexpr std::size_t ScannedLimit = std::size_t{1} << 22u;
     GuestRuns runs;
     for (const auto& [first, last] : candidates) {
         if (first >= last) continue;
         const auto maybe = possiblyNonzero(first, last);
+        const auto generation = GuestMemory::WriteWatched() ? GuestMemory::CollectWrites(first, static_cast<std::size_t>(last - first)) : 0u;
         std::size_t at = 0;
         for (auto block = first / BlockSize * BlockSize; block < last; block += BlockSize) {
             const auto from = std::max(first, block);
             const auto to = std::min(last, block + BlockSize);
             while (at < maybe.size() && maybe[at].end <= from) ++at;
+            const bool whole = generation != 0 && from == block && to == block + BlockSize;
+            std::optional<Scanned> known;
+            if (whole) {
+                std::lock_guard lock(scannedMutex);
+                if (const auto found = scanned.find(block); found != scanned.end()) known = found->second;
+            }
             bool nonzero = false;
-            for (auto next = at; !nonzero && next < maybe.size() && maybe[next].begin < to; ++next) {
-                const auto low = std::max(from, maybe[next].begin);
-                const auto high = std::min(to, maybe[next].end);
-                if (low < high) nonzero = !maybe[next].readable || !allZero(low, high);
+            if (known.has_value() && GuestMemory::UnchangedSince(block, static_cast<std::size_t>(BlockSize), known->generation)) {
+                nonzero = known->nonzero;
+            } else {
+                for (auto next = at; !nonzero && next < maybe.size() && maybe[next].begin < to; ++next) {
+                    const auto low = std::max(from, maybe[next].begin);
+                    const auto high = std::min(to, maybe[next].end);
+                    if (low < high) nonzero = !maybe[next].readable || !allZero(low, high);
+                }
+                if (whole) {
+                    std::lock_guard lock(scannedMutex);
+                    if (scanned.size() >= ScannedLimit) scanned.clear();
+                    scanned[block] = {generation, nonzero};
+                }
             }
             if (!nonzero) continue;
             if (!runs.empty() && runs.back().second == from) runs.back().second = to;
@@ -339,6 +423,10 @@ GuestRuns GuestNonzeroBlocks(const GuestRuns& candidates) {
         }
     }
     return runs;
+}
+
+void SetDeviceHeapFullForTests(bool full) {
+    deviceHeapFullForTests.store(full, std::memory_order_relaxed);
 }
 
 void SetResidentAddressSpaceLimit(std::uint64_t bytes) {
@@ -386,7 +474,7 @@ ResidentBuffer::ResidentBuffer(const Context& context, std::uint64_t base, std::
             throw std::runtime_error(text);
         }
         type = context.DeviceMemoryType(requirements.memoryTypeBits, SlabBytes, "a resident heap mirror slab");
-        memory = residentMemory(context, type);
+        memory = residentMemory(context, type, requirements.memoryTypeBits);
         slots.resize(static_cast<std::size_t>(size / BlockSize));
         std::vector<bool> wanted(slots.size(), false);
         for (const auto& [first, last] : backed) {
@@ -397,8 +485,7 @@ ResidentBuffer::ResidentBuffer(const Context& context, std::uint64_t base, std::
         for (std::size_t index = 0; index < slots.size();) {
             if (wanted[index]) {
                 auto [slab, at] = memory->Take();
-                slots[index] = {slab, at, slab->host.get() + at * BlockSize};
-                std::memset(slots[index].host, 0, static_cast<std::size_t>(BlockSize));
+                slots[index] = {slab, at, true};
                 binds.push_back({index * BlockSize, BlockSize, slab->memory, at * BlockSize, 0});
                 ++bound;
                 ++index;
@@ -413,6 +500,8 @@ ResidentBuffer::ResidentBuffer(const Context& context, std::uint64_t base, std::
         const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
         address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
         if (address == 0) fail("vkGetBufferDeviceAddressKHR of a resident heap mirror", VK_ERROR_UNKNOWN);
+        Slabs().buffers.fetch_add(1, std::memory_order_relaxed);
+        Slabs().boundBlocks.fetch_add(bound, std::memory_order_relaxed);
     } catch (...) {
         release();
         throw;
@@ -426,8 +515,13 @@ ResidentBuffer::~ResidentBuffer() {
 void ResidentBuffer::release() noexcept {
     if (buffer != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
     buffer = VK_NULL_HANDLE;
+    if (address != 0) {
+        Slabs().buffers.fetch_sub(1, std::memory_order_relaxed);
+        Slabs().boundBlocks.fetch_sub(bound, std::memory_order_relaxed);
+        address = 0;
+    }
     for (auto& slot : slots) {
-        if (slot.host != nullptr) memory->Put(static_cast<ResidentMemory::Slab*>(slot.slab), slot.index);
+        if (slot.bound) memory->Put(static_cast<ResidentMemory::Slab*>(slot.slab), slot.index);
         slot = {};
     }
     auto& devices = Devices();
@@ -441,9 +535,8 @@ std::size_t ResidentBuffer::blockIndex(std::uint64_t guest) const {
     return static_cast<std::size_t>((guest - origin) / BlockSize);
 }
 
-std::byte* ResidentBuffer::Block(std::uint64_t guest) const {
-    const auto& slot = slots[blockIndex(guest)];
-    return slot.host == nullptr ? nullptr : slot.host + (guest - origin) % BlockSize;
+bool ResidentBuffer::Bound(std::uint64_t guest) const {
+    return slots[blockIndex(guest)].bound;
 }
 
 std::uint64_t ResidentBuffer::UnboundBytes(const GuestRuns& runs) const {
@@ -451,7 +544,7 @@ std::uint64_t ResidentBuffer::UnboundBytes(const GuestRuns& runs) const {
     for (const auto& [first, last] : runs) {
         if (first >= last) continue;
         for (auto index = blockIndex(first); index <= blockIndex(last - 1); ++index) {
-            if (slots[index].host == nullptr) seen.push_back(index);
+            if (!slots[index].bound) seen.push_back(index);
         }
     }
     std::sort(seen.begin(), seen.end());
@@ -461,20 +554,19 @@ std::uint64_t ResidentBuffer::UnboundBytes(const GuestRuns& runs) const {
 void ResidentBuffer::Bind(const GuestRuns& runs) {
     std::vector<VkSparseMemoryBind> binds;
     std::vector<std::size_t> made;
-    for (const auto& [first, last] : runs) {
-        if (first >= last) continue;
-        for (auto index = blockIndex(first); index <= blockIndex(last - 1); ++index) {
-            if (slots[index].host != nullptr) continue;
-            auto [slab, at] = memory->Take();
-            slots[index] = {slab, at, slab->host.get() + at * BlockSize};
-            std::memset(slots[index].host, 0, static_cast<std::size_t>(BlockSize));
-            binds.push_back({index * BlockSize, BlockSize, slab->memory, at * BlockSize, 0});
-            made.push_back(index);
-        }
-    }
-    if (binds.empty()) return;
-    if (auto* recorder = Recorder::Active(); recorder != nullptr) recorder->Sync();
     try {
+        for (const auto& [first, last] : runs) {
+            if (first >= last) continue;
+            for (auto index = blockIndex(first); index <= blockIndex(last - 1); ++index) {
+                if (slots[index].bound) continue;
+                auto [slab, at] = memory->Take();
+                slots[index] = {slab, at, true};
+                binds.push_back({index * BlockSize, BlockSize, slab->memory, at * BlockSize, 0});
+                made.push_back(index);
+            }
+        }
+        if (binds.empty()) return;
+        if (auto* recorder = Recorder::Active(); recorder != nullptr) recorder->Sync();
         submit(binds);
     } catch (...) {
         for (const auto index : made) {
@@ -484,17 +576,29 @@ void ResidentBuffer::Bind(const GuestRuns& runs) {
         throw;
     }
     bound += made.size();
-    for (const auto index : made) MarkChanged(origin + index * BlockSize, origin + (index + 1) * BlockSize);
+    if (address != 0) Slabs().boundBlocks.fetch_add(made.size(), std::memory_order_relaxed);
+    for (const auto index : made) MarkChanged(origin + index * BlockSize, origin + (index + 1) * BlockSize, true);
 }
 
-void ResidentBuffer::MarkChanged(std::uint64_t begin, std::uint64_t end) {
+void ResidentBuffer::MarkChanged(std::uint64_t begin, std::uint64_t end, bool zero) {
     if (begin >= end) return;
     bool first = false;
     {
         std::lock_guard lock(changedMutex);
         first = changed.empty();
-        if (!changed.empty() && changed.back().second == begin) changed.back().second = end;
-        else changed.emplace_back(begin, end);
+        if (auto it = changed.lower_bound(begin); it != changed.begin()) {
+            const auto previous = std::prev(it);
+            if (previous->second.end > begin) {
+                const auto tail = previous->second;
+                previous->second.end = begin;
+                if (tail.end > end) changed[end] = tail;
+            }
+        }
+        for (auto it = changed.lower_bound(begin); it != changed.end() && it->first < end;) {
+            if (it->second.end > end) changed[end] = it->second;
+            it = changed.erase(it);
+        }
+        changed[begin] = {end, zero};
     }
     if (!first) return;
     auto& devices = Devices();
@@ -502,34 +606,24 @@ void ResidentBuffer::MarkChanged(std::uint64_t begin, std::uint64_t end) {
     devices.pending.push_back(weak_from_this());
 }
 
-void ResidentBuffer::Read(std::uint64_t guest, std::span<std::byte> out) const {
-    std::size_t done = 0;
-    while (done < out.size()) {
-        const auto at = guest + done;
-        const auto within = static_cast<std::size_t>((at - origin) % BlockSize);
-        const auto length = std::min<std::size_t>(out.size() - done, static_cast<std::size_t>(BlockSize) - within);
-        if (const auto* source = Block(at); source != nullptr) std::memcpy(out.data() + done, source, length);
-        else std::memset(out.data() + done, 0, length);
-        done += length;
-    }
-}
-
-void ResidentBuffer::Store(std::uint64_t guest, std::span<const std::byte> bytes) {
-    std::size_t done = 0;
-    while (done < bytes.size()) {
-        const auto at = guest + done;
-        const auto within = static_cast<std::size_t>((at - origin) % BlockSize);
-        const auto length = std::min<std::size_t>(bytes.size() - done, static_cast<std::size_t>(BlockSize) - within);
-        if (auto* target = Block(at); target != nullptr) std::memcpy(target, bytes.data() + done, length);
-        else Require(GuestBytesZero(reinterpret_cast<std::uintptr_t>(bytes.data() + done), reinterpret_cast<std::uintptr_t>(bytes.data() + done + length)), "the GPU wrote a heap mirror block that holds no memory");
-        done += length;
-    }
-}
-
 std::shared_ptr<Buffer> ResidentBuffer::RecordReadback(VkCommandBuffer commands, std::uint64_t guest, std::uint64_t bytes) const {
     Require(guest >= origin && bytes <= size && guest - origin <= size - bytes, "heap mirror readback outside its buffer");
     auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     CopyBuffer(context, commands, buffer, guest - origin, staging->Handle(), 0, bytes);
+    return staging;
+}
+
+std::shared_ptr<Buffer> ResidentBuffer::RecordReference(std::uint64_t guest, std::uint64_t bytes) {
+    GuestMemory::AssertGpuLockHeld("heap mirror reference copy");
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return readbackBatch(guest, bytes);
+    const auto commands = recorder->Commands();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    auto staging = RecordReadback(commands, guest, bytes);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0);
+    recorder->Keep(staging, static_cast<std::size_t>(bytes));
+    recorder->Keep(shared_from_this());
     return staging;
 }
 
@@ -549,65 +643,88 @@ std::shared_ptr<Buffer> ResidentBuffer::readbackBatch(std::uint64_t guest, std::
     return staging;
 }
 
-void ResidentBuffer::flush() {
-    GuestRuns runs;
+void ResidentBuffer::flush(bool mayWait) {
+    std::map<std::uint64_t, Change> runs;
     {
         std::lock_guard lock(changedMutex);
         runs.swap(changed);
     }
     if (runs.empty()) return;
     try {
-        std::sort(runs.begin(), runs.end());
+        constexpr std::uint64_t SegmentBytes = std::uint64_t{64} << 20u;
+        constexpr std::uint64_t WaveBytes = std::uint64_t{256} << 20u;
         std::vector<VkBufferCopy> regions;
+        std::vector<bool> zeroed;
+        std::vector<std::pair<VkDeviceSize, VkDeviceSize>> fills;
         std::uint64_t total = 0;
-        std::uint64_t cursor = 0;
-        for (const auto& [first, last] : runs) {
-            for (auto at = std::max(first, cursor); at < last;) {
-                const auto next = std::min(last, (at / BlockSize + 1) * BlockSize);
-                if (slots[blockIndex(at)].host != nullptr) {
-                    if (!regions.empty() && regions.back().dstOffset + regions.back().size == at - origin) regions.back().size += next - at;
-                    else regions.push_back({total, at - origin, next - at});
-                    total += next - at;
+        std::uint64_t held = 0;
+        const auto upload = [&] {
+            if (regions.empty() && fills.empty()) return;
+            std::shared_ptr<Buffer> staging;
+            if (total != 0) {
+                staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(total), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::MirrorRefresh);
+                for (std::size_t index = 0; index < regions.size(); ++index) {
+                    const auto target = staging->Bytes().subspan(static_cast<std::size_t>(regions[index].srcOffset), static_cast<std::size_t>(regions[index].size));
+                    if (zeroed[index]) std::memset(target.data(), 0, target.size());
+                    else GuestMemory::Read(origin + regions[index].dstOffset, target);
+                }
+            }
+            recordTransfer(context, [&](VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept) {
+                for (const auto& [offset, bytes] : fills) context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, buffer, offset, bytes, 0);
+                if (!regions.empty()) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, staging->Handle(), buffer, static_cast<std::uint32_t>(regions.size()), regions.data());
+                if (staging != nullptr) kept.push_back(staging);
+                kept.push_back(shared_from_this());
+            });
+            if (auto* recorder = Recorder::Active(); recorder != nullptr && staging != nullptr) recorder->KeepBytes(staging.get(), static_cast<std::size_t>(total));
+            held += total;
+            regions.clear();
+            zeroed.clear();
+            fills.clear();
+            total = 0;
+            if (held < WaveBytes || !mayWait) return;
+            if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) recorder->Sync();
+            held = 0;
+        };
+        for (const auto& [first, change] : runs) {
+            for (auto at = first; at < change.end;) {
+                const auto next = std::min(change.end, (at / BlockSize + 1) * BlockSize);
+                if (slots[blockIndex(at)].bound) {
+                    const auto offset = at - origin;
+                    const auto length = next - at;
+                    if (change.zero && offset % 4u == 0u && length % 4u == 0u) {
+                        if (!fills.empty() && fills.back().first + fills.back().second == offset) fills.back().second += length;
+                        else fills.emplace_back(offset, length);
+                    } else {
+                        if (!regions.empty() && zeroed.back() == change.zero && regions.back().dstOffset + regions.back().size == offset) regions.back().size += length;
+                        else {
+                            regions.push_back({total, offset, length});
+                            zeroed.push_back(change.zero);
+                        }
+                        total += length;
+                        if (total >= SegmentBytes) upload();
+                    }
                 }
                 at = next;
             }
-            cursor = std::max(cursor, last);
         }
-        if (regions.empty()) return;
-        struct Chunk {
-            std::shared_ptr<Buffer> staging;
-            std::vector<VkBufferCopy> copies;
-        };
-        std::vector<Chunk> chunks;
-        VkDeviceSize filled = StagingChunkBytes;
-        for (const auto& region : regions) {
-            for (VkDeviceSize done = 0; done < region.size;) {
-                if (filled == StagingChunkBytes) {
-                    const auto remaining = total - (region.srcOffset + done);
-                    chunks.push_back({std::make_shared<Buffer>(context, static_cast<std::size_t>(std::min(StagingChunkBytes, remaining)), VK_BUFFER_USAGE_TRANSFER_SRC_BIT), {}});
-                    filled = 0;
-                }
-                auto& chunk = chunks.back();
-                const auto at = origin + region.dstOffset + done;
-                const auto length = std::min({region.size - done, BlockSize - (at - origin) % BlockSize, StagingChunkBytes - filled});
-                std::memcpy(chunk.staging->Bytes().data() + filled, Block(at), static_cast<std::size_t>(length));
-                if (!chunk.copies.empty() && chunk.copies.back().srcOffset + chunk.copies.back().size == filled && chunk.copies.back().dstOffset + chunk.copies.back().size == region.dstOffset + done) chunk.copies.back().size += length;
-                else chunk.copies.push_back({filled, region.dstOffset + done, length});
-                filled += length;
-                done += length;
-            }
-        }
-        recordTransfer(context, [&](VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept) {
-            for (const auto& chunk : chunks) {
-                context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, chunk.staging->Handle(), buffer, static_cast<std::uint32_t>(chunk.copies.size()), chunk.copies.data());
-                kept.push_back(chunk.staging);
-            }
-            kept.push_back(shared_from_this());
-        });
+        upload();
     } catch (...) {
         {
             std::lock_guard lock(changedMutex);
-            changed.insert(changed.begin(), runs.begin(), runs.end());
+            for (const auto& [first, change] : runs) {
+                auto cursor = first;
+                while (cursor < change.end) {
+                    auto it = changed.upper_bound(cursor);
+                    if (it != changed.begin() && std::prev(it)->second.end > cursor) {
+                        cursor = std::prev(it)->second.end;
+                        continue;
+                    }
+                    const auto stop = it != changed.end() ? std::min(change.end, it->first) : change.end;
+                    if (cursor < stop) changed[cursor] = {stop, change.zero};
+                    cursor = stop;
+                }
+            }
         }
         auto& devices = Devices();
         std::lock_guard lock(devices.pendingMutex);
@@ -616,7 +733,7 @@ void ResidentBuffer::flush() {
     }
 }
 
-void ResidentBuffer::FlushChanged(const Context& context) {
+void ResidentBuffer::FlushChanged(const Context& context, bool mayWait) {
     auto& devices = Devices();
     std::vector<std::shared_ptr<ResidentMemory>> unzeroed;
     {
@@ -641,7 +758,7 @@ void ResidentBuffer::FlushChanged(const Context& context) {
             continue;
         }
         try {
-            held->flush();
+            held->flush(mayWait);
         } catch (...) {
             std::lock_guard lock(devices.pendingMutex);
             devices.pending.insert(devices.pending.end(), waiting.begin() + static_cast<std::ptrdiff_t>(index) + 1, waiting.end());
