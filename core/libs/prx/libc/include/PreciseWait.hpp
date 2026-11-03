@@ -142,7 +142,7 @@ inline std::uint64_t PreciseMonotonicNanos() {
 }
 
 #ifdef __APPLE__
-bool PreciseKernelTimerSleep_nid_no_patch(std::uint64_t wakeNanos);
+extern "C" bool PreciseKernelTimerSleep_nid_no_patch(std::uint64_t wakeNanos);
 #endif
 
 #ifdef __linux__
