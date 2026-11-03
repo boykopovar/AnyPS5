@@ -3,6 +3,7 @@ import json
 import os
 import stat
 from pathlib import Path
+import sys
 import tempfile
 
 from pad_input import BUTTONS, next_sequence
@@ -78,13 +79,16 @@ def queue_timeline(path, text):
             temporary.unlink(missing_ok=True)
 
 
-def main():
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Queue a timed controller button sequence for APS5_PAD_INPUT_FILE.")
     parser.add_argument("timeline", type=Path)
     parser.add_argument("path", type=Path)
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--gap-ms", type=int, default=200)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         if os.path.realpath(args.timeline) == os.path.realpath(args.path) or (args.path.exists() and os.path.samefile(args.timeline, args.path)):
             raise ValueError("the command file must be separate from the timeline JSON")
@@ -92,7 +96,7 @@ def main():
             raise ValueError(f"{args.path} is a directory")
         if not args.path.parent.is_dir():
             raise ValueError(f"directory does not exist: {args.path.parent}")
-        document = json.loads(args.timeline.read_text(encoding="utf-8"))
+        document = json.loads(args.timeline.read_text(encoding="utf-8-sig"))
         text = compile_timeline(document, next_sequence(args.path), args.repeat, args.gap_ms)
         queue_timeline(args.path, text)
     except (OSError, ValueError, RecursionError) as error:
