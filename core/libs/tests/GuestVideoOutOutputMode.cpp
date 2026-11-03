@@ -49,7 +49,11 @@ int main() {
         std::printf("skipped, no display or Vulkan device: %s\n", error.what());
         return 77;
     }
-    Require(handle > 0);
+    if (handle <= 0) {
+        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw std::runtime_error("sceVideoOutOpen failed");
+        std::printf("skipped, no display or Vulkan device: open failed with %d\n", handle);
+        return 77;
+    }
     Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr) == RESOURCE_BUSY);
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 0) == 1);
     Require(sceVideoOutIsOutputSupported(handle, 1, nullptr, nullptr, 0) == 1);

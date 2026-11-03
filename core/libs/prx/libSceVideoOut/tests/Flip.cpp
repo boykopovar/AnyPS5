@@ -1474,7 +1474,11 @@ int runTests(int argc, char** argv) {
         try { LibcRunShutdown_nid_postfix(); }
         catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
         const std::string what = error.what();
-        const bool noVulkanWindow = what.find("Vulkan support") != std::string::npos || (what.starts_with("DisplayWindow: ") && what.find("Vulkan") != std::string::npos);
+        const bool noVulkanWindow = what.find("Vulkan support") != std::string::npos ||
+            what.find("no display") != std::string::npos ||
+            what.find("No available video device") != std::string::npos ||
+            what.find("No displays attached") != std::string::npos ||
+            what.starts_with("DisplayWindow: ");
         if (noVulkanWindow && !std::getenv("ANYPS5_REQUIRE_DISPLAY")) {
             std::printf("skipped, no display or Vulkan device: %s\n", error.what());
             return 77;

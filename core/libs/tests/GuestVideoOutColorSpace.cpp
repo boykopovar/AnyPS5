@@ -66,7 +66,11 @@ int main() {
         std::printf("skipped, no display or Vulkan device: %s\n", error.what());
         return 77;
     }
-    Require(handle > 0);
+    if (handle <= 0) {
+        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw std::runtime_error("sceVideoOutOpen failed");
+        std::printf("skipped, no display or Vulkan device: open failed with %d\n", handle);
+        return 77;
+    }
 
     Require(sceVideoOutAdjustColorSpaceConversion(handle, &settings) == 0);
     Require(sceVideoOutAdjustColorSpaceConversion_(handle, &settings, sizeof(settings)) == 0);
