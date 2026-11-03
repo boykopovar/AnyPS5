@@ -4,10 +4,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "VulkanTestDevice.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -20,9 +22,6 @@ using AgcDriver::Graphics::Buffer;
 using AgcDriver::Graphics::Recorder;
 using AgcDriver::Graphics::Require;
 
-// The changed copy reads only push constants. It copies the same in both modes; in descriptor heap
-// mode it must also leave its command buffer in heap mode (parameters through vkCmdPushDataEXT on a
-// heap pipeline): a classic vkCmdPushConstants would make the next heap draw bind the heaps again.
 void RunChangedCopy(const AgcDriver::VulkanDevice& device) {
     const auto context = device.graphicsContext();
     const bool heapMode = AgcDriver::Graphics::DescriptorHeapEnabled() && context.descriptorHeap && BindlessHeap::For(context).DescriptorHeapMode();
@@ -58,8 +57,6 @@ void RunChangedCopy(const AgcDriver::VulkanDevice& device) {
     }
 }
 
-// The indirect dispatch argument check is the same kind of pass: group counts from thread counts,
-// and a count past the device limit dispatches nothing.
 void RunDispatchArguments(const AgcDriver::VulkanDevice& device) {
     const auto context = device.graphicsContext();
     const bool heapMode = AgcDriver::Graphics::DescriptorHeapEnabled() && context.descriptorHeap && BindlessHeap::For(context).DescriptorHeapMode();
@@ -69,7 +66,11 @@ void RunDispatchArguments(const AgcDriver::VulkanDevice& device) {
     auto grouped = std::make_shared<Buffer>(context, 32, usage);
     auto refused = std::make_shared<Buffer>(context, 32, usage);
     const std::uint32_t threadCounts[4] = {3u, 5u, 7u, 0u};
-    const std::uint32_t tooMany[4] = {0xffffffffu, 1u, 1u, 0u};
+    const auto* limit = context.limits.maxComputeWorkGroupCount;
+    const auto axis = static_cast<std::size_t>(std::min_element(limit, limit + 3) - limit);
+    const bool limited = limit[axis] < std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t tooMany[4] = {1u, 1u, 1u, 0u};
+    tooMany[axis] = limited ? limit[axis] + 1u : limit[axis];
     std::memcpy(threads->Bytes().data(), threadCounts, sizeof(threadCounts));
     std::memcpy(oversized->Bytes().data(), tooMany, sizeof(tooMany));
     std::memset(grouped->Bytes().data(), 0xff, 32);
@@ -94,7 +95,7 @@ void RunDispatchArguments(const AgcDriver::VulkanDevice& device) {
     const std::uint32_t expected[6] = {2u, 3u, 4u, 3u, 5u, 7u};
     for (std::size_t i = 0; i < 6; ++i) Require(words[i] == expected[i], "push-only heap passes: dispatch argument word " + std::to_string(i) + " is " + std::to_string(words[i]) + ", expected " + std::to_string(expected[i]));
     std::memcpy(words, refused->Bytes().data(), 3 * sizeof(std::uint32_t));
-    Require(words[0] == 0u && words[1] == 0u && words[2] == 0u, "push-only heap passes: a group count past the device limit was dispatched");
+    if (limited) Require(words[0] == 0u && words[1] == 0u && words[2] == 0u, "push-only heap passes: a group count past the device limit was dispatched");
 }
 
 }

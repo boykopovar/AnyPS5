@@ -2788,8 +2788,12 @@ VkPipeline Recorder::createPushOnlyHeapPipeline(const VkComputePipelineCreateInf
     heapInfo.pNext = &heapFlags;
     heapInfo.layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
-    auto pipelineCacheLock = context.LockPipelineCacheForUse();
-    if (context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &heapInfo, nullptr, &pipeline) != VK_SUCCESS) return VK_NULL_HANDLE;
+    try {
+        auto pipelineCacheLock = context.LockPipelineCacheForUse();
+        if (context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &heapInfo, nullptr, &pipeline) != VK_SUCCESS) return VK_NULL_HANDLE;
+    } catch (const std::exception&) {
+        return VK_NULL_HANDLE;
+    }
     return pipeline;
 }
 

@@ -777,10 +777,6 @@ private:
     VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
     VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
     VkPipeline changedCopyHeapPipeline = VK_NULL_HANDLE;
-    // The descriptor heap variant of a compute pipeline that reads only push constants (null outside
-    // descriptor heap mode or when the driver refuses it). Its parameters go in with vkCmdPushDataEXT,
-    // so the pass leaves a command buffer in descriptor heap mode: a classic vkCmdPushConstants would
-    // make the next heap draw bind the heaps again.
     VkPipeline createPushOnlyHeapPipeline(const VkComputePipelineCreateInfo& info) const;
     void bindPushOnlyPipeline(VkCommandBuffer commands, VkPipeline pipeline, VkPipeline heapPipeline) const;
     void pushOnlyParameters(VkCommandBuffer commands, VkPipeline heapPipeline, VkPipelineLayout layout, std::uint32_t bytes, const void* values) const;
