@@ -21,6 +21,7 @@ struct SpirvTargetOptions {
     std::span<const std::string_view> supportedExtensions;
     bool fragmentShaderBarycentricEnabled;
     bool nonConstantImageOffsets = false;
+    bool shaderImageMinLod = false;
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
     bool depthRangeRemap = false;
@@ -52,6 +53,7 @@ struct SpirvEmitInfo {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
+    std::uint32_t scratchPoolSlotDwords = 0;
 };
 
 struct SpannedWaveUnsupported : std::runtime_error {
