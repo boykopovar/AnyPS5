@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import annotate_module
 import nid_names
 from test_annotate_module import (DEFAULT_SYMBOLS, DEFAULT_TAGS, GNU_HASH, IMPORT_NAME, EXPORT_NAME, SECOND_IMPORT_NAME,
