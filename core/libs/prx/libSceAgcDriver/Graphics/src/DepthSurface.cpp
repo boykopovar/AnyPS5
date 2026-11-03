@@ -224,6 +224,7 @@ struct DepthSamplingState {
     std::optional<float> initialDepth;
     std::optional<std::uint8_t> initialStencil;
     std::string refusal;
+    std::optional<float> aliasDepth;
     std::optional<std::uint8_t> aliasStencil;
     std::optional<MultisampleColorAlias> unprovenStencil;
 
@@ -240,6 +241,15 @@ std::optional<std::uint8_t> aliasedStencil(const MultisampleColorAlias& alias, c
     const bool known = alias.newest == MultisampleColorContent::Fill || alias.newest == MultisampleColorContent::FastClear || alias.newest == MultisampleColorContent::Clear;
     if (!r8 || !known || alias.samples != samples || alias.address != plane.address || alias.bytes != plane.bytes) return std::nullopt;
     return alias.byte;
+}
+
+std::optional<float> aliasedDepth(const MultisampleColorAlias& alias, const GuestMemory::UnchangedQuery& plane, std::uint32_t samples) {
+    const bool r32 = alias.format == VK_FORMAT_R32_SFLOAT;
+    const bool known = alias.newest == MultisampleColorContent::Fill || alias.newest == MultisampleColorContent::FastClear || alias.newest == MultisampleColorContent::Clear;
+    if (!r32 || !known || !alias.value || alias.samples != samples || alias.address != plane.address || alias.bytes != plane.bytes) return std::nullopt;
+    const auto value = alias.value->float32[0];
+    if (!(value >= 0.0f && value <= 1.0f)) return std::nullopt;
+    return value;
 }
 
 void reportAlias(const MultisampleColorAlias& alias, const GuestMemory::UnchangedQuery& range, const char* plane) {
@@ -314,6 +324,12 @@ DepthSamplingState prepareUniformPlaneSampling(const Context& context, const Dep
     for (std::size_t index = 0u; index < state.initial.size(); ++index) {
         const auto alias = MultisampleColorTargetOver(state.initial[index].address, state.initial[index].bytes);
         if (!alias) continue;
+        if (index == 0u) {
+            if (const auto depthValue = aliasedDepth(*alias, state.initial[index], target.samples)) {
+                state.aliasDepth = *depthValue;
+                continue;
+            }
+        }
         reportAlias(*alias, state.initial[index], index == 1u ? "stencil plane" : "depth");
         return refuse(index == 1u ? stencilAliasRefusal : depthAliasRefusal);
     }
@@ -325,14 +341,18 @@ DepthSamplingState prepareUniformPlaneSampling(const Context& context, const Dep
         range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
         if (range.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     }
-    const auto depthWord = uniformPlaneValue<std::uint32_t>(depth.address, depth.bytes);
-    const auto depthValue = depthWord ? std::bit_cast<float>(*depthWord) : 0.0f;
-    if (!depthWord || !(depthValue >= 0.0f && depthValue <= 1.0f)) return refuse("native multisample depth plane without HTILE does not hold one depth value in [0, 1]");
+    if (state.aliasDepth) {
+        state.initialDepth = *state.aliasDepth;
+    } else {
+        const auto depthWord = uniformPlaneValue<std::uint32_t>(depth.address, depth.bytes);
+        const auto depthValue = depthWord ? std::bit_cast<float>(*depthWord) : 0.0f;
+        if (!depthWord || !(depthValue >= 0.0f && depthValue <= 1.0f)) return refuse("native multisample depth plane without HTILE does not hold one depth value in [0, 1]");
+        state.initialDepth = depthValue;
+    }
     const auto stencilByte = uniformPlaneValue<std::uint8_t>(stencil.address, stencil.bytes);
     if (!stencilByte) return refuse("native multisample stencil plane without HTILE does not hold one stencil value");
     for (const auto& range : state.initial) GuestMemory::CollectWritesUncached(range.address, range.bytes);
     if (!GuestMemory::UnchangedSinceAll(state.initial)) return refuse("guest writes raced native multisample depth import");
-    state.initialDepth = depthValue;
     state.initialStencil = *stencilByte;
     return state;
 }
@@ -373,8 +393,11 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
         const auto& range = state.initial[index];
         const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
         if (!alias) continue;
-        const auto value = index == 2u && stencilPlane ? aliasedStencil(*alias, range, target.samples) : std::nullopt;
-        if (!value) {
+        std::optional<float> depthValue;
+        std::optional<std::uint8_t> stencilValue;
+        if (index == 0u) depthValue = aliasedDepth(*alias, range, target.samples);
+        else if (index == 2u && stencilPlane) stencilValue = aliasedStencil(*alias, range, target.samples);
+        if (!depthValue && !stencilValue) {
             reportAlias(*alias, range, index == 2u ? "stencil plane" : index == 1u ? "HTILE" : "depth");
             if (index == 2u && stencilPlane) {
                 state.unprovenStencil = alias;
@@ -382,7 +405,8 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
             }
             return refuse(index == 2u ? stencilAliasRefusal : depthAliasRefusal);
         }
-        state.aliasStencil = value;
+        if (depthValue) state.aliasDepth = *depthValue;
+        else state.aliasStencil = *stencilValue;
     }
     const auto& htile = state.initial[1];
     for (auto& range : state.initial) {
@@ -396,8 +420,9 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     std::vector<std::uint32_t> metadata(htile.bytes / sizeof(std::uint32_t));
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(metadata)), 256u);
     if (!target.htilePipeAligned && std::adjacent_find(metadata.begin(), metadata.end(), [](std::uint32_t first, std::uint32_t second) { return first != second; }) != metadata.end()) return refuse("native multisample depth HTILE that is not pipe-aligned holds more than one word");
+    const float depthClear = state.aliasDepth.value_or(target.clearDepth);
     for (const auto word : metadata) {
-        if (!htileProvesClear(word, target.htileDepthOnly, target.clearDepth)) return refuse("native multisample depth initial HTILE does not prove its clear value");
+        if (!htileProvesClear(word, target.htileDepthOnly, depthClear)) return refuse("native multisample depth initial HTILE does not prove its clear value");
         if (stencil && !stencilPlane && !htileProvesStencilClear(word)) return refuse("native multisample stencil initial HTILE does not prove its clear value");
     }
     if (stencilPlane && !state.aliasStencil && !state.unprovenStencil) {
@@ -407,6 +432,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     }
     for (const auto& range : state.initial) GuestMemory::CollectWritesUncached(range.address, range.bytes);
     if (!GuestMemory::UnchangedSinceAll(state.initial)) return refuse("guest writes raced native multisample depth import");
+    if (state.aliasDepth) state.initialDepth = *state.aliasDepth;
     return state;
 }
 
@@ -644,9 +670,15 @@ public:
             GuestMemory::CollectWritesUncached(range.address, range.bytes);
             const auto alias = MultisampleColorTargetOver(range.address, range.bytes);
             if (!alias || (index == 2u && sampling.unprovenStencil && stencilClearGeneration == 0u)) continue;
-            const auto value = index == 2u && separatePlane ? aliasedStencil(*alias, range, target.samples) : std::nullopt;
-            const bool kept = value.has_value() && (stencilClearGeneration != 0u ? *value == *stencilClearValue : value == sampling.aliasStencil);
-            const bool stencilRange = index == 2u || (index == 1u && uniformPlaneTarget(target));
+            const bool uniform = uniformPlaneTarget(target);
+            std::optional<float> depthValue;
+            std::optional<std::uint8_t> stencilValue;
+            if (index == 0u) depthValue = aliasedDepth(*alias, range, target.samples);
+            else if (index == 2u && separatePlane) stencilValue = aliasedStencil(*alias, range, target.samples);
+            bool kept = false;
+            if (depthValue) kept = *depthValue == sampling.initialDepth.value_or(target.clearDepth);
+            else if (stencilValue) kept = stencilClearGeneration != 0u ? *stencilValue == *stencilClearValue : *stencilValue == sampling.aliasStencil;
+            const bool stencilRange = index == 2u || (index == 1u && uniform);
             if (!kept) reportAlias(*alias, range, stencilRange ? "stencil plane" : index == 1u ? "HTILE" : "depth");
             Require(kept, stencilRange ? stencilAliasRefusal : depthAliasRefusal);
             planeAliased = true;
