@@ -363,7 +363,7 @@ static bool MeasuredHole(const std::uint8_t* profile, int sbc) {
     const std::initializer_list<int> cp1253 = {0x81, 0x88, 0x8A, 0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x98, 0x9A, 0x9C, 0x9D, 0x9E, 0x9F, 0xAA, 0xD2, 0xFF};
     const std::initializer_list<int> cp1254 = {0x81, 0x8D, 0x8E, 0x8F, 0x90, 0x9D, 0x9E};
     const std::initializer_list<int> cp1255 = {0x81, 0x8A, 0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x9A, 0x9C, 0x9D, 0x9E, 0x9F, 0xCA, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xFB, 0xFC, 0xFF};
-    const std::initializer_list<int> cp1257 = {0x81, 0x83, 0x88, 0x8A, 0x8C, 0x90, 0x98, 0x9A, 0x9C, 0x9E, 0xA1, 0xA5};
+    const std::initializer_list<int> cp1257 = {0x81, 0x83, 0x88, 0x8A, 0x8C, 0x90, 0x98, 0x9A, 0x9C, 0x9F, 0xA1, 0xA5};
     const std::initializer_list<int> cp1258 = {0x81, 0x8A, 0x8D, 0x8E, 0x8F, 0x90, 0x9A, 0x9D, 0x9E};
     const std::initializer_list<int> cp864 = {0x9B, 0x9C, 0x9F, 0xA6, 0xA7, 0xFF};
     if (profile == sceCesRefersUcsProfileCp1253()) return std::find(cp1253.begin(), cp1253.end(), sbc) != cp1253.end();
@@ -397,7 +397,11 @@ static void CheckSingleByteProfiles() {
             if (MeasuredHole(profile, sbc)) {
                 std::uint32_t code = 0x5A5A5A5A;
                 Require(sceCesSbcToUtf32(profile, static_cast<std::uint8_t>(sbc), &code) == unassignedCode && code == 0x5A5A5A5A);
-                Require(sceCesUtf32ToSbc(static_cast<std::uint32_t>(sbc), profile, &back) == unassignedCode);
+                if (profile == sceCesRefersUcsProfileCp864() && sbc == 0xA6) {
+                    Require(sceCesUtf32ToSbc(static_cast<std::uint32_t>(sbc), profile, &back) == 0 && back == 0xDB);
+                } else {
+                    Require(sceCesUtf32ToSbc(static_cast<std::uint32_t>(sbc), profile, &back) == unassignedCode);
+                }
                 continue;
             }
             Require(sceCesSbcToUtf8(profile, static_cast<std::uint8_t>(sbc), cp, sizeof(cp), &cpLength) == 0);
