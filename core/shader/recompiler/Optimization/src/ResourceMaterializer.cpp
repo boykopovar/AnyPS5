@@ -2725,7 +2725,7 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 for (const auto& table : nextSnapshot.tables.tables) {
                     for (const auto& view : table.resourceViews) nextSnapshot.registeredImages.insert(nextSnapshot.registeredImages.end(), view.identities.begin(), view.identities.end());
                 }
-                if (afterImageGeneration != beforeImageGeneration && (runtime.imageViewsCurrent == nullptr || !runtime.imageViewsCurrent(runtime.userContext, nextSnapshot.registeredImages))) {
+                if (afterImageGeneration != beforeImageGeneration && (runtime.snapshotCurrent == nullptr || !runtime.snapshotCurrent(runtime.userContext, nextSnapshot.registeredImages))) {
                     continue;
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;

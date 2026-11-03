@@ -86,7 +86,7 @@ struct SrtImageViewIdentity {
 using SrtImageViewNormalizer = bool (*)(void* userData, std::uint32_t maxArrayLayers, std::array<std::uint32_t, 8>& descriptor, SrtImageViewIdentity& identity);
 using SrtImageViewGeneration = std::uint64_t (*)(void* userData);
 struct RegisteredImageView;
-using SrtImageViewsCurrent = bool (*)(void* userData, std::span<const RegisteredImageView> views);
+using SrtSnapshotCurrent = bool (*)(void* userData, std::span<const RegisteredImageView> views);
 
 // The guest addresses a walk dereferenced (Detail::Evaluator::EvaluateRawRead): the leaf read of
 // each pure flat slot (IrResourcePlan::pureFlatSlots) as (flat offset, address), set by the
@@ -116,7 +116,7 @@ struct SrtRuntime {
     SrtDescriptorScope descriptorScope = nullptr;
     SrtImageViewNormalizer normalizeImageView = nullptr;
     SrtImageViewGeneration imageViewGeneration = nullptr;
-    SrtImageViewsCurrent imageViewsCurrent = nullptr;
+    SrtSnapshotCurrent snapshotCurrent = nullptr;
 };
 
 struct SrtForceSyncScope {
