@@ -553,6 +553,8 @@ static void CheckSpecialPort(int user, int handle) {
         Require(scePadSetAngularVelocityDeadbandState(invalidHandle, true) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadSetAngularVelocityDeadbandState(invalidHandle, false) == PAD_ERROR_INVALID_HANDLE);
     }
+    Require(scePadSetVibrationMode(special, 1) == PAD_OK);
+    Require(scePadSetVibrationMode(special, 4) == PAD_ERROR_INVALID_ARG);
     Require(scePadSetTiltCorrectionState(special, true) == PAD_OK);
     Require(scePadResetOrientation(special) == PAD_OK);
     Require(scePadReadState(handle, data) == PAD_OK);
@@ -562,6 +564,8 @@ static void CheckSpecialPort(int user, int handle) {
     Require(scePadClose_nid_postfix(special) == PAD_OK);
     Require(scePadGetHandle(user, PAD_PORT_TYPE_SPECIAL, 0) == noHandle);
     Require(scePadClose_nid_postfix(special) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibrationMode(special, 1) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibrationMode(special, 0) == PAD_ERROR_INVALID_ARG);
     Require(scePadSetAngularVelocityDeadbandState(special, true) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetAngularVelocityDeadbandState(special, false) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadRead_nid_postfix(special, data, 1) == PAD_ERROR_INVALID_HANDLE);
