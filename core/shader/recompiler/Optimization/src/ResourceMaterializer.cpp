@@ -2379,6 +2379,35 @@ std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image,
     return *match.mode;
 }
 
+std::uint32_t ResourceMaterializer::VolumeGatherState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
+    const auto& image = info.images[index];
+    const auto& descriptor = snapshot.images[index];
+    if (image.table != NoTable) throw std::runtime_error("a 3D gather of an image table entry is not implemented");
+    if (descriptor.dwordCount != 8u) throw std::runtime_error("a 3D gather of an image without an 8-dword descriptor is not implemented");
+    if (nullImageDescriptor(image, descriptor)) return 0u;
+    std::optional<std::uint32_t> samplerState;
+    for (const auto& pair : info.sampledPairs) {
+        if (pair.image != index || !pair.volumeGather) continue;
+        if (pair.sampler >= info.samplers.size() || info.samplers[pair.sampler].table != NoTable) throw std::runtime_error("a 3D gather through a sampler table is not implemented");
+        if (pair.sampler >= snapshot.samplers.size() || snapshot.samplers[pair.sampler].dwordCount != 4u) throw std::runtime_error("a 3D gather has no sampler descriptor");
+        const auto& words = snapshot.samplers[pair.sampler].dwords;
+        if (((words[0] >> 15u) & 0x1u) != 0u) throw std::runtime_error("a 3D gather with unnormalized coordinates is not implemented");
+        const auto clampX = words[0] & 0x7u;
+        const auto clampY = (words[0] >> 3u) & 0x7u;
+        const auto clampZ = (words[0] >> 6u) & 0x7u;
+        const auto border = (words[3] >> 30u) & 0x3u;
+        const bool bordered = clampX >= 4u || clampY >= 4u || clampZ >= 6u;
+        if (bordered && border == 3u) throw std::runtime_error("a 3D gather with a border color table is not implemented");
+        if (bordered && (image.numericClass == IrTextureNumericClass::Uint || image.numericClass == IrTextureNumericClass::Sint)) throw std::runtime_error("a 3D gather of an integer texture with border addressing is not implemented");
+        if (bordered && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle) throw std::runtime_error("a 3D gather of a swizzled texture with border addressing is not implemented");
+        const auto state = (clampX << VolumeGather::ClampXShift) | (clampY << VolumeGather::ClampYShift) | (clampZ << VolumeGather::ClampZShift) | ((bordered ? border : 0u) << VolumeGather::BorderShift);
+        if (samplerState.has_value() && *samplerState != state) throw std::runtime_error("a 3D gather through samplers that disagree is not implemented");
+        samplerState = state;
+    }
+    if (!samplerState.has_value()) throw std::runtime_error("a 3D gather has no paired sampler");
+    return *samplerState;
+}
+
 std::uint32_t ResourceMaterializer::EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
     return emulatedCompareState(info, snapshot, index);
 }
@@ -2719,11 +2748,14 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
                 const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
-                if ((runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) || afterImageGeneration != beforeImageGeneration) {
+                if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
                     continue;
                 }
                 for (const auto& table : nextSnapshot.tables.tables) {
                     for (const auto& view : table.resourceViews) nextSnapshot.registeredImages.insert(nextSnapshot.registeredImages.end(), view.identities.begin(), view.identities.end());
+                }
+                if (afterImageGeneration != beforeImageGeneration && (runtime.snapshotCurrent == nullptr || !runtime.snapshotCurrent(runtime.userContext, nextSnapshot.registeredImages))) {
+                    continue;
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
                 const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

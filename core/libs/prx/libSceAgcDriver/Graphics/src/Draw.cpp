@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/StagedMerge.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
@@ -441,7 +442,7 @@ void storeClearTexels(const Context& context, const ColorTarget& color, const st
 }
 
 void storeSingleTexels(const Context& context, const ColorTarget& color) {
-    Require(color.tileMode != ColorTileMode::Linear, "comp-to-single DCC keys of a linear color target");
+    Require(!ColorTileModeIsLinear(color.tileMode), "comp-to-single DCC keys of a linear color target");
     const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
     Require(surface.Bytes() == color.bytes, "comp-to-single DCC keys over a color target whose layout differs from its surface");
     StorageTexture::FlushPending(color.address, color.bytes, nullptr, "comp-to-single expansion");
@@ -2219,6 +2220,14 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
 // resident targets with their views, the indirect records (null for a direct draw), how the
 // completion work is handled (`listed`, `completion`, `waited`: see Draw) and, from a recipe, the
 // push constant block (else assembled from the stages).
+struct StagedWrite {
+    std::shared_ptr<StagedTemporary> temporary;
+    VkImageView target = VK_NULL_HANDLE;
+    std::uint16_t mask = 0;
+    std::uint32_t samples = 1;
+    VkRect2D area{};
+};
+
 struct RecordedDraw {
     Recorder* recorder = nullptr;
     std::shared_ptr<ShaderResources> resources;
@@ -2230,6 +2239,7 @@ struct RecordedDraw {
     std::vector<std::shared_ptr<void>> multisampleTargets;
     std::vector<std::shared_ptr<StorageTexture>> proxies;
     std::vector<VkImage> multisampleImages;
+    std::vector<StagedWrite> staged;
     const IndirectRecord* indirect = nullptr;
     std::span<const ShaderResources::MovedBuffer> moved;
     bool listed = false;
@@ -2501,8 +2511,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
+    resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
-    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
     outcome.passContinued = continued;
@@ -2573,6 +2584,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             RecordSampleOrder(context, commands, record.reorderPass, record.reordered, true, kept);
             for (auto& object : kept) recorder->Keep(std::move(object));
         }
+        for (const auto& write : record.staged) RecordStagedClear(context, commands, *write.temporary);
         APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
         record.pipeline->Begin(commands, *record.framebuffer, state.renderExtent, state);
     }
@@ -2644,6 +2656,13 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     timer.phase(PhaseRecord);
     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome);
     timer.phase(PhaseKeep);
+    if (!record.staged.empty()) {
+        const auto merged = recorder->Commands();
+        for (auto& write : record.staged) {
+            RecordStagedMerge(context, merged, *write.temporary, write.target, write.mask, write.samples, write.area);
+            recorder->Keep(write.temporary);
+        }
+    }
     if (record.waited) {
         // The wait the dispatch path makes for such work (source 3, "address-based"): the
         // write-back runs before the next packet, so the CPU never reads copied results or
@@ -2726,6 +2745,8 @@ struct TargetBinding {
     bool multisampled = false;
     VkImage multisampleImage = VK_NULL_HANDLE;
     std::shared_ptr<void> multisampleOwner;
+    std::shared_ptr<StagedTemporary> stagedTemporary;
+    VkImageView stagedTarget = VK_NULL_HANDLE;
     std::unique_ptr<Buffer> dump;
 };
 
@@ -2965,9 +2986,15 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (color.samples > 1) {
             binding.multisampled = true;
             timer.phase(PhaseSetup);
-            if (color.partialWriteMask != 0) {
-                static_cast<void>(MultisampleTargetView(context, color));
-                static_cast<void>(MultisampleTargetStorageView(context, TargetMergeSurface(color)));
+            if (color.staged) {
+                const auto packed = StagedMergeTarget(color);
+                binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
+                static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
+                binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
+                Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
+                targetViews.push_back(binding.stagedTemporary->View());
+                timer.phase(PhaseReadTarget);
+                continue;
             }
             targetViews.push_back(MultisampleTargetView(context, color, binding.multisampleOwner, &binding.multisampleImage));
             timer.phase(PhaseReadTarget);
@@ -2985,7 +3012,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
         static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR") == nullptr;
         const bool linearResident = residentLinear && residentTargets && context.detiler != nullptr && color.tileMode == ColorTileMode::Linear && (ExistingHostImportFor(context, color.address, colorLayout.Bytes()) != nullptr || (GuestMemory::Watched(color.address, colorLayout.Bytes()) && HostImportFor(context, color.address, colorLayout.Bytes(), ImportRequester::ColorTarget) != nullptr));
-        if ((binding.gpuTiling || ((color.tileMode != ColorTileMode::Linear || linearResident) && context.detiler != nullptr)) && residentTargets) {
+        if ((binding.gpuTiling || ((!ColorTileModeIsLinear(color.tileMode) || linearResident) && context.detiler != nullptr)) && residentTargets) {
             // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
             // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then
             // UnchangedSince). The page walk is skipped while the worker's collect epoch lasts
@@ -3078,7 +3105,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     }
     if (state.depth) {
         targetViews.push_back(DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state)));
-        if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     }
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
@@ -3086,6 +3112,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
     auto& resolved = prepared.resolved;
     resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    if (state.depth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     auto& resources = resolved.resources;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         auto& binding = targets[index];
@@ -3236,9 +3263,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (!binding.multisampled) continue;
         const auto& sources = resources->MultisampleSources();
         const auto reads = std::count(sources.begin(), sources.end(), binding.color.surfaceAddress);
-        Require(reads == 0 || (reads == 1 && binding.color.partialWriteMask != 0), "sampling a multisampled color target the draw renders to is not implemented");
-        Require(binding.color.partialWriteMask == 0 || (reads == 1 && MultisampleTargetStorable(context, binding.color)), "the partial write of a multisampled packed color target does not store into the target's image");
-        if (binding.color.partialWriteMask != 0) static_cast<void>(MultisampleTargetStorageView(context, TargetMergeSurface(binding.color)));
+        Require(reads == 0, "sampling a multisampled color target the draw renders to is not implemented");
     }
     for (const auto& binding : targets) {
         if (binding.color.partialWriteMask == 0 || binding.multisampled) continue;
@@ -3305,6 +3330,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         owners.push_back(binding.resident);
         framebufferOwners.push_back(binding.multisampled ? binding.multisampleOwner : binding.resident);
     }
+    Require(!pipeline->ReordersSamples() || std::ranges::none_of(state.colors, [](const ColorTarget& color) { return color.staged; }), "a partial write of a multisampled packed color target on a device that puts the guest's samples in order is not implemented");
     auto& framebuffer = prepared.framebuffer;
     framebuffer = pipeline->AcquireFramebuffer(targetViews, framebufferOwners, state.renderExtent, state.renderLayers);
     auto& reordered = prepared.reordered;
@@ -3376,6 +3402,18 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             if (binding.multisampled) {
                 record.multisampleImages.push_back(binding.multisampleImage);
                 record.multisampleTargets.push_back(binding.multisampleOwner);
+            }
+            if (binding.stagedTemporary != nullptr) {
+                record.multisampleImages.push_back(binding.stagedTemporary->Image());
+                const auto& color = binding.color;
+                const auto bounds = VkRect2D{{0, 0}, color.extent};
+                auto area = state.scissor;
+                area.offset.x = std::max(area.offset.x, bounds.offset.x);
+                area.offset.y = std::max(area.offset.y, bounds.offset.y);
+                const auto right = std::min<std::int64_t>(static_cast<std::int64_t>(state.scissor.offset.x) + state.scissor.extent.width, color.extent.width);
+                const auto bottom = std::min<std::int64_t>(static_cast<std::int64_t>(state.scissor.offset.y) + state.scissor.extent.height, color.extent.height);
+                area.extent = {static_cast<std::uint32_t>(std::max<std::int64_t>(right - area.offset.x, 0)), static_cast<std::uint32_t>(std::max<std::int64_t>(bottom - area.offset.y, 0))};
+                record.staged.push_back({binding.stagedTemporary, binding.stagedTarget, color.stagedMask, color.samples, area});
             }
         }
         record.indirect = args != nullptr ? &indirect : nullptr;
@@ -3853,7 +3891,6 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     if (recipe.hasDepth) {
         timer.phase(PhaseSetup);
         const auto depthView = DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state));
-        if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
         timer.phase(PhaseReadTarget);
         if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);
     }
@@ -3876,6 +3913,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         return miss(DrawRecipeMiss::Proof);
     }
     CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
+    if (recipe.hasDepth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     SharedResourceCache().Touch(recipe.key);
     countCache(&DrawProfile::cacheHits);
     timer.phase(PhaseLookup);
@@ -3922,7 +3960,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
 namespace {
 
 std::shared_ptr<StorageTexture> metadataPassResident(const Context& context, const ColorTarget& color) {
-    if (color.tileMode == ColorTileMode::Linear || context.detiler == nullptr) return nullptr;
+    if (ColorTileModeIsLinear(color.tileMode) || context.detiler == nullptr) return nullptr;
     const auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
     return resident != nullptr && resident->GuestBytes() == color.bytes ? resident : nullptr;
 }
@@ -3953,7 +3991,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
     if (pass.mode == ColorMetadataPass::Mode::Resolve) {
         Require(pass.source.has_value() && pass.targets.size() == 1, "CB resolve without its source and destination");
         const auto& destination = pass.targets.front();
-        Require(destination.tileMode != ColorTileMode::Linear && context.detiler != nullptr, "CB resolve into a target without a resident image is not implemented");
+        Require(!ColorTileModeIsLinear(destination.tileMode) && context.detiler != nullptr, "CB resolve into a target without a resident image is not implemented");
         const auto resident = CachedStorageSurface(context, SurfaceForTarget(destination));
         Require(resident->Attachable(), "storage format cannot be a color attachment");
         ResolveMultisampleTarget(context, *pass.source, *resident, resident->AttachmentView(destination.format, destination.mip));

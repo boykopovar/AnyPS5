@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -71,6 +72,7 @@ struct MultisampleColorAlias {
 };
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes);
+void WithMultisampleTargetsLockForTest(const std::function<void()>& inside);
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target);
 std::size_t MultisampledDccBytes(const ColorTarget& target);
@@ -105,6 +107,7 @@ void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes);
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
+bool HoldsMultisampleTargetsLock();
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);

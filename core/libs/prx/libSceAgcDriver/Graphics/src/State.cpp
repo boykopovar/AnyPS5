@@ -451,6 +451,7 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     DepthTarget depth{};
     depth.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
     const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    depth.gcn = gcn;
     depth.depthSwizzle = gcn ? 0u : (read(cx, 0x010) >> 4u) & 31u;
     depth.iterate256 = !gcn && (read(cx, 0x010) & (1u << 20u)) != 0;
     depth.firstSlice = view & 0x1fffu;
@@ -684,25 +685,6 @@ bool sampleCoverageSupported(const QueueState& queue, std::uint32_t samples, boo
     if (ena == queue.context.end() || addr == queue.context.end()) return true;
     const auto inputs = ena->second & addr->second;
     return (inputs & PixelSampleCoverageInput) == 0u || (!perSampleShading && (inputs & PixelSampleRateInputs) == 0u);
-}
-
-bool pixelRateInputsKept(const QueueState& queue, const State& state) {
-    using ShaderRecompiler::PixelInput;
-    using ShaderRecompiler::PixelInputBit;
-    constexpr std::uint32_t numbered = PixelInputBit(PixelInput::Ancillary) | PixelInputBit(PixelInput::SampleCoverage);
-    constexpr std::uint32_t located = PixelInputBit(PixelInput::PerspectiveSample) | PixelInputBit(PixelInput::PerspectiveCentroid) | PixelInputBit(PixelInput::PerspectivePullModel) | PixelInputBit(PixelInput::LinearSample) | PixelInputBit(PixelInput::LinearCentroid) | PixelInputBit(PixelInput::PositionZ) | PixelInputBit(PixelInput::PositionW);
-    const bool centred = state.customSampleLocations && std::ranges::all_of(state.sampleLocations, [](std::uint8_t location) { return location == 0u; });
-    const auto moving = numbered | (centred ? 0u : located);
-    if (PixelProgramSkipped(queue)) return true;
-    const auto ena = find(queue.context, 0x1b3);
-    const auto addr = find(queue.context, 0x1b4);
-    if (ena == queue.context.end() || addr == queue.context.end()) return true;
-    const auto inputs = ena->second & addr->second;
-    if ((inputs & moving) != 0u) return false;
-    if (centred || (inputs & (PixelInputBit(PixelInput::PositionX) | PixelInputBit(PixelInput::PositionY))) == 0u) return true;
-    const auto position = find(queue.context, 0x1b8);
-    const auto control = position == queue.context.end() ? 0u : position->second;
-    return (control & 0x100000u) != 0u || ((control >> 16u) & 3u) == 0u;
 }
 
 bool coveredCentroidSupported(const QueueState& queue) {
@@ -1861,18 +1843,18 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             Require(nibbles || (exportedMask & packedMask) == packedMask, "partial writes of " + packed + " color target are unsupported");
             if ((exportedMask & packedMask) != packedMask) {
                 Require(color.mipCount == 1u && color.depth == 1u && color.layers == 1u && color.arrayLastSlice == 0u, "partial writes of a mipmapped, volume or array " + std::string(PackedColorTargetName(color.packing)) + " color target are not implemented");
-                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), "partial writes of a packed color target merge into their target alone and cannot join another merged color target of the draw");
-                color.partialWriteMask = PackedWriteMask(mapping, exportedMask);
-                state.colorWriteMask = 0;
+                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0 || other.staged; }), "partial writes of a packed color target merge into their target alone and cannot join another merged color target of the draw");
+                const auto written = PackedWriteMask(mapping, exportedMask);
                 if (color.samples > 1u) {
-                    Require(sampleCoverageSupported(queue, result.samples, true), "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample, or reads sample-rate or ancillary inputs, is unsupported (the input holds the whole pixel's coverage, gl_SampleMaskIn only the invocation's samples)");
-                    if (!result.perSampleShading && !pixelRateInputsKept(queue, result)) {
-                        const auto value = [&](std::uint32_t offset) { const auto it = queue.context.find(offset); return it == queue.context.end() ? 0u : it->second; };
-                        char detail[160];
-                        std::snprintf(detail, sizeof(detail), " (SPI_PS_INPUT_ENA 0x%x, SPI_PS_INPUT_ADDR 0x%x, SPI_BARYC_CNTL 0x%x, sample 1 location 0x%02x)", value(0x1b3), value(0x1b4), value(0x1b8), result.sampleLocations[1]);
-                        Require(false, std::string("partial writes of a multisampled 4_4_4_4 unorm color target run the pixel shader once per sample, so a shader the guest runs once per pixel cannot read the ancillary word or, unless every sample sits at the pixel centre, centroid, sample-located or pull-model barycentrics, Z, 1/W or a position at the centroid or a sample: they would follow the invocation's sample") + detail);
-                    }
-                    result.perSampleShading = true;
+                    Require(LogicOpFromRop(result.colorRop) == VK_LOGIC_OP_COPY, "a partial write of a multisampled 4_4_4_4 unorm color target under a color logic operation is not implemented");
+                    color.staged = true;
+                    color.stagedMask = written;
+                    color.stagedFormat = color.format;
+                    color.format = VK_FORMAT_R32_UINT;
+                    state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+                } else {
+                    color.partialWriteMask = written;
+                    state.colorWriteMask = 0;
                 }
             }
         }
@@ -1902,7 +1884,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     for (std::uint32_t i = 0; i < 3; ++i) {
         if ((requiredBlendMask & (1u << i)) != 0) result.blendConstants[i] = requiredBlendConstants[i];
     }
-    Require((!result.mergedCoverage && !result.truncatedCoverage) || std::ranges::none_of(result.colors, [](const ColorTarget& color) { return color.partialWriteMask != 0; }), "partial writes of a 4_4_4_4 unorm color target under merged or truncated coverage (a one-sample target under a multisampled rasterizer) are not implemented");
+    Require((!result.mergedCoverage && !result.truncatedCoverage) || std::ranges::none_of(result.colors, [](const ColorTarget& color) { return color.partialWriteMask != 0 || color.staged; }), "partial writes of a 4_4_4_4 unorm color target under merged or truncated coverage (a one-sample target under a multisampled rasterizer) are not implemented");
     if (!result.colors.empty()) {
         result.color = result.colors.front();
         result.blend = result.blends[result.colors.front().exportIndex];
@@ -1942,6 +1924,17 @@ std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t expor
         if (((exportedMask >> ((componentMapping >> (2u * component)) & 3u)) & 1u) != 0) mask = static_cast<std::uint16_t>(mask | (0xfu << (4u * component)));
     }
     return mask;
+}
+
+ColorTarget StagedMergeTarget(const ColorTarget& staged) {
+    Require(staged.staged, "only a staged color target has a merge target");
+    auto target = staged;
+    target.format = staged.stagedFormat;
+    target.staged = false;
+    target.stagedMask = 0;
+    target.stagedFormat = VK_FORMAT_UNDEFINED;
+    target.partialWriteMask = staged.stagedMask;
+    return target;
 }
 
 GuestTextureResource TargetMergeSurface(const ColorTarget& color) {
@@ -2081,7 +2074,7 @@ std::uint32_t GuestFormatFor(VkFormat format, std::uint32_t elementBytes) {
 
 GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR") == nullptr;
-    Require(residentLinear || color.tileMode != ColorTileMode::Linear, "linear color targets are not resident");
+    Require((residentLinear && color.tileMode == ColorTileMode::Linear) || !ColorTileModeIsLinear(color.tileMode), "linear color targets are not resident");
     const bool chain = color.mipCount > 1;
     GuestTextureResource surface{};
     surface.baseAddress = chain ? color.surfaceAddress : color.address;
@@ -2134,7 +2127,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     color.surfaceExtent = color.extent;
     color.elementBytes = decoded.elementBytes;
     switch (attrib & 0x1fu) {
-        case 8u: color.tileMode = ColorTileMode::Linear; break;
+        case 8u: color.tileMode = ColorTileMode::GcnLinear; break;
         case 5u: case 13u: color.tileMode = ColorTileMode::GcnThin1D; break;
         case 9u: color.tileMode = ColorTileMode::GcnDisplay1D; break;
         case 10u: color.tileMode = ColorTileMode::GcnDisplay2D; break;

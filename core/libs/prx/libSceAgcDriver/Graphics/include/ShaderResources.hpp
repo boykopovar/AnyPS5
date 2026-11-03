@@ -159,6 +159,7 @@ struct ImageTableReuseCounts {
 ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
 std::uint64_t SampledLookupKeyScans();
+std::uint64_t SampledLookupKeyProofs();
 
 struct PresyncSurface {
     std::uint64_t address;
@@ -189,6 +190,7 @@ public:
     VkDescriptorSetLayout FragmentLayout() const { return fragment.layout; }
     bool SplitSets() const { return splitSets; }
     PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
+    void RequireGuestBuffers() const { requireGuestBuffers(); }
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
@@ -399,6 +401,7 @@ private:
         std::int32_t pushByte = -1;
         std::int64_t dataAllocation = -1;
         std::uint32_t dataByte = 0;
+        bool oversized = false;
     };
     struct DataPatch {
         std::size_t allocation;
