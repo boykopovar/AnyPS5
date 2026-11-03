@@ -23,6 +23,7 @@
 #include <io.h>
 #include <windows.h>
 #include "prx/libc/include/WindowsDescriptor.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #endif
 
 #include "prx/libc/include/SonyCrt.hpp"
@@ -69,16 +70,10 @@ static std::optional<GuestFileMode> ParseFileMode(const char* mode) {
 static constexpr DWORD AppendOnlyAccess = FILE_GENERIC_WRITE & ~FILE_WRITE_DATA;
 
 static std::optional<std::wstring> HostOpenName(const std::filesystem::path& path) {
-    auto filename = path.native();
-    if (!filename.starts_with(L"\\\\?\\") && !filename.starts_with(L"\\\\.\\")) {
-        std::error_code pathError;
-        auto absolutePath = std::filesystem::absolute(path, pathError);
-        if (pathError) { errno = pathError.default_error_condition().value(); return std::nullopt; }
-        const auto absolute = absolutePath.lexically_normal().make_preferred().native();
-        if (absolute.size() >= MAX_PATH)
-            filename = absolute.starts_with(L"\\\\") ? L"\\\\?\\UNC\\" + absolute.substr(2) : L"\\\\?\\" + absolute;
-    }
-    return filename;
+    std::error_code pathError;
+    const auto resolved = NativeVerbatimPath_nid_no_patch(path, pathError);
+    if (pathError) { errno = pathError.default_error_condition().value(); return std::nullopt; }
+    return resolved.native();
 }
 #endif
 
