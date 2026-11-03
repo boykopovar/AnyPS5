@@ -248,7 +248,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.samplerCoordinatesIgnored = {false, seed % 2 == 0, true};
     binding.imageUnnormalized = {true, false, seed % 2 == 0};
     binding.imageUnnormalizedBaseLevel = {false, true, seed % 3 == 0};
-    binding.imageSamplers = {0x5u, 0u, 0x80000000u};
+    binding.imageSamplers = {0x5u, 0u, 0x8000000080000000u};
     binding.bufferRead = {true, false, false, true, true, false};
     binding.bufferExtent = {32, 0, 16, 4096, 8, 0};
     return binding;
@@ -508,7 +508,7 @@ void verifyEntryRoundTrip() {
     auto previousVersion = file;
     previousVersion[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodeEntry(previousVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with the previous format version loads");
-    for (const auto version : {51u, 52u, 53u, 54u}) {
+    for (const auto version : {51u, 52u, 53u, 54u, 55u}) {
         auto otherImageLayout = file;
         otherImageLayout[4] = static_cast<std::byte>(version);
         require(ShaderDiskCache::DecodeEntry(otherImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with another image record layout loads");
@@ -2190,7 +2190,7 @@ void verifyPlanEntryDamage(const std::vector<std::byte>& key, const IrResourcePl
     auto previousFormat = file;
     previousFormat[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodePlanEntry(previousFormat, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of the previous format loads");
-    for (const auto version : {51u, 52u, 53u, 54u}) {
+    for (const auto version : {51u, 52u, 53u, 54u, 55u}) {
         auto otherImageLayout = file;
         otherImageLayout[4] = static_cast<std::byte>(version);
         require(ShaderDiskCache::DecodePlanEntry(otherImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with another image record layout loads");
