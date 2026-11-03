@@ -83,6 +83,32 @@ class OracleCacheTests(unittest.TestCase):
                 self.assertEqual([file for file in cache.rglob("*") if file.is_file()], [binary])
 
 
+class CacheDirectoryTests(unittest.TestCase):
+    def test_xdg_cache_home_is_used_only_when_absolute(self):
+        home = Path.home() / ".cache" / "anyps5-hw-oracle"
+        absolute = Path(tempfile.gettempdir()).resolve()
+        cases = (
+            ({}, home),
+            ({"XDG_CACHE_HOME": ""}, home),
+            ({"XDG_CACHE_HOME": "relative/cache"}, home),
+            ({"XDG_CACHE_HOME": "."}, home),
+            ({"XDG_CACHE_HOME": str(absolute)}, absolute / "anyps5-hw-oracle"),
+            ({"XDG_CACHE_HOME": "relative/cache", "HW_ORACLE_CACHE": "chosen"}, Path("chosen")),
+            ({"XDG_CACHE_HOME": str(absolute), "HW_ORACLE_CACHE": ""}, absolute / "anyps5-hw-oracle"),
+        )
+        for environment, expected in cases:
+            with self.subTest(environment=environment):
+                self.assertEqual(hw_oracle.cache_directory(environment), expected)
+
+    def test_module_cache_follows_the_environment_at_import(self):
+        environment = {key: value for key, value in os.environ.items() if key not in ("HW_ORACLE_CACHE", "XDG_CACHE_HOME")}
+        environment["XDG_CACHE_HOME"] = "relative/cache"
+        result = subprocess.run([sys.executable, "-c", "import hw_oracle; print(hw_oracle.CACHE)"],
+                                cwd=Path(hw_oracle.__file__).parent, env=environment, check=True,
+                                stdout=subprocess.PIPE, text=True)
+        self.assertEqual(Path(result.stdout.strip()), Path.home() / ".cache" / "anyps5-hw-oracle")
+
+
 class InputRowsTests(unittest.TestCase):
     def test_cli_reports_invalid_input_before_tool_lookup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -484,6 +510,32 @@ class OracleConfigurationTests(unittest.TestCase):
                     self.assertEqual(second.read_bytes(), b"second")
                     self.assertNotEqual(first, second)
 
+    @unittest.skipIf(os.name == "nt", "POSIX executable compiler fixture")
+    def test_replacing_selected_compiler_invalidates_the_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            compiler = root / "fixture-cc"
+
+            def install(value, timestamp):
+                compiler.write_text(
+                    "#!" + sys.executable + "\nimport sys\nfrom pathlib import Path\n"
+                    "Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(" + repr(value) + ")\n",
+                    encoding="utf-8")
+                compiler.chmod(0o755)
+                os.utime(compiler, ns=(timestamp, timestamp))
+
+            with patch.object(hw_oracle, "CACHE", root / "cache"), \
+                    patch.object(hw_oracle, "rocm_root", return_value=None), \
+                    patch.dict(os.environ, {"CC": "fixture-cc", "PATH": str(root)}):
+                install(b"first", 1_000_000_000)
+                first = hw_oracle.oracle()
+                self.assertEqual(first.read_bytes(), b"first")
+                self.assertEqual(hw_oracle.oracle(), first)
+                install(b"other", 2_000_000_000)
+                second = hw_oracle.oracle()
+                self.assertEqual(second.read_bytes(), b"other")
+                self.assertNotEqual(first, second)
+
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux compiler and shared-library fixture")
     def test_cache_and_compiler_command_with_host_toolchain(self):
@@ -670,6 +722,44 @@ class AssemblyTests(unittest.TestCase):
                 with patch.object(hw_oracle, "target", return_value="gfx1036"):
                     code = hw_oracle.assemble(body, Path(tmp), wave64, **MODES)
                 self.assertTrue(code.is_file())
+
+
+class HsaRunnerTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "HSA runner is built on Linux")
+    def test_invalid_dispatch_sizes_fail_before_hsa_or_file_access(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(hw_oracle, "CACHE", Path(directory)):
+            try:
+                runner = hw_oracle.oracle()
+            except (OSError, subprocess.CalledProcessError, SystemExit) as error:
+                self.skipTest(f"HSA runner cannot be built: {error}")
+            cases = (
+                (["missing.co", "not-an-int", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1x", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "0", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1025", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "-18446744073709551615", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", " -18446744073709551615", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1", "missing.in", "missing.out", "not-an-int"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "1x"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "0"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "17"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "-18446744073709551600"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", " -18446744073709551600"], "OUT_DWORDS"),
+            )
+            for arguments, name in cases:
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run([runner, *arguments], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"{name} must be", result.stderr)
+                    self.assertNotIn("hsa_", result.stderr)
+                    self.assertNotIn("missing.co", result.stderr)
+            for threads, out_dwords in (("1", "1"), ("1024", "16")):
+                with self.subTest(threads=threads, out_dwords=out_dwords):
+                    result = subprocess.run(
+                        [runner, "missing.co", threads, "missing.in", "missing.out", out_dwords],
+                        capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertNotIn("must be", result.stderr)
 
 
 class HipRuntimeTests(unittest.TestCase):
