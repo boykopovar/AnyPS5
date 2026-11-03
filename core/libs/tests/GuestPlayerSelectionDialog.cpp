@@ -1,6 +1,7 @@
 #include "prx/libScePlayerSelectionDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,9 @@ int main() {
     Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogParamInitialize(&param) == 0);
+    errno = 71;
+    Require(scePlayerSelectionDialogParamInitialize(reinterpret_cast<PlayerSelectionDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(param.base.size == sizeof(param.base));
     Require(param.base.magic == static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param)) - 1060003575u);
     Require(param.size == sizeof(param));
@@ -102,6 +106,9 @@ int main() {
     Require(scePlayerSelectionDialogUpdateStatus() == kStatusFinished);
 
     Require(scePlayerSelectionDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(scePlayerSelectionDialogGetResult(reinterpret_cast<PlayerSelectionDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(scePlayerSelectionDialogGetResult(&result) == kResultUserCanceled);
     Require(result.result == kResultUserCanceled);
     Require(result.option == 99 && result.accountIds == nullptr && result.count == 77 && result.padding == 55);

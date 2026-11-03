@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "ImageTableAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
@@ -18,29 +19,11 @@ namespace AgcDriver::Graphics {
 
 namespace {
 
-// The page tables built per device, reused by a build whose ranges (guest ranges, device
-// addresses, permissions) equal one of them: consecutive address-based builds map the same registered
-// set through the same imports and mirrors, so the ~1200-entry table repeats. The shader only reads
-// the table (its lookup keeps its state in function variables), and a batch in flight keeps its
-// BdaResources, so sharing the buffer is safe. The cache holds the tables weakly: they never outlive
-// the builds that own them (a static owner would destroy the buffer after its device, at exit or on
-// device replacement, and would fail the tests' leak check), and with deferred lease release the
-// previous builds are still in flight when the next one asks, which is what makes the hit rate.
-// One table was enough while every build repeated the last one exactly; now the misaligned
-// descriptor sub-ranges the GPU copies out of imports sit in pool staging buffers whose device
-// addresses cycle through the few buffers the batches in flight leave free, and the three
-// address-based programs of one queue interleave with the lease draws, so a table differs from the
-// previous one and comes back a few builds later (69% misses in the wave-8 run, 4% before the GPU
-// copies). Hence several recent tables, most recently used first, matched by a word hash before
-// the byte compare. APS5_BDA_TABLE_CACHE_ENTRIES sets how many (default 8; 1 is the previous
-// behaviour); APS5_NO_BDA_TABLE_CACHE=1 builds every table.
-// A table built for (or found equal to) the cached address space's ranges carries the space's
-// serial: a build served by that space alone binds it by the serial, with no hash and no compare.
 struct TableEntry {
     std::uint64_t hash;
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     std::weak_ptr<Buffer> buffer;
-    std::uint64_t spaceSerial = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> spaceKeys;
 };
 
 struct TableCache {
@@ -54,8 +37,6 @@ struct TableCache {
 
 bool sameRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& left, const std::vector<ShaderRecompiler::BdaAbi::Range>& right);
 
-// APS5_PROFILE_DRAW: why the most recently used entry did not serve this build (see
-// TableCacheStats). Under the cache mutex.
 void classifyFirstEntry(TableCache& cache, std::uint64_t hash, const std::vector<ShaderRecompiler::BdaAbi::Range>& ranges) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;
@@ -135,8 +116,33 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
     const auto cached = memory.CachedAddressTable();
     std::vector<ShaderRecompiler::BdaAbi::Range> built;
     if (!cached.has_value()) built = memory.AddressRanges();
-    const auto& ranges = cached.has_value() ? *cached->ranges : built;
+    const auto& addressRanges = cached.has_value() ? *cached->ranges : built;
     const auto serial = cached.has_value() ? cached->serial : 0;
+    auto guardSerial = MultisampleTargetRangeGeneration();
+    if (tableCacheEnabled() && serial != 0) {
+        auto& cache = Tables();
+        std::lock_guard lock(cache.mutex);
+        if (cache.device != context.device) {
+            cache.entries.clear();
+            cache.device = context.device;
+        }
+        for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
+            const auto key = std::pair{serial, guardSerial};
+            if (std::find(it->spaceKeys.begin(), it->spaceKeys.end(), key) == it->spaceKeys.end()) continue;
+            if (auto shared = it->buffer.lock(); shared != nullptr) {
+                tableBytes = shared->Bytes().size();
+                ++cache.hits;
+                ++cache.classes.spaceTables;
+                table = std::move(shared);
+                cache.entries.splice(cache.entries.begin(), cache.entries, it);
+                return;
+            }
+            cache.entries.erase(it);
+            break;
+        }
+    }
+    auto filtered = ExcludeMultisampleTargetRanges(context.device, addressRanges, guardSerial);
+    const auto& ranges = filtered.has_value() ? *filtered : addressRanges;
     Require(ranges.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
     Require(ranges.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / sizeof(ShaderRecompiler::BdaAbi::Range), "BDA table size overflow");
     tableBytes = sizeof(ShaderRecompiler::BdaAbi::Header) + ranges.size() * sizeof(ShaderRecompiler::BdaAbi::Range);
@@ -149,20 +155,6 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         if (cache.device != context.device) {
             cache.entries.clear();
             cache.device = context.device;
-        }
-        if (serial != 0) {
-            for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
-                if (it->spaceSerial != serial) continue;
-                if (auto shared = it->buffer.lock(); shared != nullptr) {
-                    ++cache.hits;
-                    ++cache.classes.spaceTables;
-                    table = std::move(shared);
-                    cache.entries.splice(cache.entries.begin(), cache.entries, it);
-                    return;
-                }
-                cache.entries.erase(it);
-                break;
-            }
         }
         hash = hashRanges(ranges);
         classifyFirstEntry(cache, hash, ranges);
@@ -186,9 +178,13 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             }
             if (sameRanges(it->ranges, ranges)) {
                 ++cache.hits;
-                // An equal table of an earlier space (a rebuild that mapped the same ranges the
-                // same way): the next build of this space binds it by the serial.
-                if (serial != 0) it->spaceSerial = serial;
+                if (serial != 0) {
+                    const auto key = std::pair{serial, guardSerial};
+                    auto found = std::find(it->spaceKeys.begin(), it->spaceKeys.end(), key);
+                    if (found != it->spaceKeys.end()) it->spaceKeys.erase(found);
+                    it->spaceKeys.push_back(key);
+                    if (it->spaceKeys.size() > tableCacheEntries()) it->spaceKeys.erase(it->spaceKeys.begin());
+                }
                 table = std::move(shared);
                 cache.entries.splice(cache.entries.begin(), cache.entries, it);
                 return;
@@ -209,7 +205,9 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             cache.entries.clear();
             cache.device = context.device;
         }
-        cache.entries.push_front({hash, cached.has_value() ? ranges : std::move(built), table, serial});
+        auto cachedRanges = filtered.has_value() ? std::move(*filtered) : cached.has_value() ? *cached->ranges : std::move(built);
+        cache.entries.push_front({hash, std::move(cachedRanges), table, {}});
+        if (serial != 0) cache.entries.front().spaceKeys.emplace_back(serial, guardSerial);
         while (cache.entries.size() > tableCacheEntries()) cache.entries.pop_back();
     }
 }

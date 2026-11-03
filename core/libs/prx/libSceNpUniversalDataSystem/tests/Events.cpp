@@ -65,8 +65,15 @@ void testObjectSetters() {
     const auto* replaced = std::get_if<std::string>(object->Find("int32"));
     check(object->properties.size() == 9 && replaced != nullptr && *replaced == "replaced", "setting a key again did not replace its value");
     check(object->Find("missing") == nullptr, "a missing key was found");
-    check(throwsInvalidArgument([] { sceNpUniversalDataSystemEventPropertyObjectSetInt32(nullptr, "key", 1); }), "a null object was accepted");
-    check(throwsInvalidArgument([object] { sceNpUniversalDataSystemEventPropertyObjectSetInt32(object, nullptr, 1); }), "a null key was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetInt32(nullptr, "key", 1) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_OBJECT, "a null object was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetInt32(object, nullptr, 1) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY, "a null key was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetInt32(object, "", 1) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY, "an empty key was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetString(nullptr, nullptr, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_OBJECT, "a null object was not checked first");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetString(object, "", nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_KEY, "the key was not checked before the value");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetString(object, "string", nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "a null string was accepted");
+    check(sceNpUniversalDataSystemEventPropertyObjectSetBinary(object, "binary", nullptr, 0) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "a null binary of size 0 was accepted");
+    check(object->properties.size() == 9, "a rejected call changed the object");
+    check(sceNpUniversalDataSystemCreateEventPropertyObject(nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT, "a null object pointer was accepted");
     call(sceNpUniversalDataSystemDestroyEventPropertyObject(object), "property object was not destroyed");
 }
 
@@ -116,7 +123,12 @@ void testNestedValues() {
     call(sceNpUniversalDataSystemEventPropertyObjectSetArray(parent, "list", array, &stored), "SetArray over a key failed");
     call(sceNpUniversalDataSystemDestroyEventPropertyArray(array), "property array was not destroyed");
     check(stored != array && Uds::Describe(*parent) == R"({"child":{"x":5,"y":true},"list":[9]})", "SetArray did not store a copy under its key");
-    check(throwsInvalidArgument([] { sceNpUniversalDataSystemEventPropertyArraySetInt32(nullptr, 1); }), "a null array was accepted");
+    check(sceNpUniversalDataSystemEventPropertyArraySetInt32(nullptr, 1) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY, "a null array was accepted");
+    check(sceNpUniversalDataSystemEventPropertyArraySetString(nullptr, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_ARRAY, "a null array was not checked first");
+    check(sceNpUniversalDataSystemEventPropertyArraySetString(stored, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "a null string was added");
+    check(sceNpUniversalDataSystemEventPropertyArraySetBinary(stored, nullptr, 0) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE, "a null binary of size 0 was added");
+    check(stored->values.size() == 1, "a rejected call changed the array");
+    check(sceNpUniversalDataSystemCreateEventPropertyArray(nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT, "a null array pointer was accepted");
     call(sceNpUniversalDataSystemDestroyEventPropertyObject(parent), "parent object was not destroyed");
 }
 
@@ -138,11 +150,11 @@ void testEvents() {
     call(sceNpUniversalDataSystemCreateEvent("_Empty", nullptr, &empty, nullptr), "event without properties was not created");
     check(Uds::Describe(*empty) == "_Empty {}", "an event without properties was not empty");
     call(sceNpUniversalDataSystemDestroyEvent(empty), "event without properties was not destroyed");
-    check(throwsInvalidArgument([] {
-        NpUniversalDataSystemEvent* unnamed = nullptr;
-        sceNpUniversalDataSystemCreateEvent(nullptr, nullptr, &unnamed, nullptr);
-
-    }), "an event without a name was created");
+    NpUniversalDataSystemEvent* unnamed = nullptr;
+    check(sceNpUniversalDataSystemCreateEvent(nullptr, nullptr, &unnamed, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME && unnamed == nullptr, "an event without a name was created");
+    check(sceNpUniversalDataSystemCreateEvent("", nullptr, &unnamed, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME && unnamed == nullptr, "an event with an empty name was created");
+    check(sceNpUniversalDataSystemCreateEvent("", nullptr, nullptr, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME, "the name was not checked before the output pointer");
+    check(sceNpUniversalDataSystemCreateEvent("_Named", nullptr, nullptr, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT, "an event without an output pointer was created");
 }
 
 void checkEventText(const NpUniversalDataSystemEvent* event, size_t expectedSize, std::string_view expected, const char* message) {

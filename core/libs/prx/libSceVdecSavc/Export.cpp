@@ -16,9 +16,8 @@ int APS5_VABI sceSdecDestroySw() {
     return 0;
 }
 
-int APS5_VABI sceSdecGetVersionSw() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceSdecGetVersionSw(std::uint32_t* version) {
+    if (version != nullptr) *version = 0u;
 }
 
 int APS5_VABI sceSdecQueryMemorySw() {

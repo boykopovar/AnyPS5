@@ -132,6 +132,9 @@ static int testClock() {
 
     bool ok = expect(sceNpGetSystemClockUsec(&usec) == 0, "the clock was not read");
     sceKernelClockGettime(4, &after);
+    ok &= expect(sceNpGetSystemClockUsec(nullptr) == INVALID_ARGUMENT, "a null destination was not rejected");
+    std::int64_t later = -1;
+    ok &= expect(sceNpGetSystemClockUsec(&later) == 0 && later >= usec && usec >= 0, "the clock went backwards");
 
     ok &= expect(usec >= before.tv_sec * 1000000 + before.tv_nsec / 1000 && usec <= after.tv_sec * 1000000 + after.tv_nsec / 1000, "the clock is not the monotonic kernel clock in microseconds");
     char version[12];
