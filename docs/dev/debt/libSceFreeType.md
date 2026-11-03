@@ -1,5 +1,8 @@
 # libSceFreeType technical debt
 
+- [FT_Face_SetUnpatentedHinting](../../../core/libs/prx/libSceFreeType/src/FaceCompat.cpp) (libSceFreeType) - console signature is unverified; the adapter forwards to bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftpatent.c), where the call is deprecated, ignores the value and always returns false
+- [FT_Face_CheckTrueTypePatents](../../../core/libs/prx/libSceFreeType/src/FaceCompat.cpp) (libSceFreeType) - console signature is unverified; the adapter forwards to bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftpatent.c), where the call is deprecated and always returns false
+- [FT_Get_Font_Format](../../../core/libs/prx/libSceFreeType/src/FaceCompat.cpp) (libSceFreeType) - console signature is unverified; the adapter forwards to bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). The returned string is static native storage, valid for the life of the process
 ### Build
 
 - [FT_Library_Version and FT_Get_TrueType_Engine_Type](../../../core/libs/prx/libSceFreeType/src/BuildInfo.cpp) have no console ABI or build-option verification. They query the native library backing the guest handle, following bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c); the version therefore describes that backend, not an identified console release. A null library yields version 0.0.0 and engine type NONE.
