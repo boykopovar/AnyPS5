@@ -134,7 +134,7 @@ void SaveState(const Context& context, const std::set<int>& unlocked) {
     std::filesystem::create_directories(context.state.parent_path());
     const auto temporary = context.state.string() + ".tmp";
     {
-        std::ofstream file(temporary, std::ios::trunc);
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         for (const auto id : unlocked) file << id << '\n';
         file.flush();
         if (!file) {
