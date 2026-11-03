@@ -2213,16 +2213,20 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
     return StoreOwnBytes(address, source.size(), [&] { copyOwnBytes(address, source); });
 }
 
-static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete) {
+static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete, std::uint64_t* order = nullptr) {
     BreakProofs();
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
     tracker.initialize();
-    if (bytes == 0) return 0;
+    if (bytes == 0) {
+        if (order != nullptr) *order = 0;
+        return 0;
+    }
     ++tracker.generation;
     if (!tracker.watched || !tracker.covers(address, bytes)) {
         tracker.noteUnstampedStore(address, address + bytes);
         if (tracker.watched) tracker.stampWatchedPart(address, address + bytes, tracker.generation, complete);
+        if (order != nullptr) *order = tracker.generation.load(std::memory_order_relaxed);
         return 0;
     }
     {
@@ -2239,8 +2243,10 @@ static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool 
                 const TrackerLock::Suspension suspended{lock};
                 beforeUnwatchUnproven(blockFirst, static_cast<std::size_t>(blockStop - blockFirst));
             }
+            ++tracker.generation;
             unwatchLocked(tracker, blockFirst, static_cast<std::size_t>(blockStop - blockFirst));
             tracker.noteUnstampedStore(address, address + bytes);
+            if (order != nullptr) *order = tracker.generation.load(std::memory_order_relaxed);
             return 0;
         }
         if (runs.stamped != 0) ++tracker.generation;
@@ -2251,7 +2257,9 @@ static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool 
         tracker.stamp(block, tracker.generation, StampKind::Driver);
         tracker.noteDriverStore(block, address, address + bytes, tracker.generation, complete);
     }
-    return tracker.generation;
+    const auto generation = tracker.generation.load(std::memory_order_relaxed);
+    if (order != nullptr) *order = generation;
+    return generation;
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
@@ -2260,6 +2268,10 @@ std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
 
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes) {
     return markWritten(address, bytes, false);
+}
+
+std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes, std::uint64_t& order) {
+    return markWritten(address, bytes, false, &order);
 }
 
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {

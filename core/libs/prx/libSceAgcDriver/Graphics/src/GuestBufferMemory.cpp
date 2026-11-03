@@ -6659,8 +6659,9 @@ void GuestBufferMemory::MarkDirectWrites() const {
         if (found == nullptr) continue;
         const auto& region = *found;
         if (region.direct != nullptr || (region.gpuCopy && region.copiedBack)) {
-            const auto generation = GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin));
-            if (generation != 0) directWritesGeneration = std::max(directWritesGeneration, generation);
+            std::uint64_t order = 0;
+            static_cast<void>(GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin), order));
+            directWritesGeneration = std::max(directWritesGeneration, order);
         }
     }
 }
