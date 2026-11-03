@@ -77,6 +77,9 @@ static void Exhaust() {
 }
 
 int main() {
+    Require(scePthreadKeyCreate(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_key_create_nid_postfix(nullptr, nullptr) == POSIX_EINVAL);
+
     PthreadKey posixKey = 0;
     Require(pthread_key_create_nid_postfix(&posixKey, nullptr) == 0 && posixKey != 0);
     Require(scePthreadSetspecific(0, &first) == SCE_KERNEL_ERROR_EINVAL);
@@ -94,6 +97,9 @@ int main() {
     Require(scePthreadGetspecific(key) == nullptr);
     Require(scePthreadSetspecific(key, &second) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadKeyDelete(key) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadKeyDelete(9999) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_key_delete_nid_postfix(key) == POSIX_EINVAL);
+    Require(pthread_key_delete_nid_postfix(9999) == POSIX_EINVAL);
 
     PthreadKey reused = -1;
     Require(scePthreadKeyCreate(&reused, nullptr) == SCE_OK);
