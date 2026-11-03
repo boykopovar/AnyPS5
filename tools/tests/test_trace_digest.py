@@ -60,6 +60,138 @@ def excessive_trace_json(opening, closing):
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+class GpuOccupancyTests(unittest.TestCase):
+    def trace(self, ranges, begin=0, end=15000, thread="gpu"):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": thread}},
+                  {"name": "present", "ph": "i", "ts": begin, "args": {"present": 1}},
+                  {"name": "present", "ph": "i", "ts": end, "args": {"present": 2}}]
+        for index, (start, duration) in enumerate(ranges):
+            events.append(dict(complete(1, "batch", start, duration), args={"batch": index}))
+        return trace_digest.Trace(events)
+
+    def test_gpu_occupancy_is_the_union_of_clipped_ranges(self):
+        for ranges, expected in (([(0, 10000), (5000, 10000)], 15),
+                                 ([(0, 15000), (3000, 2000)], 15),
+                                 ([(1000, 2000), (6000, 3000)], 5),
+                                 ([(0, 5000), (5000, 10000)], 15),
+                                 ([(-5000, 10000), (3000, 20000)], 15),
+                                 ([(-10000, 5000), (20000, 5000)], 0)):
+            with self.subTest(ranges=ranges):
+                result = trace_digest.digest(self.trace(ranges))
+                gpu = result["threads"][0]
+                self.assertAlmostEqual(gpu["busy_ms_per_frame"], expected)
+                self.assertAlmostEqual(gpu["busy_pct"], expected / 15 * 100)
+                self.assertAlmostEqual(gpu["untraced_ms_per_frame"], 15 - expected)
+                self.assertEqual(gpu["wait_ms_per_frame"], 0)
+
+    def test_overlap_keeps_individual_batch_and_inclusive_slice_durations(self):
+        result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)]))
+        self.assertEqual([batch["ms"] for batch in result["largest_gpu_batches"]], [10, 10])
+        self.assertEqual(result["top_slices_ms_per_frame"], [{"name": "batch", "ms": 20}])
+        self.assertEqual(result["threads"][0]["top"], [{"name": "batch", "ms_per_frame": 15}])
+
+    def test_no_present_bounds_still_union_gpu_ranges(self):
+        trace = self.trace([(0, 10000), (5000, 10000)])
+        trace.presents.clear()
+        self.assertEqual(trace_digest.digest(trace)["threads"][0]["busy_ms_per_frame"], 15)
+
+    def test_cpu_scope_accounting_is_unchanged(self):
+        result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)], thread="worker"))
+        self.assertEqual(result["threads"][0]["busy_ms_per_frame"], 10)
+
+    def test_cli_reports_overlapping_gpu_batches_in_json_and_markdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.json"
+            events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}},
+                      complete(1, "batch", 0, 10000), complete(1, "batch", 5000, 10000),
+                      {"name": "present", "ph": "i", "ts": 0, "args": {"present": 1}},
+                      {"name": "present", "ph": "i", "ts": 15000, "args": {"present": 2}}]
+            path.write_text(json.dumps(events), encoding="utf-8")
+            for output in ([], ["--json"]):
+                with self.subTest(output=output):
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *output],
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if output:
+                        gpu = json.loads(result.stdout)["threads"][0]
+                        self.assertEqual(gpu["busy_pct"], 100)
+                        self.assertEqual(gpu["untraced_ms_per_frame"], 0)
+                    else:
+                        self.assertIn("| gpu | 15.0 (100 %) | 0.0 (0 %) | 0.0 |", result.stdout)
+
+
+class TraceEventLossTests(unittest.TestCase):
+    def marker(self, tid=1, lost=8):
+        return {"name": "trace buffer full", "ph": "i", "ts": 1500, "pid": 7, "tid": tid,
+                "s": "t", "args": {"events_lost": lost}}
+
+    def test_cli_reports_loss_without_an_adjacent_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.json.gz"
+            path.write_bytes(gzip.compress(json.dumps({"traceEvents": EVENTS + [self.marker()]}).encode()))
+            for output in ([], ["--json"]):
+                with self.subTest(output=output):
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *output],
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if output:
+                        digest = json.loads(result.stdout)
+                        self.assertTrue(digest["trace_incomplete"])
+                        self.assertEqual(digest["event_loss"], [{"thread": "queue worker 0x0", "at_ms": 1.5, "events_lost": 8}])
+                        self.assertIsNone(digest["summary"])
+                    else:
+                        self.assertIn("Incomplete trace", result.stdout)
+                        self.assertIn("8 events lost", result.stdout)
+                        self.assertIn("missing slices are not idle time", result.stdout)
+
+    def test_loss_does_not_change_frame_bounds_or_retained_slice_timings(self):
+        expected = trace_digest.digest(trace_digest.Trace(EVENTS), SUMMARY)
+        result = trace_digest.digest(trace_digest.Trace(EVENTS + [self.marker()]), SUMMARY)
+        self.assertTrue(result.pop("trace_incomplete"))
+        result.pop("event_loss")
+        self.assertEqual(result, expected)
+        self.assertFalse(SUMMARY["trace_dropped"])
+
+    def test_summary_loss_is_reported_without_event_markers(self):
+        summary = dict(SUMMARY, trace_dropped=True)
+        result = trace_digest.digest(trace_digest.Trace(EVENTS), summary)
+        self.assertTrue(result["trace_incomplete"])
+        self.assertEqual(result["event_loss"], [])
+        self.assertIn("Incomplete trace", trace_digest.markdown(result))
+
+    def test_markdown_loss_escapes_thread_names(self):
+        for name, escaped in (("a|b", "a&#124;b"), ("<x>", "&lt;x&gt;")):
+            with self.subTest(name=name):
+                metadata = {"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 1, "args": {"name": name}}
+                result = trace_digest.digest(trace_digest.Trace(EVENTS + [metadata, self.marker()]))
+                self.assertEqual(result["event_loss"][0]["thread"], name)
+                markdown = trace_digest.markdown(result)
+                self.assertIn(f"- {escaped}: 8 events lost; buffer full at 1.5 ms", markdown)
+                self.assertNotIn(f"- {name}: 8 events lost", markdown)
+
+    def test_thread_filter_keeps_only_relevant_loss_markers(self):
+        trace = trace_digest.Trace(EVENTS + [self.marker()])
+        trace.select_threads(["presenter"])
+        result = trace_digest.digest(trace)
+        self.assertNotIn("trace_incomplete", result)
+        self.assertNotIn("Incomplete trace", trace_digest.markdown(result))
+        trace = trace_digest.Trace(EVENTS + [self.marker(tid=9)])
+        trace.select_threads(["tid 9"])
+        result = trace_digest.digest(trace)
+        self.assertEqual(result["event_loss"], [{"thread": "tid 9", "at_ms": 1.5, "events_lost": 8}])
+
+    def test_loss_counters_are_validated(self):
+        for lost in (None, True, -1, 1.5, "8"):
+            with self.subTest(lost=lost):
+                with self.assertRaisesRegex(ValueError, "args.events_lost must be a nonnegative integer"):
+                    trace_digest.Trace(EVENTS + [self.marker(lost=lost)])
+
+    def test_zero_loss_does_not_change_the_digest(self):
+        expected = trace_digest.digest(trace_digest.Trace(EVENTS))
+        result = trace_digest.digest(trace_digest.Trace(EVENTS + [self.marker(lost=0)]))
+        self.assertEqual(result, expected)
+
+
 class TraceJsonNestingTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -113,6 +245,33 @@ class TraceJsonNestingTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), original)
 
 class TraceDigestTests(unittest.TestCase):
+
+    def test_summary_symlink_loop_is_reported_without_traceback(self):
+        loop = Path(self.directory.name) / "loop.jsonl"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+            trace_digest.load_summary(loop, self.trace)
+        default = self.trace.with_name("aps5-summary.jsonl")
+        if default.exists():
+            default.unlink()
+        try:
+            default.symlink_to(default.name)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+            trace_digest.load_summary(None, self.trace)
+        for arguments in ([str(self.trace), "--summary", str(loop)], [str(self.trace)]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, trace_digest.__file__, *arguments],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("symbolic link loop", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_summary_jsonl_excessive_nesting_reports_line_without_traceback(self):
         path = Path(self.directory.name) / "deep.jsonl"
         path.write_text('{}\n\n{"extra":' + excessive_trace_json('[', ']') + '}\n', encoding="utf-8")

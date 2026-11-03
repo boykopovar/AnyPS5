@@ -1,6 +1,7 @@
 #include "BdaShader.hpp"
 #include "BdaAbi.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <algorithm>
 #include <array>
@@ -26,7 +27,9 @@ using namespace AgcDriver::Graphics;
 
 class Pipeline {
 public:
-    Pipeline(const Context& context, std::span<const std::uint32_t> code, const std::array<Buffer*, 3>& buffers) : context(context) {
+    Pipeline(const Context& context, std::span<const std::uint32_t> code, const std::array<Buffer*, 3>& buffers) : Pipeline(context, code, std::array<VkDescriptorBufferInfo, 3>{whole(*buffers[0]), whole(*buffers[1]), whole(*buffers[2])}) {}
+
+    Pipeline(const Context& context, std::span<const std::uint32_t> code, const std::array<VkDescriptorBufferInfo, 3>& buffers) : context(context) {
         try {
             std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
             for (std::uint32_t i = 0; i < bindings.size(); ++i) bindings[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
@@ -43,13 +46,12 @@ public:
             VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, pool, 1, &setLayout};
             Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets");
             for (std::uint32_t i = 0; i < buffers.size(); ++i) {
-                const VkDescriptorBufferInfo buffer{buffers[i]->Handle(), 0, buffers[i]->Bytes().size()};
                 VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
                 write.dstSet = set;
                 write.dstBinding = i;
                 write.descriptorCount = 1;
                 write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                write.pBufferInfo = &buffer;
+                write.pBufferInfo = &buffers[i];
                 context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
             }
             VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -69,20 +71,26 @@ public:
 
     ~Pipeline() { release(); }
 
-    void Run(std::uint32_t groups) {
+    void Run(std::uint32_t groups) { RunTogether(context, {this}, groups); }
+
+    static void RunTogether(const Context& context, std::initializer_list<Pipeline*> pipelines, std::uint32_t groups = 1) {
         CommandBatch batch(context);
         const auto commands = batch.Handle();
         VkMemoryBarrier upload{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &upload, 0, nullptr, 0, nullptr);
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-        context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, nullptr);
-        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groups, 1, 1);
+        for (const auto* pipeline : pipelines) {
+            context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->pipeline);
+            context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->layout, 0, 1, &pipeline->set, 0, nullptr);
+            context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, groups, 1, 1);
+        }
         VkMemoryBarrier download{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT};
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &download, 0, nullptr, 0, nullptr);
         batch.SubmitAndWait();
     }
 
 private:
+    static VkDescriptorBufferInfo whole(Buffer& buffer) { return {buffer.Handle(), 0, buffer.Bytes().size()}; }
+
     void release() noexcept {
         if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
         if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
@@ -609,4 +617,31 @@ void RunBdaStoreExecutionTests(const Context& context) {
         ranges = {{{guest + 3, guest + 5, first.DeviceAddress(), writable, 0}, {guest + 5, guest + 8, second.DeviceAddress(), writable, 0}}};
         run("split aligned dword", guest + 3, 32, coherent, {0xcd, 0xcd, 0xcd, 0xcd, 0xcd}, {}, Abi::FaultReason::Unmapped, guest + 3, 4);
     }
+}
+
+void RunBdaFaultSlotExecutionTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    Buffer table(context, sizeof(Abi::Header), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Abi::Header header{Abi::Version, 0, sizeof(Abi::Range), 0};
+    std::memcpy(table.Bytes().data(), &header, sizeof(header));
+    Buffer output(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const VkDescriptorBufferInfo tableInfo{table.Handle(), 0, table.Bytes().size()};
+    const VkDescriptorBufferInfo outputInfo{output.Handle(), 0, output.Bytes().size()};
+    BdaResources first(context, true);
+    BdaResources second(context, true);
+    const auto firstSlot = first.Fault();
+    const auto secondSlot = second.Fault();
+    Require(firstSlot.buffer == secondSlot.buffer && firstSlot.range == sizeof(Abi::Fault) && secondSlot.range == sizeof(Abi::Fault) && firstSlot.offset != secondSlot.offset, "two report-only BdaResources did not take 32-byte slots of one fault chunk");
+    Pipeline firstPipeline(context, MakeBdaFaultSequenceTestShader({Abi::FaultReason::Unmapped}, 0x7fff11110000ULL), {tableInfo, firstSlot, outputInfo});
+    Pipeline secondPipeline(context, MakeBdaFaultSequenceTestShader({Abi::FaultReason::Unmapped}, 0x7fff22220000ULL), {tableInfo, secondSlot, outputInfo});
+    Pipeline::RunTogether(context, {&firstPipeline, &secondPipeline});
+    const auto reports = [](const BdaResources& resources, const char* address) {
+        try {
+            resources.CheckFault();
+        } catch (const std::runtime_error& error) {
+            return std::string(error.what()).find(address) != std::string::npos;
+        }
+        return false;
+    };
+    Require(reports(first, "address=0x7fff11110000") && reports(second, "address=0x7fff22220000"), "two dispatches of one batch faulting into neighbouring report-only fault slots did not each report their own address");
 }

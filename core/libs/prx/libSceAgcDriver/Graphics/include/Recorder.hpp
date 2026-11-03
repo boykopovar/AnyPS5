@@ -244,6 +244,7 @@ public:
     void CountSamples();
     bool CountingSamples() const { return countingSamples; }
     bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
+    bool RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter = 0);
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
@@ -394,6 +395,7 @@ public:
     // The function the flush hook calls, on the accessing thread (which may hold the GPU mutex),
     // when an access overlaps one of that thread's queued labels; it records them. Set once.
     static void SetQueuedLabelRecorder(void (*recorder)());
+    static void FailNextSubmitsForTest(unsigned count);
     // Whether the lock-free pending-write snapshot (open, in-flight and finishing batches) overlaps
     // the range: false means no recorded work writes it, so a wait on it has nothing to submit.
     static bool SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes);
@@ -769,6 +771,9 @@ private:
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
     VkPipeline meshArgumentPipeline = VK_NULL_HANDLE;
+    int changedCopyState = 0;
+    VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
+    VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
