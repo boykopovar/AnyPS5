@@ -923,8 +923,8 @@ std::uint32_t EmitVolumeGatherLz(SpirvValueEmitContext& ctx, const ImageEmitAcce
         const auto extent = extents[axis];
         const auto last = Binary(state, spv::OpISub, i32, extent, ConstantI32(state, 1));
         const auto modulo = [&](std::uint32_t value, std::uint32_t period) {
-            const auto remainder = Binary(state, spv::OpSRem, i32, value, period);
-            return Binary(state, spv::OpIAdd, i32, remainder, Select(state, i32, Binary(state, spv::OpSLessThan, boolean, remainder, ConstantI32(state, 0)), period, ConstantI32(state, 0)));
+            const auto lifted = Unary(state, spv::OpBitcast, u32, Binary(state, spv::OpIAdd, i32, value, period));
+            return Unary(state, spv::OpBitcast, i32, Binary(state, spv::OpUMod, u32, lifted, Unary(state, spv::OpBitcast, u32, period)));
         };
         const auto extInst = [&](std::uint32_t op, std::uint32_t a, std::uint32_t b, std::uint32_t c) {
             const auto id = state.module.AllocateId();
