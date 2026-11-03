@@ -653,7 +653,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/externals
-          key: ffmpeg-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
+          key: ffmpeg-${{ runner.os }}-winlibs-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.ffmpeg }}
       - id: seed-cache
         uses: actions/cache/restore@v6
         with:
@@ -712,7 +712,7 @@ jobs:
       - name: Build and run changed guest core/libs tests
         if: github.event_name == 'pull_request'
         shell: cmd
-        run: python tools/build_changed_guest_tests.py build changed.txt
+        run: python tools/build_changed_guest_tests.py build changed.txt --output-log ctest.log
       - id: libs
         if: github.event_name != 'pull_request'
         shell: cmd
