@@ -1535,6 +1535,18 @@ float APS5_VABI acoshf_nid_postfix(float x) {
     const float t = x - 1.0f;
     return AtanhfLog1p(t + std::sqrt(2.0f * t + t * t));
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_atanh.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_atanh.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ *
+ */
 double APS5_VABI atanh_nid_postfix(double x) {
     const double huge = 1e300;
     static volatile double zero = 0.0;
