@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -33,7 +34,7 @@ std::int64_t Position(std::FILE* stream) {
 
 struct BufferedStream {
     std::array<char, 4096> buffer{};
-    std::FILE* native = std::tmpfile();
+    std::FILE* native = TemporaryFile::Open();
     FileStream stream{native};
 
     BufferedStream() { Require(std::setvbuf(native, buffer.data(), _IOFBF, buffer.size()) == 0, "set full buffering"); }

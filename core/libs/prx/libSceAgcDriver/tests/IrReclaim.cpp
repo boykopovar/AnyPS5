@@ -76,6 +76,43 @@ int main() {
         program.Metadata().dynamicReads.clear();
         if (program.ReclaimUnusedValues() != 2u) throw std::runtime_error("reclamation did not recover after an external-owner rejection");
         if (builder.Constant(999u).Id() <= pinned.back()->Id()) throw std::runtime_error("reclamation reused a value ID");
+        IrProgram replaced;
+        auto& shared = replaced.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        std::vector<IrValue*> readers;
+        for (std::uint32_t number = 0; number < 40u; ++number) {
+            auto& reader = replaced.CreateValue(IrOpcode::IAdd32, IrType::U32);
+            reader.AddArgument(&shared);
+            readers.push_back(&reader);
+        }
+        for (std::size_t index = 0; index < readers.size(); ++index) {
+            if (shared.OperandUses()[index].user != readers[index]) throw std::runtime_error("a use list lost an entry while growing");
+        }
+        auto& target = replaced.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        shared.ReplaceAllUsesWith(&target);
+        if (shared.HasUses() || target.UseCount() != readers.size() || readers.front()->Argument(0) != &target || readers.back()->Argument(0) != &target) throw std::runtime_error("moving a grown use list to another value lost a use");
+        IrProgram replacement;
+        auto& kept = replacement.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        auto& keptReader = replacement.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        keptReader.AddArgument(&kept);
+        replaced = std::move(replacement);
+        if (kept.UseCount() != 1u || kept.OperandUses().front().user != &keptReader) throw std::runtime_error("move assignment invalidated the assigned program's use lists");
+        IrProgram cached;
+        auto& source = cached.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        std::vector<IrValue*> users;
+        for (std::uint32_t number = 0; number < 40u; ++number) {
+            auto& user = cached.CreateValue(IrOpcode::IAdd32, IrType::U32);
+            user.AddArgument(&source);
+            users.push_back(&user);
+        }
+        cached.ReleaseUseArena();
+        if (source.OperandUses().get_allocator().Arena() != nullptr || users.front()->OperandUses().get_allocator().Arena() != nullptr) throw std::runtime_error("releasing the use arena left a use list in it");
+        if (source.UseCount() != users.size()) throw std::runtime_error("releasing the use arena lost a use");
+        for (std::size_t index = 0; index < users.size(); ++index) {
+            if (source.OperandUses()[index].user != users[index] || users[index]->Argument(0) != &source) throw std::runtime_error("releasing the use arena reordered a use list");
+        }
+        auto& late = cached.CreateValue(IrOpcode::IAdd32, IrType::U32);
+        late.AddArgument(&source);
+        if (late.OperandUses().get_allocator().Arena() == nullptr || source.UseCount() != users.size() + 1u || source.OperandUses().back().user != &late) throw std::runtime_error("a value created after releasing the use arena did not get a new one");
         IrProgram moved = std::move(program);
         if (value.Id() != id || value.ImmediateU32() != 42u || moved.ReclaimUnusedValues() != 1u) throw std::runtime_error("moving a program invalidated its allocation owner");
         IrProgram assigned;
@@ -83,6 +120,29 @@ int main() {
         assigned = std::move(moved);
         if (value.Id() != id || value.ImmediateU32() != 42u || assigned.ReclaimUnusedValues() != 0u) throw std::runtime_error("move assignment invalidated a live allocation owner");
         if (assigned.CreateValue(IrOpcode::IAdd32, IrType::U32).Id() <= pinned.back()->Id()) throw std::runtime_error("a transferred allocation owner reused a value ID");
+        IrProgram operands;
+        auto& entry = operands.CreateBlock();
+        operands.SetEntryBlock(entry);
+        operands.BlockOrder().push_back(&entry);
+        IrBuilder wideBuilder(operands);
+        wideBuilder.SetInsertionPoint(entry);
+        std::vector<IrValue*> inputs;
+        for (std::uint32_t number = 0; number < 7u; ++number) inputs.push_back(&wideBuilder.Constant(300u + number));
+        auto& wide = wideBuilder.Emit(IrOpcode::ReferenceU32, IrType::Void, {inputs[0]});
+        for (std::size_t index = 1; index < inputs.size(); ++index) wide.AddArgument(inputs[index]);
+        if (wide.ArgumentCount() != inputs.size()) throw std::runtime_error("a value lost operands past its inline storage");
+        for (std::size_t index = 0; index < inputs.size(); ++index) {
+            if (wide.Argument(index) != inputs[index] || inputs[index]->UseCount() != 1u || inputs[index]->OperandUses().front().operand != index) throw std::runtime_error("an operand past the inline storage lost its value or its use");
+        }
+        wide.ReplaceArgument(5, inputs[0]);
+        if (wide.Argument(5) != inputs[0] || inputs[5]->HasUses() || inputs[0]->UseCount() != 2u) throw std::runtime_error("replacing an operand in grown storage left a stale use");
+        auto& detached = operands.CreateValue(IrOpcode::ReferenceU32, IrType::Void);
+        detached.SetDetachedOperands({inputs[1], inputs[2], inputs[3], inputs[4], inputs[6]}, {});
+        if (detached.ArgumentCount() != 5u || detached.Argument(0) != inputs[1] || detached.Argument(4) != inputs[6]) throw std::runtime_error("detached operands past the inline storage were not kept in order");
+        if (operands.ReclaimUnusedValues() != 2u) throw std::runtime_error("an unused value with grown operand storage or its dropped operand was not reclaimed");
+        for (std::size_t index = 0; index < inputs.size(); ++index) {
+            if (wide.Argument(index) != (index == 5u ? inputs[0] : inputs[index])) throw std::runtime_error("reclamation changed a live value's grown operands");
+        }
         std::puts("IR reclamation ownership tests passed");
         return 0;
     } catch (const std::exception& error) {

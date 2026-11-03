@@ -29,6 +29,7 @@ int main() {
     Require(scePlayGoDialogInitialize() == 0);
     Require(scePlayGoDialogGetStatus() == 1);
     Require(scePlayGoDialogInitialize() == alreadyInitialized);
+    Require(scePlayGoDialogClose() == static_cast<std::int32_t>(0x80B8000Bu));
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogUpdateStatus() == 1);
 
@@ -65,5 +66,6 @@ int main() {
     Require(scePlayGoDialogGetStatus() == 1);
     Require(scePlayGoDialogTerminate() == 0);
     Require(scePlayGoDialogGetStatus() == 0);
+    Require(scePlayGoDialogTerminate() == notInitialized);
     return 0;
 }

@@ -133,7 +133,8 @@ void Cases(Query query, bool inside, bool guest) {
     outline.n_contours = 1;
     for (const std::int64_t edge : {std::int64_t{0x1000000}, std::int64_t{0x1000001}}) {
         points = {{{-edge, -edge}, {-edge, edge}, {edge, edge}, {edge, -edge}}};
-        Require(query(&outline) == (edge == 0x1000000 ? Expected(inside, true) : Expected(inside, false)), "coordinate-limit boundary");
+        constexpr bool wideNative = FREETYPE_MAJOR > 2 || (FREETYPE_MAJOR == 2 && FREETYPE_MINOR >= 15);
+        Require(query(&outline) == Expected(inside, edge == 0x1000000 || (!guest && wideNative)), "coordinate-limit boundary");
     }
     std::array<GuestVector, 8> mixed{};
     std::copy(original.begin(), original.end(), mixed.begin());

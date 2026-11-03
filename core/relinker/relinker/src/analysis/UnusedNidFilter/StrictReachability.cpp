@@ -166,7 +166,7 @@ private:
                     region.Edges.insert(target);
                 }
                 if (info.HasRipRelativeDisp) {
-                    std::int32_t displacement;
+                    std::int32_t displacement = 0;
                     std::memcpy(&displacement, input.Text.data() + offset + info.RipRelativeDispOffset, sizeof(displacement));
                     auto target = next + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
                     if (info.AddressSize32) target = static_cast<std::uint32_t>(target);

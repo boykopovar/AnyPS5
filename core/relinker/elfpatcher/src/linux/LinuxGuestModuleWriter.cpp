@@ -1,4 +1,5 @@
 #include <elfpatcher/general/GuestModuleWriter.hpp>
+#include <elfpatcher/general/AddressDistance.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
@@ -20,6 +21,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             if (header.Flags == 0) continue;
             header.Flags |= 4;
         }
+        if (header.Type == 7) header.Alignment = std::max<std::uint64_t>(header.Alignment, 1);
         headers.push_back(header);
     }
     if (std::none_of(headers.begin(), headers.end(), [&](const auto& header) { return header.Type == PT_GNU_STACK; }))
@@ -62,6 +64,17 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             needsTlsResolver = true;
         }
     }
+    for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
+        const auto& symbol = image.Symbols[index];
+        if (symbol.Value != 0 || symbol.Section == 0 || symbol.Section >= 0xff00 || (symbol.Info >> 4) == 0 ||
+            (symbol.Info & 15) != 2 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
+        const auto thunk = address();
+        if (thunk > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()) - 5)
+            throw Domain::RelinkerException("Guest export at address 0 exceeds relative branch range");
+        bytes.push_back(0xe9);
+        Io::AppendU32(bytes, static_cast<std::uint32_t>(-static_cast<std::int32_t>(thunk + 5)));
+        Io::WriteU64(symbols, index * 24 + 8, thunk);
+    }
     std::vector<std::uint64_t> needed;
     for (const auto& dependency : dependencies) needed.push_back(addString(dependency));
     if (needsTlsResolver) needed.push_back(addString("ld-linux-x86-64.so.2"));
@@ -101,7 +114,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU64(bytes, 0x415053354c494658ull);
         pointer(0);
         pointer(image.Init, image.HasInit);
-        pointer(image.Fini, image.Fini != 0);
+        pointer(image.Fini, image.HasFini);
         Io::AppendU64(bytes, image.InitArray.size());
         Io::AppendU64(bytes, image.FiniArray.size());
         Io::AppendU64(bytes, 0);
@@ -154,8 +167,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     constexpr std::size_t kArgsDisplacement = 3, kTargetDisplacement = 0x11, kResultDisplacement = 0x19;
     constexpr std::size_t kStubSize = 0x1f;
     const auto stubDisplacement = [](std::uint64_t target, std::uint64_t next) {
-        const auto distance = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(next);
-        if (distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
+        std::int64_t distance = 0;
+        if (!SignedDistance(target, next, distance) || distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Guest initializer exceeds relative branch range");
         return static_cast<std::uint32_t>(static_cast<std::int32_t>(distance));
     };
@@ -180,10 +193,10 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         return start;
     };
     const auto finalizer = [&](std::uint64_t target) {
-        if (target == 0) return std::uint64_t{};
+        if (!image.HasFini) return std::uint64_t{};
         const auto start = address();
-        const auto distance = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(start + 11);
-        if (distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
+        std::int64_t distance = 0;
+        if (!SignedDistance(target, start + 11, distance) || distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Guest finaliser exceeds relative branch range");
         bytes.insert(bytes.end(), {0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xe9});
         Io::AppendU32(bytes, static_cast<std::uint32_t>(distance));
@@ -191,7 +204,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     };
     const auto init = deferInitialization ? 0 : lifecycle(image.Init);
     auto fini = deferInitialization ? 0 : finalizer(image.Fini);
-    if (deferInitialization && (image.Fini != 0 || !image.FiniArray.empty())) {
+    if (deferInitialization && (image.HasFini || !image.FiniArray.empty())) {
         fini = address();
         bytes.insert(bytes.end(), {0x48, 0x83, 0x3d});
         Io::AppendU32(bytes, stubDisplacement(lifecycleTable + 48, address() + 5));
@@ -208,7 +221,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             Io::AppendU32(bytes, stubDisplacement(*slot, address() + 4));
             bytes.insert(bytes.end(), {0x48, 0x85, 0xc0, 0x74, 8, 0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xff, 0xd0});
         }
-        if (image.Fini != 0) {
+        if (image.HasFini) {
             bytes.insert(bytes.end(), {0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xe8});
             Io::AppendU32(bytes, stubDisplacement(image.Fini, address() + 4));
         }
@@ -320,8 +333,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU64(bytes, header.MemorySize);
         Io::AppendU64(bytes, header.Alignment);
     }
-    bytes[7] = 0;
-    bytes[8] = 0;
+    std::fill_n(bytes.begin() + 7, 9, std::uint8_t{0});
     Io::WriteU16(bytes, 16, 3);
     Io::WriteU64(bytes, 24, 0);
     Io::WriteU64(bytes, 32, phOffset);

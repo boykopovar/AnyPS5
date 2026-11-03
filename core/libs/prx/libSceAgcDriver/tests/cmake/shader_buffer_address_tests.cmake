@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(shader_buffer_address_tests ${LIBS_INCLUDE_DIR}/tests/ShaderBufferAddress.cpp)
+    target_link_libraries(shader_buffer_address_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(shader_buffer_address_tests)
+    add_test(NAME shader_buffer_address COMMAND shader_buffer_address_tests)
+    if(WIN32)
+        set_tests_properties(shader_buffer_address PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
