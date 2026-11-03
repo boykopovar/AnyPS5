@@ -23,6 +23,9 @@ int main() {
     Check(_ZN6icu_6811ICU_Utility9parseCharERKNS_13UnicodeStringERiDs_nid_postfix(&input, &position, u'x') == 1 && position == 4);
     StringPiece hay{"abcabc", 6}, needle{"bc", 2};
     Check(_ZN6icu_6811StringPiece4findES0_i_nid_postfix(&hay, needle, 2) == 4);
+    StringPiece shortHay{"ab", 1}, longNeedle{"ab", 2}, tailHay{"xab", 2};
+    Check(_ZN6icu_6811StringPiece4findES0_i_nid_postfix(&shortHay, longNeedle, 0) == -1);
+    Check(_ZN6icu_6811StringPiece4findES0_i_nid_postfix(&tailHay, longNeedle, 0) == -1);
     MaybeStackArray40 array{};
     _ZN6icu_6815MaybeStackArrayIcLi40EEC1Ev_nid_postfix(&array);
     std::memcpy(array.pointer, "abc", 3);

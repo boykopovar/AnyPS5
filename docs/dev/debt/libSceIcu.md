@@ -146,7 +146,7 @@
 
 
 
-- [Basic string utilities](../../../core/libs/prx/libSceIcu/BasicStringUtilities.cpp) have no console verification. Assigned number formatting, unprintable escaping, whitespace and pattern parsing, appendToRule quoting and matcher dispatch, CharString cloning, MaybeStackArray orphaning and StringPiece finding follow ICU 68.2 `util.cpp`, `charstr.cpp`, `cmemory.h` and `stringpiece.cpp`. StringPiece requires readable backing bytes beyond the logical substring. Accessed null pointers, negative accessed indices and signed arithmetic overflow throw `std::invalid_argument` instead of undefined behavior. No assigned string utility exports remain stubs. Closes when: compared with the console.
+- [Basic string utilities](../../../core/libs/prx/libSceIcu/BasicStringUtilities.cpp) have no console verification. Assigned number formatting, unprintable escaping, whitespace and pattern parsing, appendToRule quoting and matcher dispatch, CharString cloning, MaybeStackArray orphaning and StringPiece finding follow ICU 68.2 `util.cpp`, `charstr.cpp`, `cmemory.h` and `stringpiece.cpp`. `StringPiece::find` ends a candidate match at the end of the piece and reads no byte past it, where ICU's loop reads beyond the piece when the needle runs off its end. Accessed null pointers, negative accessed indices and signed arithmetic overflow throw `std::invalid_argument` instead of undefined behavior. No assigned string utility exports remain stubs. Closes when: compared with the console.
 
 
 
