@@ -451,9 +451,20 @@ void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes,
             return;
         }
         std::copy_n(dashes, numDashes, copy);
+        for (int i = 1; i + 1 < numDashes;) {
+            if (copy[i] == 0) {
+                copy[i - 1] += copy[i + 1];
+                std::move(copy + i + 2, copy + numDashes, copy + i);
+                numDashes -= 2;
+                if (i > 1) --i;
+            } else {
+                ++i;
+            }
+        }
     }
     const double period = (numDashes % 2 == 0 ? total : total * 2);
-    if (numDashes > 0 && period < 1.0 / 256.0) {
+    if (numDashes > 0 && (period < 1.0 / 256.0 ||
+                          (numDashes == 2 && copy[1] == 0))) {
         delete[] copy;
         copy = nullptr;
         numDashes = 0;
