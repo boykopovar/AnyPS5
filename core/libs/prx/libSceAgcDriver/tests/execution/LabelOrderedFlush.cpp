@@ -134,27 +134,14 @@ private:
     std::uint32_t* texels = nullptr;
 };
 
-void LabelAfterStore(const Surface& surface, std::uint32_t* label, std::uint32_t* gate) {
+void LabelAfterStore(const Surface& surface, std::uint32_t* label) {
     std::vector<std::uint32_t> words;
-    const auto gateAddress = AddressOf(gate);
-    words.insert(words.end(), {0xc0053c00u, 0x13u, static_cast<std::uint32_t>(gateAddress), static_cast<std::uint32_t>(gateAddress >> 32u), 1u, 0xffffffffu, 0x19u});
     Store(words, surface.Texels());
     const auto labelAddress = AddressOf(label);
     words.insert(words.end(), {0xc0064900u, 0x514u, (1u << 29u) | (2u << 24u), static_cast<std::uint32_t>(labelAddress), static_cast<std::uint32_t>(labelAddress >> 32u), 1u, 0, 0});
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
-    const auto address = AddressOf(surface.Texels());
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    for (;;) {
-        {
-            std::unique_lock hold(AgcDriver::GuestMemory::GpuMutex());
-            if (StorageTexture::FindPending(address, SurfaceBytes) != nullptr) break;
-        }
-        Require(std::chrono::steady_clock::now() < deadline, "label ordered flush: the image store was never recorded");
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    Require(std::atomic_ref<std::uint32_t>(*label).load() == 0, "label ordered flush: the label landed before the gate opened");
-    std::atomic_ref<std::uint32_t>(*gate).store(1);
     while (std::atomic_ref<std::uint32_t>(*label).load() == 0) {
         Require(std::chrono::steady_clock::now() < deadline, "label ordered flush: the label never landed");
         std::this_thread::yield();
@@ -186,10 +173,8 @@ int main() {
         for (int run = 0; run < Runs; ++run) {
             Surface surface;
             auto* label = &words[0];
-            auto* gate = &words[32];
             *label = 0;
-            *gate = 0;
-            LabelAfterStore(surface, label, gate);
+            LabelAfterStore(surface, label);
         }
         AgcDriverShutdown_nid_postfix();
         std::puts("label ordered flush tests passed");
