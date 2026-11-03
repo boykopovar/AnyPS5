@@ -5436,7 +5436,10 @@ CopyStats& Copies() {
 // A shadow the device cannot provide (device memory or the allocation count exhausted: every
 // shadow is its own VkDeviceMemory, retained by cached builds) is no error: nullptr, and the
 // region takes the path it would take without staging (Region::unstaged).
+std::atomic<bool> deviceLocalFullForTests{false};
+
 bool deviceLocalHasRoom(const Context& context, std::size_t bytes) {
+    if (deviceLocalFullForTests.load(std::memory_order_relaxed)) return false;
     static std::atomic<std::int64_t> checkedMs{std::numeric_limits<std::int64_t>::min()};
     static std::atomic<std::uint64_t> room{std::numeric_limits<std::uint64_t>::max()};
     static std::atomic<VkDevice> checkedDevice{VK_NULL_HANDLE};
@@ -6956,6 +6959,14 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
     if (state.device != proof.device) return false;
     if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
     return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
+}
+
+void SetDeviceLocalFullForTests(bool full) {
+    deviceLocalFullForTests.store(full, std::memory_order_relaxed);
+}
+
+std::uint64_t StagingShadowsRefused() {
+    return Copies().stagingRefused.load(std::memory_order_relaxed);
 }
 
 HostImportsProof HostImportsIdentity(const Context& context) {
