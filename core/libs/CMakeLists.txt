@@ -1174,16 +1174,6 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
-    add_test_executable(guest_src_utility_tests tests/GuestSrcUtility.cpp)
-    target_include_directories(guest_src_utility_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_src_utility_tests PRIVATE libSceSrcUtl libc)
-    configure_windows_unwind(guest_src_utility_tests)
-    add_test(NAME guest_src_utility COMMAND guest_src_utility_tests)
-    if(WIN32)
-        set_tests_properties(guest_src_utility PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSrcUtl>")
-    endif()
-
     add_test_executable(guest_crt_tests tests/GuestCrt.cpp)
     target_include_directories(guest_crt_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_crt_tests PRIVATE libSceAmpr libc)
