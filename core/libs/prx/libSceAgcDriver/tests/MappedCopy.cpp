@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <array>
@@ -43,6 +44,12 @@ private:
     std::byte* data = nullptr;
 };
 
+unsigned readGuards = 0;
+unsigned flushes = 0;
+
+void NoteRead(std::uint64_t, std::size_t) { ++readGuards; }
+void NoteFlush(std::uint64_t, std::size_t) { ++flushes; }
+
 void Check(std::string_view mode) {
     std::array<std::byte, 256> out{};
     if (mode == "boundaries") {
@@ -53,6 +60,22 @@ void Check(std::string_view mode) {
     }
     Range range;
     Require(Accessible(range.Data(), 2 * Unit), "readable fixture cannot prime the access cache");
+    if (mode == "hooks") {
+        SetReadGuard(&NoteRead);
+        SetFlushHook(&NoteFlush);
+        const auto speculative = CopyMapped(range.Address(), out);
+        const auto speculativeReads = readGuards;
+        const auto speculativeFlushes = flushes;
+        const bool ordinary = GuestCopyIn_nid_no_patch(out.data(), range.Data(), out.size());
+        const auto ordinaryReads = readGuards;
+        const auto ordinaryFlushes = flushes;
+        SetReadGuard(nullptr);
+        SetFlushHook(nullptr);
+        Require(speculative == Compare::Equal, "a speculative copy with read hooks cannot read valid bytes");
+        Require(speculativeReads == 0 && speculativeFlushes == 0, "a speculative mapped copy ran read guards or flushed GPU writes");
+        Require(ordinary && ordinaryReads == 1 && ordinaryFlushes == 1, "an ordinary checked copy lost its read preparation");
+        return;
+    }
     if (mode == "reset") {
         GuestArena::GuestArenaReset_nid_postfix(range.Data(), 2 * Unit);
         errno = E2BIG;

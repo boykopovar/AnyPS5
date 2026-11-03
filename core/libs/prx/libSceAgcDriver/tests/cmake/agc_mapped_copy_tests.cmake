@@ -9,7 +9,7 @@ if(BUILD_TESTING)
     set_target_properties(agc_mapped_copy_tests PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(agc_mapped_copy_tests)
 
-    foreach(mode IN ITEMS valid reset partial reuse boundaries)
+    foreach(mode IN ITEMS valid reset partial reuse boundaries hooks)
         add_test(NAME agc_mapped_copy_${mode} COMMAND agc_mapped_copy_tests ${mode})
         set_tests_properties(agc_mapped_copy_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
