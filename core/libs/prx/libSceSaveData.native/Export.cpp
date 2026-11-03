@@ -898,7 +898,16 @@ static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameS
     if (cond->title_id != nullptr && std::strncmp(cond->title_id->data, GetAppTitleId_nid_postfix().value, sizeof(cond->title_id->data)) != 0) {
         return SAVE_DATA_OK;
     }
-    const char* pattern = (cond->dir_name != nullptr) ? cond->dir_name->data : nullptr;
+    std::string patternStr;
+    const char* pattern = nullptr;
+    if (cond->dir_name != nullptr) {
+        const auto* patternEnd = static_cast<const char*>(std::memchr(cond->dir_name->data, '\0', sizeof(cond->dir_name->data)));
+        if (patternEnd == nullptr) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        patternStr.assign(cond->dir_name->data, static_cast<std::size_t>(patternEnd - cond->dir_name->data));
+        pattern = patternStr.c_str();
+    }
     const std::string root = save_root();
     if (!std::filesystem::is_directory(root)) {
         return SAVE_DATA_OK;
