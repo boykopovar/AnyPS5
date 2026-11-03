@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 namespace {
 
@@ -52,6 +53,10 @@ void CheckComposite() {
     Require(sceCompositorSetIndirectCanvasCommand() == 0);
     Require(sceCompositorSetIndirectCompositionCommand() == 0);
     Require(sceCompositorSetIndirectRenderTargetConfigCommand() == 0);
+    const std::uint32_t virtualHandles[] = {0xff00, 0xff01, 0xffff, 0xffffff00, 0x1234ff78, 0xffffffff, 0x8000ff00};
+    const std::uint32_t otherHandles[] = {0, 0xfe00, 0x7f00, 0x12345678, 0x100, 0xff};
+    for (const std::uint32_t handle : virtualHandles) Require(sceCompositorIsVirtualCanvasHandle(handle));
+    for (const std::uint32_t handle : otherHandles) Require(!sceCompositorIsVirtualCanvasHandle(handle));
 }
 
 void CheckFsInternal() {
@@ -77,6 +82,35 @@ void CheckSdma() {
 void CheckSsl() {
     Require(CRYPTO_uninitAsymmetricKey() == 0);
     Require(VLONG_freeVlongQueue() == 0);
+
+    for (const int context : {0, 1, -1, 0x7fffffff, static_cast<int>(0x80000000u)}) {
+        int moduleId = 0x5a5a5a5a;
+        Require(sceSslGetNanoSSLModuleId(context, &moduleId) == 0);
+        Require(moduleId == context);
+        Require(sceSslGetNanoSSLModuleId(context, nullptr) == 0);
+    }
+
+    constexpr int InvalidArgument = static_cast<int>(0x8095177a);
+    unsigned char key[24];
+    const unsigned char blob[4] = {1, 2, 3, 4};
+    std::memset(key, 0xa5, sizeof(key));
+    Require(CA_MGMT_extractKeyBlobEx(0, nullptr, 4, key) == InvalidArgument);
+    Require(CA_MGMT_extractKeyBlobEx(0, blob, 4, nullptr) == InvalidArgument);
+    Require(CA_MGMT_extractKeyBlobEx(0, nullptr, 0, nullptr) == InvalidArgument);
+    for (unsigned char byte : key) Require(byte == 0xa5);
+    Require(CA_MGMT_extractKeyBlobEx(-1, blob, 0, key) == 0);
+    const void* stored = nullptr;
+    std::memcpy(&stored, key + 8, sizeof(stored));
+    Require(stored == blob);
+    for (int index = 0; index < 8; ++index) Require(key[index] == 0xa5);
+    for (int index = 16; index < 24; ++index) Require(key[index] == 0xa5);
+
+    std::memset(key, 0xa5, sizeof(key));
+    Require(CRYPTO_initAsymmetricKey(key) == 0);
+    std::uint32_t initialized = 0;
+    std::memcpy(&initialized, key, sizeof(initialized));
+    Require(initialized == 1);
+    for (int index = 4; index < 24; ++index) Require(key[index] == 0xa5);
 }
 
 void CheckVisionManager() {

@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <initializer_list>
 #include <string>
 #include <limits>
@@ -102,9 +103,33 @@ void testLifetime(bool reopen) {
     check(expectFailure([&] { sceVideoOutUnregisterBuffers(handle, 0); }).find("pending flip") != std::string::npos, "pending buffer was unregistered");
     check(sceVideoOutWaitVblank(handle) == 0 && sceVideoOutWaitVblank(handle) == 0, "vblank stalled behind the GPU queue");
     std::shared_ptr<VideoOutConfig> replacement;
+    if (reopen) {
+        const auto label = reinterpret_cast<std::uintptr_t>(&cfg->bufferLabels[1]);
+        std::array<uint32_t, 5> store{0xc0033700u, 0x00100200u, static_cast<uint32_t>(label), static_cast<uint32_t>(static_cast<std::uint64_t>(label) >> 32u), 1u};
+        Packet storePacket{store.data(), static_cast<uint32_t>(store.size()), 0, {}};
+        sceAgcDriverSubmitDcb(&storePacket);
+    }
     sceVideoOutClose(handle);
     if (reopen) {
-        check(sceVideoOutOpen(255, 0, 0, nullptr) == handle, "reopen changed handle");
+        std::atomic<bool> returned{false};
+        int reopened = -1;
+        std::exception_ptr openFailure;
+        std::thread opener([&] {
+            try {
+                reopened = sceVideoOutOpen(255, 0, 0, nullptr);
+            } catch (...) {
+                openFailure = std::current_exception();
+            }
+            returned.store(true, std::memory_order_release);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        const bool early = returned.load(std::memory_order_acquire);
+        gate->Release();
+        opener.join();
+        if (openFailure) std::rethrow_exception(openFailure);
+        check(!early, "reopen replaced the port's configuration while a flip and a label store of the previous one were in flight");
+        check(reopened == handle, "reopen changed handle");
+        check(std::atomic_ref(cfg->bufferLabels[1]).load(std::memory_order_acquire) == 1, "reopen returned before the label store into the previous configuration landed");
         replacement = VideoOutDriver::Get().GetConfig(handle);
         check(replacement != cfg && replacement->generation > cfg->generation, "reopen reused old port state");
     }
@@ -228,7 +253,7 @@ void testDeferredBuffer() {
 }
 
 void testCpuFlipOrder() {
-    const bool inOrder = std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
+    const bool inOrder = APS5_ENABLE_TIMING_LOG || std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::vector<std::byte> allocation(65536 + 65535);
@@ -255,7 +280,7 @@ void testCpuFlipOrder() {
     std::thread flipThread([&] { check(sceVideoOutSubmitFlip(handle, 0, 1, 5) == 0, "the flip thread's flip was not accepted"); });
     flipThread.join();
     const bool ahead = flipsWithin(1, std::chrono::milliseconds(inOrder ? 1000 : 8000));
-    if (inOrder) check(!ahead, "with APS5_CPU_FLIP_IN_ORDER a flip completed while a queue-0 submission ahead of it was held");
+    if (inOrder) check(!ahead, "with CPU flips in order a flip completed while a queue-0 submission ahead of it was held");
     else check(ahead, "a flip from a thread that never submitted queue-0 work waited for a held queue-0 submission");
     first->Release();
     check(flipsWithin(1, std::chrono::seconds(30)), "the flip thread's flip did not complete");
@@ -486,7 +511,7 @@ void testControls() {
     }
     check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "duplicate output mode unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
-    expectFailure([&] { sceVideoOutDeleteOutputModeEvent(queue, -1); });
+    check(sceVideoOutDeleteOutputModeEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode unsubscription on an invalid handle was accepted");
     check(sceVideoOutAddVblankEvent(queue, handle, nullptr) == 0 && sceVideoOutAddVblankEvent(queue, handle, &settings) == 0, "vblank subscription failed");
     {
         std::lock_guard lock(cfg->mutex);
@@ -523,6 +548,13 @@ void testControls() {
         check(!cfg->groups[3].occupied && !cfg->buffers[15].Occupied(), "a refused registration past the last buffer registered something");
     }
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffers with set reserved pointers were rejected");
+    constexpr int slotOccupied = static_cast<int>(0x80290010u);
+    VideoOutBuffers again{storage.data(), nullptr, {nullptr, nullptr}};
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &again, 1, &attribute, 0, nullptr) == slotOccupied, "a registration over a registered set and its buffers did not fail with SLOT_OCCUPIED");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->buffers[0].groupIndex == 0 && cfg->groups[0].occupied, "a refused registration released the registered set");
+    }
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "VRR status event triggered without a VRR change");
     KernelEvent vrrStatus{};
@@ -538,7 +570,7 @@ void testControls() {
     }
     check(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == 0, "duplicate VRR status unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(0, handle); });
-    expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(queue, -1); });
+    check(sceVideoOutDeleteVrrActiveStatusEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR status unsubscription on an invalid handle was accepted");
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 1, 0); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 1); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0x100000000ull, 0); });
@@ -1020,6 +1052,8 @@ void testUnopenedEventRegistration() {
     check(sceKernelCreateEqueue(&eq, "unopened") == 0, "the event queue was not created");
     check(sceVideoOutAddFlipEvent(eq, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on an unopened port was accepted");
     check(sceVideoOutAddVblankEvent(eq, 1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event on an unopened port was accepted");
+    check(sceVideoOutDeleteFlipEvent(eq, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on an unopened port was accepted");
+    check(sceVideoOutDeleteVblankEvent(eq, 1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on an unopened port was accepted");
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == 0, "flip event on an open port was refused");
     check(sceVideoOutAddVblankEvent(eq, handle, nullptr) == 0, "vblank event on an open port was refused");
@@ -1027,6 +1061,8 @@ void testUnopenedEventRegistration() {
     check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "registered vblank event was not deleted");
     sceVideoOutClose(handle);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on a closed port was accepted");
+    check(sceVideoOutDeleteFlipEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on a closed port was accepted");
+    check(sceVideoOutDeleteVblankEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on a closed port was accepted");
     check(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
     LibcRunShutdown_nid_postfix();
 }
