@@ -125,6 +125,16 @@ int APS5_VABI sceLibcPafMspaceCheckMemoryBounds();
 int APS5_VABI sceLibcHeapUnsetTraceMarker();
 int APS5_VABI sceLibcHeapGetAddressRanges();
 int APS5_VABI sceLibcHeapMutexFree();
+bool APS5_VABI sceLibcInternalPending3_016_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_021_nid_no_patch(const void* self);
+bool APS5_VABI sceLibcInternalPending3_023_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_037_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_038_nid_no_patch(const void* self);
+bool APS5_VABI sceLibcInternalPending3_039_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending4_007_nid_no_patch(const void* self, const void* name, const void* locale);
+void APS5_VABI sceLibcInternalPending4_008_nid_no_patch(const void* self, int catalog);
+int APS5_VABI sceLibcInternalPending4_013_nid_no_patch(const void* self, const void* name, const void* locale);
+void APS5_VABI sceLibcInternalPending4_014_nid_no_patch(const void* self, int catalog);
 
 
 }
