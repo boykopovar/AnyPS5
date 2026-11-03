@@ -118,6 +118,23 @@ int main(const int argc, char** argv) {
                                   "a relocation table whose address no segment maps", unmappedError);
         }
 
+        {
+            Bytes image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 24);
+            Write<std::uint64_t>(image, kRelaEntry, 0xFFFFFFFFFFFFFFF9ull);
+            Write<std::uint64_t>(image, kRelaEntry + 8, kRelativeEntryInfo);
+            Write<std::int64_t>(image, kRelaEntry + 16, 0);
+            RunAndRequireRejected(binary, image, OutputModes()[0],
+                                  "a relative relocation slot address near UINT64_MAX", "Relocation target address overflow");
+        }
+        {
+            Bytes image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 24);
+            Write<std::uint64_t>(image, kRelaEntry, 0x300);
+            Write<std::uint64_t>(image, kRelaEntry + 8, kRelativeEntryInfo);
+            Write<std::int64_t>(image, kRelaEntry + 16, -1);
+            RunAndRequireRejected(binary, image, OutputModes()[0],
+                                  "a relative relocation with a negative addend", "Relative relocation addend is outside the ELF image");
+        }
+
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "reloc_table_bounds_tests: " << error.what() << '\n';
