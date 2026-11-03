@@ -270,6 +270,16 @@ int Install(std::shared_ptr<Socket> socket) {
     }
     return number;
 }
+std::atomic<const KernelSocketPoll::Forwards*> socketForwards{nullptr};
+struct Forwarded {
+    const KernelSocketPoll::Forwards* forwards = nullptr;
+    int family = 0;
+};
+Forwarded ForwardsFor(int descriptor) {
+    const auto* forwards = GuestSockets::IsOpen(descriptor) ? nullptr : socketForwards.load(std::memory_order_acquire);
+    const int family = forwards == nullptr ? 0 : forwards->family(descriptor);
+    return family == 0 ? Forwarded{} : Forwarded{forwards, family};
+}
 std::shared_ptr<Socket> Lookup(int descriptor) {
     std::lock_guard lock(socketsMutex);
     const auto found = sockets.find(descriptor);
@@ -330,6 +340,10 @@ bool PeerConnected(const Socket& socket) {
     sockaddr_storage peer{};
     socklen_t size = sizeof(peer);
     return ::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &size) == 0;
+}
+bool Multicast(const sockaddr_storage& address) {
+    if (address.ss_family == AF_INET) return (reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in&>(address).sin_addr)[0] & 0xf0) == 0xe0;
+    return address.ss_family == AF_INET6 && reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in6&>(address).sin6_addr)[0] == 0xff;
 }
 constexpr std::int64_t NotAnswered = -2;
 std::int64_t ZeroPortSend(const Socket& socket, const sockaddr_storage& destination, std::uint64_t length) {
@@ -652,6 +666,10 @@ extern "C" void KernelReleaseSocketNumber_nid_no_patch(int number) {
     ReleaseNumber(number);
 }
 
+extern "C" void KernelSetSocketForwards_nid_no_patch(const KernelSocketPoll::Forwards* forwards) {
+    socketForwards.store(forwards, std::memory_order_release);
+}
+
 namespace {
 #ifdef _WIN32
 using NativePollDescriptor = WSAPOLLFD;
@@ -759,8 +777,10 @@ bool QueryPipe(int descriptor, const char* function, ACCESS_MASK& access, PipeLo
     if (!query) throw std::runtime_error(std::string(function) + ": NtQueryInformationFile is unavailable");
     PipeIoStatus status{};
     if (query(handle, &status, &access, sizeof(access), FileAccessInformationClass) < 0 ||
-        query(handle, &status, &pipe, sizeof(pipe), FilePipeLocalInformationClass) < 0)
+        query(handle, &status, &pipe, sizeof(pipe), FilePipeLocalInformationClass) < 0) {
+        if (reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor)) != handle || GetFileType(handle) != FILE_TYPE_PIPE) return false;
         throw std::runtime_error(std::string(function) + ": querying pipe descriptor " + std::to_string(descriptor) + " failed");
+    }
     return true;
 }
 bool PipeReadiness(int descriptor, short events, short& revents) {
@@ -1300,6 +1320,7 @@ int APS5_VABI _fcntl_nid_postfix(int descriptor, int command, ...) {
 int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
                                     const void* value, std::uint32_t length) {
     if (!value && length != 0) return Fail(14);
+    if (static_cast<std::int32_t>(length) < 0) return Fail(22);
     int netError = 0;
     if (!GuestSockets::IsOpen(descriptor) && KernelSetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
         return netError == 0 ? 0 : Fail(netError);
@@ -1317,26 +1338,25 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
 }
 int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
                                     void* value, std::uint32_t* length) {
+    std::uint32_t declared = 0;
+    if (value && !GuestCopyIn_nid_no_patch(&declared, length, sizeof(declared))) return Fail(14);
+    if (value && !GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared))) return Fail(14);
     int netError = 0;
-    if (!GuestSockets::IsOpen(descriptor) && KernelGetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
-        return netError == 0 ? 0 : Fail(netError);
+    if (!GuestSockets::IsOpen(descriptor) && KernelGetSocketOption_nid_no_patch(descriptor, level, option, value, &declared, &netError)) {
+        if (netError != 0) return Fail(netError);
+        return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);
-    if (!length) return Fail(22);
-    if (!value) {
-        const GuestArena::HostWrite lengthOutput(length, sizeof(*length));
-        if (!lengthOutput.Open()) return Fail(14);
-        *length = 0;
-    }
     std::lock_guard lock(socket->modeMutex);
     const auto native = static_cast<std::uintptr_t>(socket->value);
-    const int error = level == 0    ? GuestSockets::GetIpLevelOption(socket->options, socket->family == 2, socket->type == 2, option, value, length)
-                      : level == 6  ? GuestSockets::GetTcpLevelOption(native, socket->options, socket->family != GuestUnix && socket->type == 1, option, value, length)
-                      : level == 41 ? GuestSockets::GetIpv6LevelOption(native, socket->family == 28, option, value, length)
-                                    : GuestSockets::GetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, length);
-    return error == 0 ? 0 : Fail(error);
+    const int error = level == 0    ? GuestSockets::GetIpLevelOption(socket->options, socket->family == 2, socket->type == 2, option, value, &declared)
+                      : level == 6  ? GuestSockets::GetTcpLevelOption(native, socket->options, socket->family != GuestUnix && socket->type == 1, option, value, &declared)
+                      : level == 41 ? GuestSockets::GetIpv6LevelOption(native, socket->family == 28, option, value, &declared)
+                                    : GuestSockets::GetSocketLevelOption(native, socket->options, socket->family, socket->type, option, value, &declared);
+    if (error != 0) return Fail(error);
+    return GuestCopyOut_nid_no_patch(length, &declared, sizeof(declared)) ? 0 : Fail(14);
 }
 int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
     const bool nonblocking = (type & GuestNonBlocking) != 0;
@@ -1456,9 +1476,12 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     sockaddr_storage native{};
     socklen_t size;
     if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
+    if (native.ss_family == AF_INET6 && IN6_IS_ADDR_UNSPECIFIED(&reinterpret_cast<sockaddr_in6&>(native).sin6_addr))
+        reinterpret_cast<sockaddr_in6&>(native).sin6_addr = in6addr_loopback;
 #ifdef _WIN32
     if (socket->type == 1) RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
+    if (socket->type == 1 && Multicast(native) && !PeerConnected(*socket)) return Fail(47);
     if (ZeroPortConnect(*socket, address, length)) return -1;
     std::unique_lock lock(socket->modeMutex);
     socket->options.reportedError = 0;
@@ -1546,6 +1569,13 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
 }
 int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
+    if (const auto [forwards, family] = ForwardsFor(descriptor); forwards != nullptr) {
+        sockaddr_storage checked{};
+        socklen_t checkedSize;
+        if (!Address(family, address, length, checked, checkedSize)) return -1;
+        const int error = forwards->bind(descriptor, address, length);
+        return error == 0 ? 0 : Fail(error);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     sockaddr_storage native{};
@@ -1553,6 +1583,7 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
     const int mapped = LongMappedDualStack(*socket, address, length);
     if (mapped < 0) return -1;
     if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
+    if (socket->type == 1 && Multicast(native)) return Fail(47);
     std::unique_lock lock(socket->modeMutex, std::defer_lock);
     if (socket->type == 2) lock.lock();
     if (::bind(socket->value, reinterpret_cast<sockaddr*>(&native), size)) return Fail(NativeError());
@@ -1608,6 +1639,13 @@ int CopyAddressOut(const sockaddr_storage& native, bool unnamed, void* address, 
 int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
     std::uint32_t capacity = 0;
     if (!GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        unsigned char name[28]{};
+        std::uint32_t size = std::min<std::uint32_t>(capacity, sizeof(name));
+        if (const int error = forwards->getsockname(descriptor, name, &size)) return Fail(error);
+        if (size != 0 && !GuestCopyOut_nid_no_patch(address, name, size)) return Fail(14);
+        return GuestCopyOut_nid_no_patch(length, &size, sizeof(size)) ? 0 : Fail(14);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->family == GuestUnix) return CopyAddressOut({}, true, address, length, capacity);
@@ -1641,7 +1679,14 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
     if (File::IoctlRequestMalformed(request)) return Fail(25);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if (!argument) return Fail(14);
+    const auto command = static_cast<std::uint32_t>(request);
+    if (command == 0x20006601 || command == 0x20006602) {
+        std::lock_guard registry(socketsMutex);
+        if (command == 0x20006601) closeOnExecDescriptors.insert(descriptor);
+        else closeOnExecDescriptors.erase(descriptor);
+        return 0;
+    }
+    if (!argument && (request & 0x1fff0000 || !(request & 0x20000000))) return Fail(14);
     if (request != 0x8004667e && request != 0x4004667f) return Fail(25);
     std::lock_guard lock(socket->modeMutex);
     if (request == 0x4004667f && socket->receiveShut) {
@@ -1672,6 +1717,17 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
         if (const int error = AddressLengthError(address, addressLength)) return Fail(error);
         if (!GuestCopyIn_nid_no_patch(destinationCopy.data(), address, addressLength)) return Fail(14);
         address = destinationCopy.data();
+    }
+    if (const auto [forwards, family] = ForwardsFor(descriptor); forwards != nullptr) {
+        if ((flags & ~GuestSendFlags) != 0) return Fail(45);
+        if (length > INT_MAX) return Fail(40);
+        if (!buffer && length) return Fail(14);
+        sockaddr_storage checked{};
+        socklen_t checkedSize;
+        if (address && !Address(family, address, addressLength, checked, checkedSize)) return -1;
+        int error = 0;
+        const auto sent = forwards->sendto(descriptor, buffer, length, flags, address, addressLength, &error);
+        return error == 0 ? sent : Fail(error);
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
@@ -1706,6 +1762,18 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     int flags, void* address, std::uint32_t* addressLength) {
     std::uint32_t capacity = 0;
     if (addressLength && !GuestCopyIn_nid_no_patch(&capacity, addressLength, sizeof(capacity))) return Fail(14);
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
+        if (length > INT_MAX) return Fail(40);
+        if ((!buffer && length) || (address && !addressLength)) return Fail(14);
+        unsigned char name[28]{};
+        std::uint32_t reported = std::min<std::uint32_t>(capacity, sizeof(name));
+        int error = 0;
+        const auto received = forwards->recvfrom(descriptor, buffer, length, flags, address ? name : nullptr, address ? &reported : nullptr, &error);
+        if (error != 0) return Fail(error);
+        if (!addressLength) return received;
+        return ReportAddress(address, addressLength, name, address ? reported : capacity) ? received : Fail(14);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
