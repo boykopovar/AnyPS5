@@ -145,10 +145,24 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         allocatorUnits.push_back(wideName.size());
     }
 
+    std::vector<bool> executableProviders(libraries.size());
+    for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
+        if (!Domain::ModuleSuffix(libraries[index]).empty()) continue;
+        bool requested = false;
+        bool exported = true;
+        for (const auto& import : imports) {
+            if (Domain::NeededLibraryName(import.Library) != libraries[index]) continue;
+            requested = true;
+            exported = exported && executableExports.contains(import.Name);
+        }
+        executableProviders[index] = requested && exported;
+    }
+
     std::vector<std::uint32_t> libraryPaths;
     std::vector<std::size_t> libraryUnits;
     for (std::size_t index = 0; index < libraries.size(); ++index) {
         auto name = index < guestModules.size() ? libraries[index] : path + libraries[index];
+        if (executableProviders[index]) name += ".dll";
         std::replace(name.begin(), name.end(), '/', '\\');
         const auto wideName = toUtf16(name);
         if (wideName.size() + 1 >= PathCapacity)
@@ -236,19 +250,6 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     }
     for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
         if (unmatched.contains(stem(libraries[index]))) imported[index] = true;
-    }
-
-    std::vector<bool> executableProviders(libraries.size());
-    for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
-        if (!Domain::ModuleSuffix(libraries[index]).empty()) continue;
-        bool requested = false;
-        bool exported = true;
-        for (const auto& import : imports) {
-            if (Domain::NeededLibraryName(import.Library) != libraries[index]) continue;
-            requested = true;
-            exported = exported && executableExports.contains(import.Name);
-        }
-        executableProviders[index] = requested && exported;
     }
 
     std::optional<std::size_t> traceProvider;

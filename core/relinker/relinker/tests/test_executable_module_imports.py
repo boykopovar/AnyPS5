@@ -66,7 +66,7 @@ def check_windows(relinker, work):
         libraries = output.parent / 'libs'
         libraries.mkdir()
         expect_entry(output)
-        (libraries / MODULE).write_bytes(b'not a module')
+        (libraries / (MODULE + '.dll')).write_bytes(b'not a module')
         expect_load_failure(output, MODULE)
 
     output = convert(relinker, work / 'windows-diagnostics', ['--windows', '--windows-diagnostics'], {'consumer.prx': importer()})
