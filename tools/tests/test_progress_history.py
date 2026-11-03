@@ -180,6 +180,34 @@ class ProgressHistoryTests(unittest.TestCase):
                         progress_history.collect("HEAD", cache)
                     self.assertEqual(cache.read_bytes(), contents)
 
+    def test_measure_legacy_fallback_uses_archived_opcode_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current_prx = root / "current" / "prx"
+            current_opcodes = root / "current" / "opcodes.txt"
+            current_prx.mkdir(parents=True)
+            current_opcodes.write_text("current", encoding="utf-8")
+
+            class Archive:
+                def extractall(self, destination, **kwargs):
+                    (destination / "current" / "prx").mkdir(parents=True)
+                    (destination / "current" / "opcodes.txt").write_text("archived", encoding="utf-8")
+
+            def collect_shaders():
+                self.assertNotEqual(progress.OPCODES, current_opcodes)
+                self.assertEqual(progress.OPCODES.read_text(encoding="utf-8"), "archived")
+                return {"done": 1, "total": 2, "percent": 50.0}
+
+            with patch.multiple(progress, ROOT=root, PRX=current_prx, OPCODES=current_opcodes), \
+                    patch.object(progress_history, "git", return_value=b"archive"), \
+                    patch.object(progress_history.tarfile, "open", return_value=Archive()), \
+                    patch.object(progress, "collect_libraries", return_value={"done": 1, "total": 1, "percent": 100.0}), \
+                    patch.object(progress, "collect_shader_source", side_effect=progress.shader_scan.ScanError("unsupported")), \
+                    patch.object(progress, "collect_shaders", side_effect=collect_shaders):
+                result = progress_history.measure("HEAD")
+
+            self.assertEqual(result["shaders"], {"done": 1, "total": 2, "percent": 50.0})
+
     def test_failed_cache_publication_preserves_the_old_file(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "history.json"

@@ -64,6 +64,8 @@ def measure(sha):
                 shader_source = progress.collect_shader_source(root)
             except (OSError, AttributeError, progress.shader_scan.ScanError):
                 shader_source = None
+            if not shader_source:
+                legacy = progress.collect_shaders()
         except (OSError, AttributeError):
             return None
         finally:
@@ -76,7 +78,6 @@ def measure(sha):
             "percent": progress.shader_source_percent(shader_source),
         }
     else:
-        legacy = progress.collect_shaders()
         shaders = {key: legacy[key] for key in ("done", "total", "percent")}
     return {
         "libraries": {key: libraries[key] for key in ("done", "total", "percent")},
