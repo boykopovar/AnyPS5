@@ -2161,6 +2161,41 @@ void verifyTypeZeroImageMaterialization() {
             return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
         }), "unrelated guest mappings: a snapshot whose captured image views were untouched did not stabilize");
     }
+    {
+        srt.fill(0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin());
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16u);
+        srt[20] = 1u;
+        phase = 0u;
+        static std::array<std::uint32_t, 8> remappedT{};
+        static std::uint32_t descriptorWordsRead = 0;
+        static bool remapped = false;
+        remappedT = newT;
+        descriptorWordsRead = 0;
+        remapped = false;
+        GuestAllocations::Mutation().Add(srt.data(), sizeof(srt), true, false, false);
+        const auto remappingPending = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+            using Pending = AgcDriver::ShaderMemory::PendingWrite;
+            if (bytes >= 4096u) return address <= srtAddress && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+            if (!remapped && bytes == sizeof(std::uint32_t) && address >= srtAddress && address < srtAddress + 32u) {
+                descriptorWordsRead |= 1u << ((address - srtAddress) / sizeof(std::uint32_t));
+            } else if (!remapped && descriptorWordsRead == 0xffu && address >= srtAddress + 32u) {
+                std::memcpy(srt.data(), remappedT.data(), sizeof(remappedT));
+                GuestAllocations::Mutation().Remove(srt.data());
+                GuestAllocations::Mutation().Add(srt.data(), sizeof(srt), true, false, false);
+                remapped = true;
+            }
+            return Pending::Raw;
+        };
+        AgcDriver::ShaderMemory remappingMemory({}, remappingPending, nullptr, hookWaits);
+        const auto remappedCapture = remappingMemory.Capture(request);
+        GuestAllocations::Mutation().Remove(srt.data());
+        require(remapped, "descriptor backing: the SRT was not remapped after its T# was read");
+        const auto holds = [&](const std::array<std::uint32_t, 8>& descriptor) {
+            return std::ranges::any_of(remappedCapture->snapshot.images, [&](const DescriptorValue& value) { return std::equal(descriptor.begin(), descriptor.end(), value.dwords.begin()); });
+        };
+        require(holds(newT) && !holds(oldT), "descriptor backing: a capture kept descriptor words read before their memory was remapped");
+    }
     verifyImageViewChangeDuringRecheck();
 
     {

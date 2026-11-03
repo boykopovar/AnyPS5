@@ -88,6 +88,7 @@ public:
     static VouchCounts Vouches();
     static bool Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
     static std::uint64_t descriptorScope(void* context, std::size_t bytes);
+    static bool sourcesCurrent(void* context);
 
 private:
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
@@ -129,6 +130,10 @@ private:
         WordMask recent;
         bool wordwise = false;
         bool lazy = false;
+        bool hasRange = false;
+        std::uint64_t rangeAddress = 0;
+        std::uint64_t rangeBytes = 0;
+        std::uint64_t backingSerial = 0;
     };
 
     struct Supplied {
