@@ -154,9 +154,11 @@ int main() {
     };
     const Setting settings[] = {
         {sceUserServiceGetAccessibilityChatTranscription, 0},
+        {sceUserServiceGetAccessibilityKeyremapEnable, 0},
         {sceUserServiceGetAccessibilityPressAndHoldDelay, 0},
         {sceUserServiceGetAccessibilityTriggerEffect, 1},
         {sceUserServiceGetAccessibilityVibration, 1},
+        {sceUserServiceGetAccessibilityZoom, 0},
         {sceUserServiceGetAccessibilityZoomEnabled, 0},
         {sceUserServiceGetAccessibilityZoomFollowFocus, 1},
     };
@@ -183,22 +185,6 @@ int main() {
         Require(sceUserServiceGetGamePresets(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
-    std::int32_t accessibilityValue = 0;
-    bool threwKeyremap = false;
-    try {
-        sceUserServiceGetAccessibilityKeyremapEnable(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
-    } catch (const std::runtime_error&) {
-        threwKeyremap = true;
-    }
-    Require(threwKeyremap);
-
-    bool threwZoom = false;
-    try {
-        sceUserServiceGetAccessibilityZoom(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
-    } catch (const std::runtime_error&) {
-        threwZoom = true;
-    }
-    Require(threwZoom);
 
     char name[32]{};
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
