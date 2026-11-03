@@ -345,6 +345,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_unknown_nids.py)
         add_test(NAME conventions_debt_length COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_length.py)
+        add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
         add_test(NAME unbuilt_exports COMMAND ${Python3_EXECUTABLE}
@@ -422,6 +424,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py)
+        add_test(NAME debt_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_report.py)
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
