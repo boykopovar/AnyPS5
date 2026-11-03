@@ -809,6 +809,80 @@ const auto JSRealloc = &_ZN3WTF14jsValueReallocEPvm;
 
 std::string ViewText(StringView view) { return Bytes(ViewUTF8(&view, 1)); }
 
+const auto URLEllipsize = &_ZNK3WTF3URL30stringCenterEllipsizedToLengthEj;
+const auto DataURLMime = &_ZN3WTF19mimeTypeFromDataURLENS_10StringViewE;
+
+bool Is8Bit(const String& value) { return value.impl && (value.impl->hashAndFlags & 4); }
+
+StringView ViewOf(const String& value) {
+    return {value.impl->data, value.impl->length, !!(value.impl->hashAndFlags & 4)};
+}
+
+StringView Literal(const char* text) { return {text, static_cast<unsigned>(std::strlen(text)), true}; }
+
+void TestURLStringHelpers() {
+    auto narrow = FromUTF8Z(U8("http://example.com/abcdefghij"));
+    URL narrowURL{narrow.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (unsigned length : {29U, 30U, 40U, 0xFFFFFFFFU}) {
+        auto same = URLEllipsize(&narrowURL, length);
+        Check(same.impl == narrow.impl && narrow.impl->refCount == 4);
+    }
+    Check(narrow.impl->refCount == 2);
+    Text(URLEllipsize(&narrowURL, 28), "http://exampl...m/abcdefghij");
+    Text(URLEllipsize(&narrowURL, 10), "http...hij");
+    Text(URLEllipsize(&narrowURL, 11), "http...hij");
+    Text(URLEllipsize(&narrowURL, 6), "ht...j");
+    Text(URLEllipsize(&narrowURL, 5), "h...");
+    Text(URLEllipsize(&narrowURL, 4), "h...");
+    Text(URLEllipsize(&narrowURL, 3), "...");
+    Text(URLEllipsize(&narrowURL, 2), "...");
+    Text(URLEllipsize(&narrowURL, 1), "http://example.com/abcdefghij...");
+    Text(URLEllipsize(&narrowURL, 0), "http://example.com/abcdefghij...");
+    Check(Is8Bit(URLEllipsize(&narrowURL, 10)) && Is8Bit(URLEllipsize(&narrowURL, 3)));
+    Check(URLEllipsize(&narrowURL, 10).impl != narrow.impl);
+
+    auto wide = Create16(u"http://wide.test/path", 21);
+    URL wideURL{wide.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(URLEllipsize(&wideURL, 21).impl == wide.impl);
+    auto wideShort = URLEllipsize(&wideURL, 10);
+    Text(wideShort, "http...ath");
+    Check(!Is8Bit(wideShort));
+    auto wideDots = URLEllipsize(&wideURL, 3);
+    Text(wideDots, "...");
+    Check(!Is8Bit(wideDots));
+    auto wideLong = URLEllipsize(&wideURL, 1);
+    Text(wideLong, "http://wide.test/path...");
+    Check(!Is8Bit(wideLong));
+
+    URL absent{};
+    Check(URLEllipsize(&absent, 0).impl == nullptr && URLEllipsize(&absent, 10).impl == nullptr);
+    auto empty = Create8(U8(""), 0);
+    URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(URLEllipsize(&emptyURL, 0).impl == empty.impl && URLEllipsize(&emptyURL, 5).impl == empty.impl);
+    Throws([&] { URLEllipsize(nullptr, 10); });
+
+    Text(DataURLMime(Literal("data:text/HTML;base64,x")), "text/html");
+    Text(DataURLMime(Literal("data:Text/X,y")), "text/x");
+    Text(DataURLMime(Literal("data:,x")), "text/plain");
+    Text(DataURLMime(Literal("data:;base64,x")), "text/plain");
+    Check(Is8Bit(DataURLMime(Literal("data:,x"))));
+    Text(DataURLMime(Literal("data:a,b;c")), "a,b");
+    Text(DataURLMime(Literal("data:text/plain")), "");
+    Text(DataURLMime(Literal("data:")), "");
+    Text(DataURLMime(Literal("data")), "");
+    Text(DataURLMime(Literal("")), "");
+    Text(DataURLMime(StringView{nullptr, 0, true}), "");
+    Text(DataURLMime(Literal("http://a;b")), "//a");
+    auto wideData = Create16(u"data:TEXT/Plain;x", 17);
+    auto wideMime = DataURLMime(ViewOf(wideData));
+    Text(wideMime, "text/plain");
+    Check(!Is8Bit(wideMime));
+    auto accented = Create16(u"data:É/X,", 9);
+    Text(DataURLMime(ViewOf(accented)), "\xC3\x89/x");
+    auto widePlain = Create16(u"data:,x", 7);
+    Text(DataURLMime(ViewOf(widePlain)), "text/plain");
+}
+
 void TestURLsAndReallocation() {
     struct PinnedBits {
         unsigned valid : 1;
@@ -967,6 +1041,7 @@ void TestURLsAndReallocation() {
     memory = static_cast<unsigned char*>(JSRealloc(memory, 2));
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
+    TestURLStringHelpers();
 }
 
 }  // namespace Wtf2Tests
