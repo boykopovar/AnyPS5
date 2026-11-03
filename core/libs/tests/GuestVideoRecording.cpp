@@ -136,6 +136,20 @@ int main() {
     Require(sceVideoRecordingGetInfo(0xa001, nullptr, 0) == NotOpen, "info 0xa001 validation");
     Require(sceVideoRecordingGetInfo(0xa005, nullptr, 0) == NotOpen, "info 0xa005 validation");
     Require(sceVideoRecordingGetInfo(0, nullptr, 0) == InvalidArgument, "unknown info validation");
+
+    float volume = 1.0f;
+    Require(sceVideoRecordingSetInfo(0x8002, nullptr, sizeof(volume)) == InvalidArgument, "null data in setinfo 0x8002");
+    Require(sceVideoRecordingSetInfo(0x8002, &volume, sizeof(float) - 1) == InvalidArgument, "small size in setinfo 0x8002");
+    Require(sceVideoRecordingSetInfo(0x8002, &volume, sizeof(volume)) == static_cast<int>(0x80a80002), "valid setinfo 0x8002 returned error");
+    Require(sceVideoRecordingSetInfo(0x8003, &volume, sizeof(volume)) == static_cast<int>(0x80a80002), "valid setinfo 0x8003 returned error");
+    Require(sceVideoRecordingSetInfo(0xa004, nullptr, 0) == NotOpen, "info 0xa004 not open");
+    Require(sceVideoRecordingSetInfo(0xa006, nullptr, 0) == NotOpen, "info 0xa006 not open");
+    Require(sceVideoRecordingSetInfo(0, nullptr, 0) == InvalidArgument, "unknown setinfo validation");
+
+    Require(sceVideoRecordingInit() == 0, "init returned failure");
+    Require(sceVideoRecordingSendCommand(0, nullptr) == 0, "sendcommand returned failure");
+    Require(sceVideoRecordingTerm() == 0, "term returned failure");
+
     std::puts("VideoRecording tests passed");
     return 0;
 }
