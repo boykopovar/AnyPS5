@@ -65,6 +65,19 @@ void CheckWeightVector(const Faces& faces, FT_UInt count) {
     Require(guestLength == nativeLength);
 }
 
+void CheckLargeCounts(const Faces& faces) {
+    constexpr std::uint32_t count = 0x10003;
+    std::vector<std::int64_t> guest(count, Untouched);
+    std::vector<FT_Fixed> native(count, static_cast<FT_Fixed>(Untouched));
+    Require(FT_Get_MM_Blend_Coordinates_nid_postfix(faces.guest, count, guest.data()) == FT_Get_MM_Blend_Coordinates(faces.native, count, native.data()));
+    for (std::uint32_t index = 0; index < count; ++index) Require(guest[index] == native[index]);
+    std::uint32_t guestLength = count;
+    FT_UInt nativeLength = count;
+    Require(FT_Get_MM_WeightVector_nid_postfix(faces.guest, &guestLength, guest.data()) == FT_Get_MM_WeightVector(faces.native, &nativeLength, native.data()));
+    Require(guestLength == nativeLength);
+    for (std::uint32_t index = 0; index < count; ++index) Require(guest[index] == native[index]);
+}
+
 }
 
 int main() {
@@ -91,6 +104,8 @@ int main() {
         CheckWeightVector(variableFaces, count);
         CheckWeightVector(fixedFaces, count);
     }
+    CheckLargeCounts(variableFaces);
+    CheckLargeCounts(fixedFaces);
 
     std::array<std::int64_t, 2> empty{Untouched, Untouched};
     std::uint32_t length = 2;
