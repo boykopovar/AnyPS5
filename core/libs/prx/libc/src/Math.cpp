@@ -489,6 +489,17 @@ float APS5_VABI acosf_nid_postfix(float x) {
     const float correction = (z - high * high) / (s + high);
     return 2.0f * (high + (AcosfRational(z) * s + correction));
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_hypotf.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_hypotf.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 float APS5_VABI hypotf_nid_postfix(float x, float y) {
     const auto word = [](float value) { return static_cast<std::int32_t>(std::bit_cast<std::uint32_t>(value)); };
     const auto fromWord = [](std::int32_t value) { return std::bit_cast<float>(static_cast<std::uint32_t>(value)); };
