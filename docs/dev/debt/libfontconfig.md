@@ -1,15 +1,18 @@
 # libfontconfig technical debt
 
+### Unknown function info
+
+- [FcConfigGetCurrent and FcInitBringUptoDate](../../../core/libs/prx/libfontconfig/Export.cpp) (libfontconfig, NIDs `2M54M-SKV-k` and `Ck9k-L7rz-I`) - return what firmware 13.42's `system_ex/common_ex/lib/libfontconfig.sprx` returns, read from disassembly, not measured on a console: `FcConfigGetCurrent` is `xor %eax,%eax; ret` (no current configuration, NULL) and `FcInitBringUptoDate` is `mov $0x1,%eax; ret` (FcTrue). Neither reads arguments or state in that module.
+
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 53 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Callable exports](../../../core/libs/prx/libfontconfig/Export.cpp) - 51 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libfontconfig.c) and the [selected export metadata](https://gist.github.com/kyon-eth/7c1e54e6851733f72dbb507fdfbf35f4/206d5ec1b74f677f61a1eda755b490537209a8e1) from two version-labelled images (SHA-256 `3694ba82b2fbff0d5d789f91938906ebc8ee45262aaaba2b333d490f7e0c24ab`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
 | `FcLangSetDestroy` | `+6aV1q-CAIg` |
 | `FcPatternRemove` | `+XnLLwt2q-Y` |
 | `FcPatternGetInteger` | `2BFkLGmS+Ao` |
-| `FcConfigGetCurrent` | `2M54M-SKV-k` |
 | `FcPatternGetBool` | `3zWpyQga5N0` |
 | `FcPatternAddBool` | `6LGRGSLdSdQ` |
 | `FcFontList` | `7+Gq-0xFybo` |
@@ -17,7 +20,6 @@
 | `FcConfigSubstitute` | `8v4Xk2b+C1k` |
 | `FcPatternGetMatrix` | `9x04OJBX0J0` |
 | `FcInit` | `AwGzFwnaitQ` |
-| `FcInitBringUptoDate` | `Ck9k-L7rz-I` |
 | `FcPatternGetString` | `CkZ778Hu6Ng` |
 | `FcFontRenderPrepare` | `CvqQqWqcO-0` |
 | `FcPatternAddDouble` | `D-WphAs+Lh8` |

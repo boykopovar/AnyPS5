@@ -7,7 +7,6 @@ extern "C" {
 int APS5_VABI FcLangSetDestroy();
 int APS5_VABI FcPatternRemove();
 int APS5_VABI FcPatternGetInteger();
-int APS5_VABI FcConfigGetCurrent();
 int APS5_VABI FcPatternGetBool();
 int APS5_VABI FcPatternAddBool();
 int APS5_VABI FcFontList();
@@ -15,7 +14,6 @@ int APS5_VABI FcFontSetMatch();
 int APS5_VABI FcConfigSubstitute();
 int APS5_VABI FcPatternGetMatrix();
 int APS5_VABI FcInit();
-int APS5_VABI FcInitBringUptoDate();
 int APS5_VABI FcPatternGetString();
 int APS5_VABI FcFontRenderPrepare();
 int APS5_VABI FcPatternAddDouble();
