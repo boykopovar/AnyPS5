@@ -1,6 +1,8 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -10,6 +12,7 @@ namespace {
 constexpr int kGuestInet = 2;
 constexpr int kGuestInet6 = 28;
 constexpr std::size_t kMaxText = 46;
+constexpr std::size_t kPadChunk = 4096;
 
 bool ParseDecimalPart(const char* begin, const char* end, std::uint8_t& value) {
     const std::ptrdiff_t length = end - begin;
@@ -210,13 +213,21 @@ const char* APS5_VABI __inet_ntop_nid_postfix(int family, const void* source,
     if (family != kGuestInet && family != kGuestInet6) { *__error_nid_postfix() = 47; return nullptr; }
     if (!source) throw std::runtime_error("inet_ntop: null source");
     char text[kMaxText + 1];
-    const auto* bytes = static_cast<const std::uint8_t*>(source);
+    std::uint8_t bytes[16];
+    if (!GuestCopyIn_nid_no_patch(bytes, source, family == kGuestInet ? 4 : sizeof(bytes))) { *__error_nid_postfix() = 14; return nullptr; }
     const std::size_t length = family == kGuestInet ? FormatQuad(bytes, text) : V6ToText(bytes, text);
     text[length] = '\0';
     if (length + 1 > capacity) { *__error_nid_postfix() = 28; return nullptr; }
     if (!destination) throw std::runtime_error("inet_ntop: null destination");
-    std::memcpy(destination, text, length + 1);
-    if (family == kGuestInet6) std::memset(destination + length + 1, 0, capacity - length - 1);
+    if (!GuestCopyOut_nid_no_patch(destination, text, length + 1)) { *__error_nid_postfix() = 14; return nullptr; }
+    if (family == kGuestInet6) {
+        static const char zeros[kPadChunk]{};
+        for (std::size_t offset = length + 1; offset < capacity;) {
+            const std::size_t chunk = std::min<std::size_t>(kPadChunk, capacity - offset);
+            if (!GuestCopyOut_nid_no_patch(destination + offset, zeros, chunk)) { *__error_nid_postfix() = 14; return nullptr; }
+            offset += chunk;
+        }
+    }
     return destination;
 }
 
