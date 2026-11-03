@@ -60,6 +60,9 @@ int main() {
     Require(SetProperty(face, FT_MAKE_TAG('a', 'b', 'c', 'd'), &seed) == FT_Err_Invalid_Argument);
     Require(SetProperty(face, (std::uint64_t{1} << 32) | FT_PARAM_TAG_RANDOM_SEED, &seed) == FT_Err_Invalid_Argument);
     Require(host->internal->random_seed == -1);
+    LegacyFreeType::GuestParameter stopping[]{{FT_PARAM_TAG_RANDOM_SEED, &seed}, {FT_MAKE_TAG('a', 'b', 'c', 'd'), &seed}};
+    Require(FT_Face_Properties_nid_postfix(face, UINT32_MAX, stopping) == FT_Err_Invalid_Argument);
+    Require(host->internal->random_seed == 7);
     Require(FT_Face_Properties_nid_postfix(face, 1, nullptr) == FT_Err_Invalid_Argument);
     Require(FT_Face_Properties_nid_postfix(face, 0, nullptr) == 0);
     Require(FT_Face_Properties_nid_postfix(nullptr, 2, properties) == FT_Err_Invalid_Face_Handle);
