@@ -1,3 +1,4 @@
+/* Derived from api/rtp_parameters.cc@8d78f5de6c27b2c793039989ea381f1428fb0100 */
 /*
  *  Copyright (c) 2017 The WebRTC project authors. All Rights Reserved.
  *
