@@ -7650,6 +7650,7 @@ void verifyDepthExportClamp() {
         bytes.resize(bytes.size() - 12u);
         bytes.pop_back();
         bytes.pop_back();
+        bytes.pop_back();
         for (const std::uint8_t legacyVersion : {48u, 47u, 46u}) {
             if (legacyVersion == 47u) bytes.pop_back();
             bytes[4] = legacyVersion;
@@ -7676,6 +7677,7 @@ void verifyDepthExportClamp() {
                 ditheredBytes.erase(bounds, bounds + boundBytes.size());
             }
             ditheredBytes.resize(ditheredBytes.size() - 12u);
+            ditheredBytes.pop_back();
             ditheredBytes.pop_back();
             ditheredBytes.pop_back();
             ditheredBytes[4] = 48u;
@@ -7744,6 +7746,7 @@ void verifyVertexInfoVersion19() {
     require(std::equal(plain.begin() + offset + 4u, plain.end(), flagged.begin() + offset + 4u), "PA_CL_VS_OUT_CNTL moved the fields after it");
     auto version20Vertex = flagged;
     version20Vertex.pop_back();
+    version20Vertex.pop_back();
     version20Vertex.resize(version20Vertex.size() - sizeof(std::uint32_t));
     version20Vertex.pop_back();
     version20Vertex.pop_back();
@@ -7758,6 +7761,7 @@ void verifyVertexInfoVersion19() {
     const auto layered = serializer.Deserialize(serializer.Serialize(vertex));
     require(layered.request.context.vertex.has_value() && layered.request.context.vertex->paClVsOutCntl == vertex.context.vertex->paClVsOutCntl, "a layered vertex info lost its clip distances or render target index");
     auto legacy = plain;
+    legacy.pop_back();
     legacy.pop_back();
     legacy.resize(legacy.size() - sizeof(std::uint32_t));
     legacy.pop_back();
@@ -7832,11 +7836,11 @@ void verifyVertexInfoVersion19() {
     auto disabledBlend = merging;
     disabledBlend.context.pixel->targetMerges.at(0).blend = {false, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {1u, 2u, 3u, 4u}};
     require(serializer.Serialize(disabledBlend) == serializer.Serialize(merging), "a disabled color target blend changed the serialized request");
-    // A version 43 request: no color target merge, and no fused arithmetic flag, pixel function LDS flag, storage size or barycentric built-ins flag at the end.
+    // A version 43 request: no color target merge, and no fused arithmetic flag, pixel function LDS flag, storage size, barycentric built-ins flag, host interpolation first flag or shader image minimum LOD flag at the end.
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
         bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
-        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 5u - 12u);
+        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 6u - 12u);
         return bytes;
     };
     auto version42 = version43Bytes(plainPixel);
@@ -7998,10 +8002,10 @@ void verifyDepthRemapRequests() {
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
     constexpr std::size_t pointTailBytes = 13u;
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 28u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 28 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 21 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 21 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the host interpolation first flag, the heap profile and the other keyed target flags of a vertex request");
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 29u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 29 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 22 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 22 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the host interpolation first flag, the heap profile and the other keyed target flags of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
-        legacyBytes.resize(legacyBytes.size() - 13u);
+        legacyBytes.resize(legacyBytes.size() - 14u);
         legacyBytes.resize(legacyBytes.size() - sizeof(std::uint32_t));
         legacyBytes.pop_back();
         legacyBytes.pop_back();
@@ -8015,7 +8019,7 @@ void verifyDepthRemapRequests() {
         require(serializer.Serialize(legacy.request) == plain, ("a version " + std::to_string(legacyVersion) + " vertex request misread the fields before the depth remap").c_str());
     }
     auto version35 = remappedBytes;
-    version35.resize(version35.size() - 13u);
+    version35.resize(version35.size() - 14u);
     version35.resize(version35.size() - sizeof(std::uint32_t));
     version35.pop_back();
     version35.pop_back();
@@ -8069,8 +8073,8 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 57u + pointTailBytes && legacy[4] == 55u, "a merged hull request did not use serialization version 55");
-    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 4u - pointTailBytes - 12u);
+    require(legacy.size() > 58u + pointTailBytes && legacy[4] == 55u, "a merged hull request did not use serialization version 55");
+    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 5u - pointTailBytes - 12u);
     legacy.pop_back();
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");

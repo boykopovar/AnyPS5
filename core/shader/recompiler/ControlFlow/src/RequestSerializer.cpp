@@ -942,6 +942,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.fragmentBarycentricBuiltins);
     writer.WriteBool(request.target.tessellationEvaluationSubgroups);
     writer.WriteBool(request.target.hostInterpolationFirst);
+    writer.WriteBool(request.target.shaderImageMinLod);
     writer.WriteBool(request.target.gpuResolvedImages);
     writer.WriteBool(request.target.descriptorMemory);
     writer.WriteU32(request.target.heapDataUniformDwords);
@@ -1021,6 +1022,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version >= 48u) result.request.target.fragmentBarycentricBuiltins = reader.ReadBool();
     if (version >= 51u) result.request.target.tessellationEvaluationSubgroups = reader.ReadBool();
     if (version >= 52u) result.request.target.hostInterpolationFirst = reader.ReadBool();
+    if (version >= 53u) result.request.target.shaderImageMinLod = reader.ReadBool();
     if (version >= 55u) {
         result.request.target.gpuResolvedImages = reader.ReadBool();
         result.request.target.descriptorMemory = reader.ReadBool();
