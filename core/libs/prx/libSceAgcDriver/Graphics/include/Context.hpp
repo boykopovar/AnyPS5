@@ -6,6 +6,7 @@
 #endif
 #include <mutex>
 #include <vulkan/vulkan.h>
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -35,6 +36,7 @@ class SamplerCache;
 class ShaderResources;
 class PlaceholderImages;
 class VertexInputCache;
+class VertexBufferFormats;
 
 class PipelineCacheSynchronization {
 public:
@@ -46,7 +48,7 @@ public:
     SnapshotLock TryLockForSnapshot() const { return SnapshotLock(mutex, std::try_to_lock); }
 
 private:
-    mutable std::shared_mutex mutex;
+    mutable PrimedSharedMutex mutex;
 };
 
 inline void Require(bool condition, const std::string& reason) {
@@ -259,6 +261,8 @@ struct Context {
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
+    bool shaderResourceMinLod = false;
+    bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool graphicsPipelineLibrary = false;
@@ -279,6 +283,7 @@ struct Context {
         return pipelineCacheSynchronization != nullptr ? pipelineCacheSynchronization->LockForPipelineUse() : PipelineCacheSynchronization::PipelineUseLock{};
     }
     VertexInputCache* vertexInputs = nullptr;
+    VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

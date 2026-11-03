@@ -134,6 +134,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcStagingCopyBackShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/StagingCopyBack.comp)
+set(agcStagingCopyBackShaderSpv ${agcTextureDetileGeneratedDir}/StagingCopyBack.spv)
+set(agcStagingCopyBackShaderHeader ${agcTextureDetileGeneratedDir}/StagingCopyBack_spv.h)
+add_custom_command(
+        OUTPUT "${agcStagingCopyBackShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcStagingCopyBackShaderSpv}" "${agcStagingCopyBackShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcStagingCopyBackShaderSpv} -DOUTPUT=${agcStagingCopyBackShaderHeader}
+        -DSYMBOL=STAGING_COPY_BACK_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcStagingCopyBackShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcCmaskClearShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/CmaskClear.comp)
 set(agcCmaskClearShaderSpv ${agcTextureDetileGeneratedDir}/CmaskClear.spv)
 set(agcCmaskClearShaderHeader ${agcTextureDetileGeneratedDir}/CmaskClear_spv.h)
@@ -403,6 +416,7 @@ set(agcDriverSources
         ${agcMultisampleUploadHeader}
         ${agcCmaskClearShaderHeader}
         ${agcMeshArgumentsShaderHeader}
+        ${agcStagingCopyBackShaderHeader}
         ${agcTextureDetileImageShaderHeader}
         ${agcTextureRepackShaderHeader}
         ${agcDispatchArgumentsShaderHeader}
@@ -705,7 +719,7 @@ if(BUILD_TESTING)
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(${multisampledDccClearTests} PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(agc_driver_dithered_alpha_to_coverage agc_driver_two_sample_dithered_alpha_to_coverage ${multisampledDccClearTests} PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_dithered_alpha_to_coverage agc_driver_two_sample_dithered_alpha_to_coverage agc_driver_alpha_to_coverage_sample_mask_export agc_driver_two_sample_alpha_to_coverage_sample_mask_export ${multisampledDccClearTests} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
