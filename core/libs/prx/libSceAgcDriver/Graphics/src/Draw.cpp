@@ -2603,12 +2603,20 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
     static const bool timeEachDraw = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr;
     auto eachDrawTiming = Recorder::NoTiming;
-    if (timeEachDraw) {
-        std::uint64_t key = 0;
-        for (const auto& shader : shaders) {
-            if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
+    if (timeEachDraw && Recorder::GpuTimingEnabled()) {
+        if (Recorder::DrawStageTimingEnabled()) {
+            std::vector<std::pair<std::uint32_t, std::uint64_t>> stages;
+            for (const auto& shader : shaders) {
+                if (shader.program != nullptr) stages.emplace_back(static_cast<std::uint32_t>(shader.stage), shader.program->variantId);
+            }
+            eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawStageTimingKey(stages));
+        } else {
+            std::uint64_t key = 0;
+            for (const auto& shader : shaders) {
+                if (shader.program != nullptr && (key == 0 || shader.stage == ShaderRecompiler::ShaderStage::Fragment)) key = shader.program->variantId;
+            }
+            eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
         }
-        eachDrawTiming = recorder->BeginInPassGpuTiming(Recorder::DrawTimingKey(key));
     }
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
