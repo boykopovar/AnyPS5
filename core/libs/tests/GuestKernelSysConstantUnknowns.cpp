@@ -6,8 +6,7 @@
 
 static void Require(bool value, const char* message) {
     if (value) return;
-    std::fprintf(stderr, "%s
-", message);
+    std::fprintf(stderr, "%s\n", message);
     std::abort();
 }
 
