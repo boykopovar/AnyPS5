@@ -372,5 +372,5 @@
 
 ### Opt-in draw paths
 
-- [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
+- [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (on unless `APS5_NO_DRAW_PIPELINE` is set) - `APS5_PROFILE_DRAW=1` finishes every draw on the queue worker, so a profiled run measures the path without it. The Linux main-image page table it adds matches what Windows already does by default.
 - [Multi-submit count overflow and buffer validation](../../../core/libs/prx/libSceAgcDriver/Submit/src/Dcb.cpp) (libSceAgcDriver) - whether the console driver imposes an architectural submission packet limit or allows null buffer pointers with non-zero sizes in multi-submit arrays is unmeasured; AgcDriver::SubmitMany validates count against 32-bit pointer array bounds overflow and rejects null addresses for non-empty command buffers with a runtime exception.
