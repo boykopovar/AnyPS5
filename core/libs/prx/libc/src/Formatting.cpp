@@ -348,8 +348,8 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                 const std::size_t result = mbrtowc_nid_postfix(&unit, pending, held + 1, state);
                 if (result == static_cast<std::size_t>(-1)) {
                     source.Skip();
-                    source.PutBack(static_cast<signed char>(pending[held]));
-                    if (held != 0) source.PutBack(static_cast<signed char>(pending[0]));
+                    source.PutBack(static_cast<unsigned char>(pending[held]));
+                    if (held != 0) source.PutBack(static_cast<unsigned char>(pending[0]));
                     if (target != nullptr) std::memcpy(target, text.data(), text.size() * sizeof(char16_t));
                     return finish(read == 0 && !converted ? EOF : assigned);
                 }
