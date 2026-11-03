@@ -248,6 +248,10 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         const auto bits = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeI32(state), value, variable);
         state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
+        if (kind == StageInputKind::Layer) {
+            const auto base = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MeshLayerBase, 0u);
+            return EmitBinaryU32(state, spv::OpIAdd, bits, base);
+        }
         return kind == StageInputKind::SampleId ? GuestSampleIndex(state, bits) : bits;
     }
     if (kind == StageInputKind::SampleMask) {
@@ -1451,7 +1455,19 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
                 const auto layer = MeshLoad(state, output.meshDataVariable, spv::StorageClassWorkgroup, TypeU32(state), vertex.at(state.inputInfo.vertex->mesh.provokingVertex));
                 const auto pointer = state.module.AllocateId();
                 state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassOutput, TypeU32(state)), pointer, output.variableId, index, ConstantU32(state, 0u));
-                state.module.AddFunction(spv::OpStore, pointer, layer);
+                const auto base = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MeshLayerBase, 0u);
+                const auto count = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::MeshLayerCount, 0xffffffffu);
+                const auto relative = EmitBinaryU32(state, spv::OpISub, layer, base);
+                const auto inside = state.module.AllocateId();
+                const auto outside = state.module.AllocateId();
+                const auto selected = state.module.AllocateId();
+                const auto discarded = state.module.AllocateId();
+                state.module.AddFunction(spv::OpULessThan, TypeBool(state), inside, relative, count);
+                state.module.AddFunction(spv::OpLogicalNot, TypeBool(state), outside, inside);
+                state.module.AddFunction(spv::OpSelect, TypeU32(state), selected, inside, relative, ConstantU32(state, 0u));
+                state.module.AddFunction(spv::OpLogicalOr, TypeBool(state), discarded, culled, outside);
+                state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshCull, spv::StorageClassOutput, TypeBool(state), index), discarded);
+                state.module.AddFunction(spv::OpStore, pointer, selected);
             }
             if (emulating) {
                 const auto corners = state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 4u), ConstantU32(state, 3u));
@@ -1794,7 +1810,10 @@ void EmitProgram(SpirvEmitterState& state) {
     if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.module.AddFunction(spv::OpVariable, TypeU32ArrayPointer(state, spv::StorageClassFunction, LdsStorageDwords(state)), state.ldsVariable, spv::StorageClassFunction);
     }
-    if (state.requirements.functionScratch) {
+    if (ScratchPoolActive(state)) {
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), state.scratchPoolCandidateVariable, spv::StorageClassFunction);
+        state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), state.scratchPoolWonVariable, spv::StorageClassFunction);
+    } else if (state.requirements.functionScratch) {
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.module.AddFunction(spv::OpVariable, TypeU32ArrayPointer(state, spv::StorageClassFunction, state.program.Info().scratchDwords), state.scratchVariable.at(half), spv::StorageClassFunction);
         }
@@ -1825,6 +1844,7 @@ void EmitProgram(SpirvEmitterState& state) {
         }
     }
     EmitLdsBufferBase(state);
+    EmitScratchPoolAcquire(state);
     if (state.requirements.ldsLock) {
         const auto firstInvocation = state.module.AllocateId();
         state.module.AddFunction(spv::OpIEqual, TypeBool(state), firstInvocation, EmitLocalInvocationIndex(state), ConstantU32(state, 0u));
@@ -1933,7 +1953,7 @@ void EmitProgram(SpirvEmitterState& state) {
             state.module.AddFunction(spv::OpKill);
             EmitLabel(state, mergeLabel);
         }
-        state.module.AddFunction(spv::OpReturn);
+        EmitReturnReleasingScratch(state);
     } else {
         StructuredFunctionState functionState;
         EmitControlFlow(ctx, functionState, program);
