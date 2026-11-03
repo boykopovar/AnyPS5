@@ -204,6 +204,8 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
+void SetDeviceLocalFullForTests(bool full);
+std::uint64_t StagingShadowsRefused();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
