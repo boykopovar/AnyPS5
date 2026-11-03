@@ -1583,6 +1583,52 @@ void TestLoopWarningSharedByStreams() {
     Check(sceAvPlayerClose(player) == 0, "shared loop timing close failed");
 }
 
+void TestLoopWarningWaitsForOldPassAudio() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "old-pass audio loop init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "old-pass audio loop source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "old-pass audio loop ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "old-pass audio loop video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "old-pass audio loop audio failed");
+    Check(sceAvPlayerSetLooping(player, 1) == 0, "old-pass audio loop looping failed");
+    Check(sceAvPlayerStart(player) == 0, "old-pass audio loop start failed");
+    Check(WaitFor([&] { return events.Seen(EventPlay); }), "old-pass audio loop play missing");
+    AvPlayerFrameInfoEx frame{};
+    AvPlayerFrameInfo sound{};
+    std::uint64_t lastAudio = 0;
+    bool audioWrapped = false;
+    bool lastVideoFrame = false;
+    Check(WaitFor([&] {
+        if (sceAvPlayerGetVideoDataEx(player, &frame)) {
+            CheckVideoFrame(frame);
+            lastVideoFrame = FrameIndex(frame.timestamp) == FrameCount - 1;
+            if (lastVideoFrame) return true;
+        }
+        if (sceAvPlayerGetAudioData(player, &sound)) {
+            CheckEnglishAudio(sound);
+            audioWrapped = sound.timestamp < lastAudio;
+            lastAudio = sound.timestamp;
+        }
+        return audioWrapped;
+    }), "old-pass audio loop never reached the end of the first pass");
+    Check(lastVideoFrame && !audioWrapped, "old-pass audio loop: audio crossed the boundary before the video's last frame");
+    WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }, 100);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Check(events.Count(EventWarning, LoopingBack) == 0, "loop warning delivered while the old pass still had audio to hand out");
+    Check(WaitFor([&] {
+        if (!sceAvPlayerGetAudioData(player, &sound)) return false;
+        CheckEnglishAudio(sound);
+        audioWrapped = sound.timestamp < lastAudio;
+        lastAudio = sound.timestamp;
+        if (!audioWrapped) Check(events.Count(EventWarning, LoopingBack) == 0, "loop warning delivered before the old pass's last audio frame");
+        return audioWrapped;
+    }), "old-pass audio loop audio never wrapped");
+    Check(events.Count(EventWarning, LoopingBack) == 1, "loop audio frame handed out before its warning");
+    Check(sceAvPlayerClose(player) == 0, "old-pass audio loop close failed");
+}
+
 void TestNoSyncVideoCanLeadAudioClock() {
     Events events;
     AvPlayerInitData init = InitData(&events);
@@ -2302,6 +2348,7 @@ int main(int argc, char** argv) {
         TestLoopWarningAtPlayback();
         TestAudioLoopWarningAtPlayback();
         TestLoopWarningSharedByStreams();
+    TestLoopWarningWaitsForOldPassAudio();
         TestPlayback();
         TestVp9OpusPlayback();
         TestChangeStream();
