@@ -739,13 +739,16 @@ public:
     void NoteHtileClear(VkImageAspectFlags aspects) {
         ForgetClear(aspects);
         pendingClear |= aspects;
+        if ((aspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0u) NoteDepthWork();
         if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0u) MarkStencilStale();
     }
 
     void NotePlaneFill(VkImageAspectFlagBits aspect, float depth, std::uint8_t stencil) {
         pendingClear |= aspect;
-        if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) depthFill = depth;
-        else {
+        if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) {
+            depthFill = depth;
+            NoteDepthWork();
+        } else {
             stencilFill = stencil;
             MarkStencilStale();
         }
@@ -1104,9 +1107,12 @@ public:
         return staleCount != 0;
     }
 
+    void NoteDepthWork() {
+        depthMark = nextPlaneSerial();
+    }
+
     void MarkAllStale(std::uint64_t planeBytes) {
         SizeUnits(planeBytes);
-        depthMark = nextPlaneSerial();
         staleUnits.assign(staleUnits.size(), true);
         staleCount = staleUnits.size();
     }
@@ -1973,8 +1979,13 @@ void takePlane(DepthSurface& surface, PlaneOwners& owners, std::uint64_t address
     auto* owner = entry.surface;
     if (owner != nullptr && owner->active->load(std::memory_order_acquire) && owner != &surface && owner->target.format == surface.target.format && owner->target.samples == surface.target.samples && owner->target.extent.width == surface.target.extent.width && owner->target.extent.height == surface.target.extent.height && (!created || (clearAspects & aspect) == 0)) {
         if ((owner->pendingClear & aspect) != 0) {
-            if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) surface.depthFill = owner->depthFill;
-            else surface.stencilFill = owner->stencilFill;
+            if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) {
+                surface.depthFill = owner->depthFill;
+                surface.depthMark = std::max(surface.depthMark, owner->depthMark);
+            } else {
+                surface.stencilFill = owner->stencilFill;
+                surface.stencilMark = std::max(surface.stencilMark, owner->stencilMark);
+            }
             if (!created || (aspect == VK_IMAGE_ASPECT_DEPTH_BIT ? surface.depthFill.has_value() : surface.stencilFill.has_value())) surface.pendingClear |= aspect;
         } else {
             surface.CopyAspectFrom(*owner, aspect);
@@ -2349,6 +2360,20 @@ bool unmappedSince(std::uint64_t begin, std::uint64_t end, std::uint64_t mark) {
     return std::any_of(unmapped.ranges.begin(), unmapped.ranges.end(), [&](const auto& range) { return range.serial > mark && range.begin < end && begin < range.end; });
 }
 
+std::vector<bool> unmappedUnits(std::uint64_t plane, std::uint64_t planeBytes, std::uint64_t unitBytes, std::size_t count, std::uint64_t mark) {
+    std::vector<bool> units(count, false);
+    if (unitBytes == 0) return units;
+    auto& unmapped = unmappedPlanes();
+    std::lock_guard lock(unmapped.mutex);
+    for (const auto& range : unmapped.ranges) {
+        if (range.serial <= mark || range.begin >= plane + planeBytes || plane >= range.end) continue;
+        const auto first = (std::max(range.begin, plane) - plane) / unitBytes;
+        const auto last = (std::min(range.end, plane + planeBytes) - 1 - plane) / unitBytes;
+        for (auto unit = first; unit <= last && unit < count; ++unit) units[static_cast<std::size_t>(unit)] = true;
+    }
+    return units;
+}
+
 void pruneUnmappedPlanes(const std::vector<UnmappedPlane>& marked) {
     auto& unmapped = unmappedPlanes();
     std::lock_guard lock(unmapped.mutex);
@@ -2446,15 +2471,12 @@ void retireStoringStale(DepthSurface& surface) {
     }
     const auto resource = mirrorResource(surface.target);
     const auto planeBytes = DescribeSurface(resource).guestBytes;
-    if (unmappedSince(surface.target.address, surface.target.address + planeBytes, surface.depthMark)) {
-        retire(surface);
-        return;
-    }
     std::uint64_t generation = 0;
     const auto written = surface.WrittenUnits(resource, generation);
+    const auto removed = unmappedUnits(surface.target.address, planeBytes, surface.unitBytes, surface.staleUnits.size(), surface.depthMark);
     auto units = surface.staleUnits;
-    for (std::size_t unit = 0; unit < units.size() && unit < written.size(); ++unit) {
-        if (written[unit]) units[unit] = false;
+    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+        if ((unit < written.size() && written[unit]) || removed[unit]) units[unit] = false;
     }
     std::shared_ptr<StorageTexture> mirror;
     if (anyUnit(units) && (!anyUnit(written) || surface.StoresUnits(*surface.Mirror(resource)))) mirror = surface.StoreDepthPlane(resource, units);
@@ -2695,6 +2717,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
     if ((depthWritten || cleared) && mirrorable(target)) {
         const auto plane = target.address;
         const auto planeBytes = DescribeSurface(mirrorResource(target)).guestBytes;
+        surface->NoteDepthWork();
         surface->MarkAllStale(planeBytes);
         noteStalePlane(plane, plane + planeBytes);
     }
@@ -2801,11 +2824,14 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
             const bool overlapped = !surface->syncing && plane < end && address < plane + planeBytes;
             if (overlapped && (surface->pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) surface->MarkAllStale(planeBytes);
             if (overlapped && (scope == DepthPlaneScope::Whole || anyUnit(surface->StaleUnitsIn(planeBytes, address, end)))) {
-                if (GuestMemory::CommittedRanges(plane, static_cast<std::size_t>(planeBytes)).empty() || unmappedSince(plane, plane + planeBytes, surface->depthMark)) {
+                const auto removed = unmappedUnits(plane, planeBytes, surface->unitBytes, surface->staleUnits.size(), surface->depthMark);
+                const bool uncommitted = GuestMemory::CommittedRanges(plane, static_cast<std::size_t>(planeBytes)).empty();
+                if (uncommitted || anyUnit(removed)) {
                     static std::atomic<bool> reported{false};
                     if (!reported.exchange(true)) std::fprintf(stderr, "[gpu] depth plane 0x%llx+0x%llx was unmapped with GPU results pending; they are dropped\n", static_cast<unsigned long long>(plane), static_cast<unsigned long long>(planeBytes));
-                    surface->ClearStale();
-                    continue;
+                    if (uncommitted) surface->ClearStale();
+                    else surface->ClearStale(removed);
+                    if (!surface->AnyStale()) continue;
                 }
                 GuestMemory::CollectWritesUncached(plane, static_cast<std::size_t>(planeBytes));
                 surface->SyncFromMemory(resource);
