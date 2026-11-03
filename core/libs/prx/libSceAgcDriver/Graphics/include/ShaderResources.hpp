@@ -342,6 +342,11 @@ public:
         std::uint64_t bytes = 0;
     };
     static CollectRefusals CollectRefusalCounts();
+    struct UntrackedReproofs {
+        std::uint64_t stamped = 0;
+        std::uint64_t compared = 0;
+    };
+    static UntrackedReproofs UntrackedReproofCounts();
     static std::array<std::uint64_t, static_cast<std::size_t>(FastFail::Count)> FullWalkNanoseconds();
     // Why a Pending failure was left to the full walk instead of the own-object refresh (T1, see
     // refreshOwnObjects); Count: it was not.
@@ -546,6 +551,7 @@ private:
         const StorageTexture* source = nullptr;
         bool depth = false;
         bool valid = false;
+        std::array<std::uint64_t, 4> untracked{};
     };
     void captureValidation();
     // A surface of this object the fast proof found a foreign image pending over: the element
@@ -570,7 +576,7 @@ private:
     // holds; `reason` receives why the proof failed (Count: it passed), `overlapping` the surfaces
     // of a Pending failure in element order (empty otherwise), `accepted` whether a foreign overlap
     // was accepted by either rule (the verify switch then runs the full walk beside the proof).
-    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted);
+    bool fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted, bool compares = true);
     // T1 (design_cpu_final M3): brings the overlapping surfaces' own objects up to date exactly as
     // the full walk's lookups would, in the walk's binding order, without the lookups: a storage
     // image's Refresh (which stores the foreign images over its surface first), a view's source's
@@ -671,6 +677,7 @@ private:
     bool reusable = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
+    std::vector<std::array<std::uint64_t, 4>> storageUntracked;
     std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;
     // The pending registry's serial at the last Revalidate that proved this object, taken before
     // its checks and kept only when unchanged after them (0: none): while it is still the serial,
