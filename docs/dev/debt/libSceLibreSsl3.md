@@ -25,10 +25,11 @@
 - [sk_new, sk_push and sk_free](../../../core/libs/prx/libSceLibreSsl3/src/Stack.cpp) (libSceLibreSsl3) - follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/stack/stack.c) `stack.c` with libSceLibreSsl's 32-byte `_STACK` layout, which `stack_local.h` keeps there. Stacks and element arrays come from the guest heap, so the forwarded `sk_pop_free` can release them. Nothing is checked on the console. Where LibreSSL faults or overflows, they throw: `sk_push` on a null stack, on a negative element count, on a null element array it does not regrow, or when the element array cannot double without overflowing `int`
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
+- [PKCS5_PBKDF2_HMAC](../../../core/libs/prx/libSceLibreSsl3/src/Pbkdf2.cpp) (libSceLibreSsl3) - nothing is checked on the console. It follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_pbe.c) `evp_pbe.c` over libSceLibreSsl's HMAC, so only the digests libSceLibreSsl returns are accepted. A negative key length, a null output for a positive one, a negative salt length, a null salt for a positive one and a digest size of 0 or over 64 bytes throw, where the reference overruns or loops. A null digest publishes `EVP_R_MESSAGE_DIGEST_IS_NULL` without the file and line that 4.0.0's `EVP_MD_size` records. Closes when: compared with the console.
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 175 callable exports: 165 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 174 callable exports: 164 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -192,7 +193,6 @@
 | `tls_config_verify_client` | `v1vHv4jOJxQ` |
 | `EVP_PKEY_cmp` | `vLuIwBfrxrk` |
 | `d2i_ASN1_SEQUENCE_ANY` | `vR0po3nBkBs` |
-| `PKCS5_PBKDF2_HMAC` | `vnwZHU5FvBQ` |
 | `ASN1_OCTET_STRING_free` | `vo-cv5gnPUA` |
 | `tls_config_parse_protocols` | `vu4FgwGayHY` |
 | `SSL_CTX_set_post_handshake_auth` | `wHdymWL7CbE` |

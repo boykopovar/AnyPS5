@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +30,7 @@ unsigned char* Sha256(const unsigned char* data, std::size_t length, unsigned ch
 unsigned char* Md5(const unsigned char* data, std::size_t length, unsigned char* digest);
 unsigned char* Sha1(const unsigned char* data, std::size_t length, unsigned char* digest);
 void DesSetOddParity(unsigned char* key);
+int Pbkdf2Hmac(const char* password, int passwordLength, const unsigned char* salt, int saltLength, int iterations, int kind, int keyLength, unsigned char* output);
 const char* X509VerifyCertErrorString(long error);
 const char* SslAlertDescStringLong(int value);
 const char* OcspCertStatusString(long status);
@@ -272,6 +274,34 @@ void CompareDesParity() {
     }
 }
 
+void ComparePbkdf2() {
+    const EvpMd* const digests[] = {EVP_md5_nid_postfix(), EVP_sha256_nid_postfix(), EVP_sha384_nid_postfix(), EVP_sha512_nid_postfix()};
+    for (int round = 0; round < 3000; ++round) {
+        const int kind = static_cast<int>(generator() % 4);
+        const auto password = Bytes(generator() % 4 ? generator() % 80 : generator() % 300);
+        std::vector<char> text(password.begin(), password.end());
+        text.push_back('\0');
+        int passwordLength = static_cast<int>(password.size());
+        if (generator() % 8 == 0) passwordLength = -1;
+        else if (generator() % 16 == 0) passwordLength = -2;
+        const char* passwordPointer = generator() % 32 == 0 ? nullptr : text.data();
+        const auto salt = Bytes(generator() % 70);
+        const int iterations = generator() % 16 == 0 ? -static_cast<int>(generator() % 3) : static_cast<int>(generator() % 40 + 1);
+        const int keyLength = static_cast<int>(generator() % 200);
+        std::vector<unsigned char> mine(static_cast<std::size_t>(keyLength) + 16, 0xa5);
+        std::vector<unsigned char> theirs(mine);
+        int mineResult = 0;
+        const auto error = Attempt([&] { mineResult = PKCS5_PBKDF2_HMAC_nid_postfix(passwordPointer, passwordLength, salt.data(), static_cast<int>(salt.size()), iterations, digests[kind], keyLength, mine.data()); });
+        const int theirResult = LibreSslReference::Pbkdf2Hmac(passwordPointer, passwordLength, salt.data(), static_cast<int>(salt.size()), iterations, kind, keyLength, theirs.data());
+        ERR_clear_error_nid_postfix();
+        LibreSslReference::ErrClearError();
+        Record("PKCS5_PBKDF2_HMAC (libSceLibreSsl3)", error.empty() && mineResult == theirResult && mine == theirs, [&] {
+            return "digest " + std::to_string(kind) + " password " + (passwordPointer ? std::to_string(passwordLength) : std::string("null")) + " salt " + std::to_string(salt.size()) + " iterations " + std::to_string(iterations) + " key " + std::to_string(keyLength) + ": "
+                + (error.empty() ? std::to_string(mineResult) : error) + " vs " + std::to_string(theirResult) + " " + Hex(mine.data(), mine.size()) + " vs " + Hex(theirs.data(), theirs.size());
+        });
+    }
+}
+
 void CompareStrings(const char* function, const std::vector<long>& values, const std::function<const char*(long)>& mine, const std::function<const char*(long)>& theirs) {
     for (const long value : values) {
         const char* mineText = nullptr;
@@ -392,10 +422,13 @@ void CompareCreatedObjects() {
 }
 
 int main() {
+    void* const defaultHeap[10] {};
+    ApplicationHeapRegister_nid_no_patch(defaultHeap);
     CompareAesKeys();
     CompareAesModes();
     CompareDigests();
     CompareDesParity();
+    ComparePbkdf2();
     CompareStrings();
     CompareCreatedObjects();
     long cases = 0;

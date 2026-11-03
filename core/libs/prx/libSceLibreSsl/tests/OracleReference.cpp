@@ -1,6 +1,7 @@
 #include <openssl/aes.h>
 #include <openssl/des.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/md4.h>
 #include <openssl/md5.h>
 #include <openssl/objects.h>
@@ -73,6 +74,11 @@ unsigned char* Md5(const unsigned char* data, std::size_t length, unsigned char*
 unsigned char* Sha1(const unsigned char* data, std::size_t length, unsigned char* digest) { return SHA1(data, length, digest); }
 
 void DesSetOddParity(unsigned char* key) { DES_set_odd_parity(reinterpret_cast<DES_cblock*>(key)); }
+
+int Pbkdf2Hmac(const char* password, int passwordLength, const unsigned char* salt, int saltLength, int iterations, int kind, int keyLength, unsigned char* output) {
+    const EVP_MD* const digests[] = {EVP_md5(), EVP_sha256(), EVP_sha384(), EVP_sha512()};
+    return PKCS5_PBKDF2_HMAC(password, passwordLength, salt, saltLength, iterations, digests[kind], keyLength, output);
+}
 
 const char* X509VerifyCertErrorString(long error) { return X509_verify_cert_error_string(error); }
 const char* SslAlertDescStringLong(int value) { return SSL_alert_desc_string_long(value); }
