@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <array>
 #include <bit>
@@ -9,7 +10,7 @@
 
 namespace {
 
-constexpr std::array<std::array<int, 3>, 51> Expected = {{
+constexpr std::array<std::array<int, 3>, 33> Expected = {{
     {7, 3, 6},
     {8, 4, 6},
     {42, 41, 6},
@@ -43,33 +44,17 @@ constexpr std::array<std::array<int, 3>, 51> Expected = {{
     {948, 941, 811},
     {949, 942, 811},
     {952, 0, 952},
-    {980, 64, 990},
-    {981, 675, 990},
-    {982, 672, 990},
-    {983, 673, 990},
-    {984, 674, 990},
-    {985, 64, 991},
-    {986, 675, 991},
-    {987, 672, 991},
-    {988, 673, 991},
-    {989, 674, 991},
-    {1049, 1031, 6},
-    {1050, 1032, 6},
-    {1051, 1033, 6},
-    {1052, 1034, 6},
-    {1045, 1031, 408},
-    {1046, 1032, 408},
-    {1047, 1033, 408},
-    {1048, 1034, 408},
 }};
 
 std::size_t checks = 0;
 std::size_t cases = 0;
+std::size_t customObjects = 0;
+int currentNid = 0;
 
 void Require(bool condition) {
     ++checks;
     if (!condition) {
-        std::fprintf(stderr, "signature mapping check %zu failed in case %zu\n", checks, cases);
+        std::fprintf(stderr, "signature mapping check %zu failed in case %zu, NID %d\n", checks, cases, currentNid);
         std::abort();
     }
 }
@@ -87,6 +72,7 @@ void CheckGuard(const Guarded& output) {
 
 void RunCase(int signatureNid) {
     ++cases;
+    currentNid = signatureNid;
     const std::array<int, 3>* expected = nullptr;
     for (const auto& row : Expected)
         if (row[0] == signatureNid)
@@ -115,10 +101,63 @@ void RunCase(int signatureNid) {
     CheckGuard(second);
 }
 
+void CreatedObjects() {
+    constexpr std::array<int, 18> collidingIds = {
+        980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052
+    };
+    std::array<int, 100> allocated{};
+    OBJ_cleanup_nid_postfix();
+    ERR_clear_error_nid_postfix();
+    Require(OBJ_create_nid_postfix("3.1", nullptr, nullptr) == 0);
+    const auto error = ERR_peek_error_nid_postfix();
+    Require(error != 0);
+    for (std::size_t index = 0; index != allocated.size(); ++index) {
+        std::array<char, 64> oid{};
+        const int length = std::snprintf(oid.data(), oid.size(), "1.3.6.1.4.1.55555.%zu", index);
+        Require(length > 0 && static_cast<std::size_t>(length) < oid.size());
+        const char* shortName = index & 1 ? "customSignature" : nullptr;
+        const char* longName = index & 2 ? "custom signature object" : nullptr;
+        const int nid = OBJ_create_nid_postfix(oid.data(), shortName, longName);
+        ++customObjects;
+        allocated[index] = nid;
+        Require(nid == 956 + static_cast<int>(index));
+        RunCase(nid);
+        for (const auto& row : Expected)
+            RunCase(row[0]);
+    }
+    Require(allocated[24] == 980);
+    for (int nid : collidingIds)
+        RunCase(nid);
+    Require(ERR_get_error_nid_postfix() == error);
+    Require(ERR_get_error_nid_postfix() == 0);
+    const int repeated = OBJ_create_nid_postfix("1.3.6.1.4.1.55555.24", nullptr, nullptr);
+    ++customObjects;
+    Require(repeated == allocated.back() + 1);
+    RunCase(repeated);
+    OBJ_cleanup_nid_postfix();
+    for (int nid : allocated)
+        RunCase(nid);
+    for (int nid : collidingIds)
+        RunCase(nid);
+    for (const auto& row : Expected)
+        RunCase(row[0]);
+    const int afterCleanup = OBJ_create_nid_postfix("1.3.6.1.4.1.55555.24", nullptr, nullptr);
+    ++customObjects;
+    Require(afterCleanup == repeated + 1);
+    RunCase(afterCleanup);
+    for (int nid : collidingIds)
+        RunCase(nid);
+    Require(ERR_get_error_nid_postfix() == 0);
+    OBJ_cleanup_nid_postfix();
+}
+
 }
 
 int main() {
     static_assert(sizeof(int) == sizeof(std::uint32_t));
+    std::array<void*, 10> heap{};
+    ApplicationHeapRegister_nid_no_patch(heap.data());
+    CreatedObjects();
     for (const auto& row : Expected)
         RunCase(row[0]);
     for (int nid = -4096; nid <= 4096; ++nid)
@@ -135,5 +174,6 @@ int main() {
         state = state * 1664525u + 1013904223u;
         RunCase(std::bit_cast<int>(state));
     }
-    std::printf("signature mappings: %zu cases, %zu checks, %zu mappings\n", cases, checks, Expected.size());
+    std::printf("signature mappings: %zu cases, %zu checks, %zu mappings, %zu custom objects\n",
+        cases, checks, Expected.size(), customObjects);
 }

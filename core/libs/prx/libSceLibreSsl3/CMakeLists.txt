@@ -150,7 +150,7 @@ target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Signature
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_signature_algorithms_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/SignatureAlgorithms.cpp)
     target_include_directories(guest_libressl3_signature_algorithms_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_libressl3_signature_algorithms_tests PRIVATE libSceLibreSsl3)
+    target_link_libraries(guest_libressl3_signature_algorithms_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
     configure_windows_unwind(guest_libressl3_signature_algorithms_tests)
     add_test(NAME guest_libressl3_signature_algorithms COMMAND guest_libressl3_signature_algorithms_tests)
     set_tests_properties(guest_libressl3_signature_algorithms PROPERTIES TIMEOUT 20)

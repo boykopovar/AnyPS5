@@ -1,11 +1,12 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 
 #include <algorithm>
 #include <array>
 
 namespace {
 
-constexpr std::array<std::array<int, 3>, 51> SignatureAlgorithms = {{
+constexpr std::array<std::array<int, 3>, 33> SignatureAlgorithms = {{
     {7, 3, 6},
     {8, 4, 6},
     {42, 41, 6},
@@ -39,25 +40,11 @@ constexpr std::array<std::array<int, 3>, 51> SignatureAlgorithms = {{
     {948, 941, 811},
     {949, 942, 811},
     {952, 0, 952},
-    {980, 64, 990},
-    {981, 675, 990},
-    {982, 672, 990},
-    {983, 673, 990},
-    {984, 674, 990},
-    {985, 64, 991},
-    {986, 675, 991},
-    {987, 672, 991},
-    {988, 673, 991},
-    {989, 674, 991},
-    {1045, 1031, 408},
-    {1046, 1032, 408},
-    {1047, 1033, 408},
-    {1048, 1034, 408},
-    {1049, 1031, 6},
-    {1050, 1032, 6},
-    {1051, 1033, 6},
-    {1052, 1034, 6},
 }};
+
+static_assert(std::all_of(SignatureAlgorithms.begin(), SignatureAlgorithms.end(), [](const auto& entry) {
+    return std::all_of(entry.begin(), entry.end(), [](int nid) { return nid >= 0 && nid < LibreSslObjectCount; });
+}));
 
 }
 
