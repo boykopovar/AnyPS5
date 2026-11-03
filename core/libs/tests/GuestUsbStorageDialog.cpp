@@ -1,3 +1,4 @@
+#include "prx/libSceUsbStorageDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -7,18 +8,6 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceUserService/UserService.hpp"
-
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* param);
-int APS5_VABI sceUserServiceTerminate();
-int APS5_VABI sceUsbStorageDialogInitialize(void);
-int APS5_VABI sceUsbStorageDialogOpen(const UsbStorageDialogParam* param);
-int APS5_VABI sceUsbStorageDialogUpdateStatus(void);
-int APS5_VABI sceUsbStorageDialogGetStatus(void);
-int APS5_VABI sceUsbStorageDialogGetResult(UsbStorageDialogResult* result);
-int APS5_VABI sceUsbStorageDialogClose(void);
-int APS5_VABI sceUsbStorageDialogTerminate(void);
-}
 
 namespace {
 
@@ -56,8 +45,10 @@ int main() {
     result.result = kErrBusy;
 
     Require(sceUsbStorageDialogTerminate() == kErrNotInitialized);
+    Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogOpen(&param) == kErrNotInitialized);
     Require(sceUsbStorageDialogClose() == kErrNotInitialized);
+    Require(sceUsbStorageDialogGetResult(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogGetResult(&result) == kErrNotInitialized);
     Require(sceUsbStorageDialogGetStatus() == kStatusNone);
     Require(sceUsbStorageDialogUpdateStatus() == kStatusNone);
@@ -103,6 +94,8 @@ int main() {
     Require(sceUsbStorageDialogClose() == kErrNotRunning);
     Require(sceUsbStorageDialogTerminate() == 0);
     Require(sceUsbStorageDialogTerminate() == kErrNotInitialized);
+    Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
+    Require(sceUsbStorageDialogGetResult(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogGetStatus() == kStatusNone);
 
     Require(sceUsbStorageDialogInitialize() == 0);

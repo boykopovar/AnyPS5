@@ -11,16 +11,19 @@ namespace Cli {
 
 struct Args {
     bool showHelp = false;
+    bool showVersion = false;
     bool skipSyscallCheck = false;
     bool trapSdkSyscallStubs = false;
     bool skipSceModule = false;
     bool toIntel = false;
     bool toRosetta = false;
+    bool frameRedZone = false;
     bool writeRegistry = false;
     bool toWindows = false;
     bool toMacos = false;
     bool lazyBinding = false;
     bool autorun = false;
+    bool dryRun = false;
     bool windowsDiagnostics = false;
     bool windowsGui = false;
     std::optional<std::uint64_t> windowsFixedBase;

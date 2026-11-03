@@ -1,3 +1,8 @@
+#include "prx/libSceAgc/DcbState/include/ContextState.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Control.hpp"
+#include "prx/libSceAgc/Cb/include/Sync.hpp"
+#include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -7,15 +12,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t APS5_VABI sceAgcDcbQueueEndOfShaderActionGetSize();
-std::uint32_t APS5_VABI sceAgcAcbQueueEndOfShaderActionGetSize();
-std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer*, std::uint8_t, std::uint16_t, std::uint8_t, std::uint8_t, const volatile Label*, std::uint8_t, std::uint64_t, std::uint16_t, std::uint16_t, std::uint8_t, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcDcbAtomicGdsGetSize();
-std::uint32_t* APS5_VABI sceAgcDcbAtomicGds_0900(CommandBuffer*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint16_t, std::uint16_t, std::uint32_t, std::uint32_t, std::uint64_t, std::uint64_t);
-std::uint32_t* APS5_VABI sceAgcDcbAtomicGds(CommandBuffer*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint16_t, std::uint16_t, std::uint32_t, std::uint32_t, std::uint64_t, std::uint64_t);
-}
 
 namespace {
 

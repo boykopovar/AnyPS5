@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(scalar_bitcount64_tests ${LIBS_INCLUDE_DIR}/tests/ScalarBitCount64.cpp)
+    target_link_libraries(scalar_bitcount64_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(scalar_bitcount64_tests)
+    add_test(NAME scalar_bitcount64 COMMAND scalar_bitcount64_tests)
+    if(WIN32)
+        set_tests_properties(scalar_bitcount64 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

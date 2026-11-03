@@ -1,3 +1,5 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -5,16 +7,7 @@
 #include <cstdlib>
 #include <thread>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf(void);
-int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** retval);
-int APS5_VABI scePthreadDetach(Pthread thread);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EDEADLK = static_cast<int>(0x8002000Bu);
 static constexpr int GUEST_EDEADLK = 11;
 
 static void Require(bool value) { if (!value) std::abort(); }

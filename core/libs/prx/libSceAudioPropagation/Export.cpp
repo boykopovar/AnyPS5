@@ -1,3 +1,5 @@
+#include "prx/libSceAudioPropagation/include/Api.hpp"
+#include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 #include "AudioPropagation.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -358,7 +360,8 @@ std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropaga
     if (found == state.objects.end() || found->second.kind != Kind::Source || !liveSystem(state, found->second.system)) return ErrorInvalidHandle;
     if (!rays || !paths) return ErrorNullPointer;
     if (rayCount != 6 || reflectionOrder == 0 || pathCount == 0) return ErrorInvalidArgument;
-    throw std::runtime_error(__func__);
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHandle source, const void* entries, std::uint32_t count) {

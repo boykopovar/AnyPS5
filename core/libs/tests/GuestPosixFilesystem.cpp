@@ -1,3 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <array>
@@ -17,32 +21,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI mkstemp_nid_postfix(char*);
-int APS5_VABI isatty_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI socket_nid_postfix(int, int, int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::size_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-int APS5_VABI access_nid_postfix(const char*, int);
-int APS5_VABI __wrap_access(const char*, int);
-int APS5_VABI clock_gettime_nid_postfix(int, KernelTimespec*);
-int APS5_VABI __wrap_clock_gettime(int, KernelTimespec*);
-char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
-char* APS5_VABI __wrap_getcwd(char*, std::size_t);
-char* APS5_VABI getenv_nid_postfix(const char*);
-char* APS5_VABI __wrap_getenv(const char*);
-int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-int APS5_VABI __wrap_lstat(const char*, FileStat*);
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-void* APS5_VABI __wrap_mmap(void*, std::size_t, int, int, int, std::int64_t);
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-}
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -195,6 +173,36 @@ int main() {
     Require(mmap_nid_postfix(nullptr, page, 8, 0x1002, -1, 0) == failed && *__error_nid_postfix() == 22);
     *__error_nid_postfix() = 0;
     Require(__wrap_mmap(nullptr, page, 8, 0x1002, -1, 0) == failed && *__error_nid_postfix() == 22);
+    Require(opendir_nid_disambig1_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 14);
+    Require(opendir_nid_disambig1_nid_postfix("") == nullptr && *__error_nid_postfix() == 2);
+    Require(opendir_nid_disambig1_nid_postfix("/anyps5-posix-test/missing-directory") == nullptr && *__error_nid_postfix() == 2);
+    void* const testDirectory = opendir_nid_disambig1_nid_postfix("/anyps5-posix-test");
+    Require(testDirectory != nullptr);
+    bool foundDot = false;
+    bool foundDotDot = false;
+    bool foundFixed = false;
+    while (auto* const entry = readdir_nid_disambig1_nid_postfix(testDirectory)) {
+        Require(entry->nameLength == std::strlen(entry->name));
+        Require(entry->recordLength >= 8 + entry->nameLength);
+        Require(entry->fileNumber != 0);
+        if (std::strcmp(entry->name, ".") == 0) foundDot = true;
+        if (std::strcmp(entry->name, "..") == 0) foundDotDot = true;
+        if (std::strcmp(entry->name, "fixed") == 0) foundFixed = true;
+    }
+    Require(foundDot && foundDotDot && foundFixed);
+    Require(readdir_nid_disambig1_nid_postfix(testDirectory) == nullptr);
+    Require(readdir_nid_disambig1_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 9);
+    Require(closedir_nid_disambig1_nid_postfix(testDirectory) == 0);
+    Require(closedir_nid_disambig1_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
+    void* const readdirDirectory = opendir_nid_disambig1_nid_postfix("/anyps5-posix-test");
+    Require(readdirDirectory != nullptr);
+    GuestDirectoryEntry readdirEntry{};
+    GuestDirectoryEntry* readdirResult = nullptr;
+    Require(readdir_r_nid_disambig1_nid_postfix(readdirDirectory, &readdirEntry, &readdirResult) == 0);
+    Require(readdirResult == &readdirEntry);
+    Require(readdirEntry.nameLength == std::strlen(readdirEntry.name));
+    Require(closedir_nid_disambig1_nid_postfix(readdirDirectory) == 0);
+    Require(readdir_r_nid_disambig1_nid_postfix(nullptr, &readdirEntry, &readdirResult) == 9);
     RemovePathAlias_nid_no_patch("/anyps5-posix-test");
     Require(std::filesystem::remove_all(root) > 0);
 }

@@ -1,3 +1,4 @@
+#include "prx/libSceProprietaryVoiceChatHelperPrx/include/Api.hpp"
 #include <mutex>
 #include <stdexcept>
 #include <string>

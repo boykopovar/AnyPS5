@@ -1,4 +1,5 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
+#include "Optimization/DeadCodeEliminator.hpp"
 #include "Optimization/RedundantValueEliminator.hpp"
 #include "Recompiler.hpp"
 #include <array>
@@ -208,7 +209,8 @@ std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
     request.target.maxWorkgroupSharedMemoryBytes = 49152;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
-    const auto& words = Recompile(request).spirv.Words();
+    const auto result = Recompile(request);
+    const auto& words = result.spirv.Words();
     return {words.begin(), words.end()};
 }
 
@@ -400,6 +402,28 @@ int main() {
         return b.eliminate() == 1u && !readOtherwise.HasUses() && readHead.UseCount() == 2u && AllUsed({&readHead, &readThenAfterStore, &readMerge});
     });
 
+    passed &= run("a loop without a clobber reuses its dominating ReadConst", [] {
+        Builder b;
+        IrBlock& header = b.newBlock();
+        IrBlock& body = b.newBlock();
+        IrBlock& exit = b.newBlock();
+        b.block->AddBranch(&header);
+        header.AddBranch(&body);
+        header.AddBranch(&exit);
+        body.AddBranch(&header);
+        auto& srt = b.emit(IrOpcode::GetSrtResource, IrType::SrtResource, {});
+        auto& beforeLoop = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+        b.keep(beforeLoop);
+        std::vector<IrValue*> reads;
+        for (auto* block : {&header, &body, &exit}) {
+            b.block = block;
+            auto& read = b.emit(IrOpcode::ReadConst, IrType::U32, {&srt, &b.constant(0u)});
+            b.keep(read);
+            reads.push_back(&read);
+        }
+        return b.eliminate() == 3u && beforeLoop.UseCount() == 4u && std::ranges::none_of(reads, [](const auto* read) { return read->HasUses(); });
+    });
+
     passed &= run("a store on a loop backedge prevents reusing a pre-loop ReadConst in the loop header", [] {
         Builder b;
         IrBlock& header = b.newBlock();
@@ -503,6 +527,55 @@ int main() {
         info.condition = &second;
         b.program.Metadata().blockInfo.push_back(info);
         return b.eliminate() == 1u && b.program.Metadata().blockInfo.front().condition == &first;
+    });
+
+    passed &= run("descriptor dwords name the surviving values after redundancy and dead code elimination", [] {
+        Builder b;
+        auto& input = b.unknown();
+        DescriptorSource descriptor;
+        descriptor.dwordCount = 8u;
+        std::array<IrValue*, 8> kept{};
+        std::array<IrValue*, 8> removed{};
+        for (std::uint32_t index = 0; index < 8u; ++index) {
+            auto& first = b.emit(IrOpcode::IAdd32, IrType::U32, {&input, &b.constant(index + 1u)});
+            auto& second = b.emit(IrOpcode::IAdd32, IrType::U32, {&input, &b.constant(index + 1u)});
+            b.keep(first);
+            b.keep(second);
+            descriptor.dwords[index] = &second;
+            kept[index] = &first;
+            removed[index] = &second;
+        }
+        b.program.Resources().descriptorSources.push_back(descriptor);
+        b.program.Resources().descriptorSources.emplace_back();
+        if (b.eliminate() != 8u) return false;
+        DeadCodeEliminator{}.Eliminate(b.program);
+        const auto& descriptors = b.program.Resources().descriptorSources;
+        for (std::size_t index = 0; index < kept.size(); ++index) {
+            if (descriptors[0].dwords[index] != kept[index] || kept[index]->Parent() != b.block || removed[index]->Parent() != nullptr || descriptors[1].dwords[index] != nullptr) return false;
+        }
+        return true;
+    });
+
+    passed &= run("a selected table column keeps its surviving runtime offset", [] {
+        Builder b;
+        auto& input = b.unknown();
+        auto& first = b.emit(IrOpcode::IMul32, IrType::U32, {&input, &b.constant(48u)});
+        auto& second = b.emit(IrOpcode::IMul32, IrType::U32, {&input, &b.constant(48u)});
+        b.keep(first);
+        b.keep(second);
+        DescriptorSource selection;
+        selection.dwordCount = 1u;
+        selection.dwords[0] = &second;
+        DescriptorSource image;
+        image.tableColumn.emplace();
+        image.tableColumn->selected = true;
+        image.tableColumn->selection = 0u;
+        b.program.Resources().descriptorSources = {selection, image};
+        if (b.eliminate() != 1u) return false;
+        DeadCodeEliminator{}.Eliminate(b.program);
+        const auto& descriptors = b.program.Resources().descriptorSources;
+        const auto selected = descriptors[1].tableColumn->selection;
+        return descriptors[selected].dwords[0] == &first && first.Parent() == b.block && second.Parent() == nullptr;
     });
 
     passed &= run("lane reads are not merged", [] {

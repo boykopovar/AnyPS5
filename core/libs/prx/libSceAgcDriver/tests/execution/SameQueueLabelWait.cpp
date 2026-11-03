@@ -39,6 +39,7 @@ struct Slot {
     alignas(256) std::array<std::uint32_t, 4> spinDescriptor{};
     alignas(256) volatile std::uint32_t label = 0;
     alignas(256) volatile std::uint32_t done = 0;
+    alignas(256) volatile std::uint32_t gate = 0;
 };
 
 class GuestBlock {
@@ -131,6 +132,35 @@ std::uint64_t Run(Slot& slot, std::uint32_t value, bool wait) {
     return AgcDriver::GuestMemory::CollectEpochBumps() - before;
 }
 
+std::uint64_t RunLanded(Slot& slot, std::uint32_t value, bool wait) {
+    slot.done = 0;
+    slot.gate = 0;
+    std::vector<std::uint32_t> words;
+    for (std::uint32_t index = 0; index < Waits; ++index) {
+        ReleaseLabel(words, &slot.label, value + index);
+        WaitEqual(words, &slot.gate, index + 1);
+        if (wait) WaitEqual(words, &slot.label, value + index);
+    }
+    WriteData(words, &slot.done, 1);
+    const auto before = AgcDriver::GuestMemory::CollectEpochBumps();
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "gated compute submit failed");
+    const auto start = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < Waits; ++index) {
+        while (slot.label != value + index) {
+            Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(10), "label " + std::to_string(index) + " of the gated submission did not reach memory");
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        slot.gate = index + 1;
+    }
+    while (slot.done == 0) {
+        Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(10), "the gated submission did not finish");
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    return AgcDriver::GuestMemory::CollectEpochBumps() - before;
+}
+
 }
 
 int main() {
@@ -149,6 +179,14 @@ int main() {
             extra = std::min(extra, with > without ? with - without : 0);
         }
         Require(extra < Waits / 2, "WAIT_REG_MEMs satisfied by labels their own queue released earlier in the submission started new collect epochs: " + std::to_string(extra) + " extra bumps for " + std::to_string(Waits) + " waits");
+        std::uint64_t landedExtra = ~std::uint64_t{0};
+        for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+            const auto without = RunLanded(slot, 1000 + attempt * 2 * Waits, false);
+            const auto with = RunLanded(slot, 1000 + (attempt * 2 + 1) * Waits, true);
+            std::cout << "landed attempt " << attempt << ": " << with << " bumps with " << Waits << " waits, " << without << " without\n";
+            landedExtra = std::min(landedExtra, with > without ? with - without : 0);
+        }
+        Require(landedExtra < Waits / 2, "WAIT_REG_MEMs that found the labels their own queue released earlier in the submission already in memory started new collect epochs: " + std::to_string(landedExtra) + " extra bumps for " + std::to_string(Waits) + " waits");
         std::cout << "same-queue label wait test passed\n";
         AgcDriverShutdown_nid_postfix();
         return 0;

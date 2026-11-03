@@ -1,39 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-
-struct NpIdFull {
-    NpOnlineId handle;
-    std::uint8_t opt[8];
-    std::uint8_t reserved[8];
-};
-
-extern "C" {
-int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* onlineId2);
-int APS5_VABI sceNpCmpNpIdInOrder(const NpIdFull* npId1, const NpIdFull* npId2, std::int32_t* order);
-int APS5_VABI sceNpGetPlatformType(const NpIdFull* npId);
-int APS5_VABI sceNpIntIsValidOnlineId(const NpOnlineId* onlineId);
-int APS5_VABI sceNpMutexInit(PthreadMutex* mutex, const char* name, std::uint64_t flags);
-int APS5_VABI sceNpMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI sceNpMutexLock(PthreadMutex* mutex);
-int APS5_VABI sceNpMutexTryLock(PthreadMutex* mutex);
-int APS5_VABI sceNpMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI sceNpLwMutexInit(PthreadMutex* mutex, const char* name, std::uint64_t flags);
-int APS5_VABI sceNpLwMutexTryLock(PthreadMutex* mutex);
-int APS5_VABI sceNpLwMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI sceNpLwMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI sceNpCondInit(PthreadCond* cond, const char* name, std::uint64_t flags);
-int APS5_VABI sceNpCondDestroy(PthreadCond* cond);
-int APS5_VABI sceNpCondSignal(PthreadCond* cond);
-int APS5_VABI sceNpCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, std::uint32_t usec);
-int APS5_VABI sceNpJoinThread(Pthread thread, void** retval);
-int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec);
-void APS5_VABI sceNpGetSdkVersion(char* version);
-int APS5_VABI sceKernelClockGettime(KernelClockid clockId, KernelTimespec* tp);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-}
 
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
@@ -64,6 +35,8 @@ static int testIds() {
     const NpOnlineId kestrelCopy = onlineId("kestrel_77");
     const NpOnlineId heron = onlineId("heron-4");
     bool ok = expect(sceNpCmpOnlineId(nullptr, &kestrel) == INVALID_ARGUMENT, "a null online ID was compared");
+    ok &= expect(sceNpCmpOnlineId(&kestrel, nullptr) == INVALID_ARGUMENT, "a null second online ID was compared");
+    ok &= expect(sceNpCmpOnlineId(nullptr, nullptr) == INVALID_ARGUMENT, "null online IDs were compared");
     ok &= expect(sceNpCmpOnlineId(&kestrel, &kestrelCopy) == 0, "equal online IDs did not match");
     ok &= expect(sceNpCmpOnlineId(&kestrel, &heron) == NOT_MATCH, "different online IDs matched");
 
@@ -72,6 +45,10 @@ static int testIds() {
     high.reserved[7] = 1;
     std::int32_t order = 5;
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, nullptr) == INVALID_ARGUMENT, "a null order was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, &high, &order) == INVALID_ARGUMENT, "a null first NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(&low, nullptr, &order) == INVALID_ARGUMENT, "a null second NpId was accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, &order) == INVALID_ARGUMENT, "null NpIds were accepted");
+    ok &= expect(sceNpCmpNpIdInOrder(nullptr, nullptr, nullptr) == INVALID_ARGUMENT, "all null arguments were accepted");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &high, &order) == 0 && order == -1, "reserved bytes did not order the NpIds");
     ok &= expect(sceNpCmpNpIdInOrder(&high, &low, &order) == 0 && order == 1, "the reverse order is not 1");
     ok &= expect(sceNpCmpNpIdInOrder(&low, &low, &order) == 0 && order == 0, "an NpId is not equal to itself");
@@ -127,6 +104,8 @@ static int testSync() {
     ok &= expect(sceNpMutexUnlock(&plain) == 0, "the plain mutex did not unlock");
     ok &= expect(sceNpLwMutexTryLock(&recursive) == 0 && sceNpLwMutexTryLock(&recursive) == 0, "flag 1 did not make the mutex recursive");
     ok &= expect(sceNpLwMutexUnlock(&recursive) == 0 && sceNpLwMutexUnlock(&recursive) == 0, "the recursive mutex did not unlock twice");
+    ok &= expect(sceNpLwMutexLock(&recursive) == 0, "the recursive mutex did not lock via sceNpLwMutexLock");
+    ok &= expect(sceNpLwMutexUnlock(&recursive) == 0, "the recursive mutex did not unlock");
     ok &= expect(sceNpLwMutexDestroy(&recursive) == 0, "the recursive mutex was not destroyed");
 
     PthreadCond cond = nullptr;
@@ -150,12 +129,18 @@ static int testClock() {
     KernelTimespec after{};
     std::int64_t usec = -1;
     sceKernelClockGettime(4, &before);
+
     bool ok = expect(sceNpGetSystemClockUsec(&usec) == 0, "the clock was not read");
     sceKernelClockGettime(4, &after);
+    ok &= expect(sceNpGetSystemClockUsec(nullptr) == INVALID_ARGUMENT, "a null destination was not rejected");
+    std::int64_t later = -1;
+    ok &= expect(sceNpGetSystemClockUsec(&later) == 0 && later >= usec && usec >= 0, "the clock went backwards");
+
     ok &= expect(usec >= before.tv_sec * 1000000 + before.tv_nsec / 1000 && usec <= after.tv_sec * 1000000 + after.tv_nsec / 1000, "the clock is not the monotonic kernel clock in microseconds");
     char version[12];
     std::memset(version, 'x', sizeof(version));
     sceNpGetSdkVersion(version);
+
     ok &= expect(std::strcmp(version, "1.00") == 0, "the version is not 1.00");
     ok &= expect(version[8] == 'x', "the version was written past 8 bytes");
     return ok ? 0 : 1;

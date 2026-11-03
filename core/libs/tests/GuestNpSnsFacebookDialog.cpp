@@ -1,16 +1,9 @@
+#include "prx/libSceNpSnsFacebookDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceNpSnsFacebookDialogInitialize(void);
-int APS5_VABI sceNpSnsFacebookDialogOpen(const void* param);
-int APS5_VABI sceNpSnsFacebookDialogUpdateStatus(void);
-int APS5_VABI sceNpSnsFacebookDialogGetStatus(void);
-int APS5_VABI sceNpSnsFacebookDialogGetResult(void* result);
-int APS5_VABI sceNpSnsFacebookDialogClose(void);
-int APS5_VABI sceNpSnsFacebookDialogTerminate(void);
-}
 
 namespace {
 
@@ -25,6 +18,36 @@ constexpr int kErrNotFinished = static_cast<int>(0x80B80005);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000D);
 constexpr int kResultUserCanceled = 1;
 
+
+bool PsnNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::PsnFeature).message;
+}
+
+void RequireNotices() {
+    std::uint64_t param = 0;
+    ModalDialogSetPresenter_nid_postfix(true);
+    Require(sceNpSnsFacebookDialogInitialize() == 0);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpSnsFacebookDialogOpen(&param) == 0);
+    Require(!PsnNoticeShown() && !ModalDialogCapturesInput_nid_postfix());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrArgNull);
+    Require(!PsnNoticeShown());
+    Require(sceNpSnsFacebookDialogOpen(&param) == 0);
+    Require(PsnNoticeShown());
+
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceNpSnsFacebookDialogTerminate() == 0);
+}
+
 }
 
 int main() {
@@ -32,8 +55,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
     Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);
@@ -58,6 +83,11 @@ int main() {
     Require(sceNpSnsFacebookDialogClose() == 0);
     Require(sceNpSnsFacebookDialogTerminate() == 0);
     Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
     Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);
 
@@ -69,4 +99,13 @@ int main() {
     Require(sceNpSnsFacebookDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceNpSnsFacebookDialogTerminate() == 0);
+    Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
+    Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);
+    RequireNotices();
 }

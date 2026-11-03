@@ -22,6 +22,17 @@ struct Elf64_Ehdr {
     std::uint16_t e_shstrndx;
 };
 
+struct Elf64_Phdr {
+    std::uint32_t p_type;
+    std::uint32_t p_flags;
+    std::uint64_t p_offset;
+    std::uint64_t p_vaddr;
+    std::uint64_t p_paddr;
+    std::uint64_t p_filesz;
+    std::uint64_t p_memsz;
+    std::uint64_t p_align;
+};
+
 struct Elf64_Shdr {
     std::uint32_t sh_name;
     std::uint32_t sh_type;
@@ -103,7 +114,7 @@ constexpr std::uint16_t kShnUndef = 0u;
 
 class ElfNidPatcher final : public IBinaryPatcher {
 public:
-    void PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports) const override;
+    void PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports, const PatchOptions& options = {}) const override;
 };
 
 }

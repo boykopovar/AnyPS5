@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <algorithm>
@@ -13,18 +15,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceKernelAprResolveFilepathsToIds(const char**, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject*, std::uint32_t);
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-void* APS5_VABI fopen_nid_postfix(const char*, const char*);
-int APS5_VABI fclose_nid_postfix(void*);
-}
 
 namespace {
 
@@ -81,13 +71,15 @@ public:
         Require(sceKernelAllocateDirectMemory(0, 13824ll << 20, MappingBytes, 0x4000, 0, &physical) == 0, "cannot allocate direct memory");
         if (sceKernelMapDirectMemory(&pointer, MappingBytes, 0x33, 0, physical, 0x4000) != 0) {
             sceKernelReleaseDirectMemory(physical, MappingBytes);
+
             throw std::runtime_error("cannot map direct memory");
         }
     }
 
     ~DirectBuffer() {
-        sceKernelMunmap(pointer, MappingBytes);
+        sceKernelMunmap(reinterpret_cast<std::uint64_t>(pointer), MappingBytes);
         sceKernelReleaseDirectMemory(physical, MappingBytes);
+
     }
 
     std::uint8_t* Data() const { return static_cast<std::uint8_t*>(pointer); }
@@ -161,9 +153,9 @@ void TestErrors(const Fixture& fixture) {
 
 void TestStreams(const Fixture& fixture) {
     constexpr int StreamCount = 600;
-    std::vector<void*> streams;
+    std::vector<FileStream*> streams;
     for (int index = 0; index < StreamCount; ++index) {
-        void* stream = fopen_nid_postfix(("apr_stream_" + std::to_string(index) + ".tmp").c_str(), "w");
+        FileStream* stream = fopen_nid_postfix(("apr_stream_" + std::to_string(index) + ".tmp").c_str(), "w");
         if (stream == nullptr) break;
         streams.push_back(stream);
     }
@@ -175,10 +167,49 @@ void TestStreams(const Fixture& fixture) {
     } catch (const std::runtime_error& failure) {
         error = failure.what();
     }
-    for (void* stream : streams) fclose_nid_postfix(stream);
+    for (FileStream* stream : streams) fclose_nid_postfix(stream);
     for (int index = 0; index < StreamCount; ++index) std::filesystem::remove("apr_stream_" + std::to_string(index) + ".tmp");
     Require(error.empty(), ("APR read failed while " + std::to_string(streams.size()) + " guest streams were open: " + error).c_str());
     Require(held, "cannot hold 600 guest fopen streams");
+}
+
+void TestQueries() {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestEnoent = 2;
+    const char* names[] = {"generated.bin", "missing.bin"};
+    std::array<std::uint32_t, 2> ids{0, 0};
+    std::array<std::uint64_t, 2> sizes{1, 1};
+    std::uint32_t failed = 7;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, ids.data(), sizes.data(), &failed) == 0, "APR did not resolve a prefixed path");
+    Require(failed == 7 && sizes[0] == FileBytes, "APR did not report the prefixed file's size");
+    const auto id = ids[0];
+    ids = {0, 0};
+    sizes = {1, 1};
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing prefixed path");
+    Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing prefixed path");
+    std::uint64_t size = 0;
+    Require(sceKernelAprGetFileSize(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file size");
+    Require(sceKernelAprGetFileSize(id, &size) == 0 && size == FileBytes, "APR reported a wrong file size");
+    FileStat stat{};
+    Require(sceKernelAprGetFileStat(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file stat");
+    Require(sceKernelAprGetFileStat(id, &stat) == 0 && stat.st_size == static_cast<std::int64_t>(FileBytes), "APR reported a wrong file stat size");
+    std::vector<std::uint8_t> data(4096, 0xCC);
+    const Apr::ReadFileCommand command{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, id, 0, reinterpret_cast<std::uint64_t>(data.data()), data.size(), 100};
+    alignas(8) std::array<std::uint8_t, sizeof(command)> memory{};
+    std::memcpy(memory.data(), &command, sizeof(command));
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), memory.data()};
+    std::uint32_t result = 0xFFFFFFFFu;
+    std::uint32_t first = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, nullptr, &first) == -1 && *__error_nid_postfix() == GuestEinval && first == 0, "APR accepted a null result");
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(nullptr, 0, &result, &first) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null command buffer");
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null submission id");
+    Require(result == 0xFFFFFFFFu && first == 0, "a rejected APR submission wrote its result or id");
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, &first) == 0 && result == 0 && first != 0, "APR did not return a result and an id");
+    Require(sceKernelAprWaitCommandBuffer(first) == 0, "APR did not wait for the submission");
+    for (std::size_t index = 0; index < data.size(); ++index) Require(data[index] == FileByte(100 + index), "APR read through the submission with a result returned incorrect bytes");
+    std::uint32_t second = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 1, &result, &second) == 0 && second == first + 1, "APR submission ids did not count up");
+    Require(sceKernelAprWaitCommandBuffer(second) == 0, "APR did not wait for the second submission");
 }
 
 #ifdef _WIN32
@@ -271,6 +302,8 @@ int main(int argc, char** argv) {
             TestRead(fixture, storage.Data());
         } else if (mode == "eof") {
             TestEof(fixture);
+        } else if (mode == "queries") {
+            TestQueries();
         } else if (mode == "errors") {
             TestErrors(fixture);
         } else if (mode == "streams") {

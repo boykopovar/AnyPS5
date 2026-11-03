@@ -1,16 +1,10 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
+#include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void*, void*);
-int APS5_VABI sceNpTrophy2UnregisterUnlockCallback();
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetGroupInfo(int, int, int, NpTrophy2GroupDetails*, NpTrophy2GroupData*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-int APS5_VABI sceNpTrophy2ShowTrophyList(int);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -35,6 +29,9 @@ int main() {
 
     Require(sceNpTrophy2ShowTrophyList(1) == 0);
 
+    auto* volatile linked = &sceNpTrophy2SystemCreateContext;
+    Require(linked != nullptr);
+
     NpTrophy2GameDetails details{};
     NpTrophy2GameData data{};
     Require(sceNpTrophy2GetGameInfo(1, 1, &details, nullptr) == 0);
@@ -57,4 +54,13 @@ int main() {
     Require(sceNpTrophy2GetTrophyInfo(1, 1, 3, nullptr, &trophyData) == 0);
     Require(trophyData.trophy_id == 3);
     Require(ThrowsInvalidArgument([] { sceNpTrophy2GetTrophyInfo(1, 1, 3, nullptr, nullptr); }));
+    std::size_t iconSize = 1234;
+    Require(sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, &iconSize) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+    Require(iconSize == 0);
+    Require(sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, nullptr) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+
+    int handle = -1;
+    Require(sceNpTrophy2CreateHandle(&handle) == SCE_NP_TROPHY2_OK);
+    Require(handle == NP_TROPHY2_HANDLE_DEFAULT);
+    Require(sceNpTrophy2DestroyHandle(handle) == SCE_NP_TROPHY2_OK);
 }

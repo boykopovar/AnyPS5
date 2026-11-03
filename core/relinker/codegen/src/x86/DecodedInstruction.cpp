@@ -324,6 +324,21 @@ bool DecodedInstruction::IsClwb() const {
            ((modrm >> ModRmModShift) & ModRmModMask) != ModRmModRegister && ((modrm >> ModRmRegShift) & ModRmRegMask) == 6;
 }
 
+bool DecodedInstruction::IsXsaveopt() const {
+    bool operandSizeOverride = false;
+    bool repnePrefix = false;
+    bool repPrefix = false;
+    const std::size_t pos = _skipPrefixesAndRex(&operandSizeOverride, &repnePrefix, &repPrefix);
+
+    if (operandSizeOverride || repnePrefix || repPrefix || pos + 2 >= Length) {
+        return false;
+    }
+
+    const auto modrm = Data[pos + 2];
+    return Data[pos] == TwoByteOpcodeEscape && Data[pos + 1] == TwoByteGrp15 &&
+           ((modrm >> ModRmModShift) & ModRmModMask) != ModRmModRegister && ((modrm >> ModRmRegShift) & ModRmRegMask) == 6;
+}
+
 bool DecodedInstruction::IsMovntss() const {
     bool operandSizeOverride = false;
     bool repnePrefix = false;

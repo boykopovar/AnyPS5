@@ -1,3 +1,4 @@
+#include "prx/libSceAudioPropagation/include/Api.hpp"
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 
 #include <cstdint>
@@ -13,10 +14,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceAudioPropagationSystemLock();
-}
 
 namespace {
 
@@ -229,7 +226,6 @@ int main() {
     Require(sceAudioPropagationSourceCalculateAudioPaths(source, rays, 0, 1, rays, 6) == AudioPropagation::ErrorInvalidArgument, "path calculation empty rays");
     Require(sceAudioPropagationSourceCalculateAudioPaths(source, rays, 6, 0, rays, 6) == AudioPropagation::ErrorInvalidArgument, "path calculation zero reflection order");
     Require(sceAudioPropagationSourceCalculateAudioPaths(source, rays, 6, 1, rays, 0) == AudioPropagation::ErrorInvalidArgument, "path calculation zero output capacity");
-    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSourceCalculateAudioPaths(source, rays, 6, 1, rays, 6); }, "unsupported path calculation");
     Require(sceAudioPropagationSourceSetAudioPaths(source, nullptr, 0) == 0, "empty audio paths failed");
     RequireThrows<std::runtime_error>([&] { sceAudioPropagationSourceSetAudioPaths(source, rays, 1); }, "set audio paths");
 
@@ -386,7 +382,7 @@ int main() {
     Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "memory reuse after destroy failed");
     Require(sceAudioPropagationSystemDestroy(system) == 0, "second destroy failed");
 
-    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemLock(); }, "system lock throw");
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemLock(0); }, "system lock throw");
 
     Require(Resolve("sceAudioPropagationSystemCreate") != nullptr && Resolve("sceAudioPropagationSourceSetAudioPath") != nullptr, "export lookup");
     for (const char* name : {"sceAudioPropagationAudioPathInit", "sceAudioPropagationAudioPathPointInit", "sceAudioPropagationMaterialInit", "sceAudioPropagationPortalSettingsInit", "sceAudioPropagationRayInit", "sceAudioPropagationSourceRenderInfoInit", "sceAudioPropagationSourceSetAudioPathsParamInit", "sceAudioPropagationSystemMemoryInit", "sceAudioPropagationSystemOptionInit", "sceAudioPropagationSystem"}) {

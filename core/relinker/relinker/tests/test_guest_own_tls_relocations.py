@@ -15,8 +15,8 @@ TPOFF64 = 18
 TEMPLATE = 0x2780
 
 
-def fixture(sce=False, tls=True, info=3, value=0, kind=DTPMOD64, addend=0, section=0):
-    image = module([(TARGET, (3 << 32) | kind, addend)], sce=sce)
+def fixture(sce=False, tls=True, info=3, value=0, kind=DTPMOD64, addend=0, section=0, symbol=3, tls_memory=16):
+    image = module([(TARGET, (symbol << 32) | kind, addend)], sce=sce)
     struct.pack_into("<I", image, 0x2244, 4)
     if sce:
         change_tag(image, 4, 4 * 24, 0x6100003f)
@@ -24,7 +24,7 @@ def fixture(sce=False, tls=True, info=3, value=0, kind=DTPMOD64, addend=0, secti
     if tls:
         count, = struct.unpack_from("<H", image, 56)
         struct.pack_into("<H", image, 56, count + 1)
-        struct.pack_into("<IIQQQQQQ", image, 64 + count * 56, 7, 4, TEMPLATE, TEMPLATE, TEMPLATE, 8, 16, 8)
+        struct.pack_into("<IIQQQQQQ", image, 64 + count * 56, 7, 4, TEMPLATE, TEMPLATE, TEMPLATE, min(8, tls_memory), tls_memory, 8)
         image[TEMPLATE:TEMPLATE + 8] = bytes(range(1, 9))
     return image
 
@@ -71,6 +71,21 @@ def main():
                 result, artifact, output = convert(f"{sce}-{name}", "linux", image)
                 assert result.returncode == 2 and "Invalid guest TLS relocation" in result.stderr, (sce, name, result.stderr)
                 assert not artifact.exists() and not output.exists(), name
+            for symbol, info, section in ((3, 3, 0), (0, 3, 0), (3, 6, 1)):
+                for kind, addend in ((DTPMOD64, 0), (DTPOFF64, 4), (TPOFF64, 4)):
+                    if info == 3 and symbol == 3 and kind == TPOFF64:
+                        continue
+                    if info == 6:
+                        image = fixture(sce, info=info, section=section, kind=kind, addend=addend)
+                        for system in ("linux", "windows", "macos"):
+                            result, artifact, output = convert(f"{sce}-defined-{kind}", system, image)
+                            assert result.returncode == 0, (sce, kind, system, result.stdout, result.stderr)
+                    image = fixture(sce, info=info, section=section, kind=kind, addend=addend, symbol=symbol, tls_memory=0)
+                    for system in ("linux", "windows", "macos"):
+                        name = f"{sce}-{symbol}-{info}-{kind}-empty-tls"
+                        result, artifact, output = convert(name, system, image)
+                        assert result.returncode == 2 and "Invalid guest TLS relocation" in result.stderr, (name, system, result.stdout, result.stderr)
+                        assert not artifact.exists() and not output.exists(), (name, system)
     print("Guest own TLS relocation tests passed")
 
 

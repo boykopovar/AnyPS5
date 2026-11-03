@@ -1,20 +1,10 @@
+#include "prx/libSceShare/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceShareCaptureScreenshotExtended(const void* extended_param, std::int32_t* req_id);
-int APS5_VABI sceShareCaptureScreenshot(const void* param, std::int32_t* req_id);
-int APS5_VABI sceShareCaptureVideoClip(const void* param, std::int32_t* req_id);
-int APS5_VABI sceShareCaptureVideoClipExtended(const void* extended_param, std::int32_t* req_id);
-int APS5_VABI sceShareGetCurrentStatus(std::uint32_t feature_flag, void* status);
-int APS5_VABI sceShareOpenMenuForContent(const void* content_id);
-int APS5_VABI sceShareGetRunningStatus(std::uint32_t* status);
-int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* application_title);
-}
 
 namespace {
 
@@ -23,31 +13,43 @@ void Require(bool value) { if (!value) std::abort(); }
 }
 
 int main() {
+    Require(sceShareInitialize(0, 0, 0) == 0);
+    Require(sceShareFeaturePermit(0) == 0);
+    Require(sceShareFeaturePermit(1) == 0);
+    Require(sceShareFeatureProhibit(0) == 0);
+    Require(sceShareFeatureProhibit(1) == 0);
+    Require(sceShareRegisterContentEventCallback(nullptr, nullptr) == 0);
+    Require(sceShareUnregisterContentEventCallback(nullptr) == 0);
+    Require(sceShareSetCaptureSource(0, nullptr) == 0);
+    Require(sceShareSetContentParam(nullptr) == 0);
+    Require(sceShareSetContentParam("test") == 0);
+    Require(sceShareSetScreenshotOverlayImage(nullptr, 0, 0, 0) == 0);
     constexpr std::int32_t notSupported = static_cast<std::int32_t>(0x81960007);
     std::uint8_t param[64]{};
 
     using Capture = int (APS5_VABI*)(const void*, std::int32_t*);
     std::int32_t reqId = 7;
     constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x81960002);
-    for (Capture capture : {sceShareCaptureScreenshotExtended, sceShareCaptureVideoClipExtended}) {
+    const auto checkExtended = [&]<typename TParam>(int (APS5_VABI* capture)(const TParam*, std::int32_t*), std::uint64_t size) {
         std::uint64_t fields[5]{};
-        const std::uint64_t size = capture == sceShareCaptureScreenshotExtended ? 24 : 40;
         reqId = 7;
-        Require(capture(fields, &reqId) == invalidParam && reqId == 7);
+        Require(capture(reinterpret_cast<const TParam*>(fields), &reqId) == invalidParam && reqId == 7);
         Require(capture(nullptr, &reqId) == invalidParam && reqId == 7);
         fields[0] = size;
-        Require(capture(fields, &reqId) == notSupported && reqId == -1);
-        Require(capture(fields, nullptr) == notSupported);
+        Require(capture(reinterpret_cast<const TParam*>(fields), &reqId) == notSupported && reqId == -1);
+        Require(capture(reinterpret_cast<const TParam*>(fields), nullptr) == notSupported);
         if (size == 40) {
             fields[2] = 1;
             reqId = 7;
-            Require(capture(fields, &reqId) == invalidParam && reqId == -1);
+            Require(capture(reinterpret_cast<const TParam*>(fields), &reqId) == invalidParam && reqId == -1);
             fields[3] = 1;
-            Require(capture(fields, nullptr) == notSupported);
+            Require(capture(reinterpret_cast<const TParam*>(fields), nullptr) == notSupported);
             fields[3] |= std::uint64_t{1} << 32;
-            Require(capture(fields, nullptr) == invalidParam);
+            Require(capture(reinterpret_cast<const TParam*>(fields), nullptr) == invalidParam);
         }
-    }
+    };
+    checkExtended(sceShareCaptureScreenshotExtended, 24);
+    checkExtended(sceShareCaptureVideoClipExtended, 40);
 
     for (Capture capture : {sceShareCaptureScreenshot, sceShareCaptureVideoClip}) {
         reqId = 7;
@@ -64,13 +66,13 @@ int main() {
 
     std::uint8_t status[18];
     std::memset(status, 0x5a, sizeof(status));
-    Require(sceShareGetCurrentStatus(1, status) == 0);
+    Require(sceShareGetCurrentStatus(1, reinterpret_cast<ShareCurrentStatus*>(status)) == 0);
     for (std::size_t index = 0; index < sizeof(status); ++index) Require(status[index] == (index < 16 ? 0 : 0x5a));
     std::memset(status, 0x5a, sizeof(status));
-    Require(sceShareGetCurrentStatus(0xffffffffu, status) == 0);
+    Require(sceShareGetCurrentStatus(0xffffffffu, reinterpret_cast<ShareCurrentStatus*>(status)) == 0);
     Require(status[0] == 0 && status[15] == 0 && status[16] == 0x5a);
     std::memset(status, 0x5a, sizeof(status));
-    Require(sceShareGetCurrentStatus(0, status) == invalidParam);
+    Require(sceShareGetCurrentStatus(0, reinterpret_cast<ShareCurrentStatus*>(status)) == invalidParam);
     Require(status[0] == 0x5a);
     Require(sceShareGetCurrentStatus(1, nullptr) == invalidParam);
     std::uint32_t running[2]{0xffffffffu, 0x5a5a5a5au};
@@ -84,5 +86,6 @@ int main() {
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == 0);
     title.push_back('a');
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == invalidParam);
+    Require(sceShareTerminate() == 0);
     return 0;
 }

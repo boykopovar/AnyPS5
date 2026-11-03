@@ -3,16 +3,21 @@
 
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-#include <ft2build.h>
-#include FT_LIST_H
-
 #include <cstddef>
 #include <cstdint>
 
 namespace FreeType {
 
-using GuestListRec = FT_ListRec;
-using GuestListNodeRec = FT_ListNodeRec;
+struct GuestListNodeRec {
+    GuestListNodeRec* prev;
+    GuestListNodeRec* next;
+    void* data;
+};
+
+struct GuestListRec {
+    GuestListNodeRec* head;
+    GuestListNodeRec* tail;
+};
 
 struct GuestMemoryRec {
     void* user;

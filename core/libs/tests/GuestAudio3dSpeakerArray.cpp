@@ -1,26 +1,11 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-
-struct Audio3dSpeakerArrayParameters {
-    const AudioOut2Position* positions;
-    std::uint32_t numSpeakers;
-    std::uint8_t is3d;
-    void* memory;
-    std::size_t memorySize;
-};
-
-extern "C" {
-size_t APS5_VABI sceAudio3dGetSpeakerArrayMemorySize(std::uint32_t num_speakers, std::uint8_t is_3d);
-int APS5_VABI sceAudio3dCreateSpeakerArray(AudioOut2SpeakerArrayHandle* handle, const Audio3dSpeakerArrayParameters* parameters);
-int APS5_VABI sceAudio3dDeleteSpeakerArray(AudioOut2SpeakerArrayHandle handle);
-int APS5_VABI sceAudio3dGetSpeakerArrayMixCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, std::uint32_t num_coefficients);
-int APS5_VABI sceAudio3dGetSpeakerArrayMixCoefficients2(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, std::uint32_t num_coefficients, std::uint8_t height_aware, float downmix_spread_radius);
-size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(std::uint32_t num_speakers, std::uint8_t is_3d, std::uint8_t is_ambisonics);
-}
 
 namespace {
 
@@ -58,6 +43,15 @@ int main() {
     AudioOut2SpeakerArrayHandle handle = nullptr;
     Require(sceAudio3dCreateSpeakerArray(nullptr, &parameters) == INVALID_PARAMETER, "null handle is an invalid parameter");
     Require(sceAudio3dCreateSpeakerArray(&handle, nullptr) == INVALID_PARAMETER, "null parameters are an invalid parameter");
+    Audio3dSpeakerArrayParameters zeroSpeakers = parameters;
+    zeroSpeakers.numSpeakers = 0;
+    RequireThrows([&] { sceAudio3dCreateSpeakerArray(&handle, &zeroSpeakers); }, "zero speakers parameter is rejected");
+    Audio3dSpeakerArrayParameters nullPositions = parameters;
+    nullPositions.positions = nullptr;
+    RequireThrows([&] { sceAudio3dCreateSpeakerArray(&handle, &nullPositions); }, "null positions parameter is rejected");
+    Audio3dSpeakerArrayParameters nullMemory = parameters;
+    nullMemory.memory = nullptr;
+    RequireThrows([&] { sceAudio3dCreateSpeakerArray(&handle, &nullMemory); }, "null memory parameter is rejected");
     Require(handle == nullptr, "a rejected create leaves the handle");
     Require(sceAudio3dCreateSpeakerArray(&handle, &parameters) == 0, "create succeeds without ambisonics parameters");
     Require(handle != nullptr, "create stores the handle");
@@ -70,6 +64,8 @@ int main() {
     Require(coefficients2[3] == 0.0f, "mix coefficients 2 are written");
     RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients(handle, AudioOut2Position{1, 0, 0}, 0.0f, coefficients, 3); }, "a coefficient count that differs from the array is rejected");
     RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients(handle, AudioOut2Position{1, 0, 0}, 0.0f, nullptr, 4); }, "null coefficients pointer throws invalid_argument");
+    RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients2(handle, AudioOut2Position{1, 0, 0}, 0.0f, coefficients, 3, 1, 0.5f); }, "a coefficient count that differs from the array is rejected in v2");
+    RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients2(handle, AudioOut2Position{1, 0, 0}, 0.0f, nullptr, 4, 1, 0.5f); }, "null coefficients pointer throws invalid_argument in v2");
 
     Require(sceAudio3dDeleteSpeakerArray(handle) == 0, "delete succeeds");
     RequireThrows([&] { sceAudio3dDeleteSpeakerArray(handle); }, "a deleted array is no longer valid");

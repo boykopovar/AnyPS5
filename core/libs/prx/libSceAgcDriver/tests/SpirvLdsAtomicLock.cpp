@@ -24,7 +24,19 @@ constexpr std::uint32_t DsOperand32 = 0x00000401u;
 constexpr std::uint32_t FlatAtomicAddU32 = 0xdcc90000u;
 constexpr std::uint32_t FlatAtomicOperands = 0x0a7d0402u;
 
+struct LockFence {
+    std::uint32_t scope = 0u;
+    std::uint32_t semantics = 0u;
+    std::size_t accessesBefore = 0;
+};
+
+struct LockRegion {
+    std::vector<LockFence> fences;
+    std::size_t accesses = 0;
+};
+
 struct Usage {
+    std::vector<LockRegion> regions;
     std::size_t elects = 0;
     std::size_t exchanges = 0;
     std::size_t releases = 0;
@@ -40,7 +52,7 @@ void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-std::vector<std::uint32_t> RecompileProgram(std::span<const std::uint32_t> code) {
+std::vector<std::uint32_t> RecompileProgram(std::span<const std::uint32_t> code, bool ldsLockFences) {
     const std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     const std::array<std::uint32_t, 4> userData{};
     const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
@@ -59,6 +71,7 @@ std::vector<std::uint32_t> RecompileProgram(std::span<const std::uint32_t> code)
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
     request.target.maxWorkgroupInvocations = 1024;
     request.target.maxWorkgroupSharedMemoryBytes = 49152;
+    request.target.ldsLockFences = ldsLockFences;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     auto result = Recompile(request);
@@ -77,10 +90,18 @@ Usage Scan(std::span<const std::uint32_t> words) {
     std::uint32_t laneZeroBody = 0u;
     std::uint32_t lockPointer = 0u;
     std::map<std::uint32_t, std::uint32_t> constants;
+    std::uint32_t faultFunction = 0u;
+    bool inFaultFunction = false;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> spv::WordCountShift;
         const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
         Require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        if (op == spv::OpName && count >= 3u && std::string_view(reinterpret_cast<const char*>(words.data() + cursor + 2u)) == "record_bda_fault") faultFunction = words[cursor + 1u];
+        if (op == spv::OpFunction && count >= 3u) inFaultFunction = words[cursor + 2u] == faultFunction;
+        if (inFaultFunction) {
+            cursor += count;
+            continue;
+        }
         if (op == spv::OpDecorate && count >= 4u && words[cursor + 2u] == spv::DecorationBuiltIn && words[cursor + 3u] == spv::BuiltInLocalInvocationIndex) {
             localIndexVariable = words[cursor + 1u];
         }
@@ -93,8 +114,10 @@ Usage Scan(std::span<const std::uint32_t> words) {
         if (op == spv::OpBranchConditional && count >= 4u && words[cursor + 1u] == laneZeroCondition) laneZeroBody = words[cursor + 2u];
         if (op == spv::OpConstant && count == 4) constants[words[cursor + 2]] = words[cursor + 3];
         if (op == spv::OpGroupNonUniformElect) ++usage.elects;
+        if (locked && (op == spv::OpLoad || op == spv::OpStore || op == spv::OpAtomicIAdd || op == spv::OpAtomicCompareExchange)) ++usage.regions.back().accesses;
         if (op == spv::OpAtomicCompareExchange) {
             ++usage.exchanges;
+            if (!locked) usage.regions.emplace_back();
             locked = true;
             if (count >= 4u) lockPointer = words[cursor + 3u];
         }
@@ -108,7 +131,13 @@ Usage Scan(std::span<const std::uint32_t> words) {
             ++usage.storeReleases;
             locked = false;
         }
-        if (op == spv::OpMemoryBarrier && locked) usage.fenceBetweenLock = true;
+        if (op == spv::OpMemoryBarrier && locked) {
+            usage.fenceBetweenLock = true;
+            const auto scope = constants.find(words[cursor + 1]);
+            const auto semantics = constants.find(words[cursor + 2]);
+            Require(scope != constants.end() && semantics != constants.end(), "a memory barrier inside the workgroup lock has a non-constant scope or semantics");
+            usage.regions.back().fences.push_back({scope->second, semantics->second, usage.regions.back().accesses});
+        }
         if (op == spv::OpAtomicIAdd) {
             ++usage.adds;
             if (locked) usage.addBetweenLock = true;
@@ -148,11 +177,11 @@ Usage Scan(std::span<const std::uint32_t> words) {
     return usage;
 }
 
-Usage Compile(std::initializer_list<std::uint32_t> body) {
+Usage Compile(std::initializer_list<std::uint32_t> body, bool ldsLockFences = false) {
     std::vector<std::uint32_t> code{0x7e020280u, 0x7e0402c1u, 0x7e060280u, 0x7e080281u};
     code.insert(code.end(), body);
     code.insert(code.end(), {0xbf8cc07fu, 0xbf810000u});
-    return Scan(RecompileProgram(code));
+    return Scan(RecompileProgram(code, ldsLockFences));
 }
 
 void Check64BitOnlyLocks() {
@@ -182,6 +211,28 @@ void CheckFlatAtomicTakesLockWith64Bit() {
     Require(!usage.fenceBetweenLock, "a 32-bit flat atomic into the LDS aperture emits a memory barrier while it holds the workgroup lock");
 }
 
+void RequireFencedRegions(const Usage& usage, std::size_t expected, const std::string& name) {
+    Require(usage.regions.size() == expected, name + " with LDS lock fences took the workgroup lock " + std::to_string(usage.regions.size()) + " times, expected " + std::to_string(expected));
+    for (const auto& region : usage.regions) {
+        Require(region.fences.size() == 2, name + " with LDS lock fences emitted " + std::to_string(region.fences.size()) + " memory barriers inside the workgroup lock, expected 2");
+        const auto& acquire = region.fences.front();
+        const auto& release = region.fences.back();
+        Require(acquire.scope == spv::ScopeWorkgroup && release.scope == spv::ScopeWorkgroup, name + " with LDS lock fences emitted a lock fence that is not workgroup scope");
+        Require((acquire.semantics & spv::MemorySemanticsAcquireMask) != 0 && (acquire.semantics & spv::MemorySemanticsWorkgroupMemoryMask) != 0, name + " with LDS lock fences does not start its critical section with an acquire fence on workgroup memory");
+        Require((release.semantics & spv::MemorySemanticsReleaseMask) != 0 && (release.semantics & spv::MemorySemanticsWorkgroupMemoryMask) != 0, name + " with LDS lock fences does not end its critical section with a release fence on workgroup memory");
+        Require(region.accesses != 0 && acquire.accessesBefore == 0 && release.accessesBefore == region.accesses, name + " with LDS lock fences accesses LDS outside the fences inside the workgroup lock");
+    }
+}
+
+void CheckLockFences() {
+    RequireFencedRegions(Compile({DsAddU64, DsOperands}, true), 1, "ds_add_u64");
+    const auto mixed = Compile({DsAddU64, DsOperands, DsAddU32Hi, DsOperand32}, true);
+    RequireFencedRegions(mixed, 2, "ds_add_u32 with ds_add_u64");
+    Require(mixed.adds == 1 && mixed.addBetweenLock, "with LDS lock fences, the 32-bit OpAtomicIAdd is not between the lock acquire and the lock release");
+    const auto unfenced = Compile({DsAddU32Hi, DsOperand32}, true);
+    Require(unfenced.regions.empty() && !unfenced.fenceBetweenLock, "with LDS lock fences, a program with only ds_add_u32 got a workgroup lock");
+}
+
 void CheckFlatAtomicOnlyIsUnchanged() {
     const auto usage = Compile({FlatAtomicAddU32, FlatAtomicOperands});
     Require(usage.elects == 0, "a program with only a 32-bit flat atomic got a workgroup lock: elect " + std::to_string(usage.elects));
@@ -204,6 +255,7 @@ int main() {
         CheckFlatAtomicTakesLockWith64Bit();
         CheckFlatAtomicOnlyIsUnchanged();
         Check32BitOnlyIsUnchanged();
+        CheckLockFences();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "SpirvLdsAtomicLock: %s\n", error.what());
         return 1;

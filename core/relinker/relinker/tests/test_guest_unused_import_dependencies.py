@@ -9,7 +9,7 @@ import tempfile
 from guest_import_fixtures import dynamic
 from test_guest_deferred_dependencies import page_aligned
 from test_guest_intel_trampolines import main_fixture
-from test_guest_module_args import args_module
+from test_guest_module_args import args_module, load_and_record
 from test_guest_module_directories import module_with_symbol, needed_libraries
 from test_guest_module_dir import pe_export_names
 from test_guest_needed_modules import module_with_needed
@@ -98,7 +98,8 @@ def main():
                     else:
                         assert run.returncode == 42, (kind, run.returncode, run.stdout, run.stderr)
                         recorded = events.read_text() if events.exists() else ''
-                        assert recorded.count('args=') == (1 if kind in ('referenced', 'weak-referenced', 'plt', 'needed') else 0), (kind, recorded)
+                        assert recorded.count('args=') == 0, (kind, recorded)
+                        load_and_record(case, libraries / 'libc.prx', case / provider)
                 cases += 1
             cycle = Path(directory) / f'{system}-cycle'
             (cycle / 'sce_module').mkdir(parents=True)

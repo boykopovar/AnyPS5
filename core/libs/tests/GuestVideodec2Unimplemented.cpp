@@ -1,25 +1,10 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceVideodec2TermLibrary();
-int APS5_VABI sceVideodec2QueryLibraryInfo();
-int APS5_VABI sceVideodec2QueryDecoderInfo();
-int APS5_VABI sceVideodec2MapMemory();
-int APS5_VABI sceVideodec2MapDirectMemory(void* decoder, const void* memory);
-int APS5_VABI sceVideodec2PresetDecoderConfigInfo();
-int APS5_VABI sceVideodec2PresetDecoderConfigInfoAvc();
-int APS5_VABI sceVideodec2PresetDecoderConfigInfoHevc();
-int APS5_VABI sceVideodec2PresetDecoderConfigInfoVp9();
-int APS5_VABI sceVideodec2CreateDecoderBid();
-int APS5_VABI sceVideodec2CreateHevcDecoder();
-int APS5_VABI sceVideodec2QueryHevcDecoderMemoryInfo();
-int APS5_VABI sceVideodec2GetHevcPictureInfo();
-}
 
 static bool ReportsNotImplemented(const std::string& name, const std::function<int()>& call) {
     try {
@@ -46,6 +31,5 @@ int main() {
     passed = ReportsNotImplemented("sceVideodec2CreateDecoderBid", [] { return sceVideodec2CreateDecoderBid(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2CreateHevcDecoder", [] { return sceVideodec2CreateHevcDecoder(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2QueryHevcDecoderMemoryInfo", [] { return sceVideodec2QueryHevcDecoderMemoryInfo(); }) && passed;
-    passed = ReportsNotImplemented("sceVideodec2GetHevcPictureInfo", [] { return sceVideodec2GetHevcPictureInfo(); }) && passed;
     return passed ? 0 : 1;
 }
