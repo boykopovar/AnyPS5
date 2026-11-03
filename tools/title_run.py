@@ -162,7 +162,7 @@ def render_markdown(summary, previous=None):
     lines += ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
     for title_id, title in sorted(summary["titles"].items()):
         runs = title["runs"]
-        error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering"), "")
+        error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering" and entry["first_error"]), "")
         row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"), f"{runs[-1]['fps']:.1f}",
                error[:120].replace("|", "\\|")]
         if previous:
