@@ -30,6 +30,8 @@ public:
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
     void SetFloat64(bool enabled) { float64 = enabled; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
+    void SetVectorWindowActive(bool active) { ir.SetVectorWindowActive(active); }
+    void SyncVectorWindow(bool toWindow) { ir.SyncVectorWindow(toWindow); }
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
 
