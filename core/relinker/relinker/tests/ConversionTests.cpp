@@ -471,6 +471,22 @@ void runtimeDirectories() {
             } else if (exports(module.Bytes, Relinker::GuestInitializeExport)) require(deferredDependencies(module.Bytes).empty(), "A module without dependencies lists some");
         }
     }
+    {
+        auto source = input();
+        const auto modules = source.ModuleRoot / "Media/Modules";
+        const auto plugins = source.ModuleRoot / "Media/Plugins";
+        source.Executable = fixture("consumer.prx");
+        source.Modules.push_back({modules / "consumer.prx", fixture("provider.prx")});
+        source.Modules.push_back({plugins / "provider.prx", fixture()});
+        source.RuntimeDirectories.push_back(modules);
+        source.RuntimeDirectories.push_back(plugins);
+        const auto output = converter.Convert(std::move(source), options);
+        require(output.Modules.size() == 2, "Modules were not converted");
+        for (const auto& module : output.Modules) {
+            const bool consumer = module.SourcePath.filename() == "consumer.prx";
+            require(exports(module.Bytes, Relinker::GuestInitializeExport) == consumer, "Wrong start of a module the deferred module the executable needs depends on");
+        }
+    }
 }
 
 void relocationValidation() {

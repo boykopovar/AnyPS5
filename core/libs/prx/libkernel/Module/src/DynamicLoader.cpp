@@ -261,7 +261,7 @@ static void InitializeLinuxGuestModule(void* native) {
 static std::mutex initializedLock;
 static std::condition_variable initializedChanged;
 
-static void InitializeDeferredModule(HMODULE native);
+static void InitializeDeferredModule(HMODULE native, HMODULE initiator = nullptr);
 
 static std::vector<std::string> DeferredDependencyNames(const std::uint32_t* table) {
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
@@ -280,7 +280,13 @@ static std::vector<std::string> DeferredDependencyNames(const std::uint32_t* tab
     return names;
 }
 
-static void InitializeDeferredModule(HMODULE native) {
+static std::string ModuleFileName(HMODULE module) {
+    char buffer[MAX_PATH] = {};
+    const auto length = GetModuleFileNameA(module, buffer, MAX_PATH);
+    return std::string(buffer, length < MAX_PATH ? length : 0);
+}
+
+static void InitializeDeferredModule(HMODULE native, HMODULE initiator) {
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
     using Initializer = void (APS5_VABI *)(int, char**, char**);
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
@@ -299,7 +305,8 @@ static void InitializeDeferredModule(HMODULE native) {
         resolving.push_back(native);
         try {
             for (const auto& name : dependencies) {
-                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && dependency != native) InitializeDeferredModule(dependency);
+                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && dependency != native) InitializeDeferredModule(dependency, native);
+                else if (!dependency) std::fprintf(stderr, "[module] deferred dependency %s of %s is not mapped and is not started\n", name.c_str(), ModuleFileName(native).c_str());
                 *pendingArgs = initiating;
             }
         } catch (...) {
@@ -338,6 +345,8 @@ static void InitializeDeferredModule(HMODULE native) {
         initializedChanged.notify_all();
         if (!restored) throw std::system_error(static_cast<int>(error), std::system_category(), "restore deferred module initialization metadata");
     };
+    std::fprintf(stderr, "[module] deferred start %s (%s)\n", ModuleFileName(native).c_str(),
+        initiator ? ("needed by " + ModuleFileName(initiator)).c_str() : "loaded by the title");
     try {
         auto* base = reinterpret_cast<std::uint8_t*>(native);
         const auto* pending = static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());

@@ -220,6 +220,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
     std::vector<bool> executableReferences(executableModules.size());
     std::set<std::size_t> executableProviders;
+    std::set<std::size_t> windowsExecutableProviders;
     for (const auto* table : {&dynamic.RelaData, &dynamic.RelaPltData}) {
         if (table->size() % 24 != 0) throw Domain::RelinkerException("Invalid executable relocation table");
         for (std::size_t offset = 0; offset < table->size(); offset += 24) {
@@ -253,6 +254,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         if (needed != 1) rejectSharedImport(base, Io::Utf8Path(inputPath));
         const auto found = exports.find(name);
+        if (windows && executableReferences[offset / 24] && found != exports.end() && found->second.size() == 1) windowsExecutableProviders.insert(found->second.front().Provider);
         const auto declared = windows || executableModules[offset / 24].empty() ? guestNames.end() : findGuest(executableModules[offset / 24]);
         if (!windows && found != exports.end() && (declared == guestNames.end() || std::any_of(found->second.begin(), found->second.end(), [&](const auto& candidate) { return candidate.Provider == declared->second; }))) {
             rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
@@ -322,12 +324,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto& name : neededNames) {
         const auto found = findGuest(name);
         if (found != guestNames.end() && (!windows || standardDirectory(found->second))) require(found->second);
+        if (windows && found != guestNames.end()) windowsExecutableProviders.insert(found->second);
     }
     for (const auto provider : executableProviders) require(provider);
     for (std::size_t index = 0; index < images.size(); ++index) {
         if (!isRuntime(index)) require(index);
         if (windows) for (const auto dependency : dependencies[index]) if (standardDirectory(dependency)) require(dependency);
     }
+    for (const auto provider : windowsExecutableProviders) for (const auto dependency : dependencies[provider]) require(dependency);
     const auto deferred = [&](const std::size_t index) {
         return !required[index] && isRuntime(index);
     };
