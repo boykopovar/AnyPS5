@@ -3,11 +3,13 @@
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -6271,6 +6273,7 @@ void expectSingleAccepted(const ShaderRecompiler::DescriptorBinding& binding, st
     mock = MockVulkan{};
     auto context = mockContext();
     context.emptyBuffer = reinterpret_cast<VkBuffer>(std::uintptr_t{0x1000});
+    context.oversizedBuffer = reinterpret_cast<VkBuffer>(std::uintptr_t{0x2000});
     const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
     { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }
     Require(mock.live == 0, std::string(what) + " leaked Vulkan objects");
@@ -6979,6 +6982,161 @@ void resourceTests() {
         expectResourceFailure(vertex, fragment, "duplicate shader binding");
         fragment.bindings.front().binding = 1;
         fragment.bindings.front().guestDescriptor = vsharp(guestFirst.data(), 16);
+    }
+}
+
+void unsetFormatStorageImageTests() {
+    using ShaderRecompiler::DescriptorBinding;
+    using ShaderRecompiler::DescriptorImageShape;
+    using ShaderRecompiler::DescriptorKind;
+    using ShaderRecompiler::DescriptorRole;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    alignas(256) std::array<std::byte, 4096> guest{};
+    const auto base = reinterpret_cast<std::uint64_t>(guest.data());
+    const auto words = [](std::uint32_t format, std::uint64_t baseAddress) {
+        return std::vector<std::uint32_t>{
+            static_cast<std::uint32_t>(baseAddress >> 8u),
+            static_cast<std::uint32_t>((baseAddress >> 40u) & 0xffu) | ((format & 0x1ffu) << 20u) | (3u << 30u),
+            3u | (15u << 14u),
+            0xfacu | (Type2D << 28u),
+            0u,
+            0u,
+            0u,
+            0u,
+        };
+    };
+    const auto storage = [&](std::uint32_t format, std::uint64_t baseAddress) {
+        DescriptorBinding binding{};
+        binding.kind = DescriptorKind::StorageImage;
+        binding.role = DescriptorRole::GuestImages;
+        binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
+        binding.count = 1;
+        binding.imageWritten = {true};
+        binding.guestDescriptor = words(format, baseAddress);
+        return binding;
+    };
+    for (const std::uint32_t format : {0u, 0x1ffu}) {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorStorageImages = 8;
+        context.limits.maxDescriptorSetStorageImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(storage(format, base));
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }, "unsupported guest texture format");
+        }
+        Require(mock.live == 0, "a rejected unset-format storage image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(0u, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image2D;
+        sampled.imageSamplers = {0};
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a sampled unset-format image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(0u, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image1DArray;
+        sampled.imageSamplers = {0};
+        sampled.guestDescriptor[3] = (sampled.guestDescriptor[3] & ~(0xfu << 28u)) | (12u << 28u);
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a sampled TYPE 12 image with an unset format leaked Vulkan objects");
+    }
+    for (const std::uint32_t format : {0u, 0x1ffu}) {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(format, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image2D;
+        sampled.imageSamplers = {0};
+        sampled.guestDescriptor[3] = (sampled.guestDescriptor[3] & ~(0xfu << 28u)) | (2u << 28u);
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }, "unsupported image type 2");
+        }
+        Require(mock.live == 0, "a rejected reserved-type sampled image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorStorageImages = 8;
+        context.limits.maxDescriptorSetStorageImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(storage(0u, 0));
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a null storage image with an unset format leaked Vulkan objects");
+    }
+    {
+        ShaderRecompiler::RecompileResult compiled;
+        compiled.bindings.push_back(storage(Format8888UNorm, base));
+        bool bounded = false;
+        const auto ranges = AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded);
+        Require(ranges.size() == 1 && ranges[0].first == base && ranges[0].second == base + 4096u, "a written storage image did not contribute its whole surface to the dispatch write ranges");
+        compiled.bindings.front().guestDescriptor = words(0u, base);
+        expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded)); }, "unsupported guest texture format");
+        compiled.bindings.front().guestDescriptor = words(0u, 0u);
+        Require(AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded).empty(), "a null written storage image contributed dispatch write ranges");
     }
 }
 
@@ -10725,7 +10883,11 @@ void uintTargetTests() {
     Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
     auto halves = queue;
     halves.context[0x1c5] = 4u;
-    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(halves)); }, "color export format 4 into an unsigned integer target is unsupported");
+    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 5>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}}}) {
+        halves.context[0x31c] = (queue.context.at(0x31c) & ~0x1f7cu) | (format << 2u) | (4u << 8u);
+        const auto half = AgcDriver::Graphics::DecodeState(halves);
+        Require(half.color.format == vkFormat && half.color.packing == packing && !half.color.uintExport && AgcDriver::Graphics::ExportPackings(half)[0] == packing && !half.blends.at(0).blendEnable, "an FP16_ABGR export into a UINT target did not get the packing that clamps to its channel width");
+    }
     auto unorm = queue;
     unorm.context[0x31c] = (unorm.context.at(0x31c) & ~0x1f7cu) | (4u << 2u) | (7u << 8u);
     Require(AgcDriver::Graphics::DecodeState(unorm).color.packing == ColorExportPacking::None, "a 32-bit float target got the unsigned integer export packing");
@@ -11023,14 +11185,17 @@ void unorm4_4_4_4TargetTests() {
     changed.context[0x8e] = 1u;
     changed.context[0x31d] = (changed.context.at(0x31d) & ~0x3f000u) | (1u << 12u) | (1u << 15u);
     {
-        const auto multisampled = AgcDriver::Graphics::DecodeState(changed);
-        Require(multisampled.samples == 2u && multisampled.color.samples == 2u && multisampled.color.partialWriteMask == 0xf000u && multisampled.blends[0].colorWriteMask == 0u && multisampled.perSampleShading, "a partial write of a 2-sample 4_4_4_4 unorm target did not merge per sample behind a closed write mask");
+        const auto staged = AgcDriver::Graphics::DecodeState(changed);
+        Require(staged.samples == 2u && staged.color.samples == 2u && staged.color.staged && staged.color.stagedMask == 0xf000u && staged.color.partialWriteMask == 0u && staged.color.format == VK_FORMAT_R32_UINT && staged.color.stagedFormat == VK_FORMAT_R16_UINT && staged.blends[0].colorWriteMask == VK_COLOR_COMPONENT_R_BIT && !staged.perSampleShading, "a partial write of a 2-sample 4_4_4_4 unorm target was not staged through an R32_UINT temporary at the guest's shading rate");
+        Require(AgcDriver::Graphics::ExportTargetMerges(staged).empty(), "a staged partial write of a 2-sample 4_4_4_4 unorm target merged inside its pixel shader");
+        const auto packedTarget = AgcDriver::Graphics::StagedMergeTarget(staged.color);
+        Require(packedTarget.format == VK_FORMAT_R16_UINT && packedTarget.partialWriteMask == 0xf000u && !packedTarget.staged && packedTarget.samples == 2u && packedTarget.address == staged.color.address, "the packed target a staged partial write merges into does not carry the target's own format and word mask");
         auto coverage = changed;
         coverage.context[0x1b3] = 0x4002u;
         coverage.context[0x1b4] = 0x4002u;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(coverage); }, "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample");
+        Require(AgcDriver::Graphics::DecodeState(coverage).color.staged, "a staged partial write of a 2-sample 4_4_4_4 unorm target with a SAMPLE_COVERAGE input was refused");
         coverage.context[0x8e] = 0xfu;
-        Require(!AgcDriver::Graphics::DecodeState(coverage).perSampleShading, "a full write of a 2-sample 4_4_4_4 unorm target with a SAMPLE_COVERAGE input was refused or ran per sample");
+        Require(!AgcDriver::Graphics::DecodeState(coverage).perSampleShading && !AgcDriver::Graphics::DecodeState(coverage).color.staged, "a full write of a 2-sample 4_4_4_4 unorm target with a SAMPLE_COVERAGE input was refused or ran per sample");
         struct InputCase {
             std::uint32_t inputs;
             std::uint32_t position;
@@ -11047,21 +11212,22 @@ void unorm4_4_4_4TargetTests() {
             queue.context[0x1b8] = position;
             return queue;
         };
-        for (const auto& [inputs, position, what] : {InputCase{0x0004u, 0u, "PERSP_CENTROID"}, InputCase{0x0040u, 0u, "LINEAR_CENTROID"}, InputCase{0x0001u, 0u, "PERSP_SAMPLE"}, InputCase{0x0008u, 0u, "PERSP_PULL_MODEL"}, InputCase{0x2002u, 0u, "ANCILLARY"}, InputCase{0x0402u, 0u, "POS_Z_FLOAT"}, InputCase{0x0802u, 0u, "POS_W_FLOAT"}, InputCase{0x0302u, 0x20000u, "POS_X_FLOAT and POS_Y_FLOAT at a sample"}, InputCase{0x0102u, 0x10000u, "POS_X_FLOAT at the centroid"}}) {
-            auto moved = inputState(rasterized, inputs, position);
-            expectFailure([&] { AgcDriver::Graphics::DecodeState(moved); }, "cannot read the ancillary word or, unless every sample sits at the pixel centre");
-            moved.context[0x293] = moved.context.at(0x293) | 0x10000u;
-            Require(AgcDriver::Graphics::DecodeState(moved).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target whose shader the guest runs per sample was refused for reading ") + what);
-            if (inputs == 0x2002u) {
-                expectFailure([&] { AgcDriver::Graphics::DecodeState(inputState(changed, inputs, position)); }, "cannot read the ancillary word");
-                continue;
-            }
-            Require(AgcDriver::Graphics::DecodeState(inputState(changed, inputs, position)).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target raised from a one-sample rasterizer, every sample at the pixel centre, was refused for reading ") + what);
+        for (const auto& [inputs, position, what] : {InputCase{0x0004u, 0u, "PERSP_CENTROID"}, InputCase{0x0040u, 0u, "LINEAR_CENTROID"}, InputCase{0x0001u, 0u, "PERSP_SAMPLE"}, InputCase{0x0010u, 0u, "LINEAR_SAMPLE"}, InputCase{0x0008u, 0u, "PERSP_PULL_MODEL"}, InputCase{0x2002u, 0u, "ANCILLARY"}, InputCase{0x0402u, 0u, "POS_Z_FLOAT"}, InputCase{0x0802u, 0u, "POS_W_FLOAT"}, InputCase{0x0302u, 0x20000u, "POS_X_FLOAT and POS_Y_FLOAT at a sample"}, InputCase{0x0102u, 0x10000u, "POS_X_FLOAT at the centroid"}, InputCase{0x0302u, 0u, "POS_X_FLOAT and POS_Y_FLOAT at the centre"}, InputCase{0x9022u, 0u, "PERSP_CENTER, LINEAR_CENTER, FRONT_FACE and POS_FIXED_PT"}}) {
+            const auto decoded = AgcDriver::Graphics::DecodeState(inputState(rasterized, inputs, position));
+            Require(decoded.color.staged && !decoded.perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target was not staged at the guest's shading rate for a pixel shader reading ") + what);
         }
-        for (const auto& [inputs, position, what] : {InputCase{0x0302u, 0u, "POS_X_FLOAT and POS_Y_FLOAT at the centre"}, InputCase{0x0302u, 0x100000u, "POS_X_FLOAT and POS_Y_FLOAT at the upper-left corner"}, InputCase{0x9022u, 0u, "PERSP_CENTER, LINEAR_CENTER, FRONT_FACE and POS_FIXED_PT"}}) {
-            Require(AgcDriver::Graphics::DecodeState(inputState(rasterized, inputs, position)).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target whose pixel-rate shader reads ") + what + " was refused");
-        }
-        const auto merge = AgcDriver::Graphics::ExportTargetMerges(multisampled).at(0);
+        const auto inShader = [](AgcDriver::Graphics::State state) {
+            state.colors[0] = AgcDriver::Graphics::StagedMergeTarget(state.colors[0]);
+            state.color = state.colors[0];
+            state.blends[0].colorWriteMask = 0u;
+            state.blend = state.blends[0];
+            state.perSampleShading = true;
+            return state;
+        };
+        const auto multisampled = inShader(staged);
+        const auto merges = AgcDriver::Graphics::ExportTargetMerges(multisampled);
+        Require(merges.size() == 1u, "a staged partial write merged into more than one target of its own draw");
+        const auto merge = merges.front();
         const auto surface = AgcDriver::Graphics::DecodeTextureResource(merge.descriptor);
         Require(merge.samples == 2u && merge.mask == 0xf000u && surface.dimension == AgcDriver::Graphics::TextureDimension::k2DMsaa && surface.samples == 2u && surface.baseAddress == multisampled.color.surfaceAddress && surface.width == multisampled.color.extent.width && surface.height == multisampled.color.extent.height && surface.format == AgcDriver::Graphics::TargetMergeSurface(multisampled.color).format, "the merge descriptor of a 2-sample 4_4_4_4 unorm target does not decode to its multisampled surface");
         auto unshaded = multisampled;
@@ -11092,7 +11258,7 @@ void unorm4_4_4_4TargetTests() {
         centred.context.pixel->sampleLocations = AgcDriver::Graphics::PixelSampleLocations(multisampled, *centred.context.pixel);
         Require(std::ranges::all_of(centred.context.pixel->sampleLocations, [](std::uint8_t location) { return location == 0u; }), "a merge raised from a one-sample rasterizer did not keep every sample at the pixel centre");
         static_cast<void>(ShaderRecompiler::Recompile(centred));
-        const auto rasterizedState = AgcDriver::Graphics::DecodeState(rasterized);
+        const auto rasterizedState = inShader(AgcDriver::Graphics::DecodeState(rasterized));
         auto offCentre = packedExportRequest(rasterized, rasterizedState, mergeCode);
         offCentre.context.pixel->targetMerges = AgcDriver::Graphics::ExportTargetMerges(rasterizedState);
         offCentre.context.pixel->iteratesSamples = rasterizedState.perSampleShading;
@@ -11222,7 +11388,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(5);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(7);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
@@ -11704,6 +11870,15 @@ void validationTests() {
         const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported device capability 12");
         AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, true);
+    }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        vertex.spirv = makeModule({});
+        vertex.spirv.insert(vertex.spirv.begin() + 5, {(2u << 16u) | spv::OpCapability, static_cast<std::uint32_t>(spv::CapabilityMinLod)});
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false); }, "unsupported device capability 42");
+        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, false, false, false, false, true, true);
     }
     {
         ShaderRecompiler::RecompileResult vertex;
@@ -13333,6 +13508,7 @@ int main(int argc, char** argv) {
         descriptorPoolTests();
         pushConstantTests();
         resourceTests();
+        unsetFormatStorageImageTests();
         oversizedDescriptorTests();
         viewAtRangeLimitTests();
         guestBufferViewBytesTests();
