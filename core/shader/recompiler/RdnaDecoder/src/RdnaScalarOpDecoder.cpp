@@ -217,11 +217,11 @@ RdnaOpcode decodeSoppOpcode(std::uint32_t opcode) {
         case 0x14u: return RdnaOpcode::SIncperflevel;
         case 0x15u: return RdnaOpcode::SDecperflevel;
         case 0x16u: return RdnaOpcode::STtracedata;
-        case 0x17u:
-        case 0x18u:
-        case 0x19u:
+        case 0x17u: return RdnaOpcode::SCbranchCdbg;
+        case 0x18u: return RdnaOpcode::SCbranchCdbg;
+        case 0x19u: return RdnaOpcode::SCbranchCdbg;
         case 0x1au: return RdnaOpcode::SCbranchCdbg;
-        case 0x1bu:
+        case 0x1bu: return RdnaOpcode::SEndpgm;
         case 0x1eu: return RdnaOpcode::SEndpgm;
         case 0x1fu: return RdnaOpcode::SCodeEnd;
         case 0x20u: return RdnaOpcode::SInstPrefetch;
