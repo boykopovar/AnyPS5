@@ -15,6 +15,7 @@ LINK = re.compile(r"\[([^\]]+)\]\((?:\.\./)+core/[^)#\s]+")
 TICKED = re.compile(r"`([a-z_][A-Za-z0-9_]*)`")
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SEPARATOR = re.compile(r",\s*|\s+and\s+|\s+or\s+")
+HELPER_SUFFIX = re.compile(r"_nid_(?:postfix|no_patch(?:_cut)?)$")
 GENERIC = {"int", "void", "char", "bool", "float", "double", "size_t", "ssize_t", "off_t", "uintptr_t", "intptr_t",
            "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
            "nullptr", "true", "false", "errno", "main", "this"}
@@ -90,7 +91,7 @@ def test_words(root):
     words = set()
     for path in (root / "core").rglob("*"):
         if path.suffix in SOURCES | {".py"} and "tests" in path.relative_to(root).parts and path.is_file():
-            words.update(WORD.findall(path.read_text(encoding="utf-8", errors="ignore")))
+            words.update(HELPER_SUFFIX.sub("", word) for word in WORD.findall(path.read_text(encoding="utf-8", errors="ignore")))
     return words
 
 

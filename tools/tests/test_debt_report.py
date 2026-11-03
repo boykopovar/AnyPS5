@@ -83,10 +83,11 @@ class LabelTests(unittest.TestCase):
             write(root, {
                 "core/libs/prx/libSceExample/tests/Example.cpp": "int main() { return sceA(); }\n",
                 "core/libs/tests/test_example.py": "NAME = 'fchmodat'\n",
+                "core/libs/tests/GuestSched.cpp": "int main() { return sched_rr_get_interval_nid_postfix(0, nullptr) + sceC_nid_no_patch(); }\n",
                 "core/libs/prx/libSceExample/Export.cpp": "int sceB() { return 0; }\n",
             })
             words = debt_report.test_words(root)
-        self.assertTrue({"sceA", "fchmodat"} <= words)
+        self.assertTrue({"sceA", "fchmodat", "sched_rr_get_interval", "sceC"} <= words)
         self.assertNotIn("sceB", words)
 
     def test_untested(self):
