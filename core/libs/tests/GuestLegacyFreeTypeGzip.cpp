@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 namespace {
 
@@ -88,6 +89,15 @@ int main() {
     length = output.size();
     Require(Uncompress(counter, corrupt, output.data(), length) == InvalidTable);
     Require(length == output.size() && counter.allocations == counter.frees);
+
+    if constexpr (std::numeric_limits<unsigned long>::max() < std::numeric_limits<std::uint64_t>::max()) {
+        const std::uint64_t tooLarge = std::uint64_t{std::numeric_limits<unsigned long>::max()} + 1;
+        length = tooLarge;
+        Require(Uncompress(counter, Gzip, output.data(), length) == InvalidArgument && length == tooLarge);
+        length = output.size();
+        Require(FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), &length, Gzip.data(), tooLarge) == InvalidArgument);
+        Require(length == output.size() && counter.allocations == counter.frees);
+    }
 
     Counter initFails;
     initFails.limit = 0;
