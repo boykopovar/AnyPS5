@@ -2987,7 +2987,7 @@ Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
     if (address == 0 || out.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     const int savedErrno = errno;
-    const bool copied = GuestCopyIn_nid_no_patch(out.data(), reinterpret_cast<const void*>(address), out.size());
+    const bool copied = GuestCopyInUnsynced_nid_no_patch(out.data(), reinterpret_cast<const void*>(address), out.size());
     errno = savedErrno;
     return copied ? Compare::Equal : Compare::Unmapped;
 #else

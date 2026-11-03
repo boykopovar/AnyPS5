@@ -373,4 +373,4 @@
 
 ### Guest memory read lifetime
 
-- [Guest memory reads](../../../core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp) - `CopyMapped` uses the native checked-copy API, so stale readable-page metadata cannot turn a failed speculative copy into a host fault. A successful copy does not pin the range or provide an atomic snapshot against concurrent writes or remaps. `CompareMapped` and other direct reads still require the caller to keep their mappings alive.
+- [Guest memory reads](../../../core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp) - `CopyMapped` uses the native checked-copy API without host-read synchronization, so stale readable-page metadata cannot turn a failed speculative copy into a host fault. A successful copy does not pin the range or provide an atomic snapshot against concurrent writes or remaps. `CompareMapped` and other direct reads still require the caller to keep their mappings alive.
