@@ -421,6 +421,8 @@ char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size);
 void APS5_VABI sceLibcInternalBacktraceForGame_nid_postfix(const char* heapName);
 void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, void* block, std::uint32_t error);
 int APS5_VABI gethostname_nid_postfix(char* name, std::size_t length);
+char* APS5_VABI devname_nid_postfix(std::uint32_t device, std::uint16_t type);
+char* APS5_VABI devname_r_nid_postfix(std::uint32_t device, std::uint16_t type, char* buffer, int length);
 std::int64_t APS5_VABI __ashldi3_nid_postfix(std::int64_t value, int shift);
 std::int64_t APS5_VABI __ashrdi3_nid_postfix(std::int64_t value, int shift);
 std::int64_t APS5_VABI __lshrdi3_nid_postfix(std::int64_t value, int shift);
@@ -471,6 +473,54 @@ std::uint32_t APS5_VABI stdc_count_ones_us_nid_postfix(std::uint16_t value);
 std::uint32_t APS5_VABI stdc_count_ones_ui_nid_postfix(std::uint32_t value);
 std::uint32_t APS5_VABI stdc_count_ones_ul_nid_postfix(std::uint64_t value);
 std::uint32_t APS5_VABI stdc_count_ones_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_first_leading_zero_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_first_leading_zero_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_first_leading_zero_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_first_leading_zero_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_first_leading_zero_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_first_leading_one_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_first_leading_one_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_first_leading_one_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_first_leading_one_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_first_leading_one_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_first_trailing_zero_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_zero_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_first_trailing_one_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_one_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_one_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_one_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_one_ull_nid_postfix(std::uint64_t value);
+
+bool APS5_VABI stdc_has_single_bit_uc_nid_postfix(std::uint8_t value);
+bool APS5_VABI stdc_has_single_bit_us_nid_postfix(std::uint16_t value);
+bool APS5_VABI stdc_has_single_bit_ui_nid_postfix(std::uint32_t value);
+bool APS5_VABI stdc_has_single_bit_ul_nid_postfix(std::uint64_t value);
+bool APS5_VABI stdc_has_single_bit_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_bit_width_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_bit_width_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_bit_width_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_bit_width_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_bit_width_ull_nid_postfix(std::uint64_t value);
+
+std::uint8_t APS5_VABI stdc_bit_floor_uc_nid_postfix(std::uint8_t value);
+std::uint16_t APS5_VABI stdc_bit_floor_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_bit_floor_ui_nid_postfix(std::uint32_t value);
+std::uint64_t APS5_VABI stdc_bit_floor_ul_nid_postfix(std::uint64_t value);
+std::uint64_t APS5_VABI stdc_bit_floor_ull_nid_postfix(std::uint64_t value);
+
+std::uint8_t APS5_VABI stdc_bit_ceil_uc_nid_postfix(std::uint8_t value);
+std::uint16_t APS5_VABI stdc_bit_ceil_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_bit_ceil_ui_nid_postfix(std::uint32_t value);
+std::uint64_t APS5_VABI stdc_bit_ceil_ul_nid_postfix(std::uint64_t value);
+std::uint64_t APS5_VABI stdc_bit_ceil_ull_nid_postfix(std::uint64_t value);
 int APS5_VABI __cmpdi2_nid_postfix(std::int64_t a, std::int64_t b);
 int APS5_VABI __cmpti2_nid_postfix(Int128 a, Int128 b);
 int APS5_VABI __ucmpdi2_nid_postfix(std::uint64_t a, std::uint64_t b);
@@ -808,6 +858,14 @@ short APS5_VABI _LDunscale_nid_postfix(short*, long double*);
 short APS5_VABI _Dnorm_nid_postfix(std::uint16_t*);
 short APS5_VABI _FDnorm_nid_postfix(std::uint16_t*);
 short APS5_VABI _LDnorm_nid_postfix(std::uint16_t*);
+short APS5_VABI _ZNSt8__sce_v26_DtestEPd_nid_postfix(double* value);
+short APS5_VABI _ZNSt8__sce_v27_FDtestEPf_nid_postfix(float* value);
+short APS5_VABI _ZNSt8__sce_v27_LDtestEPe_nid_postfix(double* value);
+short APS5_VABI _ZNSt8__sce_v25_DintEPds_nid_postfix(double* value, short scale);
+short APS5_VABI _ZNSt8__sce_v26_FDintEPfs_nid_postfix(float* value, short scale);
+short APS5_VABI _ZNSt8__sce_v26_LDintEPes_nid_postfix(double* value, short scale);
+short APS5_VABI _ZNSt8__sce_v26_DnormEPNS_5_DvalE_nid_postfix(std::uint16_t* words);
+short APS5_VABI _ZNSt8__sce_v27_FDnormEPNS_5_FvalE_nid_postfix(std::uint16_t* words);
 int APS5_VABI _Fpcomp_nid_postfix(double, double);
 int APS5_VABI _FFpcomp_nid_postfix(float, float);
 int APS5_VABI _LFpcomp_nid_postfix(long double, long double);
@@ -1021,6 +1079,7 @@ char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters);
 int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address);
 std::uint32_t APS5_VABI __inet_addr_nid_postfix(const char* text);
 void* APS5_VABI memset_nid_postfix(void* s, int c, size_t n);
+void* APS5_VABI memset_explicit_nid_postfix(void* destination, int value, size_t count);
 void APS5_VABI bzero_nid_postfix(void* destination, size_t count);
 void APS5_VABI bcopy_nid_postfix(const void* source, void* destination, size_t count);
 void* APS5_VABI memcpy_nid_postfix(void* dest, const void* src, size_t n);
@@ -1213,6 +1272,10 @@ const void* APS5_VABI __std_find_trivial_1_nid_postfix(const void* first, const 
 const void* APS5_VABI __std_find_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value);
 const void* APS5_VABI __std_find_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value);
 const void* APS5_VABI __std_find_trivial_8_nid_postfix(const void* first, const void* last, std::uint64_t value);
+const void* APS5_VABI __std_find_last_trivial_1_nid_postfix(const void* first, const void* last, std::uint8_t value);
+const void* APS5_VABI __std_find_last_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value);
+const void* APS5_VABI __std_find_last_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value);
+const void* APS5_VABI __std_find_last_trivial_8_nid_postfix(const void* first, const void* last, std::uint64_t value);
 const void* APS5_VABI __std_find_trivial_unsized_1_nid_postfix(const void* first, std::uint8_t value);
 const void* APS5_VABI __std_find_trivial_unsized_2_nid_postfix(const void* first, std::uint16_t value);
 const void* APS5_VABI __std_find_trivial_unsized_4_nid_postfix(const void* first, std::uint32_t value);
