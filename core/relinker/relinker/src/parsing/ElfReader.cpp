@@ -174,8 +174,6 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
             protection.Type = PT_GNU_RELRO;
             protection.Flags = PF_R;
             relroProtections.push_back(protection);
-=======
->>>>>>> a1ccb8b71d (fix(relinker): validate covered SCE RELRO file ranges)
             relro.Type = PT_LOAD;
             relro.Flags = PF_R | PF_W;
         } else {
