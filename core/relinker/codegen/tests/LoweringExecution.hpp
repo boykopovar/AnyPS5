@@ -25,6 +25,7 @@ struct State {
     std::array<std::uint64_t, 16> Output{};
     std::uint64_t Flags = 0;
     std::array<std::uint64_t, 16> RedZone{};
+    std::uint64_t InputFlags = 0;
 };
 
 inline constexpr std::uint64_t kSentinel = 0xBADC0FFEE0DDF00Dull;
@@ -33,9 +34,12 @@ inline constexpr std::uint64_t kCarry = 0x1u;
 inline constexpr std::uint64_t kZero = 0x40u;
 inline constexpr std::uint64_t kSign = 0x80u;
 
+inline constexpr std::uint64_t kBaseFlags = 0x202u;
+
 inline State InitialState() {
     State state;
     for (std::size_t reg = 0; reg < 16; ++reg) state.Input[reg] = 0xABCD123456789000ull + reg * 0x1234567ull;
+    state.InputFlags = kBaseFlags | kFlagMask;
     return state;
 }
 
@@ -45,12 +49,14 @@ class Execution {
 public:
     using Emit = std::function<void(Codegen::StubBodyBuilder&, const Bytes& site)>;
 
-    Execution(const Bytes& site, std::uint64_t memoryValue, bool ripRelative, const Emit& emit) {
+    Execution(const Bytes& site, std::uint64_t memoryValue, bool ripRelative, const Emit& emit, std::size_t trailing = 0) {
         for (auto reg : {3, 5, 12, 13, 14, 15}) push(static_cast<std::uint8_t>(reg));
         memory(0x8D, 4, 4, -128);
         rip({0x48, 0x89, 0x3D}, 0);
         rip({0x48, 0x89, 0x25}, 8);
         memory(0x89, 4, 7, 32);
+        memory(0xFF, 6, 7, 49 * 8);
+        bytes.push_back(0x9D);
         bytes.insert(bytes.end(), {0x48, 0xB8});
         append64(kSentinel);
         for (int displacement = -128; displacement < 0; displacement += 8)
@@ -64,7 +70,7 @@ public:
         auto relocated = site;
         if (ripRelative) {
             const auto displacement = static_cast<std::int32_t>(4096 + 24 - (siteOffset + site.size()));
-            std::memcpy(relocated.data() + relocated.size() - 4, &displacement, sizeof(displacement));
+            std::memcpy(relocated.data() + relocated.size() - 4 - trailing, &displacement, sizeof(displacement));
         }
         Codegen::StubBodyBuilder builder;
         emit(builder, relocated);

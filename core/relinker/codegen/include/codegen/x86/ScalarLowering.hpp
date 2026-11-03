@@ -50,7 +50,10 @@ inline void StackSlot(StubBodyBuilder& body, std::uint8_t opcode, bool wide, std
 inline std::array<bool, 16> UsedRegisters(std::initializer_list<std::uint8_t> registers, const std::optional<MemoryOperand>& memory) {
     std::array<bool, 16> used{};
     used[Stack] = true;
-    for (const auto reg : registers) used[reg] = true;
+    for (const auto reg : registers) {
+        if (reg >= used.size()) throw CodegenException("register index " + std::to_string(reg) + " is out of range");
+        used[reg] = true;
+    }
     if (!memory) return used;
     if (memory->Rm == 4) {
         const auto base = static_cast<std::uint8_t>((memory->Sib & 7) | ((memory->RexIndexBase & 1) << 3));
@@ -72,9 +75,9 @@ inline std::uint8_t Scratch(std::array<bool, 16>& used, const char* instruction)
     throw CodegenException(std::string(instruction) + " has no scratch register");
 }
 
-inline void Memory(StubBodyBuilder& body, std::uint8_t opcode, bool wide, const MemoryOperand& memory, std::uint8_t reg, const char* instruction) {
+inline void Memory(StubBodyBuilder& body, std::uint8_t opcode, bool wide, const MemoryOperand& memory, std::uint8_t reg, const char* instruction, std::int32_t frame = FrameSize) {
     auto displacement = static_cast<std::int64_t>(memory.Displacement);
-    if (memory.StackBase) displacement += FrameSize;
+    if (memory.StackBase) displacement += frame;
     const bool address32 = std::find(memory.Prefixes.begin(), memory.Prefixes.end(), 0x67) != memory.Prefixes.end();
     if (!address32 && displacement > std::numeric_limits<std::int32_t>::max())
         throw CodegenException(std::string(instruction) + " stack displacement does not fit after spilling");
