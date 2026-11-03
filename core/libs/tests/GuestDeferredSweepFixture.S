@@ -6,6 +6,7 @@ __aps5_guest_initialize:
 .long 1
 .rva DeferredInitializerSlot_nid_no_patch
 .long 0x57534550
-.long 1
+.long 2
 .asciz "guest_deferred_module_fixture.guest.prx"
+.asciz "guest_deferred_sweep_fixture.guest.prx"
 .long 0

@@ -7,7 +7,6 @@
 #include <condition_variable>
 #include <filesystem>
 #include <cstdio>
-#include <atomic>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -302,8 +301,10 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
     using Initializer = void (APS5_VABI *)(int, char**, char**);
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
-    static std::atomic<bool> sweepStarted{false};
+    static int sweepState = 0;
+    static DWORD sweepOwner = 0;
     thread_local std::vector<HMODULE> resolving;
+    thread_local std::map<HMODULE, int> startedResults;
     if (std::find(resolving.begin(), resolving.end(), native) != resolving.end()) return;
     auto* table = reinterpret_cast<std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
     if (!table) return;
@@ -314,30 +315,53 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
     }
     auto* pendingArgs = const_cast<PendingModuleArgs*>(static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch()));
     const auto initiating = *pendingArgs;
-    const auto startAll = [&](const std::vector<std::string>& names, const std::string& why, const char* kind) {
-        resolving.push_back(native);
+    const auto startAll = [&](const std::vector<std::string>& names, const std::string& why, const char* kind, const bool sweeping) {
+        if (!sweeping) resolving.push_back(native);
         try {
             for (const auto& name : names) {
-                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && dependency != native) InitializeDeferredModule(dependency, why);
+                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && (sweeping || dependency != native)) InitializeDeferredModule(dependency, why);
                 else if (!dependency) std::fprintf(stderr, "[module] deferred %s %s of %s is not mapped and is not started\n", kind, name.c_str(), ModuleFileName(native).c_str());
                 *pendingArgs = initiating;
             }
         } catch (...) {
             *pendingArgs = initiating;
-            resolving.pop_back();
+            if (!sweeping) resolving.pop_back();
             throw;
         }
-        resolving.pop_back();
+        if (!sweeping) resolving.pop_back();
         __aps5_set_module_init_result_nid_no_patch(0);
     };
-    if (reason.empty() && !lists.sweep.empty() && !sweepStarted.exchange(true)) {
-        std::string listed;
-        for (const auto& name : lists.sweep) listed += " " + name;
-        const auto trigger = ModuleFileName(native);
-        std::fprintf(stderr, "[module] deferred sweep at the first load of %s, starting what other modules depend on:%s\n", trigger.c_str(), listed.c_str());
-        startAll(lists.sweep, "swept at the first load of " + trigger, "sweep module");
+    bool sweeping = false;
+    if (reason.empty() && !lists.sweep.empty()) {
+        const auto thread = GetCurrentThreadId();
+        std::unique_lock lock(initializedLock);
+        while (sweepState == 1 && sweepOwner != thread) initializedChanged.wait(lock);
+        if (sweepState == 0) {
+            sweepState = 1;
+            sweepOwner = thread;
+            sweeping = true;
+        }
     }
-    if (!lists.dependencies.empty()) startAll(lists.dependencies, "needed by " + ModuleFileName(native), "dependency");
+    if (sweeping) {
+        const auto finishSweep = [&](const int state) {
+            std::lock_guard lock(initializedLock);
+            sweepState = state;
+            sweepOwner = 0;
+            initializedChanged.notify_all();
+        };
+        try {
+            std::string listed;
+            for (const auto& name : lists.sweep) listed += " " + name;
+            const auto trigger = ModuleFileName(native);
+            std::fprintf(stderr, "[module] deferred sweep at the first load of %s, starting what other modules depend on:%s\n", trigger.c_str(), listed.c_str());
+            startAll(lists.sweep, "swept at the first load of " + trigger, "sweep module", true);
+        } catch (...) {
+            finishSweep(0);
+            throw;
+        }
+        finishSweep(2);
+    }
+    if (!lists.dependencies.empty()) startAll(lists.dependencies, "needed by " + ModuleFileName(native), "dependency", false);
     const auto owner = GetCurrentThreadId();
     std::unique_lock lock(initializedLock);
     while (table[1] == initializing) {
@@ -347,7 +371,15 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
     }
     const auto entry = table[0];
     const auto count = table[1];
-    if (entry == 0 && count == 0) return;
+    if (entry == 0 && count == 0) {
+        if (reason.empty()) {
+            if (const auto started = startedResults.find(native); started != startedResults.end()) {
+                __aps5_set_module_init_result_nid_no_patch(started->second);
+                startedResults.erase(started);
+            }
+        }
+        return;
+    }
     DWORD protection = 0;
     if (!VirtualProtect(table, 2 * sizeof(*table), PAGE_READWRITE, &protection))
         throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "open deferred module initialization metadata");
@@ -370,7 +402,11 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
         std::fprintf(stderr, "[module] deferred start %s (%s)\n", ModuleFileName(native).c_str(), reason.empty() ? "loaded by the title" : reason.c_str());
         auto* base = reinterpret_cast<std::uint8_t*>(native);
         const auto* pending = static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());
-        if (entry != 0) __aps5_set_module_init_result_nid_no_patch(reinterpret_cast<Entry>(base + entry)(pending->args, pending->argp, nullptr));
+        if (entry != 0) {
+            const int result = reinterpret_cast<Entry>(base + entry)(pending->args, pending->argp, nullptr);
+            __aps5_set_module_init_result_nid_no_patch(result);
+            if (!reason.empty()) startedResults[native] = result;
+        }
         for (std::uint32_t index = 0; index < count; ++index) {
             const auto initializer = *reinterpret_cast<Initializer*>(base + table[2 + index]);
             if (initializer) initializer(0, nullptr, nullptr);
