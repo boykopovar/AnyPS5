@@ -54,6 +54,8 @@ inline constexpr std::size_t kGotReservedSlots = 3;
 
 inline constexpr std::uint64_t kElfHeaderSize = 64;
 inline constexpr std::uint64_t kDefaultLoadAlignment = 0x1000;
+inline constexpr std::uint64_t kHostPageSize = 0x1000;
+inline constexpr std::uint64_t kPs5PageSize = 0x4000;
 inline constexpr std::uint64_t kPhdrHeaderAlignment = 8;
 inline constexpr std::uint64_t kDynamicHeaderAlignment = 8;
 inline constexpr std::uint64_t kInterpHeaderAlignment = 1;
