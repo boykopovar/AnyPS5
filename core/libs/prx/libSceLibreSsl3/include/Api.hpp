@@ -300,7 +300,7 @@ int APS5_VABI BIO_meth_set_ctrl_nid_postfix();
 int APS5_VABI Unknown_GjO5Ap3E_minus_t4_nid_no_patch();
 int APS5_VABI Unknown_HE_minus_vihq_minus_KKw_nid_no_patch();
 int APS5_VABI X509_set_version_nid_postfix();
-int APS5_VABI DES_set_key_unchecked_nid_postfix();
+void APS5_VABI DES_set_key_unchecked_nid_postfix(const unsigned char* key, unsigned char* schedule);
 int APS5_VABI EVP_PKEY_CTX_new_id_nid_postfix();
 int APS5_VABI RSAPublicKey_dup_nid_postfix();
 int APS5_VABI AES_unwrap_key_nid_postfix();
