@@ -54,7 +54,8 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (size < sizeof(KernelCpumask) || size > MaximumSize) return fail(GuestErange);
+    if (size < sizeof(KernelCpumask) || size >= 24) return fail(GuestErange);
+    if (size > 16) NotImplemented_nid_no_patch("cpuset_getaffinity with a size of 17 to 23 bytes");
     if (!mask) return fail(GuestEfault);
     auto* self = scePthreadSelf();
     KernelCpumask affinity = 0;
@@ -110,7 +111,8 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (size < sizeof(KernelCpumask) || size > MaximumSize) return fail(GuestErange);
+    if (size < sizeof(KernelCpumask) || size >= 24) return fail(GuestErange);
+    if (size > 16) NotImplemented_nid_no_patch("cpuset_setaffinity with a size of 17 to 23 bytes");
     if (!mask) return fail(GuestEfault);
     std::array<std::uint8_t, MaximumSize> buffer{};
     if (!GuestCopyIn_nid_no_patch(buffer.data(), mask, size)) return fail(GuestEfault);
