@@ -3502,14 +3502,14 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             // proof while the registry did not.
             if (keys != DccKeys::Uncompressed && !(own.dccAddress == surface.resource.dccAddress && ClearedViewEnabled() && StorageClearAvailable(context, surface.resource.format, keys))) query(address, address + bytes, source, source, {i, false, false});
             else if (!unchanged) query(address, address + bytes, source, nullptr, {i, false, keys == DccKeys::Uncompressed});
-            if (surface.resource.dccAddress != 0 || own.dccAddress != 0) countKeysProven(false);
+            if (compares && (surface.resource.dccAddress != 0 || own.dccAddress != 0)) countKeysProven(false);
         } else {
             // A snapshot holds its clear texels or the guest bytes: the keys must be what it was made under.
             const auto keys = surface.resource.dccAddress != 0 ? ProvedClearKeys(surface.resource, surface.bytes, textures[i]->KeyProof()) : DccKeys::Uncompressed;
             if (keys != surface.keys) return fail(FastFail::Keys);
             scannedKeys[i] = keys;
             if (!unchanged) query(address, address + bytes, nullptr, nullptr, {i, false, false});
-            if (surface.resource.dccAddress != 0) countKeysProven(false);
+            if (compares && surface.resource.dccAddress != 0) countKeysProven(false);
         }
         if (source != nullptr) {
             if (!source->Cached()) return fail(FastFail::Evicted);
@@ -3544,7 +3544,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             // uploaded under, through the image's proof; the memory query below), minus its
             // byte-compare fallback; the image's generation is left where it is.
             if (!keyProofs || image->ProvedKeys() != image->UploadedKeys()) return fail(FastFail::StorageKeys);
-            countKeysProven(true);
+            if (compares) countKeysProven(true);
         }
         if (!unchanged) query(address, address + bytes, image, nullptr, {i, true, false});
         if (!image->Cached()) return fail(FastFail::Evicted);
@@ -3567,7 +3567,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         for (std::size_t k = 0; k < pending.size(); ++k) {
             if (!pending[k].overlaps) continue;
             if (OwnImageRefreshEnabled() && owners[k].viewUncompressed && pending[k].found == pending[k].except) {
-                if (BuildProfiled()) Revalidations().ownSourceViews.fetch_add(1, std::memory_order_relaxed);
+                if (compares && BuildProfiled()) Revalidations().ownSourceViews.fetch_add(1, std::memory_order_relaxed);
                 accepted = true;
                 continue;
             }
@@ -3578,7 +3578,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
                 return viewed.get() == pending[k].except || (viewed == nullptr && entry.sourceEligible && entry.sourceRefreshed);
             };
             if (const auto entry = refreshedOwner(owners[k]); entry != refreshed.end() && (entry->storage || pending[k].found == pending[k].except || (pending[k].found == nullptr && entry->sourceEligible) || lookupAccepts(*entry))) {
-                if (BuildProfiled()) Revalidations().refreshedOverlaps.fetch_add(1, std::memory_order_relaxed);
+                if (compares && BuildProfiled()) Revalidations().refreshedOverlaps.fetch_add(1, std::memory_order_relaxed);
                 accepted = true;
                 continue;
             }
@@ -3588,7 +3588,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             countPendingFail(pending);
             return fail(FastFail::Pending);
         }
-    } else if (unchanged && BuildProfiled()) {
+    } else if (compares && unchanged && BuildProfiled()) {
         Revalidations().serialSkips.fetch_add(1, std::memory_order_relaxed);
     }
     if (!GuestMemory::UnchangedSinceAll(queries)) return fail(FastFail::Changed);
