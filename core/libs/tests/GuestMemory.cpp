@@ -2450,6 +2450,46 @@ static void CheckConcurrentCheckedReleasesUnmapViewsOnce() {
     Require(sceKernelReleaseDirectMemory(again, page * 4) == 0);
 }
 
+static void CheckReleaseExcludesMappingsAndAllocations() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t first = 0;
+    std::int64_t third = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 4, 0, 0, &first) == 0);
+    Require(sceKernelAllocateDirectMemory(first + static_cast<std::int64_t>(page * 8), 0x7fffffffffll, page, 0, 0, &third) == 0 && third == first + static_cast<std::int64_t>(page * 8));
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 4, 3, 0, first, 0) == 0);
+    auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    int result = -1;
+    std::thread releaser([&] { result = sceKernelReleaseDirectMemory(first, page * 9); });
+    const auto begin = static_cast<std::uint64_t>(first);
+    std::uint64_t claimEnd = 0;
+    while (!DirectMemoryReleaseClaimed(begin, begin + page, &claimEnd)) std::this_thread::yield();
+    Require(claimEnd == begin + page * 9);
+    int aliasResult = -1;
+    int fixedResult = -1;
+    int holeResult = -1;
+    std::atomic<bool> attempted{false};
+    std::thread attempts([&] {
+        void* alias = nullptr;
+        aliasResult = sceKernelMapDirectMemory(&alias, page, 3, 0, first + static_cast<std::int64_t>(page), 0);
+        void* fixed = static_cast<unsigned char*>(mapped) + page;
+        fixedResult = sceKernelMapDirectMemory(&fixed, page, 3, 0x10, first + static_cast<std::int64_t>(page), 0);
+        std::int64_t hole = -1;
+        holeResult = sceKernelAllocateDirectMemory(first + static_cast<std::int64_t>(page * 4), first + static_cast<std::int64_t>(page * 8), page, 0, 0, &hole);
+        attempted = true;
+    });
+    for (int waited = 0; waited < 200 && !attempted; ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    const bool finished = attempted;
+    lease.clear();
+    attempts.join();
+    releaser.join();
+    Require(finished && aliasResult == SCE_KERNEL_ERROR_ENOMEM && fixedResult == SCE_KERNEL_ERROR_ENOMEM && holeResult == SCE_KERNEL_ERROR_EAGAIN);
+    Require(result == 0);
+    std::int64_t hole = -1;
+    Require(sceKernelAllocateDirectMemory(first, first + static_cast<std::int64_t>(page * 9), page * 9, 0, 0, &hole) == 0 && hole == first);
+    Require(sceKernelReleaseDirectMemory(hole, page * 9) == 0);
+}
+
 static void CheckSecondDirectMappingWaitsForLeases() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -4402,6 +4442,7 @@ int main(int argc, char** argv) {
     CheckReleaseKeepsPhysicalUntilViewsUnmapped(sceKernelReleaseDirectMemory);
     CheckReleaseKeepsPhysicalUntilViewsUnmapped(sceKernelCheckedReleaseDirectMemory);
     CheckConcurrentCheckedReleasesUnmapViewsOnce();
+    CheckReleaseExcludesMappingsAndAllocations();
     CheckPinnedRangeIsLeftOutOfNewLeases();
     CheckBreakingAResidentRunKeepsConcurrentAccesses();
     CheckRemappedDirectMemoryIsChargedOnce();

@@ -34,8 +34,10 @@ struct DirectMemoryView {
     std::size_t bytes;
 };
 
-std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len);
-void UnmapDirectMemoryViews(const std::vector<DirectMemoryView>& views);
+void UnmapDirectMemoryRange(int64_t start, size_t len);
+bool DirectMemoryReleaseClaimed(std::uint64_t first, std::uint64_t last, std::uint64_t* claimEnd);
+void DirectMemoryAddReleaseClaim(std::uint64_t first, std::uint64_t last);
+void DirectMemoryRemoveReleaseClaim(std::uint64_t first);
 bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType);
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType);
 int DirectMemoryLargestFree(int64_t searchStart, int64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut);

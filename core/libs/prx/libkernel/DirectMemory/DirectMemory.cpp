@@ -542,6 +542,7 @@ struct DirectMemoryState {
     std::map<std::uint64_t, PhysicalBlock> physBlocks;
     std::map<std::uint64_t, PhysicalPage> physPages;
     std::map<std::uintptr_t, DirectMapping> directMappings;
+    std::map<std::uint64_t, std::uint64_t> releaseClaims;
     std::mutex protectionLock;
     std::map<std::uintptr_t, ProtectedRange> protections;
     std::mutex reservationLock;
@@ -561,6 +562,7 @@ auto& g_directLock = MemoryState().directLock;
 auto& g_physBlocks = MemoryState().physBlocks;
 auto& g_physPages = MemoryState().physPages;
 auto& g_directMappings = MemoryState().directMappings;
+auto& g_releaseClaims = MemoryState().releaseClaims;
 auto& g_physicalSpans = MemoryState().physicalSpans;
 auto& g_protectionLock = MemoryState().protectionLock;
 auto& g_protections = MemoryState().protections;
@@ -685,6 +687,22 @@ void ValidatePhysicalRange(std::uint64_t phys, std::size_t len) {
     throw std::invalid_argument(message);
 }
 
+bool ReleasingLocked(std::uint64_t first, std::uint64_t last, std::uint64_t* claimEnd = nullptr) {
+    auto claim = g_releaseClaims.lower_bound(last);
+    if (claim == g_releaseClaims.begin()) return false;
+    --claim;
+    if (claim->second <= first) return false;
+    if (claimEnd) *claimEnd = claim->second;
+    return true;
+}
+
+void RequireNotReleasing(std::uint64_t phys, std::size_t len) {
+    if (!ReleasingLocked(phys, phys + len)) return;
+    char message[160];
+    std::snprintf(message, sizeof(message), "direct memory range 0x%llx+0x%zx is being released", static_cast<unsigned long long>(phys), len);
+    throw std::invalid_argument(message);
+}
+
 #if defined(__linux__) || defined(__APPLE__)
 void WatchMapping(std::uintptr_t address, std::size_t len) {
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(address), len);
@@ -801,6 +819,7 @@ bool WriteSharedBacking(std::uintptr_t address, const void* source, std::size_t 
 
 void AddMapping(std::uintptr_t address, std::size_t len, std::uint64_t phys, int nativeProt, bool records = true) {
     ValidatePhysicalRange(phys, len);
+    RequireNotReleasing(phys, len);
     if (records) EraseMappings(address, address + len);
 #ifdef __EMSCRIPTEN__
     if (records && !MappingsSharingPhys(phys, phys + len).empty()) throw std::system_error(ENOTSUP, std::generic_category(), "WebAssembly memory cannot map one direct memory range at two addresses");
@@ -1167,7 +1186,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     if ((prot & ~0x3F7) == 0 && (prot & GuestProtCpuExecute) != 0) return SCE_KERNEL_ERROR_EINVAL;
     {
         std::lock_guard lock(g_directLock);
-        if (FirstUnallocatedPage(static_cast<std::uint64_t>(physStart), len)) return SCE_KERNEL_ERROR_ENOMEM;
+        if (FirstUnallocatedPage(static_cast<std::uint64_t>(physStart), len) || ReleasingLocked(static_cast<std::uint64_t>(physStart), static_cast<std::uint64_t>(physStart) + len)) return SCE_KERNEL_ERROR_ENOMEM;
     }
     GuestAllocations::Mutation mutation;
     flags = PlaceHintInReservation(*addr, len, flags);
@@ -1181,6 +1200,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
     std::lock_guard lock(g_directLock);
     ValidatePhysicalRange(static_cast<std::uint64_t>(physStart), len);
+    RequireNotReleasing(static_cast<std::uint64_t>(physStart), len);
     void* mapped = MapAligned(*addr, len, PROT_NONE, flags, alignment);
     try {
         AddMapping(reinterpret_cast<std::uintptr_t>(mapped), len, static_cast<std::uint64_t>(physStart), LinuxProtFromSce(prot));
@@ -1784,7 +1804,7 @@ bool DirectMemoryAliased(std::uintptr_t address, std::size_t bytes) {
     return false;
 }
 
-std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len) {
+std::vector<DirectMemoryView> PhysicalViews(int64_t start, size_t len) {
     const auto first = static_cast<std::uint64_t>(start);
     const auto last = first + len;
     std::vector<DirectMemoryView> views;
@@ -1801,11 +1821,28 @@ std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len) {
     return views;
 }
 
-void UnmapDirectMemoryViews(const std::vector<DirectMemoryView>& views) {
-    if (views.empty()) return;
+void UnmapDirectMemoryRange(int64_t start, size_t len) {
     GuestAllocations::Mutation mutation;
-    for (const auto& view : views) {
+    for (auto views = PhysicalViews(start, len); !views.empty();) {
+        const auto view = views.front();
         Trace("unmap released view %p+0x%zx", reinterpret_cast<void*>(view.address), view.bytes);
         UnmapRegistered(mutation, reinterpret_cast<void*>(view.address), view.bytes);
+        views = PhysicalViews(start, len);
+        if (!views.empty() && views.front().address == view.address && views.front().bytes == view.bytes) throw std::runtime_error("released direct memory view survived its unmap");
     }
+}
+
+bool DirectMemoryReleaseClaimed(std::uint64_t first, std::uint64_t last, std::uint64_t* claimEnd) {
+    std::lock_guard lock(g_directLock);
+    return ReleasingLocked(first, last, claimEnd);
+}
+
+void DirectMemoryAddReleaseClaim(std::uint64_t first, std::uint64_t last) {
+    std::lock_guard lock(g_directLock);
+    g_releaseClaims.emplace(first, last);
+}
+
+void DirectMemoryRemoveReleaseClaim(std::uint64_t first) {
+    std::lock_guard lock(g_directLock);
+    g_releaseClaims.erase(first);
 }
