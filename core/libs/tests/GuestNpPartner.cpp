@@ -1,4 +1,4 @@
-#include "prx/libSceNpPartner001/include/Api.hpp"
+#include "prx/libSceNpPartner001/libSceNpPartner001.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
 #include <stdexcept>
@@ -34,6 +34,7 @@ int main() {
     bool subscribed = true;
     Require(Throws([] { sceNpEAAccessTerminate(); }));
     Require(Throws([&] { sceNpHasEAAccessSubscription(1, &subscribed); }));
+    Require(ThrowsMessage([] { libSceNpPartner001Unknown_pQfYTZHznMc_nid_no_patch(); }, "not initialized"));
     Require(sceNpEAAccessInitialize() == 0);
     Require(Throws([] { sceNpEAAccessInitialize(); }));
     Require(ThrowsMessage([] { sceNpHasEAAccessSubscription(1, nullptr); }, "null result"));
@@ -47,6 +48,7 @@ int main() {
     Require(ThrowsMessage([&] { sceNpHasEAAccessSubscription(1, &subscribed); }, "not initialized"));
     Require(ThrowsMessage([] { sceNpHasEAAccessSubscription(1, nullptr); }, "not initialized"));
     Require(ThrowsMessage([] { sceNpHasEAAccessSubscription(0, nullptr); }, "not initialized"));
+    Require(ThrowsMessage([] { libSceNpPartner001Unknown_pQfYTZHznMc_nid_no_patch(); }, "not initialized"));
     Require(sceNpEAAccessInitialize() == 0);
     Require(sceNpEAAccessTerminate() == 0);
     Require(ThrowsMessage([] { sceNpEAAccessTerminate(); }, "not initialized"));
