@@ -233,6 +233,7 @@ void TestNoDevice() {
 int main(int argc, char** argv) {
     Require(argc == 2);
     Require(sceAudioInInit() == 0);
+    Require(ReportsNotImplemented("sceAudioInIsSharedDevice", [] { sceAudioInIsSharedDevice(); }));
     if (std::strcmp(argv[1], "capture") == 0) TestCapture();
     else TestNoDevice();
 }

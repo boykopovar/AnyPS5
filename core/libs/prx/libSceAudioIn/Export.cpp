@@ -232,7 +232,6 @@ int APS5_VABI sceAudioInSetUsbGain(void) {
 
 int APS5_VABI sceAudioInIsSharedDevice(void) {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceAudioInDeviceIdHqOpen(void) {
