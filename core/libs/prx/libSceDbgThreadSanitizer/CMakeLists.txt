@@ -1,0 +1,15 @@
+add_library(libSceDbgThreadSanitizer SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceDbgThreadSanitizer PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDbgThreadSanitizer)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_dbg_thread_sanitizer_tests ${LIBS_INCLUDE_DIR}/tests/GuestDbgThreadSanitizer.cpp)
+    target_include_directories(guest_dbg_thread_sanitizer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_dbg_thread_sanitizer_tests PRIVATE libSceDbgThreadSanitizer libc)
+    configure_windows_unwind(guest_dbg_thread_sanitizer_tests)
+    add_test(NAME guest_dbg_thread_sanitizer COMMAND guest_dbg_thread_sanitizer_tests)
+    if(WIN32)
+        set_tests_properties(guest_dbg_thread_sanitizer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDbgThreadSanitizer>")
+    endif()
+endif()
