@@ -116,7 +116,7 @@ int APS5_VABI sceCameraInitializeRegistryCalibData(void);
 int APS5_VABI sceCamera2GetContrast(void);
 int APS5_VABI sceCamera2Finalize(void);
 int APS5_VABI sceCameraGetConnectedDeviceAndDriverMode(void);
-int APS5_VABI sceCamera2IsAttached(void);
+int APS5_VABI sceCamera2IsAttached(int32_t index);
 int APS5_VABI sceCamera2SetSharpness(void);
 int APS5_VABI sceCameraSetTrackerMode(void);
 int APS5_VABI sceCameraSetContrast(std::int32_t handle, std::uint32_t channel, std::uint32_t, const void* option);

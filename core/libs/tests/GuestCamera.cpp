@@ -153,6 +153,9 @@ int main() {
     Require(sceCameraIsAttached(0) == 0, "camera 0 must be reported as not attached");
     Require(sceCameraIsAttached(1) == ErrorParam, "camera index 1 must be rejected");
     Require(sceCameraIsAttached(-1) == ErrorParam, "a negative camera index must be rejected");
+    Require(sceCamera2IsAttached(0) == 0, "camera2 0 must be reported as not attached");
+    Require(sceCamera2IsAttached(1) == ErrorParam, "camera2 index 1 must be rejected");
+    Require(sceCamera2IsAttached(-1) == ErrorParam, "a negative camera2 index must be rejected");
     CheckClosed();
     CheckOpen();
     CheckStart();
