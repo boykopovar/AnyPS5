@@ -211,6 +211,14 @@ static int SceIoErrorFromErrno(int error) {
     return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
 }
 
+static int TrailingSlashCreationError(const std::filesystem::path& native, int flags) {
+    if ((flags & SCE_KERNEL_O_CREAT) == 0 || native.has_filename() || !native.has_relative_path()) return 0;
+    std::error_code error;
+    const auto status = std::filesystem::status(native, error);
+    if (error) return FilesystemError(error);
+    return status.type() == std::filesystem::file_type::not_found ? 2 : 0;
+}
+
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
     if (AppArchiveHasDirectory_nid_no_patch(native)) {
         std::error_code error;
@@ -279,6 +287,12 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         }
     }
 #endif
+    if (fd < 0 && (errno == EISDIR || errno == EINVAL)) {
+        const int openError = errno;
+        const int lookupError = TrailingSlashCreationError(native, flags);
+        errno = lookupError == 2 ? ENOENT : openError;
+        if (lookupError != 0 && lookupError != 2) return SceKernelError(lookupError);
+    }
 #ifdef _WIN32
     if (fd < 0 && (errno == ENOENT || errno == ENOTDIR)) {
         std::error_code metadataError;
@@ -392,6 +406,7 @@ int APS5_VABI sceKernelClose(int d) {
 
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     if (File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
+    if (IsKqueueDescriptor_nid_no_patch(d)) return nbytes == 0 ? 0 : SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Read(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -412,6 +427,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(EISDIR);
+    if (IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_EOPNOTSUPP;
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Write(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
@@ -441,7 +457,7 @@ static bool SeekOverflows(int d, std::int64_t offset, int whence) {
 }
 
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
-    if (GuestSockets::IsOpen(d)) return SCE_KERNEL_ERROR_ESPIPE;
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SCE_KERNEL_ERROR_ESPIPE;
     if (whence < 0 || whence > 2) {
         throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
     }
@@ -529,19 +545,22 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     const DWORD linkAttributes = GetFileAttributesW(native.c_str());
     if (linkAttributes != INVALID_FILE_ATTRIBUTES && (linkAttributes & DirectoryLink) == DirectoryLink) directory = true;
 #endif
-    if (directory) {
 #ifdef _WIN32
-        if (native.has_filename()) {
-            WIN32_FIND_DATAW found{};
-            if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
-                FindClose(find);
-                if ((found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
-                    if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
-                    RecordWrittenPath_nid_no_patch(native);
-                    return 0;
-                }
+    if (native.has_filename() && native.filename().native().find_first_of(L"*?<>\"") == std::wstring::npos) {
+        WIN32_FIND_DATAW found{};
+        if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
+            FindClose(find);
+            constexpr DWORD DirectoryLink = FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY;
+            if ((found.dwFileAttributes & DirectoryLink) == DirectoryLink && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
+                if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
+                RecordWrittenPath_nid_no_patch(native);
+                return 0;
             }
         }
+    }
+#endif
+    if (directory) {
+#ifdef _WIN32
         const DWORD attributes = GetFileAttributesW(native.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;
