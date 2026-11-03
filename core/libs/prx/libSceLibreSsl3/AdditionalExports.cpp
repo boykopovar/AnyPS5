@@ -15,10 +15,6 @@ int APS5_VABI BN_clear_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BN_dup_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ERR_func_error_string_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
