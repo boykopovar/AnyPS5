@@ -20,7 +20,7 @@ the tool, but differs from gfx1013 in more places. Say which GPU you measured on
   `PATH`, they are taken from `$ROCM_PATH/llvm/bin`.
 
 The first run builds `oracle.c` into `$XDG_CACHE_HOME/anyps5-hw-oracle/`, or `~/.cache/anyps5-hw-oracle/` when
-`XDG_CACHE_HOME` is unset or empty (`HW_ORACLE_CACHE` overrides both). The target is read from the GPU (`HW_ORACLE_TARGET`
+`XDG_CACHE_HOME` is unset, empty or relative (`HW_ORACLE_CACHE` overrides both). The target is read from the GPU (`HW_ORACLE_TARGET`
 overrides it).
 
 ### Windows

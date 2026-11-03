@@ -136,6 +136,14 @@ class SplitTextTests(unittest.TestCase):
             agc_test_split.migrated(text, EXECUTION)
 
 
+class ArgumentTests(unittest.TestCase):
+    def test_bracket_comment_ends_at_its_closing_bracket(self):
+        text = "set(A #[[c]]x)\n"
+        arguments, end, _ = agc_test_split.arguments_of(text, text.index("(") + 1, 0)
+        self.assertEqual(arguments, ["A", "x"])
+        self.assertEqual(end, len(text) - 1)
+
+
 class ResolveTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
