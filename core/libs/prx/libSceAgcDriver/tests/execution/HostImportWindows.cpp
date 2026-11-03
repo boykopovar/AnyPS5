@@ -171,6 +171,68 @@ Outcome ResidentMappingsImportAfterCollection() {
     return Outcome::Passed;
 }
 
+Outcome MixedBlocksImportInSmallerRuns() {
+#ifdef _WIN32
+    constexpr std::size_t piece = 64 * 1024;
+    constexpr std::size_t pieces = 32;
+    auto* data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(pieces * piece, 8 * MiB));
+    Require(data != nullptr, "cannot allocate the mixed import block");
+    std::array<HANDLE, 6> sections{};
+    for (auto& section : sections) {
+        section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, piece, nullptr);
+        Require(section != nullptr, "cannot reserve the mixed import backing");
+    }
+    const auto at = [&](std::size_t index) { return data + index * piece; };
+    const auto map = [&](std::size_t index, std::size_t section) { GuestArena::GuestArenaMapDirect_nid_postfix(at(index), piece, sections[section], 0, PAGE_READWRITE); };
+    map(0, 0);
+    map(1, 1);
+    map(3, 1);
+    map(8, 2);
+    map(9, 3);
+    map(11, 2);
+    map(12, 3);
+    map(16, 4);
+    map(17, 5);
+    map(19, 5);
+    const auto type = [](const std::uint8_t* address) {
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(address, &info, sizeof(info)) == sizeof(info), "cannot query the mixed import block");
+        return info.Type;
+    };
+    Require(type(at(0)) == MEM_PRIVATE && type(at(1)) == MEM_MAPPED && type(at(8)) == MEM_MAPPED && type(at(9)) == MEM_MAPPED && type(at(16)) == MEM_PRIVATE && type(at(17)) == MEM_MAPPED, "the mixed import block does not hold the resident memory and shared views it maps");
+    const std::array<std::pair<std::size_t, std::size_t>, 5> ranges{{{0, 1}, {1, 1}, {8, 1}, {9, 1}, {16, 2}}};
+    for (const auto& [index, count] : ranges) GuestAllocations::Mutation().Add(at(index), count * piece, true, true, true);
+    const auto address = [&](std::size_t index) { return reinterpret_cast<std::uint64_t>(at(index)); };
+    {
+        auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "mixed import test lost its Vulkan device");
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const auto imported = [&](std::size_t index) { return Graphics::HostImportFor(context, address(index), ProbeBytes, Graphics::ImportRequester::Build); };
+            const auto* resident = imported(0);
+            Require(resident != nullptr && resident->base == address(0) && resident->bytes == piece, "the resident range of a block that mixes it with a shared view was not imported on its own");
+            const auto* shared = imported(1);
+            Require(shared != nullptr && shared->base == address(1) && shared->bytes == piece, "the shared range of a block that mixes it with resident memory was not imported on its own");
+            const auto* joined = imported(8);
+            Require(joined != nullptr && joined->base == address(8) && joined->bytes == 2 * piece, "neighbouring shared ranges were not imported as one block");
+            const auto* single = imported(16);
+            Require(single != nullptr && single->base == address(16) && single->bytes == 2 * piece, "a range that mixes resident memory with a shared view was not imported whole");
+        }
+        Require(type(at(0)) == MEM_PRIVATE, "importing a block that mixes resident memory with a shared view moved the resident memory into a shared view");
+        Graphics::ClearHostImports(device->Device());
+    }
+    for (const auto& [index, count] : ranges) GuestAllocations::Mutation().Remove(at(index));
+    GuestArena::GuestArenaReset_nid_postfix(data, pieces * piece);
+    GuestArena::GuestArenaRelease_nid_postfix(data, pieces * piece);
+    for (const auto section : sections) {
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+        CloseHandle(section);
+    }
+#endif
+    return Outcome::Passed;
+}
+
 Outcome SmallMappingsImportOnFirstUse() {
     GuestBlock small(GuestAlignment);
     GuestBlock large(2 * GuestAlignment);
@@ -219,6 +281,7 @@ int main() {
         const auto windows = WindowsFollowTheirRange();
         Require(windows == Outcome::Passed, "host import windows: the device stopped importing guest memory between two scenarios");
         Require(ResidentMappingsImportAfterCollection() == Outcome::Passed, "resident import test failed");
+        Require(MixedBlocksImportInSmallerRuns() == Outcome::Passed, "mixed import test failed");
         Require(SmallMappingsImportOnFirstUse() == Outcome::Passed, "mapped import test lost its Vulkan device or host import support");
         std::puts("host import windows tests passed");
         return 0;
