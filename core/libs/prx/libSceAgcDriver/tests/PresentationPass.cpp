@@ -790,7 +790,7 @@ void sourceImageOutsideDeviceMemoryTests(const Context& base) {
     base.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(base.device, probe, &requirements);
     base.Function<PFN_vkDestroyImage>("vkDestroyImage")(base.device, probe, nullptr);
     if (!base.HostMemoryType(requirements.memoryTypeBits)) {
-        std::printf("presentation source in host memory: skipped, the device offers no host memory type for the image\n");
+        std::printf("presentation source in host memory: skipped, the device has no host memory type for the image\n");
         return;
     }
     auto context = base;
