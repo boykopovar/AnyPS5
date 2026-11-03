@@ -880,8 +880,9 @@ int APS5_VABI sceKernelGetKnobs(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetKqueueFromEqueue(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetKqueueFromEqueue(KernelEqueue eq, int* kq) {
+    if (!kq) return SCE_KERNEL_ERROR_EINVAL;
+    *kq = static_cast<int>(static_cast<std::uint32_t>(eq));
     return 0;
 }
 

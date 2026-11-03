@@ -345,6 +345,28 @@ static void UnsupportedFilters() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void EqueueIsKqueueDescriptor() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "kqueue descriptor") == SceOk);
+    const int kq = static_cast<int>(static_cast<std::uint32_t>(eq));
+    Require((eq >> 32) != 0 && kq > 0 && kq < FirstSocket);
+    Require(Apply(kq, Change(9, EvfiltUser, EvAdd | EvClear)) == 0);
+    Require(Apply(kq, Change(9, EvfiltUser, 0, NoteTrigger)) == 0);
+    KernelEvent events[2]{};
+    int out = 0;
+    const KernelUseconds none = 0;
+    Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceOk && out == 1 && events[0].ident == 9 && events[0].filter == EvfiltUser);
+    Require(sceKernelDeleteEqueue(eq ^ (KernelEqueue{1} << 32)) == SceEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceOk);
+    RequireFailure(Poll(kq, events, 2), GuestEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+
+    Require(sceKernelCreateEqueue(&eq, "closed descriptor") == SceOk);
+    Require(close_nid_postfix(static_cast<int>(static_cast<std::uint32_t>(eq))) == 0);
+    Require(sceKernelWaitEqueue(eq, events, 2, &out, &none) == SceEbadf);
+    Require(sceKernelDeleteEqueue(eq) == SceEbadf);
+}
+
 static void UserEvents() {
     const int kq = kqueue_nid_postfix();
     int marker = 0;
@@ -1666,6 +1688,7 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    EqueueIsKqueueDescriptor();
     SocketReplacesDescriptor();
     KqueueDescriptorOperations();
     Timers();
