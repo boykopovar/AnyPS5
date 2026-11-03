@@ -26,6 +26,7 @@ int APS5_VABI freetypeLegacyGetBDFProperty_nid_no_patch(FreeType::GuestFaceRec* 
     const int error = FT_Get_BDF_Property(host, name, property ? &native : nullptr);
     if (host && property) {
         GuestArena::HostWrite write(property, sizeof(*property));
+        if (!write.Open()) return FT_Err_Invalid_Argument;
         property->type = native.type;
         if (!error) {
             switch (native.type) {
@@ -45,6 +46,7 @@ int APS5_VABI freetypeLegacyGetBDFCharsetID_nid_no_patch(FreeType::GuestFaceRec*
     if (!host) return FT_Get_BDF_Charset_ID(nullptr, nullptr, nullptr);
     GuestArena::HostWrite encodingWrite(encoding, encoding ? sizeof(*encoding) : 0);
     GuestArena::HostWrite registryWrite(registry, registry ? sizeof(*registry) : 0);
+    if ((encoding && !encodingWrite.Open()) || (registry && !registryWrite.Open())) return FT_Err_Invalid_Argument;
     return FT_Get_BDF_Charset_ID(host, encoding, registry);
 }
 APS5_EXPORT("KVRW5HPnbgU", freetypeLegacyGetBDFCharsetID_nid_no_patch);
@@ -54,6 +56,7 @@ int APS5_VABI freetypeLegacyGetSfntLangTag_nid_no_patch(FreeType::GuestFaceRec* 
     const int error = FT_Get_Sfnt_LangTag(HostFace(face), language, tag ? &native : nullptr);
     if (!error) {
         GuestArena::HostWrite write(tag, sizeof(*tag));
+        if (!write.Open()) return FT_Err_Invalid_Argument;
         tag->string = native.string;
         tag->string_len = native.string_len;
     }
@@ -66,6 +69,7 @@ int APS5_VABI freetypeLegacyGetWinFNTHeader_nid_no_patch(FreeType::GuestFaceRec*
     const int error = FT_Get_WinFNT_Header(HostFace(face), header ? &native : nullptr);
     if (!error) {
         GuestArena::HostWrite write(header, sizeof(*header));
+        if (!write.Open()) return FT_Err_Invalid_Argument;
         header->version = native.version;
         header->file_size = native.file_size;
         std::copy_n(native.copyright, 60, header->copyright);

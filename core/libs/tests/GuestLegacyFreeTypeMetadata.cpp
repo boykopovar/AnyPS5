@@ -19,6 +19,7 @@
 #include <string>
 
 #ifdef _WIN32
+#include "prx/libkernel/libkernel.hpp"
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -68,6 +69,108 @@ struct Api {
     decltype(&freetypeLegacyGetWinFNTHeader_nid_no_patch) header;
 };
 
+static void CheckText(const char* actual, const char* expected) {
+    Require((actual == nullptr) == (expected == nullptr));
+    if (actual) Require(std::strcmp(actual, expected) == 0);
+}
+
+#ifdef _WIN32
+struct KernelApi {
+    decltype(&sceKernelAllocateDirectMemory) allocate;
+    decltype(&sceKernelMapDirectMemory) map;
+    decltype(&sceKernelMprotect) protect;
+    decltype(&sceKernelMunmap) unmap;
+    decltype(&sceKernelReleaseDirectMemory) release;
+};
+
+class GuestOutput {
+public:
+    static constexpr std::size_t Page = 0x4000;
+
+    explicit GuestOutput(const KernelApi& api) : api(api) {
+        Require(api.allocate(0, 0x7fffffffffll, Page * 2, 0, 0, &physical) == 0);
+        Require(api.map(&mapping, Page * 2, 3, 0, physical, 0) == 0);
+        std::memset(mapping, 0xA5, Page * 2);
+    }
+
+    ~GuestOutput() {
+        Require(api.unmap(reinterpret_cast<std::uint64_t>(mapping), Page * 2) == 0);
+        Require(api.release(physical, Page * 2) == 0);
+    }
+
+    template <typename TValue>
+    TValue* At(unsigned page = 0) const {
+        return reinterpret_cast<TValue*>(static_cast<unsigned char*>(mapping) + Page * page + 16);
+    }
+
+    void Protect(unsigned page, int protection) const {
+        Require(api.protect(static_cast<unsigned char*>(mapping) + Page * page, Page, protection) == 0);
+        if (protection == 1) {
+            MEMORY_BASIC_INFORMATION information{};
+            Require(VirtualQuery(At<unsigned char>(page), &information, sizeof(information)) == sizeof(information));
+            Require(information.Protect == PAGE_READONLY);
+        }
+    }
+
+    template <typename TCall>
+    void Reject(TCall call, int error = FT_Err_Invalid_Argument) const {
+        const auto* bytes = static_cast<const unsigned char*>(mapping);
+        const std::vector<unsigned char> before(bytes, bytes + Page * 2);
+        Require(call() == error);
+        Require(std::memcmp(mapping, before.data(), before.size()) == 0);
+    }
+
+private:
+    const KernelApi& api;
+    std::int64_t physical = 0;
+    void* mapping = nullptr;
+};
+
+static void CheckGuestOutputs(const Api& api, const KernelApi& kernel, FreeType::GuestFaceRec* face, unsigned format) {
+    GuestOutput output(kernel);
+    output.Protect(0, 1);
+    output.Protect(1, 1);
+    if (format == 0) {
+        auto* property = output.At<BdfProperty>();
+        output.Reject([&] { return api.property(face, "FONT_NAME", property); });
+        output.Reject([&] { return api.property(face, "MISSING_PROPERTY", property); });
+        output.Reject([&] { return api.property(nullptr, "FONT_NAME", property); }, FT_Err_Invalid_Face_Handle);
+        output.Protect(0, 3);
+        Require(api.property(face, "FONT_NAME", property) == 0 && property->type == BDF_PROPERTY_TYPE_ATOM);
+        CheckText(property->value.atom, "metadata fixture");
+        auto** encoding = output.At<const char*>();
+        auto** registry = output.At<const char*>(1);
+        output.Reject([&] { return api.charset(face, encoding, registry); });
+        output.Reject([&] { return api.charset(face, nullptr, registry); });
+        output.Protect(0, 1);
+        output.Protect(1, 3);
+        output.Reject([&] { return api.charset(face, encoding, registry); });
+        output.Reject([&] { return api.charset(face, encoding, nullptr); });
+        output.Protect(1, 1);
+        output.Reject([&] { return api.charset(face, encoding, registry); });
+        output.Reject([&] { return api.charset(nullptr, encoding, registry); }, FT_Err_Invalid_Face_Handle);
+        output.Protect(0, 3);
+        output.Protect(1, 3);
+        Require(api.charset(face, encoding, registry) == 0);
+        CheckText(*encoding, "1");
+        CheckText(*registry, "ISO10646");
+    } else if (format == 1) {
+        auto* tag = output.At<SfntLangTag>();
+        output.Reject([&] { return api.tag(face, 0x8001, tag); });
+        output.Reject([&] { return api.tag(face, 0xFFFFFFFFu, tag); });
+        output.Reject([&] { return api.tag(nullptr, 0x8001, tag); });
+        output.Protect(0, 3);
+        Require(api.tag(face, 0x8001, tag) == 0 && tag->string_len == 4);
+    } else {
+        auto* header = output.At<WinFntHeader>();
+        output.Reject([&] { return api.header(face, header); });
+        output.Reject([&] { return api.header(nullptr, header); }, FT_Err_Invalid_Face_Handle);
+        output.Protect(0, 3);
+        Require(api.header(face, header) == 0 && header->version == 0x300 && header->file_size == 196);
+    }
+}
+#endif
+
 template <typename TValue>
 struct Guarded {
     std::array<unsigned char, 8> before;
@@ -81,10 +184,6 @@ struct Guarded {
     }
 };
 
-static void CheckText(const char* actual, const char* expected) {
-    Require((actual == nullptr) == (expected == nullptr));
-    if (actual) Require(std::strcmp(actual, expected) == 0);
-}
 
 static std::vector<unsigned char> BdfFont() {
     auto bytes = FontFixture::BitmapFont();
@@ -218,6 +317,16 @@ int main(int argc, char** argv) {
     Require(patched || std::strcmp(argv[3], "unpatched") == 0);
     auto module = Load(argv[1]);
     auto base = Load(argv[2]);
+#ifdef _WIN32
+    auto kernel = Load((std::filesystem::path(argv[2]).parent_path() / "libkernel.prx").string().c_str());
+    const KernelApi kernelApi{
+        Import<decltype(KernelApi::allocate)>(kernel, patched ? "rTXw65xmLIA" : "sceKernelAllocateDirectMemory"),
+        Import<decltype(KernelApi::map)>(kernel, patched ? "L-Q3LEjIbgA" : "sceKernelMapDirectMemory"),
+        Import<decltype(KernelApi::protect)>(kernel, patched ? "vSMAm3cxYTY" : "sceKernelMprotect"),
+        Import<decltype(KernelApi::unmap)>(kernel, patched ? "cQke9UuBQOk" : "sceKernelMunmap"),
+        Import<decltype(KernelApi::release)>(kernel, patched ? "MBuItvba6z8" : "sceKernelReleaseDirectMemory")
+    };
+#endif
     Api api{};
     api.initialize = Import<decltype(api.initialize)>(base, patched ? "GNsiLzm4SH8" : "FT_Init_FreeType_nid_postfix");
     api.doneLibrary = Import<decltype(api.doneLibrary)>(base, patched ? "dH02CpEEcYk" : "FT_Done_FreeType_nid_postfix");
@@ -259,11 +368,15 @@ int main(int argc, char** argv) {
         CheckCharset(api, face, native);
         for (std::uint32_t language : {0u, 0x7FFFu, 0x8000u, 0x8001u, 0x8002u, 0xFFFFFFFFu}) CheckTag(api, face, native, language);
         CheckHeader(api, face, native);
+#ifdef _WIN32
+        if (&bytes == &fonts[0] || &bytes == &fonts[1] || &bytes == &fonts[5])
+            CheckGuestOutputs(api, kernelApi, face, static_cast<unsigned>(&bytes - fonts.data()));
+#endif
         Require(api.doneFace(face) == 0 && FT_Done_Face(native) == 0);
     }
     Require(api.doneLibrary(library) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
 #ifdef _WIN32
-    Require(FreeLibrary(base) != 0 && FreeLibrary(module) != 0);
+    Require(FreeLibrary(base) != 0 && FreeLibrary(module) != 0 && FreeLibrary(kernel) != 0);
 #else
     Require(dlclose(base) == 0 && dlclose(module) == 0);
 #endif
