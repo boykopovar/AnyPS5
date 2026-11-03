@@ -182,6 +182,31 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (argc == 2 && std::string_view(argv[1]) == "--unmapped-plane") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before the unmap did not cover the plane");
+            Require(AgcDriver::Graphics::DepthPlanesStale(), "the draw writing depth before the unmap left the plane unregistered");
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(blocks);
+                mutation.Add(blocks, Block + PlaneBytes, true, true, true);
+            }
+            Fill(plane, 0.75f);
+            auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of a plane unmapped and mapped again stored the results drawn before the unmap");
+            device->WaitIdle();
+            Require(Since(before).stores == 0, "a read of a plane unmapped and mapped again counted a store");
+            for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.75f, UnitTexels, "after a read of a plane unmapped and mapped again");
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 after the unmap did not cover the plane");
+            before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            Require(!AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read of the plane drawn after the unmap stored nothing");
+            device->WaitIdle();
+            Require(Since(before).units == Units, "a read of the plane drawn after the unmap did not store every unit");
+            for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.5f, Texels(unit), "after a read of the plane drawn after the unmap");
+            std::puts("depth plane partial store tests passed (unmapped plane)");
+            return 0;
+        }
+
         Fill(plane, 1.0f);
         Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 did not cover the plane");
         Require(AgcDriver::Graphics::DepthPlanesStale(), "the draw writing depth left the plane unregistered");
