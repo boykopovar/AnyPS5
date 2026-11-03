@@ -48,6 +48,7 @@ struct Encoded {
     std::array<std::uint32_t, 4> words{};
     std::uint32_t rdnaWords = 0;
     std::uint32_t gcnWords = 0;
+    std::optional<std::uint32_t> compareDestination;
 };
 
 std::uint32_t literalAt(std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
@@ -184,11 +185,12 @@ Encoded encodeVop3(std::span<const std::uint32_t> code, std::uint32_t index, std
     if (index + 1 >= code.size()) throw std::out_of_range("truncated GCN VOP3 instruction");
     const auto word0 = code[index];
     const auto opcode = (word0 >> 17u) & 0x1ffu;
-    if (compareWritesExec(opcode)) unsupported("VOP3 v_cmpx (writes both the scalar destination and EXEC)", opcode, programCounter);
     if (const auto shift = reversedShift(opcode)) return encodeVop3Words(swapAbsolute(word0), swapSources(code[index + 1]), *shift, false);
     const auto mapped = mapOpcode(GcnTables::Vop3, opcode);
     if (!mapped) unsupported("VOP3", opcode, programCounter);
-    return encodeVop3Words(word0, code[index + 1], *mapped, gcnVop3bCarryOut(opcode));
+    auto out = encodeVop3Words(word0, code[index + 1], *mapped, gcnVop3bCarryOut(opcode));
+    if (compareWritesExec(opcode)) out.compareDestination = word0 & 0xffu;
+    return out;
 }
 
 Encoded promoteToVop3(std::uint32_t gcnVop3Opcode, std::uint32_t vdst, std::uint32_t src0, std::uint32_t src1, std::uint32_t src2, bool carryOut, std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
@@ -249,7 +251,6 @@ Encoded encodeVop1(std::span<const std::uint32_t> code, std::uint32_t index, std
 Encoded encodeVopc(std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
     const auto word = code[index];
     const auto opcode = (word >> 17u) & 0xffu;
-    if (compareWritesExec(opcode)) unsupported("VOPC v_cmpx (writes both VCC and EXEC)", opcode, programCounter);
     const auto mapped = mapOpcode(GcnTables::Vopc, opcode);
     if (!mapped) unsupported("VOPC", opcode, programCounter);
     Encoded out;
@@ -259,6 +260,7 @@ Encoded encodeVopc(std::span<const std::uint32_t> code, std::uint32_t index, std
         out.words[1] = literalAt(code, index + 1, programCounter);
         out.rdnaWords = out.gcnWords = 2;
     }
+    if (compareWritesExec(opcode)) out.compareDestination = VccSdst;
     return out;
 }
 
@@ -373,6 +375,7 @@ RdnaInstruction DecodeGcnInstruction(std::uint32_t programCounter, std::span<con
     const bool vop1RsqClamp = (word >> 25u) == 0x3fu && ((word >> 9u) & 0xffu) == 0x2cu;
     const bool vop3RsqClamp = (word >> 26u) == 0x34u && ((word >> 17u) & 0x1ffu) == 0x1acu;
     if (vop1RsqClamp || vop3RsqClamp) instruction.op = RdnaOpcode::VRsqClampF32;
+    if (encoded.compareDestination) instruction.destination2 = DecodeRdnaScalarDestination(*encoded.compareDestination, programCounter);
     return instruction;
 }
 
