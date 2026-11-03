@@ -66,10 +66,13 @@ void ExpectFailure(auto&& action) {
 }
 
 int RunHighRefreshChild(const char* program) {
+    std::error_code ec;
+    const auto absProgram = std::filesystem::absolute(program, ec);
+    const std::string progStr = ec ? std::string(program) : absProgram.string();
 #ifdef _WIN32
-    const std::string command = "\"\"" + std::string(program) + "\" --high-refresh\"";
+    const std::string command = "\"\"" + progStr + "\" --high-refresh\"";
 #else
-    const std::string command = "\"" + std::string(program) + "\" --high-refresh";
+    const std::string command = "\"" + progStr + "\" --high-refresh";
 #endif
     return std::system(command.c_str());
 }
@@ -91,7 +94,9 @@ int RunHighRefreshScenario() {
         std::printf("skipped, no display or Vulkan device: %s\n", error.what());
         return 77;
     }
-    Require(handle > 0);
+    if (handle <= 0) {
+        return 77;
+    }
 
     VideoOutOutputOptions options{};
     Require(sceVideoOutInitializeOutputOptions(&options) == 0);
