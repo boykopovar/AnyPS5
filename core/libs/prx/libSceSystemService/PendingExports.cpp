@@ -1604,6 +1604,7 @@ int APS5_VABI sceSystemServiceAppGetAppInstallStatus(const char* titleId, System
 }
 
 int APS5_VABI sceSystemServiceChangeAcpClock() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1613,6 +1614,7 @@ int APS5_VABI sceSystemServiceChangeClock(const char* clock, std::uint32_t value
 }
 
 int APS5_VABI sceSystemServiceChangeCpuClock() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1622,6 +1624,7 @@ int APS5_VABI sceSystemServiceChangeCpuPstate(const SystemServiceCpuPstateParam*
 }
 
 int APS5_VABI sceSystemServiceChangeGpuClock() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1631,34 +1634,42 @@ int APS5_VABI sceSystemServiceChangeMemPstate(std::uint32_t state) {
 }
 
 int APS5_VABI sceSystemServiceChangeMemoryClock() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSystemServiceChangeMemoryClockToBaseMode() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSystemServiceChangeMemoryClockToDefault() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSystemServiceChangeMemoryClockToMultiMediaMode() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSystemServiceChangeNumberOfGpuCu() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSystemServiceChangeSamuClock() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSystemServiceChangeUvdClock() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceSystemServiceChangeVceClock() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1953,6 +1964,7 @@ int APS5_VABI sceSystemServiceSetOutOfVrPlayAreaFlag(std::uint8_t flag) {
 }
 
 int APS5_VABI sceSystemServiceSetOutOfVrPlayZoneWarning() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
