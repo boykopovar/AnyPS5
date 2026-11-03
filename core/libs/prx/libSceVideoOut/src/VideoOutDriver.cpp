@@ -560,6 +560,24 @@ std::uint32_t VideoOutDriver::GetDisplayResolution() {
     return displayResolution.load();
 }
 
+VideoOutWindowState VideoOutDriver::GetWindowState() {
+    VideoOutWindowState state;
+#ifndef __EMSCRIPTEN__
+    OnMainThread([&] {
+        SDL_Window* handle = window.Handle();
+        state.handle = handle;
+        if (handle == nullptr) return;
+        int width = 0;
+        int height = 0;
+        SDL_GetWindowSize(handle, &width, &height);
+        state.width = width > 0 ? static_cast<std::uint32_t>(width) : 0;
+        state.height = height > 0 ? static_cast<std::uint32_t>(height) : 0;
+        window.DrawableSize(state.drawableWidth, state.drawableHeight);
+    });
+#endif
+    return state;
+}
+
 void VideoOutDriver::updateDisplayRefreshRate() {
     const int display = SDL_GetWindowDisplayIndex(window.Handle());
     if (display < 0) throw std::runtime_error(std::string("SDL_GetWindowDisplayIndex failed: ") + SDL_GetError());

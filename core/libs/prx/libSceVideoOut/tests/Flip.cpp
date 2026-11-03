@@ -6,6 +6,7 @@
 #include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PadStatusOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
@@ -1293,6 +1294,94 @@ void testOutputResolutionOverride() {
     LibcRunShutdown_nid_postfix();
 }
 
+void testOutputResolutionWindow() {
+    setOutputResolution("1920x1080");
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    const auto reported = [&] {
+        VideoOutOutputStatus status{};
+        check(sceVideoOutGetOutputStatus(handle, &status) == 0, "the output status was not returned");
+        return status.resolution;
+    };
+    const auto sameAspect = [](const VideoOutWindowState& state) {
+        const std::uint64_t left = static_cast<std::uint64_t>(state.drawableWidth) * state.height;
+        const std::uint64_t right = static_cast<std::uint64_t>(state.drawableHeight) * state.width;
+        return left > right ? left - right <= state.width : right - left <= state.width;
+    };
+    const auto initial = VideoOutDriver::Get().GetWindowState();
+    check(initial.handle != nullptr, "the port was opened without a host window");
+    SDL_Rect usable{};
+    check(SDL_GetDisplayUsableBounds(0, &usable) == 0, "the usable display bounds could not be read");
+    const auto scaled = AgcDriver::ComputeContainSize_nid_postfix(VIDEO_OUT_DEFAULT_WIDTH, VIDEO_OUT_DEFAULT_HEIGHT,
+        static_cast<std::uint32_t>(usable.w) * DisplayWindowInitialSizePercent / 100,
+        static_cast<std::uint32_t>(usable.h) * DisplayWindowInitialSizePercent / 100, true);
+    check(initial.width == scaled.width && initial.height == scaled.height, "the host window did not take the scaled contain extent of the default output");
+    check(initial.drawableWidth > 0 && initial.drawableHeight > 0, "the host drawable extent was empty");
+    check(sameAspect(initial), "the host drawable extent was not the window extent at a uniform scale");
+    check(reported() == 1u, "the 1080p override did not report the 1080p preset");
+
+    const std::uint32_t width = 1920;
+    const std::uint32_t height = 1080;
+    std::vector<std::byte> allocation(static_cast<std::size_t>(width) * height * 4 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = width;
+    attribute.height = height;
+    attribute.tiling_mode = 1;
+    attribute.pitch_in_pixel = width;
+    attribute.pixel_format = 0x8000000000000000ull;
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 1) == 0, "the flip was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the flip did not complete");
+        check(cfg->width == width && cfg->height == height, "the port did not record the guest buffer extent");
+    }
+    const auto flipped = VideoOutDriver::Get().GetWindowState();
+    check(flipped.width == initial.width && flipped.height == initial.height, "the guest buffer extent resized the host window");
+    check(reported() == 1u, "the 1080p guest buffer changed the reported preset");
+
+    setOutputResolution("3840x2160");
+    check(reported() == 2u, "the 2160p override did not report the 2160p preset");
+    const auto overridden = VideoOutDriver::Get().GetWindowState();
+    check(overridden.width == initial.width && overridden.height == initial.height, "the reported preset resized the host window");
+
+    SDL_SetWindowSize(static_cast<SDL_Window*>(overridden.handle), 960, 540);
+    const auto resized = VideoOutDriver::Get().GetWindowState();
+    check(resized.width == 960 && resized.height == 540, "the host window did not take the resized extent");
+    check(resized.drawableWidth > 0 && resized.drawableHeight > 0 && resized.drawableWidth < initial.drawableWidth && resized.drawableHeight < initial.drawableHeight, "the host drawable extent did not follow the smaller window");
+    check(sameAspect(resized), "the resized drawable extent did not keep the window aspect");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->width == width && cfg->height == height, "the host resize changed the guest buffer extent");
+    }
+    check(reported() == 2u, "the host resize changed the reported preset");
+
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 2) == 0, "a flip after the host resize was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 2; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the flip after the host resize did not complete");
+    }
+    check(sceVideoOutSubmitFlip(handle, VIDEO_OUT_BUFFER_INDEX_BLACK, 1, 3) == 0, "the withdrawal flip was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == 3; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(done, "the withdrawal flip did not complete");
+        check(cfg->width == width && cfg->height == height, "the withdrawal flip changed the guest buffer extent");
+    }
+    check(reported() == 2u, "the withdrawal flip changed the reported preset");
+    check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
+    check(sceVideoOutClose(handle) == 0, "the port was not closed");
+    setOutputResolution("");
+    LibcRunShutdown_nid_postfix();
+}
+
 }
 
 #ifdef __APPLE__
@@ -1326,6 +1415,7 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "cpuflip") testCpuFlipOrder();
         else if (argc == 2 && std::string(argv[1]) == "resolution") testOutputResolution();
         else if (argc == 2 && std::string(argv[1]) == "resolution_override") testOutputResolutionOverride();
+        else if (argc == 2 && std::string(argv[1]) == "resolution_window") testOutputResolutionWindow();
         else if (argc == 2 && std::string(argv[1]) == "fresh") testFreshHandleCalls();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
