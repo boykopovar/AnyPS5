@@ -319,17 +319,34 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertEqual(data["library_mismatch"], int(expected_missing))
                 self.assertEqual(data["imports"][0]["providers"], ["LibSceA.prx"])
 
-    def test_elf_guest_dependencies_keep_literal_host_names(self):
+    def test_elf_guest_dependencies_use_host_prx_suffixes(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
         registry, result = work.root / "game.registry.json", work.root / "audit.json"
-        write_registry(registry, [("AAAAAAAAAAA", "libSceA.sprx")])
-        registry.with_name("game.needed.json").write_text(json.dumps(["libSceA.sprx"]))
-        code, _, err = work.run(registry, "--json", str(result))
-        self.assertEqual((code, err), (1, ""))
-        data = json.loads(result.read_text())
-        self.assertEqual(data["missing_libraries"], {"libSceA.sprx": 1})
-        self.assertEqual(data["library_mismatch"], 1)
+        for suffix in (".sprx", ".suprx", ".debug_prx"):
+            with self.subTest(suffix=suffix):
+                name = "libSceA" + suffix
+                write_registry(registry, [("AAAAAAAAAAA", name)])
+                registry.with_name("game.needed.json").write_text(json.dumps([name]))
+                code, _, err = work.run(registry, "--strict-providers", "--json", str(result))
+                self.assertEqual((code, err), (0, ""))
+                data = json.loads(result.read_text())
+                self.assertEqual(data["missing_libraries"], {})
+                self.assertEqual(data["library_mismatch"], 0)
+                self.assertEqual(data["imports"][0]["providers"], ["libSceA.prx"])
+
+    def test_elf_suffix_lookup_keeps_the_suffix_case_and_missing_libraries(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        for name in ("libSceA.SPRX", "libscea.sprx", "libMissing.sprx"):
+            with self.subTest(name=name):
+                write_registry(registry, [("AAAAAAAAAAA", name)])
+                registry.with_name("game.needed.json").write_text(json.dumps([name]))
+                code, _, err = work.run(registry, "--json", str(result))
+                self.assertEqual((code, err), (1, ""))
+                data = json.loads(result.read_text())
+                self.assertEqual(data["missing_libraries"], {name: 1})
 
     def test_windows_suffix_lookup_preserves_guest_and_missing_libraries(self):
         work = self.work
