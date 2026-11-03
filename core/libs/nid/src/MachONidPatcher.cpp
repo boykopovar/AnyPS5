@@ -444,7 +444,10 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, 
         if (eligible) names.push_back(bare);
     }
     const auto mapping = ResolveImportNids(names, excluded, options);
-    if (!options.executable) {
+    bool grows = false;
+    for (std::size_t index = 0; index < imports.size(); ++index)
+        grows = grows || (selected[index] && mapping.at(StripUnderscore(originalNames[index])).size() + 1 > originalNames[index].size());
+    if (!options.executable && !grows) {
         std::set<std::uint32_t> nameOffsets;
         for (const auto& item : imports) nameOffsets.insert(item.NameOffset);
         std::set<std::uint32_t> rewritten;
@@ -459,7 +462,6 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, 
             const auto bare = StripUnderscore(name);
             if (bare == name) continue;
             const auto patched = "_" + mapping.at(bare);
-            if (patched.size() > name.size()) throw std::runtime_error("import NID longer than original name: " + name);
             const auto inside = nameOffsets.upper_bound(item.NameOffset);
             if (inside != nameOffsets.end() && *inside <= item.NameOffset + name.size()) throw std::runtime_error("chained import names share storage: " + name);
             std::memcpy(binary.data() + at, patched.data(), patched.size());

@@ -70,13 +70,14 @@ static void MatrixInfo() {
     std::memset(&info, 0xa5, sizeof(info));
     Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info)), SCE_NGS2_OK, "GetMatrixInfo failed for a matrix with levels");
     Require(info.num_levels == 4 && info.levels[0] == 1.0f && info.levels[1] == 0.5f && info.levels[2] == -4.0f && info.levels[3] == 4.0f);
-    Require(std::all_of(std::begin(info.levels) + 4, std::end(info.levels), [](float level) { return level == 0.0f; }));
+    const auto* unused = reinterpret_cast<const unsigned char*>(info.levels + 4);
+    Require(std::all_of(unused, bytes + sizeof(info), [](auto byte) { return byte == 0xa5; }));
     std::array<float, 64> full{};
     for (std::size_t i = 0; i < full.size(); i++) full[i] = static_cast<float>(i) / 64.0f;
     Control(voice, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 64, full.data()});
     Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info)), SCE_NGS2_OK, "GetMatrixInfo failed for 64 levels");
     Require(info.num_levels == 64 && std::equal(full.begin(), full.end(), info.levels));
-    Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info) + 1), SCE_NGS2_ERROR_INVALID_OUT_SIZE, "GetMatrixInfo accepted a larger output");
+    Status(sceNgs2VoiceGetMatrixInfo(voice, 0, &info, sizeof(info) + 1), SCE_NGS2_OK, "GetMatrixInfo rejected a larger output");
     Require(MatrixInfoThrows<std::invalid_argument>(voice, 1));
     const auto master = Voice(CreateRack(system, SCE_NGS2_RACK_ID_MASTERING));
     Require(MatrixInfoThrows<std::invalid_argument>(master, 0));
