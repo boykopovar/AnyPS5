@@ -10,6 +10,45 @@ from test_suggest_patches import suggest_patches, VERIFIED
 
 
 class PatchAdvisorJsonTests(unittest.TestCase):
+    def test_json_directory_resolution_errors_are_controlled(self):
+        original = suggest_patches.Path.resolve
+        windows_loop = OSError(22, "The name of the file cannot be resolved by the system", "loop")
+        windows_loop.winerror = 1921
+        for option in ("--catalog", "--sce-module-path"):
+            target = self.root / "directory-loop"
+            for failure in (RuntimeError("Symlink loop from fixture directory"), windows_loop):
+                with self.subTest(option=option, failure=type(failure).__name__):
+                    def resolve(path, *args, **kwargs):
+                        if path == target:
+                            raise failure
+                        return original(path, *args, **kwargs)
+                    with patch.object(suggest_patches.Path, "resolve", resolve):
+                        code, data = self.run_json(option, str(target), side_effect=AssertionError("verification ran"))
+                    self.assertEqual((code, data["status"], data["entries"]), (2, "error", []))
+                    self.assertIn("Symlink loop", data["error"])
+
+    def test_nonfinite_catalog_and_parameters_emit_strict_json_errors(self):
+        def reject_constant(value):
+            raise ValueError("non-standard JSON token: " + value)
+        for token in ("NaN", "Infinity", "-Infinity", "1e999", "-1e999"):
+            for location in ("catalog", "parameters"):
+                with self.subTest(token=token, location=location):
+                    self.write_index()
+                    self.param.write_text(json.dumps({"titleId": "TEST00001", "contentVersion": "01.000.000"}))
+                    if location == "catalog":
+                        path = self.catalog / "index.json"
+                        path.write_text(path.read_text().replace('"patch.toml"', token))
+                    else:
+                        self.param.write_text('{"titleId":"TEST00001","contentVersion":"01.000.000","extra":' + token + '}')
+                    output, errors = io.StringIO(), io.StringIO()
+                    with patch.object(suggest_patches.subprocess, "run", side_effect=AssertionError("verification ran")), \
+                            contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                        code = self.advise("--json")
+                    data = json.loads(output.getvalue(), parse_constant=reject_constant)
+                    self.assertEqual((code, data["status"], data["entries"]), (2, "error", []))
+                    self.assertIn("non-finite JSON number", data["error"])
+                    self.assertNotIn("Traceback", errors.getvalue())
+
     def run_json(self, *extra, **run):
         output = io.StringIO()
         with patch.object(suggest_patches.subprocess, "run", **run), contextlib.redirect_stdout(output):

@@ -2,6 +2,7 @@ import argparse
 import errno
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -73,8 +74,16 @@ def conversion_options(args, patch):
     return command_line(conversion_arguments(args, patch))
 
 
-def read_catalog(directory, object_pairs_hook=None):
-    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"), object_pairs_hook=object_pairs_hook)
+def finite_json_number(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"non-finite JSON number: {value}")
+    return number
+
+
+def read_catalog(directory, object_pairs_hook=None, *, strict_numbers=False):
+    options = {"parse_constant": finite_json_number, "parse_float": finite_json_number} if strict_numbers else {}
+    data = json.loads(confined(directory, "index.json").read_text(encoding="utf-8"), object_pairs_hook=object_pairs_hook, **options)
     if not isinstance(data, dict) or set(data) != {"format", "entries"} or type(data["format"]) is not int or data["format"] != 1 or not isinstance(data["entries"], list):
         raise ValueError("catalog must have format 1 and an entries array")
     return data["entries"]
@@ -82,7 +91,7 @@ def read_catalog(directory, object_pairs_hook=None):
 
 def load_catalog(directory, title, version):
     entries = []
-    for number, entry in enumerate(read_catalog(directory), 1):
+    for number, entry in enumerate(read_catalog(directory, strict_numbers=True), 1):
         if not isinstance(entry, dict) or (entry.get("titleId"), entry.get("contentVersion")) != (title, version):
             continue
         entries.append((number, entry))
@@ -229,11 +238,11 @@ def main(argv=None):
         if error is not None:
             report["error"] = str(error)
         if args.json:
-            print(json.dumps(report, sort_keys=True))
+            print(json.dumps(report, sort_keys=True, allow_nan=False))
         return code
     prefix = "No verified catalog entries" if args.list_verified else "No recommendation"
     try:
-        metadata = json.loads(args.param_json.read_text(encoding="utf-8"))
+        metadata = json.loads(args.param_json.read_text(encoding="utf-8"), parse_constant=finite_json_number, parse_float=finite_json_number)
         if not isinstance(metadata, dict):
             raise ValueError("param.json must be an object")
         title = metadata.get("titleId")

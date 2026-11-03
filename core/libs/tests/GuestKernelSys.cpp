@@ -1188,6 +1188,8 @@ int main() {
     Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);
     Require(profil_nid_postfix(reinterpret_cast<void*>(0x10), 4096, 0, 0) == 0);
     Require(profil_nid_postfix(nullptr, 0, 0, 0) == 0);
+    Require(is_in_sandbox_nid_postfix() == 1);
+    Require(sceKernelIsInSandbox() == 1);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);

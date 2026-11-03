@@ -54,7 +54,7 @@ int APS5_VABI OBJ_txt2obj_nid_postfix(void);
 int APS5_VABI OCSP_CERTID_free_nid_postfix(void);
 int APS5_VABI OCSP_cert_to_id_nid_postfix(void);
 int APS5_VABI OCSP_resp_find_status_nid_postfix(void);
-int APS5_VABI OpenSSL_version_nid_postfix(void);
+const char* APS5_VABI OpenSSL_version_nid_postfix(int type);
 int APS5_VABI PKCS7_free_nid_postfix(void);
 int APS5_VABI PKCS8_PRIV_KEY_INFO_free_nid_postfix(void);
 int APS5_VABI RSA_check_key_nid_postfix(void);
