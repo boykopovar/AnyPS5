@@ -12,6 +12,7 @@ import progress
 from check_conventions import DEBT, DEBT_DIR, DEBT_LABELS, DEBT_TARGET, debt_entries, debt_labels
 
 ROOT = Path(__file__).resolve().parent.parent
+SOURCES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
 LINK = re.compile(r"\[([^\]]+)\]\((?:\.\./)+core/[^)#\s]+")
 TICKED = re.compile(r"`([a-z_][A-Za-z0-9_]*)`")
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -74,3 +75,16 @@ def closer(text):
 def platforms(text):
     found = [label for label, pattern in PLATFORMS if pattern.search(text)]
     return found if len(found) < len(PLATFORMS) else []
+
+
+def test_words(root):
+    words = set()
+    for path in (root / "core").rglob("*"):
+        if path.suffix in SOURCES | {".py"} and "tests" in path.relative_to(root).parts and path.is_file():
+            words.update(WORD.findall(path.read_text(encoding="utf-8", errors="ignore")))
+    return words
+
+
+def untested(text, words):
+    found = entry_names(text)
+    return None if not found else not any(name in words for name in found)

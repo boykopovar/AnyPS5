@@ -61,6 +61,24 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(debt_report.platforms("on Windows, macOS and Linux"), [])
         self.assertEqual(debt_report.platforms("on a windows host"), [])
 
+    def test_test_words_read_only_test_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root, {
+                "core/libs/prx/libSceExample/tests/Example.cpp": "int main() { return sceA(); }\n",
+                "core/libs/tests/test_example.py": "NAME = 'fchmodat'\n",
+                "core/libs/prx/libSceExample/Export.cpp": "int sceB() { return 0; }\n",
+            })
+            words = debt_report.test_words(root)
+        self.assertTrue({"sceA", "fchmodat"} <= words)
+        self.assertNotIn("sceB", words)
+
+    def test_untested(self):
+        words = {"sceA"}
+        self.assertFalse(debt_report.untested(f"- [sceA, sceB]({LINK}) - x", words))
+        self.assertTrue(debt_report.untested(f"- [sceB]({LINK}) - x", words))
+        self.assertIsNone(debt_report.untested(f"- [Nine unnamed exports]({LINK}) - x", words))
+
 
 if __name__ == "__main__":
     unittest.main()
