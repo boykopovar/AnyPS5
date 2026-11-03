@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <initializer_list>
 #include <string>
 #include <limits>
@@ -102,9 +103,33 @@ void testLifetime(bool reopen) {
     check(expectFailure([&] { sceVideoOutUnregisterBuffers(handle, 0); }).find("pending flip") != std::string::npos, "pending buffer was unregistered");
     check(sceVideoOutWaitVblank(handle) == 0 && sceVideoOutWaitVblank(handle) == 0, "vblank stalled behind the GPU queue");
     std::shared_ptr<VideoOutConfig> replacement;
+    if (reopen) {
+        const auto label = reinterpret_cast<std::uintptr_t>(&cfg->bufferLabels[1]);
+        std::array<uint32_t, 5> store{0xc0033700u, 0x00100200u, static_cast<uint32_t>(label), static_cast<uint32_t>(static_cast<std::uint64_t>(label) >> 32u), 1u};
+        Packet storePacket{store.data(), static_cast<uint32_t>(store.size()), 0, {}};
+        sceAgcDriverSubmitDcb(&storePacket);
+    }
     sceVideoOutClose(handle);
     if (reopen) {
-        check(sceVideoOutOpen(255, 0, 0, nullptr) == handle, "reopen changed handle");
+        std::atomic<bool> returned{false};
+        int reopened = -1;
+        std::exception_ptr openFailure;
+        std::thread opener([&] {
+            try {
+                reopened = sceVideoOutOpen(255, 0, 0, nullptr);
+            } catch (...) {
+                openFailure = std::current_exception();
+            }
+            returned.store(true, std::memory_order_release);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        const bool early = returned.load(std::memory_order_acquire);
+        gate->Release();
+        opener.join();
+        if (openFailure) std::rethrow_exception(openFailure);
+        check(!early, "reopen replaced the port's configuration while a flip and a label store of the previous one were in flight");
+        check(reopened == handle, "reopen changed handle");
+        check(std::atomic_ref(cfg->bufferLabels[1]).load(std::memory_order_acquire) == 1, "reopen returned before the label store into the previous configuration landed");
         replacement = VideoOutDriver::Get().GetConfig(handle);
         check(replacement != cfg && replacement->generation > cfg->generation, "reopen reused old port state");
     }
