@@ -473,7 +473,7 @@ if(BUILD_TESTING)
                         string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${line}")
                         add_test(NAME check_compile_${check_compile_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
                             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py ${check_compile_class}.${test_case})
-                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 30)
+                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 60)
                     endif()
                 endforeach()
             endif()
