@@ -751,11 +751,6 @@ int APS5_VABI d2i_X509_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI i2d_X509_PUBKEY_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
