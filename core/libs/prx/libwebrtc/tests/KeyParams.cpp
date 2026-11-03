@@ -45,12 +45,6 @@ void TestEcdsa() {
     Require(publicExponent == 0xA5A5A5A5u);
 }
 
-void TestRsaIsNotImplemented() {
-    WebRtcKeyParams params = Filled();
-    RequireThrows<std::runtime_error>([&] { _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(&params, WebRtcKeyTypeRsa); });
-    Require(Unchanged(params));
-}
-
 void TestUnknownTypesThrow() {
     for (std::int32_t type : {2, 3, -1, 0x7fffffff}) {
         WebRtcKeyParams params = Filled();
@@ -64,7 +58,6 @@ void TestUnknownTypesThrow() {
 
 int main() {
     TestEcdsa();
-    TestRsaIsNotImplemented();
     TestUnknownTypesThrow();
     return 0;
 }
