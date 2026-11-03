@@ -160,6 +160,29 @@ def load_and_record(work, provider, module, loader=None):
     assert f'result={RETURNED}' in recorded, recorded
 
 
+def load_and_record_default(work, provider, module):
+    events = work / 'events_default.txt'
+    run = subprocess.run([sys.executable, __file__, '--load-default', str(provider), str(module)],
+                         env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
+                         capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+    recorded = events.read_text()
+    assert 'args=0000000000000010' in recorded, recorded
+    assert 'argp=0000000000000000' not in recorded, recorded
+    assert f'result={RETURNED}' in recorded, recorded
+
+
+def load_and_record_explicit_null(work, provider, module):
+    events = work / 'events_explicit_null.txt'
+    run = subprocess.run([sys.executable, __file__, '--load-explicit-null', str(provider), str(module)],
+                         env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
+                         capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+    recorded = events.read_text()
+    assert 'args=0000000000000008 argp=0000000000000000' in recorded, recorded
+    assert f'result={RETURNED}' in recorded, recorded
+
+
 def main():
     if sys.argv[1] == '--load':
         import ctypes
@@ -180,6 +203,20 @@ def main():
                 ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(callback)(0, None, None)
         host.__aps5_set_module_init_result_nid_no_patch(returned)
         table[6] = 2
+        return
+    if sys.argv[1] == '--load-default':
+        import ctypes
+        host = ctypes.CDLL(sys.argv[2], mode=ctypes.RTLD_GLOBAL if sys.platform == 'darwin' else ctypes.DEFAULT_MODE)
+        if hasattr(host, 'ClearPendingArgs'):
+            host.ClearPendingArgs()
+        ctypes.CDLL(sys.argv[3])
+        return
+    if sys.argv[1] == '--load-explicit-null':
+        import ctypes
+        host = ctypes.CDLL(sys.argv[2], mode=ctypes.RTLD_GLOBAL if sys.platform == 'darwin' else ctypes.DEFAULT_MODE)
+        host.SetPendingArgs.argtypes = [ctypes.c_size_t, ctypes.c_void_p]
+        host.SetPendingArgs(8, None)
+        ctypes.CDLL(sys.argv[3])
         return
     relinker = Path(sys.argv[1]).resolve()
     host = Path(sys.argv[2]).resolve()
@@ -237,6 +274,8 @@ def main():
             shutil.copyfile(host, libraries / 'libkernel.prx')
             shutil.copyfile(host, libraries / 'libc.prx')
             load_and_record(work, libraries / 'libc.prx', converted)
+            load_and_record_default(work, libraries / 'libc.prx', converted)
+            load_and_record_explicit_null(work, libraries / 'libc.prx', converted)
         elif macos:
             libraries = mach / 'libs'
             libraries.mkdir()
