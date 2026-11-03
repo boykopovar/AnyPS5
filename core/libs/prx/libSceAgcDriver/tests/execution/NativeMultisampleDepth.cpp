@@ -2143,7 +2143,7 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
             const auto fillBytes = fault == StencilFault::FillPartial ? metadataBytes - 4u : metadataBytes;
             if (fault == StencilFault::MaskClear) NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes);
             else NoteDepthMetadataFill(target.htileAddress, fillBytes, clearWord(clearOne));
-            if (fault == StencilFault::FillOverlap) NoteDepthMetadataFill(target.htileAddress, fillBytes, clearWord(clearOne));
+            if (fault == StencilFault::FillOverlap) NoteDepthMetadataFill(target.htileAddress, fillBytes, clearWord(!clearOne));
             const auto storedBytes = fault == StencilFault::FillPartialStore ? 4u : fillBytes;
             AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, storedBytes, [&] {
                 setWords(clearWord(clearOne), storedBytes);
@@ -3348,6 +3348,74 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
+void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes), stencil(stencilBytes), metadata(65536u);
+    std::memset(memory.Data(), 0, depthBytes);
+    std::memset(stencil.Data(), 0, stencilBytes);
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto clear = [&] {
+        recorder.Sync();
+        ClearCachedTextures(context.device);
+        ClearDepthSurfaces(context.device);
+    };
+    struct Cleanup {
+        decltype(clear)& action;
+        ~Cleanup() { action(); }
+    } cleanup{clear};
+    const auto words = DepthSampleWords(target);
+    const auto store = [&](std::uint32_t word) {
+        AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, [&] {
+            for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &word, 4u);
+        });
+    };
+    const auto sample = [&](float expected) {
+        Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a native HTILE depth target with a repeated fill has no attachment view");
+        auto texture = CachedSampledTexture(context, words);
+        Require(texture != nullptr, "a native HTILE depth target with a repeated fill was not imported");
+        recorder.Sync();
+        const auto count = extent.width * extent.height * samples;
+        Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> sampled{};
+            std::memcpy(sampled.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            Require(sampled == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "a repeated native HTILE fill lost the depth clear");
+        }
+        texture.reset();
+    };
+    sample(0.0f);
+    const std::uint32_t one = 0xfffffff0u;
+    target.clearDepth = 1.0f;
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    store(one);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    sample(1.0f);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    store(one);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+    target.clearDepth = 0.0f;
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+    std::printf("Native D32S8 with HTILE, samples=%u: a repeated whole-HTILE fill of a stored clear was accepted and an unstored or different one was refused\n", samples);
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef __linux__
@@ -3425,6 +3493,18 @@ int main(int argc, char** argv) {
                 std::printf("Native depth queued fill fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--stored-repeat-fill") {
+            const auto supported = [&](std::uint32_t samples) { return DepthSupported(context, HostDepthFormat(context, VK_FORMAT_D32_SFLOAT_S8_UINT), samples) && (context.limits.framebufferStencilSampleCounts & samples) != 0u; };
+            Require(supported(4u), "the stored repeated HTILE fill regression requires sampled D32S8 with four samples");
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!supported(samples)) { ++unavailable; continue; }
+                CheckStoredRepeatFill(context, samples);
+                ++checked;
+            }
+            std::printf("Native depth stored repeated HTILE fill cases checked=%u unavailable=%u\n", checked, unavailable);
+            return checked != 0u ? 0 : VulkanTestSkipped;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--uniform-planes") {
             std::uint32_t checked = 0u, unavailable = 0u;
