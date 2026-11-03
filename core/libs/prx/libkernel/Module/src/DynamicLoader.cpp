@@ -305,6 +305,13 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
     static DWORD sweepOwner = 0;
     thread_local std::vector<HMODULE> resolving;
     thread_local std::map<HMODULE, int> startedResults;
+    thread_local int depth = 0;
+    struct Depth {
+        int& value;
+        std::map<HMODULE, int>& results;
+        Depth(int& counter, std::map<HMODULE, int>& stored) : value(counter), results(stored) { ++value; }
+        ~Depth() { if (--value == 0) results.clear(); }
+    } scope(depth, startedResults);
     if (std::find(resolving.begin(), resolving.end(), native) != resolving.end()) return;
     auto* table = reinterpret_cast<std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
     if (!table) return;
