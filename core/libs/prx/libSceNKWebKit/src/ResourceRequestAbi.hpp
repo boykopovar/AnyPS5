@@ -9,7 +9,7 @@
 namespace NKWebKit::WebCoreAbi {
 
 struct HTTPHeaderMap {
-    alignas(8) unsigned char storage[128];
+    alignas(8) unsigned char storage[32];
 };
 
 struct Vector {
@@ -47,20 +47,20 @@ struct ResourceRequestBase {
 
 enum SameSiteDisposition : std::uint8_t { Unspecified, SameSite, CrossSite };
 
-static_assert(sizeof(HTTPHeaderMap) == 128);
+static_assert(sizeof(HTTPHeaderMap) == 32);
 static_assert(sizeof(Vector) == 16);
 static_assert(offsetof(ResourceRequestBase, url) == 0);
 static_assert(offsetof(ResourceRequestBase, firstPartyForCookies) == 40);
 static_assert(offsetof(ResourceRequestBase, timeoutInterval) == 80);
 static_assert(offsetof(ResourceRequestBase, httpMethod) == 88);
 static_assert(offsetof(ResourceRequestBase, httpHeaderFields) == 96);
-static_assert(offsetof(ResourceRequestBase, responseContentDispositionEncodingFallbackArray) == 224);
-static_assert(offsetof(ResourceRequestBase, cachePolicy) == 240);
-static_assert(offsetof(ResourceRequestBase, sameSiteDisposition) == 241);
-static_assert(offsetof(ResourceRequestBase, priority) == 242);
-static_assert(offsetof(ResourceRequestBase, requester) == 243);
-static_assert(offsetof(ResourceRequestBase, initiatorIdentifier) == 248);
-static_assert(offsetof(ResourceRequestBase, cachePartition) == 256);
-static_assert(offsetof(ResourceRequestBase, httpBody) == 264);
+static_assert(offsetof(ResourceRequestBase, responseContentDispositionEncodingFallbackArray) == 128);
+static_assert(offsetof(ResourceRequestBase, cachePolicy) == 144);
+static_assert(offsetof(ResourceRequestBase, sameSiteDisposition) == 145);
+static_assert(offsetof(ResourceRequestBase, priority) == 146);
+static_assert(offsetof(ResourceRequestBase, requester) == 147);
+static_assert(offsetof(ResourceRequestBase, initiatorIdentifier) == 152);
+static_assert(offsetof(ResourceRequestBase, cachePartition) == 160);
+static_assert(offsetof(ResourceRequestBase, httpBody) == 168);
 
 }
