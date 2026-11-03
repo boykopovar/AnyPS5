@@ -282,6 +282,8 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
     return std::fma(x, y, z);
 }
 
+double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : std::floor(x); }
+float APS5_VABI floorf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::floor(x); }
 double APS5_VABI rint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }
 float APS5_VABI rintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rint(x); }
 float APS5_VABI nearbyintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rintf(x); }
@@ -422,6 +424,15 @@ short APS5_VABI _LDnorm_nid_postfix(std::uint16_t* words) {
     std::memcpy(words, &mantissa, sizeof(mantissa));
     return static_cast<short>(-shift);
 }
+
+short APS5_VABI _ZNSt8__sce_v26_DtestEPd_nid_postfix(double* value) { return _Dtest_nid_postfix(value); }
+short APS5_VABI _ZNSt8__sce_v27_FDtestEPf_nid_postfix(float* value) { return _FDtest_nid_postfix(value); }
+short APS5_VABI _ZNSt8__sce_v27_LDtestEPe_nid_postfix(double* value) { return _Dtest_nid_postfix(value); }
+short APS5_VABI _ZNSt8__sce_v25_DintEPds_nid_postfix(double* value, short scale) { return _Dint_nid_postfix(value, scale); }
+short APS5_VABI _ZNSt8__sce_v26_FDintEPfs_nid_postfix(float* value, short scale) { return _FDint_nid_postfix(value, scale); }
+short APS5_VABI _ZNSt8__sce_v26_LDintEPes_nid_postfix(double* value, short scale) { return _Dint_nid_postfix(value, scale); }
+short APS5_VABI _ZNSt8__sce_v26_DnormEPNS_5_DvalE_nid_postfix(std::uint16_t* words) { return _Dnorm_nid_postfix(words); }
+short APS5_VABI _ZNSt8__sce_v27_FDnormEPNS_5_FvalE_nid_postfix(std::uint16_t* words) { return _FDnorm_nid_postfix(words); }
 
 int APS5_VABI _Fpcomp_nid_postfix(double x, double y) { return std::isnan(x) || std::isnan(y) ? 0 : Compare(x, y); }
 int APS5_VABI _FFpcomp_nid_postfix(float x, float y) { return std::isnan(x) || std::isnan(y) ? 0 : Compare(x, y); }

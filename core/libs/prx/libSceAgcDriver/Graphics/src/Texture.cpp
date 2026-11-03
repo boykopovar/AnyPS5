@@ -67,6 +67,11 @@ void OwnedImage::Allocate(const Context& device, const VkMemoryAllocateInfo& all
 
 namespace {
 
+Recorder* recorderFor(const Context& context) {
+    auto* recorder = Recorder::Active();
+    return recorder != nullptr && recorder->Device() == context.device ? recorder : nullptr;
+}
+
 // APS5_PROFILE_DRAW: accumulate texture setup phases and report every 200 textures.
 struct TextureProfile {
     double allocate = 0, read = 0, gpu = 0, view = 0;
@@ -84,6 +89,8 @@ struct TextureProfile {
     // batch of their own (APS5_NO_RECORDED_CLEAR=1, or no recorder).
     std::uint64_t storageRecordedClears = 0;
     std::uint64_t storageWaitedClears = 0;
+    std::uint64_t layerRows = 0;
+    double layerRowsMs = 0;
 };
 
 TextureProfile& Profile() {
@@ -288,7 +295,8 @@ namespace {
 void ChainMinLod(const Context& context, const GuestTextureResource& descriptor, VkImageViewCreateInfo& viewInfo, VkImageViewMinLodCreateInfoEXT& minLod) {
     const auto clamp = EffectiveMinLod(descriptor);
     if (clamp == 0.0f) return;
-    Require(context.imageViewMinLod, "guest texture descriptor uses a minimum LOD clamp, which needs VK_EXT_image_view_min_lod");
+    Require(context.imageViewMinLod || context.shaderImageMinLod, "guest texture descriptor uses a minimum LOD clamp, which needs VK_EXT_image_view_min_lod, or shaderResourceMinLod without graphics pipeline libraries");
+    if (!context.imageViewMinLod) return;
     minLod.minLod = clamp;
     minLod.pNext = viewInfo.pNext;
     viewInfo.pNext = &minLod;
@@ -352,10 +360,11 @@ std::uint64_t SampledTextureMemory() {
     return SampledMemoryCounter().load(std::memory_order_relaxed);
 }
 
-Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare, const VkClearColorValue* clear) : context(context) {
+Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare, bool layerRows, const VkClearColorValue* clear) : context(context) {
 
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
+    const auto started = profile && layerRows ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     try {
         const auto colorFormat = SampledTextureFormat(context, descriptor.format);
         const bool srgbExpand = !depthCompare && SrgbExpandsToRgba8(context, descriptor.format);
@@ -365,6 +374,12 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         const VkImageAspectFlags aspect = depthCompare ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
         if (IsBlockCompressed(descriptor.format)) {
             Require(context.textureCompressionBC, "device does not support BC compressed textures");
+        }
+        if (layerRows) {
+            Require(!depthCompare && descriptor.dimension == TextureDimension::k1DArray, "only a sampled 1D array is laid out as rows of a 2D image");
+            Require(!srgbExpand, "a 1D array laid out as rows of a 2D image in a format expanded to RGBA8 is not implemented");
+            Require(!IsBlockCompressed(descriptor.format), "a block-compressed 1D array laid out as rows of a 2D image is not implemented");
+            Require(descriptor.baseLevel == 0u && std::min(descriptor.lastLevel, descriptor.mipCount - 1u) == 0u, "a 1D array past maxImageArrayLayers viewed at mip levels other than level 0 alone is not implemented");
         }
 
         const auto geometry = DescribeSurface(descriptor);
@@ -386,14 +401,16 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         const auto linearBytes = sliceLinearBytes * arrayLayers;
 
         const bool depth1D = depthCompare && (descriptor.dimension == TextureDimension::k1D || descriptor.dimension == TextureDimension::k1DArray);
+        const auto rowLayers = layerRows ? geometry.imageLayers - descriptor.baseArray : 0u;
+        Require(!layerRows || (descriptor.baseArray < geometry.imageLayers && rowLayers <= context.limits.maxImageDimension2D / 2u), "a 1D array past maxImageArrayLayers whose viewed slices need more than maxImageDimension2D rows is not implemented");
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         imageInfo.flags = (descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (SrgbTwinFormat(context, vkFormat) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u);
-        imageInfo.imageType = depth1D ? VK_IMAGE_TYPE_2D : ImageTypeFor(descriptor.dimension);
+        imageInfo.imageType = depth1D || layerRows ? VK_IMAGE_TYPE_2D : ImageTypeFor(descriptor.dimension);
         imageInfo.format = vkFormat;
-        imageInfo.extent = {descriptor.width, depth1D ? 1u : descriptor.height, geometry.imageDepth};
-        imageInfo.mipLevels = descriptor.mipCount;
-        Require(geometry.imageLayers <= context.limits.maxImageArrayLayers, "a texture array with more layers than maxImageArrayLayers is not implemented");
-        imageInfo.arrayLayers = geometry.imageLayers;
+        imageInfo.extent = {descriptor.width, layerRows ? rowLayers * 2u : depth1D ? 1u : descriptor.height, geometry.imageDepth};
+        imageInfo.mipLevels = layerRows ? 1u : descriptor.mipCount;
+        Require(layerRows || geometry.imageLayers <= context.limits.maxImageArrayLayers, "a texture array with more layers than maxImageArrayLayers is not implemented");
+        imageInfo.arrayLayers = layerRows ? 1u : geometry.imageLayers;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | (srgbExpand ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u);
@@ -433,7 +450,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 batch = std::make_unique<CommandBatch>(context);
                 commands = batch->Handle();
             }
-            const VkImageSubresourceRange range{aspect, 0, descriptor.mipCount, 0, geometry.imageLayers};
+            const VkImageSubresourceRange range{aspect, 0, imageInfo.mipLevels, 0, imageInfo.arrayLayers};
             VkImageMemoryBarrier toTransferDst{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             toTransferDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             toTransferDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -539,12 +556,22 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             toTransferDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransferDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransferDst.image = uploadImage;
-            toTransferDst.subresourceRange = {aspect, 0, descriptor.mipCount, 0, geometry.imageLayers};
+            toTransferDst.subresourceRange = layerRows ? VkImageSubresourceRange{aspect, 0, 1, 0, 1} : VkImageSubresourceRange{aspect, 0, descriptor.mipCount, 0, geometry.imageLayers};
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearReadBarrier, 1, &toTransferDst);
 
             std::vector<VkBufferImageCopy> regions;
             regions.reserve(static_cast<std::size_t>(arrayLayers) * mips.size());
-            for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+            for (std::uint32_t row = 0; row < rowLayers * 2u; ++row) {
+                const auto layer = descriptor.baseArray + row / 2u;
+                VkBufferImageCopy region{};
+                region.bufferOffset = static_cast<std::uint64_t>(layer) * sliceLinearBytes + mips[0].linearOffset;
+                region.bufferRowLength = mips[0].pitchBytes / BytesPerElement(descriptor.format) * BlockWidth(descriptor.format);
+                region.imageSubresource = {aspect, 0, 0, 1};
+                region.imageOffset = {0, static_cast<std::int32_t>(row), 0};
+                region.imageExtent = {descriptor.width, 1u, 1u};
+                regions.push_back(region);
+            }
+            for (std::uint32_t layer = 0; layer < (layerRows ? 0u : arrayLayers); ++layer) {
                 const auto linearLayerOffset = static_cast<std::uint64_t>(layer) * sliceLinearBytes;
                 for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
@@ -621,11 +648,11 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
 
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = image;
-        viewInfo.viewType = depth1D ? (descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D) : ViewTypeFor(descriptor.dimension, viewLayerCount);
+        viewInfo.viewType = layerRows ? VK_IMAGE_VIEW_TYPE_2D : depth1D ? (descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D) : ViewTypeFor(descriptor.dimension, viewLayerCount);
         viewInfo.format = srgbExpand ? VK_FORMAT_R8G8B8A8_SRGB : vkFormat;
         viewFormat = viewInfo.format;
         viewInfo.components = depthCompare ? VkComponentMapping{} : components;
-        viewInfo.subresourceRange = {aspect, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
+        viewInfo.subresourceRange = layerRows ? VkImageSubresourceRange{aspect, 0, 1, 0, 1} : VkImageSubresourceRange{aspect, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
 
@@ -638,6 +665,11 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             auto& totals = Profile();
             totals.view += timer.lap();
             if (++totals.count % 200 == 0) std::fprintf(stderr, "[texture] %llu textures (%llu copied from storage images, %llu uploads recorded): allocate+image %.0f ms, guest read %.0f ms, detile+copy %.0f ms, view+buffer release %.0f ms\n", static_cast<unsigned long long>(totals.count), static_cast<unsigned long long>(totals.fromStorage), static_cast<unsigned long long>(totals.recordedUploads), totals.allocate, totals.read, totals.gpu, totals.view);
+            if (layerRows) {
+                const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+                totals.layerRowsMs += ms;
+                std::fprintf(stderr, "[texture] layer rows 0x%llx: %u slices of %u texels as a %ux%u image in %.2f ms (%llu layer-row textures, %.0f ms in all)\n", static_cast<unsigned long long>(descriptor.baseAddress), rowLayers, descriptor.width, descriptor.width, rowLayers * 2u, ms, static_cast<unsigned long long>(++totals.layerRows), totals.layerRowsMs);
+            }
         }
         countedBytes = allocationBytes;
         SampledMemoryCounter().fetch_add(countedBytes, std::memory_order_relaxed);
@@ -1105,7 +1137,7 @@ bool Texture::CanCopyFrom(const StorageTexture& source, const GuestTextureResour
     // Same memory, same layout, same texel size: the GPU copy reinterprets the texels exactly as a
     // guest read through the sampled descriptor would.
     if (IsRepackedTextureFormat(descriptor.format)) return false;
-    return descriptor.baseAddress == from.baseAddress && descriptor.pipeBankXor == from.pipeBankXor && descriptor.width == from.width && descriptor.height == from.height && ArrayLayersServeView(from, descriptor) && descriptor.tileMode == from.tileMode && descriptor.mipCount <= from.mipCount && BytesPerElement(descriptor.format) == BytesPerElement(from.format) && BlockWidth(descriptor.format) == BlockWidth(from.format);
+    return descriptor.baseAddress == from.baseAddress && descriptor.pipeBankXor == from.pipeBankXor && descriptor.width == from.width && descriptor.height == from.height && descriptor.linearPitch == from.linearPitch && ArrayLayersServeView(from, descriptor) && descriptor.tileMode == from.tileMode && descriptor.mipCount <= from.mipCount && BytesPerElement(descriptor.format) == BytesPerElement(from.format) && BlockWidth(descriptor.format) == BlockWidth(from.format);
 }
 
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components) : context(context), storageSource(source) {
@@ -1205,7 +1237,7 @@ void Texture::prepareSrgbView(const GuestTextureResource& descriptor, VkImageVie
     viewInfo.pNext = nullptr;
     viewInfo.format = format;
     srgbInfo = viewInfo;
-    srgbMinLod = EffectiveMinLod(descriptor);
+    srgbMinLod = context.imageViewMinLod ? EffectiveMinLod(descriptor) : 0.0f;
 }
 
 VkImageView Texture::SrgbView(bool firstLayer, bool baseLevel) const {
@@ -1322,21 +1354,21 @@ VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
     };
     VkFormat storage = VK_FORMAT_UNDEFINED;
     const auto packed = PackedStorageViewFormat(format);
+    VkFormat linear = VK_FORMAT_UNDEFINED;
+    switch (format) {
+        case VK_FORMAT_R8G8B8A8_SRGB: linear = VK_FORMAT_R8G8B8A8_UNORM; break;
+        case VK_FORMAT_B8G8R8A8_SRGB: linear = VK_FORMAT_B8G8R8A8_UNORM; break;
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32: linear = VK_FORMAT_A8B8G8R8_UNORM_PACK32; break;
+        case VK_FORMAT_R8_SRGB: linear = VK_FORMAT_R8_UNORM; break;
+        case VK_FORMAT_R8G8_SRGB: linear = VK_FORMAT_R8G8_UNORM; break;
+        default: break;
+    }
     if (packed != VK_FORMAT_UNDEFINED) {
         if (supports(packed)) storage = format;
+    } else if (linear != VK_FORMAT_UNDEFINED) {
+        if (supports(linear)) storage = linear;
     } else if (supports(format)) {
         storage = format;
-    } else {
-        VkFormat linear = VK_FORMAT_UNDEFINED;
-        switch (format) {
-            case VK_FORMAT_R8G8B8A8_SRGB: linear = VK_FORMAT_R8G8B8A8_UNORM; break;
-            case VK_FORMAT_B8G8R8A8_SRGB: linear = VK_FORMAT_B8G8R8A8_UNORM; break;
-            case VK_FORMAT_A8B8G8R8_SRGB_PACK32: linear = VK_FORMAT_A8B8G8R8_UNORM_PACK32; break;
-            case VK_FORMAT_R8_SRGB: linear = VK_FORMAT_R8_UNORM; break;
-            case VK_FORMAT_R8G8_SRGB: linear = VK_FORMAT_R8G8_UNORM; break;
-            default: break;
-        }
-        if (linear != VK_FORMAT_UNDEFINED && supports(linear)) storage = linear;
     }
     std::lock_guard lock(table.mutex);
     table.formats.emplace(key, storage);
@@ -3803,7 +3835,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     const bool scratchUsed = std::any_of(directRanges.begin(), directRanges.end(), [](const auto& range) { return range.first == range.second; }) || std::any_of(slabPieces.begin(), slabPieces.end(), [](const SlabPieces& pieces) { return !pieces.copies.empty(); }) || std::any_of(importCopies.begin(), importCopies.end(), [](const auto& copies) { return !copies.empty(); }) || !saves.empty() || !padding.copies.empty() || !seeds.empty();
     auto tiledScratch = scratchUsed ? std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(scratchTotal), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : nullptr;
     detiler.BeginBatch();
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
     std::unique_ptr<CommandBatch> batch;
     VkCommandBuffer commands = VK_NULL_HANDLE;
     VkAccessFlags covered = 0;
@@ -4481,7 +4513,7 @@ void waitForIdlePublish(const char* reason) {
 
 }
 
-bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited) {
+bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited, VkDevice device) {
     static_cast<void>(FlushDepthPlanes(address, bytes));
     if (published != nullptr) *published = false;
     const auto nothingToStore = [&] {
@@ -4522,7 +4554,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         const auto* exempt = refreshing;
         for (auto it = pending.textures.MayOverlap(address, bytes) ? pending.textures.begin() : pending.textures.end(); it != pending.textures.end();) {
             auto* texture = *it;
-            if (texture != except && texture != exempt && texture->overlaps(address, bytes)) {
+            if (texture != except && texture != exempt && (device == VK_NULL_HANDLE || texture->context.device == device) && texture->overlaps(address, bytes)) {
                 if (!texture->pendingUnitInside(address, bytes)) {
                     pretestSkipped.fetch_add(1, std::memory_order_relaxed);
                     ++it;
@@ -4788,7 +4820,7 @@ void StorageTexture::commitStoredSave(const std::vector<std::uint32_t>& units) {
     if (units.empty()) return;
     const auto ticket = ++lastSaveTicket;
     for (const auto unit : units) savedTicket[unit] = ticket;
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
     if (recorder == nullptr) {
         applyStoredSave(ticket, units);
         return;
@@ -4829,7 +4861,8 @@ void StorageTexture::awaitStoredSave(const std::vector<bool>* layers) {
         last = std::max(last, layerBegin(unit) + layerBytes(unit));
     }
     if (last <= first) return;
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
+    if (recorder == nullptr) recorder = context.recorder;
     Require(recorder != nullptr, "a write-back's saved guest bytes are pending without a recorder");
     recorder->SyncThrough(first, static_cast<std::size_t>(last - first));
     const auto outstanding = [&] {
@@ -4961,26 +4994,28 @@ void StorageTexture::FlushDumpSelected(const char* reason) {
     for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
 }
 
-void StorageTexture::FlushAllPending(const char* reason) {
+void StorageTexture::FlushAllPending(const char* reason, VkDevice device) {
     std::optional<PublishOnCpuScope> onCpu;
     if (reason != nullptr && std::strcmp(reason, "idle") == 0) onCpu.emplace();
-    static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason));
+    static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason, PublishScope::Whole, nullptr, false, device));
 }
 
-bool StorageTexture::FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop) {
+bool StorageTexture::FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop, VkDevice device) {
     std::optional<PublishOnCpuScope> onCpu;
     if (reason != nullptr && std::strcmp(reason, "idle") == 0) onCpu.emplace();
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
-        for (const auto* texture : pending.textures) ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        for (const auto* texture : pending.textures) {
+            if (device == VK_NULL_HANDLE || texture->context.device == device) ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        }
     }
     constexpr std::size_t piece = std::size_t{4} << 20u;
     for (const auto& [address, bytes] : ranges) {
         for (std::size_t offset = 0; offset < bytes; offset += piece) {
             if (stop()) return false;
-            static_cast<void>(FlushPending(address + offset, std::min(piece, bytes - offset), nullptr, reason));
+            static_cast<void>(FlushPending(address + offset, std::min(piece, bytes - offset), nullptr, reason, PublishScope::Whole, nullptr, false, device));
         }
     }
     return true;
@@ -5898,7 +5933,7 @@ std::shared_ptr<StorageTexture> StorageTexture::FindLive(std::uint64_t address, 
 bool StorageTexture::SameSurfaceShape(const StorageTexture& other) const {
     const auto& mine = descriptor;
     const auto& theirs = other.descriptor;
-    return guestBytes == other.guestBytes && mine.width == theirs.width && mine.height == theirs.height && mine.depthOrLastArray == theirs.depthOrLastArray && mine.baseArray == theirs.baseArray && mine.mipCount == theirs.mipCount && mine.tileMode == theirs.tileMode && mine.dimension == theirs.dimension && mine.format == theirs.format && storageFormat == other.storageFormat && geometry.imageLayers == other.geometry.imageLayers && geometry.imageDepth == other.geometry.imageDepth;
+    return guestBytes == other.guestBytes && mine.width == theirs.width && mine.height == theirs.height && mine.linearPitch == theirs.linearPitch && mine.depthOrLastArray == theirs.depthOrLastArray && mine.baseArray == theirs.baseArray && mine.mipCount == theirs.mipCount && mine.tileMode == theirs.tileMode && mine.dimension == theirs.dimension && mine.format == theirs.format && storageFormat == other.storageFormat && geometry.imageLayers == other.geometry.imageLayers && geometry.imageDepth == other.geometry.imageDepth;
 }
 
 bool StorageTexture::ImageCoversGuestBytes() const {
@@ -6640,7 +6675,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             padding = {};
         }
         detiler.BeginBatch();
-        auto* recorder = Recorder::Active();
+        auto* recorder = recorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         VkCommandBuffer commands = VK_NULL_HANDLE;
         auto timing = Recorder::NoTiming;

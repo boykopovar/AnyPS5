@@ -2,7 +2,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -13,6 +15,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
@@ -83,7 +86,7 @@ struct DepthGuard {
 };
 
 std::shared_mutex& depthGuardMutex() {
-    static std::shared_mutex mutex;
+    static PrimedSharedMutex mutex;
     return mutex;
 }
 
@@ -335,6 +338,10 @@ std::optional<DepthPlaneOverwrite> decodeOverwrite(const StorageImageClear& clea
     overwrite.height = clear.height;
     return overwrite;
 }
+
+class DepthSurface;
+std::pair<std::uint64_t, std::uint64_t> staleStencilRange(const DepthSurface& surface);
+void noteStalePlane(std::uint64_t begin, std::uint64_t end);
 
 class DepthSurface {
 public:
@@ -628,21 +635,48 @@ public:
         return texture;
     }
 
+    std::shared_ptr<Texture> FirstSample(const Texture& source, VkComponentMapping components) {
+        auto* recorder = RecorderFor(context);
+        Require(recorder != nullptr, "a native multisampled depth target is sampled only by recorded draws and dispatches");
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        const auto format = d16 ? VK_FORMAT_R16_UNORM : VK_FORMAT_R32_SFLOAT;
+        if (firstSample == nullptr) firstSample = std::make_shared<FirstSampleTextures>(context, format, target.extent);
+        firstSample->copy.Record(*recorder, source.View(), source.Layout());
+        const std::array<std::uint32_t, 4> key{static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)};
+        auto& texture = firstSample->textures[key];
+        if (texture == nullptr) {
+            texture = std::make_shared<Texture>(context, firstSample->copy.Image(), format, VK_IMAGE_ASPECT_COLOR_BIT, components);
+            texture->MarkRefreshedPerUse();
+        }
+        return {firstSample, texture.get()};
+    }
+
     void ForgetClear(VkImageAspectFlags aspects) {
         pendingClear &= ~aspects;
         if ((aspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0) depthFill.reset();
         if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0) stencilFill.reset();
     }
 
+    void MarkStencilStale() {
+        if (!StencilMirrorable()) return;
+        stencilStale = true;
+        const auto [begin, end] = staleStencilRange(*this);
+        noteStalePlane(begin, end);
+    }
+
     void NoteHtileClear(VkImageAspectFlags aspects) {
         ForgetClear(aspects);
         pendingClear |= aspects;
+        if ((aspects & VK_IMAGE_ASPECT_STENCIL_BIT) != 0u) MarkStencilStale();
     }
 
     void NotePlaneFill(VkImageAspectFlagBits aspect, float depth, std::uint8_t stencil) {
         pendingClear |= aspect;
         if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT) depthFill = depth;
-        else stencilFill = stencil;
+        else {
+            stencilFill = stencil;
+            MarkStencilStale();
+        }
     }
 
     void CopyAspectFrom(const DepthSurface& source, VkImageAspectFlagBits aspect) {
@@ -860,6 +894,7 @@ public:
             auto& plane = stencil ? stencilPlane : depthPlane;
             const auto source = std::const_pointer_cast<StorageTexture>(candidate.shared_from_this());
             copyPlane(plane, source, stencil, false);
+            ForgetClear(stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT);
             written = ++depthWrites;
             NoteHostWrite();
             return true;
@@ -1213,6 +1248,12 @@ private:
         bool filled = false;
     };
     std::map<std::array<std::uint32_t, 13>, std::shared_ptr<Texture>> textures;
+    struct FirstSampleTextures {
+        FirstSampleTextures(const Context& context, VkFormat format, VkExtent2D extent) : copy(context, format, extent) {}
+        FirstSampleCopy copy;
+        std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> textures;
+    };
+    std::shared_ptr<FirstSampleTextures> firstSample;
     PlaneStorage depthPlane;
     PlaneStorage stencilPlane;
     std::uint64_t depthMemory = 0;
@@ -2435,6 +2476,10 @@ float HostDepthBiasConstant(const Context& context, VkFormat format, float const
 }
 
 VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested) {
+    return DepthSurfaceViewWithStencilWriteIntent(context, target, depthWritten, stencilTested, true);
+}
+
+VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const DepthTarget& target, bool depthWritten, bool stencilTested, bool stencilWritten) {
     const auto planeBytes = [&](std::uint32_t bytesPerTexel) { return target.samples == 1u ? DepthSliceBytes(target.extent, bytesPerTexel) : MultisampledDepthBytes_nid_no_patch(target.extent, bytesPerTexel, target.samples); };
     ClaimMultisampleTargetMemory(target.address, planeBytes(target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u));
     if (target.stencilAddress != 0u) ClaimMultisampleTargetMemory(target.stencilAddress, planeBytes(1u));
@@ -2485,6 +2530,8 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
     const bool inherits = owner != depthOwners().end() && owner->second.surface->active->load(std::memory_order_acquire) && !owner->second.surface->retired;
     surface->clearDepth = target.clearDepth;
     surface->clearStencil = target.clearStencil;
+    const auto stencilOwner = stencilOwners().find({context.device, target.stencilAddress});
+    const bool stencilRebound = stencilOwner == stencilOwners().end() || stencilOwner->second.surface != surface;
     takePlanes(*surface, created, htileCleared | (cleared ? VK_IMAGE_ASPECT_DEPTH_BIT : 0u));
     if (cleared || htileCleared != 0u) surface->expanded = false;
     if (created && !inherits && target.htileAddress == 0) surface->TakeStorage();
@@ -2517,11 +2564,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
         surface->MarkAllStale(planeBytes);
         noteStalePlane(plane, plane + planeBytes);
     }
-    if (surface->StencilMirrorable()) {
-        surface->stencilStale = true;
-        const auto [begin, end] = staleStencilRange(*surface);
-        noteStalePlane(begin, end);
-    }
+    if (stencilWritten || created || stencilRebound) surface->MarkStencilStale();
     drawnDepth = surface;
     return surface->view;
 }
@@ -2921,6 +2964,16 @@ thread_local bool depthCopySourceActive = false;
 
 }
 
+std::shared_ptr<Texture> DepthSurfaceFirstSample(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components) {
+    Require(resource.dimension == TextureDimension::k2DMsaa, "reading sample 0 of a depth surface needs a multisampled descriptor");
+    const auto source = DepthSurfaceTexture(context, words, resource, VkComponentMapping{}, VK_IMAGE_VIEW_TYPE_2D);
+    Require(source != nullptr, "reading sample 0 of a multisampled depth surface whose depth plane is not at the descriptor's address is not implemented");
+    std::lock_guard lock(surfacesMutex());
+    auto* found = planeSurface(context.device, resource.baseAddress);
+    Require(found != nullptr && found->target.address == resource.baseAddress, "reading sample 0 of a multisampled depth surface whose depth plane is not at the descriptor's address is not implemented");
+    return found->FirstSample(*source, components);
+}
+
 std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType multisampleViewType) {
     const auto held = [&](const auto& surface) {
         return surface->active->load(std::memory_order_acquire) && surface->context.device == context.device && !surface->retired && (surface->target.address == resource.baseAddress || (surface->target.stencilAddress != 0 && surface->target.stencilAddress == resource.baseAddress));
@@ -3033,8 +3086,10 @@ VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile) {
 }
 
 std::uint64_t HtileMetadataBytes(VkExtent2D extent) {
-    const auto blocks = static_cast<std::uint64_t>((extent.width + 1023u) / 1024u) * ((extent.height + 511u) / 512u);
-    return blocks * 32768u;
+    const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    const std::uint32_t blockWidth = gcn ? 512u : 1024u;
+    const auto blocks = static_cast<std::uint64_t>((extent.width + blockWidth - 1u) / blockWidth) * ((extent.height + 511u) / 512u);
+    return blocks * (gcn ? 16384u : 32768u);
 }
 
 bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t address, std::size_t bytes) {

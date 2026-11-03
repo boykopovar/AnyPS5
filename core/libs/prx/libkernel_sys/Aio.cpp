@@ -1,9 +1,9 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -71,7 +71,7 @@ struct Job {
 
 struct Aio {
     std::mutex lock;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     bool used = false;
     bool held = false;
     bool started = false;
@@ -104,7 +104,7 @@ void Worker() {
     auto& aio = Instance();
     std::unique_lock lock(aio.lock);
     for (;;) {
-        aio.changed.wait(lock, [&] { return !aio.held && !aio.queued.empty(); });
+        aio.changed.Wait(lock, [&] { return !aio.held && !aio.queued.empty(); });
         auto job = aio.queued.front();
         aio.queued.pop_front();
         job->state = State::Running;
@@ -113,7 +113,7 @@ void Worker() {
         lock.lock();
         job->state = State::Done;
         aio.done.push_back(job);
-        aio.changed.notify_all();
+        aio.changed.NotifyAll();
     }
 }
 
@@ -122,7 +122,7 @@ void Complete(Aio& aio, const std::shared_ptr<Job>& job, std::int64_t status, in
     job->error = error;
     job->state = State::Done;
     aio.done.push_back(job);
-    aio.changed.notify_all();
+    aio.changed.NotifyAll();
 }
 
 std::optional<int> ReadyError(const std::shared_ptr<Job>& job) {
@@ -190,7 +190,7 @@ int Queue(GuestAiocb* user, int opcode) {
         aio.started = true;
         std::thread(Worker).detach();
     }
-    aio.changed.notify_all();
+    aio.changed.NotifyAll();
     return 0;
 }
 
@@ -202,7 +202,7 @@ void AioHoldWorkerForTest_nid_no_patch(bool hold) {
     auto& aio = Instance();
     std::lock_guard lock(aio.lock);
     aio.held = hold;
-    aio.changed.notify_all();
+    aio.changed.NotifyAll();
 }
 
 int APS5_VABI aio_read_nid_postfix(GuestAiocb* aiocb) {
@@ -241,10 +241,11 @@ std::int64_t APS5_VABI aio_return_nid_postfix(GuestAiocb* aiocb) {
 
 int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, const KernelTimespec* timeout) {
     if (count < 0 || count > static_cast<int>(QueuePerProcess)) return Fail(GuestEinval);
-    std::optional<std::chrono::nanoseconds> wait;
+    std::optional<std::uint64_t> deadline;
     if (timeout != nullptr) {
-        wait = WaitTime(*timeout);
+        const auto wait = WaitTime(*timeout);
         if (!wait) return Fail(GuestEinval);
+        deadline = TimedWait::NowNanos() + static_cast<std::uint64_t>(wait->count());
     }
     auto& aio = Instance();
     std::unique_lock lock(aio.lock);
@@ -260,20 +261,21 @@ int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, 
             }
         }
         if (!listed) return 0;
-        if (!wait) aio.changed.wait(lock);
-        else if (aio.changed.wait_for(lock, *wait) == std::cv_status::timeout) return Fail(GuestEagain);
+        if (!deadline) aio.changed.Wait(lock);
+        else if (!aio.changed.WaitUntil(lock, *deadline)) return Fail(GuestEagain);
     }
 }
 
 std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const KernelTimespec* timeout) {
     if (result != nullptr) *result = nullptr;
-    std::optional<std::chrono::nanoseconds> wait;
+    std::optional<std::uint64_t> deadline;
     bool poll = false;
     if (timeout != nullptr) {
         poll = timeout->tv_sec == 0 && timeout->tv_nsec == 0;
         if (!poll) {
-            wait = WaitTime(*timeout);
+            const auto wait = WaitTime(*timeout);
             if (!wait) return Fail(GuestEinval);
+            deadline = TimedWait::NowNanos() + static_cast<std::uint64_t>(wait->count());
         }
     }
     auto& aio = Instance();
@@ -281,8 +283,8 @@ std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const K
     aio.used = true;
     while (aio.done.empty()) {
         if (poll) return Fail(GuestEagain);
-        if (!wait) aio.changed.wait(lock);
-        else if (aio.changed.wait_for(lock, *wait) == std::cv_status::timeout && aio.done.empty()) return Fail(GuestEagain);
+        if (!deadline) aio.changed.Wait(lock);
+        else if (!aio.changed.WaitUntil(lock, *deadline) && aio.done.empty()) return Fail(GuestEagain);
     }
     if (result != nullptr) *result = aio.done.front()->user;
     return Consume(aio, aio.done.begin());
