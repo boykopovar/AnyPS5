@@ -49,6 +49,7 @@
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/StagedMerge.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -582,6 +583,7 @@ struct VulkanDevice::State {
     bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
+    bool pushDescriptors = false;
     bool maintenance5 = false;
     bool fillModeNonSolid = false;
     std::uint32_t srgbDecodeFormats = 0;
@@ -674,6 +676,7 @@ struct VulkanDevice::State {
     std::unique_ptr<Graphics::GpuColorTransfer> colorTransfer;
     std::shared_ptr<Graphics::BufferPool> bufferPool;
     std::unique_ptr<Graphics::Buffer> emptyBuffer;
+    std::unique_ptr<Graphics::Buffer> oversizedBuffer;
     std::unique_ptr<Graphics::PlaceholderImages> placeholderImages;
     std::unique_ptr<Graphics::TextureCache> textureCache;
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
@@ -1134,6 +1137,7 @@ struct VulkanDevice::State {
             Graphics::ClearDepthSurfaces(device);
             Graphics::ClearMultisampleTargets(device);
             Graphics::ClearSampleOrders(device);
+            Graphics::ClearStagedMerges(device);
             {
                 std::lock_guard pipelines(computePipelinesMutex);
                 computePipelines.clear();
@@ -1155,6 +1159,7 @@ struct VulkanDevice::State {
             descriptorCache.reset();
             vertexInputs.reset();
             emptyBuffer.reset();
+            oversizedBuffer.reset();
             placeholderImages.reset();
             samplerCache.reset();
             textureCache.reset();
@@ -1885,6 +1890,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     maintenance8Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR};
     maintenance8Features.maintenance8 = VK_TRUE;
+    state->pushDescriptors = hasExtension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+    if (state->pushDescriptors) deviceExtensions.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
     VkPhysicalDeviceDepthClipControlFeaturesEXT depthClipFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT};
     if (hasExtension(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &depthClipFeatures};
@@ -2484,6 +2491,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     Graphics::BufferPool::SetForceAddresses(Graphics::DescriptorHeapEnabled());
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->emptyBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::ranges::fill(state->emptyBuffer->Bytes(), std::byte{0});
+    state->oversizedBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::ranges::fill(state->oversizedBuffer->Bytes(), std::byte{0});
     if (state->descriptorHeap && Graphics::DescriptorHeapEnabled()) APS5_LOG_OUT("Vulkan descriptor heap: %s", "GPU-mode draws and dispatches bind from VK_EXT_descriptor_heap");
     if (!compileOnly && Pm4::GdsImportable() && Graphics::HostImportFor(graphicsContext(), Pm4::GdsAddress(), Pm4::GdsBytes, Graphics::ImportRequester::Map) == nullptr) Pm4::RejectGdsImport();
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, window != nullptr || compileOnly);
@@ -2840,6 +2850,10 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     static const bool drain = std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
     const auto context = graphicsContext();
     const auto* import = Graphics::HostImportFor(context, address, bytes.size());
+    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
+    const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0;
+    const auto unregistered = import == nullptr && !listed && !storesPending ? Graphics::UnregisteredHostImport(context, address, bytes.size()) : nullptr;
+    if (unregistered != nullptr) import = unregistered.get();
     if (import == nullptr) return 3;
     // A unit shadow's results in the label's unit reach the import before the store lands over
     // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
@@ -2850,7 +2864,10 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // pair for a whole group of labels recorded back to back (Recorder::RecordStore orders the
     // stores of a run against each other and against the work before and after, the queued DCC
     // key stores included).
-    const auto recordStore = [&] { recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address); };
+    const auto recordStore = [&] {
+        recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address);
+        if (unregistered != nullptr) recorder.Keep(unregistered);
+    };
     // On the console every store a queue made before a label is in memory once the label is
     // visible. A listed copied writer (a dispatch or draw whose written buffer the device holds as a
     // CPU copy) is written back by the CPU when its batch is reaped, after the GPU already ran any
@@ -2871,10 +2888,9 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // range stored this way sync through its batch first (the label is a pending write of its batch
     // and counted in PendingCompletionLabels). Debug aid: APS5_DRAIN_COMPLETION_LABELS=1 drains
     // (reason 2) instead and stores the label on the CPU.
-    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
     if (drain) {
         if (listed) return 2;
-    } else if (const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0; bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
+    } else if (bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
         recorder.AfterCompletions(address, bytes, stamp, queue, false);
         return 5;
     }
@@ -4563,6 +4579,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.drawIndirectCount = state->drawIndirectCount;
     context.occlusionQueryPrecise = state->occlusionQueryPrecise;
     context.emptyBuffer = state->emptyBuffer ? state->emptyBuffer->Handle() : VK_NULL_HANDLE;
+    context.oversizedBuffer = state->oversizedBuffer ? state->oversizedBuffer->Handle() : VK_NULL_HANDLE;
     context.exactRobustLoads = state->exactRobustLoads;
     context.copiedWriters = state->copiedWriters.get();
     context.functions = state->functionsReady ? &state->deviceFunctions : nullptr;
@@ -4601,6 +4618,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.shaderImageMinLod = state->shaderImageMinLod;
     context.pipelineExecutableInfo = state->pipelineExecutableInfo;
     context.maintenance8 = state->maintenance8;
+    context.pushDescriptors = state->pushDescriptors;
     context.srgbDecodeFormats = state->srgbDecodeFormats;
     context.srgbCopyFormats = state->srgbCopyFormats;
     context.sampleLocationSampleCounts = state->sampleLocationSampleCounts;

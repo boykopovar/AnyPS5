@@ -925,7 +925,7 @@ constexpr std::array<const char*, static_cast<std::size_t>(HeapStageReason::Coun
                                                                                                          "unresolved image source",
                                                                                                          "known ineligible"};
 constexpr std::array<const char*, static_cast<std::size_t>(SetBindSite::Count)> SetBindSiteNames{"draw", "dispatch", "detiler",
-                                                                                                 "color transfer", "presentation"};
+                                                                                                 "color transfer", "presentation", "depth transfer", "staged merge"};
 constexpr std::array<const char*, static_cast<std::size_t>(HeapFallback::Count)> HeapFallbackNames{
     "draw unmapped", "draw mixed retry", "draw refused pair", "draw mixed reused", "dispatch unmapped"};
 
@@ -1073,6 +1073,13 @@ void CmdBindDescriptorSets(const Context& context, VkCommandBuffer commands, VkP
                            std::uint32_t firstSet, std::uint32_t setCount, const VkDescriptorSet* sets, SetBindSite site) {
     context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, firstSet, setCount,
                                                                                          sets, 0, nullptr);
+    if (pipelineStats()) setBinds[static_cast<std::size_t>(site)].fetch_add(1, std::memory_order_relaxed);
+    forgetHeapBinding(commands);
+}
+
+void CmdPushDescriptorSet(PFN_vkCmdPushDescriptorSetKHR push, VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, std::uint32_t set,
+                          std::uint32_t writeCount, const VkWriteDescriptorSet* writes, SetBindSite site) {
+    push(commands, bindPoint, layout, set, writeCount, writes);
     if (pipelineStats()) setBinds[static_cast<std::size_t>(site)].fetch_add(1, std::memory_order_relaxed);
     forgetHeapBinding(commands);
 }

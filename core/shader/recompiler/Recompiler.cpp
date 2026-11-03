@@ -1137,7 +1137,7 @@ void visitBindingPlanKey(const CompiledVariant& variant, const ResourceSnapshot&
         const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
         visit(fields.word1);
         visit(fields.word3);
-        visit(fields.known ? 4u | fields.misalignment : 0u);
+        visit(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
@@ -1918,7 +1918,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
                 mix(value.dwordCount);
                 mix(value.availableDwordMask);
                 const auto fields = BufferSpecializationFields(value, substitutes, index);
-                mix(fields.known ? 4u | fields.misalignment : 0u);
+                mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
                 mix(fields.word1);
                 if (value.dwordCount > 3u) mix(fields.word3);
                 for (std::uint32_t i = 4; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
@@ -1929,7 +1929,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
                 const auto fields = BufferSpecializationFields(snapshot.buffers[index], substitutes, index);
                 mix(fields.word1);
                 mix(fields.word3);
-                mix(fields.known ? 4u | fields.misalignment : 0u);
+                mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
             }
         }
         mixDescriptors(snapshot.images);

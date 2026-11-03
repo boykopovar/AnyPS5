@@ -215,7 +215,7 @@ void NoteDataAddressPush();
 void NoteEmptyResourceSet();
 std::uint64_t EmptyResourceSets();
 std::uint64_t DataAddressPushes();
-enum class SetBindSite : std::uint8_t { Draw, Dispatch, Detiler, ColorTransfer, Presentation, Count };
+enum class SetBindSite : std::uint8_t { Draw, Dispatch, Detiler, ColorTransfer, Presentation, DepthTransfer, StagedMerge, Count };
 enum class HeapFallback : std::uint8_t { DrawUnmapped, DrawMixedRetry, DrawRefusedPair, DrawMixedReused, DispatchUnmapped, Count };
 enum class HeapStageReason : std::uint8_t {
     Heap,
@@ -277,6 +277,8 @@ void CmdPushConstants(const Context& context, VkCommandBuffer commands, VkPipeli
                       std::uint32_t offset, std::uint32_t size, const void* values);
 void CmdBindDescriptorSets(const Context& context, VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout,
                            std::uint32_t firstSet, std::uint32_t setCount, const VkDescriptorSet* sets, SetBindSite site);
+void CmdPushDescriptorSet(PFN_vkCmdPushDescriptorSetKHR push, VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, std::uint32_t set,
+                          std::uint32_t writeCount, const VkWriteDescriptorSet* writes, SetBindSite site);
 std::uint64_t DescriptorHeapBinds();
 
 }
