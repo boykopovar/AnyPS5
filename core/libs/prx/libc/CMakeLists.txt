@@ -140,6 +140,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LocaleSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Hostname.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/DeviceName.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Environment.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
@@ -894,6 +895,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_dinkumware_float_bits PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_float_helpers_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2FloatHelpers.cpp)
+    target_include_directories(guest_sce_v2_float_helpers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_float_helpers_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_float_helpers_tests)
+    add_test(NAME guest_sce_v2_float_helpers COMMAND guest_sce_v2_float_helpers_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_float_helpers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_bessel_tests ${LIBS_INCLUDE_DIR}/tests/GuestBessel.cpp)
     target_include_directories(guest_bessel_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_bessel_tests PRIVATE libc)
@@ -1077,6 +1087,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_dinkumware_internals PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_device_name_tests ${LIBS_INCLUDE_DIR}/tests/GuestDeviceName.cpp)
+    target_include_directories(guest_device_name_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_device_name_tests PRIVATE libc)
+    configure_windows_unwind(guest_device_name_tests)
+    add_test(NAME guest_device_name COMMAND guest_device_name_tests)
+    set_tests_properties(guest_device_name PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_device_name PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_hostname_tests ${LIBS_INCLUDE_DIR}/tests/GuestHostname.cpp)
     target_include_directories(guest_hostname_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_hostname_tests PRIVATE libc)
@@ -1096,6 +1116,20 @@ if(BUILD_TESTING)
         set_tests_properties(guest_vector_algorithms PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_find_last_trivial_tests ${LIBS_INCLUDE_DIR}/tests/GuestFindLastTrivial.cpp)
+    target_include_directories(guest_find_last_trivial_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_find_last_trivial_tests PRIVATE libc)
+    configure_windows_unwind(guest_find_last_trivial_tests)
+    foreach(width 1 2 4 8)
+        foreach(mode empty positions values guard_pages)
+            add_test(NAME guest_find_last_trivial_${width}_${mode} COMMAND guest_find_last_trivial_tests ${width} ${mode})
+            set_tests_properties(guest_find_last_trivial_${width}_${mode} PROPERTIES TIMEOUT 20)
+            if(WIN32)
+                set_tests_properties(guest_find_last_trivial_${width}_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            endif()
+        endforeach()
+    endforeach()
     add_test_executable(guest_memrchr_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemrchr.cpp)
     target_include_directories(guest_memrchr_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_memrchr_tests PRIVATE libc)

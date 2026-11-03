@@ -118,6 +118,16 @@ void windowsStubRejectsAnOverlongAllocatorPath() {
     throw std::runtime_error("an allocator path past the startup buffer was accepted");
 }
 
+void windowsStubWaitsForTheParentAfterOpeningTheLog(const std::string& runPath) {
+    const auto nativeImports = Elfpatcher::Windows::WindowsImportBuilder().Build(0x1000);
+    const auto stub = windowsStub(nativeImports, runPath, {"libc.prx"});
+    const auto log = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("CreateFileW"), 0);
+    require(log != std::string::npos, runPath + ": the stub does not open anyps5.log");
+    const auto parent = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("GetEnvironmentVariableW"), 0);
+    require(parent != std::string::npos, runPath + ": the stub does not read ANYPS5_LOADEXEC_PARENT");
+    require(log < parent, runPath + ": the stub reads ANYPS5_LOADEXEC_PARENT before anyps5.log is opened");
+}
+
 void windowsLibSceAmprObjectImportsFallBackToTheLibcProvider() {
     using namespace Elfpatcher::Windows;
     const auto nativeImports = WindowsImportBuilder().Build(0x1000);
@@ -182,6 +192,8 @@ int main() {
         windowsStubLoadsTheAllocatorOnRequest("C:/Games/Title/libs", u"C:\\Games\\Title\\libs\\", {0x48, 0x8d, 0x0d});
         windowsStubLoadsTheAllocatorOnRequest("$ORIGIN/libs", u"libs\\", {0x48, 0x8d, 0x35});
         windowsStubRejectsAnOverlongAllocatorPath();
+        windowsStubWaitsForTheParentAfterOpeningTheLog("C:/Games/Title/libs");
+        windowsStubWaitsForTheParentAfterOpeningTheLog("$ORIGIN/libs");
         windowsLibSceAmprObjectImportsFallBackToTheLibcProvider();
         windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant();
         windowsKernelVariantDependenciesLoadCanonicalKernel();
