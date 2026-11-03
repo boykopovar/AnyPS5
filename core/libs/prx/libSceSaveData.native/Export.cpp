@@ -57,7 +57,6 @@ static std::string save_root() {
     return std::string(SAVE_DIR);
 }
 
-// Events the title polls with sceSaveDataGetEventResult; a backup completes at once here.
 static std::mutex g_state_mutex;
 static std::deque<SaveDataEvent> g_events;
 constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP = 1;
@@ -199,9 +198,6 @@ static bool dir_name_match(const char* str, const char* pattern) {
 
 namespace {
 
-// Save-data memory: one blob per user and slot, kept next to the save directory (_sd_mem/u<user>/slot<n>.bin),
-// with a small .param sidecar holding the last SaveDataParam the title wrote. Keying by user as well as slot
-// keeps two users' in-memory saves from colliding on the same console.
 constexpr char MEM_DIR[] = "_sd_mem";
 constexpr std::size_t MEM_MAX_SIZE = 32u * 1024u * 1024u;
 std::mutex g_mem_mutex;
@@ -225,8 +221,6 @@ bool file_size_of(const std::string& path, std::size_t* out) {
     return true;
 }
 
-// Atomic-ish write: write to a temp file then rename over the target, so a kill mid-write never
-// leaves a torn save behind.
 bool write_file_replace(const std::string& path, const std::vector<char>& data) {
     return savedata::replace_file(path, data.data(), data.size());
 }
@@ -1175,8 +1169,6 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
         }
         return SAVE_DATA_ERROR_INTERNAL;
     }
-    // The title gets a short mount point (16 bytes on the PS5) and opens files under it; the
-    // path resolver maps it to the save directory, whose name may be far longer.
     const std::string mountPoint = "/savedata" + std::to_string(slot);
     AddPathAlias_nid_no_patch(mountPoint.c_str(), absolutePath.c_str());
     std::memset(mount_result, 0, sizeof(*mount_result));
@@ -1307,7 +1299,6 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
     if (!file_size_of(path, &size)) {
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
     }
-    // Validate every range first so a bad entry never leaves a partial write.
     const std::uint32_t n = set_param->data != nullptr ? (set_param->data_num != 0 ? set_param->data_num : 1u) : 0u;
     for (std::uint32_t i = 0; i < n; i++) {
         const SaveDataMemoryData& d = set_param->data[i];
@@ -1378,7 +1369,6 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
     const std::string paramPath = mem_path(setup_param->user_id, setup_param->slot_id, "param");
     std::size_t paramSize = 0;
     const bool haveParam = file_size_of(paramPath, &paramSize);
-    // First run: create a zero-filled blob and report existed size 0 so the title treats it as a new save.
     if (!have || existed < setup_param->memory_size || (needParam && !haveParam)) {
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
@@ -1420,7 +1410,6 @@ int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* sync_param) {
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    // Every Set already writes straight through to disk; sync only has to confirm the memory exists.
     const std::int32_t user_id = *static_cast<const std::int32_t*>(sync_param);
     const std::uint32_t slot_id = reinterpret_cast<const std::uint32_t*>(sync_param)[1];
     std::lock_guard<std::mutex> lk(g_mem_mutex);
@@ -1460,7 +1449,6 @@ static int transferringMount(const SaveDataTransferringMount* mount, SaveDataMou
     if (mount_result != nullptr) {
         std::memset(mount_result, 0, sizeof(*mount_result));
     }
-    // No PS4-to-PS5 transfer data exists on this console.
     return SAVE_DATA_ERROR_NOT_FOUND;
 }
 
