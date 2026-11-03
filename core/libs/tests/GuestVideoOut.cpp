@@ -131,12 +131,12 @@ int main(int argc, char** argv) {
     ExpectFailure([] { sceVideoOutSetBufferAttribute(nullptr, 0x80000000u, 1, 0, 1920, 1080, 1920); });
     VideoOutBufferAttribute bufferAttr{};
     sceVideoOutSetBufferAttribute(&bufferAttr, 0x80000000u, 1, 0, 1920, 1080, 1920);
-    Require(bufferAttr.pixelFormat == 0x80000000u);
-    Require(bufferAttr.tilingMode == 1);
-    Require(bufferAttr.aspectRatio == 0);
+    Require(bufferAttr.pixel_format == 0x80000000u);
+    Require(bufferAttr.tiling_mode == 1);
+    Require(bufferAttr.aspect_ratio == 0);
     Require(bufferAttr.width == 1920);
     Require(bufferAttr.height == 1080);
-    Require(bufferAttr.pitchInPixel == 1920);
+    Require(bufferAttr.pitch_in_pixel == 1920);
 
     ExpectFailure([] { sceVideoOutSetBufferAttribute2(nullptr, 0x8000000000000000ull, 1, 1920, 1080, 0, 0, 0); });
     VideoOutBufferAttribute2 bufferAttr2{};
