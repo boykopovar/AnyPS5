@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -707,6 +708,40 @@ void testTagMarkers() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x79, {0x343u, 0xc6000005u}), 0x20u); }, "graphics packet in compute queue");
 }
 
+void testUserDataWriters() {
+    constexpr std::uint32_t untouched = 0xa5a5a5a5u;
+    const std::uint8_t bytes[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    std::uint32_t commands[16];
+    const auto run = [&](std::uint32_t written, std::initializer_list<std::uint32_t> expected, const char* reason) {
+        check(written == expected.size() && std::equal(expected.begin(), expected.end(), commands) && commands[written] == untouched, reason);
+        AgcDriver::QueueState state;
+        for (std::uint32_t offset = 0; offset < written;) {
+            const auto length = ((commands[offset] >> 16u) & 0x3fffu) + 2u;
+            execute(state, std::vector<std::uint32_t>(commands + offset, commands + offset + length));
+            offset += length;
+        }
+        if (written > 4) check(state.userConfig.at(0x343u) == commands[written - 1], "user data payload did not reach the last user data register");
+    };
+    std::fill(std::begin(commands), std::end(commands), untouched);
+    run(sceAgcDriverUserDataWritePopMarker(commands, 0), {0xc0017904u, 0x342u, 0xc2000000u}, "draw queue pop marker");
+    run(sceAgcDriverUserDataWritePopMarker(commands, 1), {0xc0017900u, 0x342u, 0xc2000000u}, "compute queue pop marker");
+    run(sceAgcDriverUserDataWritePacket(commands, 1, 0x12345678u, bytes, 0), {0xc0017900u, 0x342u, 0x12345678u}, "user data packet without bytes");
+    run(sceAgcDriverUserDataWritePacket(commands, 1, 0x12345678u, nullptr, 9), {0xc0017900u, 0x342u, 0x12345678u}, "user data packet without a source");
+    run(sceAgcDriverUserDataWritePacket(commands, 1, 0x12345678u, bytes, 2), {0xc0027900u, 0x342u, 0x12345678u, 0x00000201u}, "user data packet with an inline dword");
+    std::fill(std::begin(commands), std::end(commands), untouched);
+    run(sceAgcDriverUserDataWritePacket(commands, 1, 0x12345678u, bytes, 9),
+        {0xc0027900u, 0x342u, 0x12345678u, 0x04030201u, 0xc0043700u, 0x06010000u, 0xc343u, 0u, 0x08070605u, 0x00000009u}, "user data packet with a payload");
+    std::fill(std::begin(commands), std::end(commands), untouched);
+    run(sceAgcDriverUserDataWritePushMarker(commands, 0, "frame", 6, 0x11223344u),
+        {0xc0027904u, 0x342u, 0xc1011882u, 0x6d617266u, 0xc0033704u, 0x06010000u, 0xc343u, 0u, 0x00000065u}, "push marker");
+    std::fill(std::begin(commands), std::end(commands), untouched);
+    run(sceAgcDriverUserDataWriteSetMarker(commands, 1, "frame", 6, 0xffffffffu),
+        {0xc0027900u, 0x342u, 0xc0017fffu, 0x6d617266u, 0xc0033700u, 0x06010000u, 0xc343u, 0u, 0x00000065u}, "set marker");
+    std::uint32_t target = 0;
+    AgcDriver::QueueState state;
+    expectFailure([&] { execute(state, makePacket(0x37, {0x500u, low(&target), high(&target), 1u}, 4u)); }, "header flags 0x4");
+}
+
 void testMemoryCopyDecode() {
     using AgcDriver::Pm4::DecodeMemoryCopy;
     constexpr std::uint64_t source = 0x1120000000ull, destination = 0x403d7b400ull;
@@ -855,6 +890,29 @@ void testWriteChangedStoresExactlyTheChangedRuns() {
         const auto expected = current[i] != original[i] ? static_cast<std::uint8_t>(current[i]) : static_cast<std::uint8_t>(0xa0u ^ i);
         check(guest[i] == expected, "write-back stored a byte the GPU did not change or missed one it did");
     }
+}
+
+void testWriteChangedKeepingGuestKeepsCpuWrites() {
+    alignas(256) static std::uint8_t guest[1024 + 13];
+    std::vector<std::byte> original(sizeof(guest)), current(sizeof(guest));
+    std::uint32_t seed = 777;
+    const auto next = [&] { return seed = seed * 1103515245u + 12345u, seed >> 16u; };
+    std::vector<std::uint8_t> cpu(sizeof(guest));
+    for (std::size_t i = 0; i < sizeof(guest); ++i) {
+        original[i] = static_cast<std::byte>(next());
+        const auto kind = next() % 4;
+        current[i] = kind >= 2 ? static_cast<std::byte>(static_cast<std::uint8_t>(original[i]) ^ (1u + next() % 255u)) : original[i];
+        cpu[i] = kind % 2 == 1 ? static_cast<std::uint8_t>(static_cast<std::uint8_t>(original[i]) ^ (1u + next() % 255u)) : static_cast<std::uint8_t>(original[i]);
+        guest[i] = cpu[i];
+    }
+    AgcDriver::GuestMemory::WriteChangedKeepingGuest(reinterpret_cast<std::uintptr_t>(guest), current, original);
+    for (std::size_t i = 0; i < sizeof(guest); ++i) {
+        const auto expected = cpu[i] != static_cast<std::uint8_t>(original[i]) ? cpu[i] : static_cast<std::uint8_t>(current[i]);
+        check(guest[i] == expected, "write-back overwrote a byte the CPU changed since the upload, or skipped one it did not");
+    }
+    for (std::size_t i = 0; i < sizeof(guest); ++i) guest[i] = static_cast<std::uint8_t>(original[i]);
+    AgcDriver::GuestMemory::WriteChangedKeepingGuest(reinterpret_cast<std::uintptr_t>(guest), current, original);
+    for (std::size_t i = 0; i < sizeof(guest); ++i) check(guest[i] == static_cast<std::uint8_t>(current[i]), "write-back skipped a changed byte although the guest still held the upload");
 }
 
 void testWriteChangedChunksOfEveryDensity() {
@@ -2148,6 +2206,7 @@ int main(int argc, char** argv) {
         testWriteChangedKeepsUntouchedBytes();
         testWriteChangedChunksOfEveryDensity();
         testWriteChangedStoresExactlyTheChangedRuns();
+        testWriteChangedKeepingGuestKeepsCpuWrites();
         testRegisters();
         testRegisterFile();
         testContextAndBases();
@@ -2159,6 +2218,7 @@ int main(int argc, char** argv) {
         testMemory();
         testTraceRegisterWrites();
         testTagMarkers();
+        testUserDataWriters();
         testCopies();
         testMemoryCopyDecode();
         testMemorySynchronization();
