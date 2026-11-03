@@ -9,6 +9,19 @@
 - [scePsmlMfsrCreateContext1300, scePsmlMfsrGetDispatchMfsrPacket1300](../../../core/libs/prx/libScePsml_debug/Export.cpp) (libScePsml) - imported by PPSA28416 next to `scePsmlMfsrGetContextBufferRequirement1100`. The names are not in the aerolib NID list; they hash to the imported NIDs `kLF7WtQ1-Dg` and `DDVUyPyYHTA` (`tools/nid_names.py`). Measured on a 13.40 base console ([#11140](https://github.com/boykopovar/AnyPS5/pull/11140#issuecomment)): `scePsmlMfsrCreateContext1300` checks the resolution before the init flag — a parameter whose first dword is 0 and whose 16-bit width at 0x18 is above 3840 or height at 0x1a above 2160 returns 0x8A810013 (3841x2160, 3840x2161 and 7680x4320 all do; 3840x2160 and 1920x1080 pass through to the init check), a type-1 parameter skips the check, and everything else reaches `scePsmlMfsrCreateContext1100`'s init check. The width/height offsets are the measured ones; whether they are the same fields `MfsrContextParam` uses is unverified
 - [scePsmlMfsrEnableSpecularAA, scePsmlMfsrEnableQuality8K, scePsmlMfsrEnableLightWeight](../../../core/libs/prx/libScePsml_debug/Export.cpp) (libScePsml) - measured on a 13.40 base console ([#11140](https://github.com/boykopovar/AnyPS5/pull/11140#issuecomment)): all three return 0 before and after a failed init and ignore their argument, setting a byte (SpecularAA) and bits 0 and 1 of a flags word (Quality8K, LightWeight) — those bits gate `scePsmlMfsrGetSharedResourcesInitRequirement` types 1 and 2. Whether the argument is stored or the flag set unconditionally is not distinguished by the measurement; the model sets it unconditionally. `scePsmlMfsrEnableLightWeight` was not previously declared
 
+- [Later MFSR exports](../../../core/libs/prx/libScePsml_debug/Export.cpp) (libScePsml): 8 function exports of the 13.60-labelled `libScePsml` image. The pinned NID database has none of these names; each hashes to its NID with `tools/nid_names.py`. They are the unversioned, `800M3` and `From2023July` forms of the existing `CreateContext`, `GetContextBufferRequirement` and `GetDispatchMfsrPacket` exports. Parameter lists, return types, the version each form serves and behaviour are unverified. The parameterless `int` declarations are import-resolution placeholders, not verified ABI contracts, and every entry throws through `NotImplemented_nid_no_patch`. `libScePsml_debug` exports them too, because both libraries are built from this source.
+
+| Name | NID |
+| --- | --- |
+| `scePsmlMfsrCreateContext` | `2ecEbQaf9VU` |
+| `scePsmlMfsrCreateContext800M3` | `pwUkfVu0c0c` |
+| `scePsmlMfsrCreateContextFrom2023July` | `vUk2pWMx3KQ` |
+| `scePsmlMfsrGetContextBufferRequirement` | `EO9YQXmJEN8` |
+| `scePsmlMfsrGetContextBufferRequirement800M3` | `sjTyYheKTrU` |
+| `scePsmlMfsrGetContextBufferRequirementFrom2023July` | `IMlj247LdTo` |
+| `scePsmlMfsrGetDispatchMfsrPacket` | `CN7uea0UQso` |
+| `scePsmlMfsrGetDispatchMfsrPacketFrom2023July` | `wHto4IznfBE` |
+
 ### Functional
 
 - [scePsmlMfsrGetDispatchMfsrPacketSizeInDwords, scePsmlMfsrGetMipmapBias, scePsmlMfsrSelectConfig, scePsmlMfsrRequestCapture, scePsmlMfsrIsCaptureInProgress](../../../core/libs/prx/libScePsml_debug/Export.cpp) (libScePsml) - semantics verified against the real Sony `libScePsml.sprx` in PPSA20397's `fakelib`. Guards: `0x8A810001` uninitialized, `0x8A810005` null/foreign handle (the binary checks an engine id `0xA9C4`/`0x9231`; our map check is the equivalent), `0x8A810009` null output. `GetDispatchMfsrPacketSizeInDwords` writes `0x600`; `GetMipmapBias(context, bias, dimension)` writes `log2f(dimension / context->inputWidth) - 1.0f` (the binary reads the recorded width at context `+0x1920`), width recorded at `CreateContext800M3_2` from the parameter pair at 0x18 or `descriptor0 + 0x20` (zero width returns `0x8A810005`). `SelectConfig`, `IsCaptureInProgress` validate then return 0; `RequestCapture` validates, logs a one-shot message and returns 0.

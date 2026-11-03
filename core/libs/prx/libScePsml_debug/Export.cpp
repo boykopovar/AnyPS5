@@ -1,4 +1,5 @@
 #include "prx/libScePsml_debug/include/Api.hpp"
+#include "prx/libScePsml_debug/include/LaterExports.hpp"
 #include "prx/libkernel/libkernel.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -362,6 +363,42 @@ int APS5_VABI scePsmlMfsrEnableQuality8K(std::uint32_t) {
 int APS5_VABI scePsmlMfsrEnableLightWeight(std::uint32_t) {
  g_mfsrFeatureFlags |= 2u;
  return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI scePsmlMfsrCreateContext() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrCreateContext800M3() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrCreateContextFrom2023July() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetContextBufferRequirement() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetContextBufferRequirement800M3() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetContextBufferRequirementFrom2023July() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetDispatchMfsrPacket() {
+ NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePsmlMfsrGetDispatchMfsrPacketFrom2023July() {
+ NotImplemented_nid_no_patch(__func__);
 }
 
 }
