@@ -321,13 +321,13 @@ void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes,
     }
     double total = 0;
     for (int i = 0; i < numDashes; ++i) {
-        if (!(dashes[i] >= 0)) {
+        if (dashes[i] < 0) {
             state->status = kInvalidDash;
             return;
         }
         total += dashes[i];
     }
-    if (numDashes > 0 && !(total > 0)) {
+    if (numDashes > 0 && total == 0) {
         state->status = kInvalidDash;
         return;
     }
