@@ -270,7 +270,7 @@ int APS5_VABI tls_config_parse_protocols_nid_postfix();
 int APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix();
 int APS5_VABI tls_config_insecure_noverifyname_nid_postfix();
 int APS5_VABI ASN1_TYPE_free_nid_postfix();
-int APS5_VABI ASN1_TIME_diff_nid_postfix();
+int APS5_VABI ASN1_TIME_diff_nid_postfix(int* days, int* seconds, const Asn1String* from, const Asn1String* to);
 int APS5_VABI ECDSA_SIG_set0_nid_postfix();
 int APS5_VABI OBJ_obj2txt_nid_postfix();
 int APS5_VABI SSL_set_quic_transport_params_nid_postfix();

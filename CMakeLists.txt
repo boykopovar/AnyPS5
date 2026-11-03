@@ -258,6 +258,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
+        add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ffmpeg_cache_keys.py)
         foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
@@ -272,7 +274,18 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
         set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py WrappedDeclarationTests)
+        set_tests_properties(conventions_wrapped_declarations PROPERTIES TIMEOUT 30)
+        set(conventions_wrapped_declarations_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${conventions_wrapped_declarations_source}")
+        file(STRINGS "${conventions_wrapped_declarations_source}" conventions_wrapped_declarations_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
+        foreach(test_class IN LISTS conventions_wrapped_declarations_classes)
+            string(REGEX REPLACE "^class ([A-Za-z0-9_]+).*" "\\1" test_class "${test_class}")
+            if(NOT test_class STREQUAL "WrappedDeclarationTests")
+                add_test(NAME conventions_wrapped_declarations_${test_class} COMMAND ${Python3_EXECUTABLE} "${conventions_wrapped_declarations_source}" ${test_class})
+                set_tests_properties(conventions_wrapped_declarations_${test_class} PROPERTIES TIMEOUT 30)
+            endif()
+        endforeach()
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
         add_test(NAME preview_pad_timeline COMMAND ${Python3_EXECUTABLE}
@@ -284,6 +297,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_base_ref.py)
         add_test(NAME tools_configure_diff COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compare_configure_checks.py)
         set_tests_properties(tools_configure_diff PROPERTIES TIMEOUT 20)
+        add_test(NAME ctest_no_tests_flag COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_ctest_no_tests_flag.py)
+        set_tests_properties(ctest_no_tests_flag PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_doc_links.py)
         add_test(NAME conventions_unknown_nids COMMAND ${Python3_EXECUTABLE}
@@ -315,6 +330,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_fixture_warnings.py)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
+        add_test(NAME relinker_test_step COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_test_step.py)
         add_test(NAME tools_self_inspect COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_inspect_self.py)
         set_tests_properties(tools_self_inspect PROPERTIES TIMEOUT 20)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
@@ -411,6 +428,8 @@ if(BUILD_TESTING)
         add_test(NAME pad_input COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_input.py)
         set_tests_properties(pad_input PROPERTIES TIMEOUT 20)
+        add_test(NAME stale_conflicts_workflow COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stale_conflicts_workflow.py)
         add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_timeline.py)
         set_tests_properties(pad_timeline PROPERTIES TIMEOUT 20)
@@ -498,6 +517,26 @@ if(BUILD_TESTING)
                     add_test(NAME trace_digest_${trace_digest_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
                         "${trace_digest_test_source}" "${trace_digest_class}.${test_case}")
                     set_tests_properties(trace_digest_${trace_digest_class}_${test_case} PROPERTIES TIMEOUT 20)
+                endif()
+            endif()
+        endforeach()
+        set(unwrap_self_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${unwrap_self_test_source}")
+        file(STRINGS "${unwrap_self_test_source}" unwrap_self_cases REGEX "^class |^    def test_")
+        set(unwrap_self_first TRUE)
+        foreach(test_case IN LISTS unwrap_self_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(unwrap_self_class "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+                if(unwrap_self_first)
+                    set_tests_properties(unwrap_self PROPERTIES
+                        ENVIRONMENT "UNWRAP_SELF_TEST=${unwrap_self_class}.${test_case}" TIMEOUT 30)
+                    set(unwrap_self_first FALSE)
+                else()
+                    add_test(NAME unwrap_self_${unwrap_self_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                        "${unwrap_self_test_source}" "${unwrap_self_class}.${test_case}")
+                    set_tests_properties(unwrap_self_${unwrap_self_class}_${test_case} PROPERTIES TIMEOUT 30)
                 endif()
             endif()
         endforeach()
