@@ -34,12 +34,14 @@ struct Variant {
     bool entryRelative;
     bool setupRelative;
     bool afterLoop;
+    bool entryInput;
 };
 
-constexpr std::array<Variant, 3> Variants{{
-    {"loop", false, false, true},
-    {"setup and loop left at a join", false, true, false},
-    {"entry block and loop", true, false, true},
+constexpr std::array<Variant, 4> Variants{{
+    {"loop", false, false, true, false},
+    {"setup and loop left at a join", false, true, false, false},
+    {"entry block and loop", true, false, true, false},
+    {"entry block reads an input register", true, false, true, true},
 }};
 
 constexpr std::uint32_t Branch(std::uint32_t opcode, std::size_t from, std::size_t to) {
@@ -60,6 +62,7 @@ std::span<const std::uint32_t> Assemble(const Variant& variant, std::uint32_t wa
     put({0x7e0202ffu, MarkerV1, 0x7e0a02ffu, MarkerV5, 0x7e0c02ffu, MarkerV6});
     if (variant.entryRelative) put({0xbefc0382u, 0x7e088708u});
     else put({0x4a080482u});
+    if (variant.entryInput) put({0xbefc0380u, 0x7e208700u});
     put({waveSize == 64u ? 0xbe94047eu : 0xbe94037eu, 0x7da800ffu, Threshold(waveSize)});
     const auto skip = at;
     put({0u, 0xbefc0381u, 0xbe900383u, variant.setupRelative ? 0x7e0c8708u : 0x4a0c0481u});
@@ -76,8 +79,8 @@ std::span<const std::uint32_t> Assemble(const Variant& variant, std::uint32_t wa
 
 std::array<std::uint32_t, Stored> ExpectedFor(const Variant& variant, std::uint32_t waveSize, std::uint32_t tid) {
     const std::uint32_t base = tid * 16u;
-    if (tid >= Threshold(waveSize)) return {MarkerV1, base + 2u, MarkerV5, MarkerV6, base, base + 1u, base + 2u, base + 3u, base + 4u, base + 5u, base + 6u, base + 7u, 0u};
-    return {base + 1u, base + 2u, 0u, base + 1u, base, base + 1u, base + 1u, base + 1u, base + 1u, base + (variant.afterLoop ? 37u : 5u), base + 54u, base + 7u, 0u};
+    if (tid >= Threshold(waveSize)) return {MarkerV1, base + 2u, MarkerV5, MarkerV6, base, base + 1u, base + 2u, base + 3u, base + 4u, base + 5u, base + 6u, base + 7u, variant.entryInput ? tid : 0u};
+    return {base + 1u, base + 2u, variant.entryInput ? tid : 0u, base + 1u, base, base + 1u, base + 1u, base + 1u, base + 1u, base + (variant.afterLoop ? 37u : 5u), base + 54u, base + 7u, variant.entryInput ? tid : 0u};
 }
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
