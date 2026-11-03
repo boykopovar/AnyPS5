@@ -50,6 +50,7 @@ bool g_maintenance8 = false;
 bool g_robust2 = false;
 bool g_waveLdsMemoryBarriers = false;
 bool g_deviceScopeLdsMemoryBarriers = false;
+bool g_imageAtomicStoreBarriers = false;
 bool g_ldsLockFences = false;
 bool g_code = false;
 
@@ -60,6 +61,7 @@ bool Replay(const char* path) {
     if (g_waveLdsMemoryBarriers) request.request.target.waveLdsMemoryBarriers = true;
     if (g_deviceScopeLdsMemoryBarriers) request.request.target.deviceScopeLdsMemoryBarriers = true;
     if (g_ldsLockFences) request.request.target.ldsLockFences = true;
+    if (g_imageAtomicStoreBarriers) request.request.target.imageAtomicStoreBarriers = true;
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     if (request.request.context.compute.has_value()) {
         const auto& compute = *request.request.context.compute;
@@ -189,7 +191,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--image-atomic-store-barriers] [--lds-lock-fences] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
@@ -224,6 +226,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--device-scope-lds-memory-barriers") {
             g_deviceScopeLdsMemoryBarriers = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--image-atomic-store-barriers") {
+            g_imageAtomicStoreBarriers = true;
             continue;
         }
         if (std::string(argv[i]) == "--lds-lock-fences") {

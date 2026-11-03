@@ -130,6 +130,7 @@ struct SpirvEmitterState {
     std::uint32_t pixelFlatPositions = 0;
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> solvedBarycentrics;
     bool waveLdsMemoryBarriers = false;
+    bool imageAtomicStoreBarriers = false;
     bool deviceScopeLdsMemoryBarriers = false;
     bool ldsLockFences = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
