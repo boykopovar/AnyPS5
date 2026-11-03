@@ -332,10 +332,6 @@ int APS5_VABI X509_digest_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509V3_set_ctx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_config_set_ciphers_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
