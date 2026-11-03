@@ -86,6 +86,12 @@ class PublicHeaderPackageTests(unittest.TestCase):
         self.api.write_text('/*\n#include "Missing.hpp"\n*/\nconst char* text = R"test(\n#include "AlsoMissing.hpp"\n)test";\n', encoding="utf-8")
         self.assertEqual(len(package_headers.public_headers(self.source)), 3)
 
+    def test_include_next_is_rejected(self):
+        self.api.write_text('#include_next <vendor.h>\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Unsupported include_next"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
     def test_external_symlink_is_rejected(self):
         external = self.root / "external.hpp"
         external.write_text("", encoding="utf-8")
@@ -777,7 +783,7 @@ class ReleaseNoteDestinationsTests(unittest.TestCase):
                 previous = {path: path.read_bytes() for index, path in enumerate(paths) if index != position}
                 result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
                                          "--input", str(paths[0]), "--body", str(paths[1]), "--full", str(paths[2])],
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, text=True, encoding="utf-8", timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertTrue(paths[position].is_symlink())
@@ -1150,7 +1156,7 @@ class ReleaseMainTests(unittest.TestCase):
                 self.skipTest(str(error))
             result = subprocess.run([sys.executable, str(Path(package_release.__file__)),
                                      "--docs", str(docs), "--output", str(output)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertNotIn("Traceback", result.stderr)
             self.assertIn("symbolic link loop", result.stderr)
