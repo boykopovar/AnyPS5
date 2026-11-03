@@ -57,6 +57,8 @@ if(BUILD_TESTING)
 endif()
 
 
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Sha512_256.cpp)
+
 if(BUILD_TESTING)
     add_test_executable(guest_libressl3_libtls_settings_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/LibTlsSettings.cpp)
     target_include_directories(guest_libressl3_libtls_settings_tests PRIVATE ${LIBS_INCLUDE_DIR})
