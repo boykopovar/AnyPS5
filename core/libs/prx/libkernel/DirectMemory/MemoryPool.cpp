@@ -235,7 +235,7 @@ private:
         if (!ins.second) throw std::logic_error("DirectMemory pool: block map and page flags disagree");
 
         try {
-            CreateDirectMemoryBacking(static_cast<int64_t>(start), static_cast<size_t>(len), type);
+            CreateDirectMemoryBacking(static_cast<int64_t>(start), static_cast<size_t>(len));
         } catch (...) {
             _blocks.erase(ins.first);
             throw;

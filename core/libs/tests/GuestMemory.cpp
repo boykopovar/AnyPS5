@@ -1106,6 +1106,19 @@ static void CheckMtypeprotect() {
     std::int64_t start = -1;
     std::int64_t end = -1;
     Require(sceKernelGetDirectMemoryType(phys + static_cast<std::int64_t>(page * 2), &type, &start, &end) == 0 && type == 2);
+    void* alias = nullptr;
+    Require(sceKernelMapDirectMemory(&alias, page * 3, 3, 0, phys, 0) == 0);
+    Require(sceKernelMtypeprotect(bytes + page, page, 5, 3) == 0);
+    const auto typeAt = [&](void* base, std::size_t index) {
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(static_cast<unsigned char*>(base) + page * index, 0, &info, sizeof(info)) == 0 && info.is_direct);
+        return info.memory_type;
+    };
+    Require(typeAt(alias, 0) == 2 && typeAt(alias, 1) == 5 && typeAt(alias, 2) == 2);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page * 3) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page * 3) == 0);
+    Require(sceKernelMapDirectMemory(&mapped, page * 3, 3, 0, phys, 0) == 0);
+    Require(typeAt(mapped, 0) == 2 && typeAt(mapped, 1) == 5 && typeAt(mapped, 2) == 2);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page * 3) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 }

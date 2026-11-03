@@ -295,7 +295,7 @@ const Case kCases[] = {
 
 }
 
-void CreateDirectMemoryBacking(int64_t, size_t, int) {
+void CreateDirectMemoryBacking(int64_t, size_t) {
     if (g_fault == Fault::BackingBadAlloc) throw std::bad_alloc();
     if (g_fault == Fault::BackingRuntimeError) throw std::runtime_error("backing");
 }
