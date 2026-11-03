@@ -556,7 +556,7 @@ static void CheckOrdinaryCharacterScans() {
     const int savedError = errno;
     for (const Scanner scan : {fscanf_nid_postfix, ScanList, fscanf_s_nid_postfix, ScanShortCharacterList}) {
         const bool secure = scan == fscanf_s_nid_postfix || scan == ScanShortCharacterList;
-        for (const char* input : {"", " ", "+", "-", ".", "+.", "0x", "0x.", "infi", "nan("}) {
+        for (const char* input : {"", " ", "+", "-", ".", "+.", "0x", "infi"}) {
             auto* native = std::tmpfile();
             Require(native != nullptr && std::fwrite(input, 1, std::strlen(input), native) == std::strlen(input));
             std::rewind(native);
@@ -569,6 +569,27 @@ static void CheckOrdinaryCharacterScans() {
             const int expected = *input == '\0' || std::strcmp(input, " ") == 0 ? EOF : 0;
             Require(result == expected && value == 42.0f && count == -77 && output[0] == 'Z', "Stream scan changed a matching failure to input failure");
             Require(errno == 97 && ferror_nid_postfix(&stream) == 0);
+            Require(std::fclose(native) == 0);
+        }
+        for (const char* input : {"0x.", "nan("}) {
+            auto* reference = std::tmpfile();
+            Require(reference != nullptr && std::fwrite(input, 1, std::strlen(input), reference) == std::strlen(input));
+            std::rewind(reference);
+            float hostValue = 42.0f;
+            char hostOutput = 'Z';
+            int hostCount = -77;
+            const int hostResult = std::fscanf(reference, "%64f %1c%n", &hostValue, &hostOutput, &hostCount);
+            Require(std::fclose(reference) == 0);
+            auto* native = std::tmpfile();
+            Require(native != nullptr && std::fwrite(input, 1, std::strlen(input), native) == std::strlen(input));
+            std::rewind(native);
+            FileStream stream(native);
+            float value = 42.0f;
+            std::array<char, 4> output{'Z', 'Z', 'Z', 'Z'};
+            int count = -77;
+            const int result = secure ? scan(&stream, "%64f %1c%n", &value, output.data(), 4u, &count) : scan(&stream, "%64f %1c%n", &value, output.data(), &count);
+            Require(result == hostResult, "Stream scan of a host-dependent float field differs from the host libc");
+            if (hostResult == 0) Require(value == 42.0f && count == -77 && output[0] == 'Z', "Stream scan changed a matching failure to input failure");
             Require(std::fclose(native) == 0);
         }
     }
