@@ -3896,6 +3896,15 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                 }
             }
         }
+        const auto currentTableEntry = [&](const ShaderRecompiler::DescriptorBinding& images, std::uint32_t element) {
+            if (textureIndex >= textures.size()) return false;
+            const auto raw = std::span<const std::uint32_t>(images.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+            std::array<std::uint32_t, 8> narrowed{};
+            const auto words = firstLayerWords(raw, images.imageShapes.at(element), narrowed, false);
+            const auto resource = DecodeTextureResource(words);
+            const VkImageViewType multisampleViewType = images.imageShapes.at(element) == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+            return cachedTexture(context, words, resource, ViewComponents(resource), 0, images.imageDepthCompare.at(element), multisampleViewType) == textures[textureIndex];
+        };
         for (const auto& table : tableStages) {
             if (table.elementTextures.empty()) continue;
             const auto* images = tableImages(shaders, table.stage);
@@ -3913,12 +3922,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                     }
                     if (entry.live) {
                         if (index == std::numeric_limits<std::size_t>::max()) continue;
-                        const auto raw = std::span<const std::uint32_t>(images->guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-                        std::array<std::uint32_t, 8> narrowed{};
-                        const auto words = firstLayerWords(raw, images->imageShapes.at(element), narrowed, false);
-                        const auto resource = DecodeTextureResource(words);
-                        const VkImageViewType multisampleViewType = images->imageShapes.at(element) == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-                        same = index == textureIndex && textureIndex < textures.size() && cachedTexture(context, words, resource, ViewComponents(resource), 0, images->imageDepthCompare.at(element), multisampleViewType) == textures[textureIndex];
+                        same = index == textureIndex && currentTableEntry(*images, element);
                         ++textureIndex;
                         continue;
                     }
@@ -3935,12 +3939,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             for (std::uint32_t element = 0; element < images->count; ++element) {
                 if (table.elementTextures[element] == std::numeric_limits<std::size_t>::max()) continue;
                 if (!table.representatives.empty() && table.representatives[element] != NoRepresentative) continue;
-                const auto raw = std::span<const std::uint32_t>(images->guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-                std::array<std::uint32_t, 8> narrowed{};
-                const auto words = firstLayerWords(raw, images->imageShapes.at(element), narrowed, false);
-                const auto resource = DecodeTextureResource(words);
-                const VkImageViewType multisampleViewType = images->imageShapes.at(element) == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-                if (textureIndex >= textures.size() || table.elementTextures[element] != textureIndex || cachedTexture(context, words, resource, ViewComponents(resource), 0, images->imageDepthCompare.at(element), multisampleViewType) != textures[textureIndex]) return false;
+                if (table.elementTextures[element] != textureIndex || !currentTableEntry(*images, element)) return false;
                 ++textureIndex;
             }
         }
@@ -5891,7 +5890,8 @@ void ShaderResources::resolveImageTables() {
             counters.variantSubstituted.fetch_add(1, std::memory_order_relaxed);
         }
         counters.tablesResolved.fetch_add(1, std::memory_order_relaxed);
-        if (reusable && CurrentTableState() == state) {
+        const bool anyKept = std::any_of(fresh.elements.begin(), fresh.elements.end(), [](const ReusedTableElement& element) { return !element.live; });
+        if (reusable && anyKept && CurrentTableState() == state) {
             const auto serial = StorageTexture::PendingSerial();
             if (!StorageTexture::AnyPendingOverlaps(fresh.ranges) && StorageTexture::PendingSerial() == serial) {
                 fresh.device = context.device;
