@@ -313,6 +313,15 @@ if(BUILD_TESTING)
     add_test(NAME relr_relocations COMMAND relr_relocations_tests)
     set_tests_properties(relr_relocations PROPERTIES TIMEOUT 20)
 
+    add_test_executable(relinker_page_alignment_asan_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/RelinkerPageAlignmentAsanTests.cpp)
+    target_link_libraries(relinker_page_alignment_asan_tests PRIVATE relinker_core)
+    target_include_directories(relinker_page_alignment_asan_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include)
+    add_test(NAME relinker_page_alignment_asan COMMAND relinker_page_alignment_asan_tests)
+    set_tests_properties(relinker_page_alignment_asan PROPERTIES TIMEOUT 20)
+
     add_test_executable(call_site_index_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CallSiteIndexTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CallSiteResolver.cpp
