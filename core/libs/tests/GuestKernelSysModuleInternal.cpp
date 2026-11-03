@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -87,11 +88,30 @@ static void CheckLoadStartSysmodule() {
     Require(res == 0);
 }
 
+static void CheckIsModuleLoaded() {
+    std::set<std::string> names;
+    for (const auto handle : List(sceKernelGetModuleListInternal)) {
+        ModuleInfo info{};
+        info.st_size = sizeof(ModuleInfo);
+        Require(sceKernelGetModuleInfo(handle, &info) == 0);
+        names.insert(info.name);
+    }
+    const auto expected = [&](const std::string& name) { return names.count(name) ? 0 : SCE_KERNEL_ERROR_ESRCH; };
+    for (const auto& name : names) {
+        Require(sceKernelIsModuleLoaded(name.c_str()) == 0);
+        Require(sceKernelIsModuleLoaded((name + "x").c_str()) == expected(name + "x"));
+        Require(sceKernelIsModuleLoaded(name.substr(0, name.size() - 1).c_str()) == expected(name.substr(0, name.size() - 1)));
+    }
+    Require(sceKernelIsModuleLoaded("libSceNoSuchModule.sprx") == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelIsModuleLoaded("") == expected(""));
+}
+
 int main() {
     CheckList();
     CheckEachModule();
     CheckMatchesAddressLookup();
     CheckRefusals();
     CheckLoadStartSysmodule();
+    CheckIsModuleLoaded();
     return 0;
 }
