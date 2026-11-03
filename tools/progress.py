@@ -177,8 +177,13 @@ def scan_library(path):
     texts = [code(source) for source in sources]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
     for source in sources:
-        for match in ASM_DEFINITION.finditer(source):
-            name = match.group(1)
+        definitions = {match.start(): match.group(1) for match in ASM_DEFINITION.finditer(source)}
+        if not definitions:
+            continue
+        for token in CPP_TOKEN.finditer(source):
+            if token.group("code") is None or token.start() not in definitions:
+                continue
+            name = definitions[token.start()]
             if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) or name in exported:
                 done.add(name)
                 live.add(name)
