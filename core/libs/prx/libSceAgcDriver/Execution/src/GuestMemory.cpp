@@ -3116,7 +3116,7 @@ static void writeChanged(std::uint64_t address, std::span<const std::byte> curre
             lastChanged = std::max(lastChanged, at + 1);
         }
         for (std::size_t index = 0; index < image.size(); ++index) {
-            image[index] = current[index] != original[index] ? current[index] : image[index];
+            image[index] = current[index] != original[index] && !(keepGuest && image[index] != original[index]) ? current[index] : image[index];
         }
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     });

@@ -560,6 +560,14 @@ void CheckOwnStoreImages() {
     current[0x10] = std::byte{0x5a};
     WriteChanged(base + 0x4000, current, original);
     expect({}, "a write-back no other store met in its page was listed as a CPU write");
+    guest[0xd020] = 0x33;
+    expect(page(0xd000), "a CPU write before a keep-guest write-back was not listed");
+    auto kept = original;
+    kept[0x20] = std::byte{0x5b};
+    kept[0x30] = std::byte{0x5c};
+    WriteChangedKeepingGuest(base + 0xd000, kept, original);
+    if (guest[0xd020] != 0x33 || guest[0xd030] != 0x5c) failures += std::string(failures.empty() ? "" : "; ") + "the keep-guest write-back did not keep the guest byte and store the other";
+    expect({}, "a keep-guest write-back that kept a guest byte was listed as a CPU write");
     StoreOwnBytes(base + 0x5f00, 0x200, [&](std::span<std::byte> image) {
         std::memset(reinterpret_cast<void*>(base + 0x5f00), 0x44, 0x200);
         if (!image.empty()) std::memset(image.data(), 0x44, image.size());
