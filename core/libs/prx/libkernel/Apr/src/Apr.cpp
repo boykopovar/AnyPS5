@@ -41,6 +41,7 @@
 namespace {
 
 constexpr int GUEST_ENOENT = 2;
+constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_EINVAL = 22;
 
 struct AprFile {
@@ -861,13 +862,16 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIds(const char* prefix, co
 
 int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
     if (!size) return _fail(GUEST_EINVAL);
-    *size = _file(id).size;
+    const std::uint64_t bytes = _file(id).size;
+    if (!GuestCopyOut_nid_no_patch(size, &bytes, sizeof(bytes))) return _fail(GUEST_EFAULT);
     return 0;
 }
 
 int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
     if (!stat) return _fail(GUEST_EINVAL);
-    File::FillFileStat(_file(id).path, stat);
+    FileStat result{};
+    File::FillFileStat(_file(id).path, &result);
+    if (!GuestCopyOut_nid_no_patch(stat, &result, sizeof(result))) return _fail(GUEST_EFAULT);
     return 0;
 }
 
