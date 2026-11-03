@@ -352,11 +352,20 @@ static void CheckProcessListSysctl() {
     const int mib[] = {1, 14, 8};
     std::size_t length = 0;
     Require(sysctl_nid_postfix(mib, 3, nullptr, &length, nullptr, 0) == 0);
+    const std::size_t size = length;
+    *__error_nid_postfix() = 13;
+    length = 0;
+    Require(sysctlbyname_nid_postfix("kern.proc.proc", nullptr, &length, nullptr, 0) == 0 && length == size && *__error_nid_postfix() == 13);
 
     unsigned char buffer[1100];
     std::memset(buffer, 0xaa, sizeof(buffer));
     length = sizeof(buffer);
     Require(sysctl_nid_postfix(mib, 3, buffer, &length, nullptr, 0) == 0 && length == 1088);
+    unsigned char named[1100];
+    std::memset(named, 0xaa, sizeof(named));
+    length = sizeof(named);
+    Require(sysctlbyname_nid_postfix("kern.proc.proc", named, &length, nullptr, 0) == 0 && length == 1088 && *__error_nid_postfix() == 13);
+    Require(std::memcmp(named, buffer, sizeof(buffer)) == 0);
     std::int32_t structSize = 0;
     std::int32_t pid = 0;
     std::memcpy(&structSize, buffer, sizeof(structSize));
@@ -377,6 +386,13 @@ static void CheckProcessListSysctl() {
 
     length = sizeof(buffer);
     Require(sysctl_nid_postfix(mib, 3, buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
+
+    *__error_nid_postfix() = 13;
+    length = 100;
+    Require(sysctlbyname_nid_postfix("kern.proc.proc", buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12 && length == 100);
+    *__error_nid_postfix() = 13;
+    length = sizeof(buffer);
+    Require(sysctlbyname_nid_postfix("kern.proc.proc", buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
 }
 struct SystemString {
     int mib[2];
@@ -970,6 +986,7 @@ static void CheckNameToMib() {
         {"kern.boottime", {1, 21}, 2},
         {"kern.rng_pseudo", {1, 50}, 2},
         {"kern.proc.pathname", {1, 14, 12}, 3},
+        {"kern.proc.proc", {1, 14, 8}, 3},
     };
     *__error_nid_postfix() = 13;
     for (const auto& entry : expected) {
@@ -1125,6 +1142,14 @@ static void CheckSysctlPointerFaults() {
     Require(sysctlbyname_nid_postfix("hw.ncpu", &nameValue, &nameLength, nullptr, 0) == 0 && nameValue > 0);
     Require(fails(sysctlbyname_nid_postfix("hw.ncpu", &nameValue, reinterpret_cast<std::size_t*>(0x10), nullptr, 0)));
     Require(fails(sysctlbyname_nid_postfix("hw.ncpu", reinterpret_cast<void*>(0x10), &nameLength, nullptr, 0)));
+    int parsedMib[2] = {};
+    std::size_t parsedMibLength = 2;
+    Require(fails(sysctlnametomib_nid_postfix(reinterpret_cast<const char*>(0x10), parsedMib, &parsedMibLength)));
+    Require(fails(sysctlnametomib_nid_postfix(crossing, parsedMib, &parsedMibLength)));
+    Require(fails(sysctlnametomib_nid_postfix("hw.ncpu", parsedMib, reinterpret_cast<std::size_t*>(0x10))));
+    Require(fails(sysctlnametomib_nid_postfix("hw.ncpu", reinterpret_cast<int*>(0x10), &parsedMibLength)));
+    Require(fails(sysctlnametomib_nid_postfix("hw.ncpu", parsedMib, readOnlyLength)));
+    Require(sysctlnametomib_nid_postfix("hw.ncpu", parsedMib, &parsedMibLength) == 0 && parsedMibLength == 2);
     const int mib[] = {6, 3};
     const int absent[] = {1, 6};
     const auto unreadable = reinterpret_cast<const int*>(0x10);

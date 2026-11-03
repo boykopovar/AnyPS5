@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -37,6 +38,7 @@ constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
 constexpr int NpUtilParseOutOfRange = static_cast<int>(0x8055060A);
 constexpr int NpTitleIdBufferTooSmall = static_cast<int>(0x80559E0D);
+constexpr int NpTitleSecretInvalid = static_cast<int>(0x80559E11);
 constexpr int NpStreamShort = static_cast<int>(0x80559E10);
 constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
 constexpr int KernelNoSuchObject = static_cast<int>(0x80020003);
@@ -78,6 +80,73 @@ void TestSemaphoresAndFlags() {
     Require(sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear event flag reports the busy error");
     Require(sceNpSetEventFlag(flag, 1) == 0 && sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == 0 && result == 1, "a set bit is polled");
     Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+}
+
+void TestEventFlagClearAndCancel() {
+    KernelEventFlag flag {};
+    Require(sceNpCreateEventFlag(&flag, "NpClearFlag", 0, 0) == 0, "an event flag is created");
+    std::uint64_t result = 0;
+    Require(sceNpSetEventFlag(flag, 0b111) == 0 && sceNpClearEventFlag(flag, 0b101) == 0, "the pattern is set and masked");
+    Require(sceNpPollEventFlag(flag, 0b010, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear keeps only the bits of its pattern");
+    Require(sceNpPollEventFlag(flag, 0b101, EventFlagWaitAnd, &result) == 0 && result == 0b101, "a clear leaves the masked bits set");
+    int waiting = -1;
+    Require(sceNpCancelEventFlag(flag, 0b1000, &waiting) == 0 && waiting == 0, "a cancel reports no waiting thread");
+    Require(sceNpPollEventFlag(flag, 0b101, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a cancel replaces the old pattern");
+    Require(sceNpPollEventFlag(flag, 0b1000, EventFlagWaitAnd, &result) == 0 && result == 0b1000, "a cancel sets its pattern");
+    Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+}
+
+struct CondWaiter {
+    PthreadMutex* mutex;
+    PthreadCond* cond;
+    int (APS5_VABI* wait)(PthreadCond*, PthreadMutex*);
+    bool ready = false;
+    bool released = false;
+};
+
+void* APS5_VABI WaitOnCondition(void* arg) {
+    auto* waiter = static_cast<CondWaiter*>(arg);
+    Require(sceNpMutexLock(waiter->mutex) == 0, "the waiter locks the mutex");
+    waiter->ready = true;
+    while (!waiter->released) Require(waiter->wait(waiter->cond, waiter->mutex) == 0, "the wait ends without an error");
+    Require(sceNpMutexUnlock(waiter->mutex) == 0, "the waiter holds the mutex after the wait");
+    return nullptr;
+}
+
+template <typename TWake>
+void WakeWaiter(PthreadCond* cond, int (APS5_VABI* wait)(PthreadCond*, PthreadMutex*), TWake wake) {
+    PthreadMutex mutex {};
+    Require(sceNpMutexInit(&mutex, "NpCondMutex", 0) == 0, "a mutex is created");
+    CondWaiter waiter {&mutex, cond, wait};
+    Pthread thread {};
+    Require(sceNpCreateThread(&thread, WaitOnCondition, &waiter, 0, 0x10000, 0, "NpCondWaiter") == 0, "the waiter is created");
+    for (bool ready = false; !ready;) {
+        Require(sceNpMutexLock(&mutex) == 0, "the main thread locks the mutex");
+        ready = waiter.ready;
+        if (!ready) {
+            Require(sceNpMutexUnlock(&mutex) == 0, "the main thread unlocks the mutex");
+            std::this_thread::yield();
+        }
+    }
+    waiter.released = true;
+    Require(wake(thread) == 0, "the waiter is signalled");
+    Require(sceNpMutexUnlock(&mutex) == 0, "the main thread unlocks the mutex");
+    Require(sceNpJoinThread(thread, nullptr) == 0, "the woken waiter is joined");
+    Require(sceNpMutexDestroy(&mutex) == 0, "the mutex is destroyed");
+}
+
+void TestConditionWakeups() {
+    PthreadCond cond {};
+    Require(sceNpCondInit(&cond, "NpCond", 0) == 0, "a condition is created");
+    WakeWaiter(&cond, sceNpCondWait, [&](Pthread) { return sceNpCondSignalAll(&cond); });
+    WakeWaiter(&cond, sceNpCondWait, [&](Pthread thread) { return sceNpCondSignalTo(&cond, thread); });
+    Require(sceNpCondDestroy(&cond) == 0, "the condition is destroyed");
+    PthreadCond lightweight {};
+    Require(sceNpLwCondInit(&lightweight, "NpLwCond") == 0, "a lightweight condition is created");
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread) { return sceNpLwCondSignal(&lightweight); });
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread) { return sceNpLwCondSignalAll(&lightweight); });
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread thread) { return sceNpLwCondSignalTo(&lightweight, thread); });
+    Require(sceNpLwCondDestroy(&lightweight) == 0, "the lightweight condition is destroyed");
 }
 
 void TestSharedEventFlags() {
@@ -219,6 +288,41 @@ void TestObjects() {
         "a failed allocation returns null");
 }
 
+void TestAllocatorEx() {
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-test") == 0, "a memory heap is created");
+    NpAllocatorEx allocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, &allocator);
+
+    Require(_sceNpAllocatorExConvertAllocator(&allocator) == &allocator.allocator, "the extended allocator converts to its allocator");
+    auto* block = static_cast<std::uint8_t*>(_sceNpAllocatorExMalloc(&allocator, 16));
+    Require(block != nullptr, "the extended allocator hands out memory");
+    block[15] = 0x5A;
+    block = static_cast<std::uint8_t*>(_sceNpAllocatorExRealloc(&allocator, block, 128));
+    Require(block != nullptr && block[15] == 0x5A, "reallocation keeps the contents");
+    _sceNpAllocatorExFree(&allocator, block);
+    char* copy = _sceNpAllocatorExStrdup(&allocator, "np-common");
+
+    Require(copy != nullptr && std::strcmp(copy, "np-common") == 0, "a string is duplicated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np-common", 2);
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a duplicated prefix is terminated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np", 16);
+
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a short string is duplicated whole");
+    _sceNpAllocatorExFree(&allocator, copy);
+    sceNpMemoryHeapDestroy(&memoryHeap);
+    AllocatorRecord record {};
+    record.fail = true;
+    NpAllocatorEx failing {{RecordAllocate, nullptr, RecordRelease, &record}, 0};
+
+    Require(_sceNpAllocatorExStrdup(&failing, "abc") == nullptr && record.size == 4, "a failed duplicate returns null after asking for the string and its terminator");
+    Require(_sceNpAllocatorExStrndup(&failing, "abcdef", 3) == nullptr && record.size == 4, "a failed prefix duplicate returns null");
+    _sceNpAllocatorExFree(&failing, record.block.data());
+    Require(record.released == record.block.data(), "freeing goes through the allocator");
+}
+
 void TestObjectsThroughStoredAllocator() {
     AllocatorRecord record {};
     NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
@@ -249,6 +353,67 @@ void TestObjectsThroughStoredAllocator() {
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
+}
+
+struct ExRecord {
+    std::array<std::uint8_t, 64> block {};
+    int allocations = 0;
+    int reallocations = 0;
+    int releases = 0;
+    void* reallocated = nullptr;
+    std::size_t size = 0;
+    void* released = nullptr;
+    bool fail = false;
+};
+
+void* APS5_VABI ExAllocate(std::size_t size, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->allocations;
+    record->size = size;
+    return record->fail ? nullptr : record->block.data();
+}
+
+void* APS5_VABI ExReallocate(void* pointer, std::size_t size, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->reallocations;
+    record->reallocated = pointer;
+    record->size = size;
+    return record->fail ? nullptr : record->block.data() + 8;
+}
+
+void APS5_VABI ExRelease(void* pointer, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->releases;
+    record->released = pointer;
+}
+
+void TestAllocatorExRecorded() {
+    ExRecord record {};
+    NpAllocatorEx allocator {{ExAllocate, ExReallocate, ExRelease, &record}, 0x1234};
+    std::uint8_t old = 0;
+
+    Require(_sceNpAllocatorExRealloc(&allocator, &old, 96) == record.block.data() + 8 && record.reallocated == &old && record.size == 96
+            && record.reallocations == 1 && record.allocations == 0 && record.releases == 0,
+        "reallocation is one call to the allocator's reallocate with the pointer and size");
+    record.fail = true;
+    Require(_sceNpAllocatorExRealloc(&allocator, &old, 32) == nullptr && record.reallocations == 2 && record.releases == 0,
+        "a failed reallocation returns null and keeps the old block");
+    Require(_sceNpAllocatorExMalloc(&allocator, 24) == nullptr && record.allocations == 1 && record.size == 24,
+        "a failed allocation is one call to allocate");
+    _sceNpAllocatorExFree(&allocator, nullptr);
+    Require(record.releases == 1 && record.released == nullptr, "freeing null still calls release");
+
+    record.fail = false;
+    record.size = 0;
+    Require(_sceNpAllocatorExStrndup(&allocator, "abc", 10) != nullptr && record.size == 4,
+        "a short string asks for its length and terminator, not the limit");
+    Require(_sceNpAllocatorExStrndup(&allocator, "abc", SIZE_MAX) != nullptr && record.size == 4
+            && std::memcmp(record.block.data(), "abc", 4) == 0,
+        "an unbounded limit duplicates the whole string");
+    const char unterminated[3] = {'x', 'y', 'z'};
+    Require(_sceNpAllocatorExStrndup(&allocator, unterminated, sizeof(unterminated)) != nullptr && record.size == 4
+            && std::memcmp(record.block.data(), "xyz", 4) == 0,
+        "the limit bounds the read of an unterminated buffer");
 }
 
 void TestTitleIdObjects() {
@@ -302,6 +467,62 @@ void TestTitleIdObjects() {
     _ZN3sce2np9NpTitleIdC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpTitleIdObject*);
     reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
+    Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
+}
+
+void TestTitleSecretObjects() {
+    std::uint8_t data[200];
+    for (std::size_t i = 0; i < sizeof(data); ++i) data[i] = static_cast<std::uint8_t>(i * 7 + 1);
+    NpTitleSecretObject secret {};
+    _ZN3sce2np13NpTitleSecretC1Ev(&secret);
+    Require(secret.vtable != nullptr && _ZNK3sce2np13NpTitleSecret7IsEmptyEv(&secret), "a default title secret is empty");
+    Require(_ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(&secret, data, 127) == NpTitleSecretInvalid && _ZNK3sce2np13NpTitleSecret7IsEmptyEv(&secret),
+        "secret data must be 128 bytes and a refused size changes nothing");
+    Require(_ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(&secret, data, 128) == 0 && std::memcmp(secret.secret.data, data, 128) == 0,
+        "128 bytes of secret data are stored");
+    Require(_ZNK3sce2np13NpTitleSecret6EqualsEPvm(&secret, data, 128) && !_ZNK3sce2np13NpTitleSecret6EqualsEPvm(&secret, data, 127),
+        "comparing with raw data needs 128 bytes");
+
+    NpTitleSecretObject fromData {};
+    _ZN3sce2np13NpTitleSecretC1EPKvm(&fromData, data, 128);
+    bool refused = false;
+    NpTitleSecretObject wrongSize {};
+    try {
+        _ZN3sce2np13NpTitleSecretC1EPKvm(&wrongSize, data, 129);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(&fromData, &secret), "constructing from data asserts the 128-byte size");
+
+    NpTitleSecret plain = secret.secret;
+    plain.data[127] ^= 1;
+    Require(_ZN3sce2npneERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(&plain, &secret) && !_ZN3sce2npeqERKNS0_13NpTitleSecretERK16SceNpTitleSecret(&secret, &plain)
+        && !_ZNK3sce2np13NpTitleSecret6EqualsERK16SceNpTitleSecret(&secret, &plain), "all 128 bytes take part in the comparison");
+    NpTitleSecretObject copy {};
+    _ZN3sce2np13NpTitleSecretC1ERK16SceNpTitleSecret(&copy, &plain);
+    Require(_ZN3sce2npeqERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(&plain, &copy) && _ZN3sce2npneERKNS0_13NpTitleSecretES3_(&copy, &secret),
+        "a secret built from a SceNpTitleSecret compares equal to it");
+    _ZN3sce2np13NpTitleSecretaSERKS1_(&copy, &secret);
+    Require(_ZNK3sce2np13NpTitleSecret6EqualsERKS1_(&copy, &secret), "assignment copies the secret");
+
+    char hex[300];
+    std::memset(hex, 'x', sizeof(hex));
+    Require(_ZN3sce2np13NpTitleSecret8BuildHexERKS1_Pcmb(&secret, hex, 256, false) == NpBufferTooSmall && hex[0] == 'x', "the hex form needs 257 bytes");
+    Require(_ZN3sce2np13NpTitleSecret8BuildHexERKS1_Pcmb(&secret, hex, 257, true) == 0 && std::strlen(hex) == 256 && std::strncmp(hex, "01080F", 6) == 0,
+        "the secret is written as 256 hex digits");
+    NpTitleSecretObject parsed {};
+    _ZN3sce2np13NpTitleSecretC1Ev(&parsed);
+    Require(_ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(&parsed, hex, 256) == 0 && _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(&parsed, &secret),
+        "the hex form parses back to the same secret");
+    Require(_ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(&parsed, hex, 255) == NpInvalidArgument
+        && _ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(&parsed, hex, 258) == NpBufferTooSmall, "parsing needs an even length of at most 256 digits");
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* owned = static_cast<NpTitleSecretObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleSecretObject), &allocator));
+    _ZN3sce2np13NpTitleSecretC1Ev(owned);
+    using Destructor = void APS5_VABI (*)(NpTitleSecretObject*);
+    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -363,6 +584,40 @@ void TestCallouts() {
     Require(context.initialized == 0, "terminating clears the context");
     sceNpCalloutTermCtx(&context);
 
+}
+
+struct SelfTermination {
+    NpCalloutContext* context {};
+    std::atomic<int> finished {0};
+    std::string message;
+};
+
+SelfTermination g_selfTermination;
+
+void APS5_VABI TerminateOwnContext(void*) {
+    try {
+        sceNpCalloutTermCtx(g_selfTermination.context);
+    } catch (const std::runtime_error& error) {
+        g_selfTermination.message = error.what();
+    }
+    g_selfTermination.finished.store(1, std::memory_order_release);
+}
+
+void TestCalloutSelfTermination() {
+    NpCalloutContext context {};
+    NpCallout callout {};
+    g_selfTermination.context = &context;
+    Require(sceNpCalloutInitCtx(&context, "np-self-term", 0x4000, 0, 0) == 0, "a callout context starts");
+    Require(sceNpCalloutStartOnCtx(&context, &callout, 0, TerminateOwnContext, nullptr) == 0, "the terminating callout is queued");
+    for (int i = 0; i < 2000 && g_selfTermination.finished.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(g_selfTermination.finished.load(std::memory_order_acquire) == 1, "the terminating callout returns");
+    Require(g_selfTermination.message.find("sceNpCalloutTermCtx") == 0, "terminating a context from its own callout is refused");
+    Require(context.initialized == 1, "a refused termination leaves the context running");
+
+    sceNpCalloutTermCtx(&context);
+
+    Require(context.initialized == 0, "the context terminates from another thread");
 }
 
 bool Equals(const char* actual, const char* expected) {
@@ -460,6 +715,78 @@ void TestJsonText() {
         "form encoding keeps the safe set and escapes the rest");
     Require(sceNpUtilHttpUrlEncode(nullptr, 0, "@", 1, &length) == 0 && length == 4, "a null buffer reports the encoded size");
     Require(sceNpUtilHttpUrlEncode(url, 3, "@", 1, &length) == NpUtilBufferTooSmall, "encoding needs room for the terminator");
+}
+
+void TestXmlText() {
+    char escaped[64] = {};
+    std::size_t length = 0;
+    const char* special = "a\"&'<>b";
+    const char* specialEscaped = "a&quot;&amp;&apos;&lt;&gt;b";
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), special, std::strlen(special), &length) == 0 && Equals(escaped, specialEscaped)
+            && length == std::strlen(specialEscaped) + 1,
+        "xml escaping replaces the five special characters and counts the terminator");
+    length = 0;
+    Require(sceNpUtilXmlEscape(nullptr, 0, special, std::strlen(special), &length) == 0 && length == std::strlen(specialEscaped) + 1,
+        "xml escaping without a buffer only measures");
+    const char* text = "\t\n\r \xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80";
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), text, std::strlen(text), &length) == 0 && Equals(escaped, text) && length == std::strlen(text) + 1,
+        "xml escaping copies whitespace and UTF-8 sequences");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a\x01", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses control characters");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\x7F", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses DEL");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\0", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses a NUL byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\x80", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses a lone continuation byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC1\xBF", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses an overlong lead byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC3(", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses a broken sequence");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xF8\x80\x80\x80", 4, &length) == NpUtilInvalidCharacter, "xml escaping refuses a five-byte lead");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC3\xA9", 1, &length) == 0 && Equals(escaped, "\xC3\xA9") && length == 3,
+        "a sequence that starts inside the source is copied whole");
+    Require(sceNpUtilXmlEscape(escaped, 5, "&", 1, &length) == NpUtilBufferTooSmall, "an entity must fit whole");
+    Require(sceNpUtilXmlEscape(escaped, 5, "abcde", 5, &length) == NpUtilBufferTooSmall, "the terminator must fit");
+    Require(sceNpUtilXmlEscape(escaped, 6, "abcde", 5, &length) == 0 && Equals(escaped, "abcde"), "a buffer of the measured size is enough");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), nullptr, 1, &length) == NpUtilInvalid, "xml escaping needs a source");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a", 0, &length) == NpUtilInvalid, "xml escaping needs a source length");
+    Require(sceNpUtilXmlEscape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml escaping needs a buffer or a length");
+
+    char unescaped[64] = {};
+    const char* entities = "x&lt;&gt;&amp;&quot;&apos;y";
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), entities, std::strlen(entities), &length) == 0 && Equals(unescaped, "x<>&\"'y")
+            && length == 8,
+        "xml unescaping replaces the five entities and counts the terminator");
+    length = 0;
+    Require(sceNpUtilXmlUnescape(nullptr, 0, entities, std::strlen(entities), &length) == 0 && length == 8, "xml unescaping without a buffer only measures");
+    const char* others = "&nbsp;&amp&#65;&";
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), others, std::strlen(others), &length) == 0 && Equals(unescaped, others),
+        "other ampersands are copied");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a\0b", 3, &length) == 0 && unescaped[0] == 'a' && unescaped[1] == '\0'
+            && unescaped[2] == 'b' && unescaped[3] == '\0' && length == 4,
+        "xml unescaping copies every other byte");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "&amp;", 1, &length) == 0 && Equals(unescaped, "&") && length == 2,
+        "an entity that starts inside the source is read whole");
+    Require(sceNpUtilXmlUnescape(unescaped, 3, "&lt;ab", 6, &length) == NpUtilBufferTooSmall, "each character must leave room for the terminator");
+    Require(sceNpUtilXmlUnescape(unescaped, 3, "&lt;a", 5, &length) == 0 && Equals(unescaped, "<a"), "a buffer of the measured size is enough");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), nullptr, 1, &length) == NpUtilInvalid, "xml unescaping needs a source");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a", 0, &length) == NpUtilInvalid, "xml unescaping needs a source length");
+    Require(sceNpUtilXmlUnescape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml unescaping needs a buffer or a length");
+    struct {
+        char buffer[4];
+        char canary[4];
+    } bounded {};
+    Require(sceNpUtilXmlEscape(bounded.buffer, 3, "ab&", 3, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "ab\0", 3) == 0
+            && bounded.buffer[3] == 0 && bounded.canary[0] == 0,
+        "xml escaping keeps the pieces that fit and writes nothing past the buffer");
+    Require(sceNpUtilXmlEscape(bounded.buffer, 4, "<", 1, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "&lt;", 4) == 0
+            && bounded.canary[0] == 0,
+        "an entity that fits stays written when the terminator does not");
+    std::memset(&bounded, 0, sizeof(bounded));
+    Require(sceNpUtilXmlUnescape(bounded.buffer, 2, "abc", 3, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "ab\0", 3) == 0
+            && bounded.canary[0] == 0,
+        "xml unescaping keeps the characters that fit and writes nothing past the buffer");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "&amp;", 2, &length) == 0 && Equals(unescaped, "&") && length == 2,
+        "an entity is matched past the source length");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xF7\xBF\xBF\xBF\xED\xA0\x80", 7, &length) == 0 && length == 8,
+        "xml escaping accepts lead bytes up to 0xF7 and does not check surrogates");
+    length = 99;
+    Require(sceNpUtilXmlEscape(escaped, 2, "ab", 2, &length) == NpUtilBufferTooSmall && length == 99, "a failed xml escape leaves the length untouched");
 }
 
 int g_jsonVariant = 0;
@@ -691,6 +1018,62 @@ void TestTitleIds() {
     Require(sceNpUtilBuildTitleId(&parts, titleId, sizeof(titleId)) == NpUtilOutOfRange, "the index is at most 99");
 }
 
+void TestJid() {
+    constexpr int NpUtilInvalidJid = static_cast<int>(0x80550604);
+    NpJid jid{};
+    char buffer[64];
+    std::size_t length = 0;
+    Require(sceNpUtilParseJid(&jid, "user@np.playstation.net/res", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "user")
+            && Equals(jid.domain, "np.playstation.net") && Equals(jid.resource, "res") && length == 28 && jid.user == buffer,
+        "a jid splits into user, domain and resource in the buffer");
+    Require(sceNpUtilParseJid(&jid, "  a.b_c+d@x-y.z", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "a.b_c+d") && Equals(jid.domain, "x-y.z")
+            && Equals(jid.resource, "") && length == 15,
+        "leading spaces are skipped and a missing resource is empty");
+    Require(sceNpUtilParseJid(&jid, "nodomain", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "") && Equals(jid.domain, "nodomain"),
+        "text without an at sign is a domain");
+    Require(sceNpUtilParseJid(&jid, "a@b./res", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "/res"),
+        "trailing dots leave the domain and one character after it is skipped");
+    Require(sceNpUtilParseJid(&jid, "a@b c", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "c"),
+        "the character after the domain is skipped whatever it is");
+    length = 0;
+    Require(sceNpUtilParseJid(nullptr, "user@dom/res", nullptr, 0, &length) == 0 && length == 13, "parsing without a buffer only measures");
+    Require(sceNpUtilParseJid(&jid, "user@dom/res", buffer, 12, &length) == NpUtilBufferTooSmall && jid.user == nullptr && jid.domain == nullptr,
+        "a buffer that is too small clears the jid");
+    Require(sceNpUtilParseJid(&jid, "user@dom/res", buffer, 13, &length) == 0 && Equals(jid.resource, "res"), "a buffer of the measured size is enough");
+    Require(sceNpUtilParseJid(&jid, "   ", buffer, sizeof(buffer), &length) == NpUtilInvalidJid, "a blank jid is refused");
+    Require(sceNpUtilParseJid(&jid, "a-b@c_d", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "a-b") && Equals(jid.domain, "c_d"),
+        "a user may hold a dash and a domain an underscore");
+    Require(sceNpUtilParseJid(&jid, "a@b+c", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "c"),
+        "a plus sign ends the domain");
+    Require(sceNpUtilParseJid(&jid, "a@b../r", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "./r"),
+        "every trailing dot leaves the domain but only one is skipped");
+    Require(sceNpUtilParseJid(&jid, "\ta@b", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "") && Equals(jid.domain, "")
+            && Equals(jid.resource, "a@b"),
+        "only spaces are skipped before a jid");
+    jid = {buffer, buffer, buffer, 0};
+    Require(sceNpUtilParseJid(&jid, "   ", buffer, sizeof(buffer), &length) == NpUtilInvalidJid && jid.user == nullptr && jid.resource == nullptr,
+        "a refused jid is cleared");
+    Require(sceNpUtilParseJid(&jid, nullptr, buffer, sizeof(buffer), &length) == NpUtilInvalid, "parsing needs text");
+    Require(sceNpUtilParseJid(&jid, "a@b", nullptr, 0, nullptr) == NpUtilInvalid, "parsing needs a buffer or a length");
+
+    NpIdFull npId{};
+    std::memset(&npId, 0xCC, sizeof(npId));
+    const NpJid psn{"user", "a1.b2.np.playstation.net", "r", 0};
+    Require(sceNpUtilJidToNpId(&npId, &psn) == 0 && Equals(npId.handle.data, "user") && npId.opt[0] == 'a' && npId.opt[1] == '1' && npId.opt[2] == 'b'
+            && npId.opt[3] == '2' && npId.opt[4] == 'r' && npId.opt[5] == 0 && npId.reserved[0] == 1 && npId.reserved[1] == 0,
+        "a PSN jid becomes an npid with its domain code and resource");
+    const NpJid sixteen{"abcdefghijklmnop", "a1.b2..playstation.net", nullptr, 0};
+    Require(sceNpUtilJidToNpId(&npId, &sixteen) == 0 && std::memcmp(npId.handle.data, "abcdefghijklmnop", 16) == 0 && npId.handle.data[16] == 0,
+        "a 16-character user fills the online id and the label may be empty");
+    const NpJid invalid[] = {{"", psn.domain, nullptr, 0}, {"abcdefghijklmnopq", psn.domain, nullptr, 0}, {"u", "a1.b2.np.playstation.ne", nullptr, 0},
+                             {"u", "a.b2.np.playstation.net", nullptr, 0}, {"u", "a1.b2", nullptr, 0}, {"u", psn.domain, "abcde", 0}, {"u", nullptr, nullptr, 0},
+                             {nullptr, psn.domain, nullptr, 0}};
+    for (const NpJid& bad : invalid) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "only a PSN jid with a short user and resource converts");
+    const NpJid shapes[] = {{"u", "a1.-2.np.playstation.net", nullptr, 0}, {"u", "a1.b2.np.playstation.network", nullptr, 0}};
+    for (const NpJid& bad : shapes) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "the domain code is alphanumeric and the suffix exact");
+    Require(sceNpUtilJidToNpId(nullptr, &psn) == NpUtilInvalid &&sceNpUtilJidToNpId(&npId, nullptr) == NpUtilInvalid, "conversion needs both pointers");
+}
+
 void TestLanguagesAndDebugIds() {
     char code[6] = {};
     char tag[36] = {};
@@ -799,6 +1182,9 @@ void TestHexAndCopies() {
     Require(sceNpStrcpyToBuf(copy, 5, "Hello") == NpBufferTooSmall, "a string without room for its terminator is refused");
     Require(sceNpStrncpyToBuf(copy, 6, "Hello World", 5) == 0 && Equals(copy, "Hello"), "the length limit sizes the copy");
     Require(sceNpStrncpyToBuf(copy, 5, "Hello World", 5) == NpBufferTooSmall, "the limited string still needs a terminator");
+    const char unterminated[] = {'A', 'B', 'C', 'D', 'E', 'F', '\0'};
+    Require(sceNpStrncpyToBuf(copy, 8, unterminated, 4) == 0 && Equals(copy, "ABCD"),
+        "a source without a terminator within the limit is cut at the limit");
 }
 
 }
@@ -1062,13 +1448,18 @@ void TestCommIdObjects() {
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
+    TestEventFlagClearAndCancel();
     TestSharedEventFlags();
     TestThreads();
+    TestConditionWakeups();
     TestHeaps();
     TestObjects();
+    TestAllocatorEx();
     TestObjectsThroughStoredAllocator();
+    TestAllocatorExRecorded();
     TestMemoryStreams();
     TestTitleIdObjects();
+    TestTitleSecretObjects();
     TestStreamHelpers();
     TestRefObjects();
     TestCommIdObjects();
@@ -1076,9 +1467,12 @@ int main() {
     TestNumbers();
     TestHexAndCopies();
     TestCallouts();
+    TestCalloutSelfTermination();
     TestIds();
+    TestJid();
     TestLanguagesAndDebugIds();
     TestJsonText();
+    TestXmlText();
     TestJsonParser();
     TestTitleIds();
     std::puts("guest np common runtime: PASS");
