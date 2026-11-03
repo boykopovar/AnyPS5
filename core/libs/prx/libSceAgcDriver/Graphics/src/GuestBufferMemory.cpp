@@ -2358,7 +2358,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             }
             return step == nullptr;
         }, watchedDmaBuf);
-        if (step != nullptr && std::strcmp(step, "UDMABUF_CREATE") == 0) {
+        if (step != nullptr && (std::strcmp(step, "UDMABUF_CREATE") == 0 || std::strcmp(step, "UDMABUF_CREATE_LIST") == 0)) {
             if (requester == ImportRequester::ColorTarget && !watchedHostPointer) return failedImport();
             std::fprintf(stderr, "[gpu] dma-buf import of 0x%llx+0x%llx refused by udmabuf; host-pointer import\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes));
             GuestMemory::ImportWatched(base, bytes, [&] {
