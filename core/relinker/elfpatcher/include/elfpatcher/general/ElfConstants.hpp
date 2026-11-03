@@ -152,6 +152,7 @@ inline constexpr std::uint32_t R_X86_64_IRELATIVE = 37;
 inline constexpr std::uint8_t STB_GLOBAL = 1;
 inline constexpr std::uint8_t STB_WEAK = 2;
 inline constexpr std::uint8_t STT_NOTYPE = 0;
+inline constexpr std::uint8_t STT_OBJECT = 1;
 inline constexpr std::uint8_t STT_FUNC = 2;
 inline constexpr std::uint8_t STT_TLS = 6;
 inline constexpr std::uint8_t STV_DEFAULT = 0;
@@ -191,8 +192,11 @@ inline constexpr std::uint8_t kStubOpXorRsiRsi[] = {0x48, 0x31, 0xf6};
 inline constexpr std::uint8_t kStubOpPushZero[] = {0x6a, 0x00};
 inline constexpr std::uint8_t kStubOpMovRbpRsp[] = {0x48, 0x89, 0xe5};
 inline constexpr std::uint8_t kStubOpCallRel32 = 0xe8;
-inline constexpr std::size_t kStubCallInstructionSize = 5;
+inline constexpr std::uint8_t kStubOpLeaRsiRip[] = {0x48, 0x8d, 0x35};
+inline constexpr std::uint8_t kStubOpCallRipIndirect[] = {0xff, 0x15};
 inline constexpr std::uint8_t kStubOpUd2[] = {0x0f, 0x0b};
+inline constexpr char kGuestMainStackEntryLibrary[] = "libkernel.prx";
+inline constexpr char kGuestMainStackEntrySymbol[] = "EnterGuestMainStack_nid_no_patch";
 
 }
 

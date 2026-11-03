@@ -1,5 +1,9 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpTrophy/include/InventoryExports.hpp"
+#include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -13,6 +17,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -83,18 +88,25 @@ std::uint64_t BigEndian64(const std::uint8_t* bytes) {
 }
 
 std::optional<std::map<std::string, TrpEntry>> ReadPackage(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) return std::nullopt;
+    const auto end = file.tellg();
+    if (end < static_cast<std::streamoff>(TrpHeaderBytes)) return std::map<std::string, TrpEntry>{};
+    const auto fileSize = static_cast<std::uint64_t>(end);
+    file.seekg(0);
     std::array<std::uint8_t, TrpHeaderBytes> header{};
     if (!file.read(reinterpret_cast<char*>(header.data()), header.size()) || BigEndian32(header.data()) != TrpMagic) return std::map<std::string, TrpEntry>{};
     const auto count = BigEndian32(header.data() + 0x10);
     if (BigEndian32(header.data() + 0x14) != TrpEntryBytes) return std::map<std::string, TrpEntry>{};
+    if (count > (fileSize - TrpHeaderBytes) / TrpEntryBytes) return std::map<std::string, TrpEntry>{};
     std::map<std::string, TrpEntry> entries;
     for (std::uint32_t i = 0; i < count; ++i) {
         std::array<std::uint8_t, TrpEntryBytes> entry{};
         if (!file.read(reinterpret_cast<char*>(entry.data()), entry.size())) return std::map<std::string, TrpEntry>{};
         const std::string name(reinterpret_cast<const char*>(entry.data()), strnlen(reinterpret_cast<const char*>(entry.data()), 32));
-        entries[name] = {BigEndian64(entry.data() + 32), BigEndian64(entry.data() + 40)};
+        const TrpEntry contents{BigEndian64(entry.data() + 32), BigEndian64(entry.data() + 40)};
+        if (contents.offset > fileSize || contents.size > fileSize - contents.offset) return std::map<std::string, TrpEntry>{};
+        entries[name] = contents;
     }
     return entries;
 }
@@ -107,12 +119,19 @@ void LoadState(Context& context) {
     }
 }
 
-void SaveState(const Context& context) {
+void SaveState(const Context& context, const std::set<int>& unlocked) {
     std::filesystem::create_directories(context.state.parent_path());
     const auto temporary = context.state.string() + ".tmp";
     {
         std::ofstream file(temporary, std::ios::trunc);
-        for (const auto id : context.unlocked) file << id << '\n';
+        for (const auto id : unlocked) file << id << '\n';
+        file.flush();
+        if (!file) {
+            file.close();
+            std::error_code removeError;
+            std::filesystem::remove(temporary, removeError);
+            throw std::runtime_error("sceNpTrophy: cannot write the unlock state " + temporary);
+        }
     }
     std::filesystem::rename(temporary, context.state);
 }
@@ -157,6 +176,8 @@ int CopyIcon(const Context& context, const std::string& name, void* buffer, std:
     if (*size < entry->second.size) return NP_TROPHY_ERROR_INSUFFICIENT_BUFFER;
     std::ifstream file(context.package, std::ios::binary);
     file.seekg(static_cast<std::streamoff>(entry->second.offset));
+    const GuestArena::HostWrite destination(buffer, entry->second.size);
+    if (!destination.Open()) throw std::runtime_error("sceNpTrophy: the icon buffer is not writable");
     if (!file.read(static_cast<char*>(buffer), static_cast<std::streamsize>(entry->second.size))) return NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT;
     *size = entry->second.size;
     return 0;
@@ -251,8 +272,10 @@ int APS5_VABI sceNpTrophyUnlockTrophy(int contextId, int handle, int trophyId, i
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED;
-    context->unlocked.insert(trophyId);
-    SaveState(*context);
+    auto updated = context->unlocked;
+    updated.insert(trophyId);
+    SaveState(*context, updated);
+    context->unlocked = std::move(updated);
     *platinumId = NP_TROPHY_INVALID_ID;
     return 0;
 }
@@ -358,5 +381,480 @@ int APS5_VABI sceNpTrophyGetTrophyInfo(int contextId, int handle, int trophyId, 
     }
     return 0;
 }
+
+int APS5_VABI sceNpTrophyCaptureScreenshot(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyFlagArray(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyGroupArray(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyGroupDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophySetInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophySetInfoInGroup(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophySetVersion(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyTitleDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigHasGroupFeature(const std::uint8_t* config) {
+    if (!config) return 0;
+    return config[0x90] & 1;
+}
+
+int APS5_VABI sceNpTrophyGroupArrayGetNum(const std::uint32_t* groupArray) {
+    return std::popcount(groupArray[0]);
+}
+
+int APS5_VABI sceNpTrophyIntAbortHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntCheckNetSyncTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntCreateHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntDestroyHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetLocalTrophySummary(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetProgress(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetRunningTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetRunningTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetTrpIconByUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntNetSyncTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntNetSyncTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo) {
+    return static_cast<int>(numInfo[0] + numInfo[1] + numInfo[2] + numInfo[3]);
+}
+
+int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray) {
+    int count = 0;
+    for (std::size_t index = 0; index < 16; ++index) {
+        flagArray[index] = setInfo[index] | setInfo[16 + index] | setInfo[32 + index] | setInfo[48 + index];
+        count += std::popcount(flagArray[index]);
+    }
+    return count;
+}
+
+int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo) {
+    int count = 0;
+    for (std::size_t index = 0; index < 64; ++index) count += std::popcount(setInfo[index]);
+    return count;
+}
+
+int APS5_VABI sceNpTrophyShowTrophyList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemAbortHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemBuildGroupIconUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemBuildNetTrophyIconUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemBuildTitleIconUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemBuildTrophyIconUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCheckCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCheckNetSyncTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCheckRecoveryRequired(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCloseStorage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCreateContext(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCreateHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDbgCtl(void) {
+    return static_cast<int>(0x80551692);
+}
+
+int APS5_VABI sceNpTrophySystemDebugLockTrophy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDebugUnlockTrophy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDestroyContext(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDestroyHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDestroyTrophyConfig(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetDbgParam(void) {
+    return static_cast<int>(0x80551692);
+}
+
+int APS5_VABI sceNpTrophySystemGetDbgParamInt(void) {
+    return static_cast<int>(0x80551692);
+}
+
+int APS5_VABI sceNpTrophySystemGetGroupIcon(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetLocalTrophySummary(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetNextTitleFileEntryStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetProgress(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTitleFileStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTitleIcon(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTitleSyncStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyConfig(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyGroupData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyIcon(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyTitleData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetUserFileInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetUserFileStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemIsServerAvailable(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemNetSyncTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemNetSyncTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemOpenStorage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemPerformRecovery(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRegisterTitleSyncedCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRegisterTitleUpdateCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRemoveAll(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRemoveTitleData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRemoveUserData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemSetDbgParam(void) {
+    return static_cast<int>(0x80551692);
+}
+
+int APS5_VABI sceNpTrophySystemSetDbgParamInt(void) {
+    return static_cast<int>(0x80551692);
+}
+
+int APS5_VABI sceNpTrophySystemUnregisterTitleSyncedCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemUnregisterTitleUpdateCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapDebugLockTrophy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapDebugUnlockTrophy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetPlayedTrophyTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTitleDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetailsArray(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyTitleIdsByNpTitleId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapRemoveAll(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapRemoveTitleData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapRemoveUserData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetailsArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTitleData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetails() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+O9vU1CpGZA", libSceNpTrophyUnknown__plus_O9vU1CpGZA_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+not13BEdVI", libSceNpTrophyUnknown__plus_not13BEdVI_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("FJZW2oHUHFk", libSceNpTrophyUnknown_FJZW2oHUHFk_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_bGnKq23jqek_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("bGnKq23jqek", libSceNpTrophyUnknown_bGnKq23jqek_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lX611WLCvX0", libSceNpTrophyUnknown_lX611WLCvX0_nid_no_patch);
+
+int APS5_VABI libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("n4AHGHb-pfY", libSceNpTrophyUnknown_n4AHGHb_minus_pfY_nid_no_patch);
 
 }

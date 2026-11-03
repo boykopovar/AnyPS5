@@ -17,7 +17,8 @@ enum class TessellationAttribute {
     PatchInput,
     InstanceOutput,
     InstanceInput,
-    ControlShared
+    ControlShared,
+    GeometryOutput
 };
 
 enum class TessellationBaseKind {

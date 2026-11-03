@@ -1,6 +1,12 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include <codegen/x86/RedZoneFramer.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <algorithm>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -16,7 +22,7 @@
 #include <ucontext.h>
 #endif
 
-#if defined(__linux__) && defined(__x86_64__)
+#if (defined(__linux__) || defined(_WIN32)) && (defined(__x86_64__) || defined(_M_X64))
 
 namespace {
 
@@ -31,7 +37,36 @@ constexpr std::uint8_t kClobber = 0xa5;
 constexpr std::uint64_t kA = 0x1111, kB = 0x2222, kC = 0x3333, kD = 0x4444;
 
 std::uint8_t* arena = nullptr;
-volatile sig_atomic_t steps = 0;
+volatile std::sig_atomic_t steps = 0;
+volatile std::sig_atomic_t outsideSteps = 0;
+
+#ifdef _WIN32
+DWORD steppingThread = 0;
+bool singleStepping = false;
+bool steppingFinished = false;
+std::uintptr_t steppingReturn = 0;
+
+LONG CALLBACK clobberBelowRsp(EXCEPTION_POINTERS* exception) {
+    if (GetCurrentThreadId() != steppingThread || !singleStepping || exception->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
+        return EXCEPTION_CONTINUE_SEARCH;
+    auto& registers = *exception->ContextRecord;
+    if (registers.Rip == steppingReturn) {
+        registers.EFlags &= ~0x100u;
+        steppingFinished = true;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    const auto base = reinterpret_cast<std::uintptr_t>(arena);
+    if (registers.Rip < base || registers.Rip >= base + kArenaBytes) {
+        registers.EFlags &= ~0x100u;
+        outsideSteps = outsideSteps + 1;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    std::memset(reinterpret_cast<void*>(registers.Rsp - 0x80), kClobber, 0x80);
+    registers.EFlags |= 0x100u;
+    steps = steps + 1;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+#else
 
 void clobberBelowRsp(int, siginfo_t*, void* context) {
     auto& registers = static_cast<ucontext_t*>(context)->uc_mcontext.gregs;
@@ -39,17 +74,114 @@ void clobberBelowRsp(int, siginfo_t*, void* context) {
     const auto base = reinterpret_cast<std::uintptr_t>(arena);
     if (rip < base || rip >= base + kArenaBytes) {
         registers[REG_EFL] &= ~static_cast<greg_t>(0x100);
+        outsideSteps = outsideSteps + 1;
         return;
     }
     std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(registers[REG_RSP]) - 0x80), kClobber, 0x80);
     steps = steps + 1;
 }
+#endif
 
-const std::vector<std::uint8_t> Runner{
+class ExecutableArena {
+public:
+    ExecutableArena() {
+#ifdef _WIN32
+        arena = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, kArenaBytes, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+#else
+        const auto mapped = mmap(nullptr, kArenaBytes, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        arena = mapped == MAP_FAILED ? nullptr : static_cast<std::uint8_t*>(mapped);
+#endif
+    }
+
+    ~ExecutableArena() {
+        if (arena == nullptr) return;
+#ifdef _WIN32
+        VirtualFree(arena, 0, MEM_RELEASE);
+#else
+        munmap(arena, kArenaBytes);
+#endif
+        arena = nullptr;
+    }
+
+    ExecutableArena(const ExecutableArena&) = delete;
+    ExecutableArena& operator=(const ExecutableArena&) = delete;
+};
+
+class SingleStepHandler {
+public:
+    SingleStepHandler() {
+#ifdef _WIN32
+        steppingThread = GetCurrentThreadId();
+        handler = AddVectoredExceptionHandler(1, clobberBelowRsp);
+        require(handler != nullptr, "cannot install the single-step handler");
+#else
+        struct sigaction action {};
+        action.sa_sigaction = clobberBelowRsp;
+        action.sa_flags = SA_SIGINFO;
+        sigemptyset(&action.sa_mask);
+        require(sigaction(SIGTRAP, &action, &previous) == 0, "cannot install the SIGTRAP handler");
+#endif
+    }
+
+    ~SingleStepHandler() {
+#ifdef _WIN32
+        singleStepping = false;
+        RemoveVectoredExceptionHandler(handler);
+#else
+        sigaction(SIGTRAP, &previous, nullptr);
+#endif
+    }
+
+    SingleStepHandler(const SingleStepHandler&) = delete;
+    SingleStepHandler& operator=(const SingleStepHandler&) = delete;
+
+private:
+#ifdef _WIN32
+    PVOID handler = nullptr;
+#else
+    struct sigaction previous {};
+#endif
+};
+
+const std::vector<std::uint8_t> RunnerEntry{
     0x53, 0x4c, 0x89, 0xc3, 0x48, 0x89, 0xf8, 0x48, 0x89, 0xf7, 0x48, 0x89, 0xd6, 0x48, 0x89, 0xca,
     0x4d, 0x85, 0xc9, 0x74, 0x0a, 0x9c, 0x48, 0x81, 0x0c, 0x24, 0x00, 0x01, 0x00, 0x00, 0x9d,
-    0xff, 0xd0, 0x9c, 0x48, 0x81, 0x24, 0x24, 0xff, 0xfe, 0xff, 0xff, 0x9d, 0x5b, 0xc3,
+    0xff, 0xd0,
 };
+
+const std::vector<std::uint8_t> Runner = [] {
+    auto bytes = RunnerEntry;
+    bytes.insert(bytes.end(), {0x9c, 0x48, 0x81, 0x24, 0x24, 0xff, 0xfe, 0xff, 0xff, 0x9d, 0x5b, 0xc3});
+    return bytes;
+}();
+
+#ifdef _WIN32
+std::vector<std::uint8_t> windowsRunner() {
+    std::vector<std::uint8_t> bytes{0x57, 0x56, 0x48, 0x81, 0xec, 0xa8, 0x00, 0x00, 0x00};
+    const auto transferXmm = [&](const std::uint8_t opcode) {
+        for (std::uint8_t reg = 6; reg < 16; ++reg) {
+            bytes.push_back(0xf3);
+            if (reg >= 8) bytes.push_back(0x44);
+            bytes.insert(bytes.end(), {0x0f, opcode, static_cast<std::uint8_t>(0x84 | ((reg & 7) << 3)), 0x24,
+                                      static_cast<std::uint8_t>((reg - 6) * 16), 0x00, 0x00, 0x00});
+        }
+    };
+    transferXmm(0x7f);
+    bytes.insert(bytes.end(), {
+        0x48, 0x89, 0xcf, 0x48, 0x89, 0xd6, 0x4c, 0x89, 0xc2, 0x4c, 0x89, 0xc9,
+        0x4c, 0x8b, 0x84, 0x24, 0xe0, 0x00, 0x00, 0x00,
+        0x4c, 0x8b, 0x8c, 0x24, 0xe8, 0x00, 0x00, 0x00,
+    });
+    const auto call = bytes.size();
+    bytes.insert(bytes.end(), {0xe8, 0x00, 0x00, 0x00, 0x00});
+    transferXmm(0x6f);
+    bytes.insert(bytes.end(), {0x48, 0x81, 0xc4, 0xa8, 0x00, 0x00, 0x00, 0x5e, 0x5f, 0xc3});
+    const auto displacement = static_cast<std::uint32_t>(bytes.size() - call - 5);
+    for (std::size_t index = 0; index < 4; ++index) bytes[call + 1 + index] = static_cast<std::uint8_t>(displacement >> (index * 8));
+    bytes.insert(bytes.end(), Runner.begin(), Runner.end());
+    return bytes;
+}
+#endif
 
 struct Leaf {
     const char* Name;
@@ -127,6 +259,45 @@ std::vector<Leaf> backwardStubbedLeaves() {
     };
 }
 
+std::vector<Leaf> widenedLeaves() {
+    return {
+        {"leaf without pushes spilling 0x10 below rsp and adding a spill before its ret", {
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x89, 0x74, 0x24, 0xf8, 0x31, 0xc0, 0xb9, 0x08, 0x00, 0x00, 0x00,
+            0x48, 0x03, 0x44, 0x24, 0xf0, 0x48, 0x03, 0x44, 0x24, 0xf8, 0xff, 0xc9, 0x75, 0xf2,
+            0x48, 0x03, 0x44, 0x24, 0xf0, 0xc3,
+        }, 8 * (kA + kB) + kA},
+        {"leaf pushing only rbx, spilling below rsp and adding rbx before its pop", {
+            0x53, 0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x89, 0xf3, 0x31, 0xc0, 0xb9, 0x08, 0x00, 0x00, 0x00,
+            0x48, 0x03, 0x44, 0x24, 0xf0, 0x48, 0x01, 0xd8, 0xff, 0xc9, 0x75, 0xf4,
+            0x48, 0x01, 0xd8, 0x5b, 0xc3,
+        }, 8 * (kA + kB) + kB},
+        {"frame-pointer leaf without other pushes spilling below rbp", {
+            0x55, 0x48, 0x89, 0xe5, 0x48, 0x89, 0x7d, 0xf0, 0x48, 0x89, 0x75, 0xf8, 0x31, 0xc0, 0xb9, 0x08, 0x00, 0x00, 0x00,
+            0x48, 0x03, 0x45, 0xf0, 0x48, 0x03, 0x45, 0xf8, 0xff, 0xc9, 0x75, 0xf4,
+            0x48, 0x03, 0x45, 0xf0, 0x5d, 0xc3,
+        }, 8 * (kA + kB) + kA},
+        {"leaf without pushes returning its first spill through the first of two widened exits", {
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x89, 0x74, 0x24, 0xf8, 0x48, 0x39, 0xf7, 0x74, 0x06,
+            0x48, 0x8b, 0x44, 0x24, 0xf0, 0xc3, 0x48, 0x8b, 0x44, 0x24, 0xf8, 0xc3,
+        }, kA},
+        {"leaf without pushes returning its second spill through the widened exit a jne reaches", {
+            0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x89, 0x74, 0x24, 0xf8, 0x48, 0x39, 0xf7, 0x75, 0x06,
+            0x48, 0x8b, 0x44, 0x24, 0xf0, 0xc3, 0x48, 0x8b, 0x44, 0x24, 0xf8, 0xc3,
+        }, kB},
+        {"leaf without pushes whose widened exit carries a VEX andn below rsp", {
+            0x48, 0x89, 0x7c, 0x24, 0xf8, 0xc4, 0xe2, 0xf0, 0xf2, 0x44, 0x24, 0xf8, 0xc3,
+        }, ~kC & kA},
+        {"leaf allocating with a 4-byte sub widened over the spill after it", {
+            0x48, 0x83, 0xec, 0x08, 0x48, 0x89, 0x7c, 0x24, 0xf0, 0x31, 0xc0, 0x48, 0x03, 0x44, 0x24, 0xf0,
+            0x48, 0x83, 0xc4, 0x08, 0xc3,
+        }, kA},
+        {"frame-pointer leaf pushing and popping rbx in its body below a slot at rbp-0x10", {
+            0x55, 0x48, 0x89, 0xe5, 0x48, 0x89, 0x7d, 0xf0, 0x53, 0x48, 0x89, 0xf3, 0x48, 0x8b, 0x45, 0xf0,
+            0x48, 0x01, 0xd8, 0x5b, 0x48, 0x01, 0xd0, 0x5d, 0xc3,
+        }, kA + kB + kC},
+    };
+}
+
 void writeRel32(std::uint8_t* at, const std::uint64_t target, const std::uint64_t next) {
     const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(next);
     require(displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max(), "a stub jump is out of rel32 range");
@@ -178,7 +349,14 @@ struct Framing {
 Framing load(const Image& image, const bool frame) {
     std::fill_n(arena, kArenaBytes, 0xcc);
     std::copy(image.Bytes.begin(), image.Bytes.end(), arena);
-    std::copy(Runner.begin(), Runner.end(), arena + kRunnerBase);
+#ifdef _WIN32
+    const auto runner = windowsRunner();
+    steppingReturn = reinterpret_cast<std::uintptr_t>(arena + kRunnerBase + runner.size() - Runner.size() + RunnerEntry.size());
+#else
+    const auto& runner = Runner;
+#endif
+    require(runner.size() <= kArenaBytes - kRunnerBase, "the runner does not fit in the executable arena");
+    std::copy(runner.begin(), runner.end(), arena + kRunnerBase);
     Framing framing;
     if (!frame) return framing;
     const auto base = reinterpret_cast<std::uint64_t>(arena);
@@ -214,7 +392,19 @@ Run run(const std::size_t start, const bool clobber) {
     using Entry = std::uint64_t (*)(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
     const auto entry = reinterpret_cast<Entry>(arena + kRunnerBase);
     steps = 0;
+    outsideSteps = 0;
+#ifdef _WIN32
+    require(FlushInstructionCache(GetCurrentProcess(), arena, kArenaBytes) != 0, "cannot flush the generated code");
+    singleStepping = clobber;
+    steppingFinished = false;
+#endif
     const auto result = entry(reinterpret_cast<std::uint64_t>(arena + start), kA, kB, kC, kD, clobber ? 1 : 0);
+#ifdef _WIN32
+    singleStepping = false;
+    require(steppingFinished == clobber, "single-stepping did not finish at the runner's return point");
+#endif
+    require(outsideSteps == 0, "single-stepping escaped the generated code");
+    require(clobber || steps == 0, "single-stepping ran without the clobber requested");
     return {result, static_cast<int>(steps)};
 }
 
@@ -252,22 +442,19 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
 
 int main() {
     try {
-        struct sigaction action {};
-        action.sa_sigaction = clobberBelowRsp;
-        action.sa_flags = SA_SIGINFO;
-        sigemptyset(&action.sa_mask);
-        require(sigaction(SIGTRAP, &action, nullptr) == 0, "cannot install the SIGTRAP handler");
-        void* mapped = mmap(nullptr, kArenaBytes, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mapped == MAP_FAILED) {
+        const ExecutableArena executableArena;
+        if (arena == nullptr) {
             std::cout << "skipped: no writable and executable memory\n";
             return 77;
         }
-        arena = static_cast<std::uint8_t*>(mapped);
+        const SingleStepHandler singleStepHandler;
         runLeaves(framedLeaves());
         const auto stubbed = runLeaves(stubbedLeaves());
         require(stubbed.OperandStubs == 3 && stubbed.StubbedOperands == 5, "the leaves were framed with " + std::to_string(stubbed.OperandStubs) + " operand stubs carrying " + std::to_string(stubbed.StubbedOperands) + " rsp operands, not 3 carrying 5");
         const auto backward = runLeaves(backwardStubbedLeaves());
         require(backward.OperandStubs == 2 && backward.StubbedOperands == 3 && backward.MovedOperands == 5, "the leaves comparing at rsp before a branch were framed with " + std::to_string(backward.OperandStubs) + " operand stubs carrying " + std::to_string(backward.StubbedOperands) + " rsp operands and " + std::to_string(backward.MovedOperands) + " moved in place, not 2 carrying 3 and 5");
+        const auto widened = runLeaves(widenedLeaves());
+        require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
         std::cout << "red-zone framer execution tests passed\n";
         return 0;
     } catch (const std::exception& error) {
@@ -279,7 +466,7 @@ int main() {
 #else
 
 int main() {
-    std::cout << "skipped: the red-zone framer execution tests single-step x86-64 code on Linux\n";
+    std::cout << "skipped: the red-zone framer execution tests require x86-64 Linux or Windows\n";
     return 77;
 }
 

@@ -99,7 +99,7 @@ int APS5_VABI sceAudioOutGetInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOutSetPadSpkVolume(void) {
+int APS5_VABI sceAudioOutSetPadSpkVolume(std::int32_t, std::int32_t) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -384,4 +384,14 @@ int APS5_VABI sceAudioOut2GetHrtfIdForCronos(void) {
     return 0;
 }
 
+
+int APS5_VABI sceAudioDeviceControlGet_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tKumjQSzhys", sceAudioDeviceControlGet_nid_no_patch);
+
+int APS5_VABI sceAudioDeviceControlSet_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5ChfcHOf3SM", sceAudioDeviceControlSet_nid_no_patch);
 }

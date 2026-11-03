@@ -1,9 +1,17 @@
-add_library(libSceImeDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+add_library(libSceImeDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PadKeyboard.cpp)
 target_include_directories(libSceImeDialog PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceImeDialog PRIVATE libSceIme)
 configure_windows_unwind(libSceImeDialog)
 
 if(BUILD_TESTING)
+    add_test_executable(ime_dialog_pad_keyboard_tests tests/PadKeyboard.cpp src/PadKeyboard.cpp)
+    target_include_directories(ime_dialog_pad_keyboard_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    if(MINGW)
+        target_compile_options(ime_dialog_pad_keyboard_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(ime_dialog_pad_keyboard_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME ime_dialog_pad_keyboard COMMAND ime_dialog_pad_keyboard_tests)
+
     add_test_executable(guest_ime_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeDialog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/ImeTextInput.cpp)
     target_include_directories(guest_ime_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
@@ -12,6 +20,37 @@ if(BUILD_TESTING)
     add_test(NAME guest_ime_dialog COMMAND guest_ime_dialog_tests)
     if(WIN32)
         set_tests_properties(guest_ime_dialog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialog>")
+    endif()
+
+    add_test_executable(guest_ime_dialog_composition_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeDialogComposition.cpp)
+    target_include_directories(guest_ime_dialog_composition_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_dialog_composition_tests PRIVATE libSceImeDialog libSceIme libc)
+    configure_windows_unwind(guest_ime_dialog_composition_tests)
+    add_test(NAME guest_ime_dialog_composition COMMAND guest_ime_dialog_composition_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_dialog_composition PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialog>")
+    endif()
+
+    add_test_executable(guest_ime_dialog_paste_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeDialogPaste.cpp)
+    target_include_directories(guest_ime_dialog_paste_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_dialog_paste_tests PRIVATE libSceImeDialog libSceIme libc)
+    configure_windows_unwind(guest_ime_dialog_paste_tests)
+    add_test(NAME guest_ime_dialog_paste COMMAND guest_ime_dialog_paste_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_dialog_paste PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialog>")
+    endif()
+
+    add_test_executable(guest_ime_text_input_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeTextInput.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/ImeTextInput.cpp)
+    target_include_directories(guest_ime_text_input_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(guest_ime_text_input_tests PRIVATE libSceImeDialog libSceIme libc)
+    configure_windows_unwind(guest_ime_text_input_tests)
+    add_test(NAME guest_ime_text_input COMMAND guest_ime_text_input_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_text_input PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialog>")
     endif()
 endif()

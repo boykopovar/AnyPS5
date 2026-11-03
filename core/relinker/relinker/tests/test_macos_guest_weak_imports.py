@@ -1,6 +1,5 @@
 import os
 import platform
-import shutil
 import struct
 import subprocess
 import sys
@@ -108,7 +107,7 @@ def check_macos_guest_weak_imports(relinker, work):
         assert '@rpath/' + HOST in macho.dylibs, (name, macho.dylibs)
         if native:
             command, kernel = native
-            shutil.copyfile(kernel, libraries / 'libkernel.prx')
+            os.link(kernel, libraries / 'libkernel.prx')
             provider_source, host = case / 'provider.c', libraries / HOST
             provider_source.write_text((f'int {OPTIONAL}(void) {{ return 77; }}\n' if optional else '') +
                                        (f'int {REQUIRED}(void) {{ return 42; }}\n' if required else ''))
