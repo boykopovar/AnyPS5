@@ -753,6 +753,26 @@ static void TestDataChunkBeyondBuffer() {
     Require(sceNgs2ParseWaveformData(truncated.data(), truncated.size(), &info) == SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA);
 }
 
+static void TestStoppedVoiceDoesNotReadInput() {
+    for (std::uint32_t grains = 1; grains <= 20; ++grains) {
+        const auto system = CreateSystem();
+        Require(sceNgs2SystemSetGrainSamples(system, 64) == SCE_NGS2_OK);
+        const auto voice = EmptySampler(system);
+        std::vector<std::uint8_t> source;
+        for (std::uint32_t i = 0; i < 8; ++i) source.insert(source.end(), Superframe, Superframe + SuperframeBytes);
+        Queue(voice, source.data(), source.size(), 0, 2048, 256);
+        Render(system, grains * 64, 64);
+        Event(voice, SCE_NGS2_VOICE_EVENT_STOP);
+        std::mt19937 random(50);
+        for (auto& byte : source) byte = static_cast<std::uint8_t>(random());
+        bool threw = false;
+        try { Render(system, 64, 64); } catch (const std::runtime_error&) { threw = true; }
+        Require(!threw);
+        Require(Flags(voice) == 0);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+}
+
 int main() {
     const auto reference = Reference();
     TestSkipAndBlockEnd(reference);
@@ -769,6 +789,7 @@ int main() {
     TestRefill(reference);
     TestReplacement();
     TestStreamingReplay();
+    TestStoppedVoiceDoesNotReadInput();
     TestStarvationAndTruncation(reference);
     TestAppendBoundaries(reference);
     TestBlockOnEmptyAtrac9Voice();
