@@ -526,7 +526,10 @@ public:
     // range index to pass to End, or NoTiming when timing is off or the batch's queries are used up.
     static constexpr std::uint32_t NoTiming = 0xffffffffu;
     static constexpr std::uint64_t DrawTimingFlag = std::uint64_t{1} << 63u;
+    static constexpr std::uint64_t DrawStageTimingFlag = std::uint64_t{1} << 62u;
     static constexpr std::uint64_t DrawTimingKey(std::uint64_t variantId) { return variantId | DrawTimingFlag; }
+    static bool DrawStageTimingEnabled();
+    static std::uint64_t DrawStageTimingKey(std::span<const std::pair<std::uint32_t, std::uint64_t>> stages);
     static std::string TimingKeyLabel(std::uint64_t key);
     static bool GpuTimingEnabled();
     static bool BatchStampsEnabled();
