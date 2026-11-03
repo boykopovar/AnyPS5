@@ -129,7 +129,9 @@ enum class ColorExportPacking : std::uint8_t {
     Unorm10_11_11,
     Float11_11_10,
     Unorm4_4_4_4,
-    Uint
+    Uint,
+    UintClamp8,
+    UintClamp16
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -292,6 +294,7 @@ struct GuestContext {
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedCallFallbacks;
     bool convertedSamples = false;
+    bool layerRowSamples = false;
 };
 
 struct MeshTargetLimits {
@@ -329,8 +332,12 @@ struct SpirvTarget {
     std::uint32_t maxWorkgroupSharedMemoryBytes;
     std::optional<MeshTargetLimits> mesh;
     std::optional<TessellationTargetLimits> tessellation;
+    std::array<std::uint64_t, 2> featureDigest{};
+    std::array<std::uintptr_t, 4> featureDigestSpans{};
+    bool featureDigestSealed = false;
     bool nonConstantImageOffsets = false;
     std::uint32_t srgbDecodeFormats = 0;
+    std::uint32_t maxImageArrayLayers = 0;
     bool narrowSubgroupClock = false;
     bool fixedPushSlots = false;
     bool float64DenormPreserve = false;
@@ -353,6 +360,8 @@ struct SpirvTarget {
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
+    bool hostInterpolationFirst = false;
+    bool shaderImageMinLod = false;
 };
 
 struct BindingLayout {
@@ -417,6 +426,8 @@ inline constexpr std::uint32_t MeshArgumentIndexCountDword = 3;
 inline constexpr std::uint32_t MeshArgumentFirstIndexDword = 4;
 inline constexpr std::uint32_t MeshArgumentBytes = 20;
 inline constexpr std::uint32_t MeshIndexRestartTable = 0x100;
+inline constexpr std::uint32_t MeshLayerStrideShift = 16;
+inline constexpr std::uint32_t MeshLayerStrideLimit = 0xffff;
 inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
 inline constexpr std::uint32_t MeshCapturedCounterDword = MeshArgumentBytes / 4;
@@ -426,6 +437,7 @@ inline constexpr std::uint32_t MeshCapturedItemAddressDword = 0;
 inline constexpr std::uint32_t TessellationCaptureArgumentAddressDword = 2;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
+inline constexpr std::uint32_t ScratchPoolDescriptorSet = 2;
 
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;
@@ -550,7 +562,7 @@ struct DescriptorBinding {
     std::vector<bool> samplerCoordinatesIgnored;
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
-    std::vector<std::uint32_t> imageSamplers;
+    std::vector<std::uint64_t> imageSamplers;
     std::vector<bool> bufferRead;
     std::vector<std::uint32_t> bufferExtent;
 };
@@ -758,6 +770,7 @@ struct CompiledShaderArtifact {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
+    std::uint32_t scratchPoolSlotDwords = 0;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;
@@ -765,6 +778,7 @@ struct CompiledShaderArtifact {
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
     bool bdaWrites = false;
+    bool layerReplaySafe = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
     std::uint64_t variantId = 0;
 };

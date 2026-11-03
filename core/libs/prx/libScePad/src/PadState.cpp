@@ -374,6 +374,27 @@ void Pad::SetVibrationMode(int mode) {
     SetVibrationMode(0, mode);
 }
 
+void Pad::SetAudioOutPath(int port, int path) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& output = slots[port].output;
+    if (output.audioOutPath == path) return;
+    output.audioOutPath = path;
+    ++output.sequence;
+}
+
+void Pad::SetVolumeGain(int port, std::uint8_t speaker, std::uint8_t headset, std::uint8_t mic) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& output = slots[port].output;
+    if (output.volumeGainValid && output.speakerVolume == speaker && output.headsetVolume == headset && output.micGain == mic) return;
+    output.volumeGainValid = true;
+    output.speakerVolume = speaker;
+    output.headsetVolume = headset;
+    output.micGain = mic;
+    ++output.sequence;
+}
+
 void Pad::SetLightBar(int port, bool valid, std::uint8_t r, std::uint8_t g, std::uint8_t b) {
     if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
     std::lock_guard lock(stateMutex);

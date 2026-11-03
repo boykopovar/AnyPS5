@@ -342,7 +342,7 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     const auto logic = [](std::uint32_t op) { return op == 10 || op == 11 || op == 12 || op == 15; };
     const auto convert = [&](std::uint32_t op, bool testFailed) {
         if (face.writeMask == 0) return VK_STENCIL_OP_KEEP;
-        char detail[112];
+        char detail[128];
         if (opValExport && ((op == 4 && !opValReference) || (op >= 5 && op != 7))) {
             std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operation %u with a pixel shader that exports the stencil operation value is unsupported", op);
             throw std::runtime_error(detail);
@@ -1010,10 +1010,20 @@ struct DecodedColorFormat {
     ShaderRecompiler::ColorExportPacking packing = ShaderRecompiler::ColorExportPacking::None;
 };
 
+bool UintPacked(ShaderRecompiler::ColorExportPacking packing) {
+    return packing == ShaderRecompiler::ColorExportPacking::Uint || packing == ShaderRecompiler::ColorExportPacking::UintClamp8 || packing == ShaderRecompiler::ColorExportPacking::UintClamp16;
+}
+
 const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) {
     if (packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4) return "4_4_4_4 unorm";
-    if (packing == ShaderRecompiler::ColorExportPacking::Uint) return "unsigned integer";
+    if (UintPacked(packing)) return "unsigned integer";
     return packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "11_11_10 float" : "10_11_11 unorm";
+}
+
+ShaderRecompiler::ColorExportPacking HalfExportPacking(VkFormat format) {
+    if (format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8G8_UINT || format == VK_FORMAT_R8G8B8A8_UINT) return ShaderRecompiler::ColorExportPacking::UintClamp8;
+    if (format == VK_FORMAT_R16_UINT || format == VK_FORMAT_R16G16_UINT || format == VK_FORMAT_R16G16B16A16_UINT) return ShaderRecompiler::ColorExportPacking::UintClamp16;
+    return ShaderRecompiler::ColorExportPacking::Uint;
 }
 
 bool WordPacked(ShaderRecompiler::ColorExportPacking packing) {
@@ -1274,7 +1284,7 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto group = read(queue.userConfig, 0x25b, RegisterBank::UserConfig);
         const auto vertices = (group >> 9u) & 0x1ffu;
         const auto primitives = group & 0x1ffu;
-        validate(!fastLaunch || (!vertexWorkgroup && inputPrimitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
+        validate(!fastLaunch || (!vertexWorkgroup && vertices == 1 && primitives == 1), "fast launch other than one vertex and one primitive per subgroup is unsupported");
         const auto maxVertices = read(queue.context, 0x1ff);
         const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
         const auto outputType = read(queue.context, 0x29b);
@@ -1329,7 +1339,7 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     } else {
         const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
         validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
-        result.mesh = meshConfiguration(primitive, fastLaunch);
+        result.mesh = meshConfiguration(fastLaunch ? 1u : primitive, fastLaunch);
     }
     return result;
 }
@@ -1375,6 +1385,16 @@ std::string DepthMaintenanceRejection(const QueueState& queue) {
     const bool colorMasks = find(queue.context, 0x8e) != queue.context.end() && find(queue.context, 0x8f) != queue.context.end();
     if ((control->second & ~0x2fe3u) == 0x10u && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
+}
+
+std::optional<DepthRenderControl> DecodeDepthRenderControl(const QueueState& queue) {
+    const auto& cx = queue.context;
+    const auto control = find(cx, 0x000);
+    const auto zInfo = find(cx, 0x010);
+    if (control == cx.end() || (control->second & 0x63u) == 0u || zInfo == cx.end() || (zInfo->second & 3u) == 0u) return std::nullopt;
+    const auto high = find(cx, 0x01a);
+    const auto address = (high == cx.end() ? 0ull : static_cast<std::uint64_t>(high->second & 0xffu) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x012)) << 8u);
+    return DepthRenderControl{address & ~std::uint64_t{65535u}, 1u << ((zInfo->second >> 2u) & 3u), control->second};
 }
 
 ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne) {
@@ -1829,11 +1849,12 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 if ((weighted(state.colorBlendOp) && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) || (weighted(state.alphaBlendOp) && (constantColor(state.srcAlphaBlendFactor) || constantColor(state.dstAlphaBlendFactor)))) throw std::runtime_error("AGC graphics: blending into an 8_8 color target with the alternate component order with a constant color factor, which Vulkan applies to the second channel with the green blend constant instead of the alpha one, is not implemented");
             }
         }
-        if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) state.blendEnable = VK_FALSE;
+        if (UintPacked(color.packing)) state.blendEnable = VK_FALSE;
         if (WordPacked(color.packing)) {
             const std::string packed = std::string(color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "an " : "a ") + PackedColorTargetName(color.packing);
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
             if (slotExport == 5 || slotExport == 6) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into " + packed + " target is unsupported");
+            if (state.srcColorBlendFactor == VK_BLEND_FACTOR_ONE && state.dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && state.colorBlendOp == VK_BLEND_OP_ADD) state.blendEnable = VK_FALSE;
             Require(!state.blendEnable, "blending into " + packed + " color target is unsupported");
             const bool nibbles = color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
             const std::uint32_t packedMask = nibbles ? 0xfu : 7u;
@@ -1857,7 +1878,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) {
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
-            if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
+            if (slotExport == 4) color.packing = HalfExportPacking(color.format);
+            else if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
         }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
             const auto addition = [](VkBlendOp op) { return op == VK_BLEND_OP_ADD || op == VK_BLEND_OP_SUBTRACT || op == VK_BLEND_OP_REVERSE_SUBTRACT; };

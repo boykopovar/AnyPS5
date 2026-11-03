@@ -27,6 +27,8 @@ constexpr int HandleNotFound = static_cast<int>(0x8055290Du);
 constexpr int ServicePushEventFilterNotFound = static_cast<int>(0x8055290Eu);
 constexpr int ServicePushEventCallbackNotFound = static_cast<int>(0x8055290Fu);
 constexpr int SignedInUserNotFound = static_cast<int>(0x80552910u);
+constexpr int HttpInvalidId = static_cast<int>(0x80431100u);
+constexpr int HttpInvalidResponse = static_cast<int>(0x80432060u);
 
 constexpr int MethodGet = 0;
 constexpr int MethodPost = 1;
@@ -178,6 +180,49 @@ void TestRequests() {
     Require(sceNpWebApiSendRequest(second, nullptr, 0) == UserContextNotFound, "request of a deleted user context");
     Require(sceNpWebApiDeleteRequest(second) == UserContextNotFound, "delete a request of a deleted user context");
     Require(sceNpWebApiTerminate(context) == 0, "terminate the request library context");
+}
+
+void TestResponses() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for responses");
+    std::int64_t request = 0;
+    std::int64_t aborted = 0;
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &request) == 0, "request for responses");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &aborted) == 0, "request to abort");
+    Require(sceNpWebApiSendRequest(request, nullptr, 0) == NotSignedIn, "the request is never sent");
+    Require(sceNpWebApiAbortRequest(aborted) == 0, "abort the second request");
+
+    std::array<char, 8> data{};
+    data.fill('x');
+    Require(sceNpWebApiReadData(request, nullptr, data.size()) == InvalidArgument, "read without a buffer");
+    Require(sceNpWebApiReadData(request, data.data(), 0) == InvalidArgument, "read of zero bytes");
+    Require(sceNpWebApiReadData(-1, nullptr, 0) == InvalidArgument, "the buffer is checked before the request");
+    Require(sceNpWebApiReadData(-1, data.data(), data.size()) == LibContextNotFound, "read request -1");
+    Require(sceNpWebApiReadData(static_cast<std::int64_t>(user + 1) << 32 | 1, data.data(), data.size()) == UserContextNotFound, "read a request of an unknown user context");
+    Require(sceNpWebApiReadData(request + 0x10000, data.data(), data.size()) == RequestNotFound, "read an unknown request");
+    Require(sceNpWebApiReadData(request, data.data(), data.size()) == HttpInvalidId, "read a request that was never sent");
+    Require(sceNpWebApiReadData(aborted, data.data(), data.size()) == Aborted, "read an aborted request");
+    Require(data[0] == 'x' && data[7] == 'x', "a failed read leaves the buffer alone");
+
+    std::array<char, 8> value{};
+    value.fill('x');
+    std::size_t length = 123;
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, nullptr, value.data(), value.size()) == InvalidArgument, "header value without a field name");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", nullptr, value.size()) == InvalidArgument, "header value without a buffer");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", value.data(), 0) == InvalidArgument, "header value with an empty buffer");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, nullptr, &length) == InvalidArgument, "header length without a field name");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, "Content-Type", nullptr) == InvalidArgument, "header length without an output");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(-1, "Content-Type", value.data(), value.size()) == LibContextNotFound, "header value of request -1");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request + 0x10000, "Content-Type", &length) == RequestNotFound, "header length of an unknown request");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", value.data(), value.size()) == HttpInvalidResponse, "header value of a request that was never sent");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, "Content-Type", &length) == HttpInvalidResponse, "header length of a request that was never sent");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(aborted, "Content-Type", &length) == HttpInvalidResponse, "header length of an aborted request");
+    Require(value[0] == 'x' && value[7] == 'x' && length == 123, "a failed header query leaves the outputs alone");
+
+    Require(sceNpWebApiDeleteRequest(request) == 0 && sceNpWebApiDeleteRequest(aborted) == 0, "delete the response requests");
+    Require(sceNpWebApiReadData(request, data.data(), data.size()) == RequestNotFound, "read a deleted request");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the response library context");
 }
 
 void TestPushEventCallbacks() {
@@ -389,6 +434,7 @@ int main() {
     TestLibraryContexts();
     TestUserContexts();
     TestRequests();
+    TestResponses();
     TestPushEventCallbacks();
     TestOlderSdks();
     TestHandleOperations();
