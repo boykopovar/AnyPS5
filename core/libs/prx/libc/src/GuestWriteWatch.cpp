@@ -102,13 +102,13 @@ public:
         return (next != _ranges.begin() && std::prev(next)->second > begin) || (next != _ranges.end() && next->first < end);
     }
 
-    bool Collect(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+    bool Collect(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void (*unreached)(void*, std::uintptr_t, std::uintptr_t), void* context) {
         if (!Available()) return false;
         begin &= ~(PageBytes - 1);
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
         if (end <= begin) return true;
-        if (!takeFresh(begin, end, true, written, context)) return false;
-        return scanWritten(begin, end, written, context);
+        if (!takeFresh(begin, end, true, written, unreached, context)) return false;
+        return scanWritten(begin, end, written, unreached, context);
     }
 
     bool CollectFresh(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
@@ -123,10 +123,10 @@ public:
             while (it != _fresh.end() && it->first < end && it->second <= begin) ++it;
             if (it == _fresh.end() || it->first >= end) return true;
         }
-        return takeFresh(begin, end, false, written, context);
+        return takeFresh(begin, end, false, written, nullptr, context);
     }
 
-    bool CollectArmed(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+    bool CollectArmed(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void (*unreached)(void*, std::uintptr_t, std::uintptr_t), void* context) {
         if (!Available()) return false;
         begin &= ~(PageBytes - 1);
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
@@ -134,7 +134,11 @@ public:
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> armed;
         {
             std::shared_lock lock(_lock);
-            if (!covers(begin, end)) return false;
+            if (!covers(begin, end)) {
+                lock.unlock();
+                if (unreached != nullptr) unreached(context, begin, end);
+                return false;
+            }
             auto cursor = begin;
             auto it = _fresh.upper_bound(begin);
             if (it != _fresh.begin()) --it;
@@ -145,18 +149,26 @@ public:
             }
             if (cursor < end) armed.emplace_back(cursor, end);
         }
-        for (const auto& [from, to] : armed) {
-            if (!scanWritten(from, to, written, context)) return false;
+        for (auto it = armed.begin(); it != armed.end(); ++it) {
+            if (scanWritten(it->first, it->second, written, unreached, context)) continue;
+            if (unreached != nullptr) {
+                for (auto later = std::next(it); later != armed.end(); ++later) unreached(context, later->first, later->second);
+            }
+            return false;
         }
         return true;
     }
 
 private:
-    bool takeFresh(std::uintptr_t begin, std::uintptr_t end, bool whole, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
+    bool takeFresh(std::uintptr_t begin, std::uintptr_t end, bool whole, void (*written)(void*, std::uintptr_t, std::uintptr_t), void (*unreached)(void*, std::uintptr_t, std::uintptr_t), void* context) {
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> fresh;
         {
             std::unique_lock lock(_lock);
-            if (whole && !covers(begin, end)) return false;
+            if (whole && !covers(begin, end)) {
+                lock.unlock();
+                if (unreached != nullptr) unreached(context, begin, end);
+                return false;
+            }
             auto it = _fresh.upper_bound(begin);
             if (it != _fresh.begin()) --it;
             for (; it != _fresh.end() && it->first < end; ++it) {
@@ -175,15 +187,22 @@ private:
                 remove(_fresh, left, right);
                 insert(_fresh, left, right);
             }
-            if (whole) written(context, begin, end);
-            else for (const auto& [left, right] : fresh) written(context, left, right);
+            if (whole) {
+                if (unreached != nullptr) unreached(context, begin, end);
+                written(context, begin, end);
+            } else {
+                for (const auto& [left, right] : fresh) {
+                    if (unreached != nullptr) unreached(context, left, right);
+                    written(context, left, right);
+                }
+            }
             return false;
         }
         return true;
     }
 
-    bool scanWritten(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) const {
-        std::array<page_region, 256> regions;
+    bool scanWritten(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void (*unreached)(void*, std::uintptr_t, std::uintptr_t), void* context) const {
+        std::array<page_region, 256> regions{};
         auto cursor = begin;
         while (cursor < end) {
             pm_scan_arg scan{};
@@ -197,10 +216,16 @@ private:
             scan.return_mask = PAGE_IS_WRITTEN;
             const auto count = ioctl(_pagemap, PAGEMAP_SCAN, &scan);
             if (count < 0) {
+                for (const auto& region : regions) {
+                    if (region.end <= region.start) break;
+                    written(context, region.start, region.end);
+                }
+                if (unreached != nullptr) unreached(context, cursor, end);
                 written(context, cursor, end);
                 return false;
             }
             for (long i = 0; i < count; ++i) written(context, regions[i].start, regions[i].end);
+            std::fill_n(regions.begin(), count, page_region{});
             if (scan.walk_end <= cursor || scan.walk_end >= end) break;
             cursor = scan.walk_end;
         }
@@ -1037,13 +1062,23 @@ bool GuestWriteWatchOverlaps_nid_postfix(std::uintptr_t address, std::size_t byt
 }
 
 bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
-#ifdef APS5_GUEST_WRITE_WATCH
+    return GuestWriteWatchCollectReporting_nid_postfix(address, bytes, written, nullptr, context);
+}
+
+bool GuestWriteWatchCollectReporting_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void (*unreached)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
     if (bytes == 0 || address + bytes < address) return false;
-    return Watch::Get().Collect(address, address + bytes, written, context);
+    return Watch::Get().Collect(address, address + bytes, written, unreached, context);
+#elif defined(__APPLE__)
+    if (bytes == 0 || address + bytes < address) return false;
+    if (Watch::Get().Collect(address, address + bytes, written, context)) return true;
+    if (unreached != nullptr) unreached(context, address, address + bytes);
+    return false;
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);
     static_cast<void>(written);
+    static_cast<void>(unreached);
     static_cast<void>(context);
     return false;
 #endif
@@ -1119,16 +1154,23 @@ bool GuestWriteWatchCollectFresh_nid_postfix(std::uintptr_t address, std::size_t
 }
 
 bool GuestWriteWatchCollectArmed_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+    return GuestWriteWatchCollectArmedReporting_nid_postfix(address, bytes, written, nullptr, context);
+}
+
+bool GuestWriteWatchCollectArmedReporting_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void (*unreached)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
 #if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
     if (bytes == 0 || address + bytes < address) return false;
-    return Watch::Get().CollectArmed(address, address + bytes, written, context);
+    return Watch::Get().CollectArmed(address, address + bytes, written, unreached, context);
 #elif defined(__APPLE__)
     if (bytes == 0 || address + bytes < address) return false;
-    return Watch::Get().Collect(address, address + bytes, written, context, Watch::Take::Armed);
+    if (Watch::Get().Collect(address, address + bytes, written, context, Watch::Take::Armed)) return true;
+    if (unreached != nullptr) unreached(context, address, address + bytes);
+    return false;
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);
     static_cast<void>(written);
+    static_cast<void>(unreached);
     static_cast<void>(context);
     return false;
 #endif

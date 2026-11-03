@@ -52,7 +52,7 @@ bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes
     return address >= Base && bytes <= 2 * Block && address - Base <= 2 * Block - bytes;
 }
 
-bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+bool GuestWriteWatchCollectReporting_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void (*)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
     auto& fake = Fake();
     const auto end = address + bytes;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> runs;
@@ -73,6 +73,10 @@ bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t byte
     }
     for (const auto& [from, to] : runs) written(context, from, to);
     return true;
+}
+
+bool GuestWriteWatchCollect_nid_postfix(std::uintptr_t address, std::size_t bytes, void (*written)(void* context, std::uintptr_t begin, std::uintptr_t end), void* context) {
+    return GuestWriteWatchCollectReporting_nid_postfix(address, bytes, written, nullptr, context);
 }
 
 }
