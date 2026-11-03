@@ -106,5 +106,50 @@ class StaleTests(unittest.TestCase):
         self.assertIsNone(self.check("Functional", f"- [sceQuiet]({LINK}) - layout unknown"))
 
 
+class ReportTests(unittest.TestCase):
+    FILES = {
+        "docs/dev/TechnicalDebt.md": "# Project technical debt\n",
+        DEBT: (
+            "# libSceExample technical debt\n\n### Unknown function info\n\n"
+            f"- [sceQuiet]({LINK}) - throws until measured on a PS5, on Windows\n"
+            f"- [sceLoud]({LINK}) - layout unknown. Labels: firmware, tested, linux\n"
+        ),
+        "core/libs/prx/libSceExample/Export.cpp": SOURCE,
+        "core/libs/prx/libSceExample/tests/Example.cpp": "int main() { return sceLoud(0); }\n",
+    }
+
+    def run_main(self, argv):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root, self.FILES)
+            debt_report.file_definitions.cache_clear()
+            output = io.StringIO()
+            with mock.patch.object(debt_report, "ROOT", root), contextlib.redirect_stdout(output):
+                code = debt_report.main(argv)
+            return code, output.getvalue()
+
+    def test_json_labels_and_override(self):
+        code, output = self.run_main(["--json"])
+        rows = json.loads(output)
+        self.assertEqual(code, 0)
+        self.assertEqual([(r["line"], r["labels"], r["reason"]) for r in rows], [
+            (5, ["console", "no-test", "windows", "stale?"], "no longer throws: sceQuiet"),
+            (6, ["firmware", "linux"], None),
+        ])
+
+    def test_text_filter_and_counts(self):
+        code, output = self.run_main(["libSceExample", "--label", "no-test"])
+        self.assertEqual(code, 0)
+        self.assertIn(f"{DEBT}:5: sceQuiet: console, no-test, windows, stale? (no longer throws: sceQuiet)", output)
+        self.assertNotIn(f"{DEBT}:6:", output)
+        self.assertIn("1 entries: 1 console, 1 no-test, 1 windows, 1 stale?", output)
+
+    def test_unknown_debt_file_is_a_usage_error(self):
+        with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as raised:
+            self.run_main(["libSceMissing"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("no debt file: libSceMissing", errors.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

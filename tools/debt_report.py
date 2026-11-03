@@ -125,3 +125,50 @@ def stale(entry, root):
         quiet = [name for name, value in throwing.items() if not value]
         return f"no longer throws: {quiet[0]}" if quiet else None
     return None
+
+
+def labels(entry, root, words):
+    explicit = set(debt_labels(entry.text))
+    chosen = {"closer": [closer(entry.text)], "test": ["no-test"] if untested(entry.text, words) else [], "platform": platforms(entry.text)}
+    for family, vocabulary in DEBT_LABELS.items():
+        given = [label for label in vocabulary if label in explicit]
+        if given:
+            chosen[family] = [label for label in given if label != "tested"]
+    found = [label for family in DEBT_LABELS for label in chosen[family]]
+    reason = stale(entry, root)
+    return (found + ["stale?"] if reason else found), reason
+
+
+def report(root, libraries=None):
+    words = test_words(root)
+    rows = []
+    for entry in entries(root, libraries):
+        found, reason = labels(entry, root, words)
+        rows.append({"file": entry.file, "line": entry.line, "section": entry.section, "names": entry_names(entry.text), "labels": found, "reason": reason})
+    return rows
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Label technical debt entries: who can close them (console, firmware, gpu, title or code), no-test when no test names what they name, stale? when the code may no longer match them, and the platforms they name. A Labels: trailer on an entry replaces the inferred labels of its family. A report, not a gate: it always exits 0.")
+    parser.add_argument("libraries", nargs="*", help="debt file names without .md, such as libkernel or TechnicalDebt (default: all)")
+    parser.add_argument("--label", action="append", default=[], help="show only entries with this label; repeat to require several")
+    parser.add_argument("--json", action="store_true", help="print the rows as JSON")
+    args = parser.parse_args(argv)
+    known = {path.stem for path in debt_files(ROOT)}
+    missing = [name for name in args.libraries if name not in known]
+    if missing:
+        parser.error(f"no debt file: {', '.join(missing)}")
+    rows = [row for row in report(ROOT, set(args.libraries) or None) if all(label in row["labels"] for label in args.label)]
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    for row in rows:
+        reason = f" ({row['reason']})" if row["reason"] else ""
+        print(f"{row['file']}:{row['line']}: {', '.join(row['names'][:3]) or '-'}: {', '.join(row['labels'])}{reason}")
+    counts = Counter(label for row in rows for label in row["labels"])
+    print(f"{len(rows)} entries: " + ", ".join(f"{count} {label}" for label, count in counts.most_common()))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
