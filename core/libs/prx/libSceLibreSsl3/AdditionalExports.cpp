@@ -468,10 +468,6 @@ int APS5_VABI X509_digest_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509V3_set_ctx_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI BIO_meth_set_destroy_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
