@@ -1323,6 +1323,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         if (auto pipeline = lookup(collision)) {
             ++store.hits;
             ++store.totals.hits;
+            if (storeHash != nullptr) *storeHash = hash;
             return pipeline;
         }
         ++store.misses;

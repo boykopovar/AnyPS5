@@ -104,10 +104,10 @@ int main(int argc, char** argv) {
     vertex.spirv = {0x07230203u, 0x00010000u, 1, 1, 0};
     fragment.spirv = {0x07230203u, 0x00010000u, 2, 1, 0};
     const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
-    const auto build = [&](VkCullModeFlags cull, bool* created) {
+    const auto build = [&](VkCullModeFlags cull, bool* created, std::uint64_t* storeHash = nullptr) {
         State state{};
         state.cullMode = cull;
-        return CachedPipeline(context, state, VertexInputLayout{}, PipelineSetLayouts{}, shaders, VK_IMAGE_LAYOUT_GENERAL, created);
+        return CachedPipeline(context, state, VertexInputLayout{}, PipelineSetLayouts{}, shaders, VK_IMAGE_LAYOUT_GENERAL, created, storeHash);
     };
     std::shared_ptr<Pipeline> warm;
     if (mode == "cached") warm = build(VK_CULL_MODE_BACK_BIT, nullptr);
@@ -117,11 +117,12 @@ int main(int argc, char** argv) {
     throwing = mode == "exception";
     std::array<std::shared_ptr<Pipeline>, 2> results;
     std::array<bool, 2> created{};
+    std::array<std::uint64_t, 2> hashes{};
     std::array<std::exception_ptr, 2> errors;
     std::atomic<bool> secondStarted{false};
     std::atomic<bool> secondDone{false};
     std::thread first([&] {
-        try { results[0] = build(0, &created[0]); }
+        try { results[0] = build(0, &created[0], &hashes[0]); }
         catch (...) { errors[0] = std::current_exception(); }
     });
     {
@@ -131,7 +132,7 @@ int main(int argc, char** argv) {
     std::thread second([&] {
         secondStarted = true;
         changed.notify_all();
-        try { results[1] = build(mode == "independent" || mode == "cached" ? VK_CULL_MODE_BACK_BIT : 0, &created[1]); }
+        try { results[1] = build(mode == "independent" || mode == "cached" ? VK_CULL_MODE_BACK_BIT : 0, &created[1], &hashes[1]); }
         catch (...) { errors[1] = std::current_exception(); }
         secondDone = true;
         changed.notify_all();
@@ -150,6 +151,8 @@ int main(int argc, char** argv) {
     Check(!errors[1] && results[1] != nullptr, "second lookup failed");
     Check((mode == "independent" || mode == "cached") ? early : !early, "lookup did not wait only for its own in-flight pipeline");
     Check(mode != "shared" || (results[0] == results[1] && created[0] && !created[1]), "identical lookups did not share one created pipeline");
+    Check(hashes[1] != 0, "a completed lookup did not return its store hash");
+    Check(mode != "shared" || hashes[0] == hashes[1], "a waited hit returned a different store hash from its builder");
     Check(mode != "cached" || (results[1] == warm && !created[1]), "a cached hit was held behind a cold build");
     Check(mode != "independent" || (results[0] != results[1] && created[0] && created[1]), "independent keys were not built separately");
     const auto expected = mode == "shared" || mode == "cached" ? 1u : 2u;
