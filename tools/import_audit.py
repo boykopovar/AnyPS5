@@ -666,33 +666,47 @@ def source_stub_classes(source):
     stubs = {}
     partial = set()
     shared = {}
+    done_by_library = {}
     for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
         aliases = {}
         for file in nid_names.source_files(library):
             for nid, name in nid_names.source_aliases(file.read_text(encoding="utf-8-sig", errors="ignore")):
                 aliases.setdefault(name, set()).add(nid)
         group = progress.scan_library(library)
-        if "shared_sources" in group:
-            shared[library.name] = group["shared_sources"]
+        shared[library.name] = progress.shared_source_owners(library)
         done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
+        done_by_library[library.name] = done
         conditional = conditional_stubs(library) if group["todo_names"] else set()
         for name in group["todo_names"]:
             for nid in nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
                 if name in conditional:
                     partial.add((library.name + ".prx", nid))
-    for library, owner in shared.items():
-        chain = [library]
-        while owner in shared:
-            if owner in chain:
-                raise AuditError(f"{source}: shared source cycle: {' -> '.join(chain + [owner])}")
-            chain.append(owner)
-            owner = shared[owner]
-        for (provider, nid), name in list(stubs.items()):
-            if provider == owner + ".prx":
-                stubs[(library + ".prx", nid)] = name
-                if (provider, nid) in partial:
-                    partial.add((library + ".prx", nid))
+    resolved = set()
+
+    def inherit(library, chain):
+        if library in chain:
+            raise AuditError(f"{source}: shared source cycle: {' -> '.join(chain + [library])}")
+        if library in resolved:
+            return
+        for owner in shared[library]:
+            inherit(owner, chain + [library])
+            done_by_library[library].update(done_by_library[owner])
+            for (provider, nid), name in list(stubs.items()):
+                if provider == owner + ".prx":
+                    key = (library + ".prx", nid)
+                    stubs.setdefault(key, name)
+                    if (provider, nid) in partial:
+                        partial.add(key)
+        resolved.add(library)
+
+    for library in shared:
+        inherit(library, [])
+    for library, done in done_by_library.items():
+        for nid in done:
+            key = (library + ".prx", nid)
+            stubs.pop(key, None)
+            partial.discard(key)
     return stubs, partial
 
 
