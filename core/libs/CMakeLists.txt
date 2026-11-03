@@ -705,7 +705,7 @@ if(BUILD_TESTING)
         add_test(NAME windows_crash_thread_name COMMAND windows_crash_thread_name_tests $<TARGET_FILE:libc>)
         set_tests_properties(windows_crash_thread_name PROPERTIES TIMEOUT 20
             PASS_REGULAR_EXPRESSION "on thread [0-9]+ 'a+Z'[^~]*thread [0-9]+ 'c+Y':"
-            FAIL_REGULAR_EXPRESSION "Zb|Yd|did not fault")
+            FAIL_REGULAR_EXPRESSION "thread [0-9]+ 'a+Z[^']|thread [0-9]+ 'c+Y[^']|did not fault")
         add_test_executable(windows_crash_text_tests tests/WindowsCrashText.cpp)
         add_dependencies(windows_crash_text_tests libc)
         if(MINGW)
