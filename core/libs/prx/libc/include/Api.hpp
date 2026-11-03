@@ -1297,6 +1297,7 @@ std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time);
 int APS5_VABI xtime_get_nid_postfix(Xtime* time, int base);
 Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime* time);
 Xtime APS5_VABI _Xtime_diff_to_ts_nid_postfix(const Xtime* target);
+std::int64_t APS5_VABI _ZNSt8__sce_v222_Xtime_diff_to_millis2EPK8timespecS2__nid_postfix(const Xtime* target, const Xtime* now);
 const void* APS5_VABI __std_find_trivial_1_nid_postfix(const void* first, const void* last, std::uint8_t value);
 const void* APS5_VABI __std_find_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value);
 const void* APS5_VABI __std_find_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value);
