@@ -499,6 +499,17 @@ double APS5_VABI hypot_nid_postfix(double x, double y) {
     }
     return std::hypot(x, y);
 }
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/e_log10f.c: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/e_log10f.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static bool Log9Reduce(float& x, std::int32_t& k, float& special) {
     static volatile float zero = 0.0f;
     const float two25 = static_cast<float>(3.3554432000e+07);
@@ -530,6 +541,17 @@ static bool Log9Reduce(float& x, std::int32_t& k, float& special) {
     return true;
 }
 
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/k_logf.h: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/k_logf.h */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static float Log9Kernel(float x) {
     const float Lg1 = 0xaaaaaa.0p-24f;
     const float Lg2 = 0xccce13.0p-25f;
@@ -2064,6 +2086,17 @@ float APS5_VABI logf_nid_postfix(float x) {
     }
     return k == 0 ? f - s * (f - R) : dk * ln2_hi - ((s * (f - R) - dk * ln2_lo) - f);
 }
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/e_log2f.c: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/e_log2f.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 float APS5_VABI log2f_nid_postfix(float x) {
     const float ivln2hi = static_cast<float>(1.4428710938e+00);
     const float ivln2lo = static_cast<float>(-1.7605285393e-04);
