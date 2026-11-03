@@ -379,3 +379,5 @@
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
 - [Multi-submit count overflow and buffer validation](../../../core/libs/prx/libSceAgcDriver/Submit/src/Dcb.cpp) (libSceAgcDriver) - whether the console driver imposes an architectural submission packet limit or allows null buffer pointers with non-zero sizes in multi-submit arrays is unmeasured; AgcDriver::SubmitMany validates count against 32-bit pointer array bounds overflow and rejects null addresses for non-empty command buffers with a runtime exception.
+
+Selected dma-buf imports also propagate failures thrown by the sparse shared-backing path through mapped-range import; these failures cannot be reduced to a logged refusal followed by copies. The regression injects a sparse Vulkan buffer-creation failure after selection and verifies propagation, no cached import and retained guest write tracking.

@@ -461,6 +461,56 @@ PFN_vkVoidFunction ResolveDmaBufRefusal(VkDevice device, const char* name) {
     return DmaBufOriginalDeviceProc(device, name);
 }
 
+PFN_vkCreateBuffer SparseOriginalCreate = nullptr;
+std::atomic<std::uint32_t> SparseRefusals{0};
+
+VKAPI_ATTR VkResult VKAPI_CALL RefuseSparseBuffer(VkDevice device, const VkBufferCreateInfo* info, const VkAllocationCallbacks* allocator, VkBuffer* buffer) {
+    if ((info->flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0) {
+        SparseRefusals.fetch_add(1, std::memory_order_relaxed);
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    return SparseOriginalCreate(device, info, allocator, buffer);
+}
+
+PFN_vkVoidFunction ResolveSparseRefusal(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkCreateBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(RefuseSparseBuffer);
+    return ResolveDmaBufRefusal(device, name);
+}
+
+bool DmaBufSparseFailure(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!DmaBufImportSelected(context) || !context.sparseBinding) {
+        std::puts("skipped, the device does not select watched sparse dma-buf imports");
+        return false;
+    }
+    SetHostImportRangeWindow(0);
+    Block block(std::size_t{65} << 20u, 0, true);
+    Require(ExistingHostImportFor(context, block.Address(), block.bytes) == nullptr, "sparse failure: direct memory already has an import");
+    DmaBufOriginalDeviceProc = context.deviceProc;
+    SparseOriginalCreate = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer");
+    context.deviceProc = ResolveSparseRefusal;
+    GuestAllocations::Mapped mapped;
+    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    for (const auto& range : lease) if (range->address == block.Address()) mapped.emplace_back(range);
+    Require(mapped.size() == 1, "sparse failure: direct allocation not registered");
+    bool propagated = false;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        try {
+            ImportMappedRanges(context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
+        } catch (const std::runtime_error& error) {
+            propagated = std::string(error.what()).find("sparse dma-buf import") != std::string::npos;
+        }
+    }
+    Require(SparseRefusals.load(std::memory_order_relaxed) == 1, "sparse failure: the injected sparse buffer refusal was not reached exactly once");
+    Require(propagated, "sparse failure: a selected dma-buf failure was swallowed by ImportMappedRanges");
+    Require(ExistingHostImportFor(context, block.Address(), block.bytes) == nullptr, "sparse failure: the failed import left an entry cached");
+    Require(block.Watched(), "sparse failure: the failed import dropped write tracking");
+    std::puts("selected sparse dma-buf import failure propagates through mapped-range import");
+    return true;
+}
+
 bool DmaBufColorTarget(AgcDriver::VulkanDevice& device, bool refused) {
     using namespace AgcDriver::Graphics;
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -524,6 +574,7 @@ int main(int argc, char** argv) {
         }
         const std::string_view only = argc > 1 ? argv[1] : "";
 #ifdef __linux__
+        if (only == "--dma-buf-sparse-failure") return DmaBufSparseFailure(*device) ? 0 : VulkanTestSkipped;
         if (only == "--dma-buf-created" || only == "--dma-buf-refused") return DmaBufColorTarget(*device, only == "--dma-buf-refused") ? 0 : VulkanTestSkipped;
 #endif
 #ifndef _WIN32

@@ -2351,7 +2351,11 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
 #ifndef _WIN32
     if (dmaBufOnly) {
         GuestMemory::ImportWatched(base, bytes, [&] {
-            step = createSharedBackingImport(context, entry, result);
+            try {
+                step = createSharedBackingImport(context, entry, result);
+            } catch (const std::exception& error) {
+                throw DmaBufImportFailure(error.what());
+            }
             return step == nullptr;
         }, watchedDmaBuf);
         if (step != nullptr && std::strcmp(step, "UDMABUF_CREATE") == 0) {
