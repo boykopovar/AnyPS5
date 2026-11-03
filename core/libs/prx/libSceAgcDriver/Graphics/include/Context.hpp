@@ -6,6 +6,7 @@
 #endif
 #include <mutex>
 #include <vulkan/vulkan.h>
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -35,6 +36,7 @@ class SamplerCache;
 class ShaderResources;
 class PlaceholderImages;
 class VertexInputCache;
+class VertexBufferFormats;
 
 class PipelineCacheSynchronization {
 public:
@@ -46,7 +48,7 @@ public:
     SnapshotLock TryLockForSnapshot() const { return SnapshotLock(mutex, std::try_to_lock); }
 
 private:
-    mutable std::shared_mutex mutex;
+    mutable PrimedSharedMutex mutex;
 };
 
 inline void Require(bool condition, const std::string& reason) {
@@ -144,10 +146,7 @@ struct DeviceFunctions {
 };
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
-inline std::uint64_t& DeviceProcLookups() {
-    thread_local std::uint64_t count = 0;
-    return count;
-}
+std::uint64_t& DeviceProcLookups();
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -262,6 +261,8 @@ struct Context {
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
+    bool shaderResourceMinLod = false;
+    bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool graphicsPipelineLibrary = false;
@@ -282,6 +283,7 @@ struct Context {
         return pipelineCacheSynchronization != nullptr ? pipelineCacheSynchronization->LockForPipelineUse() : PipelineCacheSynchronization::PipelineUseLock{};
     }
     VertexInputCache* vertexInputs = nullptr;
+    VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {
@@ -360,6 +362,20 @@ struct Context {
         const auto total = placedBytes.fetch_add(bytes) + bytes;
         if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
         return *host;
+    }
+
+    bool DeviceLocalHeadroom(std::uint32_t type, VkDeviceSize bytes) const {
+        if (memoryProperties2 == nullptr || physical == VK_NULL_HANDLE || type >= memory.memoryTypeCount) return true;
+        const auto heap = memory.memoryTypes[type].heapIndex;
+        if ((memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return true;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
+        memoryProperties2(physical, &properties);
+        const auto budget = reported.heapBudget[heap];
+        if (budget == 0) return true;
+        const auto limit = budget - budget / 8u;
+        const auto usage = reported.heapUsage[heap];
+        return usage < limit && bytes <= limit - usage;
     }
 
     std::optional<std::uint32_t> HostMemoryType(std::uint32_t mask) const {
