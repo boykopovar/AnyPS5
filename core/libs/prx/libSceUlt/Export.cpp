@@ -403,6 +403,9 @@ int APS5_VABI sceUltMutexTryLock(void* mutex) {
         return ULT_ERROR_STATE;
     }
     if (state->_owner == self) {
+        if (state->_attribute == 0) {
+            return ULT_ERROR_STATE;
+        }
         ++state->_lockCount;
         return ULT_OK;
     }
