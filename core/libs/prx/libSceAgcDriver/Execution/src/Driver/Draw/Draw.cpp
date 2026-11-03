@@ -130,6 +130,7 @@ struct DrawTail {
     std::chrono::steady_clock::time_point phaseLap{};
     DrawPhaseTiming phaseTiming{false, phaseMs, phaseLap};
     Pm4::DrawParameters drawParameters{};
+    Pm4::DrawParameters resolvedParameters{};
     bool pipelined = false;
     bool traceIndirect = false;
     std::uint64_t dumpTarget = 0;
@@ -338,6 +339,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     auto& drawParameters = tail.drawParameters;
     try {
         drawParameters = Pm4::ResolveDraw(packet, queue);
+        tail.resolvedParameters = drawParameters;
     } catch (...) {
         TraceDrawAttemptException(traceToken, "resolve-draw", submission.serial, submission.queue, packetOffset, std::current_exception());
         throw;
@@ -1316,10 +1318,33 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
 void Driver::restartFinishedDraw(DrawTail& tail) {
     using Stage = ShaderRecompiler::ShaderStage;
     using Role = ShaderRecompiler::ProgramRole;
+    const auto changed = [](const DrawProgram& program) {
+        return std::any_of(program.memory.begin(), program.memory.end(), [](const ShaderRecompiler::MemoryRegion& region) { return !region.bytes.empty() && GuestMemory::CompareMapped(region.guestAddress, region.bytes) != GuestMemory::Compare::Equal; });
+    };
+    if (std::any_of(tail.programs->begin(), tail.programs->end(), changed)) {
+        if (tail.programs != &tail.writablePrograms) {
+            tail.writablePrograms = *tail.programs;
+            tail.programs = &tail.writablePrograms;
+        }
+        for (auto& program : tail.writablePrograms) {
+            if (program.nullPixel || !changed(program)) continue;
+            auto snapshot = ProgramSnapshot(*tail.submission->shaders, program.binary.codeAddress, {program.snapshot->type});
+            if (snapshot == program.snapshot) continue;
+            const auto& fresh = *snapshot;
+            program.codeOffset = static_cast<std::size_t>((program.binary.codeAddress - fresh.codeAddress) / sizeof(std::uint32_t));
+            program.binary.code = std::span(fresh.code).subspan(program.codeOffset);
+            program.binary.headerAddress = fresh.headerAddress;
+            program.binary.header = fresh.header;
+            program.memory = {{{fresh.codeAddress, std::as_bytes(std::span(fresh.code))}, {fresh.headerAddress, fresh.header}}};
+            if (fresh.header.empty()) NoteRawGraphicsDraw(fresh);
+            program.snapshot = std::move(snapshot);
+        }
+    }
     const auto& programs = *tail.programs;
     const auto& graphics = tail.decode->state;
     const auto& roles = tail.decode->roles;
     const auto count = programs.size();
+    tail.drawParameters = tail.resolvedParameters;
     tail.memory.clear();
     AppendProgramMemory(tail.memory, programs);
     tail.results.clear();
