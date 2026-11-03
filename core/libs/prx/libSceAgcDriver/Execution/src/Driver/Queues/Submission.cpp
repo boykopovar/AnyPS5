@@ -219,6 +219,7 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
                     return true;
                 }
                 noteIndirectSegment(submission, start, target, targetWords);
+                if (guarded.empty()) return false;
             }
             cursor += count;
             continue;

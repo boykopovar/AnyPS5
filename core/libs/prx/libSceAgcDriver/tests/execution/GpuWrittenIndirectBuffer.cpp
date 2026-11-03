@@ -44,6 +44,7 @@ constexpr std::size_t MarkerOffset = 8192;
 constexpr std::size_t LabelOffset = 8196;
 constexpr std::size_t GateOffset = 8200;
 constexpr std::size_t ChildOffset = CommandsOffset + CommandWords * 4;
+constexpr std::size_t BranchOffset = ChildOffset + CommandWords * 4;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Filler = 0xffff1000u;
 
@@ -107,6 +108,14 @@ std::uint32_t Load(const GuestBlock& block, std::size_t offset) {
 
 void Store(const GuestBlock& block, std::size_t offset, std::uint32_t value) {
     std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(block.Bytes(offset))).store(value);
+}
+
+std::vector<std::uint32_t> CalledBranch(const GuestBlock& block) {
+    const auto commands = block.At(CommandsOffset);
+    const auto branch = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0});
+    std::memcpy(block.Bytes(BranchOffset), branch.data(), branch.size() * sizeof(std::uint32_t));
+    const auto wrapper = block.At(BranchOffset);
+    return Pm4(0x3f, {Low(wrapper), High(wrapper) & 0xffffu, static_cast<std::uint32_t>(branch.size())});
 }
 
 void HeldWaitAfterRewrite(const GuestBlock& block) {
@@ -184,11 +193,10 @@ void InvalidRewrite(const GuestBlock& block) {
     std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
     Store(block, MarkerOffset, 0);
     Store(block, LabelOffset, 0);
-    const auto commands = block.At(CommandsOffset);
     const auto marker = block.At(MarkerOffset);
     const auto label = block.At(LabelOffset);
     auto words = Dispatching(block, {0x00000000u, 0x00002000u, 0xc0033700u, Low(marker), High(marker)});
-    const auto run = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0});
+    const auto run = CalledBranch(block);
     words.insert(words.end(), run.begin(), run.end());
     const auto after = Pm4(0x37, {0x500u, Low(label), High(label), 1});
     words.insert(words.end(), after.begin(), after.end());
@@ -217,7 +225,7 @@ void CpuRewriteAfterSubmit(const GuestBlock& block, bool conditional) {
     const auto label = block.At(LabelOffset);
     const auto gate = block.At(GateOffset);
     auto words = Pm4(0x3c, {0x13, Low(gate), High(gate), 1, 0xffffffffu, 0x19});
-    const auto run = conditional ? Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0}) : Pm4(0x3f, {Low(commands), High(commands) & 0xffffu, CommandWords});
+    const auto run = conditional ? CalledBranch(block) : Pm4(0x3f, {Low(commands), High(commands) & 0xffffu, CommandWords});
     words.insert(words.end(), run.begin(), run.end());
     const auto after = Pm4(0x37, {0x500u, Low(label), High(label), 1});
     words.insert(words.end(), after.begin(), after.end());
@@ -331,9 +339,8 @@ void RewrittenWaitBeforeOwnFlip(const GuestBlock& block) {
     std::array<std::uint32_t, CommandWords> fillers{};
     fillers.fill(Filler);
     std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
-    const auto commands = block.At(CommandsOffset);
     auto second = Dispatching(block, {renderingWait[0], renderingWait[1], renderingWait[2], renderingWait[3], Filler});
-    const auto branch = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0});
+    const auto branch = CalledBranch(block);
     second.insert(second.end(), branch.begin(), branch.end());
     second.insert(second.end(), flip.begin(), flip.end());
     Packet secondDcb{second.data(), static_cast<std::uint32_t>(second.size()), 0, {}};
