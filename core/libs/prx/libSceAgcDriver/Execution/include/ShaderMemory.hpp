@@ -87,9 +87,11 @@ public:
     };
     static VouchCounts Vouches();
     static bool Vouched(PendingWriteQuery pending, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
+    static std::uint64_t descriptorScope(void* context, std::size_t bytes);
 
 private:
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> captureWaitingOnFailure(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
     static constexpr std::size_t PageBytes = 4096;
     static constexpr std::size_t PageWords = PageBytes / sizeof(std::uint32_t);
 
@@ -143,7 +145,6 @@ private:
     static ShaderRecompiler::SrtWriteStamp stampWrites(void* context, std::uint64_t address, std::uint64_t bytes);
     static bool unchangedSince(void* context, std::uint64_t address, std::uint64_t bytes, const ShaderRecompiler::SrtWriteStamp& stamp);
     static bool supplyWords(void* context, const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>& words);
-    static std::uint64_t descriptorScope(void* context, std::size_t bytes);
     bool invalidateRawPages();
     Page& page(std::uint64_t base);
     [[nodiscard]] std::size_t pageAtOrAfter(std::uint64_t base) const;
@@ -169,6 +170,8 @@ private:
     std::size_t descriptorSpanBytes = 0;
     std::uint64_t rawInvalidations = 0;
     std::uint32_t forceSync = 0;
+    std::uint64_t branchReadsRefused = 0;
+    bool waitBranches = false;
 };
 
 // The positions, among a dispatch-cache variant's stored words, of the pure flat-SRT leaves a

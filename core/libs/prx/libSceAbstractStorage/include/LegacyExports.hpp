@@ -1,0 +1,22 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI abstractStorageLegacyUnknown__minus_lJCD9v3ShE_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_58hoiRX9eq0_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_5E95udm3i4A_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_5sF6O0X8XOg_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_7re96ARYiKU_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_8urQQ98mwcg_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_BcT4KRrLn2U_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_EawgMNYrP2A_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_Gz6_plus_aMUIR44_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_QieeCoOG9bQ_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_YyubErxn_plus_aM_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_njl_plus_S_plus_GCNOQ_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_nkDADDAUxc4_nid_no_patch();
+int APS5_VABI abstractStorageLegacyUnknown_pfToDbCVd_minus_Y_nid_no_patch();
+
+}
