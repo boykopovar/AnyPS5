@@ -2,6 +2,9 @@
 
 #include <array>
 #include <atomic>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <climits>
 #include <cstdint>
