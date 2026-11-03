@@ -786,6 +786,20 @@ static void CheckVibrationForce(int user, int handle) {
         Require(scePadSetVibrationMode(invalidHandle, 0) == PAD_ERROR_INVALID_ARG);
         Require(scePadSetVibrationMode(invalidHandle, -1) == PAD_ERROR_INVALID_ARG);
     }
+    for (const auto& [large, small] : {
+            std::pair<std::uint8_t, std::uint8_t>{1, 1},
+            std::pair<std::uint8_t, std::uint8_t>{127, 128},
+            std::pair<std::uint8_t, std::uint8_t>{254, 255},
+            std::pair<std::uint8_t, std::uint8_t>{255, 254}}) {
+        const PadVibrationParam param{large, small};
+        Require(scePadSetVibration(handle, &param) == PAD_OK && VibrationIs(0, large, small));
+    }
+    for (const int validMode : {1, 2, 3, 5}) {
+        Require(scePadSetVibrationMode(handle, validMode) == PAD_OK && OutputOf(0).vibrationMode == validMode);
+    }
+    for (const int invalidMode : {-999, -1, 0, 4, 6, 7, 100, 0x7fffffff}) {
+        Require(scePadSetVibrationMode(handle, invalidMode) == PAD_ERROR_INVALID_ARG);
+    }
 }
 
 static bool TriggerIs(int trigger, bool valid, std::uint32_t mode, const std::array<std::uint8_t, 11>& effect, std::uint8_t fallback) {
@@ -808,6 +822,11 @@ static void CheckTriggerEffect(int user, int handle) {
     const std::array<std::uint8_t, 11> weapon{0x25, 0x24, 0x00, 0x07};
     const std::array<std::uint8_t, 11> feedback{0x21, 0x80, 0x03, 0x00, 0x00, 0x40, 0x12};
     const std::array<std::uint8_t, 11> off{0x05};
+    const std::array<std::uint8_t, 11> feedbackMin{0x21, 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    const std::array<std::uint8_t, 11> feedbackMax{0x21, 0x00, 0x02, 0x00, 0x00, 0x00, 0x38, 0x00, 0x00, 0x00, 0x00};
+    const std::array<std::uint8_t, 11> weaponMin{0x25, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    const std::array<std::uint8_t, 11> weaponMax{0x25, 0x80, 0x01, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    const std::array<std::uint8_t, 11> vibrationMidFreq{0x26, 0xfc, 0x03, 0x00, 0x49, 0x92, 0x24, 0x00, 0x00, 0x80, 0x00};
     Require(scePadSetTriggerEffect(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, param.data()) == PAD_ERROR_INVALID_HANDLE);
     for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, nullptr) == PAD_ERROR_INVALID_HANDLE);
@@ -859,6 +878,55 @@ static void CheckTriggerEffect(int user, int handle) {
     Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 3, vibrationMinFreq, 160));
     command(0, 3, {2, 5, 0});
     Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 3, off, 0));
+    command(0, 3, {2, 5, 128});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 3, vibrationMidFreq, 160));
+    command(1, 3, {2, 5, 40});
+    param[0] = 0x2;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, true, 3, vibration, 160));
+    command(1, 3, {2, 5, 255});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, true, 3, vibrationMaxFreq, 160));
+    command(1, 3, {2, 5, 128});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, true, 3, vibrationMidFreq, 160));
+    command(1, 3, {2, 5, 1});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, true, 3, vibrationMinFreq, 160));
+    command(1, 3, {2, 5, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, false, 3, off, 0));
+    command(0, 1, {0, 1, 0});
+    param[0] = 0x1;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 1, feedbackMin, 32));
+    command(0, 1, {9, 8, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 1, feedbackMax, 255));
+    command(1, 1, {0, 1, 0});
+    param[0] = 0x2;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, true, 1, feedbackMin, 32));
+    command(1, 1, {9, 8, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, true, 1, feedbackMax, 255));
+    command(0, 2, {2, 3, 1});
+    param[0] = 0x1;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 2, weaponMin, 32));
+    command(0, 2, {7, 8, 8});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 2, weaponMax, 255));
+    command(1, 2, {2, 3, 1});
+    param[0] = 0x2;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, true, 2, weaponMin, 32));
+    command(1, 2, {7, 8, 8});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(1, true, 2, weaponMax, 255));
+    command(0, 1, {0, 1, 0});
+    command(1, 3, {2, 5, 40});
+    param[0] = 0x3;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 1, feedbackMin, 32) && TriggerIs(1, true, 3, vibration, 160));
+    command(0, 2, {2, 3, 1});
+    command(1, 1, {9, 8, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 2, weaponMin, 32) && TriggerIs(1, true, 1, feedbackMax, 255));
+    command(0, 3, {2, 5, 255});
+    command(1, 0, {0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 3, vibrationMaxFreq, 160) && TriggerIs(1, false, 0, off, 0));
+    command(0, 0, {0, 0, 0});
+    command(1, 2, {7, 8, 8});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 0, off, 0) && TriggerIs(1, true, 2, weaponMax, 255));
+    command(0, 0, {50, 60, 70});
+    command(1, 0, {80, 90, 100});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 0, off, 0) && TriggerIs(1, false, 0, off, 0));
     for (const auto& data : {
             std::array<std::uint8_t, 3>{2, 0, 40},
             std::array<std::uint8_t, 3>{2, 9, 40},
