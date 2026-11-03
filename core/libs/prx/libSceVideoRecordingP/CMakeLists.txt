@@ -8,6 +8,7 @@ if(BUILD_TESTING)
     target_link_libraries(guest_video_recording_tests PRIVATE libSceVideoRecordingP libc)
     configure_windows_unwind(guest_video_recording_tests)
     add_test(NAME guest_video_recording COMMAND guest_video_recording_tests)
+    set_tests_properties(guest_video_recording PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_video_recording PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoRecordingP>")
