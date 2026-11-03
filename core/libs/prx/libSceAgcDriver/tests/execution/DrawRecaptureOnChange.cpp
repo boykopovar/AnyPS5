@@ -1,7 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -41,6 +44,18 @@ constexpr std::size_t ShiftOffset = 0x900;
 constexpr std::size_t StillOffset = 0xa00;
 constexpr std::size_t ColorBytes = 65536;
 constexpr std::uint32_t RenderTargetTileMode = 0x1b;
+constexpr std::size_t FetchBufferTableOffset = 0x000;
+constexpr std::size_t FetchAttribTableOffset = 0x100;
+constexpr std::size_t StaleSlotsOffset = 0x200;
+constexpr std::size_t CurrentSlotsOffset = 0x400;
+constexpr std::size_t InstanceSlotsOffset = 0x600;
+constexpr std::uint32_t SlotRecords = 32;
+constexpr std::uint32_t StaleSlotShift = 16;
+constexpr std::uint32_t OutputSlots = 32;
+constexpr std::uint32_t Unwritten = 0xdeadbeefu;
+constexpr std::uint32_t FetchIndexOffset = 5;
+constexpr std::uint32_t FetchVertexOffset = 3;
+constexpr std::uint32_t FetchVertices = 3;
 
 alignas(256) constexpr std::array<std::uint32_t, 40> VertexCode{
     0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u,
@@ -58,6 +73,25 @@ alignas(256) constexpr std::array<std::uint32_t, 40> VertexCode{
 
 alignas(256) constexpr std::array<std::uint32_t, 11> PixelRead{0x7e1a0280u, 0xdc308000u, 0x0c02000du, 0xbf8c3f70u, 0x7e10030cu, 0x7e120280u, 0x7e140280u, 0x7e160280u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
 
+alignas(256) constexpr std::array<std::uint32_t, 30> FetchVertexCode{
+    0x7e020305u, 0x7e040308u,
+    0xd70f6a05u, 0x00020a10u,
+    0xd70f6a08u, 0x00021011u,
+    0xf4080506u, 0xfa000000u,
+    0xf4080606u, 0xfa000010u,
+    0x02060b08u,
+    0xbf8cc07fu,
+    0xe0002000u, 0x80050a03u,
+    0xe0002000u, 0x80060b03u,
+    0xbf8c3f70u,
+    0x4a08170au, 0x34080884u,
+    0x7e180301u, 0x7e1a0302u, 0x7e1c0305u, 0x7e1e0308u,
+    0xe0781000u, 0x80020c04u,
+    0x7e200280u, 0x7e2202f2u,
+    0xf80008cfu, 0x11101010u,
+    0xbf810000u,
+};
+
 struct Header {
     Shader shader{};
     ShaderUserData userData{};
@@ -74,6 +108,40 @@ void Register(Header& header, const std::uint32_t* code, std::size_t bytes, std:
     header.shader.code = code;
     header.shader.type = type;
     header.shader.user_data = &header.userData;
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+struct FetchHeader {
+    Shader shader{};
+    ShaderUserData userData{};
+    std::array<std::uint16_t, ShaderRegs::AGC_DIRECT_RESOURCE_TYPE_COUNT> direct{};
+    std::array<ShaderSemantic, 2> semantics{};
+};
+
+alignas(8) FetchHeader FetchVertexHeader{};
+
+void RegisterFetchVertex() {
+    auto& header = FetchVertexHeader;
+    header.direct.fill(ShaderRegs::AGC_ILLEGAL_DIRECT_OFFSET);
+    header.direct[static_cast<std::size_t>(ShaderRegs::AgcDirectResourceType::PtrVertexBufferTable)] = 4;
+    header.direct[static_cast<std::size_t>(ShaderRegs::AgcDirectResourceType::PtrVertexAttribDescTable)] = 6;
+    header.userData.direct_resource_offset = header.direct.data();
+    header.userData.direct_resource_count = static_cast<std::uint16_t>(header.direct.size());
+    header.semantics[0].semantic = 0;
+    header.semantics[0].hardware_mapping = 10;
+    header.semantics[0].size_in_elements = 1;
+    header.semantics[1].semantic = 1;
+    header.semantics[1].hardware_mapping = 11;
+    header.semantics[1].size_in_elements = 1;
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(FetchHeader);
+    header.shader.shader_size = static_cast<std::uint32_t>(sizeof(FetchVertexCode));
+    header.shader.code = FetchVertexCode.data();
+    header.shader.type = 2;
+    header.shader.user_data = &header.userData;
+    header.shader.input_semantics = header.semantics.data();
+    header.shader.num_input_semantics = static_cast<std::uint32_t>(header.semantics.size());
     AgcDriverRegisterShader_nid_postfix(&header.shader);
 }
 
@@ -135,16 +203,71 @@ void ChangeTableBeforeCheck() {
     TableChanges.fetch_add(1);
 }
 
+constexpr std::size_t AddSlotZeroWord = 24;
+constexpr std::size_t AddSlotOneWord = 28;
+static_assert(VertexCode[AddSlotZeroWord] == 0x0602030au && VertexCode[AddSlotOneWord] == 0x0602030eu, "the patched words are v_add_f32 v1, v10, v1 and v_add_f32 v1, v14, v1");
+
+const GuestBlock* CodeBlock = nullptr;
+std::atomic<bool> CodePatchArmed{false};
+std::atomic<int> CodePatches{0};
+
+void ChangeCodeBeforeCheck() {
+    if (!CodePatchArmed.exchange(false)) return;
+    std::memcpy(CodeBlock->Bytes(AddSlotOneWord * sizeof(std::uint32_t)), &VertexCode[AddSlotZeroWord], sizeof(std::uint32_t));
+    CodePatches.fetch_add(1);
+}
+
+std::array<std::uint32_t, 4> SlotDescriptor(std::uint64_t address) {
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), SlotRecords, 0x01014facu};
+}
+
+std::array<std::uint32_t, 4> OutputDescriptor(std::uint64_t address) {
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), OutputSlots * 16u, 0x31016facu};
+}
+
+void WriteFetchDescriptor(const GuestBlock& block, std::size_t index, std::array<std::uint32_t, 4> descriptor) {
+    std::memcpy(block.Bytes(FetchBufferTableOffset + index * 16u), descriptor.data(), sizeof(descriptor));
+}
+
+void WriteSlots(const GuestBlock& block, std::size_t offset, std::uint32_t shift) {
+    for (std::uint32_t record = 0; record < SlotRecords; ++record) {
+        const std::uint32_t slot = record + shift;
+        std::memcpy(block.Bytes(offset + record * sizeof(slot)), &slot, sizeof(slot));
+    }
+}
+
+void PrepareFetchTables(const GuestBlock& fetch) {
+    WriteSlots(fetch, StaleSlotsOffset, StaleSlotShift);
+    WriteSlots(fetch, CurrentSlotsOffset, 0);
+    std::memset(fetch.Bytes(InstanceSlotsOffset), 0, SlotRecords * sizeof(std::uint32_t));
+    const std::array<std::uint32_t, 2> attributes{0u, 1u | (1u << 26u)};
+    std::memcpy(fetch.Bytes(FetchAttribTableOffset), attributes.data(), sizeof(attributes));
+    WriteFetchDescriptor(fetch, 0, SlotDescriptor(fetch.At(CurrentSlotsOffset)));
+    WriteFetchDescriptor(fetch, 1, SlotDescriptor(fetch.At(InstanceSlotsOffset)));
+}
+
+const GuestBlock* FetchBlock = nullptr;
+std::atomic<bool> FetchChangeArmed{false};
+std::atomic<bool> FetchCheckedOnFinisher{false};
+std::atomic<int> FetchChanges{0};
+
+void ChangeFetchBufferBeforeCheck() {
+    if (!FetchChangeArmed.exchange(false)) return;
+    FetchCheckedOnFinisher.store(AgcDriver::DriverDetail::DrawFinisher::OnFinisherThread());
+    WriteFetchDescriptor(*FetchBlock, 0, SlotDescriptor(FetchBlock->At(CurrentSlotsOffset)));
+    FetchChanges.fetch_add(1);
+}
+
 void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
     commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u));
     commands.insert(commands.end(), payload);
 }
 
-void SubmitDraw(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
+using RegisterWrites = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
+
+void SubmitDrawWith(std::uint64_t vertex, const RegisterWrites& userConfig, const RegisterWrites& vertexRegisters, const GuestBlock& data, const GuestBlock& target) {
     const auto color = target.At(0);
-    const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
     const auto pixel = reinterpret_cast<std::uintptr_t>(PixelRead.data());
-    const auto table = vertices.At(TableOffset);
     const auto pointer = data.At(0);
     const float scale = 32.0f;
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
@@ -170,15 +293,33 @@ void SubmitDraw(const GuestBlock& vertices, const GuestBlock& data, const GuestB
         {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
     };
     std::vector<std::uint32_t> commands;
-    Append(commands, 0x79, {0x242, 4});
+    for (const auto& [offset, value] : userConfig) Append(commands, 0x79, {offset, value});
     for (const auto& [offset, value] : context) Append(commands, 0x69, {offset, value});
-    for (const auto& [offset, value] : std::initializer_list<std::pair<std::uint32_t, std::uint32_t>>{{0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 2u << 1u}, {0x8c, static_cast<std::uint32_t>(table)}, {0x8d, static_cast<std::uint32_t>(table >> 32u)}, {0x00b, 8u << 1u}, {0x00c, 0}, {0x00d, 0}}) Append(commands, 0x76, {offset, value});
+    Append(commands, 0x76, {0xc8, static_cast<std::uint32_t>(vertex >> 8u)});
+    Append(commands, 0x76, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)});
+    for (const auto& [offset, value] : vertexRegisters) Append(commands, 0x76, {offset, value});
+    for (const auto& [offset, value] : std::initializer_list<std::pair<std::uint32_t, std::uint32_t>>{{0x00b, 8u << 1u}, {0x00c, 0}, {0x00d, 0}}) Append(commands, 0x76, {offset, value});
     Append(commands, 0x76, {0x008, static_cast<std::uint32_t>(pixel >> 8u), static_cast<std::uint32_t>(pixel >> 40u)});
     Append(commands, 0x76, {0x00e, static_cast<std::uint32_t>(pointer), static_cast<std::uint32_t>(pointer >> 32u)});
     Append(commands, 0x2d, {3, 2});
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "draw recapture: the draw submission failed");
     AgcDriverWaitIdle_nid_postfix();
+}
+
+void SubmitDraw(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target, std::uint64_t vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data())) {
+    const auto table = vertices.At(TableOffset);
+    SubmitDrawWith(vertex, {{0x242, 4}}, {{0x8b, 2u << 1u}, {0x8c, static_cast<std::uint32_t>(table)}, {0x8d, static_cast<std::uint32_t>(table >> 32u)}}, data, target);
+}
+
+void SubmitFetchDraw(const GuestBlock& fetch, const GuestBlock& output, const GuestBlock& data, const GuestBlock& target) {
+    const auto stored = OutputDescriptor(output.At(0));
+    const auto buffers = fetch.At(FetchBufferTableOffset);
+    const auto attributes = fetch.At(FetchAttribTableOffset);
+    const std::array<std::uint32_t, 10> user{stored[0], stored[1], stored[2], stored[3], static_cast<std::uint32_t>(buffers), static_cast<std::uint32_t>(buffers >> 32u), static_cast<std::uint32_t>(attributes), static_cast<std::uint32_t>(attributes >> 32u), FetchVertexOffset, 0u};
+    RegisterWrites registers{{0x8b, static_cast<std::uint32_t>(user.size()) << 1u}};
+    for (std::uint32_t word = 0; word < user.size(); ++word) registers.emplace_back(0x8cu + word, user[word]);
+    SubmitDrawWith(reinterpret_cast<std::uintptr_t>(FetchVertexCode.data()), {{0x242, 4}, {0x24a, FetchIndexOffset}}, registers, data, target);
 }
 
 unsigned Brightest(const GuestBlock& target) {
@@ -217,6 +358,90 @@ void UnchangedTableIsNotRedone(const GuestBlock& vertices, const GuestBlock& dat
     Expect(redone == 0, "a draw whose captured memory did not change was prepared again");
 }
 
+void ChangedRawCodeIsRecompiled(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target, const GuestBlock& code) {
+    std::memset(target.Bytes(0), 0, ColorBytes);
+    std::memcpy(code.Bytes(0), VertexCode.data(), sizeof(VertexCode));
+    WriteDescriptor(vertices, 0, VertexDescriptor(vertices.At(StillOffset)));
+    const auto retries = AgcDriver::DriverDetail::captureChangeRetries.load();
+    CodePatchArmed.store(true);
+    SubmitDraw(vertices, data, target, code.At(0));
+    const auto brightest = Brightest(target);
+    const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
+    std::printf("an unregistered vertex program whose code stopped adding the +8 x offset after its capture: the code changed %d time(s), brightest color byte %u (%s), %llu packet(s) prepared again\n", CodePatches.load(), brightest, brightest == 255u ? "the code in memory ran" : "the code captured before the change ran", static_cast<unsigned long long>(redone));
+    Expect(CodePatches.load() == 1, "the check seam did not run before the unregistered program's draw was recorded");
+    Expect(AgcDriver::DriverDetail::RawGraphicsDrawnIn(code.At(0), code.At(0) + sizeof(std::uint32_t)), "the vertex program was not captured as unregistered code");
+    Expect(brightest == 255u, "the draw ran the unregistered vertex code captured before it changed, not the code in memory when it was recorded");
+    Expect(redone == 1, "the draw of the changed unregistered program was prepared again " + std::to_string(redone) + " times, not once");
+}
+
+using FetchOutput = std::array<std::uint32_t, OutputSlots * 4u>;
+
+void ClearFetchOutput(const GuestBlock& output) {
+    FetchOutput words;
+    words.fill(Unwritten);
+    std::memcpy(output.Bytes(0), words.data(), sizeof(words));
+}
+
+FetchOutput ReadFetchOutput(const GuestBlock& output) {
+    AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uintptr_t>(output.At(0)), sizeof(FetchOutput));
+    FetchOutput words;
+    std::memcpy(words.data(), output.Bytes(0), sizeof(words));
+    return words;
+}
+
+FetchOutput FoldedOnce() {
+    FetchOutput words;
+    words.fill(Unwritten);
+    for (std::uint32_t vertex = 0; vertex < FetchVertices; ++vertex) {
+        const auto raw = FetchIndexOffset + vertex;
+        auto* entry = words.data() + static_cast<std::size_t>(raw + FetchVertexOffset) * 4u;
+        entry[0] = raw;
+        entry[1] = 0u;
+        entry[2] = raw + FetchVertexOffset;
+        entry[3] = 0u;
+    }
+    return words;
+}
+
+std::string WrittenSlots(const FetchOutput& words) {
+    std::string text;
+    for (std::uint32_t slot = 0; slot < OutputSlots; ++slot) {
+        const auto* entry = words.data() + static_cast<std::size_t>(slot) * 4u;
+        if (std::all_of(entry, entry + 4, [](std::uint32_t word) { return word == Unwritten; })) continue;
+        char line[112];
+        std::snprintf(line, sizeof(line), " [slot %u: v5 %u v8 %u, after the fetch adds %u %u]", slot, entry[0], entry[1], entry[2], entry[3]);
+        text += line;
+    }
+    return text.empty() ? std::string(" nothing") : text;
+}
+
+void FetchOffsetIsFoldedOnceOnRecapture(const GuestBlock& fetch, const GuestBlock& output, const GuestBlock& data, const GuestBlock& target) {
+    FetchBlock = &fetch;
+    AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(&ChangeFetchBufferBeforeCheck);
+    WriteFetchDescriptor(fetch, 0, SlotDescriptor(fetch.At(CurrentSlotsOffset)));
+    ClearFetchOutput(output);
+    auto retries = AgcDriver::DriverDetail::captureChangeRetries.load();
+    SubmitFetchDraw(fetch, output, data, target);
+    const auto control = ReadFetchOutput(output);
+    const auto controlRedone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
+    std::printf("a draw whose program folds s16 = %u into its first vertex (GE_INDX_OFFSET %u), with its vertex V# unchanged: wrote%s, %llu packet(s) prepared again\n", FetchVertexOffset, FetchIndexOffset, WrittenSlots(control).c_str(), static_cast<unsigned long long>(controlRedone));
+    Expect(controlRedone == 0, "the control draw, whose captured memory did not change, was prepared again");
+    Expect(control == FoldedOnce(), "the control draw did not fetch and store slots GE_INDX_OFFSET + s16 + vertex with v5 = GE_INDX_OFFSET + vertex, so s16 was not folded into its first vertex exactly once and this case cannot see a second fold");
+
+    WriteFetchDescriptor(fetch, 0, SlotDescriptor(fetch.At(StaleSlotsOffset)));
+    ClearFetchOutput(output);
+    retries = AgcDriver::DriverDetail::captureChangeRetries.load();
+    FetchChangeArmed.store(true);
+    SubmitFetchDraw(fetch, output, data, target);
+    const auto changed = ReadFetchOutput(output);
+    const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
+    std::printf("the same draw with its vertex V# moved after its capture (checked on the %s): the V# changed %d time(s), wrote%s, %llu packet(s) prepared again\n", FetchCheckedOnFinisher.load() ? "draw finisher" : "queue worker", FetchChanges.load(), WrittenSlots(changed).c_str(), static_cast<unsigned long long>(redone));
+    Expect(FetchChanges.load() == 1, "the check seam did not run before the fetching draw was recorded");
+    if (AgcDriver::DriverDetail::DrawFinisher::Enabled()) Expect(FetchCheckedOnFinisher.load(), "the fetching draw was checked on the queue worker, not the draw finisher, so restartFinishedDraw was not exercised");
+    Expect(changed == control, "the recaptured draw differs from the control: slots " + std::to_string(FetchVertexOffset) + " further on mean the retry folded s16 into the first vertex again, slots " + std::to_string(StaleSlotShift) + " further on mean it bound the V# captured before the change");
+    Expect(redone == 1, "the draw was prepared again " + std::to_string(redone) + " times, not once");
+}
+
 }
 
 int main() {
@@ -227,9 +452,13 @@ int main() {
         }
         Register(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
         Register(PixelHeader, PixelRead.data(), sizeof(PixelRead), 1);
+        RegisterFetchVertex();
         GuestBlock vertices;
         GuestBlock data;
         GuestBlock target;
+        GuestBlock code;
+        GuestBlock fetch;
+        GuestBlock output;
         WriteVertices(vertices, MovedOffset, -8.0f);
         WriteVertices(vertices, ShiftOffset, 8.0f);
         WriteVertices(vertices, StillOffset, 0.0f);
@@ -237,13 +466,18 @@ int main() {
         WriteDescriptor(vertices, 2, VertexDescriptor(vertices.At(StillOffset)));
         const float one = 1.0f;
         std::memcpy(data.Bytes(0), &one, sizeof(one));
+        PrepareFetchTables(fetch);
         TableBlock = &vertices;
+        CodeBlock = &code;
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(&ChangeTableBeforeCheck);
         ChangedTableIsBound(vertices, data, target);
         UnchangedTableIsNotRedone(vertices, data, target);
+        AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(&ChangeCodeBeforeCheck);
+        ChangedRawCodeIsRecompiled(vertices, data, target, code);
+        FetchOffsetIsFoldedOnceOnRecapture(fetch, output, data, target);
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
         AgcDriverShutdown_nid_postfix();
-        std::puts("draw recapture: a draw whose captured descriptor table changed before it was recorded binds the table in memory");
+        std::puts("draw recapture: a draw whose captured descriptor table or unregistered program code changed before it was recorded uses the memory in place when it is recorded, folding its vertex offset once");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
