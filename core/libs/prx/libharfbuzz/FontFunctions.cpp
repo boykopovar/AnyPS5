@@ -99,6 +99,7 @@ void APS5_VABI hb_font_funcs_set_glyph_extents_func_nid_postfix(hb_font_funcs_t*
 }
 
 void APS5_VABI hb_font_funcs_set_glyph_func_nid_postfix(hb_font_funcs_t* functions, HarfBuzz::VariationGlyph callback, void* data, HarfBuzz::Destroy destroy) {
+    if (!callback) NotImplemented_nid_no_patch(__func__);
     SetCallback(functions, callback, data, destroy, VariationGlyph, hb_font_funcs_set_glyph_func);
 }
 

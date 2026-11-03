@@ -256,6 +256,28 @@ static void CheckLegacyAndReset(const Api& api) {
     hb_font_funcs_destroy(functions);
 }
 
+static void CheckNullLegacy(const Api& api) {
+    for (const bool immutable : {false, true}) {
+        auto* functions = api.createFunctions();
+        FontState font{api.create(nullptr)};
+        CallbackState original{6}, rejected{6};
+        api.glyph(functions, LegacyGlyph, &original, DestroyCallback);
+        api.setFunctions(font.font, functions, &font, DestroyFont);
+        if (immutable) api.freezeFunctions(functions);
+        bool threw = false;
+        try { api.glyph(functions, nullptr, &rejected, DestroyCallback); }
+        catch (const std::exception&) { threw = true; }
+        Require(threw && original.destroyed == 0 && rejected.destroyed == 0);
+        std::uint32_t glyph = 0;
+        Require(hb_font_get_nominal_glyph(font.font, 65, &glyph) && glyph == 165);
+        Require(hb_font_get_variation_glyph(font.font, 65, 0xFE0F, &glyph) && glyph == 65 + 0xFE0F + 100);
+        DestroyCallback(&rejected);
+        api.destroy(font.font);
+        hb_font_funcs_destroy(functions);
+        Require(original.destroyed == 1 && rejected.destroyed == 1 && font.destroyed == 1);
+    }
+}
+
 int main(int argc, char** argv) {
     Require(argc == 3);
     const bool patched = std::strcmp(argv[2], "patched") == 0;
@@ -287,6 +309,7 @@ int main(int argc, char** argv) {
 #undef LoadExport
     CheckCallbacks(api);
     CheckLegacyAndReset(api);
+    CheckNullLegacy(api);
     api.destroy(nullptr);
     bool threw = false;
     try { api.scale(nullptr, 1, 2); } catch (const std::exception&) { threw = true; }
