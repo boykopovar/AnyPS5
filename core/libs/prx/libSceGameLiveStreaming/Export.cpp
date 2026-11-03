@@ -122,7 +122,10 @@ int APS5_VABI sceGameLiveStreamingSetMaxBitrate(std::uint32_t bitrate) {
 }
 
 int APS5_VABI sceGameLiveStreamingGetCurrentStatus(GameLiveStreamingStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return ErrorNotInitialized;
+    if (status == nullptr) return ErrorInvalidArgument;
+    std::memset(status, 0, sizeof(*status));
     return 0;
 }
 
