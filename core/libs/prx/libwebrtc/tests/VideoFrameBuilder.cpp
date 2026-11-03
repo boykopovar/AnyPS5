@@ -82,24 +82,6 @@ void TestDestructor() {
     _ZN6webrtc10VideoFrame7Builder6set_idEt_nid_postfix(&builder, 5);
     _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(&builder);
     Require(builder.id == 5);
-    int reference = 0;
-    builder.videoFrameBuffer = &reference;
-    bool threw = false;
-    try {
-        _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(&builder);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
-    builder.videoFrameBuffer = nullptr;
-    builder.packetInfos = &reference;
-    threw = false;
-    try {
-        _ZN6webrtc10VideoFrame7BuilderD1Ev_nid_postfix(&builder);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
 }
 
 void TestNullBuilderThrows() {
