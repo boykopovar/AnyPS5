@@ -30,9 +30,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cmath>
 #include <iterator>
-#include <limits>
 #include <list>
 #include <map>
 #include <memory>
@@ -335,16 +333,9 @@ FcResult APS5_VABI FcPatternGetInteger(const FcPattern* pattern, const char* obj
     FcValue found{};
     const auto result = FcPatternGet(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
-    if (found.type != FcTypeInteger && found.type != FcTypeDouble) return FcResultTypeMismatch;
+    if (found.type != FcTypeInteger) return FcResultTypeMismatch;
     if (!value) NotImplemented_nid_no_patch(__func__);
-    if (found.type == FcTypeDouble) {
-        const double truncated = std::trunc(found.u.d);
-        if (!std::isfinite(truncated) || truncated < std::numeric_limits<int>::min() || truncated > std::numeric_limits<int>::max())
-            NotImplemented_nid_no_patch(__func__);
-        *value = static_cast<int>(truncated);
-    } else {
-        *value = found.u.i;
-    }
+    *value = found.u.i;
     return FcResultMatch;
 }
 

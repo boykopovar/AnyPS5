@@ -1,10 +1,10 @@
 #include "prx/libfontconfig/libfontconfig.hpp"
 
-#include <array>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 
 static void Require(bool condition, int line) {
@@ -92,9 +92,11 @@ static void Patterns() {
     CHECK(FcPatternAddInteger(pattern, "slant", INT_MIN));
     CHECK(FcPatternAddDouble(pattern, "slant", -3.75));
     CHECK(FcPatternGetInteger(pattern, "slant", 0, &integer) == FcResultMatch && integer == INT_MIN);
-    CHECK(FcPatternGetInteger(pattern, "slant", 1, &integer) == FcResultMatch && integer == -3);
+    CHECK(FcPatternGetInteger(pattern, "slant", 1, &integer) == FcResultTypeMismatch);
+    CHECK(integer == INT_MIN);
     CHECK(FcPatternAddDouble(pattern, "size", 2147483647.75));
-    CHECK(FcPatternGetInteger(pattern, "size", 0, &integer) == FcResultMatch && integer == INT_MAX);
+    CHECK(FcPatternGetInteger(pattern, "size", 0, &integer) == FcResultTypeMismatch);
+    CHECK(integer == INT_MIN);
     CHECK(FcPatternAddBool(pattern, "antialias", 7));
     CHECK(FcPatternGetBool(pattern, "antialias", 0, &integer) == FcResultMatch && integer == 7);
     CHECK(FcPatternAddInteger(pattern, "antialias", 1) == 0);
@@ -136,13 +138,47 @@ static void Patterns() {
     CHECK(!FcPatternDel(pattern, "custom"));
     FcPatternReference(copy);
     FcPatternDestroy(copy);
-    CHECK(FcPatternGetInteger(copy, "slant", 1, &integer) == FcResultMatch && integer == -3);
+    CHECK(FcPatternGetInteger(copy, "slant", 0, &integer) == FcResultMatch && integer == INT_MIN);
     CHECK(FcPatternGet(copy, "absent", 0, nullptr) == FcResultNoMatch);
     CHECK(FcPatternGet(copy, "slant", 2, nullptr) == FcResultNoId);
     CHECK(FcPatternGetString(copy, "slant", 0, nullptr) == FcResultTypeMismatch);
     FcPatternDestroy(copy);
     FcPatternDestroy(pattern);
     FcPatternDestroy(empty);
+}
+
+static void IntegerGetters() {
+    auto* pattern = FcPatternCreate();
+    CHECK(pattern);
+    const int integers[] = {INT_MIN, -1, 0, 1, INT_MAX};
+    for (int i = 0; i < static_cast<int>(std::size(integers)); ++i) {
+        CHECK(FcPatternAddInteger(pattern, "integer", integers[i]));
+        int output = 0x12345678;
+        CHECK(FcPatternGetInteger(pattern, "integer", i, &output) == FcResultMatch);
+        CHECK(output == integers[i]);
+    }
+    const double doubles[] = {
+        0.0, -0.0, 42.0, -3.75, 2147483647.75, -2147483649.0,
+        std::numeric_limits<double>::max(), std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()
+    };
+    for (int i = 0; i < static_cast<int>(std::size(doubles)); ++i) {
+        CHECK(FcPatternAddDouble(pattern, "double", doubles[i]));
+        FcValue value{};
+        CHECK(FcPatternGet(pattern, "double", i, &value) == FcResultMatch);
+        CHECK(value.type == FcTypeDouble);
+        int output = 0x12345678;
+        CHECK(FcPatternGetInteger(pattern, "double", i, &output) == FcResultTypeMismatch);
+        CHECK(output == 0x12345678);
+    }
+    int output = 0x12345678;
+    CHECK(FcPatternGetInteger(pattern, "missing", 0, &output) == FcResultNoMatch);
+    CHECK(output == 0x12345678);
+    CHECK(FcPatternGetInteger(pattern, "double", -1, &output) == FcResultNoId);
+    CHECK(output == 0x12345678);
+    CHECK(FcPatternGetInteger(pattern, "double", static_cast<int>(std::size(doubles)), &output) == FcResultNoId);
+    CHECK(output == 0x12345678);
+    FcPatternDestroy(pattern);
 }
 
 static void Equality() {
@@ -189,5 +225,6 @@ static void Equality() {
 int main() {
     Languages();
     Patterns();
+    IntegerGetters();
     Equality();
 }
