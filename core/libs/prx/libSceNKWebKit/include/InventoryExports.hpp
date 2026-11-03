@@ -1852,7 +1852,6 @@ int APS5_VABI _ZN3WTF21RefCountedLeakCounterD1Ev();
 int APS5_VABI _ZN3WTF21RefCountedLeakCounterD2Ev();
 int APS5_VABI _ZN3WTF21bootSessionUUIDStringEv();
 int APS5_VABI _ZN3WTF21currentSearchLocaleIDEv();
-int APS5_VABI _ZN3WTF21makeRFC2822DateStringEjjjjjjji();
 int APS5_VABI _ZN3WTF21sentenceBreakIteratorENS_10StringViewE();
 int APS5_VABI _ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE();
 int APS5_VABI _ZN3WTF22CrossThreadTaskHandler21setCompletionCallbackEONS_8FunctionIFvvEEE();
