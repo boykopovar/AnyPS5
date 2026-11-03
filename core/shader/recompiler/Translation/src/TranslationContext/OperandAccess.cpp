@@ -342,10 +342,16 @@ IrU32 TranslationContext::quietNan32(IrU32 bits) {
     return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x00400000u))) : bits;
 }
 
-IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct) {
+IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct, bool multiplication) {
     if (!ExactF32Arithmetic()) return result;
     const auto isNan = [&](IrValue& value) -> IrValue& { return ir.Emit(IrOpcode::FPIsNan32, IrType::U1, {&value}); };
     IrValue* candidate = nullptr;
+    const bool normalFactor = multiplication && std::any_of(sources.begin(), sources.end(), [](const IrValue* source) {
+        const IrValue* constant = constantF32Bits(*source);
+        if (constant == nullptr) return false;
+        const std::uint32_t exponent = (constant->ImmediateU32() >> 23u) & 0xffu;
+        return exponent != 0u && exponent != 0xffu;
+    });
     for (auto source = sources.end(); source != sources.begin();) {
         --source;
         IrValue& sourceBits = ir.BitCastU32(**source);
@@ -355,7 +361,7 @@ IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> source
         }
         candidate = &ir.Select(isNan(**source), sourceBits, *candidate);
     }
-    IrValue& fallback = ir.Select(isNan(*result), ir.Constant(0xffc00000u), ir.BitCastU32(*result));
+    IrValue& fallback = normalFactor ? ir.BitCastU32(*result) : ir.Select(isNan(*result), ir.Constant(0xffc00000u), ir.BitCastU32(*result));
     return &ir.BitCastF32(ir.Select(isNan(ir.BitCastF32(*candidate)), quietNan32(IrU32(*candidate)).Value(), fallback));
 }
 

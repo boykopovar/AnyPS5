@@ -54,6 +54,7 @@ struct MockDevice {
     std::map<VkDeviceMemory, std::uint32_t> memoryTypes;
     std::map<VkBuffer, std::pair<VkDeviceMemory, VkDeviceSize>> bound;
     std::set<VkBuffer> liveBuffers;
+    std::map<VkImage, VkDeviceSize> imageBytes;
     std::deque<VkResult> results;
     VkDeviceSize limit = 0;
     VkResult pressureResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
@@ -63,6 +64,7 @@ struct MockDevice {
     unsigned binds = 0;
     unsigned maps = 0;
     unsigned unmaps = 0;
+    std::uint32_t typeBits = 3;
 };
 
 MockDevice mock;
@@ -76,7 +78,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateBuffer(VkDevice, const VkBufferCreateIn
 }
 
 VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer buffer, VkMemoryRequirements* requirements) {
-    *requirements = {mock.sizes.at(buffer), 256, 3};
+    *requirements = {mock.sizes.at(buffer), 256, mock.typeBits};
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
@@ -139,6 +141,41 @@ VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const
     return 0x100000000000ULL + reinterpret_cast<std::uintptr_t>(info->buffer) * 0x10000;
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImage(VkDevice, const VkImageCreateInfo* info, const VkAllocationCallbacks*, VkImage* image) {
+    *image = reinterpret_cast<VkImage>(static_cast<std::uintptr_t>(mock.next++));
+    mock.imageBytes[*image] = VkDeviceSize{info->extent.width} * info->extent.height * 4;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockGetImageMemoryRequirements(VkDevice, VkImage image, VkMemoryRequirements* requirements) {
+    *requirements = {mock.imageBytes.at(image), 4096, 1};
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockBindImageMemory(VkDevice, VkImage image, VkDeviceMemory memory, VkDeviceSize offset) {
+    return offset + mock.imageBytes.at(image) <= mock.memoryBytes.at(memory) ? VK_SUCCESS : VK_ERROR_OUT_OF_DEVICE_MEMORY;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImageView(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* view) {
+    *view = reinterpret_cast<VkImageView>(static_cast<std::uintptr_t>(mock.next++));
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyImageView(VkDevice, VkImageView, const VkAllocationCallbacks*) {}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyImage(VkDevice, VkImage image, const VkAllocationCallbacks*) {
+    Expect(mock.imageBytes.erase(image) == 1, "an unknown image was destroyed");
+}
+
+VKAPI_ATTR void VKAPI_CALL mockFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+    *properties = {};
+    properties->optimalTilingFeatures = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockImageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    *properties = {{16384, 16384, 1}, 1, 1, VK_SAMPLE_COUNT_1_BIT, VkDeviceSize{1} << 32u};
+    return VK_SUCCESS;
+}
+
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCreateBuffer)},
@@ -150,6 +187,12 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkDestroyBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyBuffer)},
         {"vkFreeMemory", reinterpret_cast<PFN_vkVoidFunction>(mockFreeMemory)},
         {"vkGetBufferDeviceAddressKHR", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferDeviceAddress)},
+        {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImage)},
+        {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetImageMemoryRequirements)},
+        {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(mockBindImageMemory)},
+        {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImageView)},
+        {"vkDestroyImageView", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImageView)},
+        {"vkDestroyImage", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImage)},
     };
     const auto it = table.find(name);
     return it == table.end() ? nullptr : it->second;
@@ -176,11 +219,15 @@ Context mockContext() {
 
 VkDeviceSize reportedBudget = 0;
 VkDeviceSize reportedUsage = 0;
+VkDeviceSize reportedSecondBudget = 0;
+VkDeviceSize reportedSecondUsage = 0;
 
 VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
     auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
     reported->heapBudget[0] = reportedBudget;
     reported->heapUsage[0] = reportedUsage;
+    reported->heapBudget[2] = reportedSecondBudget;
+    reported->heapUsage[2] = reportedSecondUsage;
 }
 
 std::uint64_t diagnosticBudgetQueries = 0;
@@ -255,6 +302,58 @@ void RefusedDevicePlacement() {
     }
     Expect(threw, "a refused device-local allocation without a host memory type did not fail");
     Expect(mock.liveBuffers.empty(), "a failed device buffer left its VkBuffer alive");
+}
+
+void StagingHeadroom() {
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 2048 * MiB;
+        reportedUsage = 1000 * MiB;
+        VkDeviceMemory retained = VK_NULL_HANDLE;
+        {
+            const auto shadow = Buffer::WithinDeviceLocalHeadroom(context, 24 * MiB, usage);
+            Expect(shadow != nullptr && mock.memoryTypes.at(MemoryOf(shadow->Handle())) == 0, "a staging buffer with room in its heap's budget was not made device-local");
+            if (shadow) retained = MemoryOf(shadow->Handle());
+        }
+        Expect(mock.memoryBytes.contains(retained), "a released staging buffer was not retained by the pool");
+        reportedUsage = 1900 * MiB;
+        const auto made = mock.allocations;
+        const auto buffers = mock.liveBuffers.size();
+        {
+            const auto reused = Buffer::WithinDeviceLocalHeadroom(context, 24 * MiB, usage);
+            Expect(reused != nullptr && MemoryOf(reused->Handle()) == retained && mock.allocations == made, "a retained staging buffer was refused within the last eighth of the budget, although reusing it allocates nothing");
+        }
+        const auto refused = Buffer::WithinDeviceLocalHeadroom(context, 40 * MiB, usage);
+        Expect(refused == nullptr && mock.allocations == made, "a staging buffer that needs a new allocation within the last eighth of its heap's budget was not refused");
+        Expect(mock.liveBuffers.size() == buffers, "a refused staging buffer left its VkBuffer alive");
+    }
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        context.memory.memoryHeapCount = 3;
+        context.memory.memoryHeaps[2] = {2048 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        context.memory.memoryTypeCount = 3;
+        context.memory.memoryTypes[2] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 2};
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 2048 * MiB;
+        reportedSecondBudget = 2048 * MiB;
+        mock.typeBits = 6;
+        const auto make = [&](const char* what, VkDeviceSize firstUsage, VkDeviceSize secondUsage, std::size_t bytes, bool expected) {
+            reportedUsage = firstUsage;
+            reportedSecondUsage = secondUsage;
+            const auto made = mock.allocations;
+            const auto shadow = Buffer::WithinDeviceLocalHeadroom(context, bytes, usage);
+            Expect((shadow != nullptr) == expected, std::string(what) + (expected ? ": refused" : ": made"));
+            if (shadow) Expect(mock.memoryTypes.at(MemoryOf(shadow->Handle())) == 2, std::string(what) + ": not allocated from the second device-local type");
+            else Expect(mock.allocations == made, std::string(what) + ": allocated although refused");
+        };
+        make("the first device-local heap is full, the buffer's mask allows only the second", 1900 * MiB, 1000 * MiB, 24 * MiB + 4096, true);
+        make("the second device-local heap is full, the buffer's mask allows only the second", 1000 * MiB, 1900 * MiB, 40 * MiB, false);
+    }
+    reportedSecondBudget = 0;
+    reportedSecondUsage = 0;
 }
 
 void AttachmentReclaim() {
@@ -1074,6 +1173,25 @@ void ImageMemoryReclaim() {
     reclaimImageContext = nullptr;
 }
 
+void RenderTargetMemoryReuse() {
+    mock = MockDevice{};
+    auto context = mockContext();
+    context.formatProperties = mockFormatProperties;
+    context.imageFormatProperties = mockImageFormatProperties;
+    context.limits.maxFramebufferWidth = 16384;
+    context.limits.maxFramebufferHeight = 16384;
+    GetBufferPool(context);
+    ColorTarget color{};
+    color.extent = {3072, 2048};
+    color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    color.bytes = 3072 * 2048 * 4;
+    { RenderTarget first(context, color, true); }
+    Expect(mock.frees == 0 && context.bufferPool->RetainedImages() == 1, "a released render target freed its image memory instead of returning it to the image pool");
+    { RenderTarget second(context, color, true); }
+    Expect(mock.allocations == 1, "a second render target of the same size allocated new image memory instead of the pooled one");
+    Expect(mock.imageBytes.empty(), "a render target leaked its image");
+}
+
 void ImageMemoryOverBudget() {
     mock = MockDevice{};
     auto context = budgetContext();
@@ -1413,9 +1531,11 @@ int main(int argc, char** argv) {
         ImageCacheReclaim();
         ImageMemoryReuse();
         ImageMemoryReclaim();
+        RenderTargetMemoryReuse();
         ImageMemoryOverBudget();
         HostPlacement();
         RefusedDevicePlacement();
+        StagingHeadroom();
         AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

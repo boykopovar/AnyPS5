@@ -236,6 +236,10 @@ int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, in
  return sceKernelAllocateDirectMemory(0, static_cast<int64_t>(DIRECT_MEMORY_SIZE), len, alignment, memory_type, phys_addr_out);
 }
 
+int APS5_VABI sceKernelAllocateDirectMemoryForApp(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
+ return sceKernelAllocateDirectMemory(search_start, search_end, len, alignment, memory_type, phys_addr_out);
+}
+
 int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out) {
  int64_t start = 0;
  size_t size = 0;
@@ -322,7 +326,7 @@ int32_t APS5_VABI sceKernelMapNamedFlexibleMemoryInternal(void** addr_in_out, si
 int APS5_VABI sceKernelMprotect(const void* addr, size_t len, int prot) {
  constexpr int DefinedProtection = 0x3F7;
  if (len == 0) return 0;
- return DoMprotect(addr, len, prot & DefinedProtection);
+ return DoMprotect(addr, len, prot & DefinedProtection, false);
 }
 
 int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len) {
@@ -474,7 +478,7 @@ int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
 
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
  if (len == 0) return 0;
- return DoMtypeprotect(addr, len, type, prot);
+ return DoMtypeprotect(addr, len, type, prot, false);
 }
 
 int APS5_VABI sceKernelQueryMemoryProtection(void* addr, void** start, void** end, int* prot) {
@@ -522,7 +526,8 @@ int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
 
 int APS5_VABI sceKernelInternalMemoryGetAvailableSize(std::size_t* size) {
  if (!size) return -1;
- throw std::logic_error("sceKernelInternalMemoryGetAvailableSize: internal pool statistics are not implemented");
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
 }
 
 int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name) {
@@ -855,6 +860,10 @@ int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
 }
 
 extern "C" {
+
+bool APS5_VABI DirectMemoryAliased_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    return DirectMemoryAliased(address, bytes);
+}
 
 int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length) {
     std::uintptr_t start = 0;
