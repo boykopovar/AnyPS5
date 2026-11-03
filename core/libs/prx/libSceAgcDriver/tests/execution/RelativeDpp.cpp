@@ -55,7 +55,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t threads) {
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t threads, ShaderRecompiler::SpirvTarget target) {
     Input.fill(0xdeadbeefu);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -69,7 +69,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t 
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
@@ -84,7 +84,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t 
     }
 }
 
-void RunMasked(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t threads, std::span<const std::uint32_t> code, std::uint32_t activeValue) {
+void RunMasked(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t threads, std::span<const std::uint32_t> code, std::uint32_t activeValue, ShaderRecompiler::SpirvTarget target) {
     Input.fill(0xdeadbeefu);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -97,7 +97,7 @@ void RunMasked(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uin
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
@@ -117,12 +117,21 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device, 32, 32);
-        Run(*device, 64, 64);
-        RunMasked(*device, 32, 32, MaskedNoFiCode, 0u);
-        RunMasked(*device, 64, 64, MaskedNoFiCode, 0u);
-        RunMasked(*device, 32, 32, MaskedFiCode, 0x20u);
-        RunMasked(*device, 64, 64, MaskedFiCode, 0x20u);
+        const auto target = device->Target();
+        Run(*device, 32, 32, device->ComputeTarget(32));
+        Run(*device, 64, 64, device->ComputeTarget(64));
+        if (target.subgroupSize < 32u) {
+            std::printf("skipped masked cases, subgroup size %u cannot hold a wave32\n", target.subgroupSize);
+            return VulkanTestSkipped;
+        }
+        RunMasked(*device, 32, 32, MaskedNoFiCode, 0u, device->ComputeTarget(32));
+        RunMasked(*device, 32, 32, MaskedFiCode, 0x20u, device->ComputeTarget(32));
+        if (target.subgroupSize < 64u) {
+            std::printf("skipped wave64 masked cases, subgroup size %u cannot hold a wave64\n", target.subgroupSize);
+        } else {
+            RunMasked(*device, 64, 64, MaskedNoFiCode, 0u, device->ComputeTarget(64));
+            RunMasked(*device, 64, 64, MaskedFiCode, 0x20u, device->ComputeTarget(64));
+        }
         std::puts("relative dpp tests passed");
         return 0;
     } catch (const std::exception& error) {
