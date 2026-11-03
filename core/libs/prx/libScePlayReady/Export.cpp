@@ -1,4 +1,6 @@
 #include "prx/libScePlayReady/include/Api.hpp"
+#include <array>
+#include <cerrno>
 #include <charconv>
 #include <cstdint>
 #include <cstddef>
@@ -75,7 +77,12 @@ int APS5_VABI scePlayReadyApiStop() {
 
 int APS5_VABI scePlayReadyApiVersion(uint32_t index, uint64_t* version) {
     if (index >= std::size(ApiVersions) || version == nullptr) return PlayReadyInvalidArgument;
-    std::memcpy(version, ApiVersions[index], sizeof(ApiVersions[index]));
+    const auto savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(version, ApiVersions[index], sizeof(ApiVersions[index]))) {
+        errno = savedErrno;
+        return PlayReadyInvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -102,7 +109,13 @@ int APS5_VABI scePlayReadyBufferFree() {
 
 int APS5_VABI scePlayReadyBufferInit(void* buffer) {
     if (buffer == nullptr) return PlayReadyInvalidArgument;
-    std::memset(buffer, 0, BufferSize);
+    const std::array<unsigned char, BufferSize> zeros{};
+    const auto savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(buffer, zeros.data(), zeros.size())) {
+        errno = savedErrno;
+        return PlayReadyInvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 
