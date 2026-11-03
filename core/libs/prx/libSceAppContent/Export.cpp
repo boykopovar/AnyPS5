@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -157,7 +158,9 @@ int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMount
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!mountPoint || !availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
     if (std::strncmp(mountPoint->data, DOWNLOAD_MOUNT_POINT, sizeof(mountPoint->data)) != 0) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const std::uint64_t quotaKb = GetAppDownloadDataSizeMiB_nid_postfix() * 1024u;
+    const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
+    if (quotaMiB > std::numeric_limits<std::uint64_t>::max() / 1024u) throw std::overflow_error("AppContent download quota exceeds KiB range");
+    const std::uint64_t quotaKb = quotaMiB * 1024u;
     if (quotaKb == 0) {
         *availableSpaceKb = 0;
         return 0;
@@ -308,6 +311,22 @@ int APS5_VABI sceAppContentDownload1Expand(void) {
 }
 
 int APS5_VABI sceAppContentDownload1Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Expand(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

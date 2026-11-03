@@ -20,6 +20,7 @@ void Require(bool condition, const char* message) {
 }
 
 void CheckDeviceIdConversion() {
+    constexpr auto unconvertibleClass = static_cast<std::int32_t>(0x809B0008u);
     std::uint32_t local = 7;
     std::uint32_t deviceClass = 7;
     Require(sceMbusConvertToLocalDeviceId(0x0020123456789ABCull, &local, &deviceClass) == 0, "local conversion failed");
@@ -40,7 +41,6 @@ void CheckDeviceIdConversion() {
     Require(sceMbusConvertToMbusDeviceId(0x123456789ABCull, 0x20, &id) == 0 && id == 0x0020123456789ABCull, "class 0x20 is placed in the top 16 bits");
     Require(sceMbusConvertToMbusDeviceId(0xFFFF000000000001ull, 0x10, &id) == 0 && id == 0xFFFF000000000001ull, "the local id is not masked");
     Require(sceMbusConvertToMbusDeviceId(1, 0x10, nullptr) == 0, "conversion without an output");
-    constexpr auto unconvertibleClass = static_cast<std::int32_t>(0x809B0008u);
     for (const std::uint32_t other : {0u, 1u, 0x11u, 0x21u, 0x30u, 0x1000u, 0xFFFFFFFFu}) {
         id = 7;
         Require(sceMbusConvertToMbusDeviceId(1, other, &id) == unconvertibleClass && id == 0, "other classes are refused and clear the output");
@@ -52,6 +52,7 @@ void CheckDeviceIdConversion() {
 
 int main() {
     static_assert(sizeof(MbusEventCallbacks) == 16);
+    sceMbusEventCallbackFuncsInit_(nullptr, sizeof(MbusEventCallbacks));
     alignas(MbusEventCallbacks) std::array<std::uint8_t, 24> callbackBytes{};
     callbackBytes.fill(0xa5);
     sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(callbackBytes.data()), 8);
