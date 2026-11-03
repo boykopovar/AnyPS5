@@ -3814,7 +3814,7 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
                 const auto sameStored = [&] {
                     if (surface->clearGeneration == 0u || surface->clearPattern != pattern) return false;
                     std::vector<std::uint32_t> words(metadata.bytes / sizeof(std::uint32_t));
-                    GuestMemory::Read(metadata.address, std::as_writable_bytes(std::span(words)));
+                    std::memcpy(words.data(), reinterpret_cast<const void*>(metadata.address), metadata.bytes);
                     return std::all_of(words.begin(), words.end(), [&](std::uint32_t word) { return word == pattern; }) && GuestMemory::NewestStamp(metadata.address, metadata.bytes) > surface->clearStoreStamp;
                 };
                 if (surface->clearPending || (surface->clearGeneration != 0u && !surface->clearPattern.has_value())) surface->sampling.Refuse("native multisample depth metadata fill over a pending HTILE clear dispatch is not implemented");

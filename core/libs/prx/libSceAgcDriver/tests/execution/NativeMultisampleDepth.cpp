@@ -2143,7 +2143,7 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
             const auto fillBytes = fault == StencilFault::FillPartial ? metadataBytes - 4u : metadataBytes;
             if (fault == StencilFault::MaskClear) NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes);
             else NoteDepthMetadataFill(target.htileAddress, fillBytes, clearWord(clearOne));
-            if (fault == StencilFault::FillOverlap) NoteDepthMetadataFill(target.htileAddress, fillBytes, clearWord(!clearOne));
+            if (fault == StencilFault::FillOverlap) NoteDepthMetadataFill(target.htileAddress, fillBytes, clearWord(clearOne));
             const auto storedBytes = fault == StencilFault::FillPartialStore ? 4u : fillBytes;
             AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, storedBytes, [&] {
                 setWords(clearWord(clearOne), storedBytes);
@@ -3373,9 +3373,9 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
         ~Cleanup() { action(); }
     } cleanup{clear};
     const auto words = DepthSampleWords(target);
-    const auto store = [&](std::uint32_t word) {
-        AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, metadataBytes, [&] {
-            for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &word, 4u);
+    const auto store = [&](std::uint32_t word, std::size_t bytes) {
+        AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, bytes, [&] {
+            for (std::size_t offset = 0u; offset + 4u <= bytes; offset += 4u) std::memcpy(metadata.Data() + offset, &word, 4u);
         });
     };
     const auto sample = [&](float expected) {
@@ -3398,22 +3398,48 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
         }
         texture.reset();
     };
+    const auto reset = [&](float expected) {
+        clear();
+        std::memset(metadata.Data(), 0, metadataBytes);
+        target.clearDepth = expected;
+        sample(expected);
+    };
     sample(0.0f);
     const std::uint32_t one = 0xfffffff0u;
     target.clearDepth = 1.0f;
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
-    store(one);
+    store(one, metadataBytes);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
     sample(1.0f);
+
+    reset(0.0f);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+
+    reset(0.0f);
+    target.clearDepth = 1.0f;
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
-    store(one);
-    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    store(one, 4u);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
     TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
-    target.clearDepth = 0.0f;
-    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
-    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
-    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
-    std::printf("Native D32S8 with HTILE, samples=%u: a repeated whole-HTILE fill of a stored clear was accepted and an unstored or different one was refused\n", samples);
+
+    reset(0.0f);
+    target.clearDepth = 1.0f;
+    {
+        const auto view = DepthSurfaceView(context, target);
+        Require(view != VK_NULL_HANDLE, "the repeated fill fixture after a draw has no attachment view");
+        DepthRaster raster(context, target, view);
+        CommandBatch batch(context);
+        raster.Run(batch.Handle(), 0.0f);
+        batch.SubmitAndWait();
+        recorder.Sync();
+    }
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    store(one, metadataBytes);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    sample(1.0f);
+    std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused and a stored refill after a draw was accepted\n", samples);
 }
 
 int main(int argc, char** argv) {
