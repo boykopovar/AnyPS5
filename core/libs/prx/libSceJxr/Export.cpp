@@ -168,10 +168,6 @@ int APS5_VABI PKFormatConverter_Copy_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
