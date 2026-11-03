@@ -94,6 +94,10 @@ void detileVolume(const Context& context, TextureDetiler& detiler, TextureTileMo
     volume.gcnPow2Pad = pow2Pad;
     const auto geometry = DescribeSurface(volume);
     Require(geometry.levelMajor && geometry.layers == depth && geometry.imageDepth == depth && geometry.imageLayers == 1u && geometry.mips.size() == 3u, what + ": the surface is not one 3D image of its depth, stored level by level");
+    const auto level1Slices = pow2Pad ? 4u : 3u;
+    Require(geometry.mips[1].tiledOffset == geometry.mips[0].tiledOffset + geometry.mips[0].tiledSize * depth, what + ": level 1 does not start after the 6 level 0 slices");
+    Require(geometry.mips[2].tiledOffset == geometry.mips[1].tiledOffset + geometry.mips[1].tiledSize * level1Slices, what + ": level 2 does not start after " + std::to_string(level1Slices) + " level 1 slices");
+    Require(geometry.guestBytes == geometry.mips[2].tiledOffset + geometry.mips[2].tiledSize, what + ": the surface does not end after the one level 2 slice");
     Buffer tiled(context, static_cast<std::size_t>(geometry.guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     Buffer linear(context, static_cast<std::size_t>(geometry.sliceLinearBytes * depth), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::memset(tiled.Bytes().data(), 0, tiled.Bytes().size());
