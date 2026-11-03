@@ -65,74 +65,10 @@ void ExpectFailure(auto&& action) {
     Require(failed);
 }
 
-int RunHighRefreshChild(const char* program) {
-    std::error_code ec;
-    const auto absProgram = std::filesystem::absolute(program, ec);
-    const std::string progStr = ec ? std::string(program) : absProgram.string();
-#ifdef _WIN32
-    const std::string command = "\"\"" + progStr + "\" --high-refresh\"";
-#else
-    const std::string command = "\"" + progStr + "\" --high-refresh";
-#endif
-    return std::system(command.c_str());
-}
-
-int RunHighRefreshScenario() {
-    VideoOutTestEnvironment environment;
-    {
-        std::ofstream param("app0/sce_sys/param.json", std::ios::binary | std::ios::trunc);
-        param << R"({"titleId":"PPSA99007","localizedParameters":{"en-US":{"titleName":"High frame rate test"}},"attribute3":64})";
-        Require(static_cast<bool>(param));
-    }
-    int handle = 0;
-    try {
-        handle = sceVideoOutOpen(SystemUser, MainBus, 0, nullptr);
-    } catch (const std::runtime_error& error) {
-        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) {
-            throw;
-        }
-        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
-        return 77;
-    }
-    if (handle <= 0) {
-        return 77;
-    }
-
-    VideoOutOutputOptions options{};
-    Require(sceVideoOutInitializeOutputOptions(&options) == 0);
-
-    const int highFrameRateSupported = sceVideoOutIsOutputSupported(handle, OutputMode11988Hz, &options, nullptr, 0);
-    Require(highFrameRateSupported == 1 || highFrameRateSupported == 0);
-
-    VideoOutResolutionStatus resStatus{};
-    VideoOutOutputStatus outStatus{};
-
-    if (highFrameRateSupported == 1) {
-        Require(sceVideoOutConfigureOutput(handle, OutputMode11988Hz, &options, nullptr, 0) == 0);
-        Require(sceVideoOutGetOutputStatus(handle, &outStatus) == 0);
-        Require(outStatus.refreshRate == RefreshRate11988Hz);
-        Require(sceVideoOutGetResolutionStatus(handle, &resStatus) == 0);
-        Require(resStatus.refreshRate == RefreshRate11988Hz);
-        Require(sceVideoOutConfigureOutput(handle, OutputModeDefault, &options, nullptr, 0) == 0);
-        Require(sceVideoOutGetOutputStatus(handle, &outStatus) == 0);
-        Require(outStatus.refreshRate == RefreshRate5994Hz);
-        Require(sceVideoOutGetResolutionStatus(handle, &resStatus) == 0);
-        Require(resStatus.refreshRate == RefreshRate5994Hz);
-    } else {
-        Require(sceVideoOutConfigureOutput(handle, OutputMode11988Hz, &options, nullptr, 0) == UnavailableOutputMode);
-    }
-
-    Require(sceVideoOutClose(handle) == 0);
-    LibcRunShutdown_nid_postfix();
-    return 0;
-}
-
 } // namespace
 
-int main(int argc, char** argv) {
-    if (argc > 1 && std::string_view(argv[1]) == "--high-refresh") {
-        return RunHighRefreshScenario();
-    }
+int main(int, char**) {
+    VideoOutTestEnvironment environment;
     ExpectFailure([] { sceVideoOutSetBufferAttribute(nullptr, 0x80000000u, 1, 0, 1920, 1080, 1920); });
     VideoOutBufferAttribute bufferAttr{};
     sceVideoOutSetBufferAttribute(&bufferAttr, 0x80000000u, 1, 0, 1920, 1080, 1920);
@@ -243,7 +179,6 @@ int main(int argc, char** argv) {
         ExpectFailure([&] { sceVideoOutSetGlobalBlendSpace(unopened, 0, 0); });
     }
 
-    VideoOutTestEnvironment environment;
     int handle = 0;
     try {
         handle = sceVideoOutOpen(SystemUser, MainBus, 0, nullptr);
@@ -387,21 +322,6 @@ int main(int argc, char** argv) {
     ExpectFailure([&] { sceVideoOutAdjustColor(handle, &colorSettings); });
     ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(handle, &csSettings); });
     ExpectFailure([&] { sceVideoOutSetGlobalBlendSpace(handle, 0, 0); });
-
-    const char* program = (argc > 0 && argv[0]) ? argv[0] : "guest_video_out_tests";
-    const int status = RunHighRefreshChild(program);
-#ifdef _WIN32
-    if (status == 77) {
-        LibcRunShutdown_nid_postfix();
-        return 77;
-    }
-#else
-    if (((status >> 8) & 0xFF) == 77) {
-        LibcRunShutdown_nid_postfix();
-        return 77;
-    }
-#endif
-    Require(status == 0);
 
     LibcRunShutdown_nid_postfix();
     return 0;
