@@ -1,10 +1,14 @@
 # libSceNKWebKit technical debt
 
+Inventory prose retains historical counts; use the [generated progress report](https://boykopovar.github.io/AnyPS5/progress.html) for current totals.
+
 ### Unknown function info
 
 - [WebKit API objects](../../../core/libs/prx/libSceNKWebKit/src/Object.hpp) (libSceNKWebKit) - `WK*` objects are host objects numbered with `API::Object::Type` as [APIObject.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/APIObject.h) builds for PlayStation, with ApplicationManifest, InspectorExtension, WebExtension and WebAuthn types off and PopupMenuItem and AccessibilityObject on per [OptionsPlayStation.cmake](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/cmake/OptionsPlayStation.cmake); the console module version, its type numbers and its object layouts are unverified, so these objects cannot be passed to a console WebKit module. A null or wrong-type reference throws where WebKit dereferences it.
 - [WTF and WebCore value layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfStringAbi.hpp) (libSceNKWebKit) - `WTF::String`, `StringImpl`, `StringView`, `CString`, `URL` and the WebCore geometry, transform and `Color` layouts follow the release 64-bit headers at the [pinned source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h) and are pinned with `static_assert`; they are tested on Windows, not against console binaries. `StringImpl::destroy`, atom and symbol strings and external buffers still throw, so a string whose last reference guest code drops terminates.
 - [Media preferences](../../../core/libs/prx/libSceNKWebKit/src/Preferences.cpp) (libSceNKWebKit) - unset `MediaSourceEnabled`, `EncryptedMediaAPIEnabled` and `SourceBufferChangeTypeEnabled` getters throw, and feature-key setters for `EncryptedMediaAPIEnabled`, `SourceBufferChangeTypeEnabled` and `WebMParserEnabled` throw, because the PlayStation media player configuration behind `ENABLE_MEDIA_SOURCE` and `ENABLE_ENCRYPTED_MEDIA` is not in the pinned source. Other defaults evaluate [UnifiedWebPreferences.yaml](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml) for PlayStation; downstream console overrides are unverified.
+
+- [FastBitVector exports](../../../core/libs/prx/libSceNKWebKit/src/WtfFastBitVector.cpp) have no console ABI or behavior verification. The 16-byte owner (word pointer at 0, 64-bit bit count at 8), range clearing, growth and copying follow the paired header and [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastBitVector.cpp). `resizeSlow` preserves the stored bit count and unused bits of existing words; new words are zeroed. Allocation uses the module's `fastMalloc` and `fastFree`. Invalid ranges, null accessed storage, shrinking the word count and overflowing the upstream round-up throw instead of reproducing assertion failures or invalid memory access. Closes when: compared with a console module.
 
 ### Functional
 
@@ -14,6 +18,7 @@
 - [Dictionary key order](../../../core/libs/prx/libSceNKWebKit/src/Dictionary.cpp) (libSceNKWebKit) - `WKDictionaryCopyKeys` returns keys sorted by UTF-16 code unit, not in the `WTF::HashMap` iteration order of [WKDictionary.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKDictionary.cpp).
 - [Out-of-line colors](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColor.cpp) (libSceNKWebKit) - `WebCore::Color` operations on an out-of-line value (extended color spaces in [Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h)) throw; only inline 8-bit sRGBA values are handled.
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
+- [WebCore::ResourceResponseBase](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponse.cpp) (libSceNKWebKit) - the object layout in [ResourceResponseAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponseAbi.hpp) comes from [ResourceResponseBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceResponseBase.h) and is not checked against the PS5 module: `URL` at 0, four `AtomString` and the 64-bit expected length up to offset 80, then a 32-byte `HTTPHeaderMap` (two vectors of inline capacity 0 as in [HTTPHeaderMap.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPHeaderMap.h)). Only these fields are modelled because `std::optional<CertificateInfo>` follows the `Box<NetworkLoadMetrics>` and the size of the PS5 `CertificateInfo` is unknown, so the offsets of `m_httpStatusCode`, `m_isNull`, `m_initLevel`, `m_type`, `m_source` and the flags are not established. The getters (`url`, `mimeType`, `expectedContentLength`, `textEncodingName`, `httpStatusText`, `httpVersion`, `httpHeaderFields`, `isInHTTPFamily`) skip `lazyInit` because the curl [ResourceResponse.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/curl/ResourceResponse.h) has no `platformLazyInit`; the PS5 `ResourceResponse` is not known to match. `isInHTTPFamily` reads the valid bit of `URL::bits` and the scheme text, not the cached `m_protocolIsInHTTPFamily` bit, whose position is unknown. The 30 other exports (`ResourceResponseBase` constructors, `setURL`, `setType`, `setExpectedContentLength`, `setHTTPStatusCode`, `httpStatusCode`, `source`, `isSuccessful`, `isRedirection`, `isHTTP09`, `isAttachment*`, `suggestedFilename`, `sanitize*`, `syntheticRedirectResponse`, `cacheControlContains*`, `hasCacheValidatorFields`, `lazyInit`, `httpHeaderField*`, `addHTTPHeaderField*`, `setHTTPHeaderField*`) still throw `NotImplemented_nid_no_patch`: they write `m_isNull`, read fields after `CertificateInfo`, or need `HTTPHeaderMap`, `CertificateInfo`, `Vector` or `ResourceResponse` layouts.
 
 ### Known export names; ABI prototypes unverified
 
@@ -27,7 +32,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7439 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7437 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -1599,7 +1604,6 @@
 | `_ZN3WTF12CountingLock10unlockSlowEv` | `y9CL7tutRKQ` |
 | `_ZN3WTF12CountingLock8lockSlowEv` | `QSRjO+sqoFU` |
 | `_ZN3WTF12isMainThreadEv` | `MKhFWAdCyCw` |
-| `_ZN3WTF13FastBitVector10clearRangeEmm` | `q1+R1z2aE0E` |
 | `_ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm` | `RPLKRR7vgYE` |
 | `_ZN3WTF13MetaAllocator17currentStatisticsERKNS_6LockerINS_4LockEEE` | `3SW2Rs+BCYE` |
 | `_ZN3WTF13MetaAllocator17freeFreeSpaceNodeEPNS0_13FreeSpaceNodeE` | `sIQ2j-9PjgU` |
@@ -1760,7 +1764,6 @@
 | `_ZN3WTF19ParallelEnvironmentC1EPFvPvEmi` | `Efn-a1tGPqw` |
 | `_ZN3WTF19ParallelEnvironmentC2EPFvPvEmi` | `ciXM3j2URKk` |
 | `_ZN3WTF19isCompilationThreadEv` | `qoO6VaMuvG0` |
-| `_ZN3WTF19mimeTypeFromDataURLENS_10StringViewE` | `kie+nv-1HCM` |
 | `_ZN3WTF19numGraphemeClustersENS_10StringViewE` | `K7qAbz7P3rs` |
 | `_ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv` | `K59xDVxbCyM` |
 | `_ZN3WTF20ConcurrentPtrHashSet5clearEv` | `sDuWnr1d9ko` |
@@ -1804,8 +1807,6 @@
 | `_ZN3WTF22CrossThreadTaskHandlerD0Ev` | `aMwGXRZ6024` |
 | `_ZN3WTF22CrossThreadTaskHandlerD1Ev` | `RQGUZHWVCLY` |
 | `_ZN3WTF22CrossThreadTaskHandlerD2Ev` | `F9bDxOEGeA8` |
-| `_ZN3WTF22FastBitVectorWordOwner10resizeSlowEm` | `NetEd5QBLRw` |
-| `_ZN3WTF22FastBitVectorWordOwner13setEqualsSlowERKS0_` | `qY895ndHoiI` |
 | `_ZN3WTF22TextBreakIteratorCache9singletonEv` | `m9nEKMAp80k` |
 | `_ZN3WTF22isMainThreadOrGCThreadEv` | `UHbf2fZIrxk` |
 | `_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE` | `95FhkfvoGQM` |
@@ -6054,7 +6055,6 @@
 | `_ZNK3WTF3URL19protocolHostAndPortEv` | `q8fEMeIqd5w` |
 | `_ZNK3WTF3URL21truncatedForUseAsBaseEv` | `uekVJTVqBGc` |
 | `_ZNK3WTF3URL24strippedForUseAsReferrerEv` | `CyN41AniueA` |
-| `_ZNK3WTF3URL30stringCenterEllipsizedToLengthEj` | `JRPrmfTHt08` |
 | `_ZNK3WTF3URL4dumpERNS_11PrintStreamE` | `ITwB6pPwmRc` |
 | `_ZNK3WTF3URL4userEv` | `ETN4mn+-5l0` |
 | `_ZNK3WTF3URL8passwordEv` | `aCtpeXWclTE` |
@@ -6730,29 +6730,21 @@
 | `_ZNK7WebCore20PasteboardCustomData18createSharedBufferEv` | `oNgcYv7sg2E` |
 | `_ZNK7WebCore20PasteboardWriterData7isEmptyEv` | `pCjXnlN6R4c` |
 | `_ZNK7WebCore20RenderBoxModelObject18inlineContinuationEv` | `nV9al8rbOKg` |
-| `_ZNK7WebCore20ResourceResponseBase11httpVersionEv` | `qJpr45shtzs` |
 | `_ZNK7WebCore20ResourceResponseBase12isAttachmentEv` | `C+morSMfP84` |
 | `_ZNK7WebCore20ResourceResponseBase12isSuccessfulEv` | `3a6B43jFjX8` |
 | `_ZNK7WebCore20ResourceResponseBase13isRedirectionEv` | `BrSesfxNNvs` |
 | `_ZNK7WebCore20ResourceResponseBase14httpStatusCodeEv` | `bFhYDNofRSE` |
-| `_ZNK7WebCore20ResourceResponseBase14httpStatusTextEv` | `MYd7F5R6ryw` |
-| `_ZNK7WebCore20ResourceResponseBase14isInHTTPFamilyEv` | `wW+Pyy9LiGA` |
 | `_ZNK7WebCore20ResourceResponseBase15httpHeaderFieldENS_14HTTPHeaderNameE` | `JkEYUFSjoXw` |
-| `_ZNK7WebCore20ResourceResponseBase16httpHeaderFieldsEv` | `cots5mYtZpo` |
-| `_ZNK7WebCore20ResourceResponseBase16textEncodingNameEv` | `wTRdXzKM3u4` |
 | `_ZNK7WebCore20ResourceResponseBase17suggestedFilenameEv` | `fBVtigUQ-qk` |
-| `_ZNK7WebCore20ResourceResponseBase21expectedContentLengthEv` | `i4zxQPHkqJs` |
 | `_ZNK7WebCore20ResourceResponseBase23hasCacheValidatorFieldsEv` | `qAv1-ceZ9iQ` |
 | `_ZNK7WebCore20ResourceResponseBase24isAttachmentWithFilenameEv` | `ClZ8vxvE28U` |
 | `_ZNK7WebCore20ResourceResponseBase27cacheControlContainsNoCacheEv` | `bTMmuXgrk-4` |
 | `_ZNK7WebCore20ResourceResponseBase27cacheControlContainsNoStoreEv` | `CchgKVep+h8` |
 | `_ZNK7WebCore20ResourceResponseBase29cacheControlContainsImmutableEv` | `OKrc5AyAqtM` |
 | `_ZNK7WebCore20ResourceResponseBase34cacheControlContainsMustRevalidateEv` | `8956F1voabk` |
-| `_ZNK7WebCore20ResourceResponseBase3urlEv` | `VljXeIAPJoA` |
 | `_ZNK7WebCore20ResourceResponseBase6sourceEv` | `Nc4OHQvmIOM` |
 | `_ZNK7WebCore20ResourceResponseBase8isHTTP09Ev` | `JjPx6bo9fbs` |
 | `_ZNK7WebCore20ResourceResponseBase8lazyInitENS0_9InitLevelE` | `o+TiqWzvS8s` |
-| `_ZNK7WebCore20ResourceResponseBase8mimeTypeEv` | `HDR9zkTEoJ4` |
 | `_ZNK7WebCore20ScrollingCoordinator36coordinatesScrollingForOverflowLayerERKNS_11RenderLayerE` | `1nxJkpm8wLA` |
 | `_ZNK7WebCore21BackForwardController12forwardCountEv` | `wmkk8v-vEI0` |
 | `_ZNK7WebCore21BackForwardController18canGoBackOrForwardEi` | `No2407W5Jes` |

@@ -19,6 +19,14 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    add_test(NAME agc_driver_sampled_cache_budget_report_age COMMAND agc_driver_sampled_cache_budget_tests budget-report-age)
+    set_tests_properties(agc_driver_sampled_cache_budget_report_age PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_TEXTURE_CACHE_MIB=" SKIP_RETURN_CODE 77 TIMEOUT 30
+        PASS_REGULAR_EXPRESSION "active storage image cache budget 4096 MiB.*storage_limit_age_ms=[1-9][0-9]*"
+        FAIL_REGULAR_EXPRESSION "FAIL:|VUID-")
+    if(WIN32)
+        set_tests_properties(agc_driver_sampled_cache_budget_report_age PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set_property(TEST agc_driver_recover_srgb_allocation APPEND PROPERTY ENVIRONMENT_MODIFICATION "APS5_SRGB_SHADER_DECODE=set:copy")
     add_test(NAME agc_driver_resource_cache_storage_admission COMMAND agc_driver_sampled_cache_budget_tests resource-admission)
     add_test(NAME agc_driver_resource_cache_oversized_storage_admission COMMAND agc_driver_sampled_cache_budget_tests resource-oversized)
