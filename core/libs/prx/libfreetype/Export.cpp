@@ -114,11 +114,6 @@ int APS5_VABI freetypeLegacyStreamOpenLZW_nid_no_patch() {
 }
 APS5_EXPORT("ctqkAfkma-k", freetypeLegacyStreamOpenLZW_nid_no_patch);
 
-int APS5_VABI freetypeLegacyGzipUncompress_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("hKvvpNeUdKo", freetypeLegacyGzipUncompress_nid_no_patch);
-
 int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

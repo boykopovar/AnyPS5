@@ -20,7 +20,6 @@ int APS5_VABI freetypeLegacyFaceProperties_nid_no_patch();
 int APS5_VABI freetypeLegacyLibrarySetLcdGeometry_nid_no_patch();
 int APS5_VABI freetypeLegacyErrorString_nid_no_patch();
 int APS5_VABI freetypeLegacyStreamOpenLZW_nid_no_patch();
-int APS5_VABI freetypeLegacyGzipUncompress_nid_no_patch();
 int APS5_VABI freetypeLegacyNewGlyph_nid_no_patch();
 int APS5_VABI freetypeLegacyGetWinFNTHeader_nid_no_patch();
 
