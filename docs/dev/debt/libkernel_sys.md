@@ -7,7 +7,9 @@
 
 ### Unknown function info
 
-- [libkernel_sys additional exports](../../../core/libs/prx/libkernel_sys/AdditionalExports.cpp) - 325 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded. Kernel variant imports already resolve through `libkernel`, then `libc`; existing providers remain unchanged. Six native data exports (`errno`, `__stack_chk_guard`, `_sigintr`, `__progname`, `environ`, and NID `AxgW94umKqU`) require separate storage, layout, TLS and ownership validation and are not added as callable aliases or fabricated globals.
+- [Nine unnamed additional exports](../../../core/libs/prx/libkernel_sys/AdditionalExports.cpp) (libkernel_sys, NIDs `pCbBddNl66Y`, `zAloppPJxy0`, `vq2+HyP5U5I`, `z+e0vV-tnH4`, `gJ5gpW45mU0`, `N94a0T4F4+U`, `C49jelxiaVE`, `1WXQlxMpnNA`, `FR0odl35yQY`) - return what firmware 13.42's `system/common/lib/libkernel_sys.sprx` returns, read from disassembly to the return, not measured on a console. The first five are `xor %eax,%eax; ret`, `N94a0T4F4+U` is `mov $0x8002004e,%eax; ret` and `C49jelxiaVE` is `mov $0x20018,%eax; ret`. `1WXQlxMpnNA` stores 1 to a zero-initialised module byte and returns 0, and `FR0odl35yQY` returns that byte zero-extended; no other code in the module touches the byte. None reads an argument, so the declarations are parameterless; the 32-bit loads clear the upper half of `rax`, so they return `std::uint64_t`. Names, intended parameters and callers are unknown.
+
+- [libkernel_sys additional exports](../../../core/libs/prx/libkernel_sys/AdditionalExports.cpp) - 316 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded. Kernel variant imports already resolve through `libkernel`, then `libc`; existing providers remain unchanged. Six native data exports (`errno`, `__stack_chk_guard`, `_sigintr`, `__progname`, `environ`, and NID `AxgW94umKqU`) require separate storage, layout, TLS and ownership validation and are not added as callable aliases or fabricated globals.
 
 | Name | NID |
 | --- | --- |
@@ -148,7 +150,6 @@
 | `sceKernelGetAppLibcData` | `-QipytgE4x0` |
 | `Unknown` | `-sYN8ucoAWw` |
 | `Unknown` | `0CV40L3tznI` |
-| `Unknown` | `1WXQlxMpnNA` |
 | `Unknown` | `1v23w7Rnkic` |
 | `Unknown` | `1v6DjTPunjs` |
 | `Unknown` | `2+KZ4mZKp6E` |
@@ -185,7 +186,6 @@
 | `Unknown` | `BjmZn9pYSuk` |
 | `Unknown` | `C3ToW2CA+hM` |
 | `Unknown` | `C3xgqN95IoE` |
-| `Unknown` | `C49jelxiaVE` |
 | `sceKernelSwitchToTrinityMode` | `Cz48pcLnLCY` |
 | `sceKernelIsGenuineCronosCex` | `DB0muDALi4Y` |
 | `Unknown` | `DWWduhQYA3I` |
@@ -195,7 +195,6 @@
 | `sceKernelTraceMarkerBookmark` | `EKMWpdzszVo` |
 | `Unknown` | `EaepepH-LmI` |
 | `Unknown` | `FIUPjhnoI+o` |
-| `Unknown` | `FR0odl35yQY` |
 | `sceKernelIccGetExtBDDriveStatus` | `GADbvgNm4tY` |
 | `Unknown` | `GTyjVeZcdRM` |
 | `Unknown` | `Gtncco+mxio` |
@@ -218,7 +217,6 @@
 | `Unknown` | `LwGBaXgvFaY` |
 | `Unknown` | `MJ-err8l-XY` |
 | `Unknown` | `MKlp-bW1bz8` |
-| `Unknown` | `N94a0T4F4+U` |
 | `Unknown` | `NhFlyw-77cY` |
 | `Unknown` | `OZBJnWxt7d4` |
 | `Unknown` | `PBq-OUg5A5s` |
@@ -275,7 +273,6 @@
 | `Unknown` | `ftHBlCfIEQo` |
 | `Unknown` | `g7MGwZ5UxBE` |
 | `Unknown` | `gBiaAGKEvHM` |
-| `Unknown` | `gJ5gpW45mU0` |
 | `Unknown` | `gSIiye3ERqo` |
 | `Unknown` | `gpgi-GwE2Is` |
 | `Unknown` | `guq+otVpgj0` |
@@ -302,7 +299,6 @@
 | `Unknown` | `o141x2VDeVc` |
 | `sceKernelGetMainSocSubId` | `oSQQA8I595Y` |
 | `sceKernelInternalUnmapMapperSharedMemory` | `pAI+17im1o0` |
-| `Unknown` | `pCbBddNl66Y` |
 | `Unknown` | `pOClGbxrx94` |
 | `sceKernelSetAppLibcData` | `pn68p6w2eK0` |
 | `Unknown` | `pp+G+UZhiqY` |
@@ -324,7 +320,6 @@
 | `Unknown` | `ulVjluL9TzM` |
 | `Unknown` | `v+qTlNjF6kE` |
 | `Unknown` | `vfYaxkxnJXQ` |
-| `Unknown` | `vq2+HyP5U5I` |
 | `sceKernelSetCanvasHandle` | `wXnNof3LrrU` |
 | `Unknown` | `wn0XzOue4EM` |
 | `Unknown` | `wwWv+0MzhGM` |
@@ -333,9 +328,7 @@
 | `Unknown` | `yWOJkfd-DhA` |
 | `Unknown` | `yn0b42DApAI` |
 | `Unknown` | `yzvrk3YrPlE` |
-| `Unknown` | `z+e0vV-tnH4` |
 | `Unknown` | `z0qKN5kkVj0` |
-| `Unknown` | `zAloppPJxy0` |
 
 - [sceKernelGetHwModelName](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - throws. On a CFI-2014 PS5 (firmware 13.60) a payload process got 0 from `sceKernelGetHwModelName(char*)`, which wrote "CFI-2014 A01X" and a terminator (14 bytes). The model string belongs to one console and the buffer size and null behaviour are not known, so it is not implemented
 - [sceKernelGetCompiledSdkVersion](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - which SDK version the console returns is unmeasured. The [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk/blob/a7685ce8e97ce1f8a4f38253a41d54241c9124f1/crt/kernel.c#L257-L275) declares the process parameters with a 32-bit PS4 SDK version at offset `0x10` and a 32-bit PS5 SDK version at `0x14`; this export returns the field at `0x10`, which [libSceHmd2](../../../core/libs/prx/libSceHmd2/Export.cpp) reads and [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/615bcba5e21b82dc59588575f7ecbce8da09ca2c/src/emulator.cpp#L110-L138) reads from the eboot. The `int (int32_t*)` signature and `EINVAL` (`0x80020016`) for null follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/615bcba5e21b82dc59588575f7ecbce8da09ca2c/src/core/libraries/kernel/process.cpp#L56-L62); `SCE_KERNEL_ERROR_EFAULT` for an unwritable output pointer is a host-safety fallback so the process does not crash, not a measured PS5 result, and the console's behaviour for such a pointer is unmeasured. Closes when: measured on a PS5

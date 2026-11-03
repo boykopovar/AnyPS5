@@ -110,7 +110,7 @@ static void TestAbiAndPointerRecords() {
             reinterpret_cast<const void*>(&_ZTIN10__cxxabiv117__pbase_type_infoE_nid_postfix));
 
     using CatchType = bool (APS5_VABI*)(const std::type_info*, const std::type_info*, void**, unsigned);
-    const auto catchType = reinterpret_cast<CatchType>(_ZTIPi_nid_postfix.vtable[4]);
+    const auto catchType = reinterpret_cast<CatchType>(const_cast<void*>(_ZTIPi_nid_postfix.vtable[4]));
     const auto* pi = reinterpret_cast<const std::type_info*>(&_ZTIPi_nid_postfix);
     const auto* pki = reinterpret_cast<const std::type_info*>(&_ZTIPKi_nid_postfix);
     const auto* pf = reinterpret_cast<const std::type_info*>(&_ZTIPf_nid_postfix);
