@@ -233,6 +233,23 @@ add_custom_command(
         DEPENDS "${agcSampleDumpsShaderSource}" glslang-standalone
         VERBATIM
 )
+function(agc_embedded_shader SOURCE STEM SYMBOL OUT_LIST)
+    set(source "${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/${SOURCE}")
+    set(spv "${agcTextureDetileGeneratedDir}/${STEM}.spv")
+    set(header "${agcTextureDetileGeneratedDir}/${STEM}_spv.h")
+    add_custom_command(
+            OUTPUT "${header}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${spv}" "${source}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${spv} -DOUTPUT=${header}
+            -DSYMBOL=${SYMBOL} -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${source}" glslang-standalone
+            VERBATIM
+    )
+    set(${OUT_LIST} ${${OUT_LIST}} "${header}" PARENT_SCOPE)
+endfunction()
+set(agcDepthTransferShaderHeaders)
+agc_embedded_shader(DepthToStorage.comp DepthToStorage DEPTH_TO_STORAGE_SPV agcDepthTransferShaderHeaders)
 foreach(agcPresentationStage IN ITEMS Vert Frag)
     string(TOLOWER "${agcPresentationStage}" agcPresentationExtension)
     string(TOUPPER "${agcPresentationStage}" agcPresentationSymbol)
@@ -447,6 +464,7 @@ set(agcDriverSources
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}
+        ${agcDepthTransferShaderHeaders}
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Query.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Resource/src/Lifecycle.cpp
@@ -809,7 +827,7 @@ if(BUILD_TESTING)
                 BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
     endif()
 
-    foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_buffer_copy)
+    foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy)
         set_tests_properties(${partialStoreTest} PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_HOST_IMPORT=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         if(WIN32)
