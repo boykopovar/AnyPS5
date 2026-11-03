@@ -4,12 +4,18 @@
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 static_assert(offsetof(SaveDataMount2, dir_name) == 8 && offsetof(SaveDataMount2, blocks) == 16 && offsetof(SaveDataMount2, mount_mode) == 24 && sizeof(SaveDataMount2) == 64, "SaveDataMount2 has the PS4 layout");
 
@@ -150,6 +156,8 @@ void TestMount2() {
 
 void TestSaveDataMemoryV1() {
     Check(sceSaveDataSetupSaveDataMemory(7, 0x1000, nullptr) == SaveDataErrorNotInitialized, "v1 SetupSaveDataMemory before v1 Initialize");
+    Check(sceSaveDataGetSaveDataMemory(7, nullptr, 0, 0) == SaveDataErrorNotInitialized, "v1 GetSaveDataMemory before v1 Initialize");
+    Check(sceSaveDataSetSaveDataMemory(7, nullptr, 0, 0) == SaveDataErrorNotInitialized, "v1 SetSaveDataMemory before v1 Initialize");
     Check(sceSaveDataInitialize(nullptr) == 0, "v1 Initialize");
     Check(sceSaveDataSetupSaveDataMemory(7, 0x1000, nullptr) == 0, "v1 SetupSaveDataMemory");
     char written[16] = "settings-v1";
@@ -157,11 +165,38 @@ void TestSaveDataMemoryV1() {
     char read[16] = {};
     Check(sceSaveDataGetSaveDataMemory(7, read, sizeof(read), 0x100) == 0, "v1 GetSaveDataMemory");
     Check(std::memcmp(read, written, sizeof(read)) == 0, "v1 GetSaveDataMemory returns the bytes v1 set");
+    Check(sceSaveDataGetSaveDataMemory(7, read, sizeof(read), -1) == SaveDataErrorParameter, "v1 GetSaveDataMemory negative offset returns PARAMETER");
+    Check(sceSaveDataSetSaveDataMemory(7, written, sizeof(written), -1) == SaveDataErrorParameter, "v1 SetSaveDataMemory negative offset returns PARAMETER");
+    Check(sceSaveDataGetSaveDataMemory(7, read, sizeof(read), 0x1001) == SaveDataErrorParameter, "v1 GetSaveDataMemory offset beyond size returns PARAMETER");
+    Check(sceSaveDataSetSaveDataMemory(7, written, sizeof(written), 0x1001) == SaveDataErrorParameter, "v1 SetSaveDataMemory offset beyond size returns PARAMETER");
+    Check(sceSaveDataGetSaveDataMemory(7, nullptr, sizeof(read), 0x100) == SaveDataErrorParameter, "v1 GetSaveDataMemory null buffer returns PARAMETER");
+    Check(sceSaveDataSetSaveDataMemory(7, nullptr, sizeof(written), 0x100) == SaveDataErrorParameter, "v1 SetSaveDataMemory null buffer returns PARAMETER");
+    Check(sceSaveDataGetSaveDataMemory(7, nullptr, 0, 0x100) == 0, "v1 GetSaveDataMemory zero length is a no-op");
+    Check(sceSaveDataSetSaveDataMemory(7, nullptr, 0, 0x100) == 0, "v1 SetSaveDataMemory zero length is a no-op");
     std::ifstream slot("_sd_mem/u7/slot0.bin", std::ios::binary);
     slot.seekg(0x100);
     char stored[16] = {};
     Check(static_cast<bool>(slot.read(stored, sizeof(stored))) && std::memcmp(stored, written, sizeof(stored)) == 0, "v1 SetSaveDataMemory stores into slot 0 of the user");
     Check(sceSaveDataTerminate() == 0, "Terminate after v1 Initialize");
+}
+
+void TestInitialize2() {
+    using Initialize2 = int (APS5_VABI*)(const void*);
+#ifdef _WIN32
+    void* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceSaveData.native.prx"), "sceSaveDataInitialize2"));
+#else
+    void* symbol = dlsym(RTLD_DEFAULT, "sceSaveDataInitialize2");
+#endif
+    if (!symbol) {
+        std::fprintf(stderr, "sceSaveDataInitialize2 is not exported by libSceSaveData.native\n");
+        std::abort();
+    }
+    const auto initialize2 = reinterpret_cast<Initialize2>(symbol);
+    Check(sceSaveDataSetupSaveDataMemory(8, 0x1000, nullptr) == SaveDataErrorNotInitialized, "SetupSaveDataMemory before Initialize2");
+    Check(initialize2(nullptr) == 0, "Initialize2");
+    Check(sceSaveDataSetupSaveDataMemory(8, 0x1000, nullptr) == 0, "SetupSaveDataMemory after Initialize2");
+    Check(sceSaveDataTerminate() == 0, "Terminate after Initialize2");
+    Check(sceSaveDataSetupSaveDataMemory(8, 0x1000, nullptr) == SaveDataErrorNotInitialized, "SetupSaveDataMemory after the Initialize2 session ended");
 }
 
 void TestMountPs4() {
@@ -192,6 +227,7 @@ int main() {
     TestTransferringMountPs4();
     TestDirNameSearchPs4();
     TestSaveDataMemoryV1();
+    TestInitialize2();
     TestMountPs4();
     TestMount2();
 
