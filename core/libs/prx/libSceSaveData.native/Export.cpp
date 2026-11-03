@@ -643,12 +643,21 @@ static void require_plain_paths(const std::string& dirName, std::initializer_lis
 }
 
 static bool parse_dir_name(const SceSaveDataDirName* name, std::string* dirName) {
+    if (name == nullptr || dirName == nullptr) {
+        return false;
+    }
     const auto* nameEnd = static_cast<const char*>(std::memchr(name->data, '\0', sizeof(name->data)));
     if (nameEnd == nullptr) {
         return false;
     }
     dirName->assign(name->data, static_cast<std::size_t>(nameEnd - name->data));
-    return !dirName->empty() && *dirName != "." && *dirName != ".." && dirName->find_first_of("/\\:") == std::string::npos;
+    if (dirName->empty() || *dirName == "." || *dirName == "..") {
+        return false;
+    }
+    if (dirName->find("..") != std::string::npos) {
+        return false;
+    }
+    return dirName->find_first_of("/\\:") == std::string::npos;
 }
 
 static bool running_title(const SceSaveDataTitleId* titleId) {
