@@ -2722,7 +2722,6 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
                     continue;
                 }
-                nextSnapshot.registeredImages.clear();
                 for (const auto& table : nextSnapshot.tables.tables) {
                     for (const auto& view : table.resourceViews) nextSnapshot.registeredImages.insert(nextSnapshot.registeredImages.end(), view.identities.begin(), view.identities.end());
                 }
