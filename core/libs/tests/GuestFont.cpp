@@ -193,6 +193,16 @@ static void CheckWritingDoesNotOwnCharacters(const FontMemory* memory, FontHandl
     FontString string = create();
     FontWriting first{};
     Require(sceFontWritingInit(&first, string, characters) == SCE_FONT_OK);
+    FontWritingMetrics metrics{1.0f, 2.0f, {3.0f, 4.0f, 5.0f, 6.0f}};
+    const auto metricsAreZero = [&] {
+        return metrics.advanceX == 0.0f && metrics.advanceY == 0.0f && metrics.Extent.top == 0.0f && metrics.Extent.bottom == 0.0f && metrics.Extent.left == 0.0f && metrics.Extent.right == 0.0f;
+    };
+    Require(sceFontWritingGetRenderMetrics(nullptr, &metrics) == SCE_FONT_ERROR_INVALID_PARAMETER && metricsAreZero());
+    Require(sceFontWritingGetRenderMetrics(&first, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontWritingGetRenderMetrics(&first, &metrics) == SCE_FONT_OK);
+    Require(sceFontWritingSetMaskInvisible(&first, 1) == SCE_FONT_OK);
+    Require(sceFontWritingSetMaskInvisible(&first, 0) == SCE_FONT_OK);
+    Require(sceFontWritingSetMaskInvisible(&first, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
     FontWriting copy;
     std::memcpy(&copy, &first, sizeof(copy));
     Require(steps(&first) == text.size() && steps(&copy) == text.size());
@@ -286,6 +296,17 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     std::uint32_t count = 0;
     FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &count);
     Require(characters != nullptr && count == 3);
+    FontHandle characterFont = font;
+    std::uint32_t characterCode = 'A';
+    Require(sceFontCharacterGetTextFontCode(nullptr, &characterFont, &characterCode) == SCE_FONT_ERROR_INVALID_PARAMETER && characterFont == nullptr && characterCode == 0);
+    Require(sceFontCharacterGetTextFontCode(nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextFontCode(characters, nullptr, &characterCode) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextFontCode(characters, &characterFont, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextFontCode(characters, &characterFont, &characterCode) == SCE_FONT_OK && characterFont == font && characterCode == 'A');
+    void* textOrder = characters;
+    Require(sceFontCharacterGetTextOrder(characters, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextOrder(nullptr, &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr);
+    Require(sceFontCharacterGetTextOrder(characters, &textOrder) == SCE_FONT_OK && textOrder == characters->textOrder);
     Require(sceFontStringGetWritingForm(string) == 0x12);
     Require(sceFontStringGetTerminateCode(string) == 0 && sceFontStringGetTerminateOrder(string) == parsed.text + 3);
     ParsedText line{"AV\nA", 0, font};
@@ -633,6 +654,8 @@ int main() {
     Require(sceFontOpenFontSet(nullptr, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_INVALID_LIBRARY);
     const unsigned char notAFont[64] = {1, 2, 3, 4};
     Require(sceFontOpenFontMemory(library, notAFont, sizeof(notAFont), nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FUNCTION && font == nullptr);
+    Require(sceFontSupportExternalFonts(library, 0x04000000u, 0x52) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontSupportExternalFonts(library, 0xffffffffu, 0x52) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontSupportExternalFonts(library, 4, 0x52) == SCE_FONT_OK);
     Require(sceFontSupportExternalFonts(library, 4, 0x52) == SCE_FONT_ERROR_ALREADY_SPECIFIED);
     font = reinterpret_cast<FontHandle>(&memory);
@@ -656,6 +679,14 @@ int main() {
     Require(sceFontCloseFont(fileHandle) == SCE_FONT_OK);
     RemovePathAlias_nid_no_patch("/font-test");
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK && font != nullptr);
+    Require(sceFontGetLibrary(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontLibrary fontLibrary = nullptr;
+    Require(sceFontGetLibrary(font, &fontLibrary) == SCE_FONT_OK && fontLibrary == library);
+    Font::FontLibNative invalidLibrary{};
+    Require(sceFontSetFontsOpenMode(nullptr, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontSetFontsOpenMode(&invalidLibrary, 0) == SCE_FONT_ERROR_INVALID_LIBRARY);
+    Require(sceFontSetFontsOpenMode(library, 3) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    for (const auto mode : {0, 1, 2}) Require(sceFontSetFontsOpenMode(library, mode) == SCE_FONT_OK);
     int setting = -1;
     Require(sceFontGetScriptLanguage(font, 3, &setting) == SCE_FONT_ERROR_INVALID_PARAMETER && setting == 0);
     Require(sceFontSetScriptLanguage(font, 3, 7) == SCE_FONT_ERROR_INVALID_PARAMETER);

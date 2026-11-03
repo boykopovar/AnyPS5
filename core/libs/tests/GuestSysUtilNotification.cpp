@@ -90,6 +90,8 @@ int main() {
     Require(hello == 0, "a text notification was not sent");
     Require(empty == 0, "a null message was not sent as an empty text");
     Require(truncated == 0, "a long message was not sent");
+    Require(sceSysUtilSendSystemNotificationWithText(0, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x8002000Eu), "an unreadable message pointer did not return EFAULT");
+    Require(sceSysUtilSendSystemNotificationWithText(0, reinterpret_cast<const char*>(~std::uintptr_t{0xfff})) == static_cast<int>(0x8002000Eu), "an unreadable message pointer did not return EFAULT");
     const std::string expected = "[notification] hello\n[notification] \n[notification] " + longText.substr(0, 179) + "\n";
     if (output != expected) {
         std::fprintf(stderr, "notification output was:\n%s", output.c_str());
