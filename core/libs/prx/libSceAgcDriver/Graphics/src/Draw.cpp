@@ -1697,7 +1697,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const bool restartLeft = draw.indirect.has_value();
         auto highest = HighestDrawIndex(kept, draw.indexSize, restartLeft);
         constexpr std::uint32_t ZeroFetchSlack = 0x10000u;
-        if (const auto zeroFrom = highest && !shaders.front().program->vertexAttributes.empty() ? ZeroFetchVertex(shaders.front().program->vertexAttributes) : std::nullopt) {
+        if (const auto zeroFrom = highest && !DrawVertexAttributes(shaders.front()).empty() ? ZeroFetchVertex(DrawVertexAttributes(shaders.front())) : std::nullopt) {
             const auto limit = *zeroFrom > draw.firstVertex ? *zeroFrom - draw.firstVertex : 0u;
             if (*highest >= limit && *highest - limit >= ZeroFetchSlack) highest = ClampDrawIndices(kept, draw.indexSize, restartLeft, limit);
         }
