@@ -49,7 +49,7 @@ int main() {
     Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 1);
     file.Close();
 
-    FileStream reread(std::tmpfile());
+    FileStream reread(TemporaryFile::Open());
     Require(std::fputs("position", reread.GetHandle()) >= 0);
     Require(fsetpos_nid_postfix(&reread, &beginning) == 0);
     for (const char expected : {'p', 'o', 's'}) Require(fgetc_nid_postfix(&reread) == expected);
