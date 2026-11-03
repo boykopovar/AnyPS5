@@ -63,6 +63,17 @@ class StaleOriginBaseTests(unittest.TestCase):
             self.assertEqual(stale.returncode, 1)
             self.assertIn("Commit subject is not Conventional Commits", stale.stdout + stale.stderr)
 
+    def test_ambiguous_local_branch_name_resolves_to_remote_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            self.git(repo, "init", "-q")
+            self.git(repo, "commit", "-q", "--allow-empty", "-m", "fix(tools): initial")
+            self.git(repo, "update-ref", "refs/remotes/upstream/main", "HEAD")
+            self.git(repo, "update-ref", "refs/heads/upstream/main", "HEAD")
+            result = self.check(repo, "--base", "upstream/main")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("warning: refname 'upstream/main' is ambiguous", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
