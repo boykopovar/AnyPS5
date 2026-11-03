@@ -101,6 +101,11 @@ std::uint16_t character(bool jis, std::uint32_t ledState, std::uint32_t modifier
 
 namespace Keyboard {
 
+bool IsInitialized() {
+    std::lock_guard lock(keyboardMutex);
+    return initialized;
+}
+
 int Initialize() {
     std::lock_guard lock(keyboardMutex);
     initialized = true;
