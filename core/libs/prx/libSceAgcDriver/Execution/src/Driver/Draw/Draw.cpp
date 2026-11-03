@@ -747,6 +747,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         DrawFinisher::Get().Enqueue([this, tailHolder] {
             auto& job = *tailHolder;
             DrawPipeline::FollowEpoch(job.epoch);
+            DrawPipeline::Active() = job.pipelined;
             GuestMemory::SetCurrentPacket(job.packetOpcode, job.submissionQueue);
             PerformanceTimer finishTiming("Driver.DrawFinish");
             try {
