@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 namespace {
 
@@ -15,12 +16,14 @@ constexpr int kErrAlreadyInitialized = static_cast<int>(0x80B80004);
 constexpr int kErrNotFinished = static_cast<int>(0x80B80005);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000D);
 constexpr int kResultUserCanceled = 1;
+constexpr std::int32_t kSentinel = static_cast<std::int32_t>(0x5a5a5a5a);
 
 }
 
 int main() {
     std::int64_t param = 0;
-    std::int32_t result[2] = {-1, -1};
+    std::int32_t result[2];
+    std::memset(result, 0x5a, sizeof(result));
 
     Require(sceSocialScreenDialogTerminate() == kErrNotInitialized);
     Require(sceSocialScreenDialogOpen(nullptr) == kErrNotInitialized);
@@ -37,7 +40,11 @@ int main() {
     Require(sceSocialScreenDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceSocialScreenDialogOpen(nullptr) == kErrArgNull);
+    std::memset(result, 0x5a, sizeof(result));
+    Require(sceSocialScreenDialogGetResult(nullptr) == kErrArgNull);
     Require(sceSocialScreenDialogGetResult(result) == kErrNotFinished);
+    Require(result[0] == kSentinel);
+    Require(result[1] == kSentinel);
 
     Require(sceSocialScreenDialogOpen(&param) == 0);
     Require(sceSocialScreenDialogGetStatus() == kStatusFinished);
@@ -46,7 +53,7 @@ int main() {
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrArgNull);
     Require(sceSocialScreenDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
-    Require(result[1] == -1);
+    Require(result[1] == kSentinel);
 
     Require(sceSocialScreenDialogClose() == 0);
     Require(sceSocialScreenDialogTerminate() == 0);
@@ -60,9 +67,10 @@ int main() {
     Require(sceSocialScreenDialogUpdateStatus() == kStatusInitialized);
     Require(sceSocialScreenDialogClose() == 0);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusFinished);
-    result[0] = -1;
+    std::memset(result, 0x5a, sizeof(result));
     Require(sceSocialScreenDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
+    Require(result[1] == kSentinel);
     Require(sceSocialScreenDialogTerminate() == 0);
     Require(sceSocialScreenDialogTerminate() == kErrNotInitialized);
     Require(sceSocialScreenDialogOpen(nullptr) == kErrNotInitialized);

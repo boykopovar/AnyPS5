@@ -582,6 +582,10 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 }
 
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
+    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32)) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
     KernelTimespec value{};
     if (ReadClock(clockId, &value) != 0) return -1;
     if (tp == nullptr) {
