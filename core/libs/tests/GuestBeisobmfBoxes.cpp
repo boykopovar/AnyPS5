@@ -125,18 +125,37 @@ int main() {
             "null member-type result is wrong");
     Require(isobmf_box_getmember_ptr_nid_postfix(box, nullptr) == nullptr,
             "null member name result is wrong");
+    Require(isobmf_box_getmember_length_nid_postfix(box, nullptr) == 0,
+            "null member name length result is wrong");
+    Require(isobmf_box_getmember_type_nid_postfix(box, nullptr) == 0,
+            "null member name type result is wrong");
 
     auto *badPointer = reinterpret_cast<void *>(std::uintptr_t{1});
     Require(isobmf_box_gettype_nid_postfix(badPointer) == 0, "unmapped box result is wrong");
+    Require(isobmf_box_getchildbox_nid_postfix(badPointer) == nullptr, "unmapped child box result is wrong");
+    Require(isobmf_box_getdiskoffset_nid_postfix(badPointer) == 0, "unmapped disk-offset result is wrong");
+    Require(isobmf_box_getnextbox_nid_postfix(badPointer) == nullptr, "unmapped next box result is wrong");
+    Require(isobmf_box_getstate_nid_postfix(badPointer) == 0, "unmapped state result is wrong");
+    Require(isobmf_box_getflags32b_nid_postfix(badPointer) == 0, "unmapped flags box result is wrong");
     Require(isobmf_decoder_next_disk_offset_nid_postfix(badPointer) == 0xffffffff,
             "unmapped decoder did not return its safe sentinel");
     auto *badName = reinterpret_cast<const char *>(std::uintptr_t{1});
     Require(isobmf_box_getmember_ptr_nid_postfix(box, badName) == nullptr,
             "unmapped member name result is wrong");
+    Require(isobmf_box_getmember_length_nid_postfix(box, badName) == 0,
+            "unmapped member name length result is wrong");
+    Require(isobmf_box_getmember_type_nid_postfix(box, badName) == 0,
+            "unmapped member name type result is wrong");
     auto *badListBox = static_cast<std::byte *>(Allocate(0xa0));
     WriteField(badListBox, 0x40, std::uintptr_t{1});
     Require(isobmf_box_getmember_ptr_nid_postfix(badListBox, "missing") == nullptr,
             "unmapped member list result is wrong");
+    Require(isobmf_box_getmember_length_nid_postfix(badListBox, "missing") == 0,
+            "unmapped member list length result is wrong");
+    Require(isobmf_box_getmember_type_nid_postfix(badListBox, "missing") == 0,
+            "unmapped member list type result is wrong");
+    Require(isobmf_box_getflags32b_nid_postfix(badListBox) == 0,
+            "unmapped flags list result is wrong");
 
     auto *cycleBox = static_cast<std::byte *>(Allocate(0xa0));
     auto *cycleMember = static_cast<std::byte *>(Allocate(0x70));
@@ -144,6 +163,12 @@ int main() {
     WriteField(cycleMember, 0x10, cycleMember);
     Require(isobmf_box_getmember_ptr_nid_postfix(cycleBox, "missing") == nullptr,
             "cyclic member list did not fail safely");
+    Require(isobmf_box_getmember_length_nid_postfix(cycleBox, "missing") == 0,
+            "cyclic member list length did not fail safely");
+    Require(isobmf_box_getmember_type_nid_postfix(cycleBox, "missing") == 0,
+            "cyclic member list type did not fail safely");
+    Require(isobmf_box_getflags32b_nid_postfix(cycleBox) == 0,
+            "cyclic flags list did not fail safely");
 
     std::puts("BEISOBMF BOXES tests passed");
     return 0;
