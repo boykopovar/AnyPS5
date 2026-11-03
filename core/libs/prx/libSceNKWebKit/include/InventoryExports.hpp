@@ -1898,8 +1898,6 @@ int APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6Vect
 int APS5_VABI _ZN3WTF37canCurrentThreadAccessThreadLocalDataERNS_6ThreadE();
 int APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc();
 double APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool* isLocalTime);
-int APS5_VABI _ZN3WTF3ICU12majorVersionEv();
-int APS5_VABI _ZN3WTF3ICU12minorVersionEv();
 int APS5_VABI _ZN3WTF3URL11setProtocolENS_10StringViewE();
 int APS5_VABI _ZN3WTF3URL14setHostAndPortENS_10StringViewE();
 int APS5_VABI _ZN3WTF3URL15hostIsIPAddressENS_10StringViewE();
