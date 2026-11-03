@@ -58,25 +58,7 @@ int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharUCode(void) {
     return 0;
 }
 
-int APS5_VABI sceCesRefersUcsProfileCp1253(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
-int APS5_VABI sceCesRefersUcsProfileCp1255(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileCp1257(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileCp864(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceCesSJisUcsProfileSetSbcs(void) {
     NotImplemented_nid_no_patch(__func__);
