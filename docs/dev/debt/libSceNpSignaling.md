@@ -6,9 +6,11 @@
 
 - [sceNpSignalingDeactivateConnection](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - not measured on a PS5: it has the same checks as `sceNpSignalingTerminateConnection` (not initialized, unknown context, then `CONN_NOT_FOUND`), after shadPS4's [call](https://github.com/shadps4-emu/shadPS4/blob/12a4564543ccec527f9723676d2180580d1d7a94/src/core/libraries/np/np_signaling/np_signaling.cpp#L378-L400). No connection is ever created, so none can be deactivated.
 
+- [sceNpSignalingGetLocalNetInfo](../../../core/libs/prx/libSceNpSignaling/LocalNetInfo.cpp) (libSceNpSignaling) - not measured on a console: the valid network and NAT information path remains unsupported, throwing through `NotImplemented_nid_no_patch` and leaving output untouched. Signature, 24-byte structure layout and the validation checks (not initialized, null info, then `size != 0x18` returning `INVALID_ARGUMENT`, without looking up `ctxId`) are adapted from [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/2183807e592b36d4440384878165b43d930c1dee/src/core/libraries/np/np_signaling/np_signaling.cpp#L644-L657).
+
 ### Additional callable export inventory
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - 15 entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
+- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - 14 entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -22,7 +24,6 @@
 | `sceNpSignalingGetConnectionStatistics` | `C6ZNCDTj00Y` |
 | `sceNpSignalingGetConnectionStatus` | `bD-JizUb3JM` |
 | `sceNpSignalingGetContextOption` | `npU5V56id34` |
-| `sceNpSignalingGetLocalNetInfo` | `U8AQMlOFBc8` |
 | `sceNpSignalingGetMemoryInfo` | `tOpqyDyMje4` |
 | `sceNpSignalingGetPeerNetInfoA` | `Shr7bZq8QHY` |
 | `sceNpSignalingGetPeerNetInfoResult` | `2HajCEGgG4s` |

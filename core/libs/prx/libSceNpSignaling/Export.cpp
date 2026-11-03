@@ -73,6 +73,11 @@ Context* FindContext(int ctxId) {
 }
 }
 
+extern "C" bool NpSignalingIsInitialized_nid_no_patch() {
+    std::lock_guard lock(signalingMutex);
+    return initialized;
+}
+
 extern "C" {
 
 int APS5_VABI sceNpSignalingActivateConnection(int ctxId, const void* peerNpId, int* outConnId) {
@@ -212,10 +217,6 @@ int APS5_VABI sceNpSignalingGetConnectionStatus() {
 }
 
 int APS5_VABI sceNpSignalingGetContextOption() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceNpSignalingGetLocalNetInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 

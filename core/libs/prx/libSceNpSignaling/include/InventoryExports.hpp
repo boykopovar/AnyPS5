@@ -14,7 +14,6 @@ int APS5_VABI sceNpSignalingGetConnectionInfoA();
 int APS5_VABI sceNpSignalingGetConnectionStatistics();
 int APS5_VABI sceNpSignalingGetConnectionStatus();
 int APS5_VABI sceNpSignalingGetContextOption();
-int APS5_VABI sceNpSignalingGetLocalNetInfo();
 int APS5_VABI sceNpSignalingGetMemoryInfo();
 int APS5_VABI sceNpSignalingGetPeerNetInfoA();
 int APS5_VABI sceNpSignalingGetPeerNetInfoResult();

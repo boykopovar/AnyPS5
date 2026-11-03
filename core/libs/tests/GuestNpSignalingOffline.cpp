@@ -63,6 +63,17 @@ int main() {
     Require(sceNpSignalingTerminateConnection(1, 1) == NotInitialized, "sceNpSignalingTerminateConnection", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpSignalingDeactivateConnection(1, 1) == NotInitialized, "sceNpSignalingDeactivateConnection", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetConnectionInfo(1, 1, 1, nullptr) == NotInitialized, "sceNpSignalingGetConnectionInfo", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetLocalNetInfo(1, nullptr) == NotInitialized, "sceNpSignalingGetLocalNetInfo", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetLocalNetInfo(99, nullptr) == NotInitialized, "sceNpSignalingGetLocalNetInfo", "an unknown context before initialization did not return NOT_INITIALIZED first");
+    auto* inaccessible = reinterpret_cast<NpSignalingNetInfo*>(static_cast<std::uintptr_t>(0x1000));
+    Require(sceNpSignalingGetLocalNetInfo(1, inaccessible) == NotInitialized, "sceNpSignalingGetLocalNetInfo", "an inaccessible pointer before initialization did not return NOT_INITIALIZED first");
+    NpSignalingNetInfo localInfo{};
+    std::memset(&localInfo, 0xA5, sizeof(localInfo));
+    localInfo.size = sizeof(localInfo);
+    Require(sceNpSignalingGetLocalNetInfo(1, &localInfo) == NotInitialized, "sceNpSignalingGetLocalNetInfo", "a valid buffer before initialization did not return NOT_INITIALIZED");
+    Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
+            localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.padding == 0xA5A5A5A5u,
+            "sceNpSignalingGetLocalNetInfo", "output was modified before initialization");
     Require(sceNpSignalingTerminate() == NotInitialized, "sceNpSignalingTerminate", "terminating before initialization did not return NOT_INITIALIZED");
 
     Require(sceNpSignalingInitialize(0, 0, 0, 0) == 0, "sceNpSignalingInitialize", "initialization failed");
@@ -112,6 +123,33 @@ int main() {
     Require(sceNpSignalingGetConnectionInfo(context, 1, 1, info) == ConnNotFound, "sceNpSignalingGetConnectionInfo", "a connection that was never created was found");
     Require(info[0] == 0xA5 && info[63] == 0xA5, "sceNpSignalingGetConnectionInfo", "connection information was written");
 
+    Require(sceNpSignalingGetLocalNetInfo(context, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was taken");
+    Require(sceNpSignalingGetLocalNetInfo(99, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was not refused before the context");
+    Require(sceNpSignalingGetLocalNetInfo(-1, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was not refused for negative context");
+
+    std::memset(&localInfo, 0xA5, sizeof(localInfo));
+    localInfo.size = 0;
+    Require(sceNpSignalingGetLocalNetInfo(context, &localInfo) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "size 0 was taken");
+    Require(localInfo.size == 0 && localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
+            localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.padding == 0xA5A5A5A5u,
+            "sceNpSignalingGetLocalNetInfo", "output was modified on invalid size 0");
+
+    localInfo.size = sizeof(localInfo) - 1;
+    Require(sceNpSignalingGetLocalNetInfo(context, &localInfo) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "short size was taken");
+    Require(sceNpSignalingGetLocalNetInfo(99, &localInfo) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "short size was not refused before context");
+    Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
+            localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.padding == 0xA5A5A5A5u,
+            "sceNpSignalingGetLocalNetInfo", "output was modified on short size");
+
+    localInfo.size = sizeof(localInfo) + 1;
+    Require(sceNpSignalingGetLocalNetInfo(context, &localInfo) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "large size was taken");
+    Require(sceNpSignalingGetLocalNetInfo(99, &localInfo) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "large size was not refused before context");
+    localInfo.size = 0x1000;
+    Require(sceNpSignalingGetLocalNetInfo(context, &localInfo) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "large size 0x1000 was taken");
+    Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
+            localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.padding == 0xA5A5A5A5u,
+            "sceNpSignalingGetLocalNetInfo", "output was modified on large size");
+
     Require(sceNpSignalingDeleteContext(99) == 0, "sceNpSignalingDeleteContext", "deleting an unknown context failed");
     Require(sceNpSignalingDeleteContext(context) == 0, "sceNpSignalingDeleteContext", "deleting a context failed");
     Require(sceNpSignalingSetContextOption(context, 1, 1) == CtxNotFound, "sceNpSignalingSetContextOption", "a deleted context was found");
@@ -128,6 +166,13 @@ int main() {
     Require(sceNpSignalingTerminateConnection(1, 1) == NotInitialized, "sceNpSignalingTerminateConnection", "terminating connection post-termination did not return NOT_INITIALIZED");
     Require(sceNpSignalingDeactivateConnection(1, 1) == NotInitialized, "sceNpSignalingDeactivateConnection", "deactivating connection post-termination did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetConnectionInfo(1, 1, 1, nullptr) == NotInitialized, "sceNpSignalingGetConnectionInfo", "getting connection info post-termination did not return NOT_INITIALIZED");
+    Require(sceNpSignalingGetLocalNetInfo(1, nullptr) == NotInitialized, "sceNpSignalingGetLocalNetInfo", "getting local net info post-termination did not return NOT_INITIALIZED");
+    Require(sceNpSignalingGetLocalNetInfo(1, inaccessible) == NotInitialized, "sceNpSignalingGetLocalNetInfo", "inaccessible pointer post-termination did not return NOT_INITIALIZED");
+    localInfo.size = sizeof(localInfo);
+    Require(sceNpSignalingGetLocalNetInfo(1, &localInfo) == NotInitialized, "sceNpSignalingGetLocalNetInfo", "getting local net info post-termination did not return NOT_INITIALIZED");
+    Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
+            localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.padding == 0xA5A5A5A5u,
+            "sceNpSignalingGetLocalNetInfo", "output was modified post-termination");
 
     if (failures != 0) return 1;
     std::puts("NpSignaling offline tests passed");
