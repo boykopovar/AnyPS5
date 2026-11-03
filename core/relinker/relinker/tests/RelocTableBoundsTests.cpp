@@ -23,8 +23,20 @@ constexpr std::size_t kEntryPointOffset = 24;
 constexpr std::uint64_t kEntryVaddr = 0x100;
 constexpr std::size_t kRelaTag = 4;
 constexpr std::size_t kRelaSzTag = 5;
+constexpr std::size_t kStrTabTag = 0;
+constexpr std::size_t kStrSzTag = 1;
+constexpr std::size_t kPltGotTag = 7;
+constexpr std::size_t kPltRelTag = 8;
+constexpr std::size_t kJmpRelTag = 9;
+constexpr std::size_t kPltRelSzTag = 10;
 constexpr std::int64_t kDtRela = 7;
 constexpr std::int64_t kDtRelaSz = 8;
+constexpr std::int64_t kDtOsPltGot = 0x61000027;
+constexpr std::int64_t kDtOsPltRel = 0x6100002b;
+constexpr std::int64_t kDtOsJmpRel = 0x61000029;
+constexpr std::int64_t kDtOsPltRelSz = 0x6100002d;
+constexpr std::int64_t kDtOsStrTab = 0x61000035;
+constexpr std::int64_t kDtOsStrSz = 0x61000037;
 constexpr std::int64_t kDtOsRela = 0x6100002f;
 constexpr std::int64_t kDtOsRelaSz = 0x61000031;
 constexpr std::uint64_t kImageSize = 0x8000;
@@ -56,6 +68,11 @@ void WriteRelativeEntry(Bytes& image) {
     Write<std::int64_t>(image, kRelaEntry + 16, 0);
 }
 
+void ExtendDynamicTable(Bytes& image) {
+    Write<std::uint64_t>(image, 64 + 56 + 32, 12 * kTagStride);
+    Write<std::uint64_t>(image, 64 + 56 + 40, 12 * kTagStride);
+}
+
 Bytes ImageWithRelocationTable(const std::int64_t offsetTag, const std::int64_t sizeTag,
                                const std::uint64_t offset, const std::uint64_t size) {
     Bytes image = MakeExecutable(kCode);
@@ -63,6 +80,24 @@ Bytes ImageWithRelocationTable(const std::int64_t offsetTag, const std::int64_t 
     Write<std::uint8_t>(image, kCodeOffset + kEntryVaddr, 0xC3);
     WriteTag(image, kRelaTag, offsetTag, offset);
     WriteTag(image, kRelaSzTag, sizeTag, size);
+    return image;
+}
+
+Bytes ImageWithStringTable(const std::uint64_t offset, const std::uint64_t size) {
+    auto image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0);
+    WriteTag(image, kStrTabTag, kDtOsStrTab, offset);
+    WriteTag(image, kStrSzTag, kDtOsStrSz, size);
+    return image;
+}
+
+Bytes ImageWithJumpRelocationTable(const std::uint64_t offset, const std::uint64_t size) {
+    auto image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0);
+    ExtendDynamicTable(image);
+    WriteTag(image, kPltGotTag, kDtOsPltGot, 0x300);
+    WriteTag(image, kPltRelTag, kDtOsPltRel, kDtRela);
+    WriteTag(image, kJmpRelTag, kDtOsJmpRel, offset);
+    WriteTag(image, kPltRelSzTag, kDtOsPltRelSz, size);
+    WriteRelativeEntry(image);
     return image;
 }
 
@@ -111,6 +146,30 @@ int main(const int argc, char** argv) {
                 auto image = ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, 0x700, 24);
                 WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x700, 1);
                 RunAndRequireRejected(binary, image, mode, "a DT_OS_RELA table outside PT_SCE_DYNLIBDATA", "outside PT_SCE_DYNLIBDATA");
+            }
+
+            {
+                auto image = ImageWithStringTable(0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x718, 1);
+                RunAndRequireAccepted(binary, image, mode, "a DT_OS_STRTAB table inside PT_SCE_DYNLIBDATA");
+            }
+
+            {
+                auto image = ImageWithStringTable(0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x700, 1);
+                RunAndRequireRejected(binary, image, mode, "a DT_OS_STRTAB table outside PT_SCE_DYNLIBDATA", "outside PT_SCE_DYNLIBDATA");
+            }
+
+            {
+                auto image = ImageWithJumpRelocationTable(0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x718, 1);
+                RunAndRequireAccepted(binary, image, mode, "a DT_OS_JMPREL table inside PT_SCE_DYNLIBDATA");
+            }
+
+            {
+                auto image = ImageWithJumpRelocationTable(0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x700, 1);
+                RunAndRequireRejected(binary, image, mode, "a DT_OS_JMPREL table outside PT_SCE_DYNLIBDATA", "outside PT_SCE_DYNLIBDATA");
             }
 
             {
