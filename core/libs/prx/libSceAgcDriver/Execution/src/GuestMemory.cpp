@@ -1057,11 +1057,11 @@ struct WriteTracker {
     static constexpr std::size_t CoarseBlocks = 64;
     static constexpr std::size_t LeafBlocks = std::size_t{1} << 16;
     struct Leaf {
-        std::array<std::uint32_t, LeafBlocks> blocks{};
-        std::array<std::uint32_t, LeafBlocks> cpuBlocks{};
-        std::array<std::uint32_t, LeafBlocks / CoarseBlocks> coarseBlocks{};
+        std::array<std::uint64_t, LeafBlocks> blocks{};
+        std::array<std::uint64_t, LeafBlocks> cpuBlocks{};
+        std::array<std::uint64_t, LeafBlocks / CoarseBlocks> coarseBlocks{};
 #ifdef _WIN32
-        std::array<std::uint32_t, LeafBlocks> hintBlocks{};
+        std::array<std::uint64_t, LeafBlocks> hintBlocks{};
 #endif
     };
     std::vector<std::unique_ptr<Leaf>> leaves;
@@ -1076,8 +1076,8 @@ struct WriteTracker {
     // stamp still happen under it): a hit must return the current value, including MarkWritten
     // bumps, or an image refreshed after a stamp would keep failing UnchangedSince until the next
     // walk of its range and re-upload at every use of the epoch.
-    std::atomic<std::uint32_t> generation{1};
-    std::atomic<std::uint32_t> stable{1};
+    std::atomic<std::uint64_t> generation{1};
+    std::atomic<std::uint64_t> stable{1};
     std::vector<void*> pages;
     // Collect memo: page-rounded ranges walked during the current epoch (see BumpCollectEpoch). A
     // collect fully inside one skips GetWriteWatch, whose cost is proportional to the range's pages,
@@ -1160,24 +1160,24 @@ struct WriteTracker {
         return !GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first));
     }
 
-    std::uint32_t newestHint(std::uint64_t first, std::uint64_t stop) const {
-        std::uint32_t newest = 0;
+    std::uint64_t newestHint(std::uint64_t first, std::uint64_t stop) const {
+        std::uint64_t newest = 0;
         for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) newest = std::max(newest, hintOf(block));
         return newest;
     }
 #endif
 
     struct DriverPiece {
-        std::uint32_t generation = 0;
+        std::uint64_t generation = 0;
         std::uint32_t begin = 0;
         std::uint32_t end = 0;
     };
     struct DriverPieces {
-        std::uint32_t whole = 0;
-        std::uint32_t dropped = 0;
+        std::uint64_t whole = 0;
+        std::uint64_t dropped = 0;
         std::array<DriverPiece, 4> pieces{};
-        std::uint32_t possibleWhole = 0;
-        std::uint32_t possibleDropped = 0;
+        std::uint64_t possibleWhole = 0;
+        std::uint64_t possibleDropped = 0;
         std::array<DriverPiece, 4> possiblePieces{};
 
         bool covers(std::uint32_t begin, std::uint32_t end, std::uint64_t generation) const {
@@ -1197,21 +1197,21 @@ struct WriteTracker {
     std::unordered_map<std::uint64_t, DriverPieces> driverPieces;
 
     struct CpuPages {
-        std::array<std::uint32_t, WritePagesPerBlock> pages{};
+        std::array<std::uint64_t, WritePagesPerBlock> pages{};
     };
     std::unordered_map<std::uint64_t, CpuPages> cpuPages;
     std::unordered_map<std::uint64_t, CpuPages> walkPages;
-    std::map<std::uint64_t, std::uint32_t> refused;
+    std::map<std::uint64_t, std::uint64_t> refused;
 
-    void noteCpuStore(std::uint64_t begin, std::uint64_t end, std::uint32_t stampGeneration) {
+    void noteCpuStore(std::uint64_t begin, std::uint64_t end, std::uint64_t stampGeneration) {
         notePages(cpuPages, begin, end, stampGeneration);
     }
 
-    void noteWalkStore(std::uint64_t begin, std::uint64_t end, std::uint32_t stampGeneration) {
+    void noteWalkStore(std::uint64_t begin, std::uint64_t end, std::uint64_t stampGeneration) {
         notePages(walkPages, begin, end, stampGeneration);
     }
 
-    void notePages(std::unordered_map<std::uint64_t, CpuPages>& pages, std::uint64_t begin, std::uint64_t end, std::uint32_t stampGeneration) {
+    void notePages(std::unordered_map<std::uint64_t, CpuPages>& pages, std::uint64_t begin, std::uint64_t end, std::uint64_t stampGeneration) {
         for (auto block = blockOf(begin); block <= blockOf(end - 1); ++block) {
             const auto blockStart = blockBegin(block);
             const auto from = std::max(begin, blockStart) - blockStart;
@@ -1235,7 +1235,7 @@ struct WriteTracker {
 #endif
     }
 
-    void stampWatchedPart(std::uint64_t address, std::uint64_t end, std::uint32_t stampGeneration, bool complete) {
+    void stampWatchedPart(std::uint64_t address, std::uint64_t end, std::uint64_t stampGeneration, bool complete) {
 #ifdef _WIN32
         address = std::max<std::uint64_t>(address, base);
         end = std::min<std::uint64_t>(end, base + size);
@@ -1253,7 +1253,7 @@ struct WriteTracker {
         }
     }
 
-    void noteDriverStore(std::uint64_t block, std::uint64_t address, std::uint64_t end, std::uint32_t stampGeneration, bool complete) {
+    void noteDriverStore(std::uint64_t block, std::uint64_t address, std::uint64_t end, std::uint64_t stampGeneration, bool complete) {
         const auto begin = blockBegin(block);
         const auto from = static_cast<std::uint32_t>(std::max(address, begin) - begin);
         const auto to = static_cast<std::uint32_t>(std::min<std::uint64_t>(end, begin + WriteBlockBytes) - begin);
@@ -1301,19 +1301,19 @@ struct WriteTracker {
         leafFor(block).hintBlocks[block % LeafBlocks] = generation;
     }
 
-    std::uint32_t hintOf(std::uint64_t block) const {
+    std::uint64_t hintOf(std::uint64_t block) const {
         const auto& leaf = leaves[block / LeafBlocks];
         return leaf != nullptr ? leaf->hintBlocks[block % LeafBlocks] : 0;
     }
 #endif
 
-    std::uint32_t stampOf(std::uint64_t block) const {
+    std::uint64_t stampOf(std::uint64_t block) const {
         const auto& leaf = leaves[block / LeafBlocks];
         return leaf != nullptr ? leaf->blocks[block % LeafBlocks] : 0;
     }
 
     static constexpr std::size_t UnstampedSlots = 1u << 16;
-    std::vector<std::uint32_t> unstampedStores;
+    std::vector<std::uint64_t> unstampedStores;
 
     void noteUnstampedStore(std::uint64_t address, std::uint64_t end) {
         if (unstampedStores.empty()) unstampedStores.assign(UnstampedSlots, 0);
@@ -1326,8 +1326,8 @@ struct WriteTracker {
         for (auto block = first; block <= last; ++block) unstampedStores[block % UnstampedSlots] = generation;
     }
 
-    std::uint32_t newestStamp(std::uint64_t address, std::uint64_t end) const {
-        std::uint32_t newest = 0;
+    std::uint64_t newestStamp(std::uint64_t address, std::uint64_t end) const {
+        std::uint64_t newest = 0;
         if (!unstampedStores.empty()) {
             const auto first = address / WriteBlockBytes;
             const auto last = (end - 1) / WriteBlockBytes;
@@ -1346,14 +1346,14 @@ struct WriteTracker {
         return newest;
     }
 
-    std::uint32_t coarseStampOf(std::uint64_t block) const {
+    std::uint64_t coarseStampOf(std::uint64_t block) const {
         const auto& leaf = leaves[block / LeafBlocks];
         return leaf != nullptr ? leaf->coarseBlocks[(block % LeafBlocks) / CoarseBlocks] : 0;
     }
 
     bool unchanged(std::uint64_t first, std::uint64_t last, std::uint64_t since) const {
         if (first == last) return stampOf(first) <= since;
-        const auto newer = [since](std::uint32_t stamp) { return stamp > since; };
+        const auto newer = [since](std::uint64_t stamp) { return stamp > since; };
         while (first <= last) {
             const auto& leaf = leaves[first / LeafBlocks];
             if (leaf == nullptr) {
@@ -1370,7 +1370,7 @@ struct WriteTracker {
         return true;
     }
 
-    std::uint32_t cpuStampOf(std::uint64_t block) const {
+    std::uint64_t cpuStampOf(std::uint64_t block) const {
         const auto& leaf = leaves[block / LeafBlocks];
         return leaf != nullptr ? leaf->cpuBlocks[block % LeafBlocks] : 0;
     }
@@ -1422,7 +1422,7 @@ struct WriteTracker {
         return unchanged(blockOf(address), blockOf(address + bytes - 1), since) || !storedOver(address, address + bytes, since, true);
     }
 
-    void stamp(std::uint64_t block, std::uint32_t stampGeneration, StampKind kind) {
+    void stamp(std::uint64_t block, std::uint64_t stampGeneration, StampKind kind) {
         const bool cpu = kind == StampKind::Cpu || kind == StampKind::ImportWindow;
         const bool stored = kind != StampKind::ImportWindow;
         auto& leaf = leafFor(block);
@@ -1516,7 +1516,7 @@ void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_
     tracker.noteCpuStore(address, address + bytes, tracker.generation);
     for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
         if (const auto& leaf = tracker.leaves[block / WriteTracker::LeafBlocks]; leaf != nullptr) leaf->hintBlocks[block % WriteTracker::LeafBlocks] = 0;
-        if (const auto found = tracker.driverPieces.find(block); found != tracker.driverPieces.end()) found->second.dropped = std::max<std::uint32_t>(found->second.dropped, tracker.generation);
+        if (const auto found = tracker.driverPieces.find(block); found != tracker.driverPieces.end()) found->second.dropped = std::max<std::uint64_t>(found->second.dropped, tracker.generation);
         tracker.stamp(block, tracker.generation, StampKind::Cpu);
     }
     unwatchSerial.fetch_add(1, std::memory_order_release);
@@ -1593,7 +1593,7 @@ struct StampRuns {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> windowRuns;
 };
 
-void noteWrittenRun(StampRuns& runs, std::uintptr_t begin, std::uintptr_t end, std::uint32_t generation) {
+void noteWrittenRun(StampRuns& runs, std::uintptr_t begin, std::uintptr_t end, std::uint64_t generation) {
     if (runs.kind != StampKind::Driver) runs.tracker.noteCpuStore(begin, end, generation);
     else runs.tracker.noteWalkStore(begin, end, generation);
 }
@@ -1741,7 +1741,8 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
         }
     }
     const TimedAccess timed(CounterCollect, bytes);
-#ifndef _WIN32
+    const auto requestedFirst = first;
+    const auto requestedStop = stop;
     if (useMemo && HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() != 0 && bytes <= WriteBlockBytes) {
         const auto begin = first & ~(WriteBlockBytes - 1);
         const auto end = (stop + WriteBlockBytes - 1) & ~(WriteBlockBytes - 1);
@@ -1750,8 +1751,16 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             stop = end;
         }
     }
+    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) {
+#ifdef _WIN32
+        if (first == requestedFirst && stop == requestedStop) return 0;
+        first = requestedFirst;
+        stop = requestedStop;
+        if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return 0;
+#else
+        return 0;
 #endif
-    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return 0;
+    }
     // Only a completed walk is remembered; a failed one (uncommitted pages) returned 0 above.
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
@@ -2297,6 +2306,12 @@ std::uint64_t TrackerGeneration() {
     // when the value is read absorbs stores made after it with a stamp not newer than the value.
     const auto lock = lockTracker(tracker);
     return tracker.generation;
+}
+
+void AdvanceTrackerGenerationForTest(std::uint64_t generation) {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    if (generation > tracker.generation.load(std::memory_order_relaxed)) tracker.generation.store(generation, std::memory_order_relaxed);
 }
 
 std::uint64_t NewestStamp(std::uint64_t address, std::size_t bytes) {
@@ -2890,6 +2905,7 @@ void visitReadablePages(std::byte* destination, std::uint64_t source, std::size_
 
 void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_t bytes) {
 #ifdef _WIN32
+    if (GuestArena::GuestArenaCopyOwned_nid_no_patch(source, destination, bytes)) return;
     visitReadablePages(destination, source, bytes, [&](std::size_t offset, std::size_t count, bool read) {
         if (!read) std::memset(destination + offset, 0, count);
     });
@@ -2900,6 +2916,8 @@ void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_
 
 bool equalsCommittedBytes(std::uint64_t address, const std::byte* expected, std::size_t bytes) {
 #ifdef _WIN32
+    bool same = false;
+    if (GuestArena::GuestArenaCompareOwned_nid_no_patch(address, expected, bytes, &same)) return same;
     constexpr std::size_t ChunkBytes = 64 * PageBytes;
     struct CompareChunkStorage {};
     auto& current = HostThreadLocal<std::vector<std::byte>, CompareChunkStorage>();
@@ -3024,7 +3042,7 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
     WriteChanged(address, current, original, ChangedByteStoreLimit());
 }
 
-void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit) {
+static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit, bool keepGuest) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs();
     if (current.empty()) return;
@@ -3044,7 +3062,9 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
         std::size_t at = 0;
         for (; at + 16 <= size; at += 16) {
             const auto bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(current.data() + at));
-            const auto same = _mm_cmpeq_epi8(bytes, _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at)));
+            const auto uploaded = _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at));
+            auto same = _mm_cmpeq_epi8(bytes, uploaded);
+            if (keepGuest) same = _mm_or_si128(same, _mm_xor_si128(_mm_cmpeq_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(destination + at)), uploaded), _mm_set1_epi8(-1)));
             const auto equal = static_cast<std::uint32_t>(_mm_movemask_epi8(same));
             if (equal == 0xffffu) continue;
             const auto changed = ~equal & 0xffffu;
@@ -3063,13 +3083,21 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
         }
         if (masked) _mm_sfence();
         for (; at < size; ++at) {
-            if (current[at] == original[at]) continue;
+            if (current[at] == original[at] || (keepGuest && destination[at] != original[at])) continue;
             destination[at] = current[at];
             firstChanged = std::min(firstChanged, at);
             lastChanged = std::max(lastChanged, at + 1);
         }
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     });
+}
+
+void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit) {
+    writeChanged(address, current, original, byteStoreLimit, false);
+}
+
+void WriteChangedKeepingGuest(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+    writeChanged(address, current, original, ChangedByteStoreLimit(), true);
 }
 
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment) {

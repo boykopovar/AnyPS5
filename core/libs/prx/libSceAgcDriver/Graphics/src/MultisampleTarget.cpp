@@ -17,6 +17,7 @@
 #include "IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/PrimedSharedMutex.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -887,14 +888,6 @@ struct GuardedRange {
     bool fmask = false;
 };
 
-class PrimedSharedMutex : public std::shared_mutex {
-public:
-    PrimedSharedMutex() {
-        lock();
-        unlock();
-    }
-};
-
 std::shared_mutex& guardedMutex() {
     static PrimedSharedMutex mutex;
     return mutex;
@@ -1151,7 +1144,7 @@ void InstallResidentImageReadGuard_nid_no_patch() {
 void UpdateResidentImageUnmapObserver_nid_no_patch() {
     static std::mutex mutex;
     std::lock_guard lock(mutex);
-    GuestAllocations::GuestAllocationsSetUnmapObserver_nid_postfix(anyGuarded().load(std::memory_order_acquire) || anySingleClears().load(std::memory_order_acquire) || HasResidentDepthGuards_nid_no_patch() ? &retireUnmapped : nullptr);
+    GuestAllocations::GuestAllocationsSetUnmapObserver_nid_postfix(anyGuarded().load(std::memory_order_acquire) || anySingleClears().load(std::memory_order_acquire) || HasResidentDepthGuards_nid_no_patch() || DepthPlanesStale() ? &retireUnmapped : nullptr);
 }
 
 std::optional<DccKeys> MultisampledCmaskKeys(std::uint8_t code) {

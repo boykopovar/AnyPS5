@@ -9,6 +9,7 @@
 #include "prx/libwebrtc/include/IpAddress.hpp"
 #include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
 #include "prx/libwebrtc/include/Opus.hpp"
+#include "prx/libwebrtc/include/CpuFeatures.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -357,7 +358,7 @@ int APS5_VABI libwebrtcUnknown42(void);
 int APS5_VABI _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(void);
 int APS5_VABI _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(void);
-int APS5_VABI _ZN6webrtc23GetAvailableCpuFeaturesEv_nid_postfix(void);
+WebRtcAvailableCpuFeatures APS5_VABI _ZN6webrtc23GetAvailableCpuFeaturesEv_nid_postfix();
 int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc7rnn_vad6RnnVadC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc7rnn_vad6RnnVadD1Ev_nid_postfix(void);
