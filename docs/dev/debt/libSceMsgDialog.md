@@ -3,7 +3,7 @@
 ### Silent stubs
 
 - [libSceMsgDialog](../../../core/libs/prx/libSceMsgDialog/Export.cpp) - only a user message dialog with button type 0, 1, 3 or 4 shows UI, and only while the video output has a window to draw it. A progress bar, a system message, a user message of any other button type, a dialog opened with no window, one opened while another dialog is shown and one that no flip drew within three seconds show none: `sceMsgDialogOpen` opens them without `sceMsgDialogInitialize` as well, and they finish on the second `sceMsgDialogGetStatus` or `sceMsgDialogUpdateStatus` call; the first 160 characters of a user message are only logged. The button a player picks, or that a dialog without UI picks (2 for `YES_NO_FOCUS_NO`, otherwise 1), is kept but not returned, as `sceMsgDialogGetResult` is exported by libSceMsgDialog.native.
-- [libSceMsgDialog](../../../core/libs/prx/libSceMsgDialog/Export.cpp) - a progress bar dialog runs until `sceMsgDialogClose` or for 30 seconds, and `sceMsgDialogProgressBarInc`, `sceMsgDialogProgressBarSetMsg` and `sceMsgDialogProgressBarSetValue` ignore their arguments
+- [libSceMsgDialog](../../../core/libs/prx/libSceMsgDialog/Export.cpp) - a progress bar dialog runs until `sceMsgDialogClose` or for 30 seconds; `sceMsgDialogProgressBarInc`, `sceMsgDialogProgressBarSetMsg` and `sceMsgDialogProgressBarSetValue` validate target index 0, rate bounds up to 100, non-null message pointer, and progress-bar running state, but ignore visual progress updates. Console progress bar presentation remains unverified.
 
 ### Unknown function info
 
