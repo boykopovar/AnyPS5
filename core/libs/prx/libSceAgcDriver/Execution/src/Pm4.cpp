@@ -34,11 +34,13 @@ bool ImportableGdsRequested() {
 }
 
 bool GdsShared() {
+    if (!ImportableGdsRequested()) return false;
     static_cast<void>(GdsAddress());
     return gdsShared.load(std::memory_order_acquire);
 }
 
 bool GdsImportable() {
+    if (!ImportableGdsRequested()) return false;
     static_cast<void>(GdsAddress());
     return gdsImportable.load(std::memory_order_acquire);
 }
