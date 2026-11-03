@@ -600,11 +600,11 @@ private:
         while (!frames.empty() && frames.front().epoch < stale) recycleFront(video);
         if (frames.empty()) return false;
         const auto& front = frames.front();
-        if (holdForLoopWarning(front.epoch)) return false;
         if (paused && presented && front.epoch <= clockEpoch) return false;
         if (front.epoch > clockEpoch) {
             if (synced && audioDriving && speed == NormalSpeed) return false;
             if (synced && front.seamless && presented && presentationClock.Now() < static_cast<double>(lastPresented + frameDuration())) return false;
+            if (holdForLoopWarning(front.epoch)) return false;
             presentationClock.Rebase(static_cast<double>(front.info.timestamp));
             clockEpoch = front.epoch;
         }
