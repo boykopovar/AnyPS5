@@ -2,6 +2,8 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <climits>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
@@ -16,6 +18,10 @@ void Require(bool condition, std::source_location location = std::source_locatio
 }
 
 int liveBlocks = 0;
+int zeroedCallsBeforeFailure = -1;
+
+constexpr std::uint64_t MallocFailure = 0x03fff041;
+constexpr std::uint64_t BignumTooLong = 0x03fff072;
 
 void* APS5_VABI Allocate(std::size_t bytes) {
     ++liveBlocks;
@@ -28,6 +34,11 @@ void APS5_VABI Release(void* block) {
 }
 
 void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t bytes) {
+    if (zeroedCallsBeforeFailure == 0) {
+        zeroedCallsBeforeFailure = -1;
+        return nullptr;
+    }
+    if (zeroedCallsBeforeFailure > 0) --zeroedCallsBeforeFailure;
     ++liveBlocks;
     return std::calloc(count ? count : 1, bytes ? bytes : 1);
 }
@@ -86,5 +97,32 @@ int main() {
     Require((zeroCopy->flags & 0x04) == 0);
     BN_free_nid_postfix(zeroCopy);
     BN_free_nid_postfix(zero);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    std::uint64_t word = 1;
+    Bignum negative{};
+    negative.d = &word;
+    negative.top = -1;
+    Require(BN_dup_nid_postfix(&negative) == nullptr);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    Bignum tooLong{};
+    tooLong.d = &word;
+    tooLong.top = INT_MAX / 256 + 1;
+    Require(BN_dup_nid_postfix(&tooLong) == nullptr);
+    Require(ERR_get_error_nid_postfix() == BignumTooLong);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    source = FromHex("123456789ABCDEF0123456789ABCDEF");
+    zeroedCallsBeforeFailure = 0;
+    Require(BN_dup_nid_postfix(source) == nullptr);
+    Require(ERR_get_error_nid_postfix() == MallocFailure);
+    Require(ERR_get_error_nid_postfix() == 0);
+
+    zeroedCallsBeforeFailure = 1;
+    Require(BN_dup_nid_postfix(source) == nullptr);
+    Require(ERR_get_error_nid_postfix() == MallocFailure);
+    Require(ERR_get_error_nid_postfix() == 0);
+    BN_free_nid_postfix(source);
     Require(liveBlocks == 0);
 }
