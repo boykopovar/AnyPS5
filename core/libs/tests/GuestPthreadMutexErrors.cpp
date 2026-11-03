@@ -120,13 +120,20 @@ int main() {
     for (int type : {1, 2, 3, 4}) Require(scePthreadMutexattrSettype(&attr, type) == SCE_OK);
     for (int protocol : {-1, 3}) Require(scePthreadMutexattrSetprotocol(&attr, protocol) == SCE_KERNEL_ERROR_EINVAL);
     for (int protocol : {0, 1, 2}) Require(scePthreadMutexattrSetprotocol(&attr, protocol) == SCE_OK);
+    for (int prioceiling : {-10, -1, 0, 255, 768, 1000}) Require(scePthreadMutexattrSetprioceiling(&attr, prioceiling) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetprioceiling(&attr, 300) == SCE_OK);
 
     PthreadMutexattr unset = nullptr;
     Require(scePthreadMutexattrSettype(&unset, 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSetprotocol(&unset, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetprioceiling(&unset, 300) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrDestroy(&unset) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetprioceiling(nullptr, 300) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(Throws([] { pthread_mutex_destroy_nid_postfix(nullptr); }));
+    Require(Throws([] { scePthreadMutexDestroy(nullptr); }));
 
     PthreadMutex mutex = nullptr;
     Require(scePthreadMutexInit(&mutex, &unset, "unset") == SCE_OK);
