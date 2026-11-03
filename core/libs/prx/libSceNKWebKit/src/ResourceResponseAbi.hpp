@@ -11,7 +11,7 @@ struct StringSlot {
 };
 
 struct ResponseHeaderStorage {
-    alignas(8) unsigned char storage[128];
+    alignas(8) unsigned char storage[32];
 };
 
 struct ResourceResponseBase {
@@ -25,7 +25,7 @@ struct ResourceResponseBase {
 };
 
 static_assert(sizeof(StringSlot) == 8);
-static_assert(sizeof(ResponseHeaderStorage) == 128);
+static_assert(sizeof(ResponseHeaderStorage) == 32);
 static_assert(offsetof(ResourceResponseBase, url) == 0);
 static_assert(offsetof(ResourceResponseBase, mimeType) == 40);
 static_assert(offsetof(ResourceResponseBase, expectedContentLength) == 48);
