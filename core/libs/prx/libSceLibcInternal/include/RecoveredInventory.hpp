@@ -6,7 +6,7 @@ extern "C" {
 
 int APS5_VABI __std_minmax_d_nid_postfix();
 int APS5_VABI __std_minmax_element_f_nid_postfix();
-int APS5_VABI __std_bitset_to_string_1_nid_postfix();
+void APS5_VABI __std_bitset_to_string_1_nid_postfix(char* destination, const void* source, std::size_t bits, char zero, char one);
 int APS5_VABI __std_max_1i_nid_postfix();
 int APS5_VABI __std_minmax_element_d_nid_postfix();
 int APS5_VABI __std_max_2u_nid_postfix();
@@ -43,6 +43,6 @@ int APS5_VABI __std_max_f_nid_postfix();
 int APS5_VABI __std_minmax_8u_nid_postfix();
 int APS5_VABI __std_min_element_d_nid_postfix();
 int APS5_VABI __std_atomic_wait_direct_16_nid_postfix();
-int APS5_VABI __std_bitset_to_string_2_nid_postfix();
+void APS5_VABI __std_bitset_to_string_2_nid_postfix(std::uint16_t* destination, const void* source, std::size_t bits, std::uint16_t zero, std::uint16_t one);
 
 }
