@@ -197,9 +197,19 @@ void RequireRing() {
     }
 }
 
+void RequireLifecycle() {
+    Require(sceSdmaQueryWorkingBufferSize() == 0x8000);
+    Require(sceSdmaInitialize() == 0);
+    Require(sceSdmaFinalize() == 0);
+    Require(sceSdmaClose(nullptr) == InvalidArgument);
+    Require(sceSdmaFlushAllWithEvent() == static_cast<int>(0x809900c9));
+    Require(sceSdmaWaitForEvent() == static_cast<int>(0x809900c9));
+}
+
 }
 
 int main() {
+    RequireLifecycle();
     RequireOpen();
     RequireLinear();
     RequireFill();
