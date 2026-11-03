@@ -115,7 +115,7 @@ int APS5_VABI sceNpTrophyIntNetSyncTitles();
 int APS5_VABI sceNpTrophyNumInfoGetTotal(const std::uint32_t* numInfo);
 int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(const std::uint8_t* setInfo, std::uint8_t* flagArray);
 int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo);
-int APS5_VABI sceNpTrophyShowTrophyList();
+int APS5_VABI sceNpTrophyShowTrophyList(int context, int handle);
 int APS5_VABI sceNpTrophySystemAbortHandle();
 int APS5_VABI sceNpTrophySystemBuildGroupIconUri();
 int APS5_VABI sceNpTrophySystemBuildNetTrophyIconUri();

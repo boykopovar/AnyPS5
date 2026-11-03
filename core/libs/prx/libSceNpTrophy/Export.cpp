@@ -521,7 +521,9 @@ int APS5_VABI sceNpTrophySetInfoGetTrophyNum(const std::uint8_t* setInfo) {
     return count;
 }
 
-int APS5_VABI sceNpTrophyShowTrophyList(void) {
+int APS5_VABI sceNpTrophyShowTrophyList(int context, int handle) {
+    (void)context;
+    (void)handle;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
