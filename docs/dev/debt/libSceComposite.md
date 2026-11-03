@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceCompositorCreateIndirectRenderTarget, sceCompositorDeleteIndirectRenderTarget, sceCompositorSetIndirectCanvasCommand, sceCompositorSetIndirectCompositionCommand and sceCompositorSetIndirectRenderTargetConfigCommand](../../../core/libs/prx/libSceComposite/Export.cpp) return error codes or success without managing compositor canvas or indirect render target state.
+- [sceCompositorCreateIndirectRenderTarget, sceCompositorDeleteIndirectRenderTarget, sceCompositorSetIndirectCanvasCommand, sceCompositorSetIndirectCompositionCommand and sceCompositorSetIndirectRenderTargetConfigCommand](../../../core/libs/prx/libSceComposite/Export.cpp) return error codes or success without managing compositor canvas or indirect render target state. GuestComposite tests verify that render target creation and deletion return 0x80d40006, indirect command setters return 0, and sceCompositorIsVirtualCanvasHandle identifies virtual handles.
 
 ### Unknown function info
 

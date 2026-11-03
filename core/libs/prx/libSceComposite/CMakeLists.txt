@@ -1,0 +1,15 @@
+add_library(libSceComposite SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceComposite PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceComposite)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_composite_tests ${LIBS_INCLUDE_DIR}/tests/GuestComposite.cpp)
+    target_include_directories(guest_composite_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_composite_tests PRIVATE libSceComposite libc)
+    configure_windows_unwind(guest_composite_tests)
+    add_test(NAME guest_composite COMMAND guest_composite_tests)
+    if(WIN32)
+        set_tests_properties(guest_composite PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>")
+    endif()
+endif()
