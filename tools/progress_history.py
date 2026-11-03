@@ -18,6 +18,20 @@ SERIES = (("libraries", "System library functions", "#2f81f7"), ("shaders", "GPU
 WIDTH, LEFT, RIGHT, TITLE, PANEL, GAP, AXIS = 900, 56, 190, 34, 150, 16, 32
 MAX_DOTS = 45
 BACKGROUND, GRID, TEXT, MUTED = "#0d1117", "#30363d", "#c9d1d9", "#8b949e"
+THEME = (
+    '.history-theme,svg[role="img"]{color-scheme:light dark;--history-background:#fff;--history-grid:#d0d7de;'
+    '--history-text:#1f2328;--history-muted:#59636e;--history-link:#0969da;--history-visited:#8250df;--history-hit:#000}'
+    '@media(prefers-color-scheme:dark){.history-theme,svg[role="img"]{--history-background:#0d1117;--history-grid:#30363d;'
+    '--history-text:#c9d1d9;--history-muted:#8b949e;--history-link:#58a6ff;--history-visited:#bc8cff;--history-hit:#fff}}'
+)
+SVG_STYLE = (
+    '<style>' + THEME + 'svg[role="img"]{fill:var(--history-text)}'
+    + ''.join(f'svg[role="img"] [fill="{color}"]{{fill:var(--history-{name})}}'
+              for name, color in (("background", BACKGROUND), ("text", TEXT), ("muted", MUTED)))
+    + ''.join(f'svg[role="img"] [stroke="{color}"]{{stroke:var(--history-{name})}}'
+              for name, color in (("grid", GRID), ("muted", MUTED)))
+    + 'svg[role="img"] .hit{fill:var(--history-hit)}</style>'
+)
 
 
 def git(*args):
@@ -201,6 +215,7 @@ def chart(points):
     axis = height - AXIS + 18
     out += [f'<text class="x" x="{x:.1f}" y="{axis}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>'
             for x, label in labels if label]
+    out.append(SVG_STYLE)
     out.append("</svg>")
     return "\n".join(out)
 
@@ -245,6 +260,7 @@ def daily(points):
     week = gained(points, 7)
     out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{top + 16}" fill="{TEXT}" font-weight="bold">Last 7 days {week:+,}</text>'
                f'<text x="{WIDTH - RIGHT + 8}" y="{top + 34}" fill="{MUTED}">Last day {bars[-1][1]:+,}</text>')
+    out.append(SVG_STYLE)
     out.append("</svg>")
     return "\n".join(out)
 
@@ -256,10 +272,14 @@ def page(points):
     return "\n".join([
         '<!DOCTYPE html>',
         '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
-        '<title>AnyPS5 progress history</title>',
-        '<style>body{font-family:sans-serif;max-width:1000px;margin:auto;padding:16px}svg{max-width:100%;height:auto}'
-        'table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:2px 8px}td+td,th+th{text-align:right}</style>',
-        '</head><body>',
+        '<meta name="color-scheme" content="light dark"><title>AnyPS5 progress history</title>',
+        '<style>:root{color-scheme:light dark}' + THEME +
+        'body{font-family:sans-serif;max-width:1000px;margin:auto;padding:16px;'
+        'background:var(--history-background);color:var(--history-text)}svg{max-width:100%;height:auto}'
+        'a{color:var(--history-link)}a:visited{color:var(--history-visited)}'
+        'table{border-collapse:collapse}th,td{border:1px solid var(--history-grid);padding:2px 8px}'
+        'td+td,th+th{text-align:right}</style>',
+        '</head><body class="history-theme">',
         '<h1>Progress history</h1>',
         chart(points),
         daily(points),
