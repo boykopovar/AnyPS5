@@ -2217,11 +2217,9 @@ static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool 
     BreakProofs();
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
+    if (order != nullptr) *order = 0;
     tracker.initialize();
-    if (bytes == 0) {
-        if (order != nullptr) *order = 0;
-        return 0;
-    }
+    if (bytes == 0) return 0;
     ++tracker.generation;
     if (!tracker.watched || !tracker.covers(address, bytes)) {
         tracker.noteUnstampedStore(address, address + bytes);
