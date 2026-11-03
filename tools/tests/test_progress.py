@@ -380,6 +380,26 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(group["done_names"], ["Real"])
         self.assertEqual(group["todo_names"], [])
 
+    def test_assembly_definitions_are_implementations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "#ifdef __EMSCRIPTEN__\n"
+                "int APS5_VABI capture_nid_postfix(void* context) { NotImplemented_nid_no_patch(__func__); }\n"
+                "#else\n"
+                "asm(\".text\\n\"\n"
+                "    APS5_ASM_FUNCTION(\"capture_nid_postfix\")\n"
+                "    \"    call \" APS5_ASM_SYMBOL(\"Finish_nid_no_patch\") \"\\n\"\n"
+                "    APS5_ASM_FUNCTION( \"restore_nid_postfix\" )\n"
+                "    APS5_ASM_FUNCTION(\"Helper_nid_no_patch\")\n"
+                "    \"    ret\\n\");\n"
+                "#endif\n", encoding="utf-8")
+            group = progress.scan_library(library)
+        self.assertEqual(group["done_names"], ["capture_nid_postfix", "restore_nid_postfix"])
+        self.assertEqual(group["todo_names"], [])
+        self.assertEqual(group["inert_names"], [])
+
     def test_stub_marker_inside_raw_literals_does_not_mark_implementation_as_stub(self):
         for prefix in ("", "u8", "u", "U", "L"):
             source = ('int APS5_VABI Ready(int value) {\n'
