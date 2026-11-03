@@ -42,15 +42,23 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 
 namespace {
 
-WebRtcI420Buffer& Checked(WebRtcI420Buffer* buffer, const char* function) {
-    if (!buffer)
+using PlaneGetter = const std::uint8_t* (APS5_VABI*)(const WebRtcI420Buffer*);
+
+constexpr std::size_t DataYSlot = 17;
+constexpr std::size_t DataUSlot = 18;
+constexpr std::size_t DataVSlot = 19;
+
+std::uint8_t* Plane(WebRtcI420Buffer* buffer, std::size_t slot, const char* function) {
+    if (!buffer || !buffer->vtable)
         throw std::invalid_argument(function);
-    return *buffer;
+    const auto getter = reinterpret_cast<PlaneGetter>(const_cast<void*>(static_cast<const void* const*>(buffer->vtable)[slot]));
+    return const_cast<std::uint8_t*>(getter(buffer));
 }
 
 }
@@ -58,17 +66,15 @@ WebRtcI420Buffer& Checked(WebRtcI420Buffer* buffer, const char* function) {
 extern "C" {
 
 std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(WebRtcI420Buffer* buffer) {
-    return Checked(buffer, "I420Buffer::MutableDataY requires a buffer").data;
+    return Plane(buffer, DataYSlot, "I420Buffer::MutableDataY requires a buffer with a vtable");
 }
 
 std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(WebRtcI420Buffer* buffer) {
-    const WebRtcI420Buffer& checked = Checked(buffer, "I420Buffer::MutableDataU requires a buffer");
-    return checked.data + checked.strideY * checked.height;
+    return Plane(buffer, DataUSlot, "I420Buffer::MutableDataU requires a buffer with a vtable");
 }
 
 std::uint8_t* APS5_VABI _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(WebRtcI420Buffer* buffer) {
-    const WebRtcI420Buffer& checked = Checked(buffer, "I420Buffer::MutableDataV requires a buffer");
-    return checked.data + checked.strideY * checked.height + checked.strideU * ((checked.height + 1) / 2);
+    return Plane(buffer, DataVSlot, "I420Buffer::MutableDataV requires a buffer with a vtable");
 }
 
 }
