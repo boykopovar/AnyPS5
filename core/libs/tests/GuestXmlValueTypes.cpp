@@ -181,6 +181,19 @@ void TestNodeId() {
     }
     XmlNodeId any = NodeIdValue(0x1234, 0x5678, 1, 0);
     Require(_ZN3sce3Xml3Dom6NodeIdcvPvEv(&any) == nullptr, "NodeId::operator void* is null");
+
+    XmlNodeId emptyNode{};
+    _ZN3sce3Xml3Dom6NodeIdC1Ev(&emptyNode);
+    Require(_ZN3sce3Xml3Dom6NodeIdeqEi(&emptyNode, 0), "empty NodeId == 0");
+    Require(!_ZN3sce3Xml3Dom6NodeIdneEi(&emptyNode, 0), "empty NodeId != 0 is false");
+    Require(_ZN3sce3Xml3Dom6NodeIdntEv(&emptyNode), "!empty NodeId is true");
+
+    Require(!_ZN3sce3Xml3Dom6NodeIdeqEi(&base, 0), "non-empty NodeId == 0 is false");
+    Require(_ZN3sce3Xml3Dom6NodeIdneEi(&base, 0), "non-empty NodeId != 0 is true");
+    Require(!_ZN3sce3Xml3Dom6NodeIdntEv(&base), "!non-empty NodeId is false");
+
+    Require(!_ZN3sce3Xml3Dom6NodeIdeqEi(&emptyNode, 1), "empty NodeId == 1 is false");
+    Require(_ZN3sce3Xml3Dom6NodeIdneEi(&emptyNode, 1), "empty NodeId != 1 is true");
 }
 
 void TestNode() {
