@@ -2349,10 +2349,10 @@ bool unmappedSince(std::uint64_t begin, std::uint64_t end, std::uint64_t mark) {
     return std::any_of(unmapped.ranges.begin(), unmapped.ranges.end(), [&](const auto& range) { return range.serial > mark && range.begin < end && begin < range.end; });
 }
 
-void pruneUnmappedPlanes(const std::vector<std::pair<std::uint64_t, std::uint64_t>>& stale) {
+void pruneUnmappedPlanes(const std::vector<UnmappedPlane>& marked) {
     auto& unmapped = unmappedPlanes();
     std::lock_guard lock(unmapped.mutex);
-    std::erase_if(unmapped.ranges, [&](const auto& range) { return std::none_of(stale.begin(), stale.end(), [&](const auto& plane) { return range.begin < plane.second && plane.first < range.end; }); });
+    std::erase_if(unmapped.ranges, [&](const auto& range) { return std::none_of(marked.begin(), marked.end(), [&](const auto& plane) { return plane.serial < range.serial && range.begin < plane.end && plane.begin < range.end; }); });
 }
 
 bool mirrorable(const DepthTarget& target) {
@@ -2776,6 +2776,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
         std::lock_guard gpu(GuestMemory::GpuMutex());
         std::lock_guard lock(surfacesMutex());
         std::vector<std::pair<std::uint64_t, std::uint64_t>> remaining;
+        std::vector<UnmappedPlane> marked;
         for (const auto& surface : surfaces()) {
             if (surface->stencilStale && !surface->syncing) {
                 const auto [stencilBegin, stencilEnd] = staleStencilRange(*surface);
@@ -2789,7 +2790,10 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
                     }
                 }
             }
-            if (surface->stencilStale) remaining.push_back(staleStencilRange(*surface));
+            if (surface->stencilStale) {
+                remaining.push_back(staleStencilRange(*surface));
+                marked.push_back({remaining.back().first, remaining.back().second, surface->stencilMark});
+            }
             if (!surface->AnyStale()) continue;
             const auto resource = mirrorResource(surface->target);
             const auto plane = surface->target.address;
@@ -2814,13 +2818,16 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
                     stored.push_back({surface.get(), std::move(mirror), std::move(units), hull.first, hull.second, false});
                 }
             }
-            if (surface->AnyStale()) remaining.emplace_back(plane, plane + planeBytes);
+            if (surface->AnyStale()) {
+                remaining.emplace_back(plane, plane + planeBytes);
+                marked.push_back({plane, plane + planeBytes, surface->depthMark});
+            }
         }
         auto& planes = stalePlanes();
         std::lock_guard staleLock(planes.mutex);
         planes.ranges = std::move(remaining);
         publishStaleHull(planes);
-        pruneUnmappedPlanes(planes.ranges);
+        pruneUnmappedPlanes(marked);
     }
     for (auto& entry : stored) entry.flushed = StorageTexture::FlushPending(entry.begin, static_cast<std::size_t>(entry.end - entry.begin), nullptr, "depth plane store");
     for (auto& entry : storedStencils) entry.flushed = StorageTexture::FlushPending(entry.begin, static_cast<std::size_t>(entry.end - entry.begin), nullptr, "stencil plane store");
