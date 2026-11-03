@@ -1442,24 +1442,68 @@ void Recorder::MarkCovered(VkAccessFlags access) {
     if (open != nullptr) open->coveredAccess = access;
 }
 
-Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access) {
+Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool wantPrologue) {
     ensureOpen();
     auto& pass = open->renderPass;
-    if (!pass.open || forced || (countingSamples && segmentMode() && !segmentSlotReady(*open))) {
-        const auto commands = Commands();
+    const bool prologue = wantPrologue && (!countingSamples || segmentMode());
+    const bool needsPrologue = wantPrologue && pass.open && open->prologue == VK_NULL_HANDLE;
+    if (!pass.open || forced || needsPrologue || (countingSamples && segmentMode() && !segmentSlotReady(*open))) {
+        auto commands = Commands();
+        if (prologue) {
+            splitForPrologue();
+            commands = open->commands;
+        }
         open->passHazards.Clear();
         open->passHazards.BeginPass();
-        return {commands, false, true};
+        return {commands, false, true, open->prologue};
     }
     const auto hazard = open->passHazards.Check(access, pass.key == key);
-    if (hazard == PassHazard::None && pass.key == key) return {open->commands, true, false};
+    if (hazard == PassHazard::None && pass.key == key) return {open->commands, true, false, open->prologue};
     const bool merge = MergeBarriers() && !fenced && !pass.fenced && !pass.afterPass;
     const bool elide = merge && hazard == PassHazard::None;
     endOpenRenderPass(!merge);
-    const auto commands = Commands();
+    auto commands = Commands();
+    if (prologue) {
+        splitForPrologue();
+        commands = open->commands;
+    }
     if (!elide) open->passHazards.Clear();
     open->passHazards.BeginPass();
-    return {commands, false, !elide};
+    return {commands, false, !elide, open->prologue};
+}
+
+VkCommandBuffer Recorder::beginChainBuffer() {
+    VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    allocation.commandPool = context.pool;
+    allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocation.commandBufferCount = 1;
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+    Check(context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocation, &commands), "vkAllocateCommandBuffers recorder prologue");
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (const auto result = function(beginCommandBuffer, "vkBeginCommandBuffer")(commands, &begin); result != VK_SUCCESS) {
+        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &commands);
+        Check(result, "vkBeginCommandBuffer recorder prologue");
+    }
+    return commands;
+}
+
+void Recorder::splitForPrologue() {
+    const auto prologue = beginChainBuffer();
+    VkCommandBuffer pass = VK_NULL_HANDLE;
+    try {
+        pass = beginChainBuffer();
+    } catch (...) {
+        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &prologue);
+        throw;
+    }
+    open->chain.reserve(open->chain.size() + 2);
+    open->chain.push_back(open->commands);
+    open->chain.push_back(prologue);
+    open->commands = pass;
+    open->prologue = prologue;
+    recordBarrier(prologue, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    open->coveredAccess = 0;
 }
 
 void Recorder::LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass) {
@@ -1493,6 +1537,7 @@ void Recorder::endOpenRenderPass(bool barrier) {
     EndGpuTiming(pass.timing);
     open->coveredAccess = barrier ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT : 0;
     open->hostReadOwed = true;
+    open->prologue = VK_NULL_HANDLE;
     pass = {};
 }
 
@@ -3580,10 +3625,14 @@ void Recorder::Submit() {
             if (batch != nullptr && !batch->submitted) recorder.discard(std::move(batch));
         }
     } discardUnsubmitted{*this, batch};
+    for (const auto chained : batch->chain) Check(function(endCommandBuffer, "vkEndCommandBuffer")(chained), "vkEndCommandBuffer recorder prologue");
     Check(function(endCommandBuffer, "vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
+    batch->prologue = VK_NULL_HANDLE;
+    std::vector<VkCommandBuffer> submitted(batch->chain);
+    submitted.push_back(batch->commands);
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submission.commandBufferCount = 1;
-    submission.pCommandBuffers = &batch->commands;
+    submission.commandBufferCount = static_cast<std::uint32_t>(submitted.size());
+    submission.pCommandBuffers = submitted.data();
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
     CaptureTrace::Log("submit batch=%llu reads=%zu writes=%zu", static_cast<unsigned long long>(serial), batch->reads.size(), batch->writes.size());
@@ -4207,6 +4256,11 @@ void Recorder::release(Batch& batch) noexcept {
     batch.endedSamples.clear();
     batch.segments = VK_NULL_HANDLE;
     batch.segmentPool.reset();
+    if (!batch.chain.empty()) {
+        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, static_cast<std::uint32_t>(batch.chain.size()), batch.chain.data());
+        batch.chain.clear();
+        batch.prologue = VK_NULL_HANDLE;
+    }
     // A completed (or never submitted) batch's objects are kept for reuse: the fence is signaled or
     // untouched, so resetting it cannot block, and the command buffer is no longer pending.
     if (batch.commands != VK_NULL_HANDLE && batch.fence != VK_NULL_HANDLE && spare.size() < 64 && function(resetFences, "vkResetFences")(context.device, 1, &batch.fence) == VK_SUCCESS) {

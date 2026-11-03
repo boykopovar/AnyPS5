@@ -67,8 +67,9 @@ public:
         VkCommandBuffer commands = VK_NULL_HANDLE;
         bool continued = false;
         bool barrier = true;
+        VkCommandBuffer prologue = VK_NULL_HANDLE;
     };
-    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
+    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access, bool wantPrologue = false);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass = {});
     void SealPassWriteOnly();
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
@@ -547,6 +548,8 @@ public:
 private:
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
+        std::vector<VkCommandBuffer> chain;
+        VkCommandBuffer prologue = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
@@ -757,6 +760,8 @@ private:
     void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
     // Opens a batch when none is open, without closing a store run (Commands() does both).
     void ensureOpen();
+    VkCommandBuffer beginChainBuffer();
+    void splitForPrologue();
     void dropStaleHoldKept();
     // Records the run's pending store (vkCmdUpdateBuffer), if any.
     void flushPendingStore();

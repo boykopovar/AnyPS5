@@ -2104,7 +2104,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
-    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || meshCompute, fenced, passAccess);
+    const bool prologueDraw = meshCompute && !meshIndirect && !gpuIndirect;
+    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || (meshCompute && !prologueDraw), fenced, passAccess, prologueDraw);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
     outcome.passContinued = continued;
@@ -2145,6 +2146,23 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             resources.Bind(commands, point, layout);
         }
     };
+    if (prologueDraw) {
+        const auto prologue = start.prologue != VK_NULL_HANDLE ? start.prologue : commands;
+        const auto bindPrologue = [&](VkPipelineBindPoint point, VkPipelineLayout layout) {
+            if (drawBindings != nullptr) {
+                const auto set = drawBindings->allocation.set;
+                const auto fragmentSet = drawBindings->fragmentAllocation.set;
+                if (set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(prologue, point, layout, 0, 1, &set, 0, nullptr);
+                if (fragmentSet != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(prologue, point, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
+            } else {
+                resources.Bind(prologue, point, layout);
+            }
+        };
+        meshOutput = recordMeshCompute(context, prologue, *record.pipeline, state, draw, shaders, resources, inputs, meshIndirect, *meshArguments, bindPrologue, record.pushBytes, record.pushStages);
+        argumentBuffer = meshOutput->Handle();
+        argumentOffset = 0;
+        countBarrier(2);
+    }
     if (continued) {
         record.pipeline->Continue(commands, state);
     } else {
@@ -2168,7 +2186,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         } else if (gpuIndirect) {
             rewritten = recordIndirectArguments(context, commands, recorder, true, *record.indirect, scratch, argumentBuffer, argumentOffset, countBarrier);
         }
-        if (meshCompute) {
+        if (meshCompute && !prologueDraw) {
             meshOutput = recordMeshCompute(context, commands, *record.pipeline, state, draw, shaders, resources, inputs, meshIndirect, *meshArguments, bindResources, record.pushBytes, record.pushStages);
             argumentBuffer = meshOutput->Handle();
             argumentOffset = 0;
