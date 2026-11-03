@@ -282,6 +282,36 @@ void HostPlacement() {
     Expect(MemoryOf(again.Handle()) == device, "a retained device-local buffer was not reused");
 }
 
+std::uint64_t cacheReleases = 0;
+
+VkDeviceSize ReleaseEverything(VkDeviceSize bytes, bool) {
+    ++cacheReleases;
+    return bytes;
+}
+
+void HostSlotBeforeCacheRelease() {
+    mock = MockDevice{};
+    auto context = budgetContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    reportedBudget = 1620 * MiB;
+    reportedUsage = 1600 * MiB;
+    VkDeviceMemory placed = VK_NULL_HANDLE;
+    {
+        DeviceBuffer large(context, 176 * MiB, usage);
+        placed = MemoryOf(large.Handle());
+        Expect(mock.memoryTypes.at(placed) == 1, "a device buffer over the device-local budget was not placed in the host memory type");
+    }
+    context.cacheReclaim = ReleaseEverything;
+    cacheReleases = 0;
+    {
+        DeviceBuffer again(context, 176 * MiB, usage);
+        Expect(MemoryOf(again.Handle()) == placed, "a retained host-placed buffer was passed over for a texture-cache release");
+        Expect(cacheReleases == 0, "taking a retained host-placed buffer asked the texture caches to release memory");
+    }
+    DeviceBuffer fresh(context, 64 * MiB, usage);
+    Expect(mock.memoryTypes.at(MemoryOf(fresh.Handle())) == 0 && cacheReleases == 1, "a new device buffer over the device-local budget did not get device-local memory after the texture caches released room");
+}
+
 void RefusedDevicePlacement() {
     mock = MockDevice{};
     auto context = budgetContext();
@@ -1571,6 +1601,7 @@ int main(int argc, char** argv) {
         RenderTargetMemoryReuse();
         ImageMemoryOverBudget();
         HostPlacement();
+        HostSlotBeforeCacheRelease();
         RefusedDevicePlacement();
         IdleReclaimSkipsHostPlaced();
         StagingHeadroom();
