@@ -1,5 +1,6 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -82,6 +83,28 @@ void TestAssignment() {
     Require(SameFields(self, Hdr()));
 }
 
+void TestTailPaddingUntouched() {
+    constexpr std::size_t copied = offsetof(WebRtcColorSpace, hasHdrMetadata) + sizeof(bool);
+    WebRtcColorSpace source = Hdr();
+    unsigned char* sourceBytes = reinterpret_cast<unsigned char*>(&source);
+    std::memset(sourceBytes + copied, 0x11, sizeof(source) - copied);
+    WebRtcColorSpace copy;
+    std::memset(&copy, 0xA5, sizeof(copy));
+    _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(&copy, &source);
+    const unsigned char* copyBytes = reinterpret_cast<const unsigned char*>(&copy);
+    Require(std::memcmp(copyBytes, sourceBytes, copied) == 0);
+    for (std::size_t i = copied; i < sizeof(copy); ++i)
+        Require(copyBytes[i] == 0xA5);
+
+    WebRtcColorSpace target;
+    std::memset(&target, 0xA5, sizeof(target));
+    Require(_ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(&target, &source) == &target);
+    const unsigned char* targetBytes = reinterpret_cast<const unsigned char*>(&target);
+    Require(std::memcmp(targetBytes, sourceBytes, copied) == 0);
+    for (std::size_t i = copied; i < sizeof(target); ++i)
+        Require(targetBytes[i] == 0xA5);
+}
+
 void TestNullArgumentsThrow() {
     WebRtcColorSpace colorSpace = Hdr();
     RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(nullptr, &colorSpace); });
@@ -96,6 +119,7 @@ void TestNullArgumentsThrow() {
 int main() {
     TestCopyConstructor();
     TestAssignment();
+    TestTailPaddingUntouched();
     TestNullArgumentsThrow();
     return 0;
 }
