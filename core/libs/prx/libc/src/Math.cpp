@@ -659,6 +659,17 @@ double APS5_VABI cbrt_nid_postfix(double x) {
     r = (r - t) / (w + r);
     return t + t * r;
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_asin.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_asin.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static double AsinRational(double t) {
     const double pS0 = 1.66666666666666657415e-01;
     const double pS1 = -3.25565818622400915405e-01;
@@ -710,6 +721,17 @@ double APS5_VABI asin_nid_postfix(double x) {
     return hx > 0 ? result : -result;
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_acos.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_acos.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI acos_nid_postfix(double x) {
     const double pi = 3.14159265358979311600e+00;
     const double pio2_hi = 1.57079632679489655800e+00;
