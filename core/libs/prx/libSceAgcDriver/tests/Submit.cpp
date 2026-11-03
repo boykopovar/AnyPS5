@@ -220,6 +220,9 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverAddEqEvent(eq, 0, &graphicsTag) == 0, "graphics event registration failed");
     check(sceAgcDriverAddEqEvent(eq, 0x20, &computeTag) == 0, "compute event registration failed");
     expectFailure([] { sceAgcDriverAddEqEvent(0, 0, nullptr); });
+    expectFailure([&] { sceAgcDriverAddEqEvent(eq, -1, &graphicsTag); });
+    expectFailure([] { sceAgcDriverDeleteEqEvent(0, 0); });
+    expectFailure([&] { sceAgcDriverDeleteEqEvent(eq, -1); });
     struct Output final : AgcDriver::IVideoOutput, AgcDriver::IFlipRequest, std::enable_shared_from_this<Output> {
         std::atomic<int> ready{0};
         std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return shared_from_this(); }
@@ -312,6 +315,7 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverDeleteEqEvent(eq, 0x20) == 0, "compute event deletion failed");
     owner.reset();
     check(sceKernelDeleteEqueue(eq) == 0, "event queue deletion failed");
+    expectFailure([&] { sceAgcDriverDeleteEqEvent(eq, 0); });
 }
 
 std::array<std::uint32_t, 5> writeData(volatile std::uint32_t* address, std::uint32_t value) {
@@ -859,6 +863,23 @@ void testHeaderWithoutProgramAddress() {
     AgcDriverRegisterShader_nid_postfix(&header.shader);
 }
 
+void testRegisterList() {
+    using AgcDriver::DriverDetail::RegisterList;
+    const AgcDriver::Registers userConfig{{0x24a, 1}, {0x24b, 2}, {0x25b, 3}};
+    const RegisterList list(userConfig);
+    check(list.size() == 3 && list.Expand() == userConfig, "a register list does not hold its registers' offsets and values");
+    check(list.find(0x24b) != list.end() && list.find(0x24b)->second == 2 && list.find(0x24c) == list.end() && list.find(0x200) == list.end(), "a register list found the wrong register");
+    RegisterList added;
+    added.emplace(0x25b, 3);
+    added.emplace(0x24a, 1);
+    added.emplace(0x24b, 2);
+    added.emplace(0x24a, 9);
+    check(added == list, "a register list is not kept in offset order, or a second emplace replaced a value");
+    AgcDriver::DriverDetail::DecodedShaderState decoded{{{0x08a, 7}}, AgcDriver::InitialContextRegisters(), userConfig};
+    const AgcDriver::DriverDetail::RegisteredShaderState state(decoded);
+    check(state.shader.Expand() == decoded.shader && state.context.Expand() == decoded.context && state.userConfig.Expand() == decoded.userConfig, "a registered state did not keep the decoded registers");
+}
+
 void testRegisteredFloatMode() {
     using AgcDriver::DriverDetail::RegisteredFloatMode;
     using AgcDriver::DriverDetail::ShaderSnapshot;
@@ -1227,6 +1248,7 @@ int main(int argc, char** argv) {
         testLabelResetByItsQueueBeforeItLanded();
         testWideLabelPartlyResetByItsQueueBeforeItLanded();
         testSmallCopyBehindPendingSource();
+        testRegisterList();
         testRegisteredFloatMode();
         testDispatchFloatMode();
         testReadOnlyResummarize();

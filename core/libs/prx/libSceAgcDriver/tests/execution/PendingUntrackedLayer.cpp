@@ -436,6 +436,8 @@ int main() {
         }};
         bool kept = true;
         bool notRun = false;
+        for (int pass = 0; pass < 2; ++pass) {
+        if (pass == 1) AgcDriver::GuestMemory::AdvanceTrackerGenerationForTest((std::uint64_t{1} << 32) + 16u);
         for (const auto& test : cases) {
 #ifdef _WIN32
             if (test.kind == Kind::SameValueWriteBack) {
@@ -451,6 +453,7 @@ int main() {
                 continue;
             }
             kept = outcome == Outcome::Kept && kept;
+        }
         }
         Require(kept, "pending storage results or a CPU store over a write-watched surface were lost");
         if (notRun) return VulkanTestSkipped;

@@ -578,8 +578,8 @@ static void TestCustomRackChecks() {
     const ModuleOptionWords reverbOff{SCE_NGS2_CUSTOM_REVERB_OPTION_SIZE, {0}};
     const ModuleOptionWords reverbSize{16, {1}};
     const ModuleOptionWords reverbWord{SCE_NGS2_CUSTOM_REVERB_OPTION_SIZE, {2}};
-    Require(CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverb, 0)));
-    Require(CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverbOff, 0)));
+    Require(!CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverb, 0)));
+    Require(!CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverbOff, 0)));
     Require(create(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverbSize, 0)) == SCE_NGS2_ERROR_INVALID_OPTION_SIZE);
     Require(create(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverbWord, 0)) == SCE_NGS2_ERROR_INVALID_REVERB_OPTION);
     Require(create(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverb, 4)) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
