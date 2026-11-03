@@ -56,12 +56,16 @@ char*** Storage(Module module) {
     return storage;
 }
 
-bool Close(Module module, const std::filesystem::path& path) {
+void Close(Module module) {
 #ifdef _WIN32
     Require(FreeLibrary(module) != 0, "cannot unload libkernel");
 #else
     Require(::dlclose(module) == 0, "cannot unload libkernel");
 #endif
+}
+
+bool Close(Module module, const std::filesystem::path& path) {
+    Close(module);
     const bool unloaded = !Loaded(path);
 #ifdef _WIN32
     Require(unloaded, "libkernel remains resident after its last handle closes");
@@ -89,7 +93,8 @@ void CheckValue(const char* name, const char* expected) {
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
+    Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--unload-reload"), "invalid test mode");
     const auto path = std::filesystem::path(GUEST_ENVIRONMENT_KERNEL_PATH);
     Require(!Loaded(path), "libkernel was loaded before the libc-only setup");
     constexpr auto beforeName = "ANYPS5_BINDING_BEFORE_E70B";
@@ -116,6 +121,12 @@ int main() {
     auto* const externalValue = std::strchr(external, '=') + 1;
     Require(getenv_nid_postfix(beforeName) == nullptr, "whole-environ replacement retained the old environment");
     Require(getenv_nid_postfix(externalName) == externalValue, "libc did not adopt the exported environ replacement");
+
+    if (argc == 1) {
+        Require(unsetenv_nid_postfix(externalName) == 0, "borrowed entry cleanup after adoption failed");
+        Close(module);
+        return 0;
+    }
 
     if (!Close(module, path)) return skip();
     Require(getenv_nid_postfix(externalName) == externalValue, "unloading libkernel lost the borrowed environment");

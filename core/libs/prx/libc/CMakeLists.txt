@@ -1518,9 +1518,11 @@ if(BUILD_TESTING)
     add_dependencies(guest_environment_binding_tests libkernel)
     configure_windows_unwind(guest_environment_binding_tests)
     add_test(NAME guest_environment_binding COMMAND guest_environment_binding_tests)
-    set_tests_properties(guest_environment_binding PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
+    add_test(NAME guest_environment_binding_unload COMMAND guest_environment_binding_tests --unload-reload)
+    set_tests_properties(guest_environment_binding guest_environment_binding_unload PROPERTIES TIMEOUT 20)
+    set_tests_properties(guest_environment_binding_unload PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(guest_environment_binding PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_environment_binding guest_environment_binding_unload PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_dinkumware_atomics_tests ${LIBS_INCLUDE_DIR}/tests/GuestDinkumwareAtomics.cpp)
