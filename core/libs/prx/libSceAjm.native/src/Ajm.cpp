@@ -1950,7 +1950,7 @@ int APS5_VABI sceAjmFinalize(uint32_t context) {
 int APS5_VABI sceAjmModuleRegister(uint32_t context, uint32_t codec, int64_t reserved) {
     (void)context;
     (void)codec;
-    (void)reserved;
+    if (reserved != 0) return SCE_AJM_ERROR_INVALID_PARAMETER;
     return 0;
 }
 
