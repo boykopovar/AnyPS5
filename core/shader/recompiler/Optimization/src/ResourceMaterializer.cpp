@@ -2769,6 +2769,9 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
             } catch (const std::runtime_error&) {
                 if (attempt == 2u) throw;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
+                if (afterImageGeneration != beforeImageGeneration && runtime.snapshotCurrent != nullptr) {
+                    static_cast<void>(runtime.snapshotCurrent(runtime.userContext, {}));
+                }
                 if (runtime.descriptorScope == nullptr) {
                     if (runtime.imageViewGeneration == nullptr || afterImageGeneration == beforeImageGeneration) throw;
                 } else if (runtime.descriptorScope(runtime.userContext, 0u) == beforeSnapshot && (runtime.imageViewGeneration == nullptr || afterImageGeneration == beforeImageGeneration)) {

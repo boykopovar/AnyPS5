@@ -2340,10 +2340,12 @@ void verifyTypeZeroImageMaterialization() {
             std::uint32_t snapshotChecks = 0u;
             bool backingMoved = false;
             bool cached = false;
+            bool throwOnMove = false;
         };
-        for (const bool backingMoved : {false, true}) {
+        for (const std::uint32_t mode : {0u, 2u, 1u}) {
             FillMemory fillState;
-            fillState.backingMoved = backingMoved;
+            fillState.backingMoved = mode != 0u;
+            fillState.throwOnMove = mode == 2u;
             fillState.words = outputV;
             fillState.fill = 0x11111111u;
             fillState.settledFill = 0x3f800000u;
@@ -2359,6 +2361,7 @@ void verifyTypeZeroImageMaterialization() {
                         ++self.epoch;
                         if (self.backingMoved) ++self.generation;
                         self.cached = true;
+                        if (self.throwOnMove) throw std::runtime_error("uniform fill page remapped during a read");
                     }
                     return true;
                 }
@@ -2378,8 +2381,9 @@ void verifyTypeZeroImageMaterialization() {
             ResourceSnapshot fillSnapshot;
             ResourceMaterializer{}.Materialize(fillPlan, fillRuntime, fillSnapshot);
             require(fillSnapshot.uniformFill.value == fillState.settledFill && fillState.fillReads == 2u,
-                    "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
-            require(!backingMoved || fillState.snapshotChecks == 1u,
+                    fillState.throwOnMove ? "uniform fill remap after read failure: a retry kept the cached value from before the remap"
+                                               : "uniform fill epoch: a pass whose uniform fill read moved the epoch was accepted with the value read before the move");
+            require(!fillState.backingMoved || fillState.snapshotChecks == 1u,
                     "uniform fill remap: descriptor scope retry skipped the snapshot backing check and retained cached words");
         }
     }
