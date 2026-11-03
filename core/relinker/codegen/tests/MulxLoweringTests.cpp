@@ -4,6 +4,7 @@
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -256,12 +257,12 @@ void check(const State& state, const Codegen::MulxOperands& operands, std::uint6
         require(state.Output[reg] == expected, "MULX changed an unrelated register or produced an incorrect result");
     }
     if ((state.Flags & 0x8D5u) != (state.InputFlags & 0x8D5u)) {
-        std::cerr << "MULX flags: wide=" << operands.Wide << " high=" << unsigned(operands.HighDestination)
-                  << " low=" << unsigned(operands.LowDestination) << " source=" << unsigned(operands.Source)
-                  << " memory=" << operands.Memory.has_value() << " expected=" << std::hex << state.InputFlags
-                  << " actual=" << state.Flags << " multiplicand=" << state.Input[2]
-                  << " operand=" << source << std::dec << '\n';
-        throw std::runtime_error("MULX changed arithmetic flags");
+        char text[192];
+        std::snprintf(text, sizeof text, "MULX changed arithmetic flags: input %#llx, output %#llx, changed bits %#llx (wide %d, high %u, low %u)",
+            static_cast<unsigned long long>(state.InputFlags & 0x8D5u), static_cast<unsigned long long>(state.Flags & 0x8D5u),
+            static_cast<unsigned long long>((state.InputFlags ^ state.Flags) & 0x8D5u), operands.Wide ? 1 : 0,
+            static_cast<unsigned>(operands.HighDestination), static_cast<unsigned>(operands.LowDestination));
+        throw std::runtime_error(text);
     }
     for (const auto value : state.RedZone) require(value == Execution::kSentinel, "MULX overwrote the caller's red zone");
 }
