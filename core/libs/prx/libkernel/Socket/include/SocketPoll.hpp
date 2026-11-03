@@ -21,6 +21,13 @@ using Closer = bool (*)(int descriptor, int* error);
 using OptionSetter = bool (*)(int descriptor, int level, int option, const void* value, std::uint32_t length, int* error);
 using OptionGetter = bool (*)(int descriptor, int level, int option, void* value, std::uint32_t* length, int* error);
 using StatusControl = bool (*)(int descriptor, int command, int flags, int* result, int* error);
+struct Forwards {
+    int (*family)(int descriptor);
+    int (*bind)(int descriptor, const void* address, std::uint32_t length);
+    int (*getsockname)(int descriptor, void* address, std::uint32_t* length);
+    std::int64_t (*sendto)(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error);
+    std::int64_t (*recvfrom)(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, int* error);
+};
 struct NativeOwner {
     int (*transfer)(NativeOwner* owner, bool send, void* buffer, int length) = nullptr;
 };
@@ -28,6 +35,7 @@ struct NativeOwner {
 using NativeLookup = bool (*)(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native);
 }
 
+extern "C" void KernelSetSocketForwards_nid_no_patch(const KernelSocketPoll::Forwards* forwards);
 extern "C" void KernelSetSocketPoller_nid_no_patch(KernelSocketPoll::Poller poller);
 extern "C" void KernelSetSocketCloser_nid_no_patch(KernelSocketPoll::Closer closer);
 extern "C" bool KernelCloseSocket_nid_no_patch(int descriptor, int* error);
