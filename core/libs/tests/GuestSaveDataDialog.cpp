@@ -60,7 +60,10 @@ int main() {
         for (int poll = 0; poll < 8; ++poll) RequireRunning();
         Require(sceSaveDataDialogOpen(&param) == SAVE_DATA_DIALOG_ERROR_INVALID_STATE,
                 "opening another dialog must not interrupt an active save");
+        Require(sceSaveDataDialogProgressBarSetValue(1, 25) == SAVE_DATA_DIALOG_ERROR_PARAM, "set progress invalid target");
+        Require(sceSaveDataDialogProgressBarSetValue(0, 101) == SAVE_DATA_DIALOG_ERROR_PARAM, "set progress rate > 100");
         Require(sceSaveDataDialogProgressBarSetValue(0, 25) == 0, "set progress");
+        Require(sceSaveDataDialogProgressBarInc(1, 25) == SAVE_DATA_DIALOG_ERROR_PARAM, "inc progress invalid target");
         Require(sceSaveDataDialogProgressBarInc(0, 25) == 0, "increment progress");
         RequireRunning();
         Require(sceSaveDataDialogProgressBarInc(0, 10) == 0, "inc progress while running");
