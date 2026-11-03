@@ -740,6 +740,10 @@ def main():
                     imports = imported_symbols_by_dll(library)
                     assert {'__iob_func', 'fputs'} <= imports.get('msvcrt.dll', set()), (library, imports)
                     assert not any(name.startswith('api-ms-win-crt-') for name in imports), (library, imports)
+                elif runtime == 'ucrt':
+                    imports = imported_symbols_by_dll(library)
+                    assert {'__acrt_iob_func', 'fputs', 'fflush'} <= imports.get('ucrtbase.dll', set()), (library, imports)
+                    assert 'msvcrt.dll' not in imports, (library, imports)
 
                 def convert_stdio_case(case_name, image=None, lazy_binding=False):
                     case = work / case_name

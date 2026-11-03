@@ -12,6 +12,7 @@
 #include "prx/libSceAgc/Acb/include/Memory.hpp"
 #include "prx/libSceAgc/Acb/include/Dispatch.hpp"
 #include "prx/libSceAgc/Acb/include/Control.hpp"
+#include <atomic>
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -76,7 +77,13 @@ std::uint64_t AlignUp(std::uint64_t value, std::uint64_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
-std::uint64_t ComputeCommandBudget() {
+struct ComputeCommandSizes {
+    std::uint64_t budget;
+    std::size_t syncWords;
+    std::size_t syncTailWords;
+};
+
+ComputeCommandSizes MeasureComputeCommands() {
     std::array<std::uint32_t, 256> words{};
     CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
     const ShaderRegister shaderRegister{};
@@ -93,13 +100,16 @@ std::uint64_t ComputeCommandBudget() {
     encoded = encoded && sceAgcAcbWaitRegMem(&buffer, 0, 3, 3, nullptr, 0, ~std::uint64_t{0}, 0x190) != nullptr;
     encoded = encoded && sceAgcAcbRewind(&buffer, 1) != nullptr;
     encoded = encoded && sceAgcCbReleaseMem(&buffer, 0x2f, 0x200, 1, 3, nullptr, 1, 0, 0, 0, 0, 0) != nullptr;
+    const auto* tail = buffer.cursor_up;
     encoded = encoded && sceAgcAcbWriteData(&buffer, 2, 3, 0, userData.data(), 1, 1, 0) != nullptr;
     const auto syncBytes = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * 4;
+    const auto syncTailWords = static_cast<std::size_t>(buffer.cursor_up - tail);
     buffer.cursor_up = words.data();
     encoded = encoded && sceAgcCbReleaseMem(&buffer, 0x2f, 0x200, 1, 3, nullptr, 1, 0, 0, 0, 2, 0) != nullptr;
     const auto waitBytes = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * 4;
     if (!encoded || dispatchBytes > 255 || syncBytes > 255 || waitBytes > 255) throw std::runtime_error("libSceJobManager: compute command size measurement failed");
-    return MaxDispatches * dispatchBytes + MaxSyncPoints * syncBytes + MaxWaits * waitBytes;
+    return {MaxDispatches * dispatchBytes + MaxSyncPoints * syncBytes + MaxWaits * waitBytes,
+        static_cast<std::size_t>(syncBytes / 4), syncTailWords};
 }
 
 struct Manager;
@@ -175,7 +185,7 @@ public:
     void Advance();
     void DispatchCompleted(std::uint32_t invocations);
     void CollectCompute();
-    void SetComputeStorage(std::uint32_t* commands, std::size_t words, Label* completion);
+    void SetComputeStorage(std::uint32_t* commands, const ComputeCommandSizes& sizes, Label* completion);
     void CancelWaits();
 
     Manager* manager = nullptr;
@@ -194,7 +204,8 @@ private:
     void SubmitCompute(const Item& item);
     void SubmitComputeAhead(Item* item);
     void RetireCompute();
-    void FlushCompute();
+    void FlushCompute(bool syncPoint);
+    void ReclaimComputeTail();
     void Profile(std::uint16_t event);
 
     Counters limits;
@@ -217,10 +228,13 @@ private:
     bool profileActive = false;
     bool profileCpu = false;
     bool profileGpuBarrier = false;
+    bool reclaimSyncTail = false;
     const char* profileName = nullptr;
     std::uint32_t* commandBegin = nullptr;
     std::size_t commandWords = 0;
     std::size_t commandUsed = 0;
+    std::size_t syncWords = 0;
+    std::size_t syncTailWords = 0;
 };
 
 static_assert(sizeof(Sequence) < SequenceBytes);
@@ -264,6 +278,7 @@ struct Manager {
     std::uint32_t workerCount = 0;
     std::uint32_t sleepingWorkers = 0;
     std::uint32_t wakeTokens = 0;
+    std::atomic<std::uint32_t> workEpoch = 0;
     std::uint64_t pendingInvocations = 0;
     std::uint64_t spinTicks = 0;
     std::array<RunQueue, 2> runQueues;
@@ -287,6 +302,7 @@ static_assert(sizeof(Manager) <= StateEnd - StateOffset);
 thread_local Manager* currentWorker = nullptr;
 
 void WakeWorkers(Manager& manager, std::uint32_t invocations, bool publisherCanRun = true) {
+    manager.workEpoch.fetch_add(1, std::memory_order_release);
     const std::uint32_t available = invocations - (publisherCanRun && currentWorker == &manager ? 1u : 0u);
     manager.wakeTokens += std::min(available, manager.sleepingWorkers - manager.wakeTokens);
     if (manager.wakeTokens != 0) manager.work.notify_all();
@@ -338,6 +354,7 @@ bool Sequence::Open(Manager* owner, const Counters& limit, std::uint32_t runQueu
     profileActive = false;
     profileCpu = false;
     profileGpuBarrier = false;
+    reclaimSyncTail = false;
     profileName = name;
     reserved = TakeNode(*owner);
     if (reserved == nullptr) return false;
@@ -376,6 +393,7 @@ void Sequence::Advance() {
     while (cursor != nullptr) {
         Item& item = *cursor;
         if (item.type == ItemType::Dispatch) {
+            ReclaimComputeTail();
             if (profileGpuBarrier) {
                 Profile(4);
                 profileActive = false;
@@ -407,7 +425,10 @@ void Sequence::Advance() {
             RetireCompute();
             continue;
         }
-        FlushCompute();
+        if (!item.encoded) {
+            FlushCompute(item.type == ItemType::SyncPoint && !profileCpu);
+            item.encoded = true;
+        }
         if (outstanding != 0) {
             if (item.type == ItemType::SyncPoint && !profileCpu && manager->running) SubmitComputeAhead(item.next);
             return;
@@ -438,6 +459,7 @@ void Sequence::Advance() {
         cursor = first;
         commandUsed = 0;
         batchStarted = false;
+        reclaimSyncTail = false;
         if (error == 0) {
             submitted.invocations -= completed.invocations;
             submitted.dispatches -= completed.dispatches;
@@ -515,15 +537,18 @@ void Sequence::SubmitCompute(const Item& item) {
         if (!encoded) throw std::runtime_error("libSceJobManager: a compute dispatch did not fit its command buffer");
     }
     batchStarted = true;
+    reclaimSyncTail = false;
     ++pendingCompute;
     const Packet packet{words, static_cast<std::uint32_t>(buffer.cursor_up - words), 0, {}};
     commandUsed += packet.dw_num;
     if (sceAgcDriverSubmitAcb(queue, &packet) != 0) throw std::runtime_error("libSceJobManager: sceAgcDriverSubmitAcb failed");
 }
 
-void Sequence::SetComputeStorage(std::uint32_t* commands, std::size_t words, Label* completion) {
+void Sequence::SetComputeStorage(std::uint32_t* commands, const ComputeCommandSizes& sizes, Label* completion) {
     commandBegin = commands;
-    commandWords = words;
+    commandWords = static_cast<std::size_t>(sizes.budget / 4);
+    syncWords = sizes.syncWords;
+    syncTailWords = sizes.syncTailWords;
     label = completion;
     const GuestArena::HostWrite destination(label, sizeof(*label));
     label->value = 0;
@@ -536,17 +561,31 @@ void Sequence::SubmitComputeAhead(Item* item) {
                 SubmitCompute(*item);
                 item->encoded = true;
             }
+        } else if (item->type == ItemType::Dispatch) {
+            ReclaimComputeTail();
+            return;
         } else {
-            FlushCompute();
+            if (!item->encoded) {
+                FlushCompute(item->type == ItemType::SyncPoint);
+                item->encoded = true;
+            }
             if (item->type != ItemType::SyncPoint) return;
         }
         item = item->next;
     }
 }
 
-void Sequence::FlushCompute() {
+void Sequence::ReclaimComputeTail() {
+    if (!reclaimSyncTail) return;
+    commandUsed -= syncTailWords;
+    reclaimSyncTail = false;
+}
+
+void Sequence::FlushCompute(bool syncPoint) {
+    if (!syncPoint) ReclaimComputeTail();
     if (pendingCompute == 0) return;
-    if (commandWords - commandUsed < 8) throw std::runtime_error("libSceJobManager: a compute completion did not fit its command buffer");
+    const auto reservedWords = syncPoint ? syncWords : std::size_t{8};
+    if (commandWords - commandUsed < reservedWords) throw std::runtime_error("libSceJobManager: a compute completion did not fit its command buffer");
     auto* const words = commandBegin + commandUsed;
     CommandBuffer buffer{words, words + 8, words, words + 8, nullptr, nullptr, 0};
     {
@@ -557,7 +596,8 @@ void Sequence::FlushCompute() {
     }
     pendingCompute = 0;
     const Packet packet{words, static_cast<std::uint32_t>(buffer.cursor_up - words), 0, {}};
-    commandUsed += packet.dw_num;
+    commandUsed += reservedWords;
+    reclaimSyncTail = syncPoint;
     if (sceAgcDriverSubmitAcb(queue, &packet) != 0) throw std::runtime_error("libSceJobManager: sceAgcDriverSubmitAcb failed for a completion");
 }
 
@@ -776,6 +816,8 @@ bool RunOne(Manager& manager, std::unique_lock<std::mutex>& guard) {
     return true;
 }
 
+constexpr std::uint32_t SpinPauses = 1024;
+
 void* APS5_VABI WorkerEntry(void* argument) {
     Manager& manager = *static_cast<Manager*>(argument);
     currentWorker = &manager;
@@ -788,8 +830,9 @@ void* APS5_VABI WorkerEntry(void* argument) {
         }
         const bool spinning = manager.pendingInvocations != 0 && __rdtsc() - lastWork < manager.spinTicks;
         if (spinning || manager.sleepingWorkers >= manager.workerCount - manager.persistentThreads) {
+            const std::uint32_t epoch = manager.workEpoch.load(std::memory_order_acquire);
             guard.unlock();
-            _mm_pause();
+            for (std::uint32_t pause = 0; pause != SpinPauses && manager.workEpoch.load(std::memory_order_acquire) == epoch; ++pause) _mm_pause();
             guard.lock();
             continue;
         }
@@ -808,7 +851,7 @@ struct WorkLayout {
     std::uint64_t stateEnd = 0;
     std::uint64_t pool = 0;
     std::uint64_t commands = 0;
-    std::uint64_t commandBytes = 0;
+    ComputeCommandSizes commandSizes{};
     std::uint64_t labels = 0;
     std::uint32_t nodes = 0;
 };
@@ -823,9 +866,9 @@ WorkLayout LayoutFor(std::uint64_t memory, std::uint64_t size, std::uint32_t wor
     address = layout.sequences + (sequences + computeQueues) * SequenceBytes;
     layout.stateEnd = address;
     if (computeQueues != 0) {
-        layout.commandBytes = ComputeCommandBudget();
+        layout.commandSizes = MeasureComputeCommands();
         layout.commands = AlignUp(address + ComputeContextBytes, 0x100);
-        layout.labels = AlignUp(layout.commands + layout.commandBytes * computeQueues + 4 * std::uint64_t{computeQueues}, 8);
+        layout.labels = AlignUp(layout.commands + layout.commandSizes.budget * computeQueues + 4 * std::uint64_t{computeQueues}, 8);
         address = layout.labels + 8 * std::uint64_t{computeQueues};
     }
     address = AlignUp(address, 64);
@@ -890,8 +933,8 @@ void StartCompute(Manager& manager, const WorkLayout& layout, std::uint32_t comp
         sequence.compute = true;
         sequence.queue = FirstComputeQueue + static_cast<std::uint32_t>(std::countr_zero(availableQueues));
         availableQueues &= availableQueues - 1;
-        sequence.SetComputeStorage(reinterpret_cast<std::uint32_t*>(layout.commands + index * layout.commandBytes),
-            static_cast<std::size_t>(layout.commandBytes / 4), reinterpret_cast<Label*>(layout.labels + index * sizeof(Label)));
+        sequence.SetComputeStorage(reinterpret_cast<std::uint32_t*>(layout.commands + index * layout.commandSizes.budget),
+            layout.commandSizes, reinterpret_cast<Label*>(layout.labels + index * sizeof(Label)));
     }
     manager.freeComputeSequences = computeSequences == MaxSequences ? ~std::uint32_t{0} : (std::uint32_t{1} << computeSequences) - 1;
     const KernelSchedParam schedule{static_cast<int>(priority)};
@@ -908,6 +951,7 @@ void StopManager(Manager& manager) {
     {
         const std::lock_guard guard(manager.lock);
         manager.running = false;
+        manager.workEpoch.fetch_add(1, std::memory_order_release);
         manager.work.notify_all();
     }
     while (manager.activeWorkers != 0) {
@@ -981,7 +1025,7 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
     std::unique_ptr<Manager, decltype(&DestroyManager)> owner(manager, DestroyManager);
     manager->running = true;
     manager->workerCount = workers;
-    manager->spinTicks = sceKernelGetTscFrequency() / 1000000 * settings.spinMicroseconds;
+    manager->spinTicks = HostTscFrequency_nid_no_patch() / 1000000 * settings.spinMicroseconds;
     for (std::uint32_t index = 0; index < layout.nodes; ++index) std::construct_at(&manager->nodes[index]);
     for (std::uint32_t index = layout.nodes; index > 1; --index) ReturnNode(*manager, &manager->nodes[index - 1]);
     manager->freeSequences = sequences == MaxSequences ? ~std::uint32_t{0} : (std::uint32_t{1} << sequences) - 1;
@@ -1078,7 +1122,7 @@ std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKN
     if (computeSequences != 0) {
         const auto queues = static_cast<std::uint64_t>(std::popcount(params->computeQueueMask));
         bytes = (bytes + (params->sequences + queues) * SequenceBytes + 0x267) & ~std::uint64_t{0xff};
-        bytes = (bytes + ComputeCommandBudget() * queues + 3) & ~std::uint64_t{3};
+        bytes = (bytes + MeasureComputeCommands().budget * queues + 3) & ~std::uint64_t{3};
         bytes = (bytes + 4 * queues + 7) & ~std::uint64_t{7};
         bytes += 8 * queues;
     } else {
@@ -1125,6 +1169,7 @@ int APS5_VABI _ZN3sce3Job10JobManager24setPersistentThreadCountEj(void* self, st
     if (count > manager->workerCount) return ManagerInvalidArgument;
     const std::lock_guard guard(manager->lock);
     manager->persistentThreads = count;
+    manager->workEpoch.fetch_add(1, std::memory_order_release);
     return 0;
 }
 

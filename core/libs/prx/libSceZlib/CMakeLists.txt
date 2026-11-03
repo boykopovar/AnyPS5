@@ -1,4 +1,4 @@
-add_library(libSceZlib SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+add_library(libSceZlib SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../libkernel/Time/TimedWait.cpp)
 target_include_directories(libSceZlib PRIVATE ${LIBS_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
 set_target_properties(libSceZlib PROPERTIES CXX_EXTENSIONS OFF)

@@ -318,6 +318,10 @@ int main(int argc, char** argv) {
         MovedDataHitsTheCache(libraries);
         UnrelocatedAliasesStayOut(libraries);
         MovedForwardedWordReachesStageDataHit(libraries);
+        if (std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr) {
+            const auto counters = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+            Require(counters.verifyDecodeMismatches == 0, "the effective relocated draw decode differed from its full decode");
+        }
         AgcDriverShutdown_nid_postfix();
         std::cout << "A draw whose data moved reused the cached draw " << (libraries ? "with" : "without") << " graphics pipeline libraries\n";
         return 0;

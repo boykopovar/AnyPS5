@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -336,7 +337,13 @@ void execution() {
                             require(stack[-8 - 128 + static_cast<int>(at)] == kSentinel, "Masked store stub wrote into the red zone");
                         require(std::memcmp(machine.Ymm, input.Ymm, sizeof(input.Ymm)) == 0, "Masked store stub changed a vector register");
                         require(std::memcmp(machine.Gpr, input.Gpr, sizeof(input.Gpr)) == 0, "Masked store stub changed a general register");
-                        require((machine.Flags & 0x8D5) == (input.Flags & 0x8D5), "Masked store stub changed the flags");
+                        if ((machine.Flags & 0x8D5) != (input.Flags & 0x8D5)) {
+                            char detail[256];
+                            std::snprintf(detail, sizeof(detail), "Masked store stub changed the flags: %s %s, addressing %zu, offset %d, mask pattern 0x%02X, %d fault(s), flags 0x%03llX in, 0x%03llX out",
+                                form.Name, wide ? "256-bit" : "128-bit", mode, offset, static_cast<unsigned>(pattern), static_cast<int>(faults),
+                                static_cast<unsigned long long>(input.Flags & 0x8D5), static_cast<unsigned long long>(machine.Flags & 0x8D5));
+                            throw std::runtime_error(detail);
+                        }
                         require(machine.Stack == input.Stack, "Masked store stub did not restore RSP");
                     }
                 }

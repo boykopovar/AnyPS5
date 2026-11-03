@@ -2,6 +2,7 @@
 #include <relinker/analysis/UnusedNidFilter/StrictReachability.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/parsing/ElfReader.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <cstring>
 #include <sstream>
 #include <limits>
@@ -34,14 +35,14 @@ public:
                 throw RelinkerException("Strict filter: invalid load segment size", segment.Offset);
             if (segment.Type != 2) continue;
             if (!tags.empty()) throw RelinkerException("Strict filter: multiple dynamic segments");
-            if (segment.FileSize % 16 != 0) throw RelinkerException("Strict filter: truncated dynamic segment", segment.Offset);
             bool terminated = false;
-            for (std::uint64_t offset = 0; offset < segment.FileSize; offset += 16) {
+            for (std::uint64_t offset = 0; segment.FileSize - offset >= 16; offset += 16) {
                 const auto tag = read<std::int64_t>(segment.Offset + offset);
                 if (tag == 0) {
                     terminated = true;
                     break;
                 }
+                if (tag == 17 || tag == 18 || tag == 19) throw RelinkerException("Strict filter: DT_REL relocations are not supported");
                 if (tag == 1 || (tag >= 0x61000000 && tag != 0x6100002F && tag != 0x61000031 && tag != 0x61000033 && tag != 0x61000039 && tag != 0x6100003B && tag != 0x6100003F)) continue;
                 if (!tags.emplace(tag, read<std::uint64_t>(segment.Offset + offset + 8)).second)
                     throw RelinkerException("Strict filter: duplicate dynamic tag", segment.Offset + offset);
@@ -71,6 +72,8 @@ public:
         const auto rela = table(7, 0x6100002F);
         const auto relaSize = value(8, 0x61000031);
         if (rela.has_value() != relaSize.has_value()) throw RelinkerException("Strict filter: incomplete relocation table metadata");
+        if (const auto entrySize = value(9, 0x61000033); entrySize && *entrySize != 24)
+            throw RelinkerException("Strict filter: invalid RELA entry size");
         if (rela) {
             if (value(9, 0x61000033) != 24 || *relaSize % 24 != 0)
                 throw RelinkerException("Strict filter: invalid RELA entry size");
@@ -86,7 +89,10 @@ public:
                         throw RelinkerException("Strict filter: relative relocation has a symbol", slot);
                 }
                 const auto target = read<std::uint64_t>(*rela + offset + 16);
-                if (input.ImportSlots.contains(slot) || !input.Pointers.emplace(slot, target).second)
+                if (target > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                    throw RelinkerException("Strict filter: relative relocation target address is negative", slot);
+                const auto [recorded, inserted] = input.Pointers.emplace(slot, target);
+                if (input.ImportSlots.contains(slot) || (!inserted && recorded->second != target))
                     throw RelinkerException("Strict filter: overlapping pointer relocations", slot);
 
             }
@@ -101,6 +107,8 @@ public:
             if (size && !array) throw RelinkerException("Strict filter: incomplete constructor array metadata");
             if (!size || *size == 0) continue;
             if (*size % 8 != 0) throw RelinkerException("Strict filter: invalid constructor array size", *array);
+            if (*size > std::numeric_limits<VirtualAddress>::max() - *array)
+                throw RelinkerException("Strict filter: constructor array address overflow", *array);
             for (std::uint64_t offset = 0; offset < *size; offset += 8) {
                 const auto slot = *array + offset;
                 const auto position = input.Pointers.find(slot);
@@ -129,7 +137,7 @@ public:
                 const auto info = read<std::uint8_t>(position + 4);
                 const auto type = info & 15;
                 if (type == 10) throw RelinkerException("Strict filter: IFUNC resolver is not modeled", position);
-                if (section == 0 || (info >> 4) == 0 || type != 2) continue;
+                if (section == 0 || section == Elfpatcher::SHN_ABS || (info >> 4) == 0 || type != 2) continue;
                 input.Entries.push_back(read<std::uint64_t>(position + 8));
             }
         }

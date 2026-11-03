@@ -129,6 +129,22 @@ class DependencyTests(unittest.TestCase):
         self.assertIsNone(pr_overlap.overlaps(prs, 1, 2))
         self.assertIsNone(pr_overlap.overlaps(prs, 2, 1))
 
+    def test_reported_link_round_trips_as_a_dependency(self):
+        with patch.object(pr_overlap, "REPO", "owner/repo", create=True):
+            link = pr_overlap.pull("https://github.com/owner/repo/blob/abc123", 2)
+        self.assertIn("https://www.github.com/owner/repo/pull/2", link)
+        prs = pull_requests(f"Depends on: {link}")
+        self.assertEqual(prs[1]["depends"], {2})
+        for pr in prs.values():
+            pr["added"] = {"shared.cpp"}
+        self.assertIsNone(pr_overlap.overlaps(prs, 1, 2))
+
+    def test_www_github_dependencies_are_supported(self):
+        for reference in ("https://www.github.com/owner/repo/pull/2",
+                          "[PR 2](https://www.github.com/owner/repo/pull/2)"):
+            with self.subTest(reference=reference):
+                self.assertEqual(pull_requests(f"Depends on: {reference}")[1]["depends"], {2})
+
     def test_unrelated_reference_keeps_overlap(self):
         prs = pull_requests("Related to #2.")
         for pr in prs.values():

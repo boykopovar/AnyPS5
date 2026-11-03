@@ -25,10 +25,7 @@ int APS5_VABI sceKernelGetEventError(const KernelEvent* ev) {
     if (event.fflags == 0) {
         return 0;
     }
-    if (event.fflags > 0xFFFFu) {
-        throw std::runtime_error(std::string(__func__) + ": fflags " + std::to_string(event.fflags) + " above 0xFFFF");
-    }
-    return static_cast<int>(0x80020000u | event.fflags);
+    return static_cast<int>(0x80020000u + static_cast<std::uint32_t>(event.fflags));
 }
 
 intptr_t APS5_VABI sceKernelGetEventFflags(const KernelEvent* ev) {

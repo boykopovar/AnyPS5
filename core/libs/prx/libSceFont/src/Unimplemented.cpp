@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceFont/include/FontGraphics.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include "prx/libSceFont/include/FontWords.hpp"
 
 static_assert(sizeof(FontGraphicsRegion) == 32);
 static_assert(offsetof(FontGraphicsRegion, x) == 0);
@@ -81,8 +83,7 @@ int APS5_VABI sceFontCreateGraphicsServiceWithEdition(const FontMemory* memory, 
 }
 
 int APS5_VABI sceFontCreateWords(const FontMemory* memory, FontTextSource* source, std::uint64_t unusedSlot, FontWords** words) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::CreateWords(memory, source, words);
 }
 
 int APS5_VABI sceFontDestroyGraphicsDevice(FontGraphicsDevice** device) {
@@ -96,27 +97,11 @@ int APS5_VABI sceFontDestroyGraphicsService(FontGraphicsService** service) {
 }
 
 int APS5_VABI sceFontDestroyWords(FontWords** words) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::DestroyWords(words);
 }
 
 
 int APS5_VABI sceFontGetGlyphExpandBufferState(FontHandle font, FontGlyphExpandBufferState* state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGlyphRenderImage(FontGlyph glyph, const FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* output) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGlyphRenderImageHorizontal(FontGlyph glyph, const FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* output) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGlyphRenderImageVertical(FontGlyph glyph, const FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* output) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -147,43 +132,35 @@ int APS5_VABI sceFontGraphicsExchangeResource(FontGraphicsResource* resource, Fo
 }
 
 int APS5_VABI sceFontGraphicsFillMethodInit(FontGraphicsFillMethod* method, std::int32_t mode, std::int32_t type) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillMethodInit(method, mode, type);
 }
 
 int APS5_VABI sceFontGraphicsFillPlotInit(FontGraphicsFillPlot* plot, const FontGraphicsRegion* region) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillPlotInit(plot, region);
 }
 
 int APS5_VABI sceFontGraphicsFillPlotSetLayout(FontGraphicsFillPlot* plot, std::int32_t first, std::int32_t second) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillPlotSetLayout(plot, first, second);
 }
 
 int APS5_VABI sceFontGraphicsFillPlotSetMapping(FontGraphicsFillPlot* plot, float first, float second, float third, float fourth) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillPlotSetMapping(plot, first, second, third, fourth);
 }
 
 int APS5_VABI sceFontGraphicsFillRatesInit(FontGraphicsFillRates* rates, const FontGraphicsFill* fill, std::uint32_t effect) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillRatesInit(rates, fill, effect);
 }
 
 int APS5_VABI sceFontGraphicsFillRatesSetFillEffect(FontGraphicsFillRates* rates, const FontGraphicsFill* fill, std::uint32_t effect) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillRatesSetFillEffect(rates, fill, effect);
 }
 
 int APS5_VABI sceFontGraphicsFillRatesSetLayout(FontGraphicsFillRates* rates, std::int32_t first, std::int32_t second) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillRatesSetLayout(rates, first, second);
 }
 
 int APS5_VABI sceFontGraphicsFillRatesSetMapping(FontGraphicsFillRates* rates, float first, float second, float third, float fourth) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillRatesSetMapping(rates, first, second, third, fourth);
 }
 
 int APS5_VABI sceFontGraphicsGetDeviceUsage(FontGraphicsDevice* device, FontGraphicsDeviceUsage* usage) {
@@ -192,18 +169,15 @@ int APS5_VABI sceFontGraphicsGetDeviceUsage(FontGraphicsDevice* device, FontGrap
 }
 
 int APS5_VABI sceFontGraphicsRegionInit(FontGraphicsRegion* region, float x, float y, float width, float height) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsRegionInit(region, x, y, width, height);
 }
 
 int APS5_VABI sceFontGraphicsRegionInitCircular(FontGraphicsRegion* region, float centerX, float centerY, float outerRadius, float innerRadius) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsRegionInitCircular(region, centerX, centerY, outerRadius, innerRadius);
 }
 
 int APS5_VABI sceFontGraphicsRegionInitRoundish(FontGraphicsRegion* region, float x, float y, float width, float height, float outerRadius, float innerRadius, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsRegionInitRoundish(region, x, y, width, height, outerRadius, innerRadius, flags);
 }
 
 int APS5_VABI sceFontGraphicsRelease(void** object) {
@@ -371,25 +345,203 @@ int APS5_VABI sceFontGraphicsUpdateShapeFillPlot(FontGraphicsResource* resource,
     return 0;
 }
 
+void APS5_VABI sceFontSetGraphicsErrorCallback(Font::GraphicsErrorCallback callback) {
+    Font::SetGraphicsErrorCallback(callback);
+}
+
 int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::WordsFindWordCharacters(words, firstCharacter, endCharacter, lastCharacter, nextCharacter);
 }
 
-int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, float x, float y, float width, float height, FontGraphicsFill** fill) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height) {
+    return Font::GraphicsDrawupFillTextureImageObject(graphicsObject, fillObject, mode, output, x, y, width, height);
 }
 
-int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, std::uint32_t firstMode, std::uint32_t secondMode, std::int32_t firstCount, std::int32_t firstLayout, std::int32_t secondLayout, std::int32_t secondCount, FontGraphicsFill** fill) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, std::uint32_t format, std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1, std::uint32_t option2, std::uint32_t dimension2, void** output) {
+    return Font::GraphicsDrawupFillTexturePatternObject(graphicsObject, fillObject, mode, format, select, dimension1, option1, option2, dimension2, output);
 }
+
+int APS5_VABI sceFontGraphicsCanvasStartDrawing() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsGetDrawingFrameHandle() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsGetIndexedVertexesGlyph() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsProcessWaitAllSequences() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsStructureVertexesGlyph() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsTextureRefersSurface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient, float position, const void* color) {
+    return Font::GraphicsAppendGradientSegment(graphicsObject, gradient, position, color);
+}
+
+int APS5_VABI sceFontSupportSystemUpdation() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsCanvasRenewal() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsDesignStartDrawing() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsGetVertexesGlyphMetrics() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsUpdateSlantShift() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsTextureMakeFillTexture() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsTextureMakeFillTextureImage() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsCanvasSetSurfaceFill() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsDrawVertexesGlyph() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsDrawRegionShape() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsProcessWaitSequence() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsTextureGetSurface() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyphs() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGetCharVariationGlyphCode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsSetupSlantShift() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsAdjustFillRadialGradient() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsDrawupFillFlatColor(FontGraphicsFrame* graphicsObject, const void* color, void** output) {
+    return Font::GraphicsDrawupFillFlatColor(graphicsObject, color, output);
+}
+
+int APS5_VABI sceFontGraphicsDrawupFillLinearGradient(FontGraphicsFrame* graphicsObject, std::uint32_t mode, const void* color1, const void* color2, void** output, float extent0, float extent1, float x0, float y0, float x1, float y1) {
+    return Font::GraphicsDrawupFillLinearGradient(graphicsObject, mode, color1, color2, output, extent0, extent1, x0, y0, x1, y1);
+}
+
+int APS5_VABI sceFontGraphicsSetVertexesGlyphScale() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGlyphGetOutlineVertexes() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsDrawupFillRadialGradient(FontGraphicsFrame* graphicsObject, std::uint32_t mode, const void* color1, const void* color2, void** output, float extent0, float extent1, float x0, float y0, float x1, float y1) {
+    return Font::GraphicsDrawupFillRadialGradient(graphicsObject, mode, color1, color2, output, extent0, extent1, x0, y0, x1, y1);
+}
+
+int APS5_VABI sceFontGraphicsAdjustGradientSpread() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithLayout() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsCanvasGetPreprocess() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsReportError() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsDrawRectangleShape() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsProcessSetSyncPolicy() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithMapping() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyphAll() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsGetVertexesGlyphScale() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsCanvasClearPreprocess() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsFindIndexedVertexesGlyph() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsDefineIndexedVertexesGlyph() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsProcessRenderSequence() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontOutlineVertexesInterfaceInit() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceFontGraphicsSurfaceSetTargetView() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 }
 
