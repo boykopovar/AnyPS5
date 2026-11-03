@@ -130,6 +130,11 @@ int main(int argc, char** argv) {
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "repeated overflow changed count");
     Require(sem_destroy_nid_postfix(&sem) == 0, "destroy must succeed");
     Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "zero count must initialize");
+    *__error_nid_postfix() = 0;
+    Require(sem_trywait_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "null semaphore pointer must report EINVAL");
+    std::uintptr_t invalidSem = 0;
+    *__error_nid_postfix() = 0;
+    Require(sem_trywait_nid_postfix(&invalidSem) == -1 && *__error_nid_postfix() == 22, "uninitialized semaphore descriptor must report EINVAL");
     Require(sem_trywait_nid_postfix(&sem) == -1 && *__error_nid_postfix() == 35, "empty semaphore must report EAGAIN");
     Require(sem_post_nid_postfix(&sem) == 0, "normal post must succeed");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 1, "normal post must increment");
