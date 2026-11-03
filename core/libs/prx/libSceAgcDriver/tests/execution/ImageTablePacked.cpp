@@ -269,33 +269,31 @@ void CheckPacked(const Result& result, const Format& format, std::uint32_t selec
     }
 }
 
-void PackedLoads(AgcDriver::VulkanDevice& device) {
-    for (const auto opcode : {2u, 3u, 4u, 5u}) {
-        for (const auto dmask : {1u, 5u, 10u, 15u}) {
-            const auto directCode = Code(opcode, dmask, false);
-            const auto tableCode = Code(opcode, dmask, true);
-            std::uint64_t artifact = 0;
-            for (std::size_t index = 0; index < LoadFormats.size(); index += 2u) {
-                FillTexture(0u, LoadFormats[index]);
-                FillTexture(1u, LoadFormats[(index + 1u) % LoadFormats.size()]);
-                FillInput(opcode >= 4u);
-                for (const auto selected : {0u, 1u, 0u}) {
-                    const auto& format = LoadFormats[(index + selected) % LoadFormats.size()];
-                    const auto name = "table packed opcode " + std::to_string(opcode) + " format " + std::to_string(format.id) + " mask " + std::to_string(dmask) + " entry " + std::to_string(selected);
-                    const auto direct = Run(device, directCode, selected);
-                    CheckPacked(direct, format, selected, dmask, opcode >= 4u, (opcode & 1u) != 0u, name + " direct");
-                    const auto table = Run(device, tableCode, selected);
-                    Require(table.tables != 0u, name + ": no runtime table");
-                    Require(table.log.find("image table:") == std::string::npos, name + ": unsupported operation or poisoned valid entry:\n" + table.log);
-                    CheckPacked(table, format, selected, dmask, opcode >= 4u, (opcode & 1u) != 0u, name);
-                    Require(direct.words == table.words, name + ": direct/table mismatch");
-                    if (artifact != 0u) Require(table.cacheHit && table.artifact == artifact, name + ": descriptor selection rebuilt shader");
-                    artifact = table.artifact;
-                }
+void PackedLoads(AgcDriver::VulkanDevice& device, std::uint32_t opcode) {
+    for (const auto dmask : {1u, 5u, 10u, 15u}) {
+        const auto directCode = Code(opcode, dmask, false);
+        const auto tableCode = Code(opcode, dmask, true);
+        std::uint64_t artifact = 0;
+        for (std::size_t index = 0; index < LoadFormats.size(); index += 2u) {
+            FillTexture(0u, LoadFormats[index]);
+            FillTexture(1u, LoadFormats[(index + 1u) % LoadFormats.size()]);
+            FillInput(opcode >= 4u);
+            for (const auto selected : {0u, 1u, 0u}) {
+                const auto& format = LoadFormats[(index + selected) % LoadFormats.size()];
+                const auto name = "table packed opcode " + std::to_string(opcode) + " format " + std::to_string(format.id) + " mask " + std::to_string(dmask) + " entry " + std::to_string(selected);
+                const auto direct = Run(device, directCode, selected);
+                CheckPacked(direct, format, selected, dmask, opcode >= 4u, (opcode & 1u) != 0u, name + " direct");
+                const auto table = Run(device, tableCode, selected);
+                Require(table.tables != 0u, name + ": no runtime table");
+                Require(table.log.find("image table:") == std::string::npos, name + ": unsupported operation or poisoned valid entry:\n" + table.log);
+                CheckPacked(table, format, selected, dmask, opcode >= 4u, (opcode & 1u) != 0u, name);
+                Require(direct.words == table.words, name + ": direct/table mismatch");
+                if (artifact != 0u) Require(table.cacheHit && table.artifact == artifact, name + ": descriptor selection rebuilt shader");
+                artifact = table.artifact;
             }
         }
     }
-    std::cout << "table packed loads and runtime reselection passed\n";
+    std::cout << "table packed opcode " << opcode << " loads and runtime reselection passed\n";
 }
 
 std::uint32_t Component(const Format& format, const std::array<std::uint32_t, 4>& raw, std::uint32_t component) {
@@ -791,8 +789,11 @@ int main(int argc, char** argv) {
         GuestAllocations::Mutation().Add(Table.data(), sizeof(Table), true, true, true);
         GuestAllocations::Mutation().Add(Output.data(), sizeof(Output), true, true, true);
         const std::string mode = argc > 1 ? argv[1] : "loads";
-        Require(mode == "all" || mode == "loads" || mode == "by" || mode == "stores" || mode == "guards" || mode == "mixed" || mode == "isolated" || mode == "rejected" || mode == "mips" || mode == "empty" || mode == "unmeasured", "unknown image table packed test mode");
-        if (mode == "all" || mode == "loads") PackedLoads(*device);
+        Require(mode == "all" || mode == "loads" || mode == "load_sgn" || mode == "load_mip" || mode == "load_mip_sgn" || mode == "by" || mode == "stores" || mode == "guards" || mode == "mixed" || mode == "isolated" || mode == "rejected" || mode == "mips" || mode == "empty" || mode == "unmeasured", "unknown image table packed test mode");
+        if (mode == "all" || mode == "loads") PackedLoads(*device, 2u);
+        if (mode == "all" || mode == "load_sgn") PackedLoads(*device, 3u);
+        if (mode == "all" || mode == "load_mip") PackedLoads(*device, 4u);
+        if (mode == "all" || mode == "load_mip_sgn") PackedLoads(*device, 5u);
         if (mode == "all" || mode == "by") ByLoads(*device);
         if (mode == "all" || mode == "stores") PackedStores(*device);
         if (mode == "all" || mode == "guards") Guards(*device);
