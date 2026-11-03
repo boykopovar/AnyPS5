@@ -60,7 +60,7 @@ struct OwnedImage {
 
 class Texture {
 public:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, const VkClearColorValue* clear = nullptr);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, bool layerRows = false, const VkClearColorValue* clear = nullptr);
     Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
     // A view of a storage image's own VkImage: the sampled texture follows the image's content, so a
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
@@ -295,11 +295,13 @@ public:
     // any unit was: a reader of the import must sync for a publish as for a store. Only images
     // with a pending unit inside the range are stored (APS5_NO_FLUSH_PRETEST=1 lists every
     // overlapping pending image, as before).
-    static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr, bool waited = false);
-    static void FlushAllPending(const char* reason);
-    static bool FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop);
+    static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr, bool waited = false, VkDevice device = VK_NULL_HANDLE);
+    static void FlushAllPending(const char* reason, VkDevice device = VK_NULL_HANDLE);
+    static bool FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop, VkDevice device = VK_NULL_HANDLE);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
+    static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static void SetPublishHookForTest(void (*hook)());
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static std::size_t StoreSmallPending(const char* reason);
     static void StoreReadbackBeforeLabel(const char* reason);
@@ -484,7 +486,26 @@ private:
     void upload(const std::vector<bool>* layers = nullptr);
     void clearImage(VkCommandBuffer commands, VkClearColorValue value, const VkImageSubresourceRange& range);
     std::vector<bool> cpuUploadLayers(const std::vector<bool>& units) const;
-    void captureGuestBytes(const std::vector<bool>* layers);
+    void captureGuestBytes(const std::vector<bool>* layers, bool keepWritten = false);
+    bool keepWrittenSince(std::uint32_t unit);
+    enum class BaselineMiss : std::uint8_t {
+        None,
+        LeftWatchWhilePending,
+        SaveInFlight,
+        SavedBytesDropped,
+        NoUploadCopy,
+        UploadCopyDiffers,
+        NoUnwatchHash,
+        UnwatchUnproven,
+        UnwatchSawCpuWrites,
+        UnwatchWhileSaved,
+        HashDiffers,
+    };
+    static const char* BaselineMissText(BaselineMiss miss);
+    BaselineMiss baselineMiss(std::uint32_t unit) const;
+    std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
+    void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
+    void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
@@ -494,6 +515,8 @@ private:
     // APS5_BLOCK_WRITEBACK_EACH=1 stores the touched units only).
     void writeBack(std::uint64_t address, std::size_t bytes);
     void writeBackLayers(const std::vector<bool>& layers);
+    void releaseReadTraps(bool sharingPages);
+    void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
     void saveBeforeUnwatch();
     void forgetKeptAtUnwatch(std::uint32_t unit);
@@ -662,10 +685,12 @@ private:
     // Whether the image is live (not released) and overlaps the fill: the test that gives ClassifyFill
     // its overlapping images, and that NoteKeysFill and ClearByKeysFill use to bound the key match.
     bool overlapsLive(std::uint64_t address, std::size_t bytes) const;
+    bool hashedAtUnwatch(std::uint64_t address, std::size_t bytes) const;
     // Whether a fill of [address, address + bytes) is a fill of this image's DCC keys, `overlapped`
     // saying whether any live image overlaps the fill (see Texture.cpp).
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
+    void appendStoredLayers(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) const;
     VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format) const;
     bool singlePass();
     VkImageView elementLayerView(std::uint32_t level, std::uint32_t layer);
@@ -690,6 +715,14 @@ private:
     mutable std::array<ComparedRange, 4> comparedRanges{};
     mutable std::uint32_t nextComparedRange = 0;
     std::vector<std::byte> generationBaseline;
+    struct UnwatchHash {
+        std::array<std::uint64_t, 2> hash{};
+        std::uint64_t generation = 0;
+        BaselineMiss skipped = BaselineMiss::None;
+        std::uint64_t skippedGeneration = 0;
+    };
+    std::vector<UnwatchHash> unwatchHash;
+    std::vector<BaselineMiss> pendingMiss;
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
@@ -756,6 +789,7 @@ private:
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     bool drawnListed = false;
+    mutable std::atomic<bool> readTrapped{false};
     bool drawnWhole = false;
     bool drawingTarget = false;
     bool pendingFromOthers = false;
