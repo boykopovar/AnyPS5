@@ -269,3 +269,16 @@
 | `sceVideoOutSysSetDrrPeg` | `cFy4rRDKZjQ` |
 | `sceVideoOutSysSetDrrPegRefreshRate` | `mVJZobHnyiQ` |
 | `sceVideoOutSysSetVrrSetting` | `FL6WhOnaR4Y` |
+
+- [Later callable NIDs](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 8 function exports of the primary logical library observed only in the 13.60-labelled image, with no name in the public symbol database. Two names were found by hashing candidates and each hashes exactly to its NID; the other six are unidentified and use literal NID aliases. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`.
+
+| Name | NID |
+| --- | --- |
+| `sceVideoOutGetFlipStatusNative` | `5vYEm0vWPxA` |
+| `sceVideoOutSysLatencyMeasureGetLatestLatency` | `4SZjpc4U1es` |
+| `Unknown` | `+ZuoGRI+U-g` |
+| `Unknown` | `96hq3WwT3DE` |
+| `Unknown` | `B8siTU85n8M` |
+| `Unknown` | `IkyDS23qu4g` |
+| `Unknown` | `gQwfLPPIZQ8` |
+| `Unknown` | `rJmjlPlreu4` |
