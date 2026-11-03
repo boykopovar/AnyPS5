@@ -198,8 +198,11 @@ class ProgressHistoryTests(unittest.TestCase):
                 self.assertEqual(progress.OPCODES.read_text(encoding="utf-8"), "archived")
                 return {"done": 1, "total": 2, "percent": 50.0}
 
+            def git_output(*args):
+                return b"current/prx/file.cpp\ncurrent/opcodes.txt\n" if args[0] == "ls-tree" else b"archive"
+
             with patch.multiple(progress, ROOT=root, PRX=current_prx, OPCODES=current_opcodes), \
-                    patch.object(progress_history, "git", return_value=b"archive"), \
+                    patch.object(progress_history, "git", side_effect=git_output), \
                     patch.object(progress_history.tarfile, "open", return_value=Archive()), \
                     patch.object(progress, "collect_libraries", return_value={"done": 1, "total": 1, "percent": 100.0}), \
                     patch.object(progress, "collect_shader_source", side_effect=progress.shader_scan.ScanError("unsupported")), \
@@ -207,6 +210,21 @@ class ProgressHistoryTests(unittest.TestCase):
                 result = progress_history.measure("HEAD")
 
             self.assertEqual(result["shaders"], {"done": 1, "total": 2, "percent": 50.0})
+
+    def test_measure_ignores_paths_missing_from_archived_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            for path in (progress.shader_scan.RECOMPILER, progress.shader_scan.AGC_DRIVER):
+                (root / path).mkdir(parents=True, exist_ok=True)
+                (root / path / "current.txt").write_text("current", encoding="utf-8")
+            (root / "tools").mkdir()
+            (root / "tools/rdna2_isa_forms.txt").write_text("current", encoding="utf-8")
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                result = progress_history.measure("HEAD")
+
+            self.assertIsNotNone(result)
 
     def test_failed_cache_publication_preserves_the_old_file(self):
         with tempfile.TemporaryDirectory() as directory:

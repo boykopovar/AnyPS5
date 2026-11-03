@@ -38,14 +38,20 @@ def daily_commits(ref):
 
 
 def measure(sha):
-    paths = [
+    candidate_paths = [
         progress.PRX.relative_to(progress.ROOT).as_posix(),
         progress.OPCODES.relative_to(progress.ROOT).as_posix(),
         progress.shader_scan.RECOMPILER.rstrip("/"),
         progress.shader_scan.AGC_DRIVER.rstrip("/"),
         "tools/rdna2_isa_forms.txt",
     ]
-    paths = [path for path in paths if (progress.ROOT / path).exists()]
+    try:
+        tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
+    except subprocess.CalledProcessError:
+        return None
+    paths = [path for path in candidate_paths if any(name == path or name.startswith(path + "/") for name in tree)]
+    if len(paths) < 2:
+        return None
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         try:
