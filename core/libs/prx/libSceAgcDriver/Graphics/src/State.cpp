@@ -451,6 +451,7 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     DepthTarget depth{};
     depth.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
     const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    depth.gcn = gcn;
     depth.depthSwizzle = gcn ? 0u : (read(cx, 0x010) >> 4u) & 31u;
     depth.iterate256 = !gcn && (read(cx, 0x010) & (1u << 20u)) != 0;
     depth.firstSlice = view & 0x1fffu;
