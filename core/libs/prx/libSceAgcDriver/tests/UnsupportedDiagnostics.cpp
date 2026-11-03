@@ -42,10 +42,6 @@ int main(int argc, char** argv) {
         {sceAgcDriverSysGetClientNumber, "sceAgcDriverSysGetClientNumber"},
         {sceAgcDriverSysIsGameClosed, "sceAgcDriverSysIsGameClosed"},
         {sceAgcDriverTmpInitIdhs, "sceAgcDriverTmpInitIdhs"},
-        {sceAgcDriverUserDataWritePacket, "sceAgcDriverUserDataWritePacket"},
-        {sceAgcDriverUserDataWritePopMarker, "sceAgcDriverUserDataWritePopMarker"},
-        {sceAgcDriverUserDataWritePushMarker, "sceAgcDriverUserDataWritePushMarker"},
-        {sceAgcDriverUserDataWriteSetMarker, "sceAgcDriverUserDataWriteSetMarker"},
     };
     if (!ExportsResolveByName(argc > 1 ? argv[1] : nullptr, exports, "sceAgcDriverNotExported")) return 11;
     return 0;

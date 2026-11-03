@@ -33,7 +33,7 @@
 
 ### Unknown function info
 
-- [libSceAgcDriver pending exports](../../../core/libs/prx/libSceAgcDriver/Export.cpp) - 28 named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAgcDriver.c). Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceAgcDriver pending exports](../../../core/libs/prx/libSceAgcDriver/Export.cpp) - 24 named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAgcDriver.c). Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 - [sceAgcDriverSubmitCommandBuffer, sceAgcDriverSubmitMultiCommandBuffers](../../../core/libs/prx/libSceAgcDriver/Submit/src/CommandBuffer.cpp) (libSceAgcDriver) - `queue_context` is treated as a pointer to context whose queue identifier is stored 4 bytes in, matching KytyPS5 (`src/libs/agc.cpp` `AgcDriverSubmitCommandBuffer` / `get_driver_queue`). A null context returns `EINVAL` (22). Whether the console validates other context fields before queue dispatch is unverified. Compute queues are still accepted only for 0x20 to 0x57; queue 0x58 and above throw. Console acceptance of 0x58 on these entrypoints was not measured
 
