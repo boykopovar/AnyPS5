@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -11,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 namespace {
@@ -226,6 +228,19 @@ void OrdinaryDontWait(bool available) {
     Require(pair.Flags() == flags, "DONTWAIT changed the socket mode");
 }
 
+void UnsupportedPeekWaitAll(Pair& pair) {
+    std::array<unsigned char, 2> bytes{0xcc, 0xdd};
+    const auto calls = NotImplementedCalls_nid_no_patch();
+    bool threw = false;
+    try {
+        recv_nid_postfix(pair.Reader(), bytes.data(), bytes.size(), WaitAll | 2);
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()).find("MSG_PEEK | MSG_WAITALL on a blocking stream socket") != std::string::npos;
+    }
+    Require(threw && NotImplementedCalls_nid_no_patch() == calls + 1, "blocking Windows PEEK | WAITALL did not throw its unsupported contract");
+    Require(bytes[0] == 0xcc && bytes[1] == 0xdd, "unsupported peek changed the receive buffer");
+}
+
 void PeekWithWaitAll() {
     Pair pair;
     const auto flags = pair.Flags();
@@ -236,9 +251,7 @@ void PeekWithWaitAll() {
     Require(peek.result == 1 && peek.bytes[0] == FirstByte && peek.bytes[1] == 0xdd, "DONTWAIT peek did not return only the available byte");
     pair.CheckReadable(true);
 #ifdef _WIN32
-    Receive unsupported(pair, WaitAll | 2);
-    unsupported.Prompt("blocking PEEK | WAITALL did not preserve its unsupported result");
-    Require(unsupported.result == -1 && unsupported.error == 45 && unsupported.bytes[0] == 0xcc && unsupported.bytes[1] == 0xdd, "blocking Windows PEEK | WAITALL did not report EOPNOTSUPP");
+    UnsupportedPeekWaitAll(pair);
     pair.CheckReadable(true);
 #endif
     Receive consume(pair, DontWait);
