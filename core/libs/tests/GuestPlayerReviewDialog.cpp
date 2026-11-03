@@ -34,7 +34,8 @@ void RequireTerminateWinsOverOpen(const PlayerReviewDialogParam& param) {
     for (int i = 1; i <= RACE_ROUNDS; ++i) {
         Require(scePlayerReviewDialogInitialize() == 0);
         round.store(i);
-        scePlayerReviewDialogOpen(&param);
+        const int opened = scePlayerReviewDialogOpen(&param);
+        Require(opened == 0 || opened == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
         while (done.load() != i) std::this_thread::yield();
         Require(scePlayerReviewDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
     }
