@@ -84,6 +84,7 @@ int main() {
     Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
     PthreadMutexattr attr = nullptr;
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
