@@ -1,4 +1,4 @@
-[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | **Español** | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md)
+[English](../../README.md) | [Português (Brasil)](README.pt-BR.md) | **Español** | [Català](README.ca.md) | [Italiano](README.it.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Bahasa Indonesia](README.id.md)
 
 # Acerca de
 
