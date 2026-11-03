@@ -19,11 +19,6 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-bool matchesBufferPatternFillKernel(std::span<const std::uint32_t> code) {
-    static constexpr std::array<std::uint32_t, 12> kernel{0xd7460004u, 0x04010c08u, 0xf4280302u, 0xfa000000u, 0xbf8cc07fu, 0x7e00020cu, 0x7e02020du, 0x7e04020eu, 0x7e06020fu, 0xe01c2000u, 0x80000004u, 0xbf810000u};
-    return code.size() >= kernel.size() && std::equal(kernel.begin(), kernel.end(), code.begin());
-}
-
 bool matchesDwordPatternFillKernel(std::span<const std::uint32_t> code) {
     static constexpr std::array<std::uint32_t, 69> kernel{
         0xbfa00003u, 0xd7460002u, 0x04010c0au, 0x7da80408u, 0xbf88003fu, 0x7e000c09u, 0xbf070980u, 0x858a807eu,
@@ -47,13 +42,26 @@ bool matchesDwordPatternFillKernel(std::span<const std::uint32_t> code) {
 
 }
 
+bool MatchesBufferPatternFillKernel(std::span<const std::uint32_t> code) {
+    static constexpr std::array<std::uint32_t, 12> kernel{0xd7460004u, 0x04010c08u, 0xf4280002u, 0xfa000000u, 0xbf8cc07fu, 0x7e000200u, 0x7e020200u, 0x7e040200u, 0x7e060200u, 0xe01c2000u, 0x80000004u, 0xbf810000u};
+    if (code.size() < kernel.size()) return false;
+    const auto pattern = (code[2] >> 6u) & 0x7fu;
+    if (pattern < 4u || pattern % 4u != 0 || pattern + 3u >= 106u || code[2] != (kernel[2] | (pattern << 6u))) return false;
+    for (std::size_t word = 0; word < kernel.size(); ++word) {
+        if (word == 2) continue;
+        const auto move = word >= 5 && word <= 8 ? pattern + static_cast<std::uint32_t>(word - 5) : 0u;
+        if (code[word] != (kernel[word] | move)) return false;
+    }
+    return true;
+}
+
 bool Driver::matchesFillKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
     static const bool enabled = std::getenv("APS5_NO_FILL_HLE") == nullptr;
     static const bool patternEnabled = std::getenv("APS5_NO_PATTERN_FILL_HLE") == nullptr;
     if (!enabled || userData.size() < 8 || compute.numThreads[0] != 64 || compute.numThreads[1] != 1 || compute.numThreads[2] != 1) return false;
     if (patternEnabled && (MatchesPatternFillKernel(code, userData, compute) || MatchesGcnPatternFillKernel(code, userData, compute))) return true;
     static constexpr std::array<std::uint32_t, 9> fillKernel{0xd7460004u, 0x04010c08u, 0x7e000204u, 0x7e020205u, 0x7e040206u, 0x7e060207u, 0xe01c2000u, 0x80000004u, 0xbf810000u};
-    if (!matchesBufferPatternFillKernel(code) && (code.size() < fillKernel.size() || !std::equal(fillKernel.begin(), fillKernel.end(), code.begin()))) return false;
+    if (!MatchesBufferPatternFillKernel(code) && (code.size() < fillKernel.size() || !std::equal(fillKernel.begin(), fillKernel.end(), code.begin()))) return false;
 
     const auto stride = (userData[1] >> 16u) & 0x3fffu;
     const bool swizzled = ((userData[1] >> 31u) & 1u) != 0;
@@ -307,7 +315,7 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         const auto records = std::min<std::uint64_t>(static_cast<std::uint64_t>(groups[0]) * 64u, numRecords);
         base = userData[0] | (static_cast<std::uint64_t>(userData[1] & 0xffffu) << 32u);
         bytes = static_cast<std::size_t>(records * 16u);
-        if (matchesBufferPatternFillKernel(code)) {
+        if (MatchesBufferPatternFillKernel(code)) {
             const auto source = userData[4] | (static_cast<std::uint64_t>(userData[5] & 0xffffu) << 32u);
             drainPendingInputWrites(queueId, {{source, sizeof(pattern)}});
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Fill);

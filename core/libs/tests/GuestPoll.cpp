@@ -12,11 +12,13 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -31,6 +33,19 @@ constexpr NativeSocket NativeInvalid = -1;
 static void CloseNative(NativeSocket socket) { close(socket); }
 #endif
 static void Require(bool value) { if (!value) std::abort(); }
+#ifndef _WIN32
+static std::atomic<std::size_t> failAllocationOfSize{0};
+void* operator new(std::size_t bytes) {
+    if (bytes != 0 && failAllocationOfSize.load() == bytes) {
+        failAllocationOfSize = 0;
+        throw std::bad_alloc();
+    }
+    if (void* pointer = std::malloc(bytes != 0 ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+#endif
 constexpr short In = 0x1;
 constexpr short Priority = 0x2;
 constexpr short ReadBand = 0x80;
@@ -312,10 +327,33 @@ static void PollsAHungUpSocketWithoutPollout() {
 }
 #endif
 
+static void PollsAPipeClosedDuringTheWait() {
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        int pair[2]{-1, -1};
+        Require(pipe_nid_postfix(pair) == 0);
+        int result = 0;
+        short revents = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestPollDescriptor entry{pair[0], In, 0};
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 20);
+            revents = entry.revents;
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + (attempt % 20) * 100));
+        Require(close_nid_postfix(pair[0]) == 0);
+        waiter.join();
+        Require(close_nid_postfix(pair[1]) == 0);
+        Require(result == 0 || (result == 1 && (revents & Invalid) != 0));
+    }
+}
+
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
+    PollsAPipeClosedDuringTheWait();
 #ifndef _WIN32
     PollsAHungUpSocketWithoutPollout();
 #endif
@@ -357,6 +395,42 @@ int main() {
     Require(shortWait >= std::chrono::milliseconds(20) && shortWait < std::chrono::milliseconds(200));
     Require(poll_nid_postfix(nullptr, 1, 0) == -1 && *__error_nid_postfix() == 14);
     Require(poll_nid_postfix(&single, 1, -2) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(reinterpret_cast<GuestPollDescriptor*>(std::uintptr_t{0x10}), 1, 0) == -1 && *__error_nid_postfix() == 14);
+    GuestResourceLimit fileLimit{};
+    Require(getrlimit_nid_postfix(8, &fileLimit) == 0);
+    if (fileLimit.rlim_max < 0xffffffff) {
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(&single, 0xffffffffu, 0) == -1 && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, 0xffffffffu, 0) == -1 && *__error_nid_postfix() == 22);
+    }
+    if (fileLimit.rlim_max >= 1024 && fileLimit.rlim_max < 100000) {
+        const auto atLimit = static_cast<std::uint32_t>(fileLimit.rlim_max);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, atLimit, 0) == -1 && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(nullptr, atLimit + 1, 0) == -1 && *__error_nid_postfix() == 22);
+        *__error_nid_postfix() = 0;
+        Require(poll_nid_postfix(reinterpret_cast<GuestPollDescriptor*>(std::uintptr_t{0x10}), atLimit + 1, 0) == -1 && *__error_nid_postfix() == 22);
+    }
+#ifndef _WIN32
+    GuestPollDescriptor allocated[3]{{-1, In, 5}, {-1, In, 6}, {-1, In, 7}};
+    failAllocationOfSize = sizeof(allocated);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(allocated, 3, 0) == -1 && *__error_nid_postfix() == 12);
+    Require(failAllocationOfSize == 0);
+    Require(allocated[0].revents == 5 && allocated[1].revents == 6 && allocated[2].revents == 7);
+    Require(poll_nid_postfix(allocated, 3, 0) == 0 && allocated[0].revents == 0);
+#endif
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<GuestPollDescriptor*>(page);
+    *readOnly = {-1, In, 7};
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(readOnly, 1, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(readOnly->descriptor == -1 && readOnly->revents == 7);
     TestPipes(listener);
     PollsFilesAndDirectories(listener);
     Require(close_nid_postfix(server) == 0);

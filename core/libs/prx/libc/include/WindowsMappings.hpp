@@ -108,6 +108,17 @@ public:
         reset(reinterpret_cast<std::uintptr_t>(address), bytes);
     }
 
+    void MapZero(void* address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        if (zeroSection == nullptr && (zeroSection = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READONLY, 0, static_cast<DWORD>(pageBytes), nullptr)) == nullptr) fail("create the read-only zero guest page");
+        const auto start = reinterpret_cast<std::uintptr_t>(address);
+        reset(start, bytes);
+        for (auto cursor = start; cursor < start + bytes; cursor += pageBytes) {
+            split(cursor, pageBytes);
+            if (!map(zeroSection, GetCurrentProcess(), reinterpret_cast<void*>(cursor), 0, pageBytes, MEM_REPLACE_PLACEHOLDER, PAGE_READONLY, nullptr, 0)) fail("map the read-only zero guest page");
+        }
+    }
+
     void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false, DWORD viewProtection = PAGE_EXECUTE_READWRITE, std::size_t sectionBytes = SIZE_MAX, std::vector<std::pair<std::uintptr_t, std::size_t>>* createdPrivate = nullptr) {
         if (sectionBytes < bytes && (resident || sectionBytes == 0 || bytes - sectionBytes >= pageBytes)) throw std::runtime_error("shared guest mapping extends a whole page past its section");
         std::lock_guard lock(mutex);
@@ -155,6 +166,7 @@ public:
                     else createdPrivate->emplace_back(base, runBytes);
                 }
                 const auto run = residentRuns.emplace(base, Run{base + runBytes, {}, static_cast<std::uint32_t>(runBytes >> 12), key, offset + done}).first;
+                run->second.watched = watchResident;
                 residentIndex.emplace(std::make_pair(key, offset + done), run);
                 for (std::size_t at = 0; at < runBytes; at += pageBytes) {
                     bool compared = false;
@@ -360,7 +372,10 @@ public:
             else ++view.hostImports;
             const auto written = subpagesOf(it->first, address, end);
             if (store) invalidate(it->first, view, written);
-            else if (view.resident) forgetClean(it->first, it->first + pageBytes);
+            else if (view.resident) {
+                forgetClean(it->first, it->first + pageBytes);
+                markImported(it->first);
+            }
             const auto opened = static_cast<std::uint8_t>((store || view.resident) ? view.armed & written : 0);
             if (opened == 0) continue;
             protectSubpages(it->first, opened, view.protection, "open shared memory to a host write", view.viewBytes);
@@ -378,6 +393,22 @@ public:
             if (store) invalidate(it->first, it->second, subpagesOf(it->first, address, end));
             else if (it->second.resident) forgetClean(it->first, it->first + pageBytes);
         }
+    }
+
+    static std::vector<bool> TouchedPages(std::uintptr_t start, std::size_t pages, void* const* written, std::size_t count) {
+        std::vector<bool> touched(pages);
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto page = (reinterpret_cast<std::uintptr_t>(written[index]) - start) / pageBytes;
+            if (page < pages) touched[page] = true;
+        }
+        return touched;
+    }
+
+    void markImported(std::uintptr_t page) {
+        const auto next = residentRuns.upper_bound(page);
+        if (next == residentRuns.begin()) return;
+        const auto run = std::prev(next);
+        if (page < run->second.end) run->second.imported = true;
     }
 
     void* MapAlias(std::uintptr_t address, std::size_t bytes) {
@@ -741,6 +772,9 @@ private:
         std::uint32_t fresh;
         std::uintptr_t key;
         std::uint64_t offset;
+        bool watched = false;
+        bool reset = false;
+        bool imported = false;
     };
     struct Window {
         void* view = nullptr;
@@ -753,6 +787,7 @@ private:
     }
 
     void collectResident(std::uintptr_t start, Run& run, std::uintptr_t from, std::uintptr_t stop, void** pages, std::size_t* count, bool clear, Collection collection) {
+        if (clear) run.reset = true;
         const auto first = from & ~std::uintptr_t{4095};
         if (run.fresh == 0 && collection != Collection::Fresh) {
             ULONG_PTR reported = (stop - first + 4095) / 4096;
@@ -974,11 +1009,23 @@ private:
         if (!VirtualProtect(reinterpret_cast<void*>(start), stop - start, PAGE_READONLY, &previous)) fail("open resident guest pages");
         const auto entry = indexEntry(run);
         const bool indexed = entry != residentIndex.end();
+        std::vector<void*> dirty;
+        std::vector<bool> touched;
+        bool filtered = false;
+        if (indexed && run->second.watched && !run->second.reset && !run->second.imported) {
+            dirty.resize((stop - start) / subpageBytes);
+            ULONG_PTR reported = dirty.size();
+            DWORD granularity = 0;
+            if (GetWriteWatch(0, reinterpret_cast<void*>(start), stop - start, dirty.data(), &reported, &granularity) == 0) {
+                touched = TouchedPages(start, (stop - start) / pageBytes, dirty.data(), reported);
+                filtered = true;
+            }
+        }
         std::shared_ptr<Saved> saved;
         for (auto page = start; page < stop; page += pageBytes) {
             const auto found = views.find(page);
             const auto& view = found->second;
-            const bool written = indexed && !blank(page);
+            const bool written = indexed && (!filtered || touched[(page - start) / pageBytes]) && !blank(page);
             if (written || (indexed && view.comparedWhenShared)) {
                 auto& slot = physical[std::make_pair(run->second.key, view.offset)];
                 if (!slot) slot = std::make_shared<Physical>();
@@ -1272,6 +1319,7 @@ private:
     static inline std::atomic<std::uint64_t> queries{0};
 #endif
     std::mutex mutex;
+    HANDLE zeroSection = nullptr;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;
     UnmapFunction unmap = nullptr;

@@ -5,10 +5,30 @@
 #include FT_MODULE_H
 #include FT_DRIVER_H
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
 using namespace FreeType;
+
+struct GuestGlyphToScriptMap {
+    GuestFaceRec* face;
+    std::uint16_t* map;
+};
+
+static int ReadGlyphToScriptMap(FT_Library library, const char* moduleName, const char* propertyName, void* output) {
+    GuestFaceRec* face = nullptr;
+    std::memcpy(&face, output, sizeof(face));
+    const GuestFace* owner = FaceOf(face);
+    FT_Prop_GlyphToScriptMap property{owner ? owner->host : nullptr, nullptr};
+    const int error = FT_Property_Get(library, moduleName, propertyName, &property);
+    if (!error) std::memcpy(static_cast<char*>(output) + offsetof(GuestGlyphToScriptMap, map), &property.map, sizeof(property.map));
+    return error;
+}
+
+static bool IsGlyphToScriptMap(const char* moduleName, const char* propertyName) {
+    return moduleName && propertyName && std::strcmp(moduleName, "autofitter") == 0 && std::strcmp(propertyName, "glyph-to-script-map") == 0;
+}
 
 static_assert(sizeof(FT_UInt) == sizeof(std::uint32_t));
 static_assert(sizeof(FT_Int32) == sizeof(std::int32_t));
@@ -84,6 +104,8 @@ int WriteIncreaseXHeight(FT_Library library, const char* moduleName, const char*
 
 extern "C" int APS5_VABI FT_Property_Get_nid_postfix(GuestLibrary* library, const char* moduleName,
     const char* propertyName, void* value) {
+    if (library && library->host && value && IsGlyphToScriptMap(moduleName, propertyName))
+        return ReadGlyphToScriptMap(library->host, moduleName, propertyName, value);
     const auto host = library ? library->host : nullptr;
     if (!host || !moduleName || !propertyName || !value) return FT_Property_Get(host, moduleName, propertyName, value);
     switch (TypeOf(moduleName, propertyName)) {
@@ -98,6 +120,10 @@ extern "C" int APS5_VABI FT_Property_Get_nid_postfix(GuestLibrary* library, cons
 
 extern "C" int APS5_VABI FT_Property_Set_nid_postfix(GuestLibrary* library, const char* moduleName,
     const char* propertyName, const void* value) {
+    if (library && library->host && value && IsGlyphToScriptMap(moduleName, propertyName)) {
+        FT_Prop_GlyphToScriptMap property{};
+        return FT_Property_Set(library->host, moduleName, propertyName, &property);
+    }
     const auto host = library ? library->host : nullptr;
     if (!host || !moduleName || !propertyName || !value) return FT_Property_Set(host, moduleName, propertyName, value);
     switch (TypeOf(moduleName, propertyName)) {
