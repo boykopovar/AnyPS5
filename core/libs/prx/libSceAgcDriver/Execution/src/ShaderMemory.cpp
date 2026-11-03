@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -78,6 +79,10 @@ constexpr std::uint64_t WordWaitNanoseconds = 50000;
 
 std::uint64_t imageViewGeneration(void*) {
     return GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+}
+
+bool imageViewsCurrent(void*, std::span<const ShaderRecompiler::RegisteredImageView> views) {
+    return DriverDetail::CaptureRegisteredViewsCurrent(views);
 }
 
 bool normalizeImageView(void*, std::uint32_t maxArrayLayers, std::array<std::uint32_t, 8>& descriptor, ShaderRecompiler::SrtImageViewIdentity& identity) {
@@ -835,6 +840,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.descriptorScope = &descriptorScope;
     runtime.normalizeImageView = &normalizeImageView;
     runtime.imageViewGeneration = &imageViewGeneration;
+    runtime.imageViewsCurrent = &imageViewsCurrent;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);

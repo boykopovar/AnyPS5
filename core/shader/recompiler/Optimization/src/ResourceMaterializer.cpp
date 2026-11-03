@@ -2719,11 +2719,15 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
                 const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
-                if ((runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) || afterImageGeneration != beforeImageGeneration) {
+                if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
                     continue;
                 }
+                nextSnapshot.registeredImages.clear();
                 for (const auto& table : nextSnapshot.tables.tables) {
                     for (const auto& view : table.resourceViews) nextSnapshot.registeredImages.insert(nextSnapshot.registeredImages.end(), view.identities.begin(), view.identities.end());
+                }
+                if (afterImageGeneration != beforeImageGeneration && (runtime.imageViewsCurrent == nullptr || !runtime.imageViewsCurrent(runtime.userContext, nextSnapshot.registeredImages))) {
+                    continue;
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
                 const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

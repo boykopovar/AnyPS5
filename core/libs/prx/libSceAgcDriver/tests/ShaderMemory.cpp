@@ -2366,6 +2366,93 @@ void verifyTypeZeroImageMaterialization() {
     }
 }
 
+void verifyAllocationChurnSnapshot() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t ids = 0u;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto userWord = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto load = [&](IrValue& address, std::uint32_t offset) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(offset);
+        auto& read = make(IrOpcode::LoadAddressU32, IrType::U32);
+        read.AddArgument(&address);
+        read.AddArgument(&immediate);
+        read.SetFlags(MemoryFlags{0, 0});
+        return read;
+    };
+    auto& base = make(IrOpcode::CompositeConstructU64, IrType::U64);
+    base.AddArgument(&userWord(0u));
+    base.AddArgument(&userWord(1u));
+    DescriptorSource descriptor;
+    descriptor.dwordCount = 4u;
+    for (std::uint32_t dword = 0; dword < 4u; ++dword) descriptor.dwords[dword] = &load(base, dword * 4u);
+    IrProgram program;
+    auto& resources = program.Resources();
+    resources.srtPlanComplete = true;
+    resources.resourceTrackingComplete = true;
+    resources.userDataCount = 2u;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    resources.memoryInfo.push_back(memory);
+    resources.descriptorSources.push_back(descriptor);
+    resources.info.buffers.push_back(BufferResource{});
+    const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+    constexpr std::uint64_t Base = 0x10000u;
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(Base), 0u};
+    std::array<std::uint32_t, 4> target{};
+    const auto targetAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(target.data()));
+    const std::array<std::uint32_t, 4> bufferV{static_cast<std::uint32_t>(targetAddress), static_cast<std::uint32_t>((targetAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    struct ChurnMemory {
+        std::array<std::uint32_t, 4> words{};
+        std::uint64_t generation = 0u;
+        std::uint32_t checks = 0u;
+        bool current = false;
+    };
+    for (const std::uint32_t mode : {0u, 1u, 2u}) {
+        ChurnMemory churn;
+        churn.words = bufferV;
+        churn.current = mode == 1u;
+        SrtRuntime runtime{userData};
+        runtime.userContext = &churn;
+        runtime.readMemory = +[](void* ctx, std::uint64_t address, std::uint32_t* value) {
+            auto& self = *static_cast<ChurnMemory*>(ctx);
+            if (address < Base || address >= Base + sizeof(self.words)) return false;
+            *value = self.words[static_cast<std::size_t>((address - Base) / sizeof(std::uint32_t))];
+            return true;
+        };
+        runtime.readSpecializationMemory = runtime.readMemory;
+        runtime.descriptorScope = +[](void*, std::size_t) -> std::uint64_t { return 0u; };
+        runtime.imageViewGeneration = +[](void* ctx) -> std::uint64_t { return ++static_cast<ChurnMemory*>(ctx)->generation; };
+        if (mode != 0u) {
+            runtime.imageViewsCurrent = +[](void* ctx, std::span<const RegisteredImageView>) {
+                auto& self = *static_cast<ChurnMemory*>(ctx);
+                ++self.checks;
+                return self.current;
+            };
+        }
+        ResourceSnapshot snapshot;
+        if (mode == 1u) {
+            ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+            require(!snapshot.buffers.empty() && std::equal(bufferV.begin(), bufferV.end(), snapshot.buffers[0].dwords.begin()) && churn.checks == 1u,
+                    "allocation churn: a snapshot whose image views stayed current was not accepted on the first pass while unrelated guest allocations kept moving the generation");
+        } else {
+            expectFailure([&] { ResourceMaterializer{}.Materialize(plan, runtime, snapshot); }, "did not stabilize",
+                          mode == 0u ? "allocation churn: without an image view check, a snapshot taken while the allocation generation moved was accepted"
+                                     : "allocation churn: a snapshot whose image views no longer match their allocations was accepted");
+        }
+    }
+}
+
 void verifyUnsetFormatImageMaterialization() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 8> measuredImage{0xffffffffu, 0xffffffffu, 0x00000019u, 0xc0017901u, 0x00000342u, 0xc8000000u, 0xc0064900u, 0x0000062fu};
@@ -11543,6 +11630,7 @@ int main(int argc, char** argv) {
         const auto nullRootRegions = nullRoot.Regions();
         request.context.memory = nullRootRegions;
         require(Recompile(request, *nullRootCapture)->poisonedSrtReads >= nullRootCapture->snapshot.nullRootReads, "a capture through a null user-data pointer is cacheable");
+        verifyAllocationChurnSnapshot();
         std::cout << "Shader memory capture, strict validation and deterministic replay passed\n";
         return 0;
     } catch (const std::exception& error) {
