@@ -447,6 +447,10 @@ void TestMultipartParts() {
     Require(sceNpWebApiAddMultipartPart(-1, &validParam, &index) == LibContextNotFound, "add part to request -1");
     Require(sceNpWebApiAddMultipartPart(unknownUser, &validParam, &index) == UserContextNotFound, "add part to unknown user context");
     Require(sceNpWebApiAddMultipartPart(multipartRequest + 0x10000, &validParam, &index) == RequestNotFound, "add part to unknown request");
+    const NpWebApiMultipartPartParameter nullHeaders{nullptr, 1, 10};
+    Require(sceNpWebApiAddMultipartPart(-1, &nullHeaders, &index) == LibContextNotFound, "null headers before library lookup");
+    Require(sceNpWebApiAddMultipartPart(unknownUser, &nullHeaders, &index) == UserContextNotFound, "null headers before user lookup");
+    Require(sceNpWebApiAddMultipartPart(multipartRequest + 0x10000, &nullHeaders, &index) == RequestNotFound, "null headers before request lookup");
 
     Require(sceNpWebApiAddMultipartPart(multipartRequest, &validParam, &index) == 0, "add first multipart part");
     Require(index == 1, "first part index is 1");

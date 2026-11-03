@@ -380,11 +380,11 @@ int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char
 
 int APS5_VABI sceNpWebApiAddMultipartPart(std::int64_t requestId, const NpWebApiMultipartPartParameter* parameter, int* partIndex) {
     if (!parameter) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
-    if (parameter->headerNum != 0 && !parameter->headers) NotImplemented_nid_no_patch(__func__);
     std::lock_guard lock(contextsMutex);
     const auto lookup = findRequest(requestId);
     if (lookup.error != 0) return lookup.error;
     if (!lookup.request->multipart) NotImplemented_nid_no_patch(__func__);
+    if (parameter->headerNum != 0 && !parameter->headers) NotImplemented_nid_no_patch(__func__);
     lookup.request->multipartParts.push_back({parameter->contentLength, 0});
     if (partIndex) *partIndex = static_cast<int>(lookup.request->multipartParts.size());
     return 0;
