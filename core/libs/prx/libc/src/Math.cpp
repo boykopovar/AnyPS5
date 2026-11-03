@@ -1515,6 +1515,17 @@ double APS5_VABI sinh_nid_postfix(double x) {
     errno = ERANGE;
     return x * shuge;
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_cosh.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_cosh.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI cosh_nid_postfix(double x) {
     static volatile double huge = 1.0e+300;
     const std::uint32_t ix = static_cast<std::uint32_t>(std::bit_cast<std::uint64_t>(x) >> 32) & 0x7fffffffu;
