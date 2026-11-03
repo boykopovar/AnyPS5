@@ -417,6 +417,16 @@ static void CheckGetprioOfTheCallingThread() {
     Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
 }
 
+static void CheckSetStackSizeOnUnsetAttributes() {
+    PthreadAttr unset = nullptr;
+    PthreadAttr destroyed = nullptr;
+    Require(scePthreadAttrInit(&destroyed) == SCE_OK);
+    Require(scePthreadAttrDestroy(&destroyed) == SCE_OK);
+    Require(pthread_attr_setstacksize_nid_postfix(nullptr, STACK_SIZE) == GUEST_EINVAL);
+    Require(pthread_attr_setstacksize_nid_postfix(&unset, STACK_SIZE) == GUEST_EINVAL);
+    Require(pthread_attr_setstacksize_nid_postfix(&destroyed, STACK_SIZE) == GUEST_EINVAL);
+}
+
 int main() {
     CheckGetprioOfTheCallingThread();
     CheckStackSizeLimit();
@@ -427,6 +437,7 @@ int main() {
     CheckSchedPolicyAndStackGetters();
     CheckThreadScope();
     CheckEndedThreads();
+    CheckSetStackSizeOnUnsetAttributes();
     PthreadAttr attr = nullptr;
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrSetinheritsched(&attr, EXPLICIT_SCHED) == SCE_OK);
