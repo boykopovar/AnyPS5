@@ -378,4 +378,4 @@ int APS5_VABI cairo_get_dash_count(CairoContext* context) {
     return state ? state->style.dashCount : 0;
 }
 
-} // extern "C"
+}

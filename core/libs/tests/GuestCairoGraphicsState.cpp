@@ -44,7 +44,7 @@ void CheckDefaultsAndSaveRestore() {
     double offset = -1;
     cairo_get_dash(context, retrieved.data(), &offset);
     assert(retrieved == original);
-    Near(offset, 13); // Doubled odd dash cycle of 18.
+    Near(offset, 13);
 
     cairo_save(context);
     cairo_set_line_width(context, -2);
@@ -111,15 +111,15 @@ void CheckDashValidationAndStress() {
         cairo_surface_destroy(surface);
         cairo_set_dash(context, valid.data(), 2, 0);
         cairo_save(context);
-        cairo_set_dash(context, bad.data(), 2, 0); // Sticky INVALID_DASH.
+        cairo_set_dash(context, bad.data(), 2, 0);
         assert(cairo_surface_status(cairo_get_target(context)) == 1);
         assert(cairo_get_dash_count(context) == 0);
-        cairo_destroy(context); // Must free the saved and current dash buffers.
+        cairo_destroy(context);
     }
     CairoSurface* surface = cairo_image_surface_create(0, 1, 1);
     CairoContext* nullDash = cairo_create(surface);
     cairo_surface_destroy(surface);
-    cairo_set_dash(nullDash, nullptr, 1, 0); // Invalid, no pointer dereference.
+    cairo_set_dash(nullDash, nullptr, 1, 0);
     assert(cairo_surface_status(cairo_get_target(nullDash)) == 1);
     cairo_destroy(nullDash);
 
