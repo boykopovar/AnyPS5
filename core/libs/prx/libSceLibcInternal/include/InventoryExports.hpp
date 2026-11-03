@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -272,8 +273,8 @@ int APS5_VABI libSceLibcInternalInventory_264_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_265_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_266_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_267_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_268_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_269_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_268_nid_no_patch(void);
+std::uint64_t APS5_VABI libSceLibcInternalInventory_269_nid_no_patch(void);
 int APS5_VABI libSceLibcInternalInventory_270_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_271_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_272_nid_no_patch();
@@ -281,11 +282,11 @@ int APS5_VABI libSceLibcInternalInventory_273_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_274_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_275_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_276_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_277_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_278_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_279_nid_no_patch();
+void APS5_VABI libSceLibcInternalInventory_277_nid_no_patch(int* locks);
+void APS5_VABI libSceLibcInternalInventory_278_nid_no_patch(const char* format, ...);
+int APS5_VABI libSceLibcInternalInventory_279_nid_no_patch(void);
 int APS5_VABI libSceLibcInternalInventory_280_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_281_nid_no_patch();
+std::uint64_t APS5_VABI libSceLibcInternalInventory_281_nid_no_patch(void);
 int APS5_VABI libSceLibcInternalInventory_282_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_283_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_284_nid_no_patch();

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
@@ -1351,13 +1352,12 @@ int APS5_VABI libSceLibcInternalInventory_267_nid_no_patch() {
 }
 APS5_EXPORT("yAZ5vOpmBus", libSceLibcInternalInventory_267_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_268_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_268_nid_no_patch(void) {
 }
 APS5_EXPORT("6NCOqr3cD74", libSceLibcInternalInventory_268_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_269_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libSceLibcInternalInventory_269_nid_no_patch(void) {
+    return 0;
 }
 APS5_EXPORT("RnqlvEmvkdw", libSceLibcInternalInventory_269_nid_no_patch);
 
@@ -1396,18 +1396,18 @@ int APS5_VABI libSceLibcInternalInventory_276_nid_no_patch() {
 }
 APS5_EXPORT("-u3XfqNumMU", libSceLibcInternalInventory_276_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_277_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_277_nid_no_patch(int* locks) {
+    (void)locks;
 }
 APS5_EXPORT("i-7v8+UGglc", libSceLibcInternalInventory_277_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_278_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_278_nid_no_patch(const char* format, ...) {
+    (void)format;
 }
 APS5_EXPORT("dmHEVUqDYGw", libSceLibcInternalInventory_278_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_279_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceLibcInternalInventory_279_nid_no_patch(void) {
+    return 7;
 }
 APS5_EXPORT("AdYYKgtPlqg", libSceLibcInternalInventory_279_nid_no_patch);
 
@@ -1416,8 +1416,8 @@ int APS5_VABI libSceLibcInternalInventory_280_nid_no_patch() {
 }
 APS5_EXPORT("gRw4XrztJ4Q", libSceLibcInternalInventory_280_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_281_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+std::uint64_t APS5_VABI libSceLibcInternalInventory_281_nid_no_patch(void) {
+    return 0;
 }
 APS5_EXPORT("1nZ4Xfnyp38", libSceLibcInternalInventory_281_nid_no_patch);
 
