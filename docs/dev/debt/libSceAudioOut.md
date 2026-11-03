@@ -40,6 +40,38 @@
 | `Unknown` | `tvPlXmc4MHs` |
 | `Unknown` | `yt9g5kdJy1o` |
 
+- [Later callable exports](../../../core/libs/prx/libSceAudioOut/src/InventoryExports.cpp) - 27 import-resolution declarations throw through `NotImplemented_nid_no_patch`; prototypes and behavior are unverified. Only the 13.60-labelled image contains these NIDs, in module `libSceAudioOut` under logical library `libSceAudioOut2`; the label does not independently authenticate firmware provenance. The NIDs are absent from the pinned public 3.20 catalogue and the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). The eight names are verified only by hashing to their NIDs with `tools/nid_names.py`; the other 19 are unidentified.
+
+| Name | NID |
+| --- | --- |
+| `sceAudioOut2CustomHrtfIsExist` | `Fxe9sj++wAc` |
+| `sceAudioOut2Enable3DAudioForUserForCronos` | `WbivTaBo+Do` |
+| `sceAudioOut2EnableCinematicVrRotation` | `9Vtt4RU9-YA` |
+| `sceAudioOut2EnableMonoHpOutput` | `gUg2q4DIW7g` |
+| `sceAudioOut2EnableTVCorrection` | `vmgNwWTCPYc` |
+| `sceAudioOut2SetHearingAssist` | `y8CNZsOqKTc` |
+| `sceAudioOut2SetSparkEQ` | `5tnxDLdHpOM` |
+| `sceAudioOut2SetSpeakerInfoForCronos` | `L9eGzD0FuEg` |
+| `Unknown` | `0E-UkHm+hZI` |
+| `Unknown` | `0rE3t9ZgyXE` |
+| `Unknown` | `7uryG3ZsXQU` |
+| `Unknown` | `9rWEssK8GMk` |
+| `Unknown` | `BDnwsIqujuQ` |
+| `Unknown` | `EeEaULhU2-g` |
+| `Unknown` | `ElgxuhkuY-k` |
+| `Unknown` | `GKzVK6pYgTk` |
+| `Unknown` | `NuGwMXbT8RU` |
+| `Unknown` | `QEcXEGqvnb4` |
+| `Unknown` | `aFxSMCVm5mQ` |
+| `Unknown` | `cRISiyyeyps` |
+| `Unknown` | `cYDvFPDrl6g` |
+| `Unknown` | `dDyfkQG1MPc` |
+| `Unknown` | `fcv6kkqIs1Y` |
+| `Unknown` | `g-JTbmmuf7M` |
+| `Unknown` | `mWypJWwaLcc` |
+| `Unknown` | `tylNHKM16GA` |
+| `Unknown` | `yd-81WQGSTw` |
+
 ### Silent stubs
 
 - [sceAudioOut2LoTerminate](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp) (libSceAudioOut) - returns 0, as the PS5 13.60 module (0x248d0) does whether or not the low-latency service runs. The module disconnects from the audio server and clears the service tables; here `sceAudioOut2LoInit` starts no service and open contexts and ports are left as they are
