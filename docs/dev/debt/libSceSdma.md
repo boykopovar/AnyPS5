@@ -9,3 +9,8 @@
 ### Functional
 
 - [libSceSdma](../../../core/libs/prx/libSceSdma/Export.cpp): the behaviour of Open, Close, the linear, fill and L2L window copies, fences and queue mode is not measured on a console. Copies run on the CPU when the queue is kicked, so a blocking call returns after they finish and the ring and fence area of the working buffer are never written. The order of source and destination and the fill size bit are read through AMD's public SDMA packet layouts. A fill with a pattern whose bytes differ throws in the default fill size and on unaligned ranges, and window fields outside their packet widths, commands larger than the ring and cancelling a queue of more than 65535 dwords throw: pending dwords are counted in 16 bits, so the ring checks see the wrapped count and a cancel would rewind only that many. Copies read guest memory directly, without waiting for GPU work that writes the source.
+
+### Silent stubs
+
+- [sceSdmaInitialize, sceSdmaFinalize, sceSdmaQueryWorkingBufferSize](../../../core/libs/prx/libSceSdma/Export.cpp) (libSceSdma) - `sceSdmaInitialize` and `sceSdmaFinalize` return success without hardware engine allocation: AnyPS5 emulates SDMA queues through host software buffers. `sceSdmaQueryWorkingBufferSize` returns 0x8000 matching the minimum working buffer without hardware query.
+
