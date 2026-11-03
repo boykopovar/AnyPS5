@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <cstdio>
+#include <atomic>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -261,23 +262,34 @@ static void InitializeLinuxGuestModule(void* native) {
 static std::mutex initializedLock;
 static std::condition_variable initializedChanged;
 
-static void InitializeDeferredModule(HMODULE native, HMODULE initiator = nullptr);
+static void InitializeDeferredModule(HMODULE native, const std::string& reason = {});
 
-static std::vector<std::string> DeferredDependencyNames(const std::uint32_t* table) {
+struct DeferredLists {
+    std::vector<std::string> dependencies;
+    std::vector<std::string> sweep;
+};
+
+static DeferredLists DeferredListNames(const std::uint32_t* table) {
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
     constexpr std::uint32_t dependenciesMagic = 0x44504541;
+    constexpr std::uint32_t sweepMagic = 0x57534550;
     constexpr std::uint32_t maximumDependencies = 4096;
-    std::vector<std::string> names;
+    DeferredLists lists;
     const auto count = table[1];
-    if (count == initializing) return names;
-    const auto* list = table + 2 + count;
-    if (list[0] != dependenciesMagic || list[1] == 0 || list[1] > maximumDependencies) return names;
-    const auto* name = reinterpret_cast<const char*>(list + 2);
-    for (std::uint32_t index = 0; index < list[1]; ++index) {
-        names.emplace_back(name);
-        name += names.back().size() + 1;
+    if (count == initializing) return lists;
+    const auto* cursor = reinterpret_cast<const char*>(table + 2 + count);
+    for (int block = 0; block < 2; ++block) {
+        std::uint32_t header[2];
+        std::memcpy(header, cursor, sizeof(header));
+        if ((header[0] != dependenciesMagic && header[0] != sweepMagic) || header[1] == 0 || header[1] > maximumDependencies) break;
+        auto& names = header[0] == dependenciesMagic ? lists.dependencies : lists.sweep;
+        cursor += sizeof(header);
+        for (std::uint32_t index = 0; index < header[1]; ++index) {
+            names.emplace_back(cursor);
+            cursor += names.back().size() + 1;
+        }
     }
-    return names;
+    return lists;
 }
 
 static std::string ModuleFileName(HMODULE module) {
@@ -286,27 +298,28 @@ static std::string ModuleFileName(HMODULE module) {
     return std::string(buffer, length < MAX_PATH ? length : 0);
 }
 
-static void InitializeDeferredModule(HMODULE native, HMODULE initiator) {
+static void InitializeDeferredModule(HMODULE native, const std::string& reason) {
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
     using Initializer = void (APS5_VABI *)(int, char**, char**);
     constexpr auto initializing = std::numeric_limits<std::uint32_t>::max();
+    static std::atomic<bool> sweepStarted{false};
     thread_local std::vector<HMODULE> resolving;
     if (std::find(resolving.begin(), resolving.end(), native) != resolving.end()) return;
     auto* table = reinterpret_cast<std::uint32_t*>(GetProcAddress(native, "__aps5_guest_initialize"));
     if (!table) return;
-    std::vector<std::string> dependencies;
+    DeferredLists lists;
     {
         std::lock_guard lock(initializedLock);
-        dependencies = DeferredDependencyNames(table);
+        lists = DeferredListNames(table);
     }
-    if (!dependencies.empty()) {
-        auto* pendingArgs = const_cast<PendingModuleArgs*>(static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch()));
-        const auto initiating = *pendingArgs;
+    auto* pendingArgs = const_cast<PendingModuleArgs*>(static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch()));
+    const auto initiating = *pendingArgs;
+    const auto startAll = [&](const std::vector<std::string>& names, const std::string& why, const char* kind) {
         resolving.push_back(native);
         try {
-            for (const auto& name : dependencies) {
-                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && dependency != native) InitializeDeferredModule(dependency, native);
-                else if (!dependency) std::fprintf(stderr, "[module] deferred dependency %s of %s is not mapped and is not started\n", name.c_str(), ModuleFileName(native).c_str());
+            for (const auto& name : names) {
+                if (const auto dependency = GetModuleHandleA(name.c_str()); dependency && dependency != native) InitializeDeferredModule(dependency, why);
+                else if (!dependency) std::fprintf(stderr, "[module] deferred %s %s of %s is not mapped and is not started\n", kind, name.c_str(), ModuleFileName(native).c_str());
                 *pendingArgs = initiating;
             }
         } catch (...) {
@@ -316,7 +329,15 @@ static void InitializeDeferredModule(HMODULE native, HMODULE initiator) {
         }
         resolving.pop_back();
         __aps5_set_module_init_result_nid_no_patch(0);
+    };
+    if (reason.empty() && !lists.sweep.empty() && !sweepStarted.exchange(true)) {
+        std::string listed;
+        for (const auto& name : lists.sweep) listed += " " + name;
+        const auto trigger = ModuleFileName(native);
+        std::fprintf(stderr, "[module] deferred sweep at the first load of %s, starting what other modules depend on:%s\n", trigger.c_str(), listed.c_str());
+        startAll(lists.sweep, "swept at the first load of " + trigger, "sweep module");
     }
+    if (!lists.dependencies.empty()) startAll(lists.dependencies, "needed by " + ModuleFileName(native), "dependency");
     const auto owner = GetCurrentThreadId();
     std::unique_lock lock(initializedLock);
     while (table[1] == initializing) {
@@ -346,8 +367,7 @@ static void InitializeDeferredModule(HMODULE native, HMODULE initiator) {
         if (!restored) throw std::system_error(static_cast<int>(error), std::system_category(), "restore deferred module initialization metadata");
     };
     try {
-        std::fprintf(stderr, "[module] deferred start %s (%s)\n", ModuleFileName(native).c_str(),
-            initiator ? ("needed by " + ModuleFileName(initiator)).c_str() : "loaded by the title");
+        std::fprintf(stderr, "[module] deferred start %s (%s)\n", ModuleFileName(native).c_str(), reason.empty() ? "loaded by the title" : reason.c_str());
         auto* base = reinterpret_cast<std::uint8_t*>(native);
         const auto* pending = static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());
         if (entry != 0) __aps5_set_module_init_result_nid_no_patch(reinterpret_cast<Entry>(base + entry)(pending->args, pending->argp, nullptr));

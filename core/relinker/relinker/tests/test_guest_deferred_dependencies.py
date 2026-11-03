@@ -161,7 +161,7 @@ def main():
             assert result.returncode == 0, (root, result.stdout, result.stderr)
             for name in ("plugin", "consumer", "provider"):
                 exports = pe_export_names((windows / "app0" / "Media" / "Plugins" / f"{name}.prx.guest.prx").read_bytes())
-                assert ("__aps5_guest_initialize" in exports) == (root != "bundled" and (root != "executable" or name == "plugin")), (root, name, exports)
+                assert ("__aps5_guest_initialize" in exports) == (root != "bundled"), (root, name, exports)
             modules = {name: (windows / "app0" / "Media" / "Plugins" / f"{name}.prx.guest.prx").read_bytes() for name in ("plugin", "consumer", "provider")}
             started_later = {name: "__aps5_guest_initialize" in pe_export_names(data) for name, data in modules.items()}
             for name, dependency in (("plugin", "consumer"), ("consumer", "provider"), ("provider", None)):
@@ -170,7 +170,7 @@ def main():
                 expected = [f"{dependency}.prx.guest.prx"] if dependency and started_later[dependency] else []
                 listed = deferred_dependencies(modules[name])
                 assert listed == expected, (root, name, listed, expected)
-            if root not in ("bundled", "executable"):
+            if root != "bundled":
                 assert deferred_dependencies(modules["plugin"]) == ["consumer.prx.guest.prx"], root
             if sys.platform == "linux" and os.uname().machine == "x86_64":
                 libraries = case / "libs"

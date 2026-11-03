@@ -81,7 +81,7 @@ static void APS5_VABI NestedLoad(const char* path) {
 }
 
 int main(int argc, char** argv) {
-    Require(argc == 3 || (argc == 4 && std::string(argv[2]).starts_with("dependency")), "fixture and mode required");
+    Require(argc == 3 || (argc == 4 && (std::string(argv[2]).starts_with("dependency") || std::string(argv[2]) == "sweep")), "fixture and mode required");
     const auto file = std::filesystem::absolute(argv[1]);
     const auto path = file.string();
     const std::string mode = argv[2];
@@ -152,15 +152,15 @@ int main(int argc, char** argv) {
         Counts(id, 1, 1);
         MetadataProtected(id);
         Close(id);
-    } else if (mode == "dependency" || mode == "dependency-nested") {
+    } else if (mode == "dependency" || mode == "dependency-nested" || mode == "sweep") {
         const auto provider = std::filesystem::absolute(argv[3]);
         const auto providerPath = provider.string();
         HMODULE mapped = LoadLibraryW(provider.c_str());
         Require(mapped != nullptr, "map the provider without starting it");
         Require(NativeCounter(mapped, "DeferredStarts_nid_no_patch") == 0, "the provider is not started by mapping it");
         GuestDeferredModuleArgs args;
-        args.Mode = mode == "dependency" ? 3 : 4;
-        args.Reenter = mode == "dependency" ? ProviderStartedFirst : NestedLoad;
+        args.Mode = mode == "dependency-nested" ? 4 : 3;
+        args.Reenter = mode == "dependency-nested" ? NestedLoad : ProviderStartedFirst;
         args.Path = providerPath.c_str();
         const int dependent = Open(path, &args);
         Counts(dependent, 1, 1);

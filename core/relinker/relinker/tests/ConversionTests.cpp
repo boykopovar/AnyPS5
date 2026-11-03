@@ -413,7 +413,7 @@ bool zeroFilled(const std::vector<std::uint8_t>& pe, std::uint32_t address) {
     throw std::runtime_error("Unmapped PE address");
 }
 
-std::vector<std::string> deferredDependencies(const std::vector<std::uint8_t>& pe) {
+std::vector<std::string> deferredNames(const std::vector<std::uint8_t>& pe, std::uint32_t wanted) {
     const auto directory = fileOffset(pe, Io::ReadU32(pe, Io::ReadU32(pe, 0x3c) + 24 + 112));
     const auto names = fileOffset(pe, Io::ReadU32(pe, directory + 32));
     const auto ordinals = fileOffset(pe, Io::ReadU32(pe, directory + 36));
@@ -425,17 +425,25 @@ std::vector<std::string> deferredDependencies(const std::vector<std::uint8_t>& p
         if (zeroFilled(pe, address)) return result;
         const auto table = fileOffset(pe, address);
         auto position = table + 8 + static_cast<std::size_t>(Io::ReadU32(pe, table + 4)) * 4;
-        if (Io::ReadU32(pe, position) != Relinker::GuestDeferredDependenciesMagic) return result;
-        const auto count = Io::ReadU32(pe, position + 4);
-        position += 8;
-        for (std::uint32_t listed = 0; listed < count; ++listed) {
-            result.emplace_back(reinterpret_cast<const char*>(pe.data() + position));
-            position += result.back().size() + 1;
+        for (int block = 0; block < 2; ++block) {
+            const auto magic = Io::ReadU32(pe, position);
+            if (magic != Relinker::GuestDeferredDependenciesMagic && magic != Relinker::GuestDeferredSweepMagic) break;
+            const auto count = Io::ReadU32(pe, position + 4);
+            position += 8;
+            for (std::uint32_t listed = 0; listed < count; ++listed) {
+                const std::string name(reinterpret_cast<const char*>(pe.data() + position));
+                if (magic == wanted) result.push_back(name);
+                position += name.size() + 1;
+            }
         }
         return result;
     }
     throw std::runtime_error("No deferred initialization table");
 }
+
+std::vector<std::string> deferredDependencies(const std::vector<std::uint8_t>& pe) { return deferredNames(pe, Relinker::GuestDeferredDependenciesMagic); }
+
+std::vector<std::string> deferredSweep(const std::vector<std::uint8_t>& pe) { return deferredNames(pe, Relinker::GuestDeferredSweepMagic); }
 
 void runtimeDirectories() {
     TestProgress progress;
@@ -473,18 +481,18 @@ void runtimeDirectories() {
     }
     {
         auto source = input();
-        const auto modules = source.ModuleRoot / "Media/Modules";
         const auto plugins = source.ModuleRoot / "Media/Plugins";
-        source.Executable = fixture("consumer.prx");
-        source.Modules.push_back({modules / "consumer.prx", fixture("provider.prx")});
-        source.Modules.push_back({plugins / "provider.prx", fixture()});
-        source.RuntimeDirectories.push_back(modules);
+        source.Modules.push_back({plugins / "core.prx", fixture("common.prx")});
+        source.Modules.push_back({plugins / "common.prx", fixture()});
+        source.Modules.push_back({plugins / "other.prx", fixture()});
         source.RuntimeDirectories.push_back(plugins);
         const auto output = converter.Convert(std::move(source), options);
-        require(output.Modules.size() == 2, "Modules were not converted");
+        require(output.Modules.size() == 3, "Modules were not converted");
         for (const auto& module : output.Modules) {
-            const bool consumer = module.SourcePath.filename() == "consumer.prx";
-            require(exports(module.Bytes, Relinker::GuestInitializeExport) == consumer, "Wrong start of a module the deferred module the executable needs depends on");
+            const auto name = module.SourcePath.filename().string();
+            require(exports(module.Bytes, Relinker::GuestInitializeExport), "A plugin was not deferred");
+            require(deferredSweep(module.Bytes) == std::vector<std::string>{"common.prx.guest.prx"}, ("Wrong sweep list of " + name).c_str());
+            require(deferredDependencies(module.Bytes) == (name == "core.prx" ? std::vector<std::string>{"common.prx.guest.prx"} : std::vector<std::string>{}), ("Wrong dependencies of " + name).c_str());
         }
     }
 }

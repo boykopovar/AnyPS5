@@ -350,6 +350,18 @@ if(BUILD_TESTING)
         configure_windows_unwind(guest_deferred_dependent_fixture)
         set_target_properties(guest_deferred_dependent_fixture PROPERTIES PREFIX "" SUFFIX ".guest.prx")
         add_dependencies(guest_deferred_module_tests guest_deferred_dependent_fixture)
+        add_library(guest_deferred_sweep_fixture SHARED
+            ${LIBS_INCLUDE_DIR}/tests/GuestDeferredModuleFixture.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestDeferredSweepFixture.S)
+        target_include_directories(guest_deferred_sweep_fixture PRIVATE ${LIBS_INCLUDE_DIR})
+        target_compile_definitions(guest_deferred_sweep_fixture PRIVATE GUEST_DEFERRED_DEPENDENT_FIXTURE=1)
+        target_link_options(guest_deferred_sweep_fixture PRIVATE -Wl,--image-base,0x3a000000 -Wl,--disable-dynamicbase)
+        configure_windows_unwind(guest_deferred_sweep_fixture)
+        set_target_properties(guest_deferred_sweep_fixture PROPERTIES PREFIX "" SUFFIX ".guest.prx")
+        add_dependencies(guest_deferred_module_tests guest_deferred_sweep_fixture)
+        add_test(NAME guest_deferred_module_sweep COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_sweep_fixture> sweep $<TARGET_FILE:guest_deferred_module_fixture>)
+        set_tests_properties(guest_deferred_module_sweep PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         foreach(mode IN ITEMS dependency dependency-nested)
             add_test(NAME guest_deferred_module_${mode} COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_dependent_fixture> ${mode} $<TARGET_FILE:guest_deferred_module_fixture>)
             set_tests_properties(guest_deferred_module_${mode} PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
