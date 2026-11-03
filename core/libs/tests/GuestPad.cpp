@@ -931,6 +931,36 @@ static void CheckControllerType(int handle) {
         Require(scePadIsRemoteController(invalid, nullptr) == PAD_ERROR_INVALID_HANDLE);
     }
 }
+static void CheckControllerQueries(int handle) {
+    int busType = -1;
+    int jack = -1;
+    PadContainerIdInformation container{};
+    Require(scePadGetParticularMode() == 0);
+    Require(scePadSetParticularMode(true) == PAD_OK);
+    Require(scePadGetParticularMode() == 1);
+    Require(scePadSetParticularMode(false) == PAD_OK);
+    Require(scePadGetParticularMode() == 0);
+    for (const int invalid : {-9999, -100, -2, -1, 0, handle + 1, 9999}) {
+        Require(scePadGetControllerBusType(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadGetJackState(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadGetContainerIdInformation(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadGetControllerBusType(invalid, &busType) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadGetJackState(invalid, &jack) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadIsControllerUpdateRequired(invalid) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadGetContainerIdInformation(invalid, &container) == PAD_ERROR_INVALID_HANDLE);
+    }
+    Require(busType == -1 && jack == -1 && container.size == 0);
+    Require(scePadGetControllerBusType(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetControllerBusType(handle, &busType) == PAD_OK);
+    Require(busType == PAD_CONNECT_TYPE_BLUETOOTH);
+    Require(scePadGetJackState(handle, &jack) == PAD_OK);
+    Require(jack == 0);
+    Require(scePadIsControllerUpdateRequired(handle) == 0);
+    std::memset(&container, 0x5a, sizeof(container));
+    Require(scePadGetContainerIdInformation(handle, &container) == PAD_OK);
+    Require(container.size == 0 && container.id[0] == '\0');
+}
+
 
 static void CheckInjectedState(const std::filesystem::path& path) {
     PadInputState physical;
@@ -1254,6 +1284,7 @@ int main() {
     CheckVibrationForce(user, handle);
     CheckTriggerEffect(user, handle);
     CheckControllerType(handle);
+    CheckControllerQueries(handle);
     CheckInjectedState(commandPath);
     CheckInjectedQueueTimes(commandPath);
     PadLightBarParam lightBar{255, 128, 64};
