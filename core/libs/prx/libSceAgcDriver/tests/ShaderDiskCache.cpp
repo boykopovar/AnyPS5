@@ -159,6 +159,7 @@ bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<
 void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShaderArtifact& right, const char* what) {
     const std::string prefix = std::string(what) + ": ";
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
+    require(left.meshWindowBuffer == right.meshWindowBuffer, prefix + "mesh window buffer flags differ");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
     require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
@@ -248,7 +249,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.samplerCoordinatesIgnored = {false, seed % 2 == 0, true};
     binding.imageUnnormalized = {true, false, seed % 2 == 0};
     binding.imageUnnormalizedBaseLevel = {false, true, seed % 3 == 0};
-    binding.imageSamplers = {0x5u, 0u, 0x80000000u};
+    binding.imageSamplers = {0x5u, 0u, 0x8000000080000000u};
     binding.bufferRead = {true, false, false, true, true, false};
     binding.bufferExtent = {32, 0, 16, 4096, 8, 0};
     return binding;
@@ -256,6 +257,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
 
 RecompileResult sampleResult() {
     RecompileResult result;
+    result.meshWindowBuffer = true;
     std::vector<std::uint32_t> words(1000);
     for (std::size_t i = 0; i < words.size(); ++i) words[i] = static_cast<std::uint32_t>(i * 2654435761u);
     words[0] = 0x07230203u;
@@ -360,6 +362,9 @@ CompiledVariant sampleVariant() {
     image.sampledOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
+    image.layerRowsCompatible = false;
+    image.layerRows = true;
+    image.maxArrayLayers = 0x01020304u;
     image.optionalDescriptor = true;
     image.byElements = 4;
     image.byComponents = 1;
@@ -449,6 +454,13 @@ void verifyResultRoundTrip() {
     require(ShaderDiskCache::DecodeResult(bytes, decoded), "an encoded result does not decode");
     requireSameResult(result, decoded, "result round trip");
     require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
+    auto memoized = result;
+    memoized.drawKeyMemo.words.store(std::make_shared<const std::vector<std::uint32_t>>(std::vector<std::uint32_t>{1u, 2u, 3u}));
+    std::vector<std::byte> memoizedBytes;
+    ShaderDiskCache::EncodeResult(memoized, memoizedBytes);
+    require(memoizedBytes == bytes, "the draw key memo was stored");
+    RecompileResult memoizedDecoded;
+    require(ShaderDiskCache::DecodeResult(memoizedBytes, memoizedDecoded) && !memoizedDecoded.drawKeyMemo.words.load(), "a decoded result has a draw key memo");
     for (std::size_t size = 0; size < bytes.size(); size += size < 256 ? 1 : 97) {
         RecompileResult partial;
         require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial), "a result truncated to " + std::to_string(size) + " bytes decodes");
@@ -498,10 +510,10 @@ void verifyEntryRoundTrip() {
     previousVersion[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodeEntry(previousVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with the previous format version loads");
     auto priorStencilVersion = file;
-    priorStencilVersion[4] = std::byte{32};
+    priorStencilVersion[4] = std::byte{50};
     require(ShaderDiskCache::DecodeEntry(priorStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an artifact with the prior stencil format loads");
     auto upstreamVersion = file;
-    upstreamVersion[4] = std::byte{33};
+    upstreamVersion[4] = std::byte{52};
     require(ShaderDiskCache::DecodeEntry(upstreamVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil artifact with the upstream resource plan format loads");
     auto incompatible = variant;
     incompatible.artifact.runtimeAbiVersion = RuntimeAbi::Version + 1u;
@@ -845,6 +857,7 @@ void verifyKeySensitivity() {
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("LDS lock fences", [](SampleRequest& sample) { sample.request.target.ldsLockFences = true; });
+    changes("mesh window buffers", [](SampleRequest& sample) { sample.request.target.meshWindowBuffer = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
