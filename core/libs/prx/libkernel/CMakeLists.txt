@@ -10,6 +10,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/Kqueue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/DirectoryDescriptor.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/FileLock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/File/src/FilesystemForwards.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/NativeStat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Terminal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Open.cpp
@@ -619,6 +620,13 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_kernel_is_stack PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_main_stack_tests ${LIBS_INCLUDE_DIR}/tests/GuestMainStack.cpp)
+        target_include_directories(guest_main_stack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_main_stack_tests PRIVATE libkernel libc)
+        add_test(NAME guest_main_stack COMMAND guest_main_stack_tests)
+        set_tests_properties(guest_main_stack PROPERTIES TIMEOUT 20)
     endif()
     if(APPLE)
         add_test_executable(guest_main_stack_move_tests ${LIBS_INCLUDE_DIR}/tests/GuestMainStackMove.cpp)
