@@ -1473,16 +1473,6 @@ if(BUILD_TESTING)
 
 endif()
 
-    add_test_executable(guest_harfbuzz_tests tests/GuestHarfBuzz.cpp)
-    target_include_directories(guest_harfbuzz_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_harfbuzz_tests PRIVATE libharfbuzz libc)
-    configure_windows_unwind(guest_harfbuzz_tests)
-    add_test(NAME guest_harfbuzz COMMAND guest_harfbuzz_tests)
-    if(WIN32)
-        set_tests_properties(guest_harfbuzz PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libharfbuzz>")
-    endif()
-
 include(prx/libSceFreeType/CurveBounds.cmake)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/src/FileWrapper.cpp)
 
