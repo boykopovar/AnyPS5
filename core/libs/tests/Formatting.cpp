@@ -421,9 +421,47 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(ScanList(" -0B11", "%i", &binary) == 1 && binary == 0);
     Require(ScanListS("0b1", "%i", &binary) == 1 && binary == 0);
     Require(sscanf_nid_postfix("0x1f", "%i", &binary) == 1 && binary == 31);
+    for (const char* format : {"%hls", "%lhs", "%llls", "%jls", "%lLs", "%5y", "%k"}) {
+        for (const char* input : {"ab", ""}) {
+            char bytes[8];
+            std::fill(bytes, bytes + sizeof(bytes), '!');
+            Require(ScanListS(input, format, bytes, 8u) == 0);
+            Require(std::all_of(bytes, bytes + sizeof(bytes), [](char value) { return value == '!'; }));
+        }
+    }
 #ifdef _WIN32
     int scanned = -1;
     int position = -1;
+    {
+        const struct {
+            const char* input;
+            const char* format;
+            int result;
+            const char* stored;
+        } sets[] = {
+            {"za", "%[z-a]", 0, ""}, {"b", "%[a-a-c]", 0, ""}, {"a-c", "%[a-a-c]", 1, "a-c"}, {"-d", "%[a-c-e]", 1, "-"},
+            {"+", "%[*--]", 1, "+"}, {"-", "%[a--]", 0, ""}, {"z", "%[-^]", 0, ""}, {"-^z", "%[-^]", 1, "-^"},
+            {"b]", "%[]-c]", 1, "b]"}, {"-]a", "%[^]-]", 0, ""}, {"ab", "%[^]", 0, ""}, {"ab", "%lls", 1, "ab"},
+            {"ab", "%hhs", 1, "ab"}, {"ab", "%ll[a-z]", 1, "ab"}, {"ab", "%y", 0, ""}, {"", "%y", 0, ""},
+            {"ab", "%5y", 0, ""}, {"ab", "%k", 0, ""}, {"ab", "%hls", 0, ""}, {"ab", "%llls", 0, ""},
+            {"ab", "%l", 0, ""}, {"", "%l", 0, ""}, {"ab", "%ll", 0, ""}, {"ab", "%h", 0, ""}, {"ab", "%hl", 0, ""},
+        };
+        for (const auto& item : sets) {
+            char bytes[8] = {'!', '!', '!', '!', '!', '!', '!', '!'};
+            Require(sscanf_nid_postfix(item.input, item.format, bytes) == item.result);
+            Require(item.result == 0 ? bytes[0] == '!' : std::strcmp(bytes, item.stored) == 0);
+            std::memset(bytes, '!', sizeof(bytes));
+            Require(ScanListS(item.input, item.format, bytes, 8u) == item.result);
+            Require(item.result == 0 ? bytes[0] == '!' : std::strcmp(bytes, item.stored) == 0);
+        }
+        char pair[4] = {'!', '!', '!', '!'};
+        Require(sscanf_nid_postfix("abc", "%2llc", pair) == 1 && pair[0] == 'a' && pair[1] == 'b' && pair[2] == '!');
+        Require(sscanf_nid_postfix("ab", "%s%y", pair) == 1 && std::strcmp(pair, "ab") == 0);
+        char16_t wide[3] = {u'!', u'!', u'!'};
+        Require(sscanf_nid_postfix("ab", "%ls", wide) == 1 && wide[0] == u'a' && wide[1] == u'b' && wide[2] == 0);
+        std::fill(wide, wide + 3, u'!');
+        Require(ScanListS("ab", "%ls", wide, 3u) == 1 && wide[0] == u'a' && wide[1] == u'b' && wide[2] == 0);
+    }
     Require(sscanf_nid_postfix("12", "%*d%d", &scanned) == 0 && scanned == -1);
     Require(sscanf_nid_postfix("12 ", "%*d %d", &scanned) == 0);
     Require(sscanf_nid_postfix("abc", "%*s%d", &scanned) == 0);

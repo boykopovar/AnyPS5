@@ -34,20 +34,41 @@ static void* APS5_VABI Waiter(void* arg) {
 
 int main() {
     PthreadBarrierattrPrivate* attr = nullptr;
+    Require(scePthreadBarrierattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_barrierattr_destroy_nid_postfix(nullptr) == 22);
+    Require(pthread_barrierattr_destroy_nid_postfix(&attr) == 22);
     Require(scePthreadBarrierattrInit(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrInit(&attr) == 0 && attr != nullptr);
     int pshared = -1;
     Require(scePthreadBarrierattrGetpshared(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, -1) == 22);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, 2) == 22);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, 9999) == 22);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, PROCESS_SHARED) == 22);
+    Require(scePthreadBarrierattrSetpshared(&attr, -1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrSetpshared(&attr, 2) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrSetpshared(&attr, 9999) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrSetpshared(&attr, PROCESS_SHARED) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrSetpshared(&attr, PROCESS_PRIVATE) == 0);
 
     Context context;
-    Require(scePthreadBarrierInit(&context.barrier, &attr, 0, "zero") == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierInit(&context.barrier, &attr, 0, "zero") == SCE_KERNEL_ERROR_EINVAL && context.barrier == nullptr);
+    Require(scePthreadBarrierInit(&context.barrier, nullptr, 0, "zero") == SCE_KERNEL_ERROR_EINVAL && context.barrier == nullptr);
+    Require(scePthreadBarrierInit(nullptr, &attr, 0, "null") == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierInit(nullptr, nullptr, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_barrier_init_nid_postfix(&context.barrier, &attr, 0) == 22 && context.barrier == nullptr);
+    Require(pthread_barrier_init_nid_postfix(&context.barrier, nullptr, 0) == 22 && context.barrier == nullptr);
+    Require(pthread_barrier_init_nid_postfix(nullptr, &attr, 0) == 22);
+    Require(pthread_barrier_init_nid_postfix(nullptr, nullptr, 0) == 22);
     Require(scePthreadBarrierInit(&context.barrier, &attr, 0x80000000u, "over") == SCE_KERNEL_ERROR_EINVAL && context.barrier == nullptr);
     Require(scePthreadBarrierInit(nullptr, &attr, WAITERS, "null") == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierInit(&context.barrier, &attr, WAITERS, "barrier") == 0 && context.barrier != nullptr);
     Require(scePthreadBarrierattrDestroy(&attr) == 0 && attr == nullptr);
     Require(scePthreadBarrierattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_barrierattr_destroy_nid_postfix(&attr) == 22);
+    Require(pthread_barrierattr_destroy_nid_postfix(nullptr) == 22);
 
     for (int round = 0; round < 2; ++round) {
         context.serial = 0;
@@ -62,6 +83,8 @@ int main() {
     Require(scePthreadBarrierWait(nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
     PthreadBarrierPrivate* single = nullptr;
+    Require(scePthreadBarrierInit(&single, nullptr, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL && single == nullptr);
+    Require(pthread_barrier_init_nid_postfix(&single, nullptr, 0) == 22 && single == nullptr);
     Require(scePthreadBarrierInit(&single, nullptr, 1, nullptr) == 0);
     Require(scePthreadBarrierWait(&single) == BARRIER_SERIAL_THREAD);
     Require(scePthreadBarrierDestroy(&single) == 0);
