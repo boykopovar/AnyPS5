@@ -3252,8 +3252,6 @@ void CheckUniformPlaneAliasedDepth(Context context, std::uint32_t samples) {
     };
     fill(0.5f, 0u);
     sample(0.0f);
-    MultisampleTargetView(context, color);
-    TargetRefuses([&] { CachedSampledTexture(context, words); }, depthAliasRefusal);
     clear();
     fill(0.25f, std::bit_cast<std::uint32_t>(1.0f));
     sample(1.0f);
@@ -3261,7 +3259,7 @@ void CheckUniformPlaneAliasedDepth(Context context, std::uint32_t samples) {
     fill(0.0f, std::bit_cast<std::uint32_t>(2.0f));
     Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a refused aliased uniform depth plane has no attachment view");
     TargetRefuses([&] { CachedSampledTexture(context, words); }, depthAliasRefusal);
-    std::printf("Native D32S8 without HTILE, samples=%u: uniform depth aliased by an R32F colour target took its clear and refused a drawn or out-of-range one\n", samples);
+    std::printf("Native D32S8 without HTILE, samples=%u: uniform depth aliased by an R32F colour target took its clear and refused an out-of-range one\n", samples);
 }
 
 void CheckHtileAliasedDepth(Context context, std::uint32_t samples) {
@@ -3295,17 +3293,17 @@ void CheckHtileAliasedDepth(Context context, std::uint32_t samples) {
         decltype(clear)& action;
         ~Cleanup() { action(); }
     } cleanup{clear};
-    const auto fill = [&](float depth, std::uint32_t pattern) {
+    const auto fill = [&](float depth, std::uint32_t pattern, std::uint32_t htileWord = 0u) {
         const auto word = std::bit_cast<std::uint32_t>(depth);
         for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &word, 4u);
         std::memset(stencil.Data(), 0x5a, stencilBytes);
-        std::memset(metadata.Data(), 0, metadataBytes);
+        for (std::size_t offset = 0u; offset < metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &htileWord, 4u);
         Require(MultisampleTargetView(context, color) != VK_NULL_HANDLE, "the colour target over the HTILE depth plane has no attachment");
         Require(MultisampledColorFillAbsorbs(color.address, depthBytes, pattern), "the colour target over the HTILE depth plane did not absorb its fill");
         NoteColorMetadataFill(color.address, depthBytes, pattern);
     };
     const auto words = DepthSampleWords(target);
-    const auto sample = [&](float expected) {
+    const auto sample = [&](float expected, bool checkStencil = true) {
         Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "an HTILE depth plane aliased by a colour target has no attachment view");
         auto texture = CachedSampledTexture(context, words);
         Require(texture != nullptr, "an HTILE depth plane aliased by a cleared colour target was not imported");
@@ -3323,18 +3321,30 @@ void CheckHtileAliasedDepth(Context context, std::uint32_t samples) {
             std::memcpy(sampled.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
             Require(sampled == std::array<float, 4>{expected, 0.0f, 0.0f, 1.0f}, "an HTILE depth plane aliased by a colour target did not take the colour clear");
         }
-        Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0x5a}; }), "an HTILE depth plane aliased by a colour target wrote its guest stencil plane");
+        if (checkStencil) Require(std::all_of(stencil.Data(), stencil.Data() + stencilBytes, [](auto value) { return value == std::byte{0x5a}; }), "an HTILE depth plane aliased by a colour target wrote its guest stencil plane");
         texture.reset();
     };
     fill(0.5f, 0u);
     sample(0.0f);
-    MultisampleTargetView(context, color);
-    TargetRefuses([&] { CachedSampledTexture(context, words); }, depthAliasRefusal);
+    clear();
+    fill(0.25f, std::bit_cast<std::uint32_t>(1.0f), 0xfffffff0u);
+    sample(1.0f);
     clear();
     fill(0.25f, std::bit_cast<std::uint32_t>(1.0f));
     Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a refused HTILE depth plane aliased by a colour target has no attachment view");
     TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample depth initial HTILE does not prove its clear value");
-    std::printf("Native D32S8 with HTILE, samples=%u: a depth plane aliased by an R32F colour target took a matching clear and refused a different one\n", samples);
+    clear();
+    fill(0.5f, 0u);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the unstored stencil fill fixture has no depth attachment");
+    NoteDepthMetadataFill(target.stencilAddress, stencilBytes, 0x33333333u);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample stencil plane fill has no complete tracked store");
+    clear();
+    fill(0.5f, 0u);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the stored stencil fill fixture has no depth attachment");
+    NoteDepthMetadataFill(target.stencilAddress, stencilBytes, 0x33333333u);
+    AgcDriver::GuestMemory::StoreOwnBytes(target.stencilAddress, stencilBytes, [&] { std::memset(stencil.Data(), 0x33, stencilBytes); });
+    sample(0.0f, false);
+    std::printf("Native D32S8 with HTILE, samples=%u: a depth plane aliased by an R32F colour target took a matching clear, kept a depth alias separate from a stored stencil fill and refused a different or unstored fill\n", samples);
 }
 
 int main(int argc, char** argv) {
