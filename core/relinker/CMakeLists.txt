@@ -308,6 +308,16 @@ if(BUILD_TESTING)
     add_test(NAME elf_reader_bounds COMMAND elf_reader_bounds_tests)
     set_tests_properties(elf_reader_bounds PROPERTIES TIMEOUT 20)
 
+    add_test_executable(elf_parser_negative_bounds_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ElfParserNegativeBoundsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp)
+    target_include_directories(elf_parser_negative_bounds_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include)
+    add_test(NAME elf_parser_negative_bounds COMMAND elf_parser_negative_bounds_tests)
+    set_tests_properties(elf_parser_negative_bounds PROPERTIES TIMEOUT 20)
+
     add_test_executable(relr_relocations_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/RelrRelocationTests.cpp)
     target_link_libraries(relr_relocations_tests PRIVATE relinker_core)
     add_test(NAME relr_relocations COMMAND relr_relocations_tests)
