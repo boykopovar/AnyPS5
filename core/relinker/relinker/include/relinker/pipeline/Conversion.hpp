@@ -20,6 +20,7 @@ struct ConversionOptions {
     bool TrapSdkSyscallStubs = false;
     bool FunctionSymbolRoots = false;
     bool LazyBinding = false;
+    bool OmitUnavailableDependencies = false;
     bool WindowsGui = false;
     bool TraceImports = false;
     std::optional<std::uint64_t> WindowsFixedBase;

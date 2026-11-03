@@ -7,6 +7,7 @@ import sys
 from guest_import_fixtures import fixture_directory
 from test_guest_intel_trampolines import elf_loads, main_fixture
 from test_guest_module_directories import module_with_symbol
+from test_guest_module_directories import needed_libraries
 from test_guest_tls import static_tls_getter
 from test_macos_output import MachO
 from test_macos_executable_exports import executable as exported_executable, exports
@@ -75,7 +76,7 @@ def elf_symbol_sizes(data):
     return sizes
 
 
-def convert(relinker, work, name, target, image, module=False, roots=True):
+def convert(relinker, work, name, target, image, module=False, roots=True, extra_options=()):
     case = work / f"{name}-{target}-{'roots' if roots else 'strict'}"
     case.mkdir()
     source = case / "input.elf"
@@ -92,6 +93,7 @@ def convert(relinker, work, name, target, image, module=False, roots=True):
         options.append("--skip-sce-module")
     if roots:
         options.append("--function-symbol-roots")
+    options.extend(extra_options)
     run = subprocess.run([str(relinker), *options, str(source), str(output)],
                          capture_output=True, text=True, timeout=10)
     assert source.read_bytes() == (main_fixture() if module else image)
@@ -219,6 +221,46 @@ def module_cases(relinker, work, baseline):
                 assert TLS_LOAD not in code
 
 
+def dependency_option_cases(relinker, work):
+    image = module_image(0x1000)
+    phoff = struct.unpack_from("<Q", image, 32)[0]
+    phsize, phcount = struct.unpack_from("<HH", image, 54)
+    dynamic_position = next(phoff + index * phsize for index in range(phcount)
+                            if struct.unpack_from("<I", image, phoff + index * phsize)[0] == 2)
+    dynamic = struct.unpack_from("<IIQQQQQQ", image, dynamic_position)
+    tags = {}
+    for position in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+        tag, value = struct.unpack_from("<qQ", image, position)
+        if tag == 0:
+            terminator = position
+            break
+        tags[tag] = (position, value)
+    plugin = b"missingPlugin.prx"
+    strings = tags[5][1]
+    length = tags[10][1]
+    image[strings + length:strings + length + len(plugin) + 1] = plugin + b"\0"
+    struct.pack_into("<Q", image, tags[10][0] + 8, length + len(plugin) + 1)
+    assert terminator + 16 == dynamic[2] + dynamic[5]
+    struct.pack_into("<QQ", image, dynamic_position + 32, dynamic[5] + 16, dynamic[6] + 16)
+    struct.pack_into("<qQqQ", image, terminator, 1, length, 0, 0)
+    (work / "libs").mkdir()
+    for roots in (False, True):
+        for omit in (False, True):
+            options = ["--rpath", "$ORIGIN/../libs"]
+            if omit:
+                options.append("--omit-unavailable-dependencies")
+            run, artifact = convert(relinker, work, f"dependency-{roots}-{omit}", "linux", image,
+                                    module=True, roots=roots, extra_options=options)
+            if not roots:
+                assert run.returncode == 2 and "Unmapped or inaccessible guest address" in run.stderr, run.stderr
+                assert not artifact.exists(), artifact
+                continue
+            data = succeeded(run, artifact, "linux")
+            output = artifact.parents[2] / "output"
+            for converted in (data, output.read_bytes()):
+                assert (plugin.decode() in needed_libraries(converted)) == (not omit), (roots, omit)
+
+
 def rejected_cases(relinker, work):
     for name, prefix, diagnostic in (("tls", 0x64, "Code analysis: overlapping instruction boundaries"),
                                       ("gs", 0x65, "GS trap would overwrite an executable entry point")):
@@ -290,6 +332,8 @@ def main():
             executable_cases(relinker, work, baseline)
         elif group == "module":
             module_cases(relinker, work, baseline)
+            if not baseline:
+                dependency_option_cases(relinker, work)
         elif group == "rejected":
             rejected_cases(relinker, work)
         else:
