@@ -55,6 +55,30 @@ template<typename TRead> void CheckField(TRead read, std::int32_t LibreSsl3EvpCi
     RequireInvalidArgument([&] { read(nullptr); });
 }
 
+void TestContextFlags() {
+    static_assert(offsetof(LibreSslEvpCipherCtx, flags) == 112);
+    for (const auto initial : {UINT64_C(0), UINT64_C(0x8000000000000000), UINT64_C(0x123456789abcdef0)}) {
+        for (const int mask : {0, 1, 2, 0x40000000, -1, std::numeric_limits<int>::min()}) {
+            LibreSslEvpCipherCtx context;
+            std::memset(&context, 0xA5, sizeof(context));
+            context.flags = initial;
+            unsigned char expected[sizeof(context)];
+            std::memcpy(expected, &context, sizeof(context));
+            const std::uint64_t flags = initial | static_cast<std::uint64_t>(static_cast<std::int64_t>(mask));
+            std::memcpy(expected + 112, &flags, sizeof(flags));
+            EVP_CIPHER_CTX_set_flags_nid_postfix(&context, mask);
+            Require(std::memcmp(expected, &context, sizeof(context)) == 0);
+            EVP_CIPHER_CTX_set_flags_nid_postfix(&context, mask);
+            Require(std::memcmp(expected, &context, sizeof(context)) == 0);
+        }
+    }
+    LibreSslEvpCipherCtx context {};
+    EVP_CIPHER_CTX_set_flags_nid_postfix(&context, 1);
+    EVP_CIPHER_CTX_set_flags_nid_postfix(&context, 2);
+    Require(context.flags == 3);
+    RequireInvalidArgument([] { EVP_CIPHER_CTX_set_flags_nid_postfix(nullptr, 1); });
+}
+
 void TestKeyLength() {
     CheckField(EVP_CIPHER_key_length_nid_postfix, &LibreSsl3EvpCipher::keyLength);
     const LibreSsl3EvpCipher cipher = Aes256Cbc();
@@ -67,9 +91,11 @@ void TestIvLength() {
     Require(EVP_CIPHER_iv_length_nid_postfix(&cipher) == 16);
 }
 
+
 }
 
 int main() {
+    TestContextFlags();
     TestKeyLength();
     TestIvLength();
     std::puts("LibreSSL3 EVP_CIPHER tests passed");
