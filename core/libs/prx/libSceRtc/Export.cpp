@@ -750,7 +750,6 @@ int APS5_VABI sceRtcSetConf(int first, int second, int third, int fourth) {
     (void)third;
     (void)fourth;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, int time_zone_minutes, int precision) {

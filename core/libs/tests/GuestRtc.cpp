@@ -167,6 +167,13 @@ int main(int argc, char** argv) {
     Require(sceRtcGetCurrentClockLocalTime(&converted) == 0 && sceRtcCheckValid(&converted) == 0);
     Require(sceRtcGetCurrentClockUtc(nullptr) == invalidPointer);
     Require(sceRtcGetCurrentClockUtc(&converted) == 0 && sceRtcCheckValid(&converted) == 0);
+    bool setConfThrew = false;
+    try {
+        sceRtcSetConf(0, 0, 0, 0);
+    } catch (const std::runtime_error& error) {
+        setConfThrew = (std::string(error.what()) == "sceRtcSetConf not implemented");
+    }
+    Require(setConfThrew);
 
     RtcDateTime epoch{1970, 1, 1, 0, 0, 0, 0};
     std::int64_t seconds = -1;
