@@ -1557,6 +1557,19 @@ static double ClearLowWord(double x) {
     return std::bit_cast<double>(std::bit_cast<std::uint64_t>(x) & 0xffffffff00000000ull);
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_rem_pio2.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_rem_pio2.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ *
+ * Optimized by Bruce D. Evans.
+ */
 static int RemPio2Near(double x, double* y, std::int32_t hx, int k) {
     const double pio2_1 = 1.57079632673412561417e+00;
     const double pio2_1t = 6.07710050650619224932e-11;
@@ -1653,6 +1666,17 @@ static int RemPio2(double x, double* y) {
     return n;
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/k_sin.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/k_sin.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 static double KernelSin(double x, double y, int iy) {
     const double S1 = -1.66666666666666324348e-01;
     const double S2 = 8.33333333332248946124e-03;
@@ -1670,6 +1694,17 @@ static double KernelSin(double x, double y, int iy) {
     return x - ((z * (0.5 * y - v * r) - y) - v * S1);
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/k_cos.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/k_cos.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
 static double KernelCos(double x, double y) {
     const double C1 = 4.16666666666666019037e-02;
     const double C2 = -1.38888888888741095749e-03;
@@ -1685,6 +1720,16 @@ static double KernelCos(double x, double y) {
     return w + (((1.0 - w) - hz) + (z * r - x * y));
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/k_tan.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/k_tan.c */
+/*
+ * ====================================================
+ * Copyright 2004 Sun Microsystems, Inc.  All Rights Reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static double KernelTan(double x, double y, int iy) {
     static constexpr double T[] = {
         3.33333333333334091986e-01, 1.33333333333201242699e-01, 5.39682539762260521377e-02, 2.18694882948595424599e-02,
@@ -1729,6 +1774,17 @@ static double KernelTan(double x, double y, int iy) {
     return t + a * (s + t * v);
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_sin.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_sin.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI sin_nid_postfix(double x) {
     const std::int32_t ix = HighWord(x) & 0x7fffffff;
     if (ix <= 0x3fe921fb) {
@@ -1752,6 +1808,17 @@ double APS5_VABI sin_nid_postfix(double x) {
     }
 }
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_cos.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_cos.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI cos_nid_postfix(double x) {
     const std::int32_t ix = HighWord(x) & 0x7fffffff;
     if (ix <= 0x3fe921fb) {
@@ -1823,6 +1890,17 @@ static double SinhLdexpExpHalf(double x) {
  */
 /* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_sinh.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_sinh.c */
 
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_tan.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_tan.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 double APS5_VABI tan_nid_postfix(double x) {
     const std::int32_t ix = HighWord(x) & 0x7fffffff;
     if (ix <= 0x3fe921fb) {
