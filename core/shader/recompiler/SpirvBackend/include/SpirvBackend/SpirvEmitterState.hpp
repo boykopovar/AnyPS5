@@ -138,6 +138,7 @@ struct SpirvEmitterState {
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
     bool nonConstantImageOffsets = false;
+    bool shaderImageMinLod = false;
     bool tableIndexNonUniform = true;
     std::uint32_t storageBufferVariable = 0;
     std::uint32_t storageBufferU64Variable = 0;
@@ -220,6 +221,14 @@ struct SpirvEmitterState {
     bool pixelFunctionLdsBuffer = false;
     std::uint32_t numWorkgroupsVariable = 0;
     std::array<std::uint32_t, 2> scratchVariable {};
+    std::uint32_t scratchPoolVariable = 0;
+    std::uint32_t scratchPoolSlotVariable = 0;
+    std::uint32_t scratchPoolCandidateVariable = 0;
+    std::uint32_t scratchPoolWonVariable = 0;
+    std::uint32_t scratchPoolSlotCount = 0;
+    std::uint32_t scratchPoolSlot = 0;
+    std::array<std::uint32_t, 2> scratchPoolLaneBase {};
+    std::uint32_t scratchPoolReturns = 0;
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
@@ -254,6 +263,8 @@ struct SpirvEmitterState {
     std::uint32_t sampleMaskInputVariable = 0;
     std::uint32_t quadSampleCoverage = 0;
     std::uint32_t sampleOrderWord = 0;
+    std::uint32_t alphaCoverageVariable = 0;
+    std::uint32_t exportedCoverageVariable = 0;
     std::uint32_t subgroupLocalInvocationIdVariable = 0;
     std::uint32_t subgroupIdVariable = 0;
     std::uint32_t perVertexVariable = 0;

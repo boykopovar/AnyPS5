@@ -1,11 +1,12 @@
 from pathlib import Path
+import os
 import struct
 import subprocess
 import sys
 import tempfile
 
 from test_guest_intel_trampolines import main_fixture
-from test_guest_none_relocations import TARGET, change_tag, module
+from test_guest_none_relocations import FUNCTION, TARGET, change_tag, module
 from test_guest_symbol_names import dynamic_tags, file_offset
 
 
@@ -29,6 +30,13 @@ def fixture(sce=False, tls=True, info=3, value=0, kind=DTPMOD64, addend=0, secti
     return image
 
 
+def with_flags(image, flags):
+    size, = struct.unpack_from("<Q", image, 176 + 32)
+    struct.pack_into("<qQqQ", image, 0x2000 + size - 16, 30, flags, 0, 0)
+    struct.pack_into("<QQ", image, 176 + 32, size + 16, size + 16)
+    return image
+
+
 def relocations(data):
     tags = dynamic_tags(data)
     start = file_offset(data, tags[7])
@@ -36,6 +44,19 @@ def relocations(data):
 
 
 def main():
+    if sys.argv[1] == "--load":
+        import ctypes
+        library = ctypes.CDLL(sys.argv[2])
+        function = getattr(library, "shared#guest")
+        function.restype = ctypes.c_int
+        assert function() == 42
+        offset = ctypes.c_int64.from_address(ctypes.cast(function, ctypes.c_void_p).value + TARGET - FUNCTION).value
+        thread = ctypes.c_uint64()
+        libc = ctypes.CDLL(None, use_errno=True)
+        assert libc.syscall(158, 0x1003, ctypes.byref(thread)) == 0, ctypes.get_errno()
+        assert offset < 0, offset
+        assert ctypes.string_at(thread.value + offset, 4) == bytes(range(5, 9)), (offset, ctypes.string_at(thread.value + offset, 4))
+        return
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-own-tls-") as directory:
         work = Path(directory)
@@ -86,6 +107,20 @@ def main():
                         result, artifact, output = convert(name, system, image)
                         assert result.returncode == 2 and "Invalid guest TLS relocation" in result.stderr, (name, system, result.stdout, result.stderr)
                         assert not artifact.exists() and not output.exists(), (name, system)
+            for flags in (0x10, 0x18):
+                image = with_flags(fixture(sce, info=6, section=1, kind=TPOFF64, addend=4), flags)
+                for system in ("linux", "windows", "macos"):
+                    result, artifact, output = convert(f"{sce}-static-tls-{flags}", system, image)
+                    assert result.returncode == 0, (sce, flags, system, result.stdout, result.stderr)
+                    if system == "linux":
+                        assert [info & 0xffffffff for _, info, _ in relocations(artifact.read_bytes())] == [TPOFF64], (sce, flags)
+                        if sys.platform == "linux" and os.uname().machine == "x86_64":
+                            loaded = subprocess.run([sys.executable, __file__, "--load", str(artifact)], capture_output=True, text=True, timeout=10)
+                            assert loaded.returncode == 0, (sce, flags, loaded.returncode, loaded.stderr)
+            for flags in (0x1, 0x4, 0x14):
+                image = with_flags(fixture(sce, info=6, section=1, kind=TPOFF64, addend=4), flags)
+                result, artifact, output = convert(f"{sce}-unsupported-flags-{flags}", "linux", image)
+                assert result.returncode == 2 and "Unsupported guest dynamic flags" in result.stderr, (sce, flags, result.stderr)
     print("Guest own TLS relocation tests passed")
 
 
