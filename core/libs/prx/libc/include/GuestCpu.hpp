@@ -13,6 +13,22 @@ namespace GuestCpu {
 
 inline std::uint64_t ReadTsc() { return __rdtsc(); }
 
+inline std::array<std::uint32_t, 4> Cpuid(const std::uint32_t leaf, const std::uint32_t subleaf) {
+    std::uint32_t eax;
+    std::uint32_t ebx;
+    std::uint32_t ecx;
+    std::uint32_t edx;
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "0"(leaf), "2"(subleaf));
+    return {eax, ebx, ecx, edx};
+}
+
+inline std::uint64_t Xgetbv(const std::uint32_t index) {
+    std::uint32_t low;
+    std::uint32_t high;
+    asm volatile("xgetbv" : "=a"(low), "=d"(high) : "c"(index));
+    return (static_cast<std::uint64_t>(high) << 32) | low;
+}
+
 inline std::uint32_t Mxcsr() { return _mm_getcsr(); }
 inline void SetMxcsr(const std::uint32_t value) { _mm_setcsr(value); }
 
