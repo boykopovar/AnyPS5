@@ -508,7 +508,7 @@ void verifyEntryRoundTrip() {
     auto previousVersion = file;
     previousVersion[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodeEntry(previousVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with the previous format version loads");
-    for (const auto version : {51u, 52u, 53u}) {
+    for (const auto version : {51u, 52u, 53u, 54u}) {
         auto otherImageLayout = file;
         otherImageLayout[4] = static_cast<std::byte>(version);
         require(ShaderDiskCache::DecodeEntry(otherImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with another image record layout loads");
@@ -2190,7 +2190,7 @@ void verifyPlanEntryDamage(const std::vector<std::byte>& key, const IrResourcePl
     auto previousFormat = file;
     previousFormat[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodePlanEntry(previousFormat, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of the previous format loads");
-    for (const auto version : {51u, 52u, 53u}) {
+    for (const auto version : {51u, 52u, 53u, 54u}) {
         auto otherImageLayout = file;
         otherImageLayout[4] = static_cast<std::byte>(version);
         require(ShaderDiskCache::DecodePlanEntry(otherImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with another image record layout loads");
