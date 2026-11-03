@@ -226,7 +226,7 @@ private:
 
 enum class Outcome { Kept, Lost, Missed, NotRun };
 
-enum class Kind { Results, CpuWhilePending, CpuBeforeMark };
+enum class Kind { Results, CpuWhilePending, CpuBeforeMark, SameValueRefresh, SameValueWriteBack };
 
 struct Case {
     const char* name;
@@ -284,6 +284,34 @@ Outcome Run(const Case& test) {
         std::vector<std::byte> read(ReadThreads * 4u);
         AgcDriver::GuestMemory::Read(AddressOf(output.Data()), read);
     };
+    if (test.kind == Kind::SameValueRefresh || test.kind == Kind::SameValueWriteBack) {
+        const auto* first = std::find(surface.Texels(), surface.Texels() + SurfaceBytes / 4u, Stored);
+        Require(static_cast<std::size_t>(first - surface.Texels()) * 4u < Block, "pending untracked layer: the first result is not in the surface's first block");
+        auto* result = static_cast<volatile std::uint32_t*>(surface.Texels()) + (first - surface.Texels());
+        Store(surface.Texels(), StoreAgainCode);
+        if (!heldPending(StoredAgain)) return Outcome::Missed;
+        Require(StorageTexture::FindLive(address, SurfaceBytes) != nullptr, "pending untracked layer: the surface has no storage image");
+        *result = Stored;
+        if (test.kind == Kind::SameValueRefresh) StorageTexture::FindLive(address, SurfaceBytes)->Refresh();
+        else StorageTexture::FlushAllPending("pending untracked layer fixture");
+        hold.unlock();
+        readGuest();
+        const auto guestResults = Count(surface.Texels(), SurfaceBytes / 4u, StoredAgain);
+        const auto guestStored = Count(surface.Texels(), SurfaceBytes / 4u, Stored);
+        Output output;
+        readOutput(output);
+        const auto imageResults = Count(output.Data(), ReadThreads, StoredAgain);
+        const auto imageStored = Count(output.Data(), ReadThreads, Stored);
+        hold.lock();
+        StorageTexture::FlushAllPending("pending untracked layer fixture");
+        hold.unlock();
+        readGuest();
+        const auto finalResults = Count(surface.Texels(), SurfaceBytes / 4u, StoredAgain);
+        const auto finalStored = Count(surface.Texels(), SurfaceBytes / 4u, Stored);
+        if (guestResults == 0 && guestStored == StoreThreads && imageResults == 0 && imageStored == StoreThreads && finalResults == 0 && finalStored == StoreThreads) return Outcome::Kept;
+        std::fprintf(stderr, "[pending untracked layer] %s: guest memory holds %zu results and %zu stored words, the image %zu results and %zu stored words, guest memory after the last flush %zu results and %zu stored words\n", test.name, guestResults, guestStored, imageResults, imageStored, finalResults, finalStored);
+        return Outcome::Lost;
+    }
     if (test.kind == Kind::CpuBeforeMark) {
         const auto* first = std::find(surface.Texels(), surface.Texels() + SurfaceBytes / 4u, Stored);
         auto* result = static_cast<volatile std::uint32_t*>(surface.Texels()) + (first - surface.Texels());
@@ -358,11 +386,13 @@ int main() {
             Surface probe;
             Require(AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(probe.Texels()))).guestBytes == SurfaceBytes, "pending untracked layer: unexpected surface size");
         }
-        constexpr std::array<Case, 4> cases{{
+        constexpr std::array<Case, 6> cases{{
             {"results over a surface whose walk fails", Kind::Results, true},
             {"results and a CPU store over a surface whose walk fails", Kind::CpuWhilePending, true},
             {"a CPU store between a refresh and the pending mark", Kind::CpuBeforeMark, false},
             {"a CPU store between a refresh and the pending mark over a surface whose walk fails", Kind::CpuBeforeMark, true},
+            {"a same-value CPU store in a block the walk reached before it failed, then a refresh", Kind::SameValueRefresh, true},
+            {"a same-value CPU store in a block the walk reached before it failed, then a direct write-back", Kind::SameValueWriteBack, true},
         }};
         bool kept = true;
         bool notRun = false;
