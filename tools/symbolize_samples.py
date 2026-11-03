@@ -1,6 +1,7 @@
 import argparse
 import bisect
 import collections
+import os
 import shutil
 import struct
 import subprocess
@@ -15,6 +16,7 @@ table when it has none, and names every frame module!function.
 The '# module name size timestamp' header lines the samplers write are compared with the SizeOfImage and
 TimeDateStamp of the file that is found; a module whose file does not match is left unsymbolized, since its
 addresses would name the wrong functions.
+If two loaded modules share a name, their frames stay unsymbolized because the samples cannot distinguish them.
 
 The sampler rewrites its files every 20 s with totals since start-up. --since takes an earlier copy of the same
 file and subtracts it, which keeps only the samples taken between the two copies (a steady-state window).
@@ -43,54 +45,117 @@ class PeModule:
             raise ValueError(f"{path}: not a PE file")
         _, sections, self.timestamp, symbol_table, symbol_count, optional_size, _ = struct.unpack_from("<HHIIIHH", data, pe + 4)
         optional = pe + 24
+        if optional_size < 112 or optional_size > len(data) - optional:
+            raise ValueError(f"{path}: PE32+ optional header is truncated")
         if struct.unpack_from("<H", data, optional)[0] != 0x20B:
             raise ValueError(f"{path}: not a PE32+ image")
         self.image_base = struct.unpack_from("<Q", data, optional + 24)[0]
         self.size = struct.unpack_from("<I", data, optional + 56)[0]
-        export_rva, export_size = struct.unpack_from("<II", data, optional + 112)
+        directories = struct.unpack_from("<I", data, optional + 108)[0]
+        if directories > (optional_size - 112) // 8:
+            raise ValueError(f"{path}: PE data directories exceed the optional header")
+        export_rva, export_size = struct.unpack_from("<II", data, optional + 112) if directories else (0, 0)
         self.sections = []
         for index in range(sections):
             entry = optional + optional_size + index * 40
             virtual_size, rva, raw_size, raw_pointer = struct.unpack_from("<IIII", data, entry + 8)
             characteristics = struct.unpack_from("<I", data, entry + 36)[0]
-            self.sections.append((rva, max(virtual_size, raw_size), raw_pointer, characteristics))
+            self.sections.append((rva, max(virtual_size, raw_size), raw_size, raw_pointer, characteristics))
         symbols = self.coff_symbols(data, symbol_table, symbol_count) if symbol_table and symbol_count else []
         self.exported = not symbols
         if self.exported and export_rva:
             symbols = self.export_symbols(data, export_rva, export_size)
         symbols.sort()
         self.code = []
-        for start, size, _, characteristics in self.sections:
+        for start, size, _, _, characteristics in self.sections:
             if not characteristics & IMAGE_SCN_CNT_CODE:
                 continue
             inside = [(address, name) for address, name in symbols if start <= address < start + size]
             self.code.append((start, start + size, [address for address, _ in inside], [name for _, name in inside]))
         self.names = [name for _, name in symbols]
 
-    def offset(self, rva):
-        for start, size, raw, _ in self.sections:
-            if start <= rva < start + size:
-                return raw + rva - start
-        raise ValueError(f"RVA {rva:#x} is in no section")
+    def read_bytes(self, data, rva, count):
+        if rva + count > 0x100000000:
+            raise ValueError("RVA exceeds address space")
+        result = bytearray()
+        while count > 0:
+            for start, size, raw_size, raw_pointer, _ in self.sections:
+                if start <= rva < start + size:
+                    offset = rva - start
+                    chunk = min(count, size - offset)
+                    if offset < raw_size:
+                        raw_chunk = min(chunk, raw_size - offset)
+                        if raw_pointer + raw_size > len(data):
+                            raise ValueError("Truncated section raw data")
+                        result.extend(data[raw_pointer + offset:raw_pointer + offset + raw_chunk])
+                        rva += raw_chunk
+                        count -= raw_chunk
+                    else:
+                        result.extend(b"\0" * chunk)
+                        rva += chunk
+                        count -= chunk
+                    break
+            else:
+                raise ValueError(f"RVA {rva:#x} is in no section")
+        return bytes(result)
+
+    def read_string(self, data, rva):
+        chunks = []
+        while True:
+            if rva >= 0x100000000:
+                raise ValueError("RVA exceeds address space")
+            for start, size, raw_size, raw_pointer, _ in self.sections:
+                if start <= rva < start + size:
+                    offset = rva - start
+                    if offset < raw_size:
+                        if raw_pointer + raw_size > len(data):
+                            raise ValueError("Truncated section raw data")
+                        raw_left = raw_size - offset
+                        scan_len = min(raw_left, 4096, 0x100000000 - rva)
+                        file_offset = raw_pointer + offset
+                        chunk = data[file_offset:file_offset + scan_len]
+                        nul = chunk.find(b"\0")
+                        if nul >= 0:
+                            chunks.append(chunk[:nul])
+                            return b"".join(chunks).decode("utf-8", "replace")
+                        chunks.append(chunk)
+                        rva += scan_len
+                    else:
+                        return b"".join(chunks).decode("utf-8", "replace")
+                    break
+            else:
+                raise ValueError(f"RVA {rva:#x} is in no section")
 
     def coff_symbols(self, data, table, count):
         strings = table + count * 18
+        if strings > len(data) - 4:
+            raise ValueError("COFF string table header is outside the file")
+        size = struct.unpack_from("<I", data, strings)[0]
+        if size < 4 or size > len(data) - strings:
+            raise ValueError("COFF string table size is outside the file")
         result = []
         index = 0
         while index < count:
             entry = table + index * 18
             name, value, section, kind, storage, aux = struct.unpack_from("<8sIhHBB", data, entry)
+            if aux > count - index - 1:
+                raise ValueError("COFF auxiliary records exceed the symbol count")
             index += 1 + aux
             if storage not in (IMAGE_SYM_CLASS_EXTERNAL, IMAGE_SYM_CLASS_STATIC) or not 1 <= section <= len(self.sections):
                 continue
-            start, _, _, characteristics = self.sections[section - 1]
+            start, _, _, _, characteristics = self.sections[section - 1]
             if not characteristics & IMAGE_SCN_CNT_CODE:
                 continue
             if storage == IMAGE_SYM_CLASS_STATIC and (kind >> 4) != 2 and value == 0:
                 continue
             if name[:4] == b"\0\0\0\0":
-                at = strings + struct.unpack_from("<I", name, 4)[0]
-                end = data.index(b"\0", at)
+                offset = struct.unpack_from("<I", name, 4)[0]
+                if not 4 <= offset < size:
+                    raise ValueError("COFF string table name offset is out of range")
+                at = strings + offset
+                end = data.find(b"\0", at, strings + size)
+                if end < 0:
+                    raise ValueError("COFF string table name is unterminated")
                 text = data[at:end]
             else:
                 text = name.rstrip(b"\0")
@@ -98,20 +163,22 @@ class PeModule:
         return result
 
     def export_symbols(self, data, rva, size):
-        directory = self.offset(rva)
-        _, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
-        function_table = self.offset(function_rva)
+        directory = self.read_bytes(data, rva, 40)
+        functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", directory, 20)
+        if not names:
+            return []
+        if function_rva + functions * 4 > 0x100000000 or name_rva + names * 4 > 0x100000000 or ordinal_rva + names * 2 > 0x100000000:
+            raise ValueError("PE export table exceeds address space")
         result = []
-        if names:
-            name_table = self.offset(name_rva)
-            ordinal_table = self.offset(ordinal_rva)
-            for index in range(names):
-                ordinal = struct.unpack_from("<H", data, ordinal_table + index * 2)[0]
-                address = struct.unpack_from("<I", data, function_table + ordinal * 4)[0]
-                if rva <= address < rva + size:
-                    continue
-                at = self.offset(struct.unpack_from("<I", data, name_table + index * 4)[0])
-                result.append((address, data[at:data.index(b"\0", at)].decode("utf-8", "replace")))
+        for index in range(names):
+            ordinal = struct.unpack("<H", self.read_bytes(data, ordinal_rva + index * 2, 2))[0]
+            if ordinal >= functions:
+                raise ValueError("PE export ordinal is outside the export address table")
+            address = struct.unpack("<I", self.read_bytes(data, function_rva + ordinal * 4, 4))[0]
+            if rva <= address < rva + size:
+                continue
+            entry_name_rva = struct.unpack("<I", self.read_bytes(data, name_rva + index * 4, 4))[0]
+            result.append((address, self.read_string(data, entry_name_rva)))
         return result
 
     def name(self, rva):
@@ -129,7 +196,7 @@ class Symbolizer:
             for path in Path(directory).iterdir():
                 if path.is_file():
                     self.files.setdefault(path.name.lower(), {}).setdefault(path.resolve(), path)
-        self.headers = headers
+        self.headers = {name.lower(): identity for name, identity in headers.items()}
         self.modules = {}
         self.demangle = demangle and shutil.which("c++filt") is not None
         self.demangled = {}
@@ -140,7 +207,7 @@ class Symbolizer:
         paths = list(self.files.get(name.lower(), {}).values())
         if len(paths) <= 1:
             return paths[0] if paths else None
-        identity = self.headers.get(name)
+        identity = self.headers.get(name.lower())
         if identity is None and not self.unverified:
             self.warn(f"{name}: the samples have no '# module' record; multiple candidates stay unsymbolized")
             return None
@@ -165,17 +232,21 @@ class Symbolizer:
         if name in self.modules:
             return self.modules[name]
         module = None
+        if self.headers.get(name.lower()) is False:
+            self.warn(f"{name}: multiple sampled modules share this name, so their frames stay unsymbolized")
+            self.modules[name] = None
+            return None
         path = self.candidate_path(name)
         if path is not None:
             try:
                 module = PeModule(path)
             except (OSError, ValueError, struct.error) as error:
                 self.warn(f"{name}: {error}")
-            if module is not None and name not in self.headers and not self.unverified:
+            if module is not None and name.lower() not in self.headers and not self.unverified:
                 self.warn(f"{name}: the samples have no '# module' record for it, so {path} may be another build; its frames stay unsymbolized (--unverified symbolizes them anyway)")
                 module = None
-            if module is not None and name in self.headers and self.headers[name] != (module.size, module.timestamp):
-                size, timestamp = self.headers[name]
+            if module is not None and name.lower() in self.headers and self.headers[name.lower()] != (module.size, module.timestamp):
+                size, timestamp = self.headers[name.lower()]
                 self.warn(f"{name}: the sampled module had size {size:#x} and timestamp {timestamp:#x}, but {path} has {module.size:#x} and {module.timestamp:#x}; its frames stay unsymbolized")
                 module = None
         self.modules[name] = module
@@ -210,9 +281,12 @@ class Symbolizer:
 def read_headers(lines):
     headers = {}
     for line in lines:
-        parts = line.split()
-        if len(parts) == 5 and parts[:2] == ["#", "module"]:
-            headers[parts[2]] = (int(parts[3], 16), int(parts[4], 16))
+        parts = line.split(None, 2)
+        fields = parts[2].rsplit(None, 2) if len(parts) == 3 and parts[:2] == ["#", "module"] else []
+        if len(fields) == 3:
+            name = fields[0].lower()
+            identity = (int(fields[1], 16), int(fields[2], 16))
+            headers[name] = False if name in headers else identity
     return headers
 
 
@@ -242,14 +316,17 @@ def load(path, thread=None):
             if thread is None or current == thread:
                 samples.total["threads"] += int(parts[3])
             continue
-        if len(parts) == 4 and parts[1].startswith("0x") and parts[2].isdigit() and parts[3].isdigit():
+        fields = line.strip().rsplit(None, 3)
+        if len(fields) == 4 and fields[1].startswith("0x") and fields[2].isdigit() and fields[3].isdigit():
             if thread is None or current == thread:
-                samples.self_counts[(parts[0], parts[1])] += int(parts[2])
-                samples.inclusive[(parts[0], parts[1])] += int(parts[3])
+                samples.self_counts[(fields[0], fields[1])] += int(fields[2])
+                samples.inclusive[(fields[0], fields[1])] += int(fields[3])
             continue
         frames, _, count = line.rpartition(" ")
         if not frames or not count.isdigit():
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        if thread is not None:
+            raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")
         samples.stacks[frames] += int(count)
     return samples
 
@@ -296,6 +373,9 @@ def summarize(symbolizer, samples, top):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("samples", help="collapsed-stack file or address file written by a Windows sampler")
     parser.add_argument("--libs", action="append", required=True, help="directory holding the modules that ran (repeatable)")
@@ -318,9 +398,11 @@ def symbolize(parser, args):
         for source in (args.samples, args.since):
             if source is not None:
                 source = Path(source)
-                if source.resolve() == output.resolve() or (source.exists() and output.exists() and source.samefile(output)):
+                if os.path.realpath(source) == os.path.realpath(output) or (source.exists() and output.exists() and source.samefile(output)):
                     parser.error("symbolized output must be separate from the sample captures")
     samples = load(args.samples, args.thread)
+    if args.out and not samples.stacks:
+        parser.error("--out needs a collapsed-stack file")
     if args.since:
         samples = window(samples, load(args.since, args.thread))
     if args.out and samples.stacks:
@@ -334,7 +416,7 @@ def symbolize(parser, args):
         module_output_alias = False
         for directory in args.libs:
             for source in Path(directory).iterdir():
-                if not source.is_file() or not (source.resolve() == output.resolve() or
+                if not source.is_file() or not (os.path.realpath(source) == os.path.realpath(output) or
                                                 (source.exists() and output.exists() and source.samefile(output))):
                     continue
                 if source.name.lower() in referenced_modules or source.suffix.lower() in (".prx", ".dll", ".exe"):

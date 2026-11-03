@@ -20,6 +20,8 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr std::size_t ObjectSize = 0x40;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
+static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
 
 struct DestroyCase {
     Destroy destroy;
@@ -116,6 +118,7 @@ static void TestAssign(const AssignCase& testCase) {
     testCase.assign(&pointer, &pointer);
     Require(pointer.object == first && pointer.deleter == RecordDelete && pointer.libContext == &context);
     Require(ReadCount(first, offset) == 1);
+    Require(deleterCalls == 0);
 
     const IntrusivePtr alias{first, nullptr, nullptr};
     testCase.assign(&pointer, &alias);
@@ -209,6 +212,62 @@ static void TestSharedOwnership() {
     Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V122RecordScoreRequestBodyEEptEv(&owner) == nullptr);
 }
 
+static void TestMatchmakingSharedOwnership() {
+    alignas(8) unsigned char object[ObjectSize];
+    std::memset(object, 0x5a, sizeof(object));
+    WriteCount(object, 0, 1);
+    deleterCalls = 0;
+    deletedObject = nullptr;
+
+    IntrusivePtr owner;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEC1Ev(&owner);
+
+    owner.object = object;
+    owner.deleter = RecordDelete;
+
+    IntrusivePtr argument;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEC1ERS7_(&argument, &owner);
+
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEptEv(&argument) == object);
+    Require(ReadCount(object, 0) == 2);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEED1Ev(&argument);
+    Require(ReadCount(object, 0) == 1);
+    Require(deleterCalls == 0);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEED1Ev(&owner);
+    Require(ReadCount(object, 0) == 0);
+    Require(deleterCalls == 1);
+    Require(deletedObject == object);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEptEv(&owner) == nullptr);
+}
+
+static void TestMatchTeamVectorSize() {
+    int context = 0;
+    alignas(8) unsigned char object[ObjectSize];
+    std::memset(object, 0x5a, sizeof(object));
+    WriteCount(object, 0, 1);
+    deleterCalls = 0;
+    deletedObject = nullptr;
+
+    IntrusivePtr vector;
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, &context);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 0);
+
+    IntrusivePtr filled{object, RecordDelete, &context};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE8pushBackERKS8_(&vector, &filled) == 0);
+    Require(ReadCount(object, 0) == 2);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 1);
+
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEED1Ev(&vector);
+    Require(ReadCount(object, 0) == 1 && deleterCalls == 0);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEED1Ev(&filled);
+    Require(ReadCount(object, 0) == 0);
+    Require(deleterCalls == 1);
+    Require(deletedObject == object);
+}
+
 static void TestVectorPushBackReleasesElements() {
     int context = 0;
     alignas(8) unsigned char object[ObjectSize];
@@ -245,11 +304,11 @@ static void TestVectorPushBackReleasesElements() {
     Require(deletedObject == object);
 }
 
-static void TestAdoptedVectorBodyDestroyedThroughDeleter() {
+static void TestAdoptedStringVectorCountsReferences() {
     int context = 0;
     alignas(8) unsigned char body[ObjectSize];
     std::memset(body, 0x5a, sizeof(body));
-    WriteCount(body, VectorReferenceCountOffset, 1);
+    WriteCount(body, StringVectorReferenceCountOffset, 0);
     deleterCalls = 0;
     deletedObject = nullptr;
 
@@ -259,12 +318,52 @@ static void TestAdoptedVectorBodyDestroyedThroughDeleter() {
     Require(vector.object == body);
     Require(vector.deleter == RecordDelete);
     Require(vector.libContext == &context);
+    Require(ReadCount(body, StringVectorReferenceCountOffset) == 1);
+    Require(OnlyCountChanged(body, StringVectorReferenceCountOffset));
+
+    IntrusivePtr copy;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1ERS7_(&copy, &vector);
+    Require(copy.object == body);
+    Require(ReadCount(body, StringVectorReferenceCountOffset) == 2);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(&copy);
+    Require(ReadCount(body, StringVectorReferenceCountOffset) == 1);
+    Require(deleterCalls == 0);
 
     _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(&vector);
-    Require(ReadCount(body, VectorReferenceCountOffset) == 0);
+    Require(ReadCount(body, StringVectorReferenceCountOffset) == 0);
+    Require(OnlyCountChanged(body, StringVectorReferenceCountOffset));
     Require(deleterCalls == 1);
     Require(deletedObject == body);
     Require(vector.object == nullptr);
+
+    IntrusivePtr empty;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1EPS6_PFvS8_EPNS2_10LibContextE(&empty, nullptr, RecordDelete, &context);
+    Require(empty.object == nullptr);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(&empty);
+    Require(deleterCalls == 1);
+}
+
+static void TestScalarVectorAssignment() {
+    int context = 0;
+    alignas(8) unsigned char first[ObjectSize];
+    alignas(8) unsigned char second[ObjectSize];
+    std::memset(first, 0x5a, sizeof(first));
+    std::memset(second, 0x5a, sizeof(second));
+    WriteCount(first, ScalarVectorReferenceCountOffset, 2);
+    WriteCount(second, ScalarVectorReferenceCountOffset, 1);
+    deleterCalls = 0;
+
+    IntrusivePtr target{first, RecordDelete, &context};
+    const IntrusivePtr source{second, RecordDelete, &context};
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_(&target, &source);
+
+    Require(target.object == second);
+    Require(ReadCount(first, ScalarVectorReferenceCountOffset) == 1);
+    Require(ReadCount(second, ScalarVectorReferenceCountOffset) == 2);
+    Require(OnlyCountChanged(first, ScalarVectorReferenceCountOffset));
+    Require(OnlyCountChanged(second, ScalarVectorReferenceCountOffset));
+    Require(deleterCalls == 0);
 }
 
 static void TestVectorAliasedGrowth() {
@@ -343,6 +442,48 @@ static void TestUserProfileModelAndTransaction() {
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(transaction) == 0);
 }
 
+static void TestUserProfilePublicProfileRequest() {
+    constexpr int NotSignedIn = static_cast<int>(0x80552907);
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfileC1Ev() == 0);
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfile10initializeEPNS1_6Common10LibContextEPKc() == 0);
+
+    std::uint64_t transaction[0x20];
+    std::memset(transaction, 0xa5, sizeof(transaction));
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(transaction) == 0);
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi16getPublicProfileEiRKNS4_27ParameterToGetPublicProfileERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_24GetPublicProfileResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE() == NotSignedIn);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE() == NotSignedIn);
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_() == NotSignedIn);
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption() == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(transaction) == 0);
+
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfile9terminateEv() == 0);
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfileD1Ev() == 0);
+}
+
+static void TestUserProfileBoolAndSize() {
+    int object = 0;
+    const IntrusivePtr empty{nullptr, RecordDelete, nullptr};
+    const IntrusivePtr filled{&object, nullptr, nullptr};
+    Require(!_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEcvbEv(&empty));
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEcvbEv(&filled));
+    Require(!_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEcvbEv(&empty));
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEcvbEv(&filled));
+
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE4sizeEv(&empty) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(&empty) == 0);
+
+    // a body created by pushBack is host-side, so size reads it
+    int context = 0;
+    IntrusivePtr vector;
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, &context);
+    const IntrusivePtr element{nullptr, nullptr, &context};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEE8pushBackERKS8_(&vector, &element) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEE8pushBackERKS8_(&vector, &element) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE4sizeEv(&vector) == 2);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(&vector) == 2);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEED1Ev(&vector);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "alias-vector") == 0) { TestVectorAliasedGrowth(); return 0; }
     Require(sizeof(IntrusivePtr) == 0x18);
@@ -362,6 +503,8 @@ int main(int argc, char** argv) {
         _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEC1Ev,
         _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEC1Ev,
         _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEC1Ev,
+        _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEC1Ev,
+        _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V114PersonalDetailEEC1Ev,
     };
     for (const auto construct : constructors) TestConstruct(construct);
 
@@ -403,6 +546,10 @@ int main(int argc, char** argv) {
         _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEptEv,
         _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEptEv,
         _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEEptEv,
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEEdeEv,
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEptEv,
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V16AvatarEEptEv,
+        _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V16AvatarEEEEEEdeEv,
     };
     for (const auto access : accessors) TestAccess(access);
 
@@ -422,6 +569,7 @@ int main(int argc, char** argv) {
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V113PlayerSessionEEaSERS7_, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V113PlayerSessionEEEEEEaSERKSA_, VectorReferenceCountOffset},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEaSERKSA_, VectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_, ScalarVectorReferenceCountOffset},
     };
     for (const auto& testCase : assignments) TestAssign(testCase);
 
@@ -437,6 +585,8 @@ int main(int argc, char** argv) {
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_15ProfanityFilter2V219WebApiFilterRequestEED1Ev, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_18ResponseHeaderBaseEED1Ev, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEED1Ev, 0},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev, StringVectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev, ScalarVectorReferenceCountOffset},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V113BasicPresenceEEEEEED1Ev, VectorReferenceCountOffset},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V57ProductEED1Ev, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_13InGameCatalog2V59ContainerEED1Ev, 0},
@@ -450,13 +600,22 @@ int main(int argc, char** argv) {
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEED1Ev, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEED1Ev, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEED1Ev, VectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEED1Ev, 0},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V16AvatarEEEEEED1Ev, VectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev, StringVectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev, ScalarVectorReferenceCountOffset},
     };
     for (const auto& testCase : destructors) TestDestroy(testCase);
 
     TestSharedOwnership();
+    TestMatchmakingSharedOwnership();
+    TestMatchTeamVectorSize();
     TestVectorPushBackReleasesElements();
-    TestAdoptedVectorBodyDestroyedThroughDeleter();
+    TestAdoptedStringVectorCountsReferences();
+    TestScalarVectorAssignment();
     TestUserProfileVectorAssign();
     TestUserProfileModelAndTransaction();
+    TestUserProfilePublicProfileRequest();
+    TestUserProfileBoolAndSize();
     return 0;
 }

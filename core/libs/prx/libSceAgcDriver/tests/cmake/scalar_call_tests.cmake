@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(scalar_call_tests ${LIBS_INCLUDE_DIR}/tests/ScalarCall.cpp)
+    target_link_libraries(scalar_call_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(scalar_call_tests)
+    add_test(NAME scalar_call COMMAND scalar_call_tests)
+    if(WIN32)
+        set_tests_properties(scalar_call PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

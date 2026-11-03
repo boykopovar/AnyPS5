@@ -4,12 +4,12 @@
 
 extern "C" {
 
-void APS5_VABI __tsan_acquire(void*) {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __tsan_acquire(void* addr) {
+    (void)addr;
 }
 
-void APS5_VABI __tsan_release(void*) {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI __tsan_release(void* addr) {
+    (void)addr;
 }
 
 }
