@@ -367,7 +367,7 @@ struct Context {
             if (released >= wanted) return type;
             if (released != 0) {
                 const auto after = ReportedHeap(heap);
-                if (after.usage < after.budget && bytes <= after.budget - after.usage) return type;
+                if (after.Fits(bytes)) return type;
             }
         }
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
