@@ -11803,6 +11803,17 @@ void multisampleTargetOverPendingStorageTests(const Device& device, Recorder& re
         settle();
         return message;
     };
+    const auto refusedDraw = [&] {
+        std::string message;
+        try {
+            std::lock_guard gpu(GpuMutex());
+            static_cast<void>(MultisampleTargetView(context, target));
+        } catch (const std::exception& error) {
+            message = error.what();
+        }
+        settle();
+        return message;
+    };
     const auto refused = [](const std::string& message) { return message.find("a CPU read") != std::string::npos && message.find("multisampled color target") != std::string::npos; };
     const auto targetRead = [&] {
         std::array<std::byte, 64> bytesRead{};
@@ -11829,6 +11840,9 @@ void multisampleTargetOverPendingStorageTests(const Device& device, Recorder& re
     Require(texels[0] == 0xff00ff00u, "the results of a store that claimed a multisampled target did not reach guest memory at its next draw");
     Require(refused(targetRead()), "a CPU read of a multisampled target's memory passed after it was drawn again");
     clear({{0.0f, 0.0f, 1.0f, 1.0f}});
+    message = refusedDraw();
+    Require(refused(message), "the next draw of a multisampled target over storage results recorded after its last draw, by a writer that did not claim it, read the target's memory: " + message);
+    Require(StorageTexture::AnyPendingOverlaps(surface), "storage results refused at a multisampled target's next draw were dropped");
     message = idleStore();
     Require(refused(message), "an idle store of storage results recorded after a multisampled target's last draw, by a writer that did not claim it, read the target's memory: " + message);
     Require(StorageTexture::AnyPendingOverlaps(surface), "refused storage results under a multisampled target were dropped");
