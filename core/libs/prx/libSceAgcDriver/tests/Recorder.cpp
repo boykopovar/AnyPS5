@@ -2079,6 +2079,51 @@ void largeLabelTests(Recorder& recorder) {
     Require(recorder.PendingLabels() == 0 && !Recorder::WideLabelIn(0, ~0ull) && !recorder.PendingLabelIn(slot, clear.size()) && !recorder.PendingWriteOverlaps(slot, clear.size()), "large label tests left entries, ranges or writes behind");
 }
 
+void storedBytesTests(Recorder& recorder) {
+    constexpr std::uint64_t ring = 0x74000;
+    std::array<std::byte, 144> table{};
+    for (std::size_t i = 0; i < table.size(); ++i) table[i] = static_cast<std::byte>(i + 1);
+    std::array<std::byte, 256> next{};
+    next.fill(std::byte{0x5a});
+    const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    std::array<std::byte, 8> out{};
+    const auto served = [](std::uint64_t address, std::span<std::byte> bytes) { return Recorder::LookupStoredBytes(address, bytes); };
+    recorder.Sync();
+    Require(!served(ring, out), "stored bytes are served from an empty table");
+    recorder.NoteLabel(ring, table, 200, 0);
+    Require(served(ring + 0x40, out) && std::equal(out.begin(), out.end(), table.begin() + 0x40), "a wide store is not served");
+    std::array<std::byte, 144> whole{};
+    Require(served(ring, whole) && whole == table, "a whole wide store is not served");
+    Require(!served(ring + table.size() - 4, out), "bytes past a wide store are served");
+    Require(!served(ring + 2, std::span(out).first(4)) && !served(ring, std::span(out).first(2)), "a partial dword is served");
+    recorder.NoteLabel(ring + 0x80, next, 201, 0);
+    std::array<std::byte, 16> straddle{};
+    Require(served(ring + 0x78, straddle) && std::equal(straddle.begin(), straddle.begin() + 8, table.begin() + 0x78) && std::all_of(straddle.begin() + 8, straddle.end(), [](std::byte value) { return value == std::byte{0x5a}; }), "overlapping wide stores do not compose newest first");
+    recorder.NoteLabel(ring + 0x10, one, 202, 0);
+    Require(served(ring + 0x0c, out) && std::equal(out.begin(), out.begin() + 4, table.begin() + 0x0c) && std::equal(out.begin() + 4, out.end(), one.begin()), "a label inside a wide store does not win");
+    recorder.NoteLabel(ring, next, 203, 0);
+    Require(!Recorder::LookupLabel(ring + 0x10, 4, 0).has_value() && served(ring + 0x10, out) && std::all_of(out.begin(), out.end(), [](std::byte value) { return value == std::byte{0x5a}; }), "a wide store over a label does not replace it");
+    const auto tag = AgcDriver::GuestMemory::GpuLockThreadTag();
+    Recorder::NoteQueuedLabel(ring + 0x104, one, 204, tag);
+    Require(!served(ring + 0x100, out), "a store with a queued label over it is served");
+    Recorder::ForgetQueuedLabels();
+    Require(served(ring + 0x100, out), "a forgotten queued label still refuses the store");
+    recorder.NotePendingWrite(ring + 0x20, 4);
+    Require(!served(ring, std::span(out).first(4)), "an overwritten wide store is served");
+    Require(served(ring + 0x100, out), "a write over other stores refused this one");
+    recorder.NotePendingWrite(ring + 0x14c, 4);
+    Require(!served(ring + 0x148, out), "a write inside a wide store did not refuse it");
+    recorder.Sync();
+    recorder.NoteLabel(ring + 0x200, table, 205, 0);
+    recorder.NoteLabel(ring + 0x300, one, 206, 0);
+    Require(served(ring + 0x240, out) && served(ring + 0x300, std::span(out).first(4)), "stores of the open batch are not served");
+    recorder.Submit();
+    Require(!served(ring + 0x240, out), "a wide store is served after its batch was submitted, when a guest that saw the batch's labels may have written over it");
+    Require(!served(ring + 0x300, std::span(out).first(4)), "a label-table store is served after its batch was submitted, when a guest that saw the batch's labels may have written over it");
+    recorder.Sync();
+    Require(!served(ring + 0x100, out) && !Recorder::WideLabelIn(ring, 0x400), "stored bytes outlived their batch");
+}
+
 // (6) GuestMemory::UnchangedSinceCollected: false outside the watched arena, and around a
 // MarkWritten or a CPU write of the block inside it.
 void unchangedSinceTests() {
@@ -9217,6 +9262,146 @@ void refreshProofTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: refreshes over a pending key store not tested\n";
+        return false;
+    }
+    if (!KeyFastPath()) {
+        std::cout << "key fast path off: refreshes over a pending key store not tested\n";
+        return false;
+    }
+    const auto decided = PrepareImportWatch(base);
+#ifndef _WIN32
+    const auto probe = ProbeImportWriteProtection(base);
+    if (probe.failure != nullptr || probe.writtenAfterSubmit != 0) {
+        std::cout << "the device reports watched host memory written after a GPU read: refreshes over a pending key store not tested\n";
+        return false;
+    }
+#endif
+    SetImportWatch(base, ImportWatch::Watch);
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() { SetImportWatch(context, decided); }
+    } restore{base, decided};
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t keyCount = surfaceBytes / 256;
+    constexpr std::size_t bytes = surfaceBytes + 65536;
+    constexpr std::uint64_t draws = 16;
+    void* block = AllocateWatched(bytes, 65536);
+    if (block == nullptr) {
+        std::cout << "no write watching: refreshes over a pending key store not tested\n";
+        return false;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* texels = static_cast<std::uint8_t*>(block);
+    auto* keys = texels + surfaceBytes;
+    std::memset(texels, 0x55, surfaceBytes);
+    std::memset(keys, 0x00, keyCount);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{base, block, address};
+    if (HostImportFor(base, address, bytes) == nullptr || !AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "no watched host import: refreshes over a pending key store not tested\n";
+        return false;
+    }
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    resource.dccAddress = address + surfaceBytes;
+    const auto proved = [] { return StorageTexture::RefreshesProved(); };
+    {
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const auto draw = [&](VkClearColorValue value) {
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkDirty();
+        };
+        const auto storePending = [&] { return recorder.PendingWriteOverlaps(resource.dccAddress, keyCount) && keys[0] == 0x00 && keys[keyCount - 1] == 0x00; };
+        image->Refresh();
+        image->Refresh();
+        Require(image->UploadedKeys() == DccKeys::Clear0000, "the fast-cleared keys were not uploaded as a 0000 clear");
+        draw({{1.0f, 0.0f, 0.0f, 1.0f}});
+        Require(image->UploadedKeys() == DccKeys::Uncompressed && storePending(), "the first draw into the fast-cleared target left no pending uncompressed key store");
+        const auto before = proved();
+        for (std::uint64_t i = 0; i < draws; ++i) {
+            Require(image->Refresh(), "a refresh of the drawn target failed");
+            draw({{0.0f, static_cast<float>(i + 1) / static_cast<float>(draws), 0.0f, 1.0f}});
+        }
+        const auto full = draws - (proved() - before);
+        std::cout << draws << " draws into the unchanged target over its pending key store: " << full << " full refreshes, " << draws - full << " proved\n";
+        Require(storePending(), "the key store did not stay pending in the batch through the draws");
+        Require(full == 1, std::to_string(full) + " of " + std::to_string(draws) + " refreshes of the unchanged target over its pending key store ran in full, not 1");
+        texels[0] = 0x11;
+        const auto written = proved();
+        image->Refresh();
+        Require(proved() == written, "a CPU write of the target over its pending key store was answered from the proof");
+        Require(storePending(), "the key store landed before its batch was retired");
+        const auto proof = image->KeyProof();
+        Require(proof.pendingNote != 0, "the refresh over the pending key store took no proof of its write note");
+        bool crossed = false;
+        bool own = false;
+        {
+            Recorder other(base);
+            for (std::uint64_t i = 1; i < proof.pendingNote; ++i) other.NotePendingWrite(0x1000, 16);
+            other.NotePendingWrite(resource.dccAddress, keyCount);
+            std::lock_guard gpu(GpuMutex());
+            other.Activate();
+            crossed = PendingKeyProofHolds(resource, surfaceBytes, proof);
+            recorder.Activate();
+            own = PendingKeyProofHolds(resource, surfaceBytes, proof);
+            other.Sync();
+        }
+        recorder.Sync();
+        Require(!crossed, "the pending key proof held with another recorder active, holding the same write note over the keys");
+        Require(own, "the pending key proof did not hold again with its own recorder active");
+        Require(std::all_of(keys, keys + keyCount, [](std::uint8_t key) { return key == 0xff; }), "the uncompressed key store did not land");
+        const auto landed = proved();
+        image->Refresh();
+        Require(proved() == landed, "the proof over the pending key store held after its batch retired");
+        image->Refresh();
+        Require(proved() == landed + 1, "the proof was not taken again over the landed keys");
+    }
+    recorder.Sync();
+    return true;
+}
+
 bool repeatedNeighbourStoreTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     constexpr std::uint32_t width = 1024;
@@ -14594,6 +14779,14 @@ int main(int argc, char** argv) {
             keptUnitSettleTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pending-key-refresh-only") {
+            if (!pendingKeyRefreshTests(device, recorder)) {
+                std::cout << "skipped, refreshes over a pending key store are not testable here\n";
+                return 77;
+            }
+            std::cout << "Refreshes over a pending DCC key store passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--clear-hand-over-only") {
             clearHandOverTests(device, recorder, false);
             if (!clearHandOverTests(device, recorder, true)) {
@@ -14611,6 +14804,11 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--settled-baseline-only") {
             settledBaselineTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--stored-bytes-only") {
+            storedBytesTests(recorder);
+            std::cout << "stored bytes tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-after-unwatch-only") return pendingAfterLeavingWatchTests(device, recorder) ? 0 : 77;
@@ -14631,6 +14829,7 @@ int main(int argc, char** argv) {
             labelTests(recorder);
             lateLabelTests(recorder);
             largeLabelTests(recorder);
+            storedBytesTests(recorder);
             unlandedOwnLabelTests(recorder);
             unlandedOwnStoreWaitTests(recorder);
             std::cout << "Completion label storage and ordering tests passed\n";
@@ -14874,6 +15073,7 @@ int main(int argc, char** argv) {
         labelTests(recorder);
         lateLabelTests(recorder);
         largeLabelTests(recorder);
+        storedBytesTests(recorder);
         unlandedOwnLabelTests(recorder);
         unlandedOwnStoreWaitTests(recorder);
         unchangedSinceTests();
