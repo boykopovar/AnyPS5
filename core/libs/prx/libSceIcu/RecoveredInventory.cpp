@@ -1,0 +1,542 @@
+#include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libc/include/General.hpp"
+
+extern "C" {
+
+int APS5_VABI u_strToTitle_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_countRuns_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_getBaseDirection_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_getLogicalRun_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_getParaLevel_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_getVisualRun_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_reorderVisual_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_setClassCallback_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ubidi_setPara_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_clone_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_get_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_getAttribute_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_getCanonicalTimeZoneID_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_getDayOfWeekType_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_getDefaultTimeZone_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_getKeywordValuesForLocale_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_getTimeZoneDisplayName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_openTimeZoneIDEnumeration_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_openTimeZones_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_setGregorianChange_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucal_setMillis_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_countAvailable_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getAttribute_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getAvailable_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getContractionsAndExpansions_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getKeywordValues_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getKeywordValuesForLocale_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getReorderCodes_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getRules_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getStrength_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_getTailoredSet_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_setAttribute_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_setStrength_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_strcoll_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_strcollIter_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucol_strcollUTF8_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucsdet_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucsdet_detectAll_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucsdet_enableInputFilter_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucsdet_getConfidence_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucsdet_getName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucsdet_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ucsdet_setText_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udat_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udat_countSymbols_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udat_format_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udat_formatForFields_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udat_getCalendar_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udat_getSymbols_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udat_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udat_toPattern_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udatpg_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udatpg_getBestPattern_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udatpg_getBestPatternWithOptions_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udatpg_getFieldDisplayName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udatpg_getSkeleton_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udatpg_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udtitvfmt_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udtitvfmt_closeResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udtitvfmt_formatCalendarToResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udtitvfmt_formatToResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udtitvfmt_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udtitvfmt_openResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI udtitvfmt_resultAsValue_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ufieldpositer_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ufieldpositer_next_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ufieldpositer_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ufmtval_getString_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ufmtval_nextPosition_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uidna_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uidna_nameToASCII_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uidna_nameToUnicode_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uidna_openUTS46_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uldn_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uldn_keyValueDisplayName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uldn_localeDisplayName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uldn_openForContext_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uldn_regionDisplayName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uldn_scriptDisplayName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ulistfmt_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ulistfmt_closeResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ulistfmt_format_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ulistfmt_formatStringsToResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ulistfmt_openForType_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ulistfmt_openResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ulistfmt_resultAsValue_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_clone_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_formatDecimal_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_formatDouble_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_formatDoubleForFields_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_getSymbol_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_getTextAttribute_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_setAttribute_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unum_setTextAttribute_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumf_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumf_closeResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumf_formatDecimal_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumf_formatDouble_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumf_openForSkeletonAndLocale_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumf_openResult_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumf_resultGetAllFieldPositions_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumf_resultToString_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumsys_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumsys_getName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumsys_isAlgorithmic_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumsys_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumsys_openAvailableNames_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI unumsys_openByName_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uplrules_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uplrules_getKeywords_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uplrules_openForType_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uplrules_selectWithFormat_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ureldatefmt_close_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ureldatefmt_format_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ureldatefmt_formatNumeric_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI ureldatefmt_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI uscript_getCode_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_getCollator_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_getMatchedLength_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_next_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_open_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_reset_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_setAttribute_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_setOffset_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_setPattern_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI usearch_setText_nid_postfix() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
