@@ -115,6 +115,8 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
+    *__error_nid_postfix() = 0;
+    Require(sem_post_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "null semaphore pointer in sem_post must fail with EINVAL");
     Require(sem_init_nid_postfix(&sem, 0, maximum) == 0, "maximum count must initialize");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "maximum count must be readable");
     *__error_nid_postfix() = 0;
