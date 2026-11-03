@@ -19,7 +19,7 @@ std::uint32_t JxrReferenceGet32(void* io, std::uint32_t bits);
 namespace {
 
 constexpr std::size_t RingSize = 8192;
-alignas(16384) std::array<std::uint8_t, 32768> ringStorage;
+alignas(64) std::array<std::uint8_t, 49152> ringStorage;
 
 std::uint8_t* Ring() {
     return reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(ringStorage.data()) + 16383) & ~std::uintptr_t{16383});
