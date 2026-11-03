@@ -81,6 +81,10 @@ static bool IsCpuClock(int clockId) {
     return (static_cast<std::uint32_t>(clockId) & CPU_CLOCK_BIT) != 0;
 }
 
+static bool FailsUnknownClock(int clockId) {
+    return clockId >= 16 && clockId < 32 && std::getenv("APS5_FAIL_UNKNOWN_CLOCKS") != nullptr;
+}
+
 static std::uint64_t RawMonotonicNanos() {
 #ifdef _WIN32
     return TimedWait::NowNanos();
@@ -582,7 +586,7 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 }
 
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
-    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32)) {
+    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32 || FailsUnknownClock(clockId))) {
         *__error_nid_postfix() = GUEST_EINVAL;
         return -1;
     }
@@ -636,6 +640,10 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zo
 
 int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     if (res == nullptr) return 0;
+    if (FailsUnknownClock(clockId)) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
     if (IsCpuClock(clockId))
         return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
     if (clockId == 1 || clockId == 2) {
