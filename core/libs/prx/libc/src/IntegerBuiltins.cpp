@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -168,6 +169,12 @@ int CountTrailingZeros128(Uint128 value) {
 }
 
 template<typename TValue>
+TValue CeilBit(TValue value) {
+    constexpr TValue highest = TValue{1} << (std::numeric_limits<TValue>::digits - 1);
+    return value > highest ? TValue{0} : std::bit_ceil(value);
+}
+
+template<typename TValue>
 int Compare(TValue a, TValue b) {
     if (a < b) return 0;
     return a > b ? 2 : 1;
@@ -259,6 +266,54 @@ std::uint32_t APS5_VABI stdc_count_ones_us_nid_postfix(std::uint16_t value) { re
 std::uint32_t APS5_VABI stdc_count_ones_ui_nid_postfix(std::uint32_t value) { return std::popcount(value); }
 std::uint32_t APS5_VABI stdc_count_ones_ul_nid_postfix(std::uint64_t value) { return std::popcount(value); }
 std::uint32_t APS5_VABI stdc_count_ones_ull_nid_postfix(std::uint64_t value) { return std::popcount(value); }
+
+std::uint32_t APS5_VABI stdc_first_leading_zero_uc_nid_postfix(std::uint8_t value) { return value == std::numeric_limits<std::uint8_t>::max() ? 0 : std::countl_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_zero_us_nid_postfix(std::uint16_t value) { return value == std::numeric_limits<std::uint16_t>::max() ? 0 : std::countl_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_zero_ui_nid_postfix(std::uint32_t value) { return value == std::numeric_limits<std::uint32_t>::max() ? 0 : std::countl_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_zero_ul_nid_postfix(std::uint64_t value) { return value == std::numeric_limits<std::uint64_t>::max() ? 0 : std::countl_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_zero_ull_nid_postfix(std::uint64_t value) { return value == std::numeric_limits<std::uint64_t>::max() ? 0 : std::countl_one(value) + 1; }
+
+std::uint32_t APS5_VABI stdc_first_leading_one_uc_nid_postfix(std::uint8_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_one_us_nid_postfix(std::uint16_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_one_ui_nid_postfix(std::uint32_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_one_ul_nid_postfix(std::uint64_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_leading_one_ull_nid_postfix(std::uint64_t value) { return value == 0 ? 0 : std::countl_zero(value) + 1; }
+
+std::uint32_t APS5_VABI stdc_first_trailing_zero_uc_nid_postfix(std::uint8_t value) { return value == std::numeric_limits<std::uint8_t>::max() ? 0 : std::countr_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_zero_us_nid_postfix(std::uint16_t value) { return value == std::numeric_limits<std::uint16_t>::max() ? 0 : std::countr_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ui_nid_postfix(std::uint32_t value) { return value == std::numeric_limits<std::uint32_t>::max() ? 0 : std::countr_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ul_nid_postfix(std::uint64_t value) { return value == std::numeric_limits<std::uint64_t>::max() ? 0 : std::countr_one(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ull_nid_postfix(std::uint64_t value) { return value == std::numeric_limits<std::uint64_t>::max() ? 0 : std::countr_one(value) + 1; }
+
+std::uint32_t APS5_VABI stdc_first_trailing_one_uc_nid_postfix(std::uint8_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_one_us_nid_postfix(std::uint16_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_one_ui_nid_postfix(std::uint32_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_one_ul_nid_postfix(std::uint64_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+std::uint32_t APS5_VABI stdc_first_trailing_one_ull_nid_postfix(std::uint64_t value) { return value == 0 ? 0 : std::countr_zero(value) + 1; }
+
+bool APS5_VABI stdc_has_single_bit_uc_nid_postfix(std::uint8_t value) { return std::has_single_bit(value); }
+bool APS5_VABI stdc_has_single_bit_us_nid_postfix(std::uint16_t value) { return std::has_single_bit(value); }
+bool APS5_VABI stdc_has_single_bit_ui_nid_postfix(std::uint32_t value) { return std::has_single_bit(value); }
+bool APS5_VABI stdc_has_single_bit_ul_nid_postfix(std::uint64_t value) { return std::has_single_bit(value); }
+bool APS5_VABI stdc_has_single_bit_ull_nid_postfix(std::uint64_t value) { return std::has_single_bit(value); }
+
+std::uint32_t APS5_VABI stdc_bit_width_uc_nid_postfix(std::uint8_t value) { return std::bit_width(value); }
+std::uint32_t APS5_VABI stdc_bit_width_us_nid_postfix(std::uint16_t value) { return std::bit_width(value); }
+std::uint32_t APS5_VABI stdc_bit_width_ui_nid_postfix(std::uint32_t value) { return std::bit_width(value); }
+std::uint32_t APS5_VABI stdc_bit_width_ul_nid_postfix(std::uint64_t value) { return std::bit_width(value); }
+std::uint32_t APS5_VABI stdc_bit_width_ull_nid_postfix(std::uint64_t value) { return std::bit_width(value); }
+
+std::uint8_t APS5_VABI stdc_bit_floor_uc_nid_postfix(std::uint8_t value) { return std::bit_floor(value); }
+std::uint16_t APS5_VABI stdc_bit_floor_us_nid_postfix(std::uint16_t value) { return std::bit_floor(value); }
+std::uint32_t APS5_VABI stdc_bit_floor_ui_nid_postfix(std::uint32_t value) { return std::bit_floor(value); }
+std::uint64_t APS5_VABI stdc_bit_floor_ul_nid_postfix(std::uint64_t value) { return std::bit_floor(value); }
+std::uint64_t APS5_VABI stdc_bit_floor_ull_nid_postfix(std::uint64_t value) { return std::bit_floor(value); }
+
+std::uint8_t APS5_VABI stdc_bit_ceil_uc_nid_postfix(std::uint8_t value) { return CeilBit(value); }
+std::uint16_t APS5_VABI stdc_bit_ceil_us_nid_postfix(std::uint16_t value) { return CeilBit(value); }
+std::uint32_t APS5_VABI stdc_bit_ceil_ui_nid_postfix(std::uint32_t value) { return CeilBit(value); }
+std::uint64_t APS5_VABI stdc_bit_ceil_ul_nid_postfix(std::uint64_t value) { return CeilBit(value); }
+std::uint64_t APS5_VABI stdc_bit_ceil_ull_nid_postfix(std::uint64_t value) { return CeilBit(value); }
 
 int APS5_VABI __cmpdi2_nid_postfix(std::int64_t a, std::int64_t b) { return Compare(a, b); }
 int APS5_VABI __cmpti2_nid_postfix(Int128 a, Int128 b) { return Compare(a, b); }
