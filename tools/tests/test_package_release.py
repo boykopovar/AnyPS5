@@ -215,9 +215,11 @@ class ReleasePackageTests(unittest.TestCase):
         package_release.package("linux", self.build, self.output, "v1")
         with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
             for name, content in notices.values():
+                self.assertIn("libs/licenses/" + name, archive.namelist())
                 self.assertEqual(archive.read("libs/licenses/" + name), content)
         with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
             for name, content in notices.values():
+                self.assertIn("libs/licenses/" + name, archive.getnames())
                 self.assertEqual(archive.extractfile("libs/licenses/" + name).read(), content)
 
     def test_ajm_vibration_decoder_license_in_archives(self):
