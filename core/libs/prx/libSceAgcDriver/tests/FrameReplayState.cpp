@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include <limits>
 #include <string_view>
 #include <barrier>
 
@@ -768,6 +769,112 @@ void testShaderCode(const std::filesystem::path& directory, bool host, std::stri
     check(registered && captured == expected, "the complete separate shader code was not captured before registration");
 }
 
+std::optional<std::pair<std::uint64_t, std::byte>> lastRecorded(const FrameCaptureReader& reader, const std::byte* at) {
+    std::optional<std::pair<std::uint64_t, std::byte>> last;
+    for (const auto& chunk : reader.Chunks()) {
+        if ((chunk.kind != FrameMemoryKind::Delta && chunk.kind != FrameMemoryKind::Snapshot) || chunk.address > address(at) || address(at) >= chunk.address + chunk.bytes) continue;
+        const std::uint64_t group = chunk.kind == FrameMemoryKind::Delta ? chunk.group : 0;
+        if (last && group < last->first) continue;
+        last = std::pair{group, reader.Read(chunk)[address(at) - chunk.address]};
+    }
+    return last;
+}
+
+std::string describeRecorded(const std::optional<std::pair<std::uint64_t, std::byte>>& last) {
+    if (!last) return "in no memory delta and not in the snapshot";
+    const auto where = last->first == 0 ? std::string("last recorded by the snapshot") : "last recorded in memory delta group " + std::to_string(last->first);
+    return where + " with byte " + std::to_string(static_cast<int>(last->second));
+}
+
+void testStoreWindow(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    auto* page = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    auto* label = reinterpret_cast<std::uint32_t*>(page + 0x100);
+    auto* title = page + 0x800;
+    auto* own = bytes + 4 * FrameCaptureWriter::BlockBytes;
+    own[4 * Page + 0x123] = std::byte{0x6d};
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    AgcDriver::GuestMemory::StoreOwnBytes(address(label), sizeof(*label), [&] {
+        *label = 1;
+        std::thread([&] { std::fill_n(title, 64, std::byte{0x7e}); }).join();
+    });
+    const std::array<std::byte, 8> eight{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}, std::byte{6}, std::byte{7}, std::byte{8}};
+    AgcDriver::GuestMemory::StoreOwnBytes(address(own + Page + 0x40), eight);
+    AgcDriver::GuestMemory::Write(address(own + 2 * Page + 0x80), eight, 4);
+    AgcDriverStoreGuestLabel_nid_postfix(reinterpret_cast<std::uint64_t*>(own + 3 * Page + 0x10), 7);
+    const std::vector<std::byte> original(Page, std::byte{0});
+    auto current = original;
+    current[0x10] = std::byte{0x5c};
+    AgcDriver::GuestMemory::WriteChanged(address(own + 4 * Page), current, original);
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    check(reader.Header().find("stopped") == std::string::npos, ("the capture stopped: " + reader.Header()).c_str());
+    std::string failures;
+    const auto last = lastRecorded(reader, title);
+    if (!last || last->first == 0 || last->second != std::byte{0x7e}) failures = "the store another thread made in the page of a driver store during the store is " + describeRecorded(last) + ", not 126";
+    const std::array<const char*, 4> stores{"StoreOwnBytes with given bytes", "Write", "AgcDriverStoreGuestLabel", "WriteChanged"};
+    for (std::size_t index = 0; index < stores.size(); ++index) {
+        const auto groups = deltaGroupsHolding(reader, own + (index + 1) * Page);
+        if (groups.empty()) continue;
+        failures += std::string(failures.empty() ? "" : "; ") + "the page " + stores[index] + " stored into with no other store in it is in memory delta groups";
+        for (const auto held : groups) failures += " " + std::to_string(held);
+    }
+    auto* after = bytes + 6 * FrameCaptureWriter::BlockBytes;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    const auto since = AgcDriver::GuestMemory::CollectWrittenBlocks(address(after), Page, std::numeric_limits<std::uint64_t>::max(), written);
+    AgcDriver::GuestMemory::StoreOwnBytes(address(after + 0x100), 8, [&] { after[0x100] = std::byte{1}; });
+    AgcDriver::GuestMemory::CollectWrittenBlocks(address(after), Page, since, written);
+    if (!written.empty()) failures += std::string(failures.empty() ? "" : "; ") + "a driver store made after the capture finished was listed as a CPU write";
+    if (!failures.empty()) throw std::runtime_error(failures);
+}
+
+void testStoreWindowUnwritten(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    auto* bytes = allocate(Size);
+    auto* page = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    const std::array<std::byte, 16> zero{};
+    AgcDriver::GuestMemory::Write(address(page + 0x100), zero);
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    recorder->Suspend([] {});
+    auto* label = reinterpret_cast<std::uint32_t*>(page + 0x100);
+    auto* title = page + 0x800;
+    AgcDriver::GuestMemory::StoreOwnBytes(address(label), sizeof(*label), [&] {
+        *label = 1;
+        std::thread([&] { std::fill_n(title, 64, std::byte{0x7e}); }).join();
+    });
+    recorder->Suspend([] {});
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    check(reader.Header().find("stopped") == std::string::npos, ("the capture stopped: " + reader.Header()).c_str());
+    const auto last = lastRecorded(reader, title);
+    if (!last || last->first == 0 || last->second != std::byte{0x7e}) throw std::runtime_error("the store another thread made during a driver store into a page the CPU has not written is " + describeRecorded(last) + ", not 126");
+}
+
+void testStoreWindowStopped(const std::filesystem::path& directory) {
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
+    std::fill_n(bytes, FrameCaptureWriter::BlockBytes, std::byte{0});
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    check(reader.Header().find("stopped: less than 4 GiB free on the capture volume") != std::string::npos, "the capture did not stop when it started");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    const auto since = AgcDriver::GuestMemory::CollectWrittenBlocks(address(bytes), Page, std::numeric_limits<std::uint64_t>::max(), written);
+    AgcDriver::GuestMemory::StoreOwnBytes(address(bytes + 0x100), 8, [&] { bytes[0x100] = std::byte{1}; });
+    AgcDriver::GuestMemory::CollectWrittenBlocks(address(bytes), Page, since, written);
+    if (!written.empty()) throw std::runtime_error("a driver store made after the capture stopped was listed as a CPU write");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -786,6 +893,9 @@ int main(int argc, char** argv) {
         else if (mode == "partly_covered") testPartlyCoveredBlock(directory);
         else if (mode == "late_clear") testLateClear(directory);
         else if (mode == "store_between_walks") testStoreBetweenWalks(directory);
+        else if (mode == "store_window") testStoreWindow(directory);
+        else if (mode == "store_window_unwritten") testStoreWindowUnwritten(directory);
+        else if (mode == "store_window_stopped") testStoreWindowStopped(directory);
 #ifdef _WIN32
         else if (mode == "fresh_note") testFreshNote(directory);
 #endif
