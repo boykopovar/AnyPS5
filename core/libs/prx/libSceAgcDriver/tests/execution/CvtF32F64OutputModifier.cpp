@@ -181,7 +181,7 @@ int main() {
             return VulkanTestSkipped;
         }
         Run(*device, std::nullopt);
-        Check(ExpectedApply, "no float mode");
+        Check(ExpectedIgnore, "no float mode");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
         Check(ExpectedApply, "0xc0 IEEE=0");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xd0u, true, false, false});
