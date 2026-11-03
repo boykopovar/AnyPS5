@@ -127,6 +127,18 @@ int main() {
     Require(sceNetCtlGetInfoV6(6, &info) == kErrInvalidCode);
     Require(sceNetCtlGetInfoV6(1, nullptr) == kErrInvalidAddr);
 
+    std::memset(&info, kFill, sizeof(info));
+    const int first = sceNetCtlGetInfoV6(1, &info);
+    Require(first == 0 || first == kErrNotConnected);
+    sceNetCtlTerm();
+    std::memset(&info, kFill, sizeof(info));
+    const int termed = sceNetCtlGetInfoV6(1, &info);
+    Require(termed == first);
+    Require(sceNetCtlGetInfoV6(1, nullptr) == kErrInvalidAddr);
+    Require(sceNetCtlInit() == 0);
+    std::memset(&info, kFill, sizeof(info));
+    Require(sceNetCtlGetInfoV6(1, &info) == first);
+
     std::vector<HostIpv6Address> global;
     std::vector<HostIpv6Address> linkLocal;
     CollectHostAddresses(global, linkLocal);
