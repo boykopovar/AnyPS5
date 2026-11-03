@@ -1254,6 +1254,7 @@ Recorder::~Recorder() {
         if (labelTableOwner == this) labelTableOwner = nullptr;
     }
     if (meshArgumentPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, meshArgumentPipeline, nullptr);
+    if (meshArgumentHeapPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, meshArgumentHeapPipeline, nullptr);
     if (meshArgumentLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, meshArgumentLayout, nullptr);
     if (changedCopyPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, changedCopyPipeline, nullptr);
     if (changedCopyHeapPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, changedCopyHeapPipeline, nullptr);
@@ -1269,6 +1270,7 @@ Recorder::~Recorder() {
         sampleCounter.reset();
     }
     if (dispatchArgumentPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, dispatchArgumentPipeline, nullptr);
+    if (dispatchArgumentHeapPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, dispatchArgumentHeapPipeline, nullptr);
     if (dispatchArgumentLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, dispatchArgumentLayout, nullptr);
     for (const auto fence : spare) context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     spare.clear();
@@ -2276,6 +2278,7 @@ bool Recorder::RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress
             pipelineInfo.stage.pName = "main";
             pipelineInfo.layout = dispatchArgumentLayout;
             Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &dispatchArgumentPipeline), "vkCreateComputePipelines dispatch arguments");
+            dispatchArgumentHeapPipeline = createPushOnlyHeapPipeline(pipelineInfo);
             context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
             dispatchArgumentState = 1;
         } catch (const std::exception& error) {
@@ -2285,7 +2288,7 @@ bool Recorder::RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress
     }
     if (dispatchArgumentState < 0) return false;
     recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-    function(cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, dispatchArgumentPipeline);
+    bindPushOnlyPipeline(commands, dispatchArgumentPipeline, dispatchArgumentHeapPipeline);
     const auto* limit = context.limits.maxComputeWorkGroupCount;
     struct {
         VkDeviceAddress source;
@@ -2295,7 +2298,7 @@ bool Recorder::RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress
     } parameters{source, arguments, {limit[0], limit[1], limit[2], threadGroup != nullptr ? 1u : 0u}, {1u, 1u, 1u, 0u}};
     if (threadGroup != nullptr) std::copy(threadGroup->begin(), threadGroup->end(), parameters.group.begin());
     static_assert(sizeof(parameters) == PushBytes);
-    CmdPushConstants(context, commands, dispatchArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+    pushOnlyParameters(commands, dispatchArgumentHeapPipeline, dispatchArgumentLayout, PushBytes, &parameters);
     function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
     const VkPipelineStageFlags readers = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | (threadGroup != nullptr ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0u);
     const VkAccessFlags reads = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | (threadGroup != nullptr ? VK_ACCESS_TRANSFER_READ_BIT : 0u);
@@ -2754,6 +2757,7 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
                 auto pipelineCacheLock = context.LockPipelineCacheForUse();
                 Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &meshArgumentPipeline), "vkCreateComputePipelines mesh arguments");
             }
+            meshArgumentHeapPipeline = createPushOnlyHeapPipeline(pipelineInfo);
             context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
             meshArgumentState = 1;
         } catch (const std::exception& error) {
@@ -2763,14 +2767,14 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
     }
     if (meshArgumentState < 0) return false;
     recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
-    function(cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, meshArgumentPipeline);
+    bindPushOnlyPipeline(commands, meshArgumentPipeline, meshArgumentHeapPipeline);
     struct {
         VkDeviceAddress record;
         VkDeviceAddress arguments;
         std::array<std::uint32_t, 8> rules;
     } parameters{record, arguments, {rules[0], rules[1], rules[2], rules[3], rules[4], rules[5], rules[6], 0u}};
     static_assert(sizeof(parameters) == PushBytes);
-    CmdPushConstants(context, commands, meshArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+    pushOnlyParameters(commands, meshArgumentHeapPipeline, meshArgumentLayout, PushBytes, &parameters);
     function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
     recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
     CountBarriers(CommandClass::Draw, 2);

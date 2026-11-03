@@ -772,6 +772,7 @@ private:
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
     VkPipeline meshArgumentPipeline = VK_NULL_HANDLE;
+    VkPipeline meshArgumentHeapPipeline = VK_NULL_HANDLE;
     int changedCopyState = 0;
     VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
     VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
@@ -794,6 +795,7 @@ private:
     int dispatchArgumentState = 0;
     VkPipelineLayout dispatchArgumentLayout = VK_NULL_HANDLE;
     VkPipeline dispatchArgumentPipeline = VK_NULL_HANDLE;
+    VkPipeline dispatchArgumentHeapPipeline = VK_NULL_HANDLE;
     // BeginGpuTiming on the open batch without Commands() (RecordStore times its own run, which
     // Commands() would close).
     std::uint32_t beginTiming(std::uint64_t key);
