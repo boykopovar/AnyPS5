@@ -359,6 +359,25 @@ if(BUILD_TESTING)
         configure_windows_unwind(guest_deferred_sweep_fixture)
         set_target_properties(guest_deferred_sweep_fixture PROPERTIES PREFIX "" SUFFIX ".guest.prx")
         add_dependencies(guest_deferred_module_tests guest_deferred_sweep_fixture)
+        add_library(guest_deferred_failed_fixture SHARED
+            ${LIBS_INCLUDE_DIR}/tests/GuestDeferredModuleFixture.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestDeferredFailedFixture.S)
+        target_include_directories(guest_deferred_failed_fixture PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_options(guest_deferred_failed_fixture PRIVATE -Wl,--image-base,0x3b000000 -Wl,--disable-dynamicbase)
+        configure_windows_unwind(guest_deferred_failed_fixture)
+        set_target_properties(guest_deferred_failed_fixture PROPERTIES PREFIX "" SUFFIX ".guest.prx")
+        add_library(guest_deferred_sweep_failed_fixture SHARED
+            ${LIBS_INCLUDE_DIR}/tests/GuestDeferredModuleFixture.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestDeferredSweepFailedFixture.S)
+        target_include_directories(guest_deferred_sweep_failed_fixture PRIVATE ${LIBS_INCLUDE_DIR})
+        target_compile_definitions(guest_deferred_sweep_failed_fixture PRIVATE GUEST_DEFERRED_DEPENDENT_FIXTURE=1)
+        target_link_options(guest_deferred_sweep_failed_fixture PRIVATE -Wl,--image-base,0x3c000000 -Wl,--disable-dynamicbase)
+        configure_windows_unwind(guest_deferred_sweep_failed_fixture)
+        set_target_properties(guest_deferred_sweep_failed_fixture PROPERTIES PREFIX "" SUFFIX ".guest.prx")
+        add_dependencies(guest_deferred_module_tests guest_deferred_failed_fixture guest_deferred_sweep_failed_fixture)
+        add_test(NAME guest_deferred_module_sweep_failed COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_sweep_failed_fixture> sweep-failed $<TARGET_FILE:guest_deferred_module_fixture> $<TARGET_FILE:guest_deferred_failed_fixture>)
+        set_tests_properties(guest_deferred_module_sweep_failed PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test(NAME guest_deferred_module_sweep COMMAND guest_deferred_module_tests $<TARGET_FILE:guest_deferred_sweep_fixture> sweep $<TARGET_FILE:guest_deferred_module_fixture>)
         set_tests_properties(guest_deferred_module_sweep PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")

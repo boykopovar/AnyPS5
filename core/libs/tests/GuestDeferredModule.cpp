@@ -81,7 +81,7 @@ static void APS5_VABI NestedLoad(const char* path) {
 }
 
 int main(int argc, char** argv) {
-    Require(argc == 3 || (argc == 4 && (std::string(argv[2]).starts_with("dependency") || std::string(argv[2]) == "sweep")), "fixture and mode required");
+    Require(argc == 3 || (argc == 4 && (std::string(argv[2]).starts_with("dependency") || std::string(argv[2]) == "sweep")) || (argc == 5 && std::string(argv[2]) == "sweep-failed"), "fixture and mode required");
     const auto file = std::filesystem::absolute(argv[1]);
     const auto path = file.string();
     const std::string mode = argv[2];
@@ -152,10 +152,14 @@ int main(int argc, char** argv) {
         Counts(id, 1, 1);
         MetadataProtected(id);
         Close(id);
-    } else if (mode == "dependency" || mode == "dependency-nested" || mode == "sweep") {
+    } else if (mode == "dependency" || mode == "dependency-nested" || mode == "sweep" || mode == "sweep-failed") {
         const auto provider = std::filesystem::absolute(argv[3]);
         const auto providerPath = provider.string();
         HMODULE mapped = LoadLibraryW(provider.c_str());
+        if (mode == "sweep-failed") {
+            const auto failed = std::filesystem::absolute(argv[4]);
+            Require(LoadLibraryW(failed.c_str()) != nullptr, "map the module whose start fails");
+        }
         Require(mapped != nullptr, "map the provider without starting it");
         Require(NativeCounter(mapped, "DeferredStarts_nid_no_patch") == 0, "the provider is not started by mapping it");
         GuestDeferredModuleArgs args;

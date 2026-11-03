@@ -323,7 +323,9 @@ static void InitializeDeferredModule(HMODULE native, const std::string& reason) 
                     try {
                         InitializeDeferredModule(dependency, why);
                     } catch (const std::exception& error) {
-                        std::fprintf(stderr, "[module] deferred sweep module %s failed to start and is skipped: %s\n", name.c_str(), error.what());
+                        std::fprintf(stderr, "[module] deferred sweep: %s failed: %s\n", name.c_str(), error.what());
+                    } catch (...) {
+                        std::fprintf(stderr, "[module] deferred sweep: %s failed: unknown exception\n", name.c_str());
                     }
                 } else if (dependency && dependency != native) InitializeDeferredModule(dependency, why);
                 else if (!dependency) std::fprintf(stderr, "[module] deferred %s %s of %s is not mapped and is not started\n", kind, name.c_str(), ModuleFileName(native).c_str());
