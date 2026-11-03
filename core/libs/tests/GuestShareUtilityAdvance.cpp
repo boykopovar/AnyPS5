@@ -5,7 +5,7 @@
 
 namespace {
 
-constexpr int Result = static_cast<int>(0x81170001u);
+constexpr int AdvanceResult = static_cast<int>(0x81170001u);
 
 using Query = int (APS5_VABI *)();
 
@@ -20,6 +20,6 @@ int main() {
              sceShareUtilityAdvanceQueryServiceInfoA,
              sceShareUtilityAdvanceValidateContents,
          }) {
-        if (query() != Result) std::abort();
+        if (query() != AdvanceResult) std::abort();
     }
 }
