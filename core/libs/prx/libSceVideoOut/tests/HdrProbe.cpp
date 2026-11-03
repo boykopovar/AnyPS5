@@ -47,12 +47,12 @@ bool monitorReportsHdr(SDL_Window* window) {
 
 int main() {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-        std::printf("skipped, no SDL video driver: %s\n", SDL_GetError());
+        std::printf("skipped, no display or Vulkan device: SDL video driver: %s\n", SDL_GetError());
         return 77;
     }
     SDL_Window* window = SDL_CreateWindow("HDR probe test", 0, 0, 64, 64, SDL_WINDOW_HIDDEN);
     if (window == nullptr) {
-        std::printf("skipped, no SDL window: %s\n", SDL_GetError());
+        std::printf("skipped, no display or Vulkan device: SDL window: %s\n", SDL_GetError());
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         return 77;
     }
