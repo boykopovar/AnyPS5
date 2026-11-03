@@ -1877,7 +1877,7 @@ static void* HostVectorEnd(void* out, const void* self, const std::int32_t eleme
     const VectorBody* body = HostVectorBody(self, elementKind, function);
     auto* it = static_cast<CommonIterator*>(out);
     it->referenceCount = 0;
-    it->element = body != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * elementSize : nullptr;
+    it->element = body != nullptr && body->elements != nullptr ? static_cast<std::uint8_t*>(body->elements) + body->size * elementSize : nullptr;
     return out;
 }
 
@@ -1936,9 +1936,7 @@ static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, co
 }
 
 static void* CopyOnlineId(void* out, const void* self, const std::size_t memberOffset) {
-    std::memcpy(out, static_cast<const std::uint8_t*>(self) + memberOffset, 0x10);
-    *reinterpret_cast<std::uint32_t*>(static_cast<std::uint8_t*>(out) + 0x10) =
-        *reinterpret_cast<const std::uint32_t*>(static_cast<const std::uint8_t*>(self) + memberOffset + 0x10);
+    std::memcpy(out, static_cast<const std::uint8_t*>(self) + memberOffset, 0x14);
     return out;
 }
 
@@ -1966,8 +1964,13 @@ static void DestroyHostString(void* field) {
 static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* source, const char* function) {
     VectorBody* body = VectorBodyFor(self, 2, function);
     if (body == nullptr) return ParameterAllocationFailed;
-    if (self->libContext == nullptr) self->libContext = source->libContext;
-    const auto* sourceBody = static_cast<const VectorBody*>(source->object);
+    const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
+    const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
+    const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
+    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
+    void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+    if (*selfContext == nullptr) *selfContext = sourceContext;
+    if (body->libContext == nullptr) body->libContext = *selfContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 2)) {
         NotImplemented_nid_no_patch(function);
         return ParameterAllocationFailed;

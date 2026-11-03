@@ -861,6 +861,21 @@ static void TestAuditedModelAccessors() {
     Require(deleterCalls == 0);
 }
 
+static void TestEntryGetOnlineIdCopiesAllBytes() {
+    alignas(8) unsigned char entry[0x90];
+    std::memset(entry, 0, sizeof(entry));
+    unsigned char expected[0x14];
+    for (std::size_t index = 0; index < sizeof(expected); ++index) {
+        expected[index] = static_cast<unsigned char>(0x30 + index);
+    }
+    std::memcpy(entry + 0x69, expected, sizeof(expected));
+    alignas(8) unsigned char out[0x18];
+    std::memset(out, 0xa5, sizeof(out));
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getOnlineIdEv(out, entry) == out);
+    Require(std::memcmp(out, expected, sizeof(expected)) == 0);
+    Require(out[0x14] == 0xa5);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "alias-vector") == 0) { TestVectorAliasedGrowth(); return 0; }
     Require(sizeof(IntrusivePtr) == 0x18);
@@ -998,5 +1013,6 @@ int main(int argc, char** argv) {
     TestUserProfileBoolAndSize();
     TestResidualAccessors();
     TestAuditedModelAccessors();
+    TestEntryGetOnlineIdCopiesAllBytes();
     return 0;
 }
