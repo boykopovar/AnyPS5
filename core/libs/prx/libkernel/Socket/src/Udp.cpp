@@ -1873,7 +1873,9 @@ std::shared_ptr<Socket> PassedSocket(int native) {
     const int guestType = GuestFromHostSocketType(type);
     if (family < 0 || guestType < 0) throw std::runtime_error("recvmsg: a received socket of host domain " + std::to_string(domain) + " and type " + std::to_string(type) + " is not supported");
     auto socket = std::make_shared<Socket>(native, family, guestType);
-    socket->connectStarted = true;
+    sockaddr_storage peer{};
+    socklen_t peerLength = sizeof(peer);
+    socket->connectStarted = guestType != 1 || ::getpeername(native, reinterpret_cast<sockaddr*>(&peer), &peerLength) == 0;
     return socket;
 }
 class ReceivedRights {
