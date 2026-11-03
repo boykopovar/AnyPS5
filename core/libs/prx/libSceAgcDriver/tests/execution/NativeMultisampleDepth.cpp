@@ -1,5 +1,4 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
-#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -3695,19 +3694,6 @@ int main(int argc, char** argv) {
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return VulkanTestSkipped;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--attachment-buffer-feedback") return CheckDrawFeedback(false) ? 0 : VulkanTestSkipped;
-        if (argc == 2 && std::string_view(argv[1]) == "--sampled-buffer-feedback") return CheckDrawFeedback(true) ? 0 : VulkanTestSkipped;
-        if (argc == 2 && std::string_view(argv[1]) == "--cached-draw-publication") {
-            const bool checked = CheckCachedDrawPublication();
-            AgcDriver::DriverDetail::DriverTestAccess::Stop();
-            return checked ? 0 : VulkanTestSkipped;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--buffer-publication") {
-            const bool checked = CheckRetiredNativeWriteRefusal() && CheckRetiredNativeWriteRefusal(true) && CheckPairedBufferOverwrite();
-            AgcDriver::DriverDetail::DriverTestAccess::Stop();
-            return checked ? 0 : VulkanTestSkipped;
-        }
-        CheckDrawFeedback();
         const auto context = device->GetContext();
         if (argc == 2 && std::string_view(argv[1]) == "--publication") {
             std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
@@ -3742,6 +3728,18 @@ int main(int argc, char** argv) {
             for (const auto write : {PublicationWrite::SameDepth, PublicationWrite::SameStencil, PublicationWrite::SameHtile, PublicationWrite::ChangedHull, PublicationWrite::Possible, PublicationWrite::ImportSameValue}) CheckDepthPublication(publishing, 4u, write, true);
             CheckDepthPublication(publishing, 4u, PublicationWrite::DccAcquisition, true);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--attachment-buffer-feedback") return CheckDrawFeedback(false) ? 0 : VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--sampled-buffer-feedback") return CheckDrawFeedback(true) ? 0 : VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--cached-draw-publication") {
+            const bool checked = CheckCachedDrawPublication();
+            AgcDriver::DriverDetail::DriverTestAccess::Stop();
+            return checked ? 0 : VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--buffer-publication") {
+            const bool checked = CheckRetiredNativeWriteRefusal() && CheckRetiredNativeWriteRefusal(true) && CheckPairedBufferOverwrite();
+            AgcDriver::DriverDetail::DriverTestAccess::Stop();
+            return checked ? 0 : VulkanTestSkipped;
         }
         CheckDrawFeedback();
         if (argc == 1) {
