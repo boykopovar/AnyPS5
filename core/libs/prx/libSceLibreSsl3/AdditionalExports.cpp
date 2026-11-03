@@ -538,10 +538,6 @@ int APS5_VABI d2i_ASN1_SEQUENCE_ANY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_CTX_set_post_handshake_auth_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
