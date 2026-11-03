@@ -199,6 +199,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_output_guards_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutputGuards.cpp)
+    target_include_directories(guest_freetype_output_guards_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_output_guards_tests PRIVATE libSceFreeType freetype libkernel libc)
+    configure_windows_unwind(guest_freetype_output_guards_tests)
+    add_test(NAME guest_freetype_output_guards COMMAND guest_freetype_output_guards_tests)
+    set_tests_properties(guest_freetype_output_guards PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_output_guards PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/MemoryRecord.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/ModuleProperties.cmake")
