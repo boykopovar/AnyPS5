@@ -134,6 +134,7 @@ std::int32_t APS5_VABI _ZN6icu_6811StringPiece4findES0_i_nid_postfix(const Icu::
         std::int32_t j = 0;
         for (; j < needle.length; ++j) {
             if (index < 0) throw std::invalid_argument("ICU find: negative index");
+            if (index >= object.length) break;
             Require(object.pointer);
             Require(needle.pointer);
             if (object.pointer[index] != needle.pointer[j]) break;
