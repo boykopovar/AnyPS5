@@ -2079,6 +2079,51 @@ void largeLabelTests(Recorder& recorder) {
     Require(recorder.PendingLabels() == 0 && !Recorder::WideLabelIn(0, ~0ull) && !recorder.PendingLabelIn(slot, clear.size()) && !recorder.PendingWriteOverlaps(slot, clear.size()), "large label tests left entries, ranges or writes behind");
 }
 
+void storedBytesTests(Recorder& recorder) {
+    constexpr std::uint64_t ring = 0x74000;
+    std::array<std::byte, 144> table{};
+    for (std::size_t i = 0; i < table.size(); ++i) table[i] = static_cast<std::byte>(i + 1);
+    std::array<std::byte, 256> next{};
+    next.fill(std::byte{0x5a});
+    const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    std::array<std::byte, 8> out{};
+    const auto served = [](std::uint64_t address, std::span<std::byte> bytes) { return Recorder::LookupStoredBytes(address, bytes); };
+    recorder.Sync();
+    Require(!served(ring, out), "stored bytes are served from an empty table");
+    recorder.NoteLabel(ring, table, 200, 0);
+    Require(served(ring + 0x40, out) && std::equal(out.begin(), out.end(), table.begin() + 0x40), "a wide store is not served");
+    std::array<std::byte, 144> whole{};
+    Require(served(ring, whole) && whole == table, "a whole wide store is not served");
+    Require(!served(ring + table.size() - 4, out), "bytes past a wide store are served");
+    Require(!served(ring + 2, std::span(out).first(4)) && !served(ring, std::span(out).first(2)), "a partial dword is served");
+    recorder.NoteLabel(ring + 0x80, next, 201, 0);
+    std::array<std::byte, 16> straddle{};
+    Require(served(ring + 0x78, straddle) && std::equal(straddle.begin(), straddle.begin() + 8, table.begin() + 0x78) && std::all_of(straddle.begin() + 8, straddle.end(), [](std::byte value) { return value == std::byte{0x5a}; }), "overlapping wide stores do not compose newest first");
+    recorder.NoteLabel(ring + 0x10, one, 202, 0);
+    Require(served(ring + 0x0c, out) && std::equal(out.begin(), out.begin() + 4, table.begin() + 0x0c) && std::equal(out.begin() + 4, out.end(), one.begin()), "a label inside a wide store does not win");
+    recorder.NoteLabel(ring, next, 203, 0);
+    Require(!Recorder::LookupLabel(ring + 0x10, 4, 0).has_value() && served(ring + 0x10, out) && std::all_of(out.begin(), out.end(), [](std::byte value) { return value == std::byte{0x5a}; }), "a wide store over a label does not replace it");
+    const auto tag = AgcDriver::GuestMemory::GpuLockThreadTag();
+    Recorder::NoteQueuedLabel(ring + 0x104, one, 204, tag);
+    Require(!served(ring + 0x100, out), "a store with a queued label over it is served");
+    Recorder::ForgetQueuedLabels();
+    Require(served(ring + 0x100, out), "a forgotten queued label still refuses the store");
+    recorder.NotePendingWrite(ring + 0x20, 4);
+    Require(!served(ring, std::span(out).first(4)), "an overwritten wide store is served");
+    Require(served(ring + 0x100, out), "a write over other stores refused this one");
+    recorder.NotePendingWrite(ring + 0x14c, 4);
+    Require(!served(ring + 0x148, out), "a write inside a wide store did not refuse it");
+    recorder.Sync();
+    recorder.NoteLabel(ring + 0x200, table, 205, 0);
+    recorder.NoteLabel(ring + 0x300, one, 206, 0);
+    Require(served(ring + 0x240, out) && served(ring + 0x300, std::span(out).first(4)), "stores of the open batch are not served");
+    recorder.Submit();
+    Require(!served(ring + 0x240, out), "a wide store is served after its batch was submitted, when a guest that saw the batch's labels may have written over it");
+    Require(!served(ring + 0x300, std::span(out).first(4)), "a label-table store is served after its batch was submitted, when a guest that saw the batch's labels may have written over it");
+    recorder.Sync();
+    Require(!served(ring + 0x100, out) && !Recorder::WideLabelIn(ring, 0x400), "stored bytes outlived their batch");
+}
+
 // (6) GuestMemory::UnchangedSinceCollected: false outside the watched arena, and around a
 // MarkWritten or a CPU write of the block inside it.
 void unchangedSinceTests() {
@@ -13692,39 +13737,58 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     constexpr std::array<std::uint8_t, 8> green{0, 0, 0x00, 0x3c, 0, 0, 0x00, 0x3c};
     constexpr std::array<std::uint8_t, 8> cleared{};
     enum class Order { Superseded, ReadFirst, Rewritten, CpuStore };
+    enum class Path { Refresh, Creation, Detached };
     struct Outcome {
         std::vector<std::byte> bytes;
         std::vector<std::byte> imageB;
         std::uint64_t handOvers = 0;
         std::uint64_t superseded = 0;
     };
-    const auto run = [&](bool on, Order order) {
-        const std::string where = what + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote") + (on ? ", on" : ", off");
+    const auto pathName = [](Path path) { return std::string(path == Path::Refresh ? ", at B's refresh" : path == Path::Creation ? ", at B's creation" : ", at B's creation after A left the cache"); };
+    const auto run = [&](bool on, Order order, Path path) {
+        const std::string where = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote") + (on ? ", on" : ", off");
         StorageTexture::SetClearHandOver(on);
         recorder.Sync();
         std::memset(memory, 0x55, surfaceA);
         std::memset(memory + surfaceA, 0x00, keyCount);
         Outcome outcome{};
-        const auto handOvers = StorageTexture::ClearHandOvers();
+        const auto handOvers = StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers();
         const auto superseded = StorageTexture::HandedOverSuperseded();
         {
             auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
-            auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+            std::shared_ptr<StorageTexture> imageB;
+            if (path == Path::Refresh) imageB = StorageTexture::Create(context, detiler, resourceB, 0);
             draw(imageA, {{1.0f, 0.0f, 0.0f, 1.0f}});
-            imageB->Refresh();
-            if (on && watched) {
-                Require(StorageTexture::ClearHandOvers() == handOvers + 1, where + ": B's refresh under clear keys did not hand A's results over");
-                Require(StorageTexture::FindPending(address, surfaceA) == imageA, where + ": A's results did not stay pending");
-                Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": B's refresh stored A's results over B");
+            const std::weak_ptr<StorageTexture> weakA = imageA;
+            if (path == Path::Refresh) {
+                imageB->Refresh();
             } else {
-                Require(StorageTexture::ClearHandOvers() == handOvers, where + ": the hand-over ran while off");
+                std::shared_ptr<StorageTexture> detached;
+                if (path == Path::Detached) {
+                    imageA->Detach();
+                    detached = std::move(imageA);
+                }
+                bool flushed = false;
+                auto handOver = StorageTexture::PrepareCreation(context, resourceB, surfaceB, std::move(detached), flushed);
+                Require(flushed != (on && watched), where + (flushed ? ": B's creation stored A's results although they were handed over" : ": B's creation did not store A's results although they were not handed over"));
+                imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+                imageB->AdoptHandOver(std::move(handOver));
+            }
+            if (on && watched) {
+                Require(StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() == handOvers + 1, where + ": B under clear keys did not take A's results over");
+                Require(StorageTexture::FindPending(address, surfaceA) == weakA.lock() && !weakA.expired(), where + ": A's results did not stay pending");
+                Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": B stored A's results over B");
+            } else {
+                Require(StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() == handOvers, where + ": the hand-over ran while off");
             }
             outcome.imageB = readImage(imageB, 128, 128, 8);
             Require(filled(outcome.imageB, cleared), where + ": B does not hold its keys' clear");
             if (order == Order::ReadFirst) {
                 Require(filled(readMemory(address, 65536), red), where + ": a read of A's memory before B wrote it did not see A's results");
-                imageA->Refresh();
-                Require(filled(readImage(imageA, 256, 256, 4), red), where + ": A read again as A lost its results");
+                if (imageA != nullptr) {
+                    imageA->Refresh();
+                    Require(filled(readImage(imageA, 256, 256, 4), red), where + ": A read again as A lost its results");
+                }
             }
             if (order == Order::Rewritten) {
                 draw(imageA, {{0.0f, 0.0f, 1.0f, 1.0f}});
@@ -13743,15 +13807,17 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
             outcome.bytes = readMemory(address, surfaceA);
             Require(filled(readImage(imageB, 128, 128, 8), green), where + ": B lost its results");
         }
-        outcome.handOvers = StorageTexture::ClearHandOvers() - handOvers;
+        outcome.handOvers = StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() - handOvers;
         outcome.superseded = StorageTexture::HandedOverSuperseded() - superseded;
         recorder.Sync();
         return outcome;
     };
+    for (const auto path : {Path::Refresh, Path::Creation, Path::Detached})
     for (const auto order : {Order::Superseded, Order::ReadFirst, Order::Rewritten, Order::CpuStore}) {
-        const std::string name = what + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote");
-        const auto off = run(false, order);
-        const auto on = run(true, order);
+        if (path == Path::Detached && order == Order::Rewritten) continue;
+        const std::string name = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote");
+        const auto off = run(false, order, path);
+        const auto on = run(true, order, path);
         const auto& lastA = order == Order::Rewritten ? blue : red;
         if (order != Order::CpuStore) Require(filled(std::span(off.bytes).first(2 * 65536), green), name + ": B's results did not reach guest memory with the hand-over off");
         Require(filled(std::span(off.bytes).subspan(2 * 65536), lastA), name + ": A's results did not reach guest memory with the hand-over off");
@@ -13765,6 +13831,54 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
         if (order == Order::Superseded) Require(on.superseded == 2, name + ": B's results did not drop A's two units under B (dropped " + std::to_string(on.superseded) + ")");
         if (order == Order::ReadFirst) Require(on.superseded <= 1, name + ": a unit stored by the read was dropped again");
     }
+    static_assert(2 * keyCount <= bytes - surfaceA, "B's and C's DCC keys both follow A inside the block");
+    const auto resourceC = surface(128, 128, 71, address + surfaceA + keyCount);
+    const auto chained = [&](bool on) {
+        const std::string where = what + ", A handed to B and then to C as each left the cache" + (on ? ", on" : ", off");
+        StorageTexture::SetClearHandOver(on);
+        recorder.Sync();
+        std::memset(memory, 0x55, surfaceA);
+        std::memset(memory + surfaceA, 0x00, 2 * keyCount);
+        const auto handOvers = StorageTexture::CreationHandOvers();
+        std::shared_ptr<StorageTexture> imageC;
+        std::weak_ptr<StorageTexture> weakA;
+        {
+            auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
+            draw(imageA, {{1.0f, 0.0f, 0.0f, 1.0f}});
+            weakA = imageA;
+            bool flushed = false;
+            imageA->Detach();
+            auto toB = StorageTexture::PrepareCreation(context, resourceB, surfaceB, std::move(imageA), flushed);
+            auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+            imageB->AdoptHandOver(std::move(toB));
+            imageB->Detach();
+            auto toC = StorageTexture::PrepareCreation(context, resourceC, surfaceB, std::move(imageB), flushed);
+            imageC = StorageTexture::Create(context, detiler, resourceC, 0);
+            imageC->AdoptHandOver(std::move(toC));
+        }
+        if (on && watched) Require(StorageTexture::CreationHandOvers() == handOvers + 2, where + ": A's results were not handed over at both creations");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        if (on && watched) Require(!weakA.expired(), where + ": A was released with its results pending once the recorder dropped its keeps");
+        imageC->Refresh();
+        if (on && watched) Require(!weakA.expired(), where + ": C's refresh released A with its results pending");
+        draw(imageC, {{0.0f, 1.0f, 0.0f, 1.0f}});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        if (on && watched) Require(!weakA.expired(), where + ": C's results released A with its units outside C still pending");
+        auto stored = readMemory(address, surfaceA);
+        Require(filled(std::span(stored).first(2 * 65536), green), where + ": C's results did not reach a CPU read");
+        Require(filled(std::span(stored).subspan(2 * 65536), red), where + ": A's results outside C did not reach a CPU read");
+        imageC.reset();
+        recorder.Sync();
+        return stored;
+    };
+    const auto chainedOff = chained(false);
+    Require(chained(true) == chainedOff, what + ", A handed to B and then to C: the hand-over left other guest bytes than the old order");
     std::cout << what << ": ok\n";
     return true;
 }
@@ -14761,6 +14875,11 @@ int main(int argc, char** argv) {
             settledBaselineTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--stored-bytes-only") {
+            storedBytesTests(recorder);
+            std::cout << "stored bytes tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-after-unwatch-only") return pendingAfterLeavingWatchTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--unwatch-lock-order-only") return unwatchHookLockOrderTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--map-gate-publication-only") return mapGatePublicationTests(device, recorder) ? 0 : 77;
@@ -14779,6 +14898,7 @@ int main(int argc, char** argv) {
             labelTests(recorder);
             lateLabelTests(recorder);
             largeLabelTests(recorder);
+            storedBytesTests(recorder);
             unlandedOwnLabelTests(recorder);
             unlandedOwnStoreWaitTests(recorder);
             std::cout << "Completion label storage and ordering tests passed\n";
@@ -15022,6 +15142,7 @@ int main(int argc, char** argv) {
         labelTests(recorder);
         lateLabelTests(recorder);
         largeLabelTests(recorder);
+        storedBytesTests(recorder);
         unlandedOwnLabelTests(recorder);
         unlandedOwnStoreWaitTests(recorder);
         unchangedSinceTests();

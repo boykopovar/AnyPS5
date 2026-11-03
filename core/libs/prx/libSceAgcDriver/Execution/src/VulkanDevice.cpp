@@ -48,6 +48,7 @@
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/StagedMerge.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -583,6 +584,14 @@ struct VulkanDevice::State {
     // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
     // last; each is filled once by a doubling chain in device memory.
     std::vector<std::pair<std::array<std::uint32_t, 4>, std::shared_ptr<Graphics::DeviceBuffer>>> patternBuffers;
+    struct RepeatedFill {
+        std::size_t bytes = 0;
+        std::array<std::uint32_t, 4> pattern{};
+        std::uint64_t generation = 0;
+        std::uint64_t importSerial = 0;
+        std::uint64_t unwatchSerial = 0;
+    };
+    std::unordered_map<std::uint64_t, RepeatedFill> repeatedFills;
     VkDescriptorSetLayout workgroupMemoryLayout = VK_NULL_HANDLE;
     std::shared_ptr<WorkgroupMemory> workgroupMemory;
     std::mutex scratchPoolsMutex;
@@ -601,6 +610,7 @@ struct VulkanDevice::State {
     std::unique_ptr<Graphics::GpuColorTransfer> colorTransfer;
     std::shared_ptr<Graphics::BufferPool> bufferPool;
     std::unique_ptr<Graphics::Buffer> emptyBuffer;
+    std::unique_ptr<Graphics::Buffer> oversizedBuffer;
     std::unique_ptr<Graphics::PlaceholderImages> placeholderImages;
     std::unique_ptr<Graphics::TextureCache> textureCache;
     std::unique_ptr<Graphics::PipelineCache> pipelineCache;
@@ -1057,6 +1067,7 @@ struct VulkanDevice::State {
             Graphics::ClearDepthSurfaces(device);
             Graphics::ClearMultisampleTargets(device);
             Graphics::ClearSampleOrders(device);
+            Graphics::ClearStagedMerges(device);
             {
                 std::lock_guard pipelines(computePipelinesMutex);
                 computePipelines.clear();
@@ -1071,12 +1082,14 @@ struct VulkanDevice::State {
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
+            repeatedFills.clear();
             workgroupMemory.reset();
             scratchPools.clear();
             if (workgroupMemoryLayout != VK_NULL_HANDLE) reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(deviceProc(device, "vkDestroyDescriptorSetLayout"))(device, workgroupMemoryLayout, nullptr);
             descriptorCache.reset();
             vertexInputs.reset();
             emptyBuffer.reset();
+            oversizedBuffer.reset();
             placeholderImages.reset();
             samplerCache.reset();
             textureCache.reset();
@@ -2378,6 +2391,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     Graphics::PrepareImportWatch(graphicsContext());
     state->bufferPool = std::make_shared<Graphics::BufferPool>(graphicsContext());
     state->emptyBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::ranges::fill(state->emptyBuffer->Bytes(), std::byte{0});
+    state->oversizedBuffer = std::make_unique<Graphics::Buffer>(graphicsContext(), Graphics::EmptyBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::ranges::fill(state->oversizedBuffer->Bytes(), std::byte{0});
     if (!compileOnly && Pm4::GdsImportable() && Graphics::HostImportFor(graphicsContext(), Pm4::GdsAddress(), Pm4::GdsBytes, Graphics::ImportRequester::Map) == nullptr) Pm4::RejectGdsImport();
     state->pipelineCache = std::make_unique<Graphics::PipelineCache>(graphicsContext(), state->properties, window != nullptr || compileOnly);
     state->detiler = std::make_unique<Graphics::TextureDetiler>(graphicsContext());
@@ -2729,6 +2745,10 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     static const bool drain = std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
     const auto context = graphicsContext();
     const auto* import = Graphics::HostImportFor(context, address, bytes.size());
+    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
+    const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0;
+    const auto unregistered = import == nullptr && !listed && !storesPending ? Graphics::UnregisteredHostImport(context, address, bytes.size()) : nullptr;
+    if (unregistered != nullptr) import = unregistered.get();
     if (import == nullptr) return 3;
     // A unit shadow's results in the label's unit reach the import before the store lands over
     // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
@@ -2739,7 +2759,10 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // pair for a whole group of labels recorded back to back (Recorder::RecordStore orders the
     // stores of a run against each other and against the work before and after, the queued DCC
     // key stores included).
-    const auto recordStore = [&] { recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address); };
+    const auto recordStore = [&] {
+        recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address);
+        if (unregistered != nullptr) recorder.Keep(unregistered);
+    };
     // On the console every store a queue made before a label is in memory once the label is
     // visible. A listed copied writer (a dispatch or draw whose written buffer the device holds as a
     // CPU copy) is written back by the CPU when its batch is reaped, after the GPU already ran any
@@ -2760,10 +2783,9 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // range stored this way sync through its batch first (the label is a pending write of its batch
     // and counted in PendingCompletionLabels). Debug aid: APS5_DRAIN_COMPLETION_LABELS=1 drains
     // (reason 2) instead and stores the label on the CPU.
-    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
     if (drain) {
         if (listed) return 2;
-    } else if (const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0; bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
+    } else if (bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
         recorder.AfterCompletions(address, bytes, stamp, queue, false);
         return 5;
     }
@@ -2869,7 +2891,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     // chain), notes (the pending-write note and the write stamp); fills by uniform dword vs
     // 16-byte pattern, with the pattern fills' doubling steps.
     static double decideMs = 0, recordMs = 0, notesMs = 0;
-    static std::uint64_t uniformFills = 0, patternFills = 0, doublingSteps = 0, patternBuffersReused = 0, patternBuffersMade = 0;
+    static std::uint64_t uniformFills = 0, patternFills = 0, doublingSteps = 0, patternBuffersReused = 0, patternBuffersMade = 0, elidedFills = 0, elidedBytes = 0;
     static auto lastReport = std::chrono::steady_clock::now();
     // A 16-byte pattern is copied from a device-local buffer holding it repeated (filled once by a
     // doubling chain in device memory, cached per pattern), one transfer into the import per fill.
@@ -2907,7 +2929,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
         const auto now = std::chrono::steady_clock::now();
         if (now - lastReport > std::chrono::seconds(10)) {
             lastReport = now;
-            AgcDriver::ProfilePrint_nid_no_patch("[fill-sync] fills (cumulative): %llu synced (%llu with a completion label pending) waited %.0f ms, %llu ordered by barrier, %llu with no pending write; phases ms: decide %.0f record %.0f notes %.0f; %llu uniform, %llu pattern (%llu doubling steps in place; pattern buffers reused %llu, made %llu)\n", static_cast<unsigned long long>(synced), static_cast<unsigned long long>(fillCompletionSyncs), syncedMs, static_cast<unsigned long long>(ordered), static_cast<unsigned long long>(fills - synced - ordered), decideMs, recordMs, notesMs, static_cast<unsigned long long>(uniformFills), static_cast<unsigned long long>(patternFills), static_cast<unsigned long long>(doublingSteps), static_cast<unsigned long long>(patternBuffersReused), static_cast<unsigned long long>(patternBuffersMade));
+            AgcDriver::ProfilePrint_nid_no_patch("[fill-sync] fills (cumulative): %llu synced (%llu with a completion label pending) waited %.0f ms, %llu ordered by barrier, %llu with no pending write; phases ms: decide %.0f record %.0f notes %.0f; %llu uniform, %llu pattern (%llu doubling steps in place; pattern buffers reused %llu, made %llu); %llu repeated fills elided (%.0f MiB)\n", static_cast<unsigned long long>(synced), static_cast<unsigned long long>(fillCompletionSyncs), syncedMs, static_cast<unsigned long long>(ordered), static_cast<unsigned long long>(fills - synced - ordered), decideMs, recordMs, notesMs, static_cast<unsigned long long>(uniformFills), static_cast<unsigned long long>(patternFills), static_cast<unsigned long long>(doublingSteps), static_cast<unsigned long long>(patternBuffersReused), static_cast<unsigned long long>(patternBuffersMade), static_cast<unsigned long long>(elidedFills), static_cast<double>(elidedBytes) / 1048576.0);
         }
     }
     auto phaseStart = fillStart;
@@ -2923,6 +2945,19 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     recorder.FlushKeyStoresOverlapping(address, bytes);
     const bool uniform = pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3];
     const std::array<std::uint32_t, 4> patternWords{pattern[0], pattern[1], pattern[2], pattern[3]};
+    static const bool elideRepeats = std::getenv("APS5_NO_FILL_ELISION") == nullptr;
+    const auto importSerial = elideRepeats ? Graphics::HostImportSerial(context, address, bytes, false) : 0;
+    const auto unwatchSerial = GuestMemory::UnwatchSerial();
+    if (elideRepeats) {
+        const auto found = state->repeatedFills.find(address);
+        if (found != state->repeatedFills.end() && found->second.bytes == bytes && found->second.pattern == patternWords && found->second.importSerial == importSerial && found->second.unwatchSerial == unwatchSerial && !Graphics::LeaseWorkPending() && GuestMemory::CollectWritesUncached(address, bytes) != 0 && GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
+            ++elidedFills;
+            elidedBytes += bytes;
+            found->second.generation = GuestMemory::MarkWritten(address, bytes);
+            phase(notesMs);
+            return true;
+        }
+    }
     std::shared_ptr<Graphics::DeviceBuffer> patternBuffer;
     if (!uniform && !chainInPlace) {
         auto& buffers = state->patternBuffers;
@@ -3011,7 +3046,12 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     phase(recordMs);
     if (uniform) recorder.NotePendingWordFill(address, bytes, pattern[0]);
     else recorder.NotePendingWrite(address, bytes);
-    GuestMemory::MarkWritten(address, bytes);
+    const auto generation = GuestMemory::MarkWritten(address, bytes);
+    if (elideRepeats && generation != 0) {
+        constexpr std::size_t RepeatedFillsKept = 256;
+        if (state->repeatedFills.size() >= RepeatedFillsKept && !state->repeatedFills.contains(address)) state->repeatedFills.clear();
+        state->repeatedFills[address] = {bytes, patternWords, generation, importSerial, unwatchSerial};
+    }
     phase(notesMs);
     return true;
 }
@@ -3763,7 +3803,8 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const Displ
         const auto channel = [&](std::size_t index) { return static_cast<float>(std::to_integer<unsigned>((*cleared)[index])) / 255.0f; };
         uniform = {{channel(2), channel(1), channel(0), channel(3)}};
     }
-    if (!present(buffer.width, buffer.height, true, {}, cleared ? nullptr : &buffer, resident, filter, dumpFrame || (screenshot && !cpuScreenshot), convert, cleared ? &uniform : nullptr, layer, passthrough, plane)) {
+    const auto decoded = buffer.tilingMode != DisplayTilingGcn || resident != nullptr ? std::vector<std::byte>{} : passthrough ? ReadDisplayBufferTexels(buffer) : ReadDisplayBuffer(buffer);
+    if (!present(buffer.width, buffer.height, true, decoded, cleared || !decoded.empty() ? nullptr : &buffer, resident, filter, dumpFrame || (screenshot && !cpuScreenshot), convert, cleared ? &uniform : nullptr, layer, passthrough, plane)) {
         // A dropped frame (swapchain out of date) keeps the dump numbering contiguous.
         if (dumpFrame) --dumps.dumped;
         if (screenshot) Screenshot::Request();
@@ -4439,6 +4480,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.drawIndirectCount = state->drawIndirectCount;
     context.occlusionQueryPrecise = state->occlusionQueryPrecise;
     context.emptyBuffer = state->emptyBuffer ? state->emptyBuffer->Handle() : VK_NULL_HANDLE;
+    context.oversizedBuffer = state->oversizedBuffer ? state->oversizedBuffer->Handle() : VK_NULL_HANDLE;
     context.exactRobustLoads = state->exactRobustLoads;
     context.copiedWriters = state->copiedWriters.get();
     context.functions = state->functionsReady ? &state->deviceFunctions : nullptr;
@@ -5427,6 +5469,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
     static_cast<void>(Graphics::StorageTexture::StoreDrawnLinearTouching("dispatch access", touches, resources.HoldsLease()));
+    resources.RequireGuestBuffers();
     std::shared_ptr<ScratchPool> pool;
     if (const auto slotDwords = record.shader->program->scratchPoolSlotDwords; slotDwords != 0) {
         const std::uint64_t groups = argumentImport != nullptr ? std::numeric_limits<std::uint64_t>::max() : static_cast<std::uint64_t>(record.x) * record.y * record.z;
