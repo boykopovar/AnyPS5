@@ -218,6 +218,8 @@ inline constexpr std::uint8_t ModRmRmRipRelative = 0x05;
 inline constexpr std::uint8_t Grp3RegTestMax = 0x01;
 inline constexpr std::uint8_t SibBaseMask = 0x07;
 inline constexpr std::uint8_t SibBaseDisp32 = 0x05;
+inline constexpr std::uint8_t SibIndexMask = 0x38;
+inline constexpr std::uint8_t SibIndexNone = 0x20;
 
 inline constexpr std::size_t Disp8Size = 1;
 inline constexpr std::size_t Disp32Size = 4;

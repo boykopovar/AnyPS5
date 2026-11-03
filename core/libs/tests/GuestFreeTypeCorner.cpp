@@ -128,6 +128,36 @@ void CheckVectorTransformScaled() {
         "FT_Vector_Transform_Scaled checks 0x10000 * scaling before the null test");
 }
 
+void CheckSqrtFixed() {
+    Require(FT_SqrtFixed_nid_postfix(0) == 0, "FT_SqrtFixed of 0 is 0");
+    Require(FT_SqrtFixed_nid_postfix(-1) == 0 && FT_SqrtFixed_nid_postfix(-0x10000) == 0 && FT_SqrtFixed_nid_postfix(INT32_MIN) == 0,
+        "FT_SqrtFixed returns 0 for negative inputs");
+    Require(FT_SqrtFixed_nid_postfix(1) == 256, "FT_SqrtFixed scales the least positive fixed unit by 256");
+    Require(FT_SqrtFixed_nid_postfix(0x10000) == 0x10000 && FT_SqrtFixed_nid_postfix(0x40000) == 0x20000 && FT_SqrtFixed_nid_postfix(0x90000) == 0x30000 &&
+            FT_SqrtFixed_nid_postfix(0x24000) == 0x18000,
+        "FT_SqrtFixed computes exact 16.16 roots");
+    Require(FT_SqrtFixed_nid_postfix(2) == 362 && FT_SqrtFixed_nid_postfix(3) == 443 && FT_SqrtFixed_nid_postfix(12) == 886 &&
+            FT_SqrtFixed_nid_postfix(0xFFFE) == 0xFFFE && FT_SqrtFixed_nid_postfix(0xFFFF) == 0xFFFF && FT_SqrtFixed_nid_postfix(0x10001) == 0x10000,
+        "FT_SqrtFixed truncates non-square roots");
+    Require(FT_SqrtFixed_nid_postfix(INT32_MAX) == 0xB504F3, "FT_SqrtFixed handles INT32_MAX");
+}
+
+void CheckSqrt32() {
+    Require(FT_Sqrt32_nid_postfix(0) == 0 && FT_Sqrt32_nid_postfix(1) == 1, "FT_Sqrt32 handles 0 and 1");
+    Require(FT_Sqrt32_nid_postfix(4) == 2 && FT_Sqrt32_nid_postfix(9) == 3 && FT_Sqrt32_nid_postfix(0x10000) == 256 &&
+            FT_Sqrt32_nid_postfix(46340 * 46340) == 46340,
+        "FT_Sqrt32 computes exact integer roots");
+    Require(FT_Sqrt32_nid_postfix(3) == 1 && FT_Sqrt32_nid_postfix(8) == 2 && FT_Sqrt32_nid_postfix(15) == 3 &&
+            FT_Sqrt32_nid_postfix(46340 * 46340 - 1) == 46339 && FT_Sqrt32_nid_postfix(INT32_MAX) == 46340,
+        "FT_Sqrt32 truncates non-square positive inputs");
+    Require(FT_Sqrt32_nid_postfix(INT32_MIN) == 46340 &&
+            FT_Sqrt32_nid_postfix(static_cast<std::int32_t>(46341u * 46341u - 1u)) == 46340 &&
+            FT_Sqrt32_nid_postfix(static_cast<std::int32_t>(46341u * 46341u)) == 46341 &&
+            FT_Sqrt32_nid_postfix(static_cast<std::int32_t>(65535u * 65535u - 1u)) == 65534 &&
+            FT_Sqrt32_nid_postfix(static_cast<std::int32_t>(65535u * 65535u)) == 65535 && FT_Sqrt32_nid_postfix(-1) == 65535,
+        "FT_Sqrt32 treats negative inputs as unsigned 32-bit values");
+}
+
 void CheckHighPow2() {
     Require(ft_highpow2_nid_postfix(0) == 0, "ft_highpow2 of 0 is 0");
     Require(ft_highpow2_nid_postfix(1) == 1 && ft_highpow2_nid_postfix(2) == 2 && ft_highpow2_nid_postfix(0x10) == 0x10, "ft_highpow2 keeps a power of two");
@@ -166,6 +196,8 @@ int main() {
     CheckMulDivNoRound();
     CheckMatrixMultiplyScaled();
     CheckVectorTransformScaled();
+    CheckSqrtFixed();
+    CheckSqrt32();
     CheckHighPow2();
 
     std::puts("Guest FreeType corner tests passed");

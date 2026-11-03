@@ -18,6 +18,7 @@
 #include "SDL.h"
 #include "SceTypes.hpp"
 #include "AudioOut2PadMix.hpp"
+#include "prx/libSceAudioOut/include/HostGain.hpp"
 
 // Shared by the AudioOut2 context and port files.
 //
@@ -98,6 +99,7 @@ struct AudioOut2Context {
     std::uint32_t queued = 0;
     std::chrono::steady_clock::time_point playHead;
     SDL_AudioDeviceID device = 0;
+    HostGainRamp hostGain{AUDIO_OUT2_SAMPLE_RATE / 100};
     // Stereo float mix of the ports for one grain.
     std::vector<float> mix;
     // Mixed stereo frames the device has not played yet; it plays silence until the cushion is mixed.

@@ -18,6 +18,8 @@ NOOP = (0, 0, 0)
 IGNORED = (0xffffffffffffffff, 0xffffffff00000000, -1)
 OVERLAP = (TARGET + 1, 0xffffffff00000000, -1)
 RELATIVE = (TARGET, 8, FUNCTION)
+EARLIER_RELATIVE = (TARGET, 8, FUNCTION + 4)
+SYMBOL_POINTER = (TARGET, (1 << 32) | 1, 0)
 RELATIVE_DEFINED = (TARGET, (1 << 32) | 8, FUNCTION)
 JUMP_SLOT = (TARGET, (1 << 32) | 7, 0)
 
@@ -81,7 +83,19 @@ def unsized_lifecycle(rela, sce, initial):
     return change_tag(change_tag(image, 27, replacement=0x61000001), 28, replacement=0x61000001)
 
 
-def check_output(data, system, rela, plt, initial):
+def relative_module(addend, sce, encoding, lifecycle=False):
+    entries = [(TARGET, 8, addend)]
+    initial = addend if encoding == "relr" else UNCHANGED
+    image = module(entries if encoding != "repeated" else [RELATIVE, *entries], sce=sce, initial=initial, lifecycle=lifecycle)
+    if encoding == "relr":
+        for tag, replacement, value in ((7, 36, 0x2300), (8, 35, 8), (9, 37, 8)):
+            change_tag(image, {7: 0x6100002f, 8: 0x61000031, 9: 0x61000033}[tag] if sce else tag,
+                       value=value, replacement=replacement)
+        struct.pack_into("<Q", image, 0x2300, TARGET)
+    return image, initial
+
+
+def check_output(data, system, rela, plt, initial, addend=FUNCTION):
     expected_rela = [(entry[0], entry[1] & 0xffffffff, entry[2])
                      if (entry[1] & 0xffffffff) == 8 and entry[1] >> 32 else entry
                      for entry in rela if entry[1] & 0xffffffff]
@@ -106,22 +120,31 @@ def check_output(data, system, rela, plt, initial):
         pe_header, = struct.unpack_from("<I", data, 0x3C)
         base, = struct.unpack_from("<Q", data, pe_header + 24 + 24)
         value, = struct.unpack_from("<Q", data, writable[3] + TARGET - 0x2000)
-        assert value == (base + code[1] if relocated else initial), hex(value)
+        assert value == (base + code[1] + addend - FUNCTION if relocated else initial), hex(value)
     else:
         assert data.startswith(b"\xcf\xfa\xed\xfe")
         macho = MachO(data)
         code = macho.segment("__ELF0")
         writable = macho.segment("__ELF1")
         value, = struct.unpack_from("<Q", data, writable["fileoff"] + TARGET - 0x2000)
-        assert value == (code["vmaddr"] if relocated else initial), hex(value)
+        assert value == (code["vmaddr"] + addend - FUNCTION if relocated else initial), hex(value)
 
 
 def invalid_cases(sce):
+    for encoding in ("rela", "relr"):
+        for addend in (FUNCTION - 1, 0x2801):
+            image, _ = relative_module(addend, sce, encoding)
+            yield f"relative-outside-image-{encoding}-{addend:x}", image, "Relative relocation addend is outside the ELF image"
+        image, _ = relative_module(0x1800, sce, encoding, lifecycle=True)
+        yield "gap-lifecycle-" + encoding, image, "Unmapped or inaccessible guest address"
     yield "relative-symbol-mismatched-value", module([(TARGET, (1 << 32) | 8, FUNCTION + 8)], sce=sce), "RELATIVE relocation has a symbol"
     yield "relative-symbol-undefined", module([(TARGET, (1 << 32) | 8, 0)], sce=sce, exported=False), "RELATIVE relocation has a symbol"
     yield "invalid-symbol", module([NOOP, (TARGET, (99 << 32) | 6, 0)], sce=sce), "Unsupported relocation or symbol index"
     yield "invalid-target", module([NOOP, (0xffffffffffffffff, 8, FUNCTION)], sce=sce), "Unmapped or inaccessible guest address"
-    yield "overlapping-real", module([NOOP, RELATIVE, RELATIVE], sce=sce), "Overlapping guest relocations"
+    yield "overlapping-partial", module([NOOP, RELATIVE, (TARGET + 4, 8, FUNCTION)], sce=sce), "Overlapping guest relocations"
+    yield "relative-over-symbol", module([SYMBOL_POINTER, RELATIVE], sce=sce), "Overlapping guest relocations"
+    yield "symbol-over-relative", module([RELATIVE, SYMBOL_POINTER], sce=sce), "Overlapping guest relocations"
+    yield "relative-over-defined-relative", module([RELATIVE_DEFINED, RELATIVE], sce=sce), "Overlapping guest relocations"
     yield "invalid-plt-kind", module(plt=[NOOP, RELATIVE], sce=sce), "Unsupported relocation or symbol index"
     yield "unrelocated-lifecycle", module([(TARGET, 0, FUNCTION)], sce=sce, lifecycle=True, initial=FUNCTION), "Unrelocated guest lifecycle pointer"
     yield "plt-lifecycle", module(plt=[JUMP_SLOT], sce=sce, lifecycle=True, initial=0), "Unsupported guest lifecycle relocation"
@@ -181,6 +204,14 @@ def main():
             return result, case / "app0" / "sce_module" / "module.prx.guest.prx", output
 
         for sce in (False, True):
+            for addend in (FUNCTION, 0x1100, 0x1800, 0x2000, 0x2800):
+                for encoding in ("rela", "repeated", "relr"):
+                    entries = [(TARGET, 8, addend)]
+                    image, initial = relative_module(addend, sce, encoding)
+                    for system in ("linux", "windows", "macos"):
+                        result, artifact, output = convert(f"{sce}-relative-{encoding}-{addend:x}", system, image)
+                        assert result.returncode == 0, (sce, encoding, addend, system, result.stderr)
+                        check_output(artifact.read_bytes(), system, entries, [], initial, addend=addend)
             for name, rela, plt, lifecycle, initial in cases:
                 symbol_info = 0x11 if name == "relative-defined-object" else 0x12
                 image = module(rela, plt, sce, lifecycle, initial, symbol_info=symbol_info)
@@ -193,6 +224,12 @@ def main():
                             executed = subprocess.run([sys.executable, __file__, "--load", str(artifact)],
                                                       capture_output=True, text=True, timeout=10)
                             assert executed.returncode == 0, (executed.stdout, executed.stderr)
+            for name, rela in (("relative-repeated", [RELATIVE, RELATIVE]), ("relative-rewritten", [EARLIER_RELATIVE, NOOP, RELATIVE])):
+                image = module(rela, sce=sce)
+                for system in ("linux", "windows", "macos"):
+                    result, artifact, output = convert(f"{sce}-{name}", system, image)
+                    assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
+                    check_output(artifact.read_bytes(), system, [RELATIVE], [], UNCHANGED)
             for name, rela, initial in (("unsized-lifecycle", [RELATIVE], UNCHANGED),
                                         ("unsized-lifecycle-unread", [(TARGET, 0, FUNCTION)], FUNCTION)):
                 image = unsized_lifecycle(rela, sce, initial)
