@@ -347,8 +347,6 @@ void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes,
         std::copy_n(dashes, numDashes, copy);
     }
     const double period = (numDashes % 2 == 0 ? total : total * 2);
-    // Cairo's raster dash cycle cannot represent intervals below 1/256 pixel.
-    // The native API turns such an otherwise valid dash array into solid strokes.
     if (numDashes > 0 && period < 1.0 / 256.0) {
         delete[] copy;
         copy = nullptr;
