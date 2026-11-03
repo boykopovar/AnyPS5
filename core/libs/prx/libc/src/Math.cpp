@@ -2177,6 +2177,16 @@ float APS5_VABI powf_nid_postfix(float x, float y) {
     else z = PowfFloat(j);
     return sn * z;
 }
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_pow.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_pow.c */
+/*
+ * ====================================================
+ * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
 static double SetLowWord(double x, std::uint32_t low) {
     return std::bit_cast<double>((std::bit_cast<std::uint64_t>(x) & 0xffffffff00000000ull) | low);
 }
