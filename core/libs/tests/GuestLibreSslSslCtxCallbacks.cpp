@@ -27,8 +27,8 @@ static bool OnlySlots(const TestCallbacks& callbacks, int first, void* firstValu
     return true;
 }
 
-static LibreSslCallbackCtx* Context(TestCtx* ctx) {
-    return reinterpret_cast<LibreSslCallbackCtx*>(ctx);
+static LibreSslCtx* Context(TestCtx* ctx) {
+    return reinterpret_cast<LibreSslCtx*>(ctx);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
