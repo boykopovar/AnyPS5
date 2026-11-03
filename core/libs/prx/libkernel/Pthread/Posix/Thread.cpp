@@ -49,6 +49,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     constexpr int WhichThread = 1, WhichProcess = 2, WhichCpuset = 3, WhichIrq = 4, WhichJail = 5, WhichDomain = 6;
     constexpr int GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22, GuestErange = 34;
     constexpr std::size_t MaximumSize = 256 / 8;
+    constexpr KernelCpumask RootCpumask = 0xffff;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
@@ -82,8 +83,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     case LevelRoot:
     case LevelCpuset:
         if (which == WhichIrq || which == WhichDomain) return fail(GuestEinval);
-        if (level == LevelRoot) NotImplemented_nid_no_patch("cpuset_getaffinity at CPU_LEVEL_ROOT");
-        affinity = sceKernelGetAvailableCpumask();
+        affinity = level == LevelRoot ? RootCpumask : sceKernelGetAvailableCpumask();
         break;
     case LevelWhich:
         if (which == WhichIrq) NotImplemented_nid_no_patch("cpuset_getaffinity of an interrupt");

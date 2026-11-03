@@ -312,14 +312,29 @@ int main() {
             return true;
         }
     };
-    Require(throws([&] { cpuset_getaffinity_nid_postfix(1, 1, -1, 8, processSet); }));
     Require(throws([&] { cpuset_getaffinity_nid_postfix(3, 4, -1, 8, processSet); }));
     std::uint64_t pinnedSelf[4] = {available & (~available + 1), 0, 0, 0};
     Require(cpuset_setaffinity_nid_postfix(3, 1, -1, 8, pinnedSelf) == 0);
     for (const int which : {1, 2}) {
-        std::uint64_t base[4] = {~0ull, ~0ull, ~0ull, ~0ull};
-        Require(cpuset_getaffinity_nid_postfix(2, which, -1, sizeof(base), base) == 0);
-        Require(base[0] == available && base[1] == 0 && base[2] == 0 && base[3] == 0);
+        for (const std::size_t size : {std::size_t{8}, std::size_t{16}}) {
+            std::uint64_t base[4] = {~0ull, ~0ull, ~0ull, ~0ull};
+            Require(cpuset_getaffinity_nid_postfix(2, which, -1, size, base) == 0);
+            Require(base[0] == available && (size == 8 || base[1] == 0));
+            Require(base[2] == ~0ull && base[3] == ~0ull);
+        }
+        for (const int level : {1, 2}) {
+            std::uint64_t set[4] = {0, ~0ull, 0, 0};
+            Require(cpuset_getaffinity_nid_postfix(level, which, -1, 16, set) == 0);
+            Require(set[0] == (level == 1 ? 0xffffull : available) && set[1] == 0);
+        }
+    }
+    {
+        std::uint64_t root = 0;
+        Require(cpuset_getaffinity_nid_postfix(1, 3, -1, 8, &root) == 0 && root == 0xffff);
+        root = 0;
+        Require(cpuset_getaffinity_nid_postfix(1, 1, scePthreadGetthreadid(), 8, &root) == 0 && root == 0xffff);
+        *__error_nid_postfix() = 0;
+        Require(cpuset_getaffinity_nid_postfix(1, 1, 999999, 8, &root) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
     }
     std::uint64_t base[4]{};
     Require(cpuset_getaffinity_nid_postfix(2, 1, scePthreadGetthreadid(), 8, base) == 0 && base[0] == available);
