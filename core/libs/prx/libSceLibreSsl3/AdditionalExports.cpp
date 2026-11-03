@@ -241,10 +241,6 @@ int APS5_VABI OpenSSL_add_all_digests_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_PKEY_base_id_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI Unknown_PBYz0kpXwg8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
