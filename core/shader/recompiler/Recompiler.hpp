@@ -129,7 +129,9 @@ enum class ColorExportPacking : std::uint8_t {
     Unorm10_11_11,
     Float11_11_10,
     Unorm4_4_4_4,
-    Uint
+    Uint,
+    UintClamp8,
+    UintClamp16
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -582,7 +584,7 @@ struct DescriptorBinding {
     std::vector<bool> samplerCoordinatesIgnored;
     std::vector<bool> imageUnnormalized;
     std::vector<bool> imageUnnormalizedBaseLevel;
-    std::vector<std::uint32_t> imageSamplers;
+    std::vector<std::uint64_t> imageSamplers;
     std::vector<bool> bufferRead;
     std::vector<std::uint32_t> bufferExtent;
 };

@@ -101,6 +101,8 @@ class HeapSlotOwner;
         VkShaderModule addressedModule = VK_NULL_HANDLE;
         VkShaderModule addressedRepackModule = VK_NULL_HANDLE;
         VkPipeline addressedRepackPipeline = VK_NULL_HANDLE;
+        VkShaderModule imageWordModule = VK_NULL_HANDLE;
+        VkShaderModule wordModule = VK_NULL_HANDLE;
         DescriptorRing imageDescriptorSets;
         VkDescriptorSetLayout readbackDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout readbackPipelineLayout = VK_NULL_HANDLE;
