@@ -141,10 +141,21 @@ double Fixed(double coordinate) {
     return std::nearbyint(std::clamp(coordinate, kMinimum, kMaximum) * 256.0) / 256.0;
 }
 
-void DevicePoint(const CairoMatrix& matrix, double& x, double& y) {
-    cairo_matrix_transform_point(&matrix, &x, &y);
-    x = Fixed(x);
-    y = Fixed(y);
+void DevicePoint(const ContextStorage* state, double& x, double& y) {
+    cairo_matrix_transform_point(&state->matrix, &x, &y);
+    double sx = 1, sy = 1;
+    cairo_surface_get_device_scale(state->target, &sx, &sy);
+    x = Fixed(x * sx);
+    y = Fixed(y * sy);
+}
+
+void UserPoint(const ContextStorage* state, const CairoMatrix& inverse,
+               double& x, double& y) {
+    double sx = 1, sy = 1;
+    cairo_surface_get_device_scale(state->target, &sx, &sy);
+    x /= sx;
+    y /= sy;
+    cairo_matrix_transform_point(&inverse, &x, &y);
 }
 
 bool AppendMove(ContextStorage* state, double x, double y) {
@@ -167,13 +178,26 @@ void AppendLine(ContextStorage* state, double x, double y) {
         return;
     }
     if (state->path && !state->path->empty()) {
-        const auto& previous = state->path->back();
+        auto& previous = state->path->back();
         const bool matchingLine = previous.type == 1 &&
                                   previous.points[0] == x && previous.points[1] == y;
         const bool matchingCurve = previous.type == 2 &&
                                    previous.points[4] == x && previous.points[5] == y;
         if (matchingLine || matchingCurve)
             return;
+        if (previous.type == 1 && state->path->size() >= 2) {
+            const auto& earlier = (*state->path)[state->path->size() - 2];
+            const int endpoint = earlier.type == 2 ? 4 : 0;
+            const long double dx1 = previous.points[0] - earlier.points[endpoint];
+            const long double dy1 = previous.points[1] - earlier.points[endpoint + 1];
+            const long double dx2 = x - previous.points[0];
+            const long double dy2 = y - previous.points[1];
+            if (dx1 * dy2 == dy1 * dx2 && dx1 * dx2 + dy1 * dy2 >= 0) {
+                previous.points[0] = state->currentX = x;
+                previous.points[1] = state->currentY = y;
+                return;
+            }
+        }
     }
     PathEntry command{};
     command.type = 1;
@@ -476,14 +500,14 @@ void APS5_VABI cairo_new_sub_path(CairoContext* context) {
 void APS5_VABI cairo_move_to(CairoContext* context, double x, double y) {
     auto* state = Valid(context);
     if (!state) return;
-    DevicePoint(state->matrix, x, y);
+    DevicePoint(state, x, y);
     AppendMove(state, x, y);
 }
 
 void APS5_VABI cairo_line_to(CairoContext* context, double x, double y) {
     auto* state = Valid(context);
     if (!state) return;
-    DevicePoint(state->matrix, x, y);
+    DevicePoint(state, x, y);
     AppendLine(state, x, y);
 }
 
@@ -491,9 +515,9 @@ void APS5_VABI cairo_curve_to(CairoContext* context, double x1, double y1,
                               double x2, double y2, double x3, double y3) {
     auto* state = Valid(context);
     if (!state) return;
-    DevicePoint(state->matrix, x1, y1);
-    DevicePoint(state->matrix, x2, y2);
-    DevicePoint(state->matrix, x3, y3);
+    DevicePoint(state, x1, y1);
+    DevicePoint(state, x2, y2);
+    DevicePoint(state, x3, y3);
     if (!state->hasCurrent && !AppendMove(state, x1, y1)) return;
     if (state->currentX == x1 && state->currentY == y1 &&
         x1 == x2 && y1 == y2 && x2 == x3 && y2 == y3) {
@@ -539,7 +563,7 @@ void APS5_VABI cairo_get_current_point(CairoContext* context, double* x, double*
     if (cairo_matrix_invert(&inverse) != kSuccess) return;
     *x = state->currentX;
     *y = state->currentY;
-    cairo_matrix_transform_point(&inverse, x, y);
+    UserPoint(state, inverse, *x, *y);
 }
 
 CairoPath* APS5_VABI cairo_copy_path(CairoContext* context) {
@@ -575,7 +599,7 @@ CairoPath* APS5_VABI cairo_copy_path(CairoContext* context) {
         for (int i = 1; i < length; ++i) {
             double x = entry.points[(i - 1) * 2];
             double y = entry.points[(i - 1) * 2 + 1];
-            cairo_matrix_transform_point(&inverse, &x, &y);
+            UserPoint(state, inverse, x, y);
             result->data[offset + i].point = {x, y};
         }
         offset += length;

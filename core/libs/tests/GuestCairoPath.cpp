@@ -216,11 +216,63 @@ void CheckErrorAndSaveSemantics() {
     cairo_destroy(context);
 }
 
+void CheckScaledCoordinatesAndLines() {
+    CairoSurface* surface = cairo_image_surface_create(0, 8, 8);
+    cairo_surface_set_device_scale(surface, 2, 2);
+    CairoContext* context = cairo_create(surface);
+    cairo_surface_destroy(surface);
+
+    cairo_move_to(context, 0.1, 0.1);
+    double x = 0, y = 0;
+    cairo_get_current_point(context, &x, &y);
+    Near(x, 0.099609375);
+    Near(y, 0.099609375);
+    CairoPath* path = cairo_copy_path(context);
+    assert(path && path->status == 0 && path->num_data == 2);
+    Near(path->data[1].point.x, 0.099609375);
+    Near(path->data[1].point.y, 0.099609375);
+    cairo_path_destroy(path);
+
+    cairo_new_path(context);
+    cairo_move_to(context, 0, 0);
+    cairo_line_to(context, 1, 1);
+    cairo_line_to(context, 2, 2);
+    path = cairo_copy_path(context);
+    assert(path && path->status == 0 && path->num_data == 4);
+    Near(path->data[3].point.x, 2);
+    Near(path->data[3].point.y, 2);
+    cairo_path_destroy(path);
+
+    cairo_new_path(context);
+    cairo_move_to(context, 0, 0);
+    cairo_line_to(context, 0, 0);
+    cairo_line_to(context, 1, 1);
+    path = cairo_copy_path(context);
+    assert(path && path->status == 0 && path->num_data == 4);
+    Near(path->data[3].point.x, 1);
+    cairo_path_destroy(path);
+
+    cairo_new_path(context);
+    cairo_move_to(context, 0, 0);
+    cairo_line_to(context, 2, 2);
+    cairo_line_to(context, 1, 1);
+    path = cairo_copy_path(context);
+    assert(path && path->status == 0 && path->num_data == 6);
+    cairo_path_destroy(path);
+
+    cairo_translate(context, 1, 2);
+    cairo_get_current_point(context, &x, &y);
+    Near(x, 0);
+    Near(y, -1);
+    cairo_destroy(context);
+}
+
 } // namespace
 
 int main() {
     CheckBasicPathAndCurrentPoint();
     CheckQuantizationTransformsAndAppend();
     CheckErrorAndSaveSemantics();
+    CheckScaledCoordinatesAndLines();
     std::puts("guest Cairo path-data tests passed");
 }

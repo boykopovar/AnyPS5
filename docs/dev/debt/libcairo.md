@@ -14,7 +14,7 @@
 
 - [Graphics state in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements fifteen getters/setters for antialias, fill rule, line cap, line join, line width, miter limit and owned dash arrays. Save/restore duplicates dash memory and restores these parameters alongside the CTM; error inputs set sticky INVALID_DASH. The stored state is observable but no rasterizer consumes it yet. Platform rendering and clipping remain unimplemented.
 
-- [Path data in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements eleven path lifecycle and current-point exports with Cairo 24.8 device-coordinate quantization, move/line/cubic/close elements, deep-copied public cairo_path_t arrays, and guest ABI ownership. Append converts user paths through the current CTM, while save/restore preserves the independent path. Rendering and path extents are not yet implemented; arc/rectangle constructors remain pending.
+- [Path data in Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) implements eleven path lifecycle and current-point exports with Cairo 24.8 device-coordinate quantization, target device scale, forward-collinear line canonicalization, move/line/cubic/close elements, deep-copied public cairo_path_t arrays, and guest ABI ownership. Append converts user paths through the current CTM and target device scale, while save/restore preserves the independent path. Rendering and path extents are not yet implemented; arc/rectangle constructors remain pending.
 
 ### Callable exports
 
