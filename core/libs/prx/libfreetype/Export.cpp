@@ -69,11 +69,6 @@ int APS5_VABI freetypeLegacyGetSfntLangTag_nid_no_patch() {
 }
 APS5_EXPORT("MDsMjUGulyY", freetypeLegacyGetSfntLangTag_nid_no_patch);
 
-int APS5_VABI freetypeLegacyPaletteSetForegroundColor_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("NbFQEYieSS0", freetypeLegacyPaletteSetForegroundColor_nid_no_patch);
-
 int APS5_VABI freetypeLegacySetMMWeightVector_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -83,11 +78,6 @@ int APS5_VABI freetypeLegacySetNamedInstance_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("V476bsxEylk", freetypeLegacySetNamedInstance_nid_no_patch);
-
-int APS5_VABI freetypeLegacyFaceProperties_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("VKuZXhyjtoo", freetypeLegacyFaceProperties_nid_no_patch);
 
 int APS5_VABI freetypeLegacyLibrarySetLcdGeometry_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
