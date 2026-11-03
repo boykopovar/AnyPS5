@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #ifdef __APPLE__
@@ -36,7 +37,19 @@ namespace File {
 std::optional<std::filesystem::path> WindowsDescriptorPath_nid_no_patch(int descriptor);
 #endif
 int HostStandardError();
-[[nodiscard]] std::unique_lock<std::mutex> LockPositionedTransfer(int descriptor);
+void ForgetClosedDescriptor(int descriptor);
+class PositionedTransferLock {
+public:
+    explicit PositionedTransferLock(std::shared_ptr<std::mutex> mutex) : _mutex(std::move(mutex)), _lock(*_mutex) {}
+    PositionedTransferLock(PositionedTransferLock&&) = default;
+    PositionedTransferLock& operator=(PositionedTransferLock&&) = delete;
+    void unlock() { _lock.unlock(); }
+
+private:
+    std::shared_ptr<std::mutex> _mutex;
+    std::unique_lock<std::mutex> _lock;
+};
+[[nodiscard]] PositionedTransferLock LockPositionedTransfer(int descriptor);
 void SharePositionedTransfer(int from, int to);
 #ifdef _WIN32
 std::int64_t WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes);

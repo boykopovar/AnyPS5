@@ -259,6 +259,8 @@ int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
     const auto resolved = resolveCond(cond);
     if (!resolved || !thread)
         return SCE_KERNEL_ERROR_EINVAL;
+    if (!GuestThreadIsLive(thread))
+        return SCE_KERNEL_ERROR_ESRCH;
     if (!IsWaiting(resolved.get(), thread))
         return SCE_KERNEL_ERROR_EPERM;
     resolved->NotifyAll();
