@@ -812,7 +812,7 @@ private:
         return word;
     }
 
-    bool ChildKeyWord(const IrValue& read, const IrValue& vsharp) const {
+    bool ChildKeyWord(const IrValue& read, const IrValue& vsharp, bool siblings = false) const {
         std::uint32_t memoryIndex = 0;
         std::uint32_t immediate = 0;
         if (ScalarReadMemory(read, memoryIndex) == nullptr || !immediateU32(read.Argument(1), immediate) || read.Uses().empty() || WrittenThrough(vsharp)) return false;
@@ -830,7 +830,7 @@ private:
                     std::uint32_t stride = 0;
                     std::uint32_t addend = 0;
                     KeyDomain domain;
-                    if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameHandle(*buffer, vsharp) || !std::ranges::any_of(use->Uses(), DescriptorUser) || !MatchAffineOffset(use->Argument(1), key, stride, addend) || ChildKeyWordOf(key, domain) != &read) return false;
+                    if (buffer->Opcode() != IrOpcode::GetBufferResource || (!SameHandle(*buffer, vsharp) && !(siblings && SiblingVsharp(*buffer, vsharp))) || !std::ranges::any_of(use->Uses(), DescriptorUser) || !MatchAffineOffset(use->Argument(1), key, stride, addend) || ChildKeyWordOf(key, domain) != &read) return false;
                     keys = true;
                     continue;
                 }
@@ -861,7 +861,7 @@ private:
         return std::ranges::all_of(buffer.Uses(), [&](const IrValue* read) {
             if (read->Opcode() != IrOpcode::ReadConstBuffer) return false;
             if (rereadable ? std::ranges::any_of(read->Uses(), DescriptorUser) : !read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)) return true;
-            return rereadable && ChildKeyWord(*read, vsharp);
+            return rereadable && ChildKeyWord(*read, vsharp, true);
         });
     }
 
@@ -2403,6 +2403,22 @@ private:
             }
         }
         return handles;
+    }
+
+    bool SiblingVsharp(const IrValue& left, const IrValue& right) const {
+        if (left.Opcode() != IrOpcode::GetBufferResource || right.Opcode() != IrOpcode::GetBufferResource || left.ArgumentCount() != 4u || right.ArgumentCount() != 4u) return false;
+        const IrValue* address = nullptr;
+        for (const IrValue* handle : {&left, &right}) {
+            for (std::size_t index = 0; index < 4u; index++) {
+                const IrValue* word = handle->Argument(index)->Resolve();
+                if (word->Opcode() != IrOpcode::LoadAddressU32 || word->ArgumentCount() == 0u) return false;
+                const IrValue* base = word->Argument(0)->Resolve();
+                if (base->Opcode() != IrOpcode::GetAddressResource) return false;
+                if (address == nullptr) address = base;
+                else if (base != address && !EquivalentValue(m_program.Resources(), base, address)) return false;
+            }
+        }
+        return true;
     }
 
     bool SameHandle(const IrValue& left, const IrValue& right) const {
