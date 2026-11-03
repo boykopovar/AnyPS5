@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceDebugGetProcessEventCntlFlag, sceDebugSetProcessEventCntlFlag](../../../core/libs/prx/libmdbg_syscore/Export.cpp) (libmdbg_syscore) - return 1 silently without inspecting or updating any debug event control flag state
+- [sceDebugGetProcessEventCntlFlag, sceDebugSetProcessEventCntlFlag](../../../core/libs/prx/libmdbg_syscore/Export.cpp) (libmdbg_syscore) - return 1 silently without inspecting or updating any debug event control flag state. The `guest_mdbg_syscore` test verifies both exports return 1.
 
 ### Unknown function info
 

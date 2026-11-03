@@ -1,0 +1,15 @@
+add_library(libmdbg_syscore SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libmdbg_syscore PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libmdbg_syscore)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_mdbg_syscore_tests ${LIBS_INCLUDE_DIR}/tests/GuestMdbgSyscore.cpp)
+    target_include_directories(guest_mdbg_syscore_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_mdbg_syscore_tests PRIVATE libmdbg_syscore libc)
+    configure_windows_unwind(guest_mdbg_syscore_tests)
+    add_test(NAME guest_mdbg_syscore COMMAND guest_mdbg_syscore_tests)
+    if(WIN32)
+        set_tests_properties(guest_mdbg_syscore PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
+    endif()
+endif()
