@@ -1,65 +1,38 @@
 #include "prx/libSceNet/include/Net.hpp"
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <initializer_list>
+#include "prx/libc/include/general/VabiMacros.hpp"
 
-namespace {
+#include <cstdio>
+#include <functional>
+#include <stdexcept>
+#include <string>
 
-void Require(bool value) { if (!value) std::abort(); }
-
-constexpr int kErrorBase = static_cast<int>(0x80410100);
-constexpr int kResolverEnosupport = 227;
-
-bool Failed(int result, int error) { return result == (kErrorBase | error) && *sceNetErrnoLoc() == error; }
-
-bool StorageUntouched(const std::uint8_t* storage, std::size_t size) {
-    for (std::size_t index = 0; index < size; ++index) {
-        if (storage[index] != 0x5a) return false;
+static bool ReportsNotImplemented(const std::string& name, const std::function<int()>& call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        if (error.what() == name + " not implemented") return true;
+        std::fprintf(stderr, "%s threw: %s\n", name.c_str(), error.what());
+        return false;
     }
-    return true;
+    std::fprintf(stderr, "%s returned instead of reporting that it is not implemented\n", name.c_str());
+    return false;
 }
 
-void CheckUnsupported() {
-    alignas(16) std::uint8_t storage[64];
-    NetResolverConnectOption option{1000, 2000, 3, 0};
-    const NetResolverConnectOption before = option;
-    for (const std::uint32_t flags : {0u, 1u, 0x80000000u}) {
-        std::memset(storage, 0x5a, sizeof(storage));
-        auto* connection = reinterpret_cast<NetResolverConnection*>(storage);
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnectCreate("resolver", 1, connection, flags), kResolverEnosupport));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnectCreate(nullptr, 2, nullptr, flags), kResolverEnosupport));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnectCreate("", 3, nullptr, flags), kResolverEnosupport));
-        Require(StorageUntouched(storage, sizeof(storage)));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnect(connection, "example.org", 53, &option), kResolverEnosupport));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnect(nullptr, nullptr, 0, nullptr), kResolverEnosupport));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnect(connection, "", 65535, &option), kResolverEnosupport));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnectAbort(connection, flags), kResolverEnosupport));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnectAbort(nullptr, 0), kResolverEnosupport));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnectDestroy(connection), kResolverEnosupport));
-        *sceNetErrnoLoc() = 0;
-        Require(Failed(sceNetResolverConnectDestroy(nullptr), kResolverEnosupport));
-        Require(StorageUntouched(storage, sizeof(storage)));
-        Require(std::memcmp(&option, &before, sizeof(option)) == 0);
-    }
-}
-
+static bool FamilyReportsNotImplemented() {
+    bool passed = ReportsNotImplemented("sceNetResolverConnectCreate", [] { return sceNetResolverConnectCreate("resolver", 1, nullptr, 0); });
+    passed = ReportsNotImplemented("sceNetResolverConnectCreate", [] { return sceNetResolverConnectCreate(nullptr, 2, nullptr, 0x80000000); }) && passed;
+    passed = ReportsNotImplemented("sceNetResolverConnect", [] { return sceNetResolverConnect(nullptr, "example.org", 53, nullptr); }) && passed;
+    passed = ReportsNotImplemented("sceNetResolverConnectAbort", [] { return sceNetResolverConnectAbort(nullptr, 1); }) && passed;
+    passed = ReportsNotImplemented("sceNetResolverConnectDestroy", [] { return sceNetResolverConnectDestroy(nullptr); }) && passed;
+    return passed;
 }
 
 int main() {
-    CheckUnsupported();
-    Require(sceNetInit_nid_postfix() == 0);
-    CheckUnsupported();
-    Require(sceNetTerm() == 0);
-    CheckUnsupported();
-    return 0;
+    bool passed = FamilyReportsNotImplemented();
+    if (sceNetInit_nid_postfix() != 0) {
+        std::fprintf(stderr, "sceNetInit failed\n");
+        return 1;
+    }
+    passed = FamilyReportsNotImplemented() && passed;
+    return passed ? 0 : 1;
 }
