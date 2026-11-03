@@ -1,3 +1,6 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceHmd/include/InventoryExports.hpp"
+#include "prx/libSceHmd/include/Api.hpp"
 #include "Hmd.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
@@ -8,55 +11,11 @@
 #include <initializer_list>
 #include <string>
 
-struct HmdDistortionCommandParameter;
-struct HmdWideNearDistortionCommandParameter;
-struct Hmd2dVrCommandParameter;
-
-struct HmdCommandBuffer {
-    const std::uint32_t* commands;
-    std::uint32_t dwordCount;
-};
-
 static_assert(sizeof(HmdCommandBuffer) == 16);
 static_assert(offsetof(HmdCommandBuffer, dwordCount) == 8);
 
-struct HmdReprojectionFrameParameter;
-struct HmdReprojectionWideNearParameter;
-struct HmdReprojection2dVrParameter;
-struct HmdReprojectionPose;
-struct HmdReprojectionOverlayParameter;
-struct HmdReprojectionSubmissionParameter;
-struct HmdReprojectionInitializeParameter;
-struct HmdReprojectionMultilayerParameter;
-struct HmdDeviceInformation;
-struct HmdDistortionParameters;
-struct HmdInertialSensorData;
-struct HmdStatusReport;
-
-struct HmdFieldOfView {
-    float angles[4];
-};
-
-struct HmdAssemblyError {
-    float offsets[4];
-};
-
 static_assert(sizeof(HmdFieldOfView) == 16);
 static_assert(sizeof(HmdAssemblyError) == 16);
-
-struct HmdVr2dData;
-struct HmdPuPositionParameter;
-struct HmdOpticalParameter;
-struct HmdCrashDumpInfo;
-struct HmdScreenOutputParameter;
-struct HmdScreenFadeParameter;
-struct HmdScreenStatus;
-struct HmdCaptureInitializeParameter;
-struct HmdCaptureInfo;
-struct HmdLiveCaptureParameter;
-struct HmdReprojectionDebugInfo;
-struct HmdReprojectionMultilayerDebugInfo;
-struct HmdReprojectionCallbackParameter;
 
 namespace {
 
@@ -101,59 +60,19 @@ std::int32_t Vr2dCommandArguments(const Hmd2dVrCommandParameter* parameter, cons
 
 }
 
-struct HmdEyeDistances {
-    std::uint32_t left;
-    std::uint32_t right;
-};
-
-struct HmdEyeOffset {
-    float x;
-    float y;
-    float z;
-};
-
-struct HmdMirroringAspect {
-    std::uint16_t reserved0;
-    std::int16_t aspect;
-    std::uint16_t reserved1;
-    std::uint16_t reserved2;
-};
-
-struct HmdMirroringAspectDebug {
-    std::uint16_t values[5];
-    std::uint8_t mode;
-};
-
 static_assert(sizeof(HmdMirroringAspectDebug) == 12);
 static_assert(offsetof(HmdMirroringAspectDebug, mode) == 10);
 static_assert(sizeof(HmdMirroringAspect) == 8);
 static_assert(offsetof(HmdMirroringAspect, aspect) == 2);
 
-using HmdEventCallback = void (APS5_VABI *)(std::uint32_t events);
-
-struct HmdDfuData {
-    const void* data;
-    std::uint32_t size;
-    std::uint32_t mode;
-};
-
 static_assert(sizeof(HmdDfuData) == 16);
 static_assert(offsetof(HmdDfuData, size) == 8);
 static_assert(offsetof(HmdDfuData, mode) == 12);
-
-struct HmdScreenData {
-    const void* data;
-    std::int32_t size;
-};
 
 static_assert(sizeof(HmdScreenData) == 16);
 static_assert(offsetof(HmdScreenData, size) == 8);
 static_assert(sizeof(HmdEyeDistances) == 8);
 static_assert(sizeof(HmdEyeOffset) == 12);
-
-struct HmdLedData {
-    std::uint8_t values[9];
-};
 
 static_assert(sizeof(HmdLedData) == 9);
 
@@ -1000,5 +919,104 @@ int APS5_VABI sceHmdGet2dVrCommand(std::int32_t handle, const Hmd2dVrCommandPara
     if (const auto result = Vr2dCommandArguments(parameter, commandBuffer); result != 0) return result;
     return CommandQueryHandle(handle, __func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceHmdUnknown__minus_Bk71lPyry4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-Bk71lPyry4", libSceHmdUnknown__minus_Bk71lPyry4_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown__minus_y4OUwFf4jE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-y4OUwFf4jE", libSceHmdUnknown__minus_y4OUwFf4jE_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_IC0NGmh_minus_zS8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IC0NGmh-zS8", libSceHmdUnknown_IC0NGmh_minus_zS8_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_NY2_minus_gYo9ihI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NY2-gYo9ihI", libSceHmdUnknown_NY2_minus_gYo9ihI_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_XMutp2_minus_o9A4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("XMutp2-o9A4", libSceHmdUnknown_XMutp2_minus_o9A4_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_Y9QDFn3AjPA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Y9QDFn3AjPA", libSceHmdUnknown_Y9QDFn3AjPA_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_aTg7K0466r8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aTg7K0466r8", libSceHmdUnknown_aTg7K0466r8_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_eRVgwy9PbWg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("eRVgwy9PbWg", libSceHmdUnknown_eRVgwy9PbWg_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_mVIneDkja6c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mVIneDkja6c", libSceHmdUnknown_mVIneDkja6c_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_miduc55U7q8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("miduc55U7q8", libSceHmdUnknown_miduc55U7q8_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_nlAZlOKJy_plus_c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("nlAZlOKJy+c", libSceHmdUnknown_nlAZlOKJy_plus_c_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_ox9NqLO9LhI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ox9NqLO9LhI", libSceHmdUnknown_ox9NqLO9LhI_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_oxoDINgOrZk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("oxoDINgOrZk", libSceHmdUnknown_oxoDINgOrZk_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_qS18I6w2SZM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qS18I6w2SZM", libSceHmdUnknown_qS18I6w2SZM_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_rczCXLh2_minus_b4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rczCXLh2-b4", libSceHmdUnknown_rczCXLh2_minus_b4_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_sWZSZB_minus_mnw4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sWZSZB-mnw4", libSceHmdUnknown_sWZSZB_minus_mnw4_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_smQw6nT8PcA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("smQw6nT8PcA", libSceHmdUnknown_smQw6nT8PcA_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_thTykLZ_minus_tZs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("thTykLZ-tZs", libSceHmdUnknown_thTykLZ_minus_tZs_nid_no_patch);
+
+int APS5_VABI libSceHmdUnknown_uab6BzXsfkk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("uab6BzXsfkk", libSceHmdUnknown_uab6BzXsfkk_nid_no_patch);
 
 }

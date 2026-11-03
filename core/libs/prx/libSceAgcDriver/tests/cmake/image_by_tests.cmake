@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(image_by_tests ${LIBS_INCLUDE_DIR}/tests/ImageBy.cpp)
+    target_link_libraries(image_by_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(image_by_tests)
+    add_test(NAME image_by COMMAND image_by_tests)
+    if(WIN32)
+        set_tests_properties(image_by PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

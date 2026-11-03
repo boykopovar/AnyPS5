@@ -1,11 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
 #include <string_view>
-
-extern "C" int APS5_VABI sceKernelGetModuleInfoForUnwind(std::uint64_t address, int flags, ModuleInfoForUnwind* info);
 
 static std::uint64_t expectedAddress = 0;
 static int calls = 0;
@@ -29,6 +28,7 @@ int main() {
         bool threw = false;
         try {
             sceKernelGetModuleInfoForUnwind(expectedAddress, 1, &info);
+
         } catch (const std::runtime_error& error) {
             threw = std::string_view(error.what()) == "sceKernelGetModuleInfoForUnwind: failed to query guest module information";
         }

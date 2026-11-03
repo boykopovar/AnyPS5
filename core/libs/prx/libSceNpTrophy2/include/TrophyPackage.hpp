@@ -89,17 +89,27 @@ struct TrophyPackage {
 
 TrophyPackage ParseTrophyPackage(std::string_view ucp, std::string_view language);
 
-enum class StatType { UInt32, UInt64 };
+enum class StatType { UInt32, UInt64, Int32 };
+
+enum class StatAggregation { Latest, Max };
 
 struct StatDefinition {
     StatType type = StatType::UInt64;
+    StatAggregation aggregation = StatAggregation::Latest;
     std::uint64_t minimum = 0;
     std::uint64_t maximum = UINT64_MAX;
+    std::uint64_t initial = 0;
+};
+
+struct StatFilter {
+    std::string path;
+    std::uint64_t value = 0;
 };
 
 struct StatRule {
     std::string input;
     std::uint64_t statId = 0;
+    std::optional<StatFilter> filter;
 };
 
 struct StatRules {

@@ -14,6 +14,11 @@ namespace AgcDriver::Pm4 {
 
 constexpr std::size_t GdsBytes = 0x10000;
 std::uint64_t GdsAddress();
+void RequestImportableGds(bool requested);
+bool ImportableGdsRequested();
+bool GdsShared();
+bool GdsImportable();
+void RejectGdsImport();
 
 struct DrawParameters {
     std::uint64_t indexAddress;
@@ -46,6 +51,7 @@ struct DrawParameters {
         std::uint32_t drawIndexLocation;
         bool drawIndexEnabled;
         std::uint32_t indxOffset;
+        bool indexLimitKnown = true;
         enum class Rule : std::uint8_t { InPlace, Constant };
         Rule vertexRule = Rule::Constant;
         Rule instanceRule = Rule::Constant;

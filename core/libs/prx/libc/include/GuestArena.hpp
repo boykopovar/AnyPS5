@@ -17,6 +17,11 @@ inline constexpr std::uintptr_t GuestAddressOffset = 0;
 #ifndef _WIN32
 using SharedBackingResolver = bool (*)(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
 using SharedBackingWriter = bool (*)(std::uintptr_t address, const void* source, std::size_t bytes);
+struct SharedBackingRun {
+    std::uint64_t offset;
+    std::size_t bytes;
+};
+using SharedBackingRunsResolver = bool (*)(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count);
 #endif
 
 extern "C" {
@@ -55,6 +60,10 @@ void GuestArenaMapFile_nid_postfix(void* pointer, std::size_t bytes, void* secti
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaUnmapAlias_nid_postfix(void* alias);
 bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uintptr_t* start, std::uintptr_t* end);
+void GuestArenaCompareWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestArenaCompareResidentWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestArenaComparedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count);
+void GuestArenaTakeUnreportedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count);
 void GuestArenaForgetSection_nid_postfix(void* section);
 bool GuestArenaBeginHostImport_nid_no_patch(void* pointer, std::size_t bytes);
 void GuestArenaEndHostImport_nid_no_patch(void* pointer, std::size_t bytes);
@@ -64,6 +73,10 @@ void GuestArenaSetSharedBacking_nid_postfix(SharedBackingResolver resolver);
 void GuestArenaSetSharedBackingWriter_nid_no_patch(SharedBackingWriter writer);
 bool GuestArenaWriteSharedBacking_nid_no_patch(std::uintptr_t address, const void* source, std::size_t bytes);
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
+void GuestArenaSetSharedBackingRuns_nid_postfix(SharedBackingRunsResolver resolver);
+bool GuestArenaSharedBackingRuns_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, SharedBackingRun* runs, std::size_t capacity, std::size_t* count);
+bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestArenaReleaseHostRegion_nid_no_patch(const void* pointer, std::size_t bytes);
 #endif
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes);
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes);

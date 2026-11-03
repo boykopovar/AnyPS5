@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -17,30 +19,12 @@
 #include <vector>
 #ifdef _WIN32
 #include <io.h>
+#include <windows.h>
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
+#else
+#include <sys/mman.h>
 #endif
-extern "C" {
-int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
-int APS5_VABI sceKernelClose(int d);
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
-int APS5_VABI sceKernelAioDeleteRequest(std::int32_t id, std::int32_t* ret);
-int APS5_VABI sceKernelAioInitializeImpl(void* param, std::int32_t size);
-void APS5_VABI sceKernelAioInitializeParam(void* param);
-int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, std::int32_t schedulingWindowSize, std::int32_t delayedCountLimit, std::uint32_t enableSplit, std::uint32_t splitSize, std::uint32_t splitChunkSize);
-int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioSubmitWriteCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioPollRequest(std::int32_t id, std::int32_t* state);
-int APS5_VABI sceKernelAioWaitRequest(std::int32_t id, std::int32_t* state, std::uint32_t* usec);
-int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
-int APS5_VABI sceKernelAioWaitRequests(std::int32_t* id, std::int32_t num, std::int32_t* state, std::uint32_t mode, std::uint32_t* usec);
-int APS5_VABI sceKernelAioPollRequests(std::int32_t* id, std::int32_t num, std::int32_t* state);
-int APS5_VABI sceKernelAioCancelRequest(std::int32_t id, std::int32_t* state);
-int APS5_VABI sceKernelAioCancelRequests(std::int32_t* id, std::int32_t num, std::int32_t* state);
-int APS5_VABI sceKernelAioDeleteRequests(std::int32_t* id, std::int32_t num, std::int32_t* ret);
-}
+
 static void Require(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "Aio check failed at line %d\n", line);
@@ -48,6 +32,31 @@ static void Require(bool value, int line) {
     }
 }
 #define Check(value) Require((value), __LINE__)
+
+static void DeleteAio(std::int32_t id) {
+    std::int32_t removed = -1;
+    Check(sceKernelAioDeleteRequest(id, &removed) == 0 && removed == 0);
+}
+
+static void* MapReadOnlyPage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READONLY);
+    Check(page != nullptr);
+#else
+    void* page = mmap(nullptr, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Check(page != MAP_FAILED);
+#endif
+    return page;
+}
+
+static void UnmapReadOnlyPage(void* page) {
+#ifdef _WIN32
+    Check(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Check(munmap(page, 4096) == 0);
+#endif
+}
+
 #ifdef _WIN32
 static int g_parameterReports = 0;
 static void CountParameterReport(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {
@@ -413,6 +422,55 @@ int main(int argc, char** argv) {
     Check(sceKernelAioDeleteRequests(badIds, 2, untouched) == 0);
     Check(untouched[0] == 0 && untouched[1] == SCE_KERNEL_ERROR_ESRCH);
     Check(sceKernelAioDeleteRequests(writeIds, 2, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    const int faultFd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Check(faultFd >= 0);
+    std::array<char, 4> faultBuffer{};
+    KernelAioResult faultResult{-1, 0};
+    KernelAioRwRequest faultRequest{0, faultBuffer.size(), faultBuffer.data(), &faultResult, faultFd};
+    const auto finished = [&] {
+        std::int32_t requestId = 0;
+        Check(sceKernelAioSubmitReadCommands(&faultRequest, 1, 1, &requestId) == 0 && faultResult.state == 3);
+        return requestId;
+    };
+    auto* unreadable = reinterpret_cast<std::int32_t*>(0x10);
+    std::int32_t kept[2] = {7, 7};
+    Check(sceKernelAioPollRequests(unreadable, 0, kept) == SCE_KERNEL_ERROR_EINVAL);
+    Check(sceKernelAioPollRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioCancelRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioDeleteRequests(unreadable, 2, kept) == SCE_KERNEL_ERROR_EFAULT);
+    Check(kept[0] == 7 && kept[1] == 7);
+    void* readOnly = MapReadOnlyPage();
+    for (void* bad : {static_cast<void*>(unreadable), readOnly}) {
+        auto* badState = static_cast<std::int32_t*>(bad);
+        const std::int32_t pollId = finished();
+        Check(sceKernelAioPollRequest(pollId, badState) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioPollRequest(pollId, &polled) == 0 && polled == 0x10003);
+        const std::int32_t cancelId = finished();
+        Check(sceKernelAioCancelRequest(cancelId, badState) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioPollRequest(cancelId, &polled) == 0 && polled == 3);
+        const std::int32_t deleteId = finished();
+        Check(sceKernelAioDeleteRequest(deleteId, badState) == SCE_KERNEL_ERROR_EFAULT);
+        std::int32_t removed = 7;
+        Check(sceKernelAioDeleteRequest(deleteId, &removed) == 0 && removed == SCE_KERNEL_ERROR_ESRCH);
+        std::int32_t batchIds[2] = {finished(), finished()};
+        std::int32_t batchStates[2] = {7, 7};
+        Check(sceKernelAioPollRequests(batchIds, 2, badState) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioCancelRequests(batchIds, 2, badState) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioPollRequests(batchIds, 2, batchStates) == 0 && batchStates[0] == 0x10003 && batchStates[1] == 0x10003);
+        Check(sceKernelAioDeleteRequests(batchIds, 2, badState) == SCE_KERNEL_ERROR_EFAULT);
+        Check(sceKernelAioDeleteRequests(batchIds, 2, batchStates) == 0);
+        Check(batchStates[0] == SCE_KERNEL_ERROR_ESRCH && batchStates[1] == SCE_KERNEL_ERROR_ESRCH);
+        DeleteAio(pollId);
+        DeleteAio(cancelId);
+    }
+    Check(*static_cast<std::int32_t*>(readOnly) == 0);
+    UnmapReadOnlyPage(readOnly);
+    const std::int32_t twiceId = finished();
+    std::int32_t twice[2] = {twiceId, twiceId};
+    std::int32_t twiceStates[2] = {7, 7};
+    Check(sceKernelAioPollRequests(twice, 2, twiceStates) == 0 && twiceStates[0] == 3 && twiceStates[1] == 0x10003);
+    Check(sceKernelAioDeleteRequests(twice, 2, twiceStates) == 0 && twiceStates[0] == 0 && twiceStates[1] == SCE_KERNEL_ERROR_ESRCH);
+    Check(sceKernelClose(faultFd) == 0);
     const auto shared = root / "shared.bin";
     std::string sharedContents;
     for (char letter : {'A', 'B', 'C', 'D'}) sharedContents.append(1024, letter);
@@ -432,6 +490,7 @@ int main(int argc, char** argv) {
                     result.return_value != 16 || std::memcmp(bytes.data(), sharedContents.data() + offset, 16) != 0) {
                     misread = true;
                 }
+                DeleteAio(requestId);
             }
         });
     }

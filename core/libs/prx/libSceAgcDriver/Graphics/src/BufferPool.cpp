@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 
 namespace AgcDriver::Graphics {
@@ -51,7 +53,7 @@ BufferPool::BufferPool(const Context& context) : maxSlots(std::max<std::size_t>(
 BufferPool::~BufferPool() {
     for (auto* tier : {&smallTier, &largeTier, &deviceTier}) {
         for (const auto& [key, slots] : tier->free) {
-            for (const auto& slot : slots) destroy(slot.allocation);
+            for (const auto& slot : slots) destroy(slot.allocation, true);
         }
     }
     for (auto& [memory, block] : slabBlocks) freeBlock(*block);
@@ -91,6 +93,7 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
         ++attempts;
         if (result == VK_SUCCESS) {
             if (allocatedType != nullptr) *allocatedType = *hostType;
+            MemoryAccounting::Record(device, memory, host, memoryProperties, operation);
             static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
             const auto count = placements.fetch_add(1, std::memory_order_relaxed) + 1;
             const auto total = placedBytes.fetch_add(allocation.allocationSize, std::memory_order_relaxed) + allocation.allocationSize;
@@ -99,6 +102,7 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
         }
     }
     if (result == VK_SUCCESS) {
+        MemoryAccounting::Record(device, memory, allocation, memoryProperties, operation);
         if (attempts > 1) std::fprintf(stderr, "[bufferpool] %s recovered: allocation=%llu reclaimed=%llu released=%llu initialResult=%d attempts=%u\n", operation, static_cast<unsigned long long>(allocation.allocationSize), static_cast<unsigned long long>(reclaimed), static_cast<unsigned long long>(released), static_cast<int>(initialResult), attempts);
         return memory;
     }
@@ -163,6 +167,7 @@ VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocatio
             --imageSlots;
             imageBytes -= allocation.allocationSize;
             ++imageHits;
+            MemoryAccounting::Use(device, memory, operation);
             if (allocatedType != nullptr) *allocatedType = type;
             return memory;
         }
@@ -174,7 +179,7 @@ VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocatio
 void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept {
     if (memory == VK_NULL_HANDLE) return;
     if (!imagePooled(bytes, memoryType)) {
-        freeMemory(device, memory, nullptr);
+        MemoryAccounting::Free(freeMemory, device, memory);
         return;
     }
     BufferAllocation allocation{VK_NULL_HANDLE, memory, nullptr, 0, bytes, static_cast<std::size_t>(bytes), 0, memoryProperties.memoryTypes[memoryType].propertyFlags};
@@ -204,11 +209,12 @@ void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::
             deviceTier.retainedBytes += bytes;
             ++imageSlots;
             imageBytes += bytes;
+            MemoryAccounting::Retain(device, memory, bytes);
         }
     } catch (...) {
         destroy(allocation);
     }
-    for (const auto& gone : evicted) destroy(gone);
+    for (const auto& gone : evicted) destroy(gone, true);
 }
 
 std::size_t BufferPool::RetainedImages() {
@@ -245,6 +251,7 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
         if (block.used++ == 0) --slab.emptyBlocks;
         if (block.free.empty()) slab.available.erase(std::find(slab.available.begin(), slab.available.end(), &block));
         const auto offset = static_cast<VkDeviceSize>(index) * block.slotBytes;
+        MemoryAccounting::RetainPart(device, block.memory, block.slotBytes, false);
         return SlabSlot{block.memory, offset, block.mapping != nullptr ? block.mapping + offset : nullptr};
     };
     {
@@ -275,6 +282,7 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
     const auto slots = static_cast<std::uint32_t>(blockBytes / capacity);
     block->free.reserve(slots);
     for (std::uint32_t index = slots; index-- != 0;) block->free.push_back(index);
+    MemoryAccounting::Retain(device, block->memory, blockBytes);
     std::lock_guard lock(slabMutex);
     auto& slab = slabs[key];
     if (slab.blocks == slab.available.capacity()) slab.available.reserve(std::max<std::size_t>(1, slab.available.capacity() * 2));
@@ -289,7 +297,7 @@ SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, 
 
 void BufferPool::freeBlock(SlabBlock& block) noexcept {
     if (block.mapping != nullptr) unmap(device, block.memory);
-    freeMemory(device, block.memory, nullptr);
+    MemoryAccounting::Free(freeMemory, device, block.memory);
 }
 
 VkDeviceSize BufferPool::PutSlot(VkDeviceMemory memory, VkDeviceSize offset) noexcept {
@@ -302,6 +310,7 @@ VkDeviceSize BufferPool::PutSlot(VkDeviceMemory memory, VkDeviceSize offset) noe
         auto& slab = slabs[block.slab];
         if (block.free.empty()) slab.available.push_back(&block);
         block.free.push_back(static_cast<std::uint32_t>(offset / block.slotBytes));
+        MemoryAccounting::RetainPart(device, memory, block.slotBytes, true);
         if (--block.used != 0) return 0;
         if (slab.emptyBlocks == 0) {
             ++slab.emptyBlocks;
@@ -352,15 +361,16 @@ VkDeviceSize BufferPool::deviceBudget(const Context& context) {
     return DeviceBudget(context.memory, &reported);
 }
 
-VkDeviceSize BufferPool::destroy(const BufferAllocation& allocation) noexcept {
+VkDeviceSize BufferPool::destroy(const BufferAllocation& allocation, bool retained) noexcept {
     if (allocation.slab) {
+        if (retained) MemoryAccounting::RetainPart(device, allocation.memory, allocation.allocationBytes, false);
         destroyBuffer(device, allocation.buffer, nullptr);
         return PutSlot(allocation.memory, allocation.offset);
     }
     // Device-local allocations (see DeviceBuffer) are never mapped.
     if (allocation.mapping != nullptr) unmap(device, allocation.memory);
     if (allocation.buffer != VK_NULL_HANDLE) destroyBuffer(device, allocation.buffer, nullptr);
-    freeMemory(device, allocation.memory, nullptr);
+    MemoryAccounting::Free(freeMemory, device, allocation.memory);
     return allocation.allocationBytes;
 }
 
@@ -368,11 +378,10 @@ bool BufferPool::DeviceTiered(VkMemoryPropertyFlags properties) {
     return (properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 && DeviceTierEnabled();
 }
 
-std::size_t BufferPool::Capacity(std::size_t bytes, VkMemoryPropertyFlags properties) {
+std::size_t BufferPool::Capacity(std::size_t bytes) {
     constexpr std::size_t smallest = 256;
     if (exactSizes()) return bytes;
     if (bytes < classLimit) return std::max(smallest, std::bit_ceil(bytes));
-    if (!DeviceTiered(properties)) return bytes;
     const auto step = std::bit_floor(bytes) >> deviceClassBits;
     return (bytes + step - 1) / step * step;
 }
@@ -390,9 +399,9 @@ BufferPool::Tier& BufferPool::tierFor(std::size_t capacity, VkMemoryPropertyFlag
     return !sharedTiers() && capacity < classLimit ? smallTier : largeTier;
 }
 
-std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
+std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, const char* category) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    const auto capacity = Capacity(bytes, properties);
+    const auto capacity = Capacity(bytes);
     std::lock_guard lock(mutex);
     ++clock;
     if (profile) {
@@ -411,12 +420,19 @@ std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsag
         ++tier.misses;
         return std::nullopt;
     }
-    auto result = found->second.back().allocation;
-    found->second.pop_back();
-    if (found->second.empty()) tier.free.erase(found);
+    auto& slots = found->second;
+    const auto newest = std::prev(slots.end());
+    auto chosen = newest;
+    for (std::size_t scanned = 1; chosen->allocation.bufferBytes != bytes && scanned < exactSizeScan && chosen != slots.begin(); ++scanned) --chosen;
+    if (chosen->allocation.bufferBytes != bytes) chosen = newest;
+    auto result = chosen->allocation;
+    slots.erase(chosen);
+    if (slots.empty()) tier.free.erase(found);
     --tier.slots;
     tier.retainedBytes -= result.allocationBytes;
     ++tier.hits;
+    if (result.slab) MemoryAccounting::RetainPart(device, result.memory, result.allocationBytes, false);
+    else MemoryAccounting::Use(device, result.memory, category);
     return result;
 }
 
@@ -537,7 +553,7 @@ VkDeviceSize BufferPool::trim() {
     VkDeviceSize bytes = 0;
     for (const auto* tier : {&retiredSmall, &retiredLarge, &retiredDevice}) {
         for (const auto& [key, slots] : tier->free) {
-            for (const auto& slot : slots) bytes += destroy(slot.allocation);
+            for (const auto& slot : slots) bytes += destroy(slot.allocation, true);
         }
     }
     for (;;) {
@@ -573,11 +589,13 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
             tier.free[{allocation.bytes, allocation.usage, allocation.properties}].push_back({allocation, ++clock, {}});
             ++tier.slots;
             tier.retainedBytes += allocation.allocationBytes;
+            if (allocation.slab) MemoryAccounting::RetainPart(device, allocation.memory, allocation.allocationBytes, true);
+            else MemoryAccounting::Retain(device, allocation.memory, allocation.allocationBytes);
         }
     } catch (...) {
         destroy(allocation);
     }
-    for (const auto& gone : evicted) destroy(gone);
+    for (const auto& gone : evicted) destroy(gone, true);
 }
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context) {
@@ -595,7 +613,7 @@ void ReleaseImageMemory(const Context& context, VkDeviceMemory memory, VkDeviceS
         context.bufferPool->PutImageMemory(memory, bytes, memoryType);
         return;
     }
-    context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    MemoryAccounting::Free(context, memory);
 }
 
 }

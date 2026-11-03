@@ -177,6 +177,18 @@ void StatStore::Set(std::int32_t userId, std::uint32_t serviceLabel, std::uint64
     stats = std::move(updated);
 }
 
+std::uint64_t StatStore::Raise(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId, std::uint64_t value) {
+    std::lock_guard lock(mutex);
+    const Key key{userId, serviceLabel};
+    auto& stats = record(key);
+    if (const auto found = stats.find(statId); found != stats.end() && found->second >= value) return found->second;
+    auto updated = stats;
+    updated[statId] = value;
+    writeRecord(directory, RecordPath(userId, serviceLabel), updated, "stat record");
+    stats = std::move(updated);
+    return value;
+}
+
 std::optional<std::uint64_t> StatStore::Value(std::int32_t userId, std::uint32_t serviceLabel, std::uint64_t statId) {
     std::lock_guard lock(mutex);
     const auto& stats = record({userId, serviceLabel});

@@ -254,7 +254,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             hasModRm = true;
             immediateSize = ImmSize8;
         } else if (opcode == TwoByteShldCl || opcode == TwoByteShrdCl ||
-                   opcode == TwoBytePopcnt || opcode == TwoByteUd1 || opcode == TwoByteBtc ||
+                   opcode == TwoBytePopcnt || opcode == TwoByteUd1 || opcode == TwoByteUd0 || opcode == TwoByteBtc ||
                    opcode == TwoBytePrefetchw || opcode == TwoByteXaddRm8 ||
                    opcode == TwoByteMovnti || opcode == TwoByteGrp6 ||
                    opcode == TwoByteLar || opcode == TwoByteLsl ||
@@ -393,6 +393,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
         const std::uint8_t modrm = data[modrmPos];
         info.HasModRm = true;
         info.ModRmByte = modrm;
+        info.ModRmOffset = modrmPos;
         info.ModRmRegField = (modrm >> ModRmRegShift) & ModRmRegMask;
         const std::uint8_t mod = registerOnly ? ModRmModRegister : (modrm >> ModRmModShift) & ModRmModMask;
         const std::uint8_t rm = modrm & ModRmRmMask;
@@ -489,6 +490,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             std::uint8_t modrm = data[pos];
             info.HasModRm = true;
             info.ModRmByte = modrm;
+            info.ModRmOffset = pos;
             std::uint8_t reg = (modrm >> ModRmRegShift) & ModRmRegMask;
             info.ModRmRegField = reg;
             std::uint8_t mod = (modrm >> ModRmModShift) & ModRmModMask;
@@ -533,7 +535,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             info.FlowKind = ControlFlowKind::Trap;
             return info;
         }
-        if (op == TwoByteUd1) {
+        if (op == TwoByteUd1 || op == TwoByteUd0) {
             if (pos < info.Length)
                 readModRm(pos, false);
             info.FlowKind = ControlFlowKind::Trap;
@@ -621,6 +623,12 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
     if (!twoByteOpcode && ((op >= 0x6c && op <= 0x6f) || (op >= 0xa0 && op <= 0xa7) ||
                            (op >= 0xaa && op <= 0xaf) || op == 0xd7))
         info.HasMemoryOperand = true;
+
+    if ((!twoByteOpcode && op == OneByteLea) || (twoByteOpcode && op == TwoByteNopModRm))
+        info.HasMemoryOperand = false;
+
+    if (!twoByteOpcode && (op == 0x6c || op == 0x6d || op == 0xaa || op == 0xab || op == 0xae || op == 0xaf))
+        info.SegmentPrefix = 0;
 
     info.FlowKind = ControlFlowKind::Sequential;
     return info;

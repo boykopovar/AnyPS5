@@ -51,6 +51,13 @@ enum class PublishScope : std::uint8_t { None, Whole, PartialUnits };
 enum class PublishReason : std::uint8_t { Hook, Region, Indirect, CopySource, CopyDestination, Fill, FillClear, Label, Keys, Scanout, Validate, Upload, TailMip, Evict, Retire, Teardown, Address, Count };
 // The reason for a FlushPending reason string ("memory access" -> Hook, ...).
 PublishReason PublishReasonFor(const char* flushReason);
+void SetPublishSelectedHook(void (*hook)(std::uint64_t begin, std::uint64_t end));
+
+struct PublishOnCpuScope {
+    PublishOnCpuScope();
+    ~PublishOnCpuScope();
+    bool previous;
+};
 
 struct ShadowSlab {
     ShadowSlab(const Context& context, VkBuffer buffer, VkDeviceMemory memory, std::uint64_t firstUnit, std::uint32_t units);
@@ -95,6 +102,7 @@ std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope
 // hook-free readers and a build's stage A.
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes);
 bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> LiveShadowedRanges(std::uint64_t address, std::size_t bytes, PublishScope scope);
 
 // The sources of a storage upload's surface-relative runs: [begin, end) pieces of them, each read
 // from one buffer (a slab while the unit is fresh, else the import) at `offset` (byte x of the run

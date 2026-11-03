@@ -1,3 +1,5 @@
+#include "prx/libSceSaveDataDialog.native/include/Api.hpp"
+#include "prx/libSceSaveDataDialog/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>

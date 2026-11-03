@@ -52,14 +52,25 @@ static_assert(offsetof(DeviceInformation, hmuMount) == 24);
 
 }
 
-struct HmdFieldOfView;
-struct HmdEyeOffset;
+struct HmdFieldOfView {
+    float angles[4];
+};
+struct HmdEyeOffset {
+    float x;
+    float y;
+    float z;
+};
 struct HmdInertialSensorData;
-struct HmdAssemblyError;
+struct HmdAssemblyError {
+    float offsets[4];
+};
 struct HmdDistortionCommandParameter;
 struct HmdWideNearDistortionCommandParameter;
 struct Hmd2dVrCommandParameter;
-struct HmdCommandBuffer;
+struct HmdCommandBuffer {
+    const std::uint32_t* commands;
+    std::uint32_t dwordCount;
+};
 
 extern "C" {
 std::int32_t APS5_VABI sceHmdInitialize(const Hmd::InitializeParam* param);

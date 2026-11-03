@@ -1,3 +1,7 @@
+#include "prx/libSceVideoRecordingP/include/Api.hpp"
+#include "prx/libSceRudp/include/Api.hpp"
+#include "prx/libSceNpEntitlementAccess/include/Api.hpp"
+#include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 
 #include <array>
@@ -6,30 +10,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceVideoRecordingGetInfo(std::int32_t info, void* data, std::size_t size);
-int APS5_VABI sceVideoRecordingSetInfo(std::int32_t info, const void* data, std::size_t size);
-int APS5_VABI sceNpEntitlementAccessAbortRequest(std::int64_t);
-int APS5_VABI sceNpEntitlementAccessDeleteRequest(std::int64_t);
-int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
-int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(
-    std::uint32_t, const NpUnifiedEntitlementLabel*, NpEntitlementAccessEntitlementKey*);
-int APS5_VABI sceNpEntitlementAccessGetGameTrialsFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGetPftFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfoList(std::int32_t userId, std::uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabels, std::uint32_t labelCount, const NpEntitlementAccessListParameter* parameter, std::int64_t* requestId);
-int APS5_VABI sceNpEntitlementAccessPollUnifiedEntitlementInfoList(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessUnifiedInfo* infos, std::uint32_t capacity, std::int32_t* firstResult, std::int32_t* secondResult, std::int32_t* thirdResult);
-int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfoList(std::int32_t userId, std::uint32_t serviceLabel, const NpServiceEntitlementLabel* entitlementLabels, std::uint32_t labelCount, const NpEntitlementAccessListParameter* parameter, std::int64_t* requestId);
-int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfoList(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessServiceInfo* infos, std::uint32_t capacity, std::int32_t* firstResult, std::int32_t* secondResult, std::int32_t* thirdResult);
-int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfo(std::int32_t userId, std::uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, std::int64_t* requestId);
-int APS5_VABI sceNpEntitlementAccessPollUnifiedEntitlementInfo(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessUnifiedInfo* info);
-int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfo(std::int32_t userId, std::uint32_t serviceLabel, const NpServiceEntitlementLabel* entitlementLabel, std::int64_t* requestId);
-int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfo(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessServiceInfo* info);
-int APS5_VABI sceRudpInit_nid_postfix(void*, int);
-int APS5_VABI sceRudpActivate(std::int32_t, const void*, std::uint32_t);
-int APS5_VABI sceRudpGetStatus(void*, std::size_t);
-int APS5_VABI sceRudpEnd();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -56,22 +36,6 @@ int main() {
             Require(sceVideoRecordingSetInfo(selector, nullptr, size) == recordingInvalid);
             Require(sceVideoRecordingSetInfo(selector, &recordingVolume, size) == (size < sizeof(float) ? recordingInvalid : recordingUnavailable));
         }
-    }
-
-    for (std::int64_t requestId : {std::int64_t{0}, std::int64_t{1}, INT64_MAX}) {
-        bool abortFailed = false;
-        bool deleteFailed = false;
-        try {
-            sceNpEntitlementAccessAbortRequest(requestId);
-        } catch (const std::logic_error&) {
-            abortFailed = true;
-        }
-        try {
-            sceNpEntitlementAccessDeleteRequest(requestId);
-        } catch (const std::logic_error&) {
-            deleteFailed = true;
-        }
-        Require(abortFailed && deleteFailed);
     }
 
     constexpr int network = static_cast<int>(0x80431063);
@@ -117,6 +81,21 @@ int main() {
     Require(sceNpEntitlementAccessPollUnifiedEntitlementInfo(0, nullptr, nullptr) == signedOut);
     Require(sceNpEntitlementAccessRequestServiceEntitlementInfo(0, 0, nullptr, nullptr) == signedOut);
     Require(sceNpEntitlementAccessPollServiceEntitlementInfo(0, nullptr, nullptr) == signedOut);
+
+    std::array<unsigned char, 72> transactionId{};
+    std::int64_t requestId = 0x5a5a5a5a5a5a5a5a;
+    std::int32_t result = 0x5a5a5a5a;
+    std::array<unsigned char, 64> info;
+    info.fill(0xa5);
+    const auto originalInfo = info;
+    Require(sceNpEntitlementAccessRequestConsumeEntitlement(1, 0, &label, transactionId.data(), 1, &requestId) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumeEntitlement(1, 0, nullptr, nullptr, 1, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumableEntitlementInfo(1, 0, &label, &requestId) == signedOut);
+    Require(sceNpEntitlementAccessRequestConsumableEntitlementInfo(1, 0, nullptr, nullptr) == signedOut);
+    Require(requestId == 0x5a5a5a5a5a5a5a5a);
+    Require(sceNpEntitlementAccessPollConsumableEntitlementInfo(1, &result, info.data()) == signedOut);
+    Require(sceNpEntitlementAccessPollConsumableEntitlementInfo(1, nullptr, nullptr) == signedOut);
+    Require(result == 0x5a5a5a5a && info == originalInfo);
 
     Require(sceRudpActivate(-1, nullptr, 0) == static_cast<int>(0x80770001));
     std::array<unsigned char, 248> status;

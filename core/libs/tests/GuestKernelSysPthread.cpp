@@ -1,18 +1,11 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include <cstdlib>
 
-extern "C" {
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetscope(const PthreadAttr* attr, int* scope);
-int APS5_VABI scePthreadAttrSetscope(PthreadAttr* attr, int scope);
-int APS5_VABI scePthreadAtfork(PthreadAtforkHandler prepare, PthreadAtforkHandler parent, PthreadAtforkHandler child);
-int APS5_VABI scePthreadSetconcurrency(int level);
-int APS5_VABI scePthreadGetconcurrency();
-}
-
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCOPE_PROCESS = 0;
 static constexpr int SCOPE_SYSTEM = 2;
 
@@ -42,6 +35,29 @@ static void TestScope() {
     Require(scePthreadAttrDestroy(&attr) == 0);
 }
 
+static void TestMutexAttributeGeneration() {
+    PthreadMutexattr attr = nullptr;
+    Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
+
+    int generation = -1;
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&attr, &generation) == 0 && generation == 0);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(&attr, 1) == 0);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&attr, &generation) == 0 && generation == 1);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(&attr, 2) == 45);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(nullptr, &generation) == 22);
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&attr, nullptr) == 22);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(nullptr, 0) == 22);
+    PthreadMutexattr destroyedAttr = nullptr;
+    Require(pthread_mutexattr_getgen_np_nid_postfix(&destroyedAttr, &generation) == 22);
+    Require(pthread_mutexattr_setgen_np_nid_postfix(&destroyedAttr, 0) == 22);
+
+    Require(scePthreadMutexattrSetgen(&attr, 0) == 0);
+    Require(scePthreadMutexattrGetgen(&attr, &generation) == 0 && generation == 0);
+    Require(scePthreadMutexattrSetgen(&attr, 2) == SCE_KERNEL_ERROR_EOPNOTSUPP);
+    Require(scePthreadMutexattrGetgen(nullptr, &generation) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+}
+
 static void TestConcurrency() {
     Require(scePthreadSetconcurrency(3) == 0 && scePthreadGetconcurrency() == 3);
     Require(scePthreadSetconcurrency(-1) == SCE_KERNEL_ERROR_EINVAL && scePthreadGetconcurrency() == 3);
@@ -60,6 +76,7 @@ static void TestAtfork() {
 
 int main() {
     TestScope();
+    TestMutexAttributeGeneration();
     TestConcurrency();
     TestAtfork();
     return 0;

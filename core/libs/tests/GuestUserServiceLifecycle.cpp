@@ -4,14 +4,6 @@
 #include <cstring>
 #include <initializer_list>
 
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params);
-int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask affinityMask);
-int APS5_VABI sceUserServiceTerminate(void);
-int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_id_list);
-int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event);
-}
-
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -36,6 +28,41 @@ void RequireLoginOnce() {
 int InitializeWithPriority(int priority) {
     const UserServiceInitParam param{priority};
     return sceUserServiceInitialize(&param);
+}
+
+void TestInitialUserLogout() {
+    SceUserServiceEvent event{};
+    UserServiceLoginUserIdList list{};
+    int initial = -1;
+    Require(sceUserServiceGetInitialUser(&initial) == USER_SERVICE_OK && initial == USER_SERVICE_INITIAL_USER_ID);
+
+    UserServiceSetUserConnected_nid_postfix(0, false);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_USER_ID_INVALID);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(0, false);
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(0, false);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_USER_ID_INVALID);
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
 }
 
 void TestThreadPriority() {
@@ -82,6 +109,43 @@ int main() {
 
     Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     RequireLoginOnce();
+
+    UserServiceSetUserConnected_nid_postfix(1, true);
+    SceUserServiceEvent event{};
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 1);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
+    Require(list.user_id[1] == USER_SERVICE_INITIAL_USER_ID + 1);
+
+    UserServiceSetUserConnected_nid_postfix(1, false);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 1);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
+    Require(list.user_id[1] == USER_SERVICE_USER_ID_INVALID);
+
+    for (int i = 0; i < 50; ++i) {
+        UserServiceSetUserConnected_nid_postfix(1, true);
+        UserServiceSetUserConnected_nid_postfix(1, false);
+    }
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(2, true);
+    UserServiceSetUserConnected_nid_postfix(2, false);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(2, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 2);
+    UserServiceSetUserConnected_nid_postfix(2, false);
+    UserServiceSetUserConnected_nid_postfix(2, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+    UserServiceSetUserConnected_nid_postfix(2, false);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 2);
+
+    TestInitialUserLogout();
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 
     TestThreadPriority();

@@ -1,6 +1,9 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -13,13 +16,6 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
-extern "C" std::int64_t APS5_VABI _fstat_nid_postfix(int descriptor, FileStat* status);
-extern "C" std::int64_t APS5_VABI pread_nid_postfix(int descriptor, void* buffer, std::size_t bytes, std::int64_t offset);
-extern "C" std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int descriptor, const void* buffer, std::size_t bytes, std::int64_t offset);
-extern "C" int APS5_VABI fsync_nid_postfix(int descriptor);
 
 namespace {
 
@@ -56,35 +52,8 @@ constexpr std::uint64_t IoSizeMax = std::numeric_limits<int>::max();
 constexpr std::int64_t NanosecondsPerSecond = 1000000000;
 constexpr std::int64_t TickNanoseconds = 1000000;
 
-struct GuestSigevent {
-    int notify;
-    int signo;
-    std::int64_t value;
-    std::int64_t extra[8];
-};
-
-struct GuestAiocb {
-    int fildes;
-    std::int64_t offset;
-    void* buf;
-    std::uint64_t nbytes;
-    int spare[2];
-    void* spare2;
-    int lioOpcode;
-    int reqprio;
-    std::int64_t status;
-    std::int64_t error;
-    void* kernelinfo;
-    GuestSigevent sigevent;
-};
-
 static_assert(offsetof(GuestAiocb, lioOpcode) == 48 && offsetof(GuestAiocb, status) == 56 && offsetof(GuestAiocb, sigevent) == 80);
 static_assert(sizeof(GuestAiocb) == 160);
-
-struct GuestTimespec {
-    std::int64_t tv_sec;
-    std::int64_t tv_nsec;
-};
 
 enum class State { Queued, Running, Done };
 
@@ -102,7 +71,7 @@ struct Job {
 
 struct Aio {
     std::mutex lock;
-    std::condition_variable changed;
+    TimedWait::Condition changed;
     bool used = false;
     bool held = false;
     bool started = false;
@@ -135,7 +104,7 @@ void Worker() {
     auto& aio = Instance();
     std::unique_lock lock(aio.lock);
     for (;;) {
-        aio.changed.wait(lock, [&] { return !aio.held && !aio.queued.empty(); });
+        aio.changed.Wait(lock, [&] { return !aio.held && !aio.queued.empty(); });
         auto job = aio.queued.front();
         aio.queued.pop_front();
         job->state = State::Running;
@@ -144,7 +113,7 @@ void Worker() {
         lock.lock();
         job->state = State::Done;
         aio.done.push_back(job);
-        aio.changed.notify_all();
+        aio.changed.NotifyAll();
     }
 }
 
@@ -153,7 +122,7 @@ void Complete(Aio& aio, const std::shared_ptr<Job>& job, std::int64_t status, in
     job->error = error;
     job->state = State::Done;
     aio.done.push_back(job);
-    aio.changed.notify_all();
+    aio.changed.NotifyAll();
 }
 
 std::optional<int> ReadyError(const std::shared_ptr<Job>& job) {
@@ -170,7 +139,7 @@ std::int64_t Consume(Aio& aio, std::list<std::shared_ptr<Job>>::iterator found) 
     return job->error != 0 ? Fail(job->error) : job->status;
 }
 
-std::optional<std::chrono::nanoseconds> WaitTime(const GuestTimespec& time) {
+std::optional<std::chrono::nanoseconds> WaitTime(const KernelTimespec& time) {
     if (time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= NanosecondsPerSecond) return std::nullopt;
     const auto microseconds = time.tv_nsec / 1000;
     const std::int64_t whole = microseconds * 1000;
@@ -221,7 +190,7 @@ int Queue(GuestAiocb* user, int opcode) {
         aio.started = true;
         std::thread(Worker).detach();
     }
-    aio.changed.notify_all();
+    aio.changed.NotifyAll();
     return 0;
 }
 
@@ -233,7 +202,7 @@ void AioHoldWorkerForTest_nid_no_patch(bool hold) {
     auto& aio = Instance();
     std::lock_guard lock(aio.lock);
     aio.held = hold;
-    aio.changed.notify_all();
+    aio.changed.NotifyAll();
 }
 
 int APS5_VABI aio_read_nid_postfix(GuestAiocb* aiocb) {
@@ -270,12 +239,13 @@ std::int64_t APS5_VABI aio_return_nid_postfix(GuestAiocb* aiocb) {
     return Fail(GuestEinval);
 }
 
-int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, const GuestTimespec* timeout) {
+int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, const KernelTimespec* timeout) {
     if (count < 0 || count > static_cast<int>(QueuePerProcess)) return Fail(GuestEinval);
-    std::optional<std::chrono::nanoseconds> wait;
+    std::optional<std::uint64_t> deadline;
     if (timeout != nullptr) {
-        wait = WaitTime(*timeout);
+        const auto wait = WaitTime(*timeout);
         if (!wait) return Fail(GuestEinval);
+        deadline = TimedWait::NowNanos() + static_cast<std::uint64_t>(wait->count());
     }
     auto& aio = Instance();
     std::unique_lock lock(aio.lock);
@@ -291,20 +261,21 @@ int APS5_VABI aio_suspend_nid_postfix(const GuestAiocb* const* list, int count, 
             }
         }
         if (!listed) return 0;
-        if (!wait) aio.changed.wait(lock);
-        else if (aio.changed.wait_for(lock, *wait) == std::cv_status::timeout) return Fail(GuestEagain);
+        if (!deadline) aio.changed.Wait(lock);
+        else if (!aio.changed.WaitUntil(lock, *deadline)) return Fail(GuestEagain);
     }
 }
 
-std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const GuestTimespec* timeout) {
+std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const KernelTimespec* timeout) {
     if (result != nullptr) *result = nullptr;
-    std::optional<std::chrono::nanoseconds> wait;
+    std::optional<std::uint64_t> deadline;
     bool poll = false;
     if (timeout != nullptr) {
         poll = timeout->tv_sec == 0 && timeout->tv_nsec == 0;
         if (!poll) {
-            wait = WaitTime(*timeout);
+            const auto wait = WaitTime(*timeout);
             if (!wait) return Fail(GuestEinval);
+            deadline = TimedWait::NowNanos() + static_cast<std::uint64_t>(wait->count());
         }
     }
     auto& aio = Instance();
@@ -312,8 +283,8 @@ std::int64_t APS5_VABI aio_waitcomplete_nid_postfix(GuestAiocb** result, const G
     aio.used = true;
     while (aio.done.empty()) {
         if (poll) return Fail(GuestEagain);
-        if (!wait) aio.changed.wait(lock);
-        else if (aio.changed.wait_for(lock, *wait) == std::cv_status::timeout && aio.done.empty()) return Fail(GuestEagain);
+        if (!deadline) aio.changed.Wait(lock);
+        else if (!aio.changed.WaitUntil(lock, *deadline) && aio.done.empty()) return Fail(GuestEagain);
     }
     if (result != nullptr) *result = aio.done.front()->user;
     return Consume(aio, aio.done.begin());

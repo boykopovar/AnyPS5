@@ -1,22 +1,11 @@
+#include "prx/libSceSaveDataDialog/include/Api.hpp"
+#include "prx/libSceSaveDataDialog.native/include/Api.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceSaveDataDialogInitialize();
-int APS5_VABI sceSaveDataDialogOpen(const void* param);
-int APS5_VABI sceSaveDataDialogGetStatus();
-int APS5_VABI sceSaveDataDialogUpdateStatus();
-int APS5_VABI sceSaveDataDialogIsReadyToDisplay();
-int APS5_VABI sceSaveDataDialogProgressBarInc(int target, std::uint32_t delta);
-int APS5_VABI sceSaveDataDialogProgressBarSetValue(int target, std::uint32_t rate);
-int APS5_VABI sceSaveDataDialogClose(const void* param);
-int APS5_VABI sceSaveDataDialogGetResult(void* result);
-int APS5_VABI sceSaveDataDialogTerminate();
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -45,6 +34,7 @@ int main() {
     Require(sceSaveDataDialogGetResult(&uninitResult) == SAVE_DATA_DIALOG_ERROR_NOT_FINISHED, "get result before init");
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc before init");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value before init");
+    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "isReadyToDisplay before init");
 
     Require(sceSaveDataDialogInitialize() == 0, "initialize");
     Require(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED, "double init");
@@ -140,4 +130,5 @@ int main() {
 
     Require(sceSaveDataDialogProgressBarInc(0, 10) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress inc after terminate");
     Require(sceSaveDataDialogProgressBarSetValue(0, 50) == SAVE_DATA_DIALOG_ERROR_NOT_RUNNING, "progress set value after terminate");
+    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "isReadyToDisplay after terminate");
 }

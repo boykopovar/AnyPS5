@@ -1,3 +1,6 @@
+#include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -9,23 +12,6 @@
 #include <set>
 #include <string>
 #include <system_error>
-
-extern "C" {
-int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(const char* path, int* perms, int* error);
-int APS5_VABI _ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(const char* path, int* perms, int* error);
-std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error);
-int APS5_VABI _ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(const char* path, std::int64_t* seconds, std::int64_t* nanoseconds);
-int APS5_VABI _ZNSt10filesystem9_Make_dirEPKcS1__nid_postfix(const char* path, const char* existing);
-bool APS5_VABI _ZNSt10filesystem11_Remove_dirEPKc_nid_postfix(const char* path);
-int APS5_VABI _ZNSt10filesystem7_UnlinkEPKc_nid_postfix(const char* path);
-int APS5_VABI _ZNSt10filesystem6_ChmodEPKcNS_5permsE_nid_postfix(const char* path, int perms);
-bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target);
-void* APS5_VABI _ZNSt10filesystem9_Open_dirERA260_cPKcRiRNS_9file_typeE_nid_postfix(char* target, const char* path, int* error, int* type);
-char* APS5_VABI _ZNSt10filesystem9_Read_dirERA260_cPvRNS_9file_typeE_nid_postfix(char* target, void* handle, int* type);
-int APS5_VABI _ZNSt10filesystem10_Close_dirEPv_nid_postfix(void* handle);
-int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
-char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size);
-}
 
 namespace {
 

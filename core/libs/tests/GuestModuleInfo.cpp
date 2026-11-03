@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -11,18 +12,11 @@
 #include <source_location>
 #include <string>
 #include <vector>
-extern "C" {
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-void* APS5_VABI dlsym_nid_postfix(void*, const char*);
-int APS5_VABI dlclose_nid_postfix(void*);
-int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t, int, ModuleInfoEx*);
-int APS5_VABI sceKernelGetModuleList(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo(KernelModule, ModuleInfo*);
-int APS5_VABI sceKernelGetModuleList2(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo2(KernelModule, ModuleInfo*);
-std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void**, std::size_t*);
-std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo*);
-}
+#ifdef __APPLE__
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#endif
+
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (!value) {
         std::fprintf(stderr, "module info check failed at line %u\n", location.line());
@@ -64,10 +58,15 @@ int main(int argc, char** argv) {
     Require(executable);
 #if defined(_WIN32) && defined(__SEH__)
     Require(info.eh_frame_addr == 0 && info.eh_frame_size == 0);
+#elif defined(__APPLE__)
+    unsigned long frameSize = 0;
+    const auto* frames = getsectiondata(reinterpret_cast<const mach_header_64*>(info.segments[0].address), SEG_TEXT, "__eh_frame", &frameSize);
+    Require(info.eh_frame_addr == reinterpret_cast<std::uintptr_t>(frames) && info.eh_frame_size == frameSize);
+    Require(info.eh_frame_hdr_addr == 0 && info.eh_frame_hdr_size == 0);
 #else
     Require(info.eh_frame_addr != 0 && info.eh_frame_size != 0);
 #endif
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
     Require(info.eh_frame_hdr_addr != 0 && info.eh_frame_hdr_size != 0);
 #endif
     Require(info.init_proc_addr == 0 || info.init_proc_addr >= info.segments[0].address);
@@ -82,6 +81,17 @@ int main(int argc, char** argv) {
     Require(count >= 2 && count < handles.size() && handles[count] == -1);
     handles.resize(count);
     Require(handles.front() == self.id);
+    const auto mainHandle = sceKernelGetExecutableModuleHandle();
+    Require(mainHandle == self.id);
+    ModuleInfo executableInfo{};
+    executableInfo.st_size = sizeof(ModuleInfo);
+    Require(sceKernelGetModuleInfo(mainHandle, &executableInfo) == 0 && std::string(executableInfo.name) == self.name);
+    bool holdsOwnCode = false;
+    for (std::uint32_t i = 0; i < executableInfo.segment_count; ++i) {
+        const auto code = reinterpret_cast<std::uintptr_t>(&Query);
+        holdsOwnCode = holdsOwnCode || (code >= executableInfo.segments[i].address && code - executableInfo.segments[i].address < executableInfo.segments[i].size);
+    }
+    Require(holdsOwnCode);
     const auto kernel = Query(reinterpret_cast<const void*>(&sceKernelGetModuleList), 0).id;
     Require(std::count(handles.begin(), handles.end(), kernel) == 1);
     Require(std::count(handles.begin(), handles.end(), info.id) == 0);
@@ -93,7 +103,9 @@ int main(int argc, char** argv) {
     Require(sceKernelGetModuleList(shorter.data(), count - 1, &untouched) == SCE_KERNEL_ERROR_ENOMEM);
     Require(untouched == 99 && shorter.back() == -1 && std::equal(handles.begin(), handles.end() - 1, shorter.begin()));
     Require(sceKernelGetModuleList(nullptr, 0, &untouched) == SCE_KERNEL_ERROR_EFAULT);
-    Require(sceKernelGetModuleList(handles.data(), handles.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    std::vector<KernelModule> written(count, -1);
+    Require(sceKernelGetModuleList(written.data(), written.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(written == handles);
     const auto kernelEx = Query(reinterpret_cast<const void*>(&sceKernelGetModuleInfo), 0);
     ModuleInfo kernelInfo{};
     kernelInfo.st_size = sizeof(ModuleInfo);
@@ -211,4 +223,5 @@ int main(int argc, char** argv) {
         Require(fresh.eh_frame_addr - fresh.segments[0].address == info.eh_frame_addr - info.segments[0].address);
     else Require(fresh.eh_frame_addr == 0);
     Require(dlclose_nid_postfix(reloaded) == 0);
+    Require(sceKernelGetExecutableModuleHandle() == self.id);
 }

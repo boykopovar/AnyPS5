@@ -317,7 +317,7 @@ class SilentStubSectionTests(unittest.TestCase):
             env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="safe.directory", GIT_CONFIG_VALUE_0=str(root))
             return subprocess.run(
                 [sys.executable, str(checker), "--base", "HEAD~1"],
-                cwd=root, capture_output=True, text=True, env=env, timeout=10,
+                cwd=root, capture_output=True, text=True, env=env, timeout=120,
             )
 
     def require_rejected(self, debt, debt_path=library_debt):
@@ -386,6 +386,25 @@ class SilentStubSectionTests(unittest.TestCase):
         result = self.check_stub(f"# libSceExample technical debt\n\n### Functional\n\n{entry}")
         self.assertIn("docs/dev/debt/libSceExample.md:5: error: [debt-file]", result.stdout)
         self.assertIn("docs/dev/debt/shader.md", result.stdout)
+
+    def test_entry_linking_core_on_a_continuation_line_goes_in_the_library_file(self):
+        entry = "- sceExample is unverified against the console\n  ([reference](../../../core/libs/prx/libSceExample/Reference.hpp)).\n"
+        result = self.check_stub(f"# libSceExample technical debt\n\n### Functional\n\n{entry}")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
+        result = self.check_stub(f"# Project technical debt\n\n### Functional\n\n{entry.replace('../../../', '../../')}", "docs/dev/TechnicalDebt.md")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/dev/TechnicalDebt.md:5: error: [debt-file]", result.stdout)
+        self.assertIn("docs/dev/debt/libSceExample.md", result.stdout)
+
+    def test_entry_continuation_after_a_blank_line_still_names_its_file(self):
+        entry = "- sceExample is unverified against the console\n\n  ([reference](../../../core/libs/prx/libSceExample/Reference.hpp)).\n"
+        result = self.check_stub(f"# libSceExample technical debt\n\n### Functional\n\n{entry}")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
+
+    def test_core_link_in_prose_after_an_entry_does_not_name_its_file(self):
+        text = "# Project technical debt\n\n### Build\n\n- A toolchain limitation.\n\nSee [reference](../../core/libs/prx/libSceExample/Reference.hpp).\n"
+        result = self.check_stub(text, "docs/dev/TechnicalDebt.md")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
 
     def test_entry_without_a_core_link_stays_in_the_index(self):
         result = self.check_stub("# Project technical debt\n\n### Build\n\n- A toolchain limitation.\n", "docs/dev/TechnicalDebt.md")

@@ -354,7 +354,7 @@ std::vector<std::uint32_t> CollectVerneedNameOffsets(const std::vector<std::uint
 
 }
 
-void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports) const {
+void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports, const PatchOptions& options) const {
     using namespace Internal;
 
     if (elf.size() < sizeof(Elf64_Ehdr)) throw std::runtime_error("file too small");
@@ -370,11 +370,13 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     std::size_t sysvHashOffset = 0u, sysvHashSize = 0u;
     std::uint32_t sysvHashLink = 0u;
     std::size_t versymOffset = 0u;
+    bool hasDynamic = false;
     std::uint32_t dynSymSectionIndex = 0u;
     std::uint32_t gnuHashSymOffset = 0u;
     for (std::uint16_t i = 0u; i < ehdr.e_shnum; ++i) {
         const std::size_t shOffset = static_cast<std::size_t>(ehdr.e_shoff) + i * sizeof(Elf64_Shdr);
         const auto shdr = Read<Elf64_Shdr>(elf, shOffset);
+        if (shdr.sh_type == kShtDynamic) hasDynamic = true;
         if (shdr.sh_type == kShtDynsym) {
             if (shdr.sh_entsize != sizeof(Elf64_Sym) || shdr.sh_size % sizeof(Elf64_Sym) || shdr.sh_link >= ehdr.e_shnum)
                 throw std::runtime_error("invalid ELF dynsym layout");
@@ -398,6 +400,19 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             throw std::runtime_error("unsupported .gnu.version_d section: symbol version definitions cannot be preserved");
     }
 
+    if (options.executable && dynSymOffset == 0u && !hasDynamic) {
+        if (ehdr.e_phnum) {
+            if (!ehdr.e_phoff || ehdr.e_phentsize != sizeof(Elf64_Phdr) || ehdr.e_phnum == 0xffffu)
+                throw std::runtime_error("unsupported ELF program header layout");
+            RequireElfRange(elf, ehdr.e_phoff, std::uint64_t{ehdr.e_phnum} * sizeof(Elf64_Phdr), "program headers");
+            for (std::uint16_t index = 0u; index < ehdr.e_phnum; ++index) {
+                const auto segment = Read<Elf64_Phdr>(elf, ehdr.e_phoff + index * sizeof(Elf64_Phdr));
+                if (segment.p_type == 2u)
+                    throw std::runtime_error("unsupported ELF PT_DYNAMIC without a .dynsym section");
+            }
+        }
+        return;
+    }
     if (dynSymOffset == 0u) throw std::runtime_error("no .dynsym section");
 
     const std::size_t symCount = dynSymSize / sizeof(Elf64_Sym);
@@ -437,19 +452,26 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         elf.begin() + static_cast<std::ptrdiff_t>(dynStrOffset + dynStrSize)
     );
 
+    std::vector<std::string> importedNames;
     std::vector<std::string> exportedNames;
     for (std::size_t i = 1u; i < symCount; ++i) {
         const std::size_t symOffset = dynSymOffset + i * sizeof(Elf64_Sym);
         const auto sym = Read<Elf64_Sym>(elf, symOffset);
         if (sym.st_name == 0u) continue;
         const std::uint8_t binding = sym.st_info >> 4u;
-        if (binding == kStbLocal || sym.st_shndx == kShnUndef) continue;
+        if (binding == kStbLocal) continue;
+        if (sym.st_shndx == kShnUndef) {
+            const auto name = ReadCStr(origDynStr, sym.st_name);
+            if (!name.empty()) importedNames.push_back(name);
+            continue;
+        }
         const std::string symName = ReadCStr(origDynStr, sym.st_name);
         if (symName.empty()) continue;
         exportedNames.push_back(symName);
     }
 
-    const auto nidMap = ResolveNids(exportedNames, libraryName, excludedExports);
+    const auto nidMap = options.executable ? std::unordered_map<std::string, std::string>{} : ResolveNids(exportedNames, libraryName, excludedExports);
+    const auto importMap = ResolveImportNids(importedNames, excludedExports, options);
 
     struct SymbolNameUse {
         std::size_t symIndex;
@@ -481,14 +503,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         } else if (binding != kStbLocal && sym.st_shndx == kShnUndef) {
             const bool isUnversioned = versymOffset == 0u ||
                 (Read<std::uint16_t>(elf, versymOffset + i * sizeof(std::uint16_t)) <= 1u);
-            const bool hasNidPostfix = symName.size() >= kNidPostfixLen &&
-                symName.compare(symName.size() - kNidPostfixLen, kNidPostfixLen, kNidPostfix) == 0;
-            const bool hasScePrefix = symName.size() >= 3u &&
-                std::tolower(static_cast<unsigned char>(symName[0])) == 's' &&
-                std::tolower(static_cast<unsigned char>(symName[1])) == 'c' &&
-                std::tolower(static_cast<unsigned char>(symName[2])) == 'e';
-            if (isUnversioned && (hasNidPostfix || hasScePrefix))
-                newValue = ResolveOneName(symName);
+            if (options.executable || isUnversioned) {
+                newValue = importMap.at(symName);
+                if (options.executable && newValue != symName && versymOffset != 0u)
+                    Write(elf, versymOffset + i * sizeof(std::uint16_t), std::uint16_t{1});
+            }
         }
 
         uses.push_back(SymbolNameUse{i, sym.st_name, newValue});
@@ -538,11 +557,69 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
     for (const auto offset : preservedOffsets)
         preservedToNewOffset.emplace_back(offset, valueOffsets.at(ReadCStr(origDynStr, offset)));
 
+    if (newDynStr.size() > dynStrSize && options.executable) {
+        if (ehdr.e_phentsize != sizeof(Elf64_Phdr) || ehdr.e_phnum == 0 || ehdr.e_phnum >= 0xfffdu)
+            throw std::runtime_error("invalid ELF program header table for string growth");
+        RequireElfRange(elf, ehdr.e_phoff, std::uint64_t{ehdr.e_phnum} * sizeof(Elf64_Phdr), "program headers");
+        const auto align = [](std::uint64_t value) {
+            if (value > UINT64_MAX - 4095u) throw std::runtime_error("ELF address overflow");
+            return (value + 4095u) & ~std::uint64_t{4095u};
+        };
+        std::vector<Elf64_Phdr> segments;
+        std::uint64_t virtualEnd = 0;
+        bool hasPhdr = false;
+        for (std::size_t index = 0; index < ehdr.e_phnum; ++index) {
+            const auto segment = Read<Elf64_Phdr>(elf, ehdr.e_phoff + index * sizeof(Elf64_Phdr));
+            segments.push_back(segment);
+            hasPhdr |= segment.p_type == 6;
+            if (segment.p_type != 1) continue;
+            if (segment.p_memsz > UINT64_MAX - segment.p_vaddr) throw std::runtime_error("ELF segment address overflow");
+            virtualEnd = std::max(virtualEnd, segment.p_vaddr + segment.p_memsz);
+        }
+        if (!virtualEnd) throw std::runtime_error("ELF executable has no load segment");
+        if (!hasPhdr) segments.insert(segments.begin(), Elf64_Phdr{6, 4, 0, 0, 0, 0, 0, 8});
+        const auto fileOffset = align(elf.size());
+        const auto address = align(virtualEnd);
+        const auto tableSize = (segments.size() + 1u) * sizeof(Elf64_Phdr);
+        const auto segmentSize = tableSize + newDynStr.size();
+        if (segmentSize > UINT64_MAX - address || segmentSize > SIZE_MAX - fileOffset) throw std::runtime_error("ELF string segment overflow");
+        for (auto& segment : segments) {
+            if (segment.p_type != 6) continue;
+            segment = {6, 4, fileOffset, address, address, tableSize, tableSize, 8};
+        }
+        segments.push_back({1, 4, fileOffset, address, address, segmentSize, segmentSize, 4096});
+        elf.resize(static_cast<std::size_t>(fileOffset + segmentSize), 0);
+        for (std::size_t index = 0; index < segments.size(); ++index)
+            Write(elf, fileOffset + index * sizeof(Elf64_Phdr), segments[index]);
+        Write(elf, offsetof(Elf64_Ehdr, e_phoff), fileOffset);
+        Write(elf, offsetof(Elf64_Ehdr, e_phnum), static_cast<std::uint16_t>(segments.size()));
+        dynStrOffset = static_cast<std::size_t>(fileOffset + tableSize);
+        dynStrSize = newDynStr.size();
+        const auto stringAddress = address + tableSize;
+        const auto sectionOffset = ehdr.e_shoff + dynStrSectionLink * sizeof(Elf64_Shdr);
+        auto strings = Read<Elf64_Shdr>(elf, sectionOffset);
+        strings.sh_offset = dynStrOffset;
+        strings.sh_addr = stringAddress;
+        strings.sh_size = dynStrSize;
+        Write(elf, sectionOffset, strings);
+        bool foundAddress = false;
+        bool foundSize = false;
+        for (std::size_t index = 0; index < ehdr.e_shnum; ++index) {
+            const auto section = Read<Elf64_Shdr>(elf, ehdr.e_shoff + index * sizeof(Elf64_Shdr));
+            if (section.sh_type != kShtDynamic) continue;
+            RequireElfRange(elf, section.sh_offset, section.sh_size, "dynamic");
+            for (std::uint64_t offset = 0; offset + sizeof(Elf64_Dyn) <= section.sh_size; offset += sizeof(Elf64_Dyn)) {
+                auto entry = Read<Elf64_Dyn>(elf, section.sh_offset + offset);
+                if (entry.d_tag == kDtNull) break;
+                if (entry.d_tag == 5) { entry.d_val = stringAddress; foundAddress = true; }
+                if (entry.d_tag == 10) { entry.d_val = dynStrSize; foundSize = true; }
+                Write(elf, section.sh_offset + offset, entry);
+            }
+        }
+        if (!foundAddress || !foundSize) throw std::runtime_error("ELF executable lacks DT_STRTAB or DT_STRSZ");
+    }
     if (newDynStr.size() > dynStrSize) {
-        throw std::runtime_error(
-            "rebuilt .dynstr (" + std::to_string(newDynStr.size()) + " bytes) exceeds original section size (" +
-            std::to_string(dynStrSize) + " bytes) - relinking with a larger section is required"
-        );
+        throw std::runtime_error("rebuilt .dynstr exceeds original section size; relinking with a larger section is required");
     }
     newDynStr.resize(dynStrSize, 0u);
 
