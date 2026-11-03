@@ -95,7 +95,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 
 ## Title notes
 
-- **PlayGo:** dumps without PlayGo metadata stop at start unless `APS5_PLAYGO_UNLISTED_CHUNKS` is set; report the value used.
+- **PlayGo:** dumps without PlayGo metadata stop at start unless `APS5_PLAYGO_UNLISTED_CHUNKS` is set (installed, absent, or a comma-separated list of installed chunk ids); report the value used.
 - **UE4 titles:** keep the startup movies in place. Renaming them to skip the intro has made a level render without its 3D view, which looked like an emulator bug and wasn't.
 
 ## Input
