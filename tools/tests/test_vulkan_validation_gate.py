@@ -168,7 +168,7 @@ class FixtureTests(unittest.TestCase):
         return code, report
 
 
-class IntegrationTests(FixtureTests):
+class TimeoutTests(FixtureTests):
     def test_timeout_reset_property_is_refused_before_running_tests(self):
         baseline = self.source("base-reset")
         candidate = self.source("head-reset", property_text='TIMEOUT_AFTER_MATCH "1;ready"')
@@ -202,6 +202,8 @@ class IntegrationTests(FixtureTests):
                 self.assertEqual(report["status"], "incomplete")
                 (self.root / "evidence").rename(self.root / ("evidence-" + value))
 
+
+class IntegrationTests(FixtureTests):
     def test_pass_builds_both_targets_and_alternates_with_attribution(self):
         code, report = self.execute(self.source("base"), self.source("head"))
         self.assertEqual(code, 0, report)

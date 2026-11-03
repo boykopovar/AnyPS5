@@ -369,6 +369,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ReportTests)
         add_test(NAME vulkan_validation_gate_integration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py IntegrationTests)
+        add_test(NAME vulkan_validation_gate_timeouts COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py TimeoutTests)
         add_test(NAME vulkan_validation_gate_validation COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ValidationTests)
         add_test(NAME vulkan_validation_gate_layers COMMAND ${Python3_EXECUTABLE}
