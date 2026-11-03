@@ -689,6 +689,38 @@ static void RequireThreeForms(const Cipher* cipher, const Bytes& key, const Byte
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
 }
 
+static void TestAesCbc() {
+    const auto* descriptor = EVP_aes_128_cbc_nid_postfix();
+    const auto* cipher = reinterpret_cast<const Cipher*>(descriptor);
+    Require(cipher->nid == 419 && cipher->blockSize == 16 && cipher->keyLength == 16 && cipher->ivLength == 16);
+    const auto key = Hex(Sp80038aKey128);
+    const auto iv = Hex("000102030405060708090a0b0c0d0e0f");
+    const auto plain = Hex("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710");
+    const auto encrypted = Hex("7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b273bed6b8e3c1743b7116e69e222295163ff1caa1681fac09120eca307586e1a7");
+    unsigned char context[ContextBytes] {};
+    Bytes output;
+    for (std::size_t chunk : {1, 7, 16, 64}) {
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(descriptor), nullptr, key.data(), iv.data()) == 1);
+        Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+        Require(Process(context, EVP_EncryptUpdate_nid_postfix, EVP_EncryptFinal_ex_nid_postfix, plain, chunk, output) == 1);
+        Require(output == encrypted);
+        Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(descriptor), nullptr, key.data(), iv.data()) == 1);
+        Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 0) == 1);
+        Require(Process(context, EVP_DecryptUpdate_nid_postfix, EVP_DecryptFinal_ex_nid_postfix, encrypted, chunk, output) == 1);
+        Require(output == plain);
+        Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(descriptor), nullptr, key.data(), iv.data()) == 1);
+        Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 1) == 1);
+        Require(Process(context, EVP_EncryptUpdate_nid_postfix, EVP_EncryptFinal_ex_nid_postfix, plain, chunk, output) == 1);
+        Require(output.size() == encrypted.size() + 16 && Bytes(output.begin(), output.begin() + 64) == encrypted);
+        const auto padded = output;
+        Require(EVP_DecryptInit_ex_nid_postfix(Context(context), EvpCipher(descriptor), nullptr, key.data(), iv.data()) == 1);
+        Require(EVP_CIPHER_CTX_set_padding_nid_postfix(Context(context), 1) == 1);
+        Require(Process(context, EVP_DecryptUpdate_nid_postfix, EVP_DecryptFinal_ex_nid_postfix, padded, chunk, output) == 1);
+        Require(output == plain);
+    }
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+}
+
 static void TestAesCfb8() {
     const struct {
         Descriptor descriptor;
@@ -1110,6 +1142,7 @@ int main() {
     TestStreamCipher();
     TestCustomCipher();
     TestUpdateArguments();
+    TestAesCbc();
     TestAesCfb8();
     TestAesCtr();
     TestAesGcmVectors();
