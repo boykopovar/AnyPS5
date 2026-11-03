@@ -22,6 +22,7 @@ struct SavedState {
 struct ContextStorage {
     std::atomic<unsigned> references{1};
     int status{kSuccess};
+    int initialStatus{kSuccess};
     bool immortal{false};
     CairoSurface* target{};
     CairoMatrix matrix{kIdentity};
@@ -29,7 +30,7 @@ struct ContextStorage {
 
     explicit ContextStorage(int error = kSuccess, bool staticError = false,
                             CairoSurface* initialTarget = nullptr)
-        : status(error), immortal(staticError), target(initialTarget) {}
+        : status(error), initialStatus(error), immortal(staticError), target(initialTarget) {}
 };
 
 ContextStorage* State(CairoContext* context) {
@@ -137,7 +138,8 @@ void APS5_VABI cairo_restore(CairoContext* context) {
 CairoSurface* APS5_VABI cairo_get_target(CairoContext* context) {
     if (!context) return nullptr;
     const auto* state = State(context);
-    return state->status == kSuccess ? state->target : CairoSurfaceError(kNoMemory);
+    return state->status == kSuccess || state->initialStatus != kSuccess
+               ? state->target : CairoSurfaceError(kNoMemory);
 }
 
 void APS5_VABI cairo_translate(CairoContext* context, double tx, double ty) {

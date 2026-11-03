@@ -52,9 +52,9 @@ void CheckContextLifetime() {
     CairoSurface* invalid = cairo_image_surface_create(-1, 2, 2);
     CairoContext* erroneous = cairo_create(invalid);
     assert(erroneous);
-    assert(cairo_get_target(erroneous) != invalid);
+    assert(cairo_get_target(erroneous) == invalid);
     cairo_surface_destroy(invalid);
-    assert(cairo_surface_status(cairo_get_target(erroneous)) == 1);
+    assert(cairo_surface_status(cairo_get_target(erroneous)) == 16);
     cairo_destroy(erroneous);
 }
 
