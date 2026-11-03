@@ -2766,9 +2766,13 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 const auto imagesMoved = [&] {
                     if (afterImageGeneration == beforeImageGeneration) return false;
                     if (runtime.imageViewCurrent == nullptr) return true;
+                    const bool viewsCaptured = !nextSnapshot.registeredImages.empty() || std::any_of(nextSnapshot.tables.tables.begin(), nextSnapshot.tables.tables.end(), [](const auto& table) {
+                        return std::any_of(table.resourceViews.begin(), table.resourceViews.end(), [](const auto& view) { return !view.identities.empty(); });
+                    });
                     for (std::uint32_t pass = 0; pass < 2u; ++pass) {
                         const auto passGeneration = runtime.imageViewGeneration(runtime.userContext);
                         if (runtime.sourcesCurrent != nullptr && !runtime.sourcesCurrent(runtime.userContext)) return true;
+                        if (!viewsCaptured) return false;
                         const bool current = std::all_of(nextSnapshot.registeredImages.begin(), nextSnapshot.registeredImages.end(), viewCurrent) &&
                                              std::all_of(nextSnapshot.tables.tables.begin(), nextSnapshot.tables.tables.end(), [&](const auto& table) {
                                                  return std::all_of(table.resourceViews.begin(), table.resourceViews.end(), [&](const auto& view) { return std::all_of(view.identities.begin(), view.identities.end(), viewCurrent); });

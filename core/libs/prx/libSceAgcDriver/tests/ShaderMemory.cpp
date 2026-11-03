@@ -1520,6 +1520,62 @@ void verifyImageViewChangeDuringRecheck() {
             "image view recheck: a snapshot kept a view whose mapping changed while the views were rechecked");
 }
 
+void verifyUnviewedSnapshotDuringMappingChurn() {
+    using namespace ShaderRecompiler;
+    struct Churn {
+        std::uint64_t generation = 1;
+        std::uint32_t sourceChecks = 0;
+        std::uint32_t viewChecks = 0;
+        bool sourcesCurrent = true;
+    };
+    static Churn churn;
+    static std::array<std::uint32_t, 128> input{};
+    static std::array<float, 256> output{};
+    const auto buffer = [](const void* data, std::uint32_t bytes) {
+        const auto address = reinterpret_cast<std::uintptr_t>(data);
+        return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
+    };
+    const std::vector<std::uint32_t> code{0x34020084u, 0xe0381000u, 0x80000201u, 0xbf8c3f70u, 0xf09c0f20u, 0x00820602u, 0x34020085u, 0xbf8c3f70u, 0xe0781000u, 0x80010601u, 0xbf810000u};
+    std::vector<std::uint32_t> userData(20, 0u);
+    const auto load = buffer(input.data(), static_cast<std::uint32_t>(sizeof(input)));
+    const auto store = buffer(output.data(), static_cast<std::uint32_t>(sizeof(output)));
+    const std::array<std::uint32_t, 8> texture{0x2000000u, (56u << 20u) | (3u << 30u), 1u, 0xfacu | (12u << 28u), 3u, 0u, 0u, 0u};
+    const std::array<std::uint32_t, 4> sampler{2u | (2u << 3u) | (2u << 6u), 0u, 0u, 0u};
+    std::copy(load.begin(), load.end(), userData.begin());
+    std::copy(store.begin(), store.end(), userData.begin() + 4);
+    std::copy(texture.begin(), texture.end(), userData.begin() + 8);
+    std::copy(sampler.begin(), sampler.end(), userData.begin() + 16);
+    auto request = FrontendRequest(code, userData);
+    request.context.waveSize = 32;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    SrtRuntime runtime{};
+    runtime.userData = userData;
+    runtime.shaderBase = request.shader.codeAddress;
+    runtime.imageViewGeneration = +[](void*) { return ++churn.generation; };
+    runtime.imageViewCurrent = +[](void*, const SrtImageViewIdentity&) {
+        ++churn.viewChecks;
+        return true;
+    };
+    runtime.sourcesCurrent = +[](void*) {
+        ++churn.sourceChecks;
+        return churn.sourcesCurrent;
+    };
+    churn = {};
+    const auto capture = CaptureResources(request, runtime);
+    require(churn.sourceChecks != 0u && churn.viewChecks == 0u && capture->snapshot.registeredImages.empty() && capture->snapshot.imageAllocationGeneration == 0u &&
+                std::ranges::any_of(capture->snapshot.images, [&](const DescriptorValue& value) { return std::equal(texture.begin(), texture.end(), value.dwords.begin()); }),
+            "unviewed snapshot: mapping churn during every recheck pass disturbed a snapshot that captured no image view");
+    churn = {};
+    churn.sourcesCurrent = false;
+    bool refused = false;
+    try {
+        static_cast<void>(CaptureResources(request, runtime));
+    } catch (const std::runtime_error& error) {
+        refused = std::string_view(error.what()).find("did not stabilize") != std::string_view::npos;
+    }
+    require(refused && churn.sourceChecks == 3u, "unviewed snapshot: a snapshot that captured no image view was kept although its descriptor memory was remapped");
+}
+
 void verifyTypeZeroImageMaterialization() {
     using namespace ShaderRecompiler;
     for (const std::uint32_t type : {0u, 1u, 2u}) {
@@ -2197,6 +2253,7 @@ void verifyTypeZeroImageMaterialization() {
         require(holds(newT) && !holds(oldT), "descriptor backing: a capture kept descriptor words read before their memory was remapped");
     }
     verifyImageViewChangeDuringRecheck();
+    verifyUnviewedSnapshotDuringMappingChurn();
 
     {
         srt.fill(0u);
