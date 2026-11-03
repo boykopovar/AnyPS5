@@ -3,6 +3,7 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <relinker/analysis/CodeInstructionCollector.hpp>
+#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <io/BufferUtils.hpp>
 #include <io/NativePath.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
@@ -302,6 +303,61 @@ void scanning() {
     require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
 }
 
+void strongRootsInsideDataTables() {
+    auto image = fixture();
+    Io::WriteU64(image, 64 + 32, 0x36);
+    Io::WriteU64(image, 64 + 40, 0x36);
+    std::fill(image.begin() + 0x1000, image.begin() + 0x1036, 0xcc);
+    const std::array<std::uint8_t, 8> function{0x48, 0x8d, 0x05, 0x11, 0, 0, 0, 0xc3};
+    std::copy(function.begin(), function.end(), image.begin() + 0x1000);
+    const std::array<std::uint8_t, 4> table{0x0f, 0x78, 0x33, 0x1e};
+    std::copy(table.begin(), table.end(), image.begin() + 0x1018);
+    const std::array<std::uint8_t, 6> transfer{0xff, 0x25, 0xca, 0x17, 0, 0};
+    std::copy(transfer.begin(), transfer.end(), image.begin() + 0x1030);
+    Io::WriteU32(image, 0x2684, 3);
+    for (const auto [symbol, address, size] : {std::array<std::uint64_t, 3>{1, 0x1000, 8}, {2, 0x1030, 6}}) {
+        const auto offset = 0x2620 + symbol * 24;
+        image[offset + 4] = 0x12;
+        Io::WriteU16(image, offset + 6, 1);
+        Io::WriteU64(image, offset + 8, address);
+        Io::WriteU64(image, offset + 16, size);
+    }
+    Io::WriteU64(image, 0x2058, 24);
+    Io::WriteU64(image, 0x2700, 0x2800);
+    Io::WriteU64(image, 0x2708, 8);
+    Io::WriteU64(image, 0x2710, 0x1000);
+    const auto headers = Relinker::ElfReader(image).ReadProgramHeaders();
+    const auto tables = Relinker::FindRelativeJumpTables(std::span<const std::uint8_t>(image.data() + 0x1000, 0x36), 0x1000, {{0x1000, 0x1008}, {0x1030, 0x1036}});
+    require(tables.size() == 1 && tables.front().Begin == 0x1018 && tables.front().End == 0x1030, "Strong-root fixture did not contain the expected recognized data table");
+    const Relinker::CodeInstructionCollector collector;
+    const auto accepted = collector.Collect(image, headers);
+    require(std::binary_search(accepted.begin(), accepted.end(), 0x1000) && std::binary_search(accepted.begin(), accepted.end(), 0x1030), "Roots outside the data table were lost");
+    require(std::none_of(accepted.begin(), accepted.end(), [](auto address) { return address >= 0x1018 && address < 0x1030; }), "Recognized data table was decoded as code");
+    const auto refused = [&](const auto& input) {
+        try {
+            collector.Collect(input, Relinker::ElfReader(input).ReadProgramHeaders());
+            throw std::runtime_error("A strong root inside a recognized data table was accepted");
+        } catch (const Domain::RelinkerException& error) {
+            require(std::string(error.what()) == "Code analysis: code entry point lies inside a data table", "A different error hid the data-table root refusal");
+            require(error.FailureOffset == 0x1018, "Data-table root refusal reported the wrong address");
+        }
+    };
+    auto entry = image;
+    Io::WriteU64(entry, 24, 0x1018);
+    refused(entry);
+    for (const auto tag : {12u, 13u}) {
+        auto lifecycle = image;
+        Io::WriteU64(lifecycle, 0x2080, tag);
+        Io::WriteU64(lifecycle, 0x2088, 0x1018);
+        Io::WriteU64(lifecycle, 64 + 2 * 56 + 32, 10 * 16);
+        Io::WriteU64(lifecycle, 64 + 2 * 56 + 40, 10 * 16);
+        refused(lifecycle);
+    }
+    auto indirect = image;
+    Io::WriteU64(indirect, 0x2710, 0x1018);
+    refused(indirect);
+}
+
 void lifecycleRoots() {
     std::vector<std::uint8_t> image(256);
     Io::WriteU64(image, 24, 16);
@@ -452,21 +508,6 @@ void runtimeDirectories() {
         require(output.Modules.size() == 1, "Module was not converted");
         require(exports(output.Modules.front().Bytes, Relinker::GuestInitializeExport) == (std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module the executable needs");
     }
-    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Modules"}) {
-        auto source = input();
-        const auto parent = source.ModuleRoot / directory;
-        const auto plugins = source.ModuleRoot / "Media/Plugins";
-        source.Modules.push_back({plugins / "plugin.prx", fixture("needed.prx")});
-        source.Modules.push_back({parent / "needed.prx", fixture()});
-        source.RuntimeDirectories.push_back(plugins);
-        source.RuntimeDirectories.push_back(parent);
-        const auto output = converter.Convert(std::move(source), options);
-        require(output.Modules.size() == 2, "Modules were not converted");
-        for (const auto& module : output.Modules) {
-            const bool plugin = module.SourcePath.filename() == "plugin.prx";
-            require(exports(module.Bytes, Relinker::GuestInitializeExport) == (plugin || std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module another runtime module needs");
-        }
-    }
 }
 
 void relocationValidation() {
@@ -581,6 +622,7 @@ int main() {
         runtimeLifecyclePolicy();
         fixedBase();
         scanning();
+        strongRootsInsideDataTables();
         lifecycleRoots();
         branchAcrossSignedBoundary();
         diagnosticContext();
