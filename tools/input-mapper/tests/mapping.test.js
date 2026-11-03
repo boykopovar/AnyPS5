@@ -68,6 +68,16 @@ test('setting names canonicalize like the native parser', () => {
     assert.deepEqual(imported.settings, [{name: 'LeftStickDeadzone', value: '8'}, {name: 'MouseSensitivity', value: '1e0'}]);
 });
 
+test('the mouse stick target accepts the native LEFT and RIGHT spellings', () => {
+    const imported = parseIni('MouseStickTarget = Left\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.settings, [{name: 'MouseStickTarget', value: 'Left'}]);
+    assert.equal(serialize(imported.entries, imported.settings), 'MouseStickTarget = Left\n');
+    assert.deepEqual(validateSettings([{name: 'MouseStickTarget', value: 'RIGHT'}]).settings, [{name: 'MouseStickTarget', value: 'RIGHT'}]);
+    assert.equal(validateSettings([{name: 'MouseStickTarget', value: 'Both'}]).errors[0].message, 'MouseStickTarget must be LEFT or RIGHT.');
+    assert.equal(validateSettings([{name: 'MouseStickTarget', value: '1'}]).errors[0].message, 'MouseStickTarget must be LEFT or RIGHT.');
+});
+
 test('a signed zero deadzone imports like the native parser', () => {
     const imported = parseIni('LeftStickDeadzone = -0\nRightStickDeadzone = -00\n');
     assert.deepEqual(imported.errors, []);

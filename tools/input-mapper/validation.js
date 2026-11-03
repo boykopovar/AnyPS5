@@ -13,7 +13,8 @@ export const settings = [
     {name: 'MouseDecayMs', minimum: 1, maximum: 1000},
     {name: 'StickModifierScale', minimum: 0.05, maximum: 1},
     {name: 'KeyboardRampMs', minimum: 0, maximum: 2000},
-    {name: 'TriggerRampMs', minimum: 0, maximum: 2000}
+    {name: 'TriggerRampMs', minimum: 0, maximum: 2000},
+    {name: 'MouseStickTarget', kind: 'stickTarget'}
 ];
 
 const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
@@ -27,6 +28,10 @@ export function settingValue(setting, value) {
     const parsed = numberPattern.test(text) ? Number(text) : undefined;
     if (setting.kind === 'sensitivity') {
         if (parsed === undefined || !Number.isFinite(parsed) || !(parsed > 0) || parsed > 10) return `${setting.name} must be a number greater than 0 and at most 10.`;
+        return '';
+    }
+    if (setting.kind === 'stickTarget') {
+        if (canonicalValue(text, ['LEFT', 'RIGHT']) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
         return '';
     }
     if (parsed === undefined || !Number.isFinite(parsed) || parsed < setting.minimum || parsed > setting.maximum) {
