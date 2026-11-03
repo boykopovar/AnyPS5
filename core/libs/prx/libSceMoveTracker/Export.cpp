@@ -53,6 +53,9 @@ int APS5_VABI sceMoveTrackerGetWorkingMemorySize(std::uint32_t* totalSize, std::
 }
 
 int APS5_VABI sceMoveTrackerInit(void* workMemory, std::uint64_t requiredArgument, std::uint32_t pipeId, std::uint32_t queueId) {
+    if (workMemory == nullptr || requiredArgument == 0 || pipeId >= 8 || queueId >= 8) {
+        return static_cast<int>(0x80ef0003);
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
