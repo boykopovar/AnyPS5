@@ -265,6 +265,8 @@ int main(int argc, char** argv) {
         }
         RunBdaStoreExecutionTests(device->GetContext());
         std::cout << "BDA store boundary tests passed\n";
+        RunBdaFaultSlotExecutionTests(device->GetContext());
+        std::cout << "BDA report-only fault slot tests passed\n";
         RunColorTransferTests(device->GetContext());
         std::cout << "Vulkan BDA allocation and execution tests passed\n";
         return 0;
