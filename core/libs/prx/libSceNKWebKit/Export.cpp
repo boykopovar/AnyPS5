@@ -19246,10 +19246,6 @@ int APS5_VABI _ZN3WTF37canCurrentThreadAccessThreadLocalDataERNS_6ThreadE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF3ICU12majorVersionEv() {
     NotImplemented_nid_no_patch(__func__);
 }
