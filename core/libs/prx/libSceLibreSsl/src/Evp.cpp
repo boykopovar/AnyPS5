@@ -168,6 +168,7 @@
 
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -198,6 +199,9 @@ constexpr std::uint64_t DigestAlgorithmIdAbsent = 0x8;
 constexpr std::int32_t PkeyRsa = 6;
 constexpr std::int32_t PkeyRsa2 = 19;
 constexpr std::int32_t PointerSize = 8;
+constexpr int EvpLibrary = 6;
+constexpr int AnyFunction = 0xfff;
+constexpr int MessageDigestIsNull = 159;
 
 int APS5_VABI Md5Init(EvpMdContext* context) {
     return MD5_Init_nid_postfix(static_cast<Md5Context*>(context->mdData));
@@ -449,7 +453,11 @@ const EvpMd* APS5_VABI EVP_sha512_nid_postfix(void) {
 }
 
 int APS5_VABI EVP_MD_size_nid_postfix(const EvpMd* md) {
-    return md ? md->mdSize : -1;
+    if (!md) {
+        LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, MessageDigestIsNull);
+        return -1;
+    }
+    return md->mdSize;
 }
 
 void APS5_VABI EVP_MD_CTX_init_nid_postfix(EvpMdContext* context) {

@@ -198,13 +198,17 @@ int main() {
           "e37b6a775dc87dbaa4dfa9f96e5e3ffddebd71f8867289865df5a32d20cdc944b6022cac3c4982b10d5eeb55c3e4de15134676fb6de0446065c97440fa8c6a58"}},
     };
 
+    Require(ERR_peek_error_nid_postfix() == 0);
     Require(EVP_MD_size_nid_postfix(nullptr) == -1);
+    Require(ERR_get_error_nid_postfix() == (6u << 24 | 0xfffu << 12 | 159u));
+    Require(ERR_get_error_nid_postfix() == 0);
     Require(EVP_md5_nid_postfix() == algorithms[0].md && EVP_sha512_nid_postfix() == algorithms[3].md);
     for (std::size_t i = 0; i < 4; ++i)
         for (std::size_t j = i + 1; j < 4; ++j) Require(algorithms[i].md != algorithms[j].md);
     for (const auto& algorithm : algorithms) {
         Require(algorithm.md != nullptr);
         Require(EVP_MD_size_nid_postfix(algorithm.md) == algorithm.size);
+        Require(ERR_peek_error_nid_postfix() == 0);
         Require(Field<std::int32_t>(algorithm.md, 0) == algorithm.type);
         Require(Field<std::int32_t>(algorithm.md, 4) == algorithm.pkeyType);
         Require(Field<std::int32_t>(algorithm.md, 8) == algorithm.size);
