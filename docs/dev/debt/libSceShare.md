@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceShareFeaturePermit, sceShareFeatureProhibit, sceShareInitialize, sceShareRegisterContentEventCallback, sceShareSetCaptureSource, sceShareSetContentParam, sceShareSetScreenshotOverlayImage, sceShareTerminate and sceShareUnregisterContentEventCallback](../../../core/libs/prx/libSceShare/Export.cpp) return success without interacting with share or capture services.
+- [sceShareFeaturePermit, sceShareFeatureProhibit, sceShareInitialize, sceShareRegisterContentEventCallback, sceShareSetCaptureSource, sceShareSetContentParam, sceShareSetScreenshotOverlayImage, sceShareTerminate and sceShareUnregisterContentEventCallback](../../../core/libs/prx/libSceShare/Export.cpp) return success without interacting with share or capture services. Eight of the ten local titles call `sceShareInitialize`: all nine calls pass a 0x20000-byte heap and thread priority 700, and seven pass affinity mask 0x1FFF (PPSA30839 and PPSA31162 pass a computed mask). The constant flags passed to `sceShareFeaturePermit` and `sceShareFeatureProhibit` are 1, 2 and 4 (PPSA36591 sets each bit on its own, PPSA03984 only 2) and 0xFFFFFFFF (PPSA25286); PPSA01494, PPSA30839 and PPSA31162 forward a caller's value.
 
 ### Unknown function info
 

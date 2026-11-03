@@ -201,12 +201,12 @@ void DefineInputs(SpirvEmitterState& state) {
             addBuiltin(StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID");
         }
     }
-    if (state.requirements.ldsLock && std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
+    if ((state.requirements.ldsLock || ScratchPoolActive(state)) && std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
         return input.kind == StageInputKind::LocalInvocationIndex;
     })) {
         state.inputs.push_back(SpirvInputBinding {{StageInputKind::LocalInvocationIndex, 0u, 1u, "gl_LocalInvocationIndex", false}});
     }
-    if (LdsInDeviceMemory(state)) {
+    if (LdsInDeviceMemory(state) || ScratchPoolActive(state)) {
         if (std::none_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) {
             return input.kind == StageInputKind::WorkgroupId;
         })) {
@@ -604,6 +604,22 @@ void DefineDescriptors(SpirvEmitterState& state) {
         state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationBinding, 0u);
         state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationCoherent);
         if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.ldsBufferVariable);
+    }
+    DefineScratchPool(state);
+}
+
+void DefineScratchPool(SpirvEmitterState& state) {
+    if (!ScratchPoolActive(state)) return;
+    state.scratchPoolVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
+    state.module.AddName(state.scratchPoolVariable, "scratch_pool");
+    state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationDescriptorSet, ScratchPoolDescriptorSet);
+    state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationBinding, 0u);
+    state.module.AddAnnotation(spv::OpDecorate, state.scratchPoolVariable, spv::DecorationCoherent);
+    state.scratchPoolSlotVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassWorkgroup, TypeU32(state)), spv::StorageClassWorkgroup);
+    state.module.AddName(state.scratchPoolSlotVariable, "scratch_pool_slot");
+    if (state.spirvVersion >= 0x00010400u) {
+        state.interfaceVariables.push_back(state.scratchPoolVariable);
+        state.interfaceVariables.push_back(state.scratchPoolSlotVariable);
     }
 }
 
