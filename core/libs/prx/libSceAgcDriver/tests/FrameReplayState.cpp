@@ -428,6 +428,91 @@ void testShaderCode(const std::filesystem::path& directory, bool host, std::stri
     check(listed && *listed == expected, "the offline shader listing read other code than the capture holds at the registration");
 }
 
+void testDeltaPaths(const std::filesystem::path& directory, std::string_view mode) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    constexpr std::size_t PieceBytes = Block + Block / 2;
+    const bool host = mode != "shader_unaligned_restored";
+    const bool rewritten = mode == "shader_host_rewritten";
+    const std::size_t codeBytes = host ? 3 * Block : Block;
+    Shader* shader = nullptr;
+    std::byte* code = nullptr;
+    if (host) {
+        shader = reinterpret_cast<Shader*>(allocate(1u << 20));
+        std::byte* memory = nullptr;
+#ifdef _WIN32
+        memory = static_cast<std::byte*>(VirtualAlloc(nullptr, codeBytes + 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#elif defined(__linux__)
+        void* mapped = mmap(nullptr, codeBytes + 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        memory = mapped != MAP_FAILED ? static_cast<std::byte*>(mapped) : nullptr;
+#endif
+        check(memory != nullptr, "host shader allocation failed");
+        GuestAllocations::Mutation mutation;
+        mutation.Add(memory, codeBytes + 4096, true, true, true);
+        code = memory + 256;
+    } else {
+        auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * Block, Block));
+        check(block != nullptr, "guest reservation failed");
+        GuestArena::GuestArenaRelease_nid_postfix(block, 2 * Block);
+        auto* piece = block + Block / 2;
+        GuestArena::GuestArenaCommit_nid_postfix(piece, PieceBytes, 0x04, PieceBytes);
+#ifdef _WIN32
+        AgcDriver::GuestMemory::Unwatch(address(piece), PieceBytes);
+#endif
+        check(!AgcDriver::GuestMemory::Watched(address(piece), PieceBytes), "the unaligned shader range is write-watched");
+        GuestAllocations::Mutation mutation;
+        mutation.Add(piece, PieceBytes, true, true, false);
+        shader = reinterpret_cast<Shader*>(piece);
+        code = piece + 256;
+    }
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    shader->shader_size = codeBytes;
+    shader->code = code;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    const auto store = [&](unsigned seed) {
+        std::vector<std::byte> bytes(codeBytes);
+        for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::byte>(i * 31 + seed);
+        std::memcpy(code, bytes.data(), bytes.size());
+        return bytes;
+    };
+    const auto checked = rewritten ? FrameCallKind::RegisterShader : FrameCallKind::Flip;
+    const auto call = [&](FrameCallKind kind) {
+        if (kind == FrameCallKind::Flip) recorder->Flip(AgcDriver::FlipInfo{}, {});
+        else recorder->RegisterShader(shader);
+    };
+    const auto expected = store(17);
+    call(checked);
+    store(29);
+    call(rewritten ? FrameCallKind::Flip : FrameCallKind::RegisterShader);
+    store(17);
+    call(checked);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    CapturedMemory memory(reader);
+    std::map<std::uint64_t, std::vector<const FrameMemoryChunk*>> groups;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind == FrameMemoryKind::Delta) groups[chunk.group].push_back(&chunk);
+    }
+    std::size_t seen = 0;
+    std::optional<std::vector<std::byte>> replayed;
+    for (const auto& captured : reader.Calls()) {
+        if (captured.kind == checked && ++seen == 2) {
+            replayed = memory.Read(address(code), codeBytes);
+            break;
+        }
+        if (captured.kind != FrameCallKind::Memory) continue;
+        if (const auto found = groups.find(captured.values.at(0)); found != groups.end()) memory.Apply(found->second);
+    }
+    check(seen == 2, "the capture lost a call of the test");
+    check(replayed && *replayed == expected, rewritten ? "the second registration replays the host code a flip's delta wrote, not the code the title registered again" :
+        host ? "after the second flip the replay keeps the host code a shader delta wrote, not the code the title restored" :
+        "after the second flip the replay keeps the code a shader delta wrote into an unaligned unwatched range, not the code the title restored");
+}
+
 bool insideRanges(const FrameCaptureReader& reader, const FrameMemoryChunk& chunk) {
     std::map<std::uint64_t, std::uint64_t> ranges;
     for (const auto& range : reader.Chunks()) {
@@ -605,6 +690,7 @@ int main(int argc, char** argv) {
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
+        else if (mode == "shader_host_rewritten" || mode == "shader_host_restored" || mode == "shader_unaligned_restored") testDeltaPaths(directory, mode);
         else if (mode == "shader_hole") testShaderBlockHole(directory);
         else if (mode == "delta_hole") testDeltaOutsideRanges(directory);
         else throw std::runtime_error("unknown test");

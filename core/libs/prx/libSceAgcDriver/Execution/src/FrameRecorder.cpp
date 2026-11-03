@@ -476,6 +476,14 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
             any = true;
         }
     };
+    const auto forget = [&](std::uint64_t begin, std::uint64_t end) {
+        hostPageHashes.erase(hostPageHashes.lower_bound(begin & ~std::uint64_t{HostPageBytes - 1}), hostPageHashes.lower_bound(end));
+        auto found = unwatchedHashes.lower_bound({begin - std::min<std::uint64_t>(begin, FrameCaptureWriter::BlockBytes), 0});
+        while (found != unwatchedHashes.end() && found->first.first < end) {
+            if (found->first.first + found->first.second > begin) found = unwatchedHashes.erase(found);
+            else ++found;
+        }
+    };
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);
         ranges.push_back(range);
@@ -496,9 +504,9 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
         bytes.resize(HostPageBytes);
         std::memcpy(bytes.data(), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(page)), HostPageBytes);
         const auto hash = contentHash(bytes);
-        auto& known = hostPageHashes[page];
-        if (known == hash) continue;
-        known = hash;
+        if (const auto found = hostPageHashes.find(page); found != hostPageHashes.end() && found->second == hash) continue;
+        forget(page, page + HostPageBytes);
+        hostPageHashes[page] = hash;
         writer->WriteDelta(group, completed, page, bytes);
         deltaBytes += bytes.size();
         any = true;
@@ -506,16 +514,15 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
         readGuest(begin, bytes);
-        if (!GuestMemory::Watched(begin, bytes.size())) {
+        if (accepted == completed && !GuestMemory::Watched(begin, bytes.size())) {
             const auto key = std::pair{begin, static_cast<std::uint64_t>(bytes.size())};
-            if (accepted == completed) {
-                const auto sample = std::pair{contentHash(bytes), accepted};
-                const auto found = unwatchedHashes.find(key);
-                if (found != unwatchedHashes.end() && found->second == sample) continue;
-                unwatchedHashes[key] = sample;
-            } else {
-                unwatchedHashes.erase(key);
-            }
+            const auto sample = std::pair{contentHash(bytes), accepted};
+            const auto found = unwatchedHashes.find(key);
+            if (found != unwatchedHashes.end() && found->second == sample) continue;
+            forget(begin, end);
+            unwatchedHashes[key] = sample;
+        } else {
+            forget(begin, end);
         }
         writeTitleWords(begin);
     }
