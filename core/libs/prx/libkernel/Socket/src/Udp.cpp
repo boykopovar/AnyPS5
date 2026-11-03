@@ -759,8 +759,10 @@ bool QueryPipe(int descriptor, const char* function, ACCESS_MASK& access, PipeLo
     if (!query) throw std::runtime_error(std::string(function) + ": NtQueryInformationFile is unavailable");
     PipeIoStatus status{};
     if (query(handle, &status, &access, sizeof(access), FileAccessInformationClass) < 0 ||
-        query(handle, &status, &pipe, sizeof(pipe), FilePipeLocalInformationClass) < 0)
+        query(handle, &status, &pipe, sizeof(pipe), FilePipeLocalInformationClass) < 0) {
+        if (reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor)) != handle || GetFileType(handle) != FILE_TYPE_PIPE) return false;
         throw std::runtime_error(std::string(function) + ": querying pipe descriptor " + std::to_string(descriptor) + " failed");
+    }
     return true;
 }
 bool PipeReadiness(int descriptor, short events, short& revents) {
@@ -1648,7 +1650,7 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
         else closeOnExecDescriptors.erase(descriptor);
         return 0;
     }
-    if (!argument) return Fail(14);
+    if (!argument && (request & 0x1fff0000 || !(request & 0x20000000))) return Fail(14);
     if (request != 0x8004667e && request != 0x4004667f) return Fail(25);
     std::lock_guard lock(socket->modeMutex);
     if (request == 0x4004667f && socket->receiveShut) {
