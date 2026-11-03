@@ -49,9 +49,14 @@ def measure(sha):
         tree = git("ls-tree", "-r", "--name-only", sha, "--", *candidate_paths).decode("utf-8").splitlines()
     except subprocess.CalledProcessError:
         return None
-    paths = [path for path in candidate_paths if any(name == path or name.startswith(path + "/") for name in tree)]
-    if len(paths) < 2:
+    tree = set(tree)
+    required_paths = candidate_paths[:2]
+    if any(not any(name == path or name.startswith(path + "/") for name in tree) for path in required_paths):
         return None
+    paths = required_paths + [
+        path for path in candidate_paths[2:]
+        if any(name == path or name.startswith(path + "/") for name in tree)
+    ]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         try:

@@ -226,6 +226,17 @@ class ProgressHistoryTests(unittest.TestCase):
 
             self.assertIsNotNone(result)
 
+    def test_measure_skips_commit_missing_required_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            (root / progress.shader_scan.RECOMPILER).mkdir(parents=True, exist_ok=True)
+            with patch.multiple(progress, ROOT=root, PRX=root / "missing/prx", OPCODES=root / OPCODES):
+                result = progress_history.measure("HEAD")
+
+            self.assertIsNone(result)
+
     def test_failed_cache_publication_preserves_the_old_file(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "history.json"
