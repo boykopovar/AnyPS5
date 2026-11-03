@@ -99,7 +99,12 @@ void CheckDashValidationAndStress() {
         cairo_save(context);
         cairo_set_dash(context, nullptr, 0, 1);
         cairo_restore(context);
-        assert(cairo_get_dash_count(context) == 3);
+        assert(cairo_get_dash_count(context) == 1);
+        double merged = 0;
+        double mergedOffset = 0;
+        cairo_get_dash(context, &merged, &mergedOffset);
+        Near(merged, 7);
+        Near(mergedOffset, 8);
         cairo_restore(context);
         assert(cairo_get_dash_count(context) == 2);
         cairo_destroy(context);
@@ -134,6 +139,25 @@ void CheckDashValidationAndStress() {
     cairo_get_dash(nanDash, &actualDash, &actualOffset);
     assert(std::isnan(actualDash) && std::isnan(actualOffset));
     cairo_destroy(nanDash);
+
+    surface = cairo_image_surface_create(0, 1, 1);
+    CairoContext* normalized = cairo_create(surface);
+    cairo_surface_destroy(surface);
+    const double twoSolid[] = {10, 0};
+    cairo_set_dash(normalized, twoSolid, 2, 5);
+    assert(cairo_get_dash_count(normalized) == 0);
+    const double fourGaps[] = {5, 0, 2, 5};
+    cairo_set_dash(normalized, fourGaps, 4, 0);
+    assert(cairo_get_dash_count(normalized) == 2);
+    std::array<double, 2> mergedGaps{};
+    cairo_get_dash(normalized, mergedGaps.data(), nullptr);
+    assert((mergedGaps == std::array<double, 2>{7, 5}));
+    const double zeroStarts[] = {0, 1, 0, 2};
+    cairo_set_dash(normalized, zeroStarts, 4, 0);
+    assert(cairo_get_dash_count(normalized) == 2);
+    cairo_get_dash(normalized, mergedGaps.data(), nullptr);
+    assert((mergedGaps == std::array<double, 2>{0, 3}));
+    cairo_destroy(normalized);
 }
 
 } // namespace

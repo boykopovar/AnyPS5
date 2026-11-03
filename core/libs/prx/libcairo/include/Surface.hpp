@@ -4,7 +4,6 @@
 
 struct CairoSurface;
 
-// Internal C++ accessor for the immutable, shared Cairo error surfaces.
 CairoSurface* CairoSurfaceError(int status);
 
 extern "C" {
