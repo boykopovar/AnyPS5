@@ -90,7 +90,7 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const {
     std::vector<std::filesystem::path> paths;
     std::map<std::filesystem::path, GuestImage> discovered;
     progress.Report({Domain::ProgressStage::Modules, {}, 0, modules.size()});
@@ -337,7 +337,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto provider : executableProviders) require(provider);
     for (std::size_t index = 0; index < images.size(); ++index) {
         if (!isRuntime(index)) require(index);
-        if (windows) for (const auto dependency : dependencies[index]) if (standardDirectory(dependency)) require(dependency);
+        if (windows) for (const auto dependency : dependencies[index]) require(dependency);
     }
     const auto deferred = [&](const std::size_t index) {
         return !required[index] && isRuntime(index);
@@ -377,6 +377,39 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         const auto imports = importsExportedByExecutable.find(name);
         return imports == importsExportedByExecutable.end() || !imports->second;
     };
+    std::vector<std::filesystem::path> runDirectories;
+    bool runDirectoriesExist = !windows && !macos;
+    for (std::size_t begin = 0; runDirectoriesExist && begin <= runPath.size();) {
+        const auto end = std::min(runPath.find(':', begin), runPath.size());
+        const auto component = std::string_view(runPath).substr(begin, end - begin);
+        std::filesystem::path directory;
+        if (component == "$ORIGIN") directory = outputPath.parent_path();
+        else if (component.starts_with("$ORIGIN/")) directory = outputPath.parent_path() / std::string(component.substr(8));
+        else if (component.starts_with('/')) directory = std::string(component);
+        std::error_code error;
+        runDirectoriesExist = !directory.empty() && std::filesystem::is_directory(directory, error);
+        runDirectories.push_back(std::move(directory));
+        begin = end + 1;
+    }
+    std::set<std::pair<std::size_t, std::string>> reportedDependencies;
+    const auto unavailableUnused = [&](std::size_t index, const std::string& dependency) {
+        if (!runDirectoriesExist || findGuest(dependency) != guestNames.end()) return false;
+        const auto stem = ModuleStem(dependency, windows);
+        if (stem.empty()) return false;
+        const auto& symbols = images[index].Symbols;
+        if (std::any_of(symbols.begin(), symbols.end(), [&](const auto& symbol) { return symbol.Section == 0 && !symbol.Library.empty() && (symbol.Library == dependency || symbol.Library == stem || ModuleStem(symbol.Library, windows) == stem); })) return false;
+        const auto file = hostLibrary(dependency);
+        for (const auto& directory : runDirectories) {
+            std::error_code error;
+            const bool exists = std::filesystem::exists(directory / file, error);
+            if (exists || error) return false;
+        }
+        if (reportedDependencies.emplace(index, dependency).second) {
+            const auto subject = Io::Utf8Path(images[index].SourcePath) + " needs " + dependency + ", which no module or run path library provides and from which it imports nothing";
+            progress.Message(omitUnavailableDependencies ? "Warning: " + subject + "; it is left out of the needed libraries" : "Note: " + subject + "; --omit-unavailable-dependencies leaves it out");
+        }
+        return omitUnavailableDependencies;
+    };
     const auto addHost = [&](const std::string& name, const bool startup) {
         if (!loadsHost(name)) return;
         if (name.empty() || name.find_first_of("/\\:$") != std::string::npos) throw Domain::RelinkerException("Invalid host dependency: " + name);
@@ -386,6 +419,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (std::size_t index = 0; index < images.size(); ++index) {
         auto& hosts = moduleHostLibraries[index];
         for (const auto& dependency : images[index].Dependencies) {
+            if (unavailableUnused(index, dependency)) continue;
             addHost(dependency, windows || !deferred(index));
             if (loadsHost(dependency)) hosts.push_back(hostLibrary(dependency));
         }
@@ -508,7 +542,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         dynamic.GuestModules.push_back(std::move(runtime));
         std::vector<std::string> neededLibraries;
         for (const auto& name : image.Dependencies)
-            if (loadsHost(name)) neededLibraries.push_back(hostLibrary(name));
+            if (loadsHost(name) && !unavailableUnused(index, name)) neededLibraries.push_back(hostLibrary(name));
         artifacts.push_back({target, std::move(output), std::move(imports), image.SourcePath, std::move(neededLibraries)});
         progress.Report({Domain::ProgressStage::Modules, Io::Utf8Path(image.SourcePath), artifacts.size(), order.size()});
     }
