@@ -19,4 +19,8 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_cairo_surface_tests)
     add_test(NAME guest_cairo_surface COMMAND guest_cairo_surface_tests)
     set_tests_properties(guest_cairo_surface PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_surface PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
