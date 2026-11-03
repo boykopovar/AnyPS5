@@ -254,8 +254,7 @@ private:
                 kept = RefineValue(arm, facts, factSet, relied, depth + 1u);
             } else if (guard->IsPhi() && arm->IsPhi() && guard->Parent() == arm->Parent()) {
                 const auto block = m_index.find(arm->Parent());
-                const auto from = m_index.find(predecessor);
-                if (block == m_index.end() || from == m_index.end() || !Dominates(block->second, from->second)) return nullptr;
+                if (block == m_index.end()) return nullptr;
                 kept = Restrict(*arm, *guard, expected, facts, factSet, relied, depth + 1u);
                 if (kept == nullptr) return nullptr;
                 kept = kept->Resolve();
