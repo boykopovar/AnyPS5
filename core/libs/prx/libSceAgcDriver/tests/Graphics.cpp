@@ -2107,6 +2107,26 @@ void ReversedComponentOrderTests() {
         queue.context[0x1e0] = (1u << 30u) | (2u << 5u) | 13u;
         Require(AgcDriver::Graphics::DecodeState(queue).blends[0].colorBlendOp == VK_BLEND_OP_MIN, "a constant color factor of a MIN blend into an 8_8 SWAP_ALT target was rejected");
     }
+    for (const auto& [number, format] : {std::pair{0u, VK_FORMAT_R16G16_UNORM}, std::pair{1u, VK_FORMAT_R16G16_SNORM}, std::pair{4u, VK_FORMAT_R16G16_UINT}, std::pair{7u, VK_FORMAT_R16G16_SFLOAT}}) {
+        auto queue = makeState();
+        const auto info = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (5u << 2u) | (number << 8u);
+        for (const auto swap : {0u, 1u}) {
+            queue.context[0x31c] = info | (swap << 11u);
+            const auto state = AgcDriver::Graphics::DecodeState(queue);
+            Require(state.colors.size() == 1 && state.colors[0].format == format && state.colors[0].elementBytes == 4 && state.colors[0].componentMapping == (swap == 1u ? 0xecu : 0xe4u), "a 16_16 target did not store the x and y exports, or with SWAP_ALT the x and w exports, in its two channels");
+        }
+        if (number == 7u) {
+            queue.context[0x31c] = info | (1u << 11u);
+            for (const auto offset : {0x105u, 0x106u, 0x107u, 0x108u}) queue.context[offset] = 0;
+            queue.context[0x1e0] = 0x60000001u;
+            Require(AgcDriver::Graphics::SplitsAlternateAlpha(AgcDriver::Graphics::DecodeState(queue)), "a separate alpha blend into a 16_16 SWAP_ALT target did not split its second channel");
+            queue.context[0x1e0] = 0;
+        }
+        for (const auto swap : {2u, 3u}) {
+            queue.context[0x31c] = info | (swap << 11u);
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color format 5 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+        }
+    }
     for (const auto& [swap, mapping] : {std::pair{2u, 0x1bu}, std::pair{3u, 0x93u}}) {
         auto queue = makeState();
         queue.context[0x31c] = (queue.context[0x31c] & ~(3u << 11u)) | (swap << 11u);
