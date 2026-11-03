@@ -4,7 +4,7 @@
 
 extern "C" {
 
-int APS5_VABI sceImeBackendParamInit(void);
+void APS5_VABI sceImeBackendParamInit(void* param);
 int APS5_VABI sceImeBackendOpen(void);
 int APS5_VABI sceImeBackendClose(void);
 int APS5_VABI sceImeBackendReset(void);

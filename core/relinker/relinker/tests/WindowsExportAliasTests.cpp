@@ -87,6 +87,27 @@ int main() {
         Io::WriteU32(multiBucket,0x2600,2);Io::WriteU32(multiBucket,0x2604,4);Io::WriteU32(multiBucket,0x2608,1);Io::WriteU32(multiBucket,0x260c,2);
         auto goodMulti=Relinker::GuestImageReader().Read("generic.prx",multiBucket,true);
         Check(goodMulti.Symbols.size()==4,"valid multi-bucket SysV hash accepted");
+        auto rel=Fixture();
+        Io::WriteU64(rel,0x2080,17);
+        Io::WriteU64(rel,0x2088,0x2700);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",rel,true);},"DT_REL relocations are not supported");
+        auto badRelaEnt=Fixture();
+        Io::WriteU64(badRelaEnt,0x2050,0x61000021);
+        Io::WriteU64(badRelaEnt,0x2060,0x61000021);
+        Io::WriteU64(badRelaEnt,0x2078,16);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",badRelaEnt,true);},"Invalid RELA entry size");
+        auto badPltRel=Fixture();
+        Io::WriteU64(badPltRel,0x2080,20);
+        Io::WriteU64(badPltRel,0x2088,17);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",badPltRel,true);},"Unsupported PLT relocation format");
+        auto validNoPlt=Fixture();
+        Io::WriteU64(validNoPlt,0x2050,0x61000021);
+        Io::WriteU64(validNoPlt,0x2060,0x61000021);
+        Io::WriteU64(validNoPlt,0x2078,24);
+        Io::WriteU64(validNoPlt,0x2080,20);
+        Io::WriteU64(validNoPlt,0x2088,7);
+        auto goodNoPlt=Relinker::GuestImageReader().Read("generic.prx",validNoPlt,true);
+        Check(goodNoPlt.Symbols.size()==4,"valid RELAENT and PLTREL without tables accepted");
         std::cout<<"WINDOWS_EXPORT_ALIAS_CASES_PASSED\npreserved-indices reversed-order conflicting-fields strict-nonwindows qualified-import writer-guard\n";
     } catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

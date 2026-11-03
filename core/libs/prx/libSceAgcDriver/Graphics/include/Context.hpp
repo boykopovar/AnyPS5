@@ -35,6 +35,7 @@ class SamplerCache;
 class ShaderResources;
 class PlaceholderImages;
 class VertexInputCache;
+class VertexBufferFormats;
 
 class PipelineCacheSynchronization {
 public:
@@ -144,10 +145,7 @@ struct DeviceFunctions {
 };
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
-inline std::uint64_t& DeviceProcLookups() {
-    thread_local std::uint64_t count = 0;
-    return count;
-}
+std::uint64_t& DeviceProcLookups();
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -262,6 +260,8 @@ struct Context {
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
+    bool shaderResourceMinLod = false;
+    bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool graphicsPipelineLibrary = false;
@@ -282,6 +282,7 @@ struct Context {
         return pipelineCacheSynchronization != nullptr ? pipelineCacheSynchronization->LockForPipelineUse() : PipelineCacheSynchronization::PipelineUseLock{};
     }
     VertexInputCache* vertexInputs = nullptr;
+    VertexBufferFormats* vertexFormats = nullptr;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

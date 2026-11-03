@@ -601,6 +601,10 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         static constexpr int mib[] = {1, 14, 12};
         return sysctl_nid_postfix(mib, 3, oldValue, oldLength, newValue, newLength);
     }
+    if (std::strcmp(name, "kern.proc.proc") == 0) {
+        static constexpr int mib[] = {1, 14, 8};
+        return sysctl_nid_postfix(mib, 3, oldValue, oldLength, newValue, newLength);
+    }
     if (std::strcmp(name, "kern.boottime") == 0) {
         static constexpr int mib[] = {1, 21};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
@@ -803,26 +807,32 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
         {"kern.maxfilesperproc", {1, 27}, 2},
         {"kern.maxproc", {1, 6}, 2},
         {"kern.proc.pathname", {1, 14, 12}, 3},
+        {"kern.proc.proc", {1, 14, 8}, 3},
         {"kern.ps_strings", {1, 32}, 2},
         {"kern.rng_pseudo", {1, 50}, 2},
         {"vm.loadavg", {2, 2}, 2},
     };
     if (name == nullptr || size == nullptr) throw std::invalid_argument(std::string(__func__) + ": null name or size");
-    const std::size_t nameLength = strnlen(name, MaximumSysctlName);
-    if (nameLength == MaximumSysctlName) {
-        *__error_nid_postfix() = 63;
+    std::string guestName;
+    if (const int error = CopyGuestPath_nid_no_patch(name, guestName)) {
+        *__error_nid_postfix() = error;
         return -1;
     }
+    name = guestName.c_str();
     const std::string trimmed = WithoutTrailingDot(name);
     name = trimmed.c_str();
-    if (nameLength == 0 || std::strcmp(name, "hw.cacheline_size") == 0 || std::strcmp(name, "hw.usermem") == 0 || std::strcmp(name, "machdep.cacheline_size") == 0) {
+    if (trimmed.empty() || std::strcmp(name, "hw.cacheline_size") == 0 || std::strcmp(name, "hw.usermem") == 0 || std::strcmp(name, "machdep.cacheline_size") == 0) {
         *__error_nid_postfix() = 2;
         return -1;
     }
+    std::size_t count = 0;
+    if (!GuestCopyIn_nid_no_patch(&count, size, sizeof(count))) return Fault();
     const auto copyMib = [&](const int* found, std::size_t length) {
-        std::size_t bytes = *size * sizeof(int);
+        std::size_t bytes = count * sizeof(int);
         const int result = CopyOut(found, length * sizeof(int), mib, &bytes);
-        *size = bytes / sizeof(int);
+        if (result != 0 && *__error_nid_postfix() != 12) return result;
+        count = bytes / sizeof(int);
+        if (!GuestCopyOut_nid_no_patch(size, &count, sizeof(count))) return Fault();
         return result;
     };
     if (const int node = TopLevelNode(trimmed); node >= 0) return copyMib(&node, 1);
