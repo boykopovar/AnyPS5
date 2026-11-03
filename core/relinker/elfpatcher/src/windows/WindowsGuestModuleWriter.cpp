@@ -15,7 +15,6 @@ namespace Elfpatcher {
 
 std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestImage& guest, Domain::GuestRuntime& runtime, const std::function<void(std::string_view)>& message) const {
     using namespace Windows;
-    if (guest.Symbolic) throw Domain::RelinkerException("DF_SYMBOLIC guest modules are not supported by the Windows writer");
     WindowsLoadImage image(guest.Bytes, guest.Headers, false);
     std::vector<std::uint32_t> relocations;
     std::vector<std::pair<std::uint64_t, std::uint32_t>> tlsModules;
