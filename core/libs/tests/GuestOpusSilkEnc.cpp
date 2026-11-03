@@ -239,8 +239,10 @@ int main() {
     ++instanceId;
     const std::uint32_t wideRate = 0x40000064u;
     std::memcpy(wideRateState.data() + 0x14, &wideRate, sizeof wideRate);
-    Require(sceOpusSilkEncEncode(ToState(wideRateState), samples.data(), 1, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
-    Require(sceOpusSilkEncEncodeFloat(ToState(wideRateState), floatSamples.data(), 1, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
+    for (const int wrappedFrame : {1, 2, 4, 6}) {
+        Require(sceOpusSilkEncEncode(ToState(wideRateState), samples.data(), wrappedFrame, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
+        Require(sceOpusSilkEncEncodeFloat(ToState(wideRateState), floatSamples.data(), wrappedFrame, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
+    }
     Require(sceOpusSilkEncDestroy(ToState(wideRateState)) == 0);
 
     std::array<std::uint8_t, 65536> floatState{};
