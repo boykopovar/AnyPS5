@@ -4094,10 +4094,27 @@ void StorageTexture::noteLayersBehind(std::uint32_t firstLayer, std::uint32_t la
     if (std::none_of(layerBehind.begin(), layerBehind.end(), [](bool behind) { return behind; })) layerBehind.clear();
 }
 
+namespace {
+std::atomic<std::uint64_t> flipSerial{0};
+std::atomic<std::uint64_t> occasionalLabelStores{0};
+}
+
+void StorageTexture::NoteFlip() {
+    flipSerial.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t StorageTexture::OccasionalLabelStores() {
+    return occasionalLabelStores.load(std::memory_order_relaxed);
+}
+
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    if (const auto flip = flipSerial.load(std::memory_order_relaxed); writes == 1u || flip != writtenFlip) {
+        writtenOccasionally = writes == 1u || flip - writtenFlip > OccasionalWriteFlips;
+        writtenFlip = flip;
+    }
     std::optional<MapImportGate::PublishHold> publication;
     if (!layerPending.Any()) publication.emplace(descriptor.baseAddress, guestBytes);
     if (!layerPending.AllIn(first, count)) {
@@ -5041,10 +5058,11 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
     return stored;
 }
 
-void StorageTexture::StoreReadbackBeforeLabel(const char* reason) {
+void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice device) {
     static const bool disabled = std::getenv("APS5_NO_LABEL_READBACK_STORE") != nullptr;
     if (disabled) return;
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+    std::vector<std::pair<std::uint64_t, std::size_t>> occasional;
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
@@ -5070,8 +5088,16 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason) {
 #endif
             ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
+        for (auto* texture : pending.textures) {
+            if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes || texture->guestBytes > OccasionalStoreBytes) continue;
+            if (device != VK_NULL_HANDLE && texture->context.device != device) continue;
+            if (!texture->writtenOccasionally.exchange(false, std::memory_order_relaxed)) continue;
+            occasionalLabelStores.fetch_add(1, std::memory_order_relaxed);
+            occasional.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        }
     }
     for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
+    for (const auto& [address, bytes] : occasional) static_cast<void>(FlushPending(address, bytes, nullptr, reason, PublishScope::Whole, nullptr, false, device));
 }
 
 std::size_t StorageTexture::StoreDrawnLinear(const char* reason) {
