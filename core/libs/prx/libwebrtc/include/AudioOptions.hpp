@@ -22,7 +22,6 @@ struct WebRtcOptionalGuestString {
 
 struct WebRtcAudioOptions {
     WebRtcOptionalBool echoCancellation;
-    WebRtcOptionalBool iosForceSoftwareAecHack;
     WebRtcOptionalBool autoGainControl;
     WebRtcOptionalBool noiseSuppression;
     WebRtcOptionalBool highpassFilter;
@@ -38,6 +37,11 @@ struct WebRtcAudioOptions {
 static_assert(sizeof(WebRtcOptionalInt) == 8);
 static_assert(sizeof(WebRtcOptionalGuestString) == 48);
 static_assert(sizeof(WebRtcAudioOptions) == 96);
+static_assert(offsetof(WebRtcAudioOptions, echoCancellation) == 0);
+static_assert(offsetof(WebRtcAudioOptions, autoGainControl) == 2);
+static_assert(offsetof(WebRtcAudioOptions, noiseSuppression) == 4);
+static_assert(offsetof(WebRtcAudioOptions, highpassFilter) == 6);
+static_assert(offsetof(WebRtcAudioOptions, stereoSwapping) == 8);
 static_assert(offsetof(WebRtcAudioOptions, audioJitterBufferMaxPackets) == 12);
 static_assert(offsetof(WebRtcAudioOptions, audioJitterBufferFastAccelerate) == 20);
 static_assert(offsetof(WebRtcAudioOptions, audioJitterBufferMinDelayMs) == 24);
