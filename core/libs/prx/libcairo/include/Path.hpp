@@ -4,7 +4,6 @@
 
 #include <cstddef>
 
-// cairo_path_data_t's public C ABI: every header or point occupies 16 bytes.
 union CairoPathData {
     struct {
         int type;

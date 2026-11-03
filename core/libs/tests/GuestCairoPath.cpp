@@ -31,7 +31,7 @@ void CheckBasicPathAndCurrentPoint() {
         Near(x, 0);
         Near(y, 0);
 
-        cairo_line_to(context, 4, 5); // Native treats line_to without current point as move_to.
+        cairo_line_to(context, 4, 5);
         assert(cairo_has_current_point(context) == 1);
         CairoPath* path = cairo_copy_path(context);
         assert(path && path->status == 0 && path->num_data == 2);
@@ -41,14 +41,14 @@ void CheckBasicPathAndCurrentPoint() {
         cairo_path_destroy(path);
 
         cairo_move_to(context, 1.2345, 2.3456);
-        cairo_move_to(context, 3, 4); // Replaces the previous move-only subpath.
+        cairo_move_to(context, 3, 4);
         cairo_line_to(context, 5, 6);
         path = cairo_copy_path(context);
         assert(path && path->status == 0 && path->num_data == 4);
         assert(path->data[0].header.type == 0 && path->data[2].header.type == 1);
         cairo_path_destroy(path);
 
-        cairo_line_to(context, 5, 6); // Duplicate terminal line is canonicalized.
+        cairo_line_to(context, 5, 6);
         path = cairo_copy_path(context);
         assert(path && path->status == 0 && path->num_data == 4);
         cairo_path_destroy(path);
@@ -168,14 +168,14 @@ void CheckErrorAndSaveSemantics() {
     cairo_move_to(context, 1, 2);
     cairo_save(context);
     cairo_line_to(context, 5, 7);
-    cairo_restore(context); // Cairo paths are not part of the saved graphics state.
+    cairo_restore(context);
     CairoPath* path = cairo_copy_path(context);
     assert(path && path->status == 0 && path->num_data == 4);
     cairo_path_destroy(path);
     CairoPathData corrupt[2]{};
-    corrupt[0].header = {2, 2}; // Curve requires four path data words.
+    corrupt[0].header = {2, 2};
     CairoPath wrong{0, corrupt, 2};
-    cairo_append_path(context, &wrong); // Sticky invalid path data.
+    cairo_append_path(context, &wrong);
     double x = 42, y = 24;
     cairo_get_current_point(context, &x, &y);
     Near(x, 0);
@@ -196,7 +196,7 @@ void CheckErrorAndSaveSemantics() {
     CairoPathData extended[3]{};
     extended[0].header = {0, 3};
     extended[1].point = {1, 2};
-    extended[2].point = {3, 4}; // Native accepts unused padding words.
+    extended[2].point = {3, 4};
     CairoPath padded{0, extended, 3};
     cairo_append_path(context, &padded);
     path = cairo_copy_path(context);
@@ -209,7 +209,7 @@ void CheckErrorAndSaveSemantics() {
     context = cairo_create(surface);
     cairo_surface_destroy(surface);
     CairoPath alreadyFailed{5, nullptr, 3};
-    cairo_append_path(context, &alreadyFailed); // Propagate path status before examining data.
+    cairo_append_path(context, &alreadyFailed);
     path = cairo_copy_path(context);
     assert(path && path->status == 5);
     cairo_path_destroy(path);

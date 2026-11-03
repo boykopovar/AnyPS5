@@ -39,8 +39,8 @@ struct SavedState {
 };
 
 struct PathEntry {
-    int type{}; // Move=0, Line=1, Curve=2, Close=3.
-    double points[6]{}; // Device-space coordinates, quantized to Cairo's 24.8 fixed grid.
+    int type{};
+    double points[6]{};
 };
 
 struct ContextStorage {
@@ -135,9 +135,6 @@ bool Record(ContextStorage* state, const PathEntry& entry) {
 }
 
 double Fixed(double coordinate) {
-    // Cairo stores path coordinates as signed 24.8 fixed-point device values.
-    // The native fixed-point converter maps NaN to zero and saturates infinities
-    // and out-of-range inputs at its safe representable path-coordinate limits.
     if (std::isnan(coordinate)) return 0;
     constexpr double kMinimum = -8388606.0;
     constexpr double kMaximum = 8388606.0 - 1.0 / 256.0;
@@ -169,8 +166,6 @@ void AppendLine(ContextStorage* state, double x, double y) {
         AppendMove(state, x, y);
         return;
     }
-    // Multiple consecutive line segments ending at the same device point
-    // collapse into one public path record in native Cairo.
     if (state->path && !state->path->empty()) {
         const auto& previous = state->path->back();
         const bool matchingLine = previous.type == 1 &&
@@ -434,8 +429,6 @@ void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes,
         std::copy_n(dashes, numDashes, copy);
     }
     const double period = (numDashes % 2 == 0 ? total : total * 2);
-    // Cairo's raster dash cycle cannot represent intervals below 1/256 pixel.
-    // The native API turns such an otherwise valid dash array into solid strokes.
     if (numDashes > 0 && period < 1.0 / 256.0) {
         delete[] copy;
         copy = nullptr;
@@ -475,7 +468,6 @@ void APS5_VABI cairo_new_path(CairoContext* context) {
 void APS5_VABI cairo_new_sub_path(CairoContext* context) {
     auto* state = Valid(context);
     if (!state) return;
-    // A move with no subsequent segment is discarded when a subpath is abandoned.
     if (state->path && !state->path->empty() && state->path->back().type == 0)
         state->path->pop_back();
     state->hasCurrent = false;
@@ -503,9 +495,6 @@ void APS5_VABI cairo_curve_to(CairoContext* context, double x1, double y1,
     DevicePoint(state->matrix, x2, y2);
     DevicePoint(state->matrix, x3, y3);
     if (!state->hasCurrent && !AppendMove(state, x1, y1)) return;
-    // A cubic whose control points and endpoint all coincide with the current
-    // point is emitted as a zero-length line, or coalesced with the preceding
-    // non-move segment. Match native Cairo's fixed-path canonicalization.
     if (state->currentX == x1 && state->currentY == y1 &&
         x1 == x2 && y1 == y2 && x2 == x3 && y2 == y3) {
         AppendLine(state, x3, y3);
@@ -635,4 +624,4 @@ void APS5_VABI cairo_path_destroy(CairoPath* path) {
     delete path;
 }
 
-} // extern "C"
+}

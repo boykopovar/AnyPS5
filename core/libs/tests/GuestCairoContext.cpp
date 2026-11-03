@@ -182,19 +182,19 @@ void CheckMatrixAliasingAndErrorState() {
     context = cairo_create(surface);
     cairo_surface_destroy(surface);
     CairoMatrix infiniteOrigin{1, 0, 0, 1, std::numeric_limits<double>::infinity(), 0};
-    cairo_set_matrix(context, &infiniteOrigin); // Native permits nonfinite translation in set_matrix.
+    cairo_set_matrix(context, &infiniteOrigin);
     cairo_get_matrix(context, &failedMatrix);
     assert(std::isinf(failedMatrix.x0));
     cairo_identity_matrix(context);
     cairo_translate(context, std::numeric_limits<double>::infinity(), 0);
     cairo_get_matrix(context, &failedMatrix);
-    Near(failedMatrix.x0, 0); // Native translate rejects nonfinite operands.
+    Near(failedMatrix.x0, 0);
     cairo_destroy(context);
 
     surface = cairo_image_surface_create(0, 1, 1);
     context = cairo_create(surface);
     cairo_surface_destroy(surface);
-    cairo_scale(context, 1e200, 1e200); // Product determinant overflows.
+    cairo_scale(context, 1e200, 1e200);
     cairo_get_matrix(context, &failedMatrix);
     Near(failedMatrix.xx, 1);
     Near(failedMatrix.yy, 1);
