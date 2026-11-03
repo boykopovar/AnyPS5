@@ -5492,7 +5492,16 @@ void verifyImageTableRegistration() {
     const auto atomic64Fault = atomic64Map[Abi::TableHeader(0) + Abi::TableFault];
     const auto* atomic64Table = TableBinding(*atomic64.result, DescriptorRole::ImageStorageTable);
     require((atomic64Fault & Abi::PoisonFlag) == 0u && atomic64Table != nullptr && atomic64Table->count != 0u && atomic64Table->imageAtomic64.size() == atomic64Table->count && std::all_of(atomic64Table->imageAtomic64.begin(), atomic64Table->imageAtomic64.end(), [](bool atomic) { return atomic; }), "image table registration: the image_atomic64_add table was not bound as 64-bit atomic storage elements");
-    const std::array<std::pair<std::uint32_t, const char*>, 2> unsupportedStores{{{0xf0240f08u, "image_store_mip"}, {0xf0280f08u, "image_store_pck"}}};
+    auto packedStoreCode = storeCode;
+    packedStoreCode[8] = 0xf0280f08u;
+    const auto packedStore = CompileTable(TableRequest(packedStoreCode, userData));
+    const auto& packedStorePlan = *packedStore.capture->plan;
+    require(packedStorePlan.info.images.size() == 1u && packedStorePlan.info.images[0].table == 0u && packedStorePlan.info.images[0].tableOperation == TableOperation::Supported, "image table registration: a table T# feeding image_store_pck was not a supported table operation");
+    const auto packedStoreFault = TableMap(*packedStore.result)[Abi::TableHeader(0) + Abi::TableFault];
+    const auto* packedStoreTable = TableBinding(*packedStore.result, DescriptorRole::ImageStorageTable);
+    require((packedStoreFault & Abi::PoisonFlag) == 0u && packedStoreTable != nullptr && packedStoreTable->count != 0u && std::all_of(packedStoreTable->imageWritten.begin(), packedStoreTable->imageWritten.end(), [](bool written) { return written; }), "image table registration: the image_store_pck table was not bound as written storage elements");
+    require(TableBinding(*packedStore.result, DescriptorRole::ImageTable) == nullptr || TableBinding(*packedStore.result, DescriptorRole::ImageTable)->count == 0u, "image table registration: a packed store-only table bound sampled elements");
+    const std::array<std::pair<std::uint32_t, const char*>, 1> unsupportedStores{{{0xf0240f08u, "image_store_mip"}}};
     for (const auto& [instruction, name] : unsupportedStores) {
         auto code = storeCode;
         code[8] = instruction;
@@ -5970,7 +5979,7 @@ void verifySelectedRecordDirectOperations() {
         require(word0 == 0xf0440308u || (TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && compiled.result->imageTableFaults == 0u && TableCovered(compiled.regions, &heap[2], sizeof(heap[2]))), (what + " through a T# whose record the CPU evaluates was not bound from its record").c_str());
         const auto wholeCode = WithImageOperation(TableWholeCode, word0, false);
         const auto whole = GetResourcePlan(TableRequest(wholeCode, userData));
-        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == (word0 == 0xf0200f08u || word0 == 0xf0440108u || word0 == 0xf0440308u ? TableOperation::Supported : TableOperation::Unsupported), (what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
+        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == TableOperation::Supported,(what + " through a T# keyed per lane left the image table or has the wrong table operation").c_str());
     }
     const auto mixedCode = WithImageOperation(TableSrtKeyCode, 0xf0200f08u, true);
     const auto mixed = GetResourcePlan(TableRequest(mixedCode, userData));
