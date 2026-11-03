@@ -154,7 +154,7 @@ AvcPictureInfo queryAvc(const OutputInfo& output) {
     return typed.info;
 }
 
-void checkUnprojected(const OutputInfo& output, std::uint64_t size) {
+void checkUnprojected(const OutputInfo& output, std::uint64_t size, bool requireRefusal = false) {
     alignas(8) std::array<std::uint8_t, 0xc8> initial;
     initial.fill(0x5a);
     std::memcpy(initial.data(), &size, sizeof(size));
@@ -168,6 +168,7 @@ void checkUnprojected(const OutputInfo& output, std::uint64_t size) {
             else sceVideodec2GetAvcPictureInfo_nid_postfix(&output, info, nullptr);
         });
         check(std::equal(bytes.begin() + static_cast<std::ptrdiff_t>(size), bytes.end(), cleared.begin() + static_cast<std::ptrdiff_t>(size)), "AVC picture info crossed its declared size");
+        check(!requireRefusal || !completed, "an unsupported AVC picture info query completed");
         check(completed || bytes == cleared, "an AVC picture info query that threw changed more than its validity word");
     }
 }
@@ -784,7 +785,7 @@ void testAvcPictureMetadata() {
     check(decodeAll(66, otherSps, [&](const OutputInfo& output, std::size_t picture) {
         check(hash(output) == hashes[picture], "AVC picture " + std::to_string(picture) + " decodes differently after a PPS moved to an identical SPS 1");
         if (picture < 2) check(avcFields(queryAvc(output)) == avcFields(plain[picture]), "AVC picture " + std::to_string(picture) + " before a PPS moved to another SPS differs");
-        else checkUnprojected(output, sizeof(AvcPictureInfo));
+        else checkUnprojected(output, sizeof(AvcPictureInfo), true);
     }) == ippp.size(), "AVC pictures after a PPS moved to another SPS are missing");
 }
 
