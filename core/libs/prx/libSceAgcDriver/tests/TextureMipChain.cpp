@@ -423,7 +423,7 @@ void TestClearedMipRanges(const Context& context, TextureDetiler& detiler) {
         clearRecords();
         VkClearColorValue clear{};
         clear.float32[0] = 0.5f;
-        const auto texture = std::make_shared<Texture>(context, detiler, descriptor, VkComponentMapping{}, std::span<const std::byte>{}, false, &clear);
+        const auto texture = std::make_shared<Texture>(context, detiler, descriptor, VkComponentMapping{}, std::span<const std::byte>{}, false, false, &clear);
         Require(mock.images.size() == 1u, "a sampled GPU clear did not create exactly one image");
         const auto [image, info] = *mock.images.begin();
         Require(info.mipLevels == expected, "a sampled GPU clear allocated the wrong mip count");
