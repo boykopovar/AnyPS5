@@ -9062,8 +9062,8 @@ bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
     const auto decided = PrepareImportWatch(base);
 #ifndef _WIN32
     const auto probe = ProbeImportWriteProtection(base);
-    if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0) {
-        std::cout << "the device reports watched host memory written when it imports or reads it: refreshes over a pending key store not tested\n";
+    if (probe.failure != nullptr || probe.writtenAfterSubmit != 0) {
+        std::cout << "the device reports watched host memory written after a GPU read: refreshes over a pending key store not tested\n";
         return false;
     }
 #endif
