@@ -898,7 +898,8 @@ void FailKeep(Scene& scene, const KeepFailure& failure) {
 }
 
 void CompleteHeldBatch(Scene& scene) {
-    const std::array<std::uint32_t, 4> pattern{};
+    static std::uint32_t completions = 0;  // a new pattern each time: main elides a repeated fill of the same pattern, which would record nothing
+    const std::array<std::uint32_t, 4> pattern{++completions, 0, 0, 0};
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         Require(scene.device.FillBuffer(scene.spare.Address(), 16, pattern), "address draw space reuse: the fill that completes the held batch was not recorded on the GPU");
