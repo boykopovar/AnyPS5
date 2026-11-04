@@ -1,4 +1,4 @@
-#include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/CaseMapping.hpp"
 #include "prx/libc/include/General.hpp"
 #include "ucase.h"
 #include "ucasemap_imp.h"

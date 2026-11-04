@@ -1,4 +1,4 @@
-#include "prx/libSceIcu/libSceIcu.hpp"
+#include "prx/libSceIcu/Properties.hpp"
 #include "prx/libc/include/General.hpp"
 #include "unicode/uchar.h"
 #include "uprops.h"
