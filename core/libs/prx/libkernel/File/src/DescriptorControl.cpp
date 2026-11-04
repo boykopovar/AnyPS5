@@ -118,6 +118,7 @@ struct Entry {
     bool closeOnExec = false;
     std::shared_ptr<int> status;
     bool pipe = false;
+    bool fixedSizeWrites = false;
 };
 
 std::mutex g_mutex;
@@ -147,7 +148,8 @@ const char* KindName(Kind kind) {
 
 #ifdef _WIN32
 std::optional<Kind> Classify(int fd, const char* function) {
-    if (fd < 0 || !DescriptorIsOpen_nid_no_patch(fd)) return std::nullopt;
+    if (fd < 0 || (!GuestSockets::IsOpen(fd) && !DescriptorIsOpen_nid_no_patch(fd))) return std::nullopt;
+    if (GuestSockets::IsOpen(fd)) return Kind::Socket;
     if (File::IsDirectoryDescriptor(fd)) return Kind::Directory;
     if (File::IsRandomDevice(fd)) return Kind::RandomDevice;
     if (File::IsArchivedFile(fd)) return Kind::ArchivedFile;
@@ -160,6 +162,7 @@ std::optional<Kind> Classify(int fd, const char* function) {
 }
 
 int AccessMode(int fd, const char* function) {
+    if (GuestSockets::IsOpen(fd)) return ReadWrite;
     return WindowsDescriptorAccess_nid_no_patch(WindowsDescriptorHandle_nid_no_patch(fd), fd, function);
 }
 
@@ -220,6 +223,12 @@ int Readable(int fd, Kind kind, const char* function) {
         if (size < 0 || offset < 0)
             throw std::runtime_error(std::string(function) + ": cannot read the size and offset of descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
         return static_cast<int>(size - offset);
+    }
+    if (kind == Kind::Socket) {
+        std::int64_t data = 0;
+        bool eof = false;
+        GuestSockets::Ready(fd, false, &data, &eof);
+        return static_cast<int>(data);
     }
     if (AccessMode(fd, function) == WriteOnly) return 0;
     DWORD available = 0;
@@ -301,7 +310,11 @@ std::optional<Kind> Classify(int fd, const char* function) {
     if (S_ISFIFO(status.st_mode)) return Kind::Pipe;
     if (S_ISCHR(status.st_mode)) return Kind::Device;
     if (S_ISSOCK(status.st_mode)) return Kind::Socket;
+#ifdef __linux__
+    return std::nullopt;
+#else
     throw std::runtime_error(std::string(function) + ": descriptor " + std::to_string(fd) + " is neither a file, a directory, a pipe, a socket nor a character device");
+#endif
 }
 
 int HostStatus(int fd, const char* function) {
@@ -567,18 +580,16 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         return 0;
     }
     if (command == NonblockingRequest) {
-        const bool enable = *static_cast<const int*>(argument) != 0;
-        return ChangeStatus(fd, *kind, Nonblocking, enable ? Nonblocking : 0, "ioctl");
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
+        return ChangeStatus(fd, *kind, Nonblocking, enable != 0 ? Nonblocking : 0, "ioctl");
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
         if (*kind != Kind::File && *kind != Kind::Pipe && *kind != Kind::Socket && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
         const auto archived = File::ArchivedFileRemaining(fd);
         const int available = archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max())) : Readable(fd, *kind, "ioctl");
-        if (argument == nullptr) return Fail(GuestEfault);
-        const GuestArena::HostWrite destination(argument, sizeof(available));
-        if (!destination.Open()) return Fail(GuestEfault);
-        std::memcpy(argument, &available, sizeof(available));
+        if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
         return 0;
     }
     if (((command >> 8) & 0xff) == TerminalGroup) return Fail(GuestEnotty);
@@ -587,9 +598,9 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
     Unsupported("ioctl", std::string("request ") + hex, *kind, fd);
 }
 
-void RememberDescriptor(int fd, int openFlags) {
+void RememberDescriptor(int fd, int openFlags, bool fixedSizeWrites) {
     std::lock_guard lock(g_mutex);
-    g_entries[fd] = Entry{(openFlags & OpenCloseOnExec) != 0, std::make_shared<int>(openFlags & OpenStatusFlags)};
+    g_entries[fd] = Entry{.closeOnExec = (openFlags & OpenCloseOnExec) != 0, .status = std::make_shared<int>(openFlags & OpenStatusFlags), .fixedSizeWrites = fixedSizeWrites};
 #ifdef _WIN32
     GuestFileLockForget_nid_no_patch(fd);
 #endif
@@ -604,8 +615,9 @@ void RememberPipe(int fd) {
 void ShareDescriptor(int from, int to) {
     File::ShareArchivedFile(from, to);
     std::lock_guard lock(g_mutex);
-    const auto& source = Materialize(from);
-    g_entries[to] = Entry{false, source.status, source.pipe};
+    auto copy = Materialize(from);
+    copy.closeOnExec = false;
+    g_entries[to] = std::move(copy);
 #ifdef _WIN32
     File::SharePositionedTransfer(from, to);
     GuestFileLockShare_nid_no_patch(from, to);
@@ -616,6 +628,12 @@ void ForgetDescriptor(int fd) {
     File::ForgetArchivedFile(fd);
     std::lock_guard lock(g_mutex);
     g_entries.erase(fd);
+}
+
+bool HasFixedSizeWrites(int fd) {
+    std::lock_guard lock(g_mutex);
+    const auto found = g_entries.find(fd);
+    return found != g_entries.end() && found->second.fixedSizeWrites;
 }
 
 std::uint64_t g_synchronousWrites = 0;
@@ -655,7 +673,7 @@ bool GrantsAccess(int fd, bool write) {
 }
 
 bool IsVnode(int fd) {
-    if (fd < 0 || File::IsRandomDevice(fd)) return false;
+    if (fd < 0 || File::IsRandomDevice(fd) || GuestSockets::IsOpen(fd)) return false;
     if (File::IsArchivedFile(fd)) return true;
 #ifdef _WIN32
     if (!DescriptorIsOpen_nid_no_patch(fd)) return false;

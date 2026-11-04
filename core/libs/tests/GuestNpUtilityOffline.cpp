@@ -234,6 +234,26 @@ void CheckWordFilterAsync() {
     sceNpWordFilterDeleteTitleCtx(context);
 }
 
+void CheckTitleContextsA() {
+    int lookups[32];
+    int created = 0;
+    while (created < 32) {
+        const int context = sceNpLookupCreateTitleCtxA(created == 0 ? -1 : 1);
+        if (context == TooManyObjects) break;
+        Require(context > 0 && context < WordFilterTitleCtxBase, "sceNpLookupCreateTitleCtxA", "a lookup context id was not returned");
+        lookups[created++] = context;
+    }
+    Require(created > 0, "sceNpLookupCreateTitleCtxA", "no context was created");
+    Require(sceNpLookupCreateTitleCtxA(1) == TooManyObjects, "sceNpLookupCreateTitleCtxA", "the 32-context limit was not applied");
+    Require(sceNpLookupCreateTitleCtx(selfNpId) == TooManyObjects, "sceNpLookupCreateTitleCtxA", "the A contexts do not share the lookup limit");
+    for (int index = 0; index < created; ++index) Require(sceNpLookupDeleteTitleCtx(lookups[index]) == 0, "sceNpLookupCreateTitleCtxA", "an A context could not be deleted");
+
+    const int filter = sceNpWordFilterCreateTitleCtxA(-1);
+    Require(filter > WordFilterTitleCtxBase, "sceNpWordFilterCreateTitleCtxA", "a word filter context id was not returned");
+    Require(sceNpLookupDeleteTitleCtx(filter) == InvalidId, "sceNpWordFilterCreateTitleCtxA", "the context was created among the lookup contexts");
+    Require(sceNpWordFilterDeleteTitleCtx(filter) == 0, "sceNpWordFilterCreateTitleCtxA", "the context could not be deleted");
+}
+
 int main() {
     std::memset(selfNpId, 0, sizeof(selfNpId));
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
@@ -243,6 +263,7 @@ int main() {
     CheckWordFilter();
     CheckLookupAsync();
     CheckWordFilterAsync();
+    CheckTitleContextsA();
     if (failures != 0) return 1;
     std::puts("NpUtility offline tests passed");
     return 0;
