@@ -242,18 +242,22 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
     std::uint64_t nextClobberEpoch = order.size() + 2u;
     std::vector<std::uint64_t> firstClobber(order.size(), 0u);
     std::vector<std::uint64_t> lastClobber(order.size(), 0u);
+    bool hasClobber = false;
     for (std::size_t position = 0; position < order.size(); ++position) {
         firstClobber[position] = nextClobberEpoch;
         for (const auto* inst : order[position]->Instructions()) {
-            if (ClobbersReadConst(inst->Opcode())) lastClobber[position] = nextClobberEpoch++;
+            if (ClobbersReadConst(inst->Opcode())) {
+                lastClobber[position] = nextClobberEpoch++;
+                hasClobber = true;
+            }
         }
     }
-    std::vector<std::uint64_t> entryEpoch(order.size(), 0u);
+    std::vector<std::uint64_t> entryEpoch(order.size(), hasClobber ? 0u : 1u);
     const auto exitEpoch = [&](std::size_t position) -> std::uint64_t {
         if (entryEpoch[position] == 0u) return 0u;
         return lastClobber[position] != 0u ? lastClobber[position] : entryEpoch[position];
     };
-    for (bool changed = true; changed;) {
+    for (bool changed = hasClobber; changed;) {
         changed = false;
         for (std::size_t position = 0; position < order.size(); ++position) {
             std::uint64_t candidate = position == 0u ? 1u : 0u;

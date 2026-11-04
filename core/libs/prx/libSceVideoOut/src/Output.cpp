@@ -17,6 +17,7 @@
 
 static constexpr std::uint32_t VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD = 0x00FF0000;
 static constexpr std::size_t VIDEO_OUT_OUTPUT_OPTIONS_FREE_WORD = 3;
+static constexpr int VIDEO_OUT_ERROR_0x8029001C = -2144796644;
 
 static VideoOutOutputStatus outputStatus(const auto& cfg) {
     VideoOutOutputStatus status{};
@@ -24,7 +25,7 @@ static VideoOutOutputStatus outputStatus(const auto& cfg) {
     const bool hdr = AgcDriver::CurrentHostHdr().available;
     status.dynamicRange = hdr ? VIDEO_OUT_DYNAMIC_RANGE_HDR : VIDEO_OUT_DYNAMIC_RANGE_SDR;
     status.refreshRate = (cfg.outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
-    status.flags = hdr ? VIDEO_OUT_OUTPUT_STATUS_FLAG_HDR : 0;
+    status.flags = 0;
     return status;
 }
 
@@ -242,6 +243,29 @@ int APS5_VABI sceVideoOutIsFlipPending(int handle) try {
     LibcAwaitExit_nid_postfix();
 }
 
+static bool isFreshHandle(int handle) {
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::unique_lock lock(cfg->mutex);
+    cfg->Check();
+    return !cfg->buffersEverRegistered;
+}
+
+int APS5_VABI sceVideoOutSetFlipMaster(std::int32_t handle, std::int32_t masterHandle) try {
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if ((masterHandle == 0 || masterHandle == 1) && isFreshHandle(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    NotImplemented_nid_no_patch(__func__);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutClearFlipMaster(std::int32_t handle) try {
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (isFreshHandle(handle)) return VIDEO_OUT_ERROR_0x8029001C;
+    NotImplemented_nid_no_patch(__func__);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 static int cursorHandleError(const char* function, int handle, int index) {
     if (index != 0) NotImplemented_nid_no_patch(function);
     if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
@@ -272,6 +296,13 @@ int APS5_VABI sceVideoOutCursorSetImageAddress(int32_t handle, int32_t index, co
 }
 
 int APS5_VABI sceVideoOutCursorSetPosition(int32_t handle, int32_t index, uint32_t, uint32_t) try {
+    if (const int error = cursorHandleError(__func__, handle, index)) return error;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutCursorSet2xMagnify(int32_t handle, int32_t index, bool) try {
     if (const int error = cursorHandleError(__func__, handle, index)) return error;
     return 0;
 } catch (const ProcessShutdown&) {

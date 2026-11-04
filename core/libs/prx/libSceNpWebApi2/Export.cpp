@@ -1,3 +1,4 @@
+#include "prx/libSceNpWebApi2/include/InventoryExports.hpp"
 #include "prx/libSceNpWebApi2/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -8,6 +9,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpWebApi2/include/Firmware320Exports.hpp"
 
 // The PSN web API has no service behind it: handles can be created, but requests fail.
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80553402);
@@ -39,6 +42,15 @@ struct PushHandle {
 static std::unordered_map<int, PushHandle> pushHandles;
 
 extern "C" {
+
+int APS5_VABI sceNpWebApi2IntGlobalPush2Initialize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpWebApi2IntGlobalPush2Terminate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceNpWebApi2AbortRequest(int64_t request_id) {
     (void)request_id;
@@ -283,5 +295,29 @@ int APS5_VABI sceNpWebApi2SetMultipartContentType() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpWebApi2Unknown_4N85o28Ifbk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4N85o28Ifbk", libSceNpWebApi2Unknown_4N85o28Ifbk_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_A9IoYzANK3M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("A9IoYzANK3M", libSceNpWebApi2Unknown_A9IoYzANK3M_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_lylvdXiq1UE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lylvdXiq1UE", libSceNpWebApi2Unknown_lylvdXiq1UE_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_qaMcX2_plus_6ZiA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qaMcX2+6ZiA", libSceNpWebApi2Unknown_qaMcX2_plus_6ZiA_nid_no_patch);
 
 }
