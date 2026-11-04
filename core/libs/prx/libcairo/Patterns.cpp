@@ -61,7 +61,7 @@ CairoPattern* Create(int type, const double (&geometry)[6]) {
     if (pattern == nullptr)
         return NilPattern();
     pattern->type = type;
-    pattern->extend = CairoExtendPad;
+    pattern->extend = type == CairoPatternTypeMesh ? 0 : CairoExtendPad;
     pattern->filter = CairoFilterGood;
     for (int i = 0; i < 6; ++i)
         pattern->geometry[i] = geometry[i];
@@ -89,9 +89,149 @@ double Restrict(double value) {
     }
 }
 
+constexpr int kPathI[12]{0, 0, 0, 0, 1, 2, 3, 3, 3, 3, 2, 1};
+constexpr int kPathJ[12]{0, 1, 2, 3, 3, 3, 3, 2, 1, 0, 0, 0};
+constexpr int kControlI[4]{1, 1, 2, 2};
+constexpr int kControlJ[4]{1, 2, 2, 1};
+
+CairoPattern* Mesh(CairoPattern* pattern) {
+    if (!pattern || pattern->status != CairoStatusSuccess) return nullptr;
+    if (pattern->type != CairoPatternTypeMesh) {
+        SetError(pattern, CairoStatusPatternTypeMismatch);
+        return nullptr;
+    }
+    return pattern;
+}
+
+CairoMeshPoint& PathPoint(CairoMeshPatch& patch, int index) {
+    return patch.points[kPathI[index]][kPathJ[index]];
+}
+
+void CalculateControlPoint(CairoMeshPatch& patch, int corner) {
+    const int row = kControlI[corner];
+    const int column = kControlJ[corner];
+    CairoMeshPoint* p[3][3]{};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            p[i][j] = &patch.points[row ^ i][column ^ j];
+    p[0][0]->x = (-4 * p[1][1]->x + 6 * (p[1][0]->x + p[0][1]->x) -
+                  2 * (p[1][2]->x + p[2][1]->x) + 3 * (p[2][0]->x + p[0][2]->x) -
+                  p[2][2]->x) * (1. / 9);
+    p[0][0]->y = (-4 * p[1][1]->y + 6 * (p[1][0]->y + p[0][1]->y) -
+                  2 * (p[1][2]->y + p[2][1]->y) + 3 * (p[2][0]->y + p[0][2]->y) -
+                  p[2][2]->y) * (1. / 9);
+}
+
 }
 
 extern "C" {
+
+CairoPattern* APS5_VABI cairo_pattern_create_mesh() {
+    const double geometry[6]{};
+    return Create(CairoPatternTypeMesh, geometry);
+}
+
+void APS5_VABI cairo_mesh_pattern_begin_patch(CairoPattern* pattern) {
+    if (!Mesh(pattern)) return;
+    if (pattern->patchActive) {
+        SetError(pattern, CairoStatusInvalidMeshConstruction);
+        return;
+    }
+    try {
+        pattern->patches.emplace_back();
+    } catch (const std::bad_alloc&) {
+        SetError(pattern, CairoStatusNoMemory);
+        return;
+    } catch (const std::length_error&) {
+        SetError(pattern, CairoStatusNoMemory);
+        return;
+    }
+    pattern->patchActive = true;
+    pattern->currentSide = -2;
+    for (bool& hasColor : pattern->hasColor) hasColor = false;
+}
+
+void APS5_VABI cairo_mesh_pattern_move_to(CairoPattern* pattern, double x, double y) {
+    if (!Mesh(pattern)) return;
+    if (!pattern->patchActive || pattern->currentSide >= 0) {
+        SetError(pattern, CairoStatusInvalidMeshConstruction);
+        return;
+    }
+    pattern->currentSide = -1;
+    pattern->patches.back().points[0][0] = {x, y};
+}
+
+void APS5_VABI cairo_mesh_pattern_curve_to(CairoPattern* pattern, double x1, double y1,
+                                           double x2, double y2, double x3, double y3) {
+    if (!Mesh(pattern)) return;
+    if (!pattern->patchActive || pattern->currentSide == 3) {
+        SetError(pattern, CairoStatusInvalidMeshConstruction);
+        return;
+    }
+    if (pattern->currentSide == -2)
+        cairo_mesh_pattern_move_to(pattern, x1, y1);
+    ++pattern->currentSide;
+    auto& patch = pattern->patches.back();
+    const int index = 3 * pattern->currentSide;
+    PathPoint(patch, index + 1) = {x1, y1};
+    PathPoint(patch, index + 2) = {x2, y2};
+    if (index + 3 < 12)
+        PathPoint(patch, index + 3) = {x3, y3};
+}
+
+void APS5_VABI cairo_mesh_pattern_line_to(CairoPattern* pattern, double x, double y) {
+    if (!Mesh(pattern)) return;
+    if (!pattern->patchActive || pattern->currentSide == 3) {
+        SetError(pattern, CairoStatusInvalidMeshConstruction);
+        return;
+    }
+    if (pattern->currentSide == -2) {
+        cairo_mesh_pattern_move_to(pattern, x, y);
+        return;
+    }
+    const CairoMeshPoint start = PathPoint(pattern->patches.back(), 3 * (pattern->currentSide + 1));
+    cairo_mesh_pattern_curve_to(pattern,
+                               (2 * start.x + x) * (1. / 3),
+                               (2 * start.y + y) * (1. / 3),
+                               (start.x + 2 * x) * (1. / 3),
+                               (start.y + 2 * y) * (1. / 3), x, y);
+}
+
+void APS5_VABI cairo_mesh_pattern_set_corner_color_rgba(CairoPattern* pattern, unsigned int corner,
+                                                        double red, double green, double blue, double alpha) {
+    if (!Mesh(pattern)) return;
+    if (corner > 3) {
+        SetError(pattern, CairoStatusInvalidIndex);
+        return;
+    }
+    if (!pattern->patchActive) {
+        SetError(pattern, CairoStatusInvalidMeshConstruction);
+        return;
+    }
+    pattern->patches.back().colors[corner] = {Restrict(red), Restrict(green), Restrict(blue), Restrict(alpha)};
+    pattern->hasColor[corner] = true;
+}
+
+void APS5_VABI cairo_mesh_pattern_end_patch(CairoPattern* pattern) {
+    if (!Mesh(pattern)) return;
+    if (!pattern->patchActive || pattern->currentSide == -2) {
+        SetError(pattern, CairoStatusInvalidMeshConstruction);
+        return;
+    }
+    auto& patch = pattern->patches.back();
+    while (pattern->currentSide < 3) {
+        const CairoMeshPoint start = patch.points[0][0];
+        cairo_mesh_pattern_line_to(pattern, start.x, start.y);
+        const int corner = pattern->currentSide + 1;
+        if (corner < 4 && !pattern->hasColor[corner]) {
+            patch.colors[corner] = patch.colors[0];
+            pattern->hasColor[corner] = true;
+        }
+    }
+    for (int i = 0; i < 4; ++i)
+        CalculateControlPoint(patch, i);
+    pattern->patchActive = false;
+}
 
 CairoPattern* APS5_VABI cairo_pattern_create_linear(double x0, double y0, double x1, double y1) {
     const double geometry[6] = {x0, y0, x1, y1, 0.0, 0.0};
