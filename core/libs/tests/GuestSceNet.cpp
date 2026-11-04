@@ -788,6 +788,9 @@ static void CheckRejectedArguments() {
         Require(std::memcmp(mac.data, untouched.data(), untouched.size()) == 0);
     }
     Require(Failed(sceNetGetMacAddress(nullptr, 1), 22));
+    Require(Failed(sceNetGetMacAddress(reinterpret_cast<NetEtherAddr*>(std::uintptr_t{0x10}), 0), 14));
+    Require(sceNetGetMacAddress(&mac, 0) == 0);
+    Require(std::memcmp(mac.data, "\x02\x50\x53\x35\x00\x01", sizeof(mac.data)) == 0);
 
     for (const int flags : {1, 0x10000, -1}) Require(Failed(sceNetResolverCreate("rejected-resolver", 0, flags), 22));
 
@@ -1175,7 +1178,9 @@ static void CheckIoctl() {
     Require(sceNetRecv(socket, buffer, sizeof(buffer), 0) == sizeof(payload));
     Require(sceNetIoctl(socket, 0x4004667f, &readable) == 0 && readable == 0);
     Require(Failed(sceNetIoctl(socket, 0x8004667e, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x8004667e, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetIoctl(socket, 0x4004667f, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x4004667f, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetIoctl(socket, 123, &readable), 25));
     Require(Failed(sceNetIoctl(socket, 123, nullptr), 25));
     Require(sceNetSocketClose(socket) == 0);
@@ -1551,8 +1556,8 @@ static void CheckTcpNoDelay() {
     Require(sceNetGetsockopt(stream, 6, 1, &value, &size) == 0 && value == 4);
     Require(setsockopt_nid_postfix(stream, 6, 1, &off, sizeof(off)) == 0);
     Require(sceNetGetsockopt(stream, 6, 1, &value, &size) == 0 && value == 0);
-    Require(Failed(sceNetSetsockopt(stream, 6, 2, &on, sizeof(on)), 42));
-    Require(Failed(sceNetGetsockopt(stream, 6, 2, &value, &size), 42));
+    Require(Failed(sceNetSetsockopt(stream, 6, 0x7777, &on, sizeof(on)), 42));
+    Require(Failed(sceNetGetsockopt(stream, 6, 0x7777, &value, &size), 42));
     Require(Failed(sceNetSetsockopt(datagram, 6, 1, &on, sizeof(on)), 22));
     Require(Failed(sceNetGetsockopt(datagram, 6, 1, &value, &size), 22));
     Require(Failed(sceNetSetsockopt(datagram, 6, 2, &on, sizeof(on)), 22));
@@ -2113,14 +2118,35 @@ static void CheckSockInfo() {
     const int inet6 = sceNetSocket("sockinfo-inet6", 28, 2, 17);
     Require(inet6 >= 0 ? Failed(sceNetGetSockInfo(inet6, record.data(), 1, 0), 47) : *sceNetErrnoLoc() == 47);
     Require(std::all_of(record.begin(), record.end(), [](auto byte) { return byte == 0xa5; }));
+    const int kernel = socket_nid_postfix(2, 2, 0);
+    std::array<std::uint8_t, 16> kernelAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(kernel >= 0 && bind_nid_postfix(kernel, kernelAddress.data(), kernelAddress.size()) == 0);
+    size = kernelAddress.size();
+    Require(getsockname_nid_postfix(kernel, kernelAddress.data(), &size) == 0 && size == 16);
+    std::array<std::uint8_t, 0xa0> kernelRecord;
+    kernelRecord.fill(0xa5);
+    Require(sceNetGetSockInfo(kernel, kernelRecord.data(), 1, 0) == 1);
+    std::array<std::uint8_t, 0xa0> kernelExpected{};
+    std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
+    kernelExpected[0x28] = 2;
+    std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
+    std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
+    kernelExpected[0x48] = 1;
+    std::memcpy(kernelExpected.data() + 0x64, kernelRecord.data() + 0x64, 8);
+    Require(std::equal(kernelExpected.begin(), kernelExpected.end(), kernelRecord.begin()));
+    std::int32_t kernelBuffers[2] = {};
+    std::memcpy(kernelBuffers, kernelRecord.data() + 0x64, sizeof(kernelBuffers));
+    Require(kernelBuffers[0] > 0 && kernelBuffers[1] > 0);
     std::vector<int> expected = earlier;
-    expected.insert(expected.end(), {datagram, listener, client, accepted});
+    expected.insert(expected.end(), {datagram, listener, client, accepted, kernel});
     std::sort(expected.begin(), expected.end());
     Require(RequireSockInfoList(0) == expected && RequireSockInfoList(0x40) == expected);
     Require(sceNetGetSockInfo(datagram, record.data(), 1, 0x40) == 1 && std::equal(configured.begin(), configured.end(), record.begin()));
     if (inet6 >= 0) Require(sceNetSocketClose(inet6) == 0);
     for (const int descriptor : {accepted, client, listener, datagram}) Require(sceNetSocketClose(descriptor) == 0);
     Require(Failed(sceNetGetSockInfo(datagram, record.data(), 1, 0), 9));
+    Require(close_nid_postfix(kernel) == 0);
+    Require(Failed(sceNetGetSockInfo(kernel, record.data(), 1, 0), 9));
     Require(RequireSockInfoList(0) == earlier);
 }
 
@@ -2805,6 +2831,7 @@ int main() {
     Require(sceNetResolverAbort(other, 0) == static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9);
     Require(sceNetResolverAbort(-1, 1) == static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9);
     Require(sceNetResolverGetError(resolver, nullptr) == static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
+    Require(Failed(sceNetResolverGetError(resolver, reinterpret_cast<int*>(std::uintptr_t{0x10})), 14));
     Require(sceNetClearDnsCache(0) == 0);
     ipv4.fill(0xA5);
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0 && ipv4[0] == 127);
