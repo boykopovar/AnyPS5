@@ -259,9 +259,14 @@ void testPs4Buffers() {
         rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, index, &changed); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
     }
     rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 3, &changed); }, "VIDEO_OUT_ERROR_INVALID_INDEX");
-    rejected([&] { sceVideoOutSubmitChangeBufferAttribute(handle, 0, nullptr); }, "VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    for (int index : {0, 1, 3, -1, VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX}) {
+        check(sceVideoOutSubmitChangeBufferAttribute(handle, index, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "the legacy change checked its index before a null attribute");
+        unchanged();
+    }
     for (int invalid : {-1, 0, VIDEO_OUT_NUM_MAX}) {
-        check(sceVideoOutSubmitChangeBufferAttribute(invalid, -1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "the legacy change checked arguments before its handle");
+        check(sceVideoOutSubmitChangeBufferAttribute(invalid, -1, &changed) == VIDEO_OUT_ERROR_INVALID_HANDLE, "the legacy change checked arguments before its handle");
+        unchanged();
+        check(sceVideoOutSubmitChangeBufferAttribute(invalid, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "the legacy change checked its handle before a null attribute");
         unchanged();
     }
     for (int field = 0; field < 3; ++field) {

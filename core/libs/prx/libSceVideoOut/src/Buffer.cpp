@@ -234,14 +234,12 @@ int APS5_VABI sceVideoOutRegisterBuffers(int handle, int bufferIndexStart, void*
 }
 
 int APS5_VABI sceVideoOutSubmitChangeBufferAttribute(int handle, int setIndex, const VideoOutBufferAttribute* attribute) try {
+    if (attribute == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     auto& driver = VideoOutDriver::Get();
     if (!driver.HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     auto cfg = driver.GetConfig(handle);
     if (setIndex < 0 || setIndex >= VIDEO_OUT_BUFFER_ATTRIBUTE_NUM_MAX) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_INDEX");
-    }
-    if (attribute == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
