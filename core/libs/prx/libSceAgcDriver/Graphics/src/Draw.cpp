@@ -2439,10 +2439,10 @@ struct StagedWrite {
 };
 
 struct RecordedDraw {
-    Recorder* recorder = nullptr;
-    std::shared_ptr<ShaderResources> resources;
+    const std::shared_ptr<ShaderResources>& resources;
     std::shared_ptr<Pipeline> pipeline;
     std::shared_ptr<Framebuffer> framebuffer;
+    Recorder* recorder = nullptr;
     std::span<const VkImageView> targetViews;
     std::vector<std::shared_ptr<StorageTexture>> targets;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> targetSlices;
@@ -3092,7 +3092,7 @@ std::shared_ptr<Pipeline> shapePipeline(const Context& context, std::uint64_t sh
     for (const auto& choice : entry->choices) {
         if (!sameChoice(choice, input, layouts, shaders, attachmentLayout, fragmentOutputs)) continue;
         const auto hash = choice.hash;
-        const auto expected = choice.pipeline;
+        const auto& expected = choice.pipeline;
         return TouchCachedPipeline(context, hash, expected);
     }
     return nullptr;
@@ -3617,12 +3617,9 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     const auto& reorderPass = prepared.reorderPass;
     const auto& depthLocations = prepared.depthLocations;
     if (lean) {
-        RecordedDraw record;
+        RecordedDraw record{resources, pipeline, framebuffer};
         record.recorder = recorder;
-        record.resources = resources;
         record.moved = resolved.moved;
-        record.pipeline = pipeline;
-        record.framebuffer = framebuffer;
         record.targetViews = targetViews;
         record.targets = owners;
         for (const auto& binding : targets) record.targetSlices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u);
@@ -4181,12 +4178,9 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     }
     timer.phase(PhasePipeline);
     const auto recordStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    RecordedDraw record;
+    RecordedDraw record{resources, std::move(pipeline), std::move(framebuffer)};
     record.recorder = recorder;
     record.completion = outcome.completion;
-    record.resources = std::move(resources);
-    record.pipeline = std::move(pipeline);
-    record.framebuffer = std::move(framebuffer);
     record.targetViews = recipe.targetViews;
     record.targets = std::move(targets);
     for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
