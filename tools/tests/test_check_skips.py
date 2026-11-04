@@ -1,6 +1,7 @@
 from pathlib import Path
 import contextlib
 import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,20 +20,33 @@ LIMITATIONS = [
     "skipped, the device lacks VK_EXT_shader_stencil_export",
     "skipped, the device does not import guest memory",
     "skipped, the device imports no host memory",
+    "skipped, the device imports shared memory through host pointers, so no run list was bound",
     "skipped, the device flushes f64 subnormals without DenormPreserve",
     "skipped, the device binds fewer than 8 storage buffers per stage or set",
     "skipped, no usable Vulkan device: ErrorInitializationFailed",
     "skipped, unit shadows or host imports are unavailable",
     "skipped, the device has no compute queue",
+    "skipped, not enough free disk space for a file of more than 2 GiB",
     "skipped, the device reports 4 lanes",
     "skipped, subgroup size 8",
     "skipped, no display",
+    "skipped, the host has not enough free disk space for a file of more than 2 GiB",
+    "skipped, the host cannot allocate a buffer of more than 2 GiB",
+]
+
+HOST_LIMITATIONS = [
+    "skipping: not enough free disk space for a file of more than 2 GiB",
+    "skipping: cannot allocate a buffer of more than 2 GiB",
 ]
 
 OTHER = [
     "skipped, flaky",
     "skipped, APS5_RAYTRACING replaces the node",
     "skipped, interpolation modes require",
+    "skipped, the host imports shared memory through host pointers",
+    "skipped, the device imports shared memory successfully; skipped because flaky",
+    "skipped, the device imports shared memory",
+    "skipped, the device imports shared memory through host pointersX",
 ]
 
 
@@ -236,6 +250,12 @@ class CheckSkipsTests(unittest.TestCase):
         for message in LIMITATIONS:
             with self.subTest(message=message):
                 self.assertTrue(check_skips.DEVICE_LIMITATION.search(message))
+
+    def test_host_limitations_match(self):
+        for message in HOST_LIMITATIONS:
+            with self.subTest(message=message):
+                self.assertTrue(check_skips.HOST_LIMITATION.search("skipped, Skipped\n" + message + "\n"))
+        self.assertFalse(check_skips.HOST_LIMITATION.search("skipping: not enough free disk space for a file of 1 MiB"))
 
     def test_other_reasons_do_not_match(self):
         for message in OTHER:
@@ -461,6 +481,7 @@ class SkipReportTests(unittest.TestCase):
 
 
 class NotRunTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ctest"), "CTest is required to write a real JUnit report")
     def test_real_notrun_case_is_rejected_before_windows_agc_exemption(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

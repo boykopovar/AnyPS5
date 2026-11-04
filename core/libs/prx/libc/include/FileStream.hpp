@@ -116,6 +116,7 @@ class FileStream {
     bool guestError = false;
     bool randomDevice = false;
     bool directory = false;
+    std::atomic<int> _orientation{0};
     char16_t lowSurrogate = 0;
     unsigned pushedBack = 0;
     FileStream* _nextStream_nid_no_patch = nullptr;
@@ -193,6 +194,13 @@ public:
         return LoadHandleAtomic_nid_no_patch() != nullptr;
     }
 
+    int Orientation(int mode) {
+        if (mode == 0) return _orientation.load(std::memory_order_relaxed);
+        int expected = 0;
+        _orientation.compare_exchange_strong(expected, mode > 0 ? 1 : -1, std::memory_order_relaxed);
+        return _orientation.load(std::memory_order_relaxed);
+    }
+
     bool IsDynamic() const {
         return _dynamic;
     }
@@ -208,6 +216,7 @@ public:
     }
 
     void Detach() {
+        _orientation.store(0, std::memory_order_relaxed);
         StoreHandleAtomic_nid_no_patch(nullptr);
         _guest.flags = 0;
         _guest.descriptor = -1;
@@ -291,6 +300,7 @@ public:
         _guest = {};
         guestError = false;
         randomDevice = false;
+        _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
 #ifdef _WIN32
@@ -426,6 +436,17 @@ public:
 #endif
     }
 
+    bool OpenForReading() {
+#ifdef _WIN32
+        constexpr long UcrtReading = 0x0001;
+        constexpr long UcrtUpdate = 0x0004;
+        std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(GetHandle())->flags);
+        return (state.load() & (UcrtReading | UcrtUpdate)) != 0;
+#else
+        return true;
+#endif
+    }
+
     bool SwitchToReadingUnlocked() {
 #ifdef _WIN32
         constexpr long UcrtReading = 0x0001;
@@ -433,6 +454,12 @@ public:
         constexpr long UcrtUpdate = 0x0004;
         auto* native = GetHandle();
         std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(native)->flags);
+        if ((state.load() & (UcrtReading | UcrtUpdate)) == 0) {
+            errno = 9;
+            guestError = true;
+            SyncUnlockedStatus();
+            return false;
+        }
         if ((state.load() & (UcrtReading | UcrtUpdate)) != UcrtUpdate) return true;
         const bool switched = (state.load() & UcrtWriting) == 0 || ::_fflush_nolock(native) == 0;
         if (switched) state.fetch_or(UcrtReading);
@@ -535,6 +562,7 @@ public:
         StoreHandleAtomic_nid_no_patch(nullptr);
         _guest.flags = 0;
         _guest.descriptor = -1;
+        _orientation.store(0, std::memory_order_relaxed);
         lowSurrogate = 0;
         pushedBack = 0;
         DetachFileStreamAliasesForNative_nid_no_patch(this, native);
