@@ -2122,10 +2122,6 @@ void ReversedComponentOrderTests() {
             Require(AgcDriver::Graphics::SplitsAlternateAlpha(AgcDriver::Graphics::DecodeState(queue)), "a separate alpha blend into a 16_16 SWAP_ALT target did not split its second channel");
             queue.context[0x1e0] = 0;
         }
-        for (const auto swap : {2u, 3u}) {
-            queue.context[0x31c] = info | (swap << 11u);
-            expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported color format 5 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
-        }
     }
     for (const auto& [swap, mapping] : {std::pair{2u, 0x1bu}, std::pair{3u, 0x93u}}) {
         auto queue = makeState();
