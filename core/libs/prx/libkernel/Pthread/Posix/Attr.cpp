@@ -1,8 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
-#include <stdexcept>
-#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "../include/Pthread.hpp"
@@ -53,8 +51,7 @@ int APS5_VABI pthread_attr_getguardsize_nid_postfix(const PthreadAttr* attr, siz
 }
 
 int APS5_VABI pthread_attr_getinheritsched_nid_postfix(const PthreadAttr* attr, int* inherit_sched) {
-    if (!Valid(attr)) return PosixThread::GUEST_EINVAL;
-    if (!inherit_sched) throw std::runtime_error(std::string(__func__) + ": null output");
+    if (!Valid(attr) || !inherit_sched) return PosixThread::GUEST_EINVAL;
     *inherit_sched = (*attr)->_inheritsched;
     return 0;
 }

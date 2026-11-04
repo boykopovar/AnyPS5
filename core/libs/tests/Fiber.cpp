@@ -5,11 +5,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <xmmintrin.h>
 #ifdef _WIN32
 #include <windows.h>
+#endif
+#ifdef __APPLE__
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include <sys/mman.h>
 #endif
 
 using Entry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
@@ -268,6 +274,16 @@ void RunAttachedContext() {
     FiberInfo info{};
     info.size = sizeof(info);
     Require(sceFiberGetInfo(g_attached, &info) == 0 && info.addr_context == nullptr && info.size_context == 0, "fiber without a context reports none");
+    alignas(16) unsigned char notFiber[512] = {};
+    Require(sceFiberRename(nullptr, "renamed") == FiberErrorNull, "rename a null fiber");
+    Require(sceFiberRename(g_attached, nullptr) == FiberErrorNull, "rename to a null name");
+    Require(sceFiberRename(reinterpret_cast<FiberObject*>(notFiber), "renamed") == FiberErrorInvalid, "rename an object that is not a fiber");
+    Require(sceFiberRename(g_attached, "renamed") == 0, "rename a fiber");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strcmp(info.name, "renamed") == 0, "the new name is reported");
+    const std::string longName(FIBER_MAX_NAME_LENGTH + 8, 'n');
+    Require(sceFiberRename(g_attached, longName.c_str()) == 0, "rename to a long name");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strlen(info.name) == FIBER_MAX_NAME_LENGTH && longName.compare(0, FIBER_MAX_NAME_LENGTH, info.name) == 0, "a long name is cut at the limit");
+    Require(sceFiberRename(g_attached, "attached") == 0, "restore the fiber's name");
     Require(_sceFiberAttachContextAndRun(nullptr, g_attachedContext.data(), g_attachedContext.size(), 0, nullptr) == FiberErrorNull, "attach and run a null fiber");
     Require(_sceFiberAttachContextAndRun(g_attached, nullptr, g_attachedContext.size(), 0, nullptr) == FiberErrorInvalid, "attach a null context with a size");
     Require(_sceFiberAttachContextAndRun(g_attached, g_attachedContext.data(), 0, 0, nullptr) == FiberErrorRange, "attach a context without a size");
@@ -507,6 +523,34 @@ void RunContextlessOptions() {
     return result;
 }
 
+#ifdef __APPLE__
+std::uint64_t CollectedBytes(void* region, std::size_t bytes) {
+    std::uint64_t total = 0;
+    Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(region), bytes, [](void* count, std::uintptr_t begin, std::uintptr_t end) { *static_cast<std::uint64_t*>(count) += end - begin; }, &total), "collect the watched region");
+    return total;
+}
+
+void CheckContextLeavesWriteWatch() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) return;
+    constexpr std::size_t bytes = 64 * 1024;
+    void* region = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    Require(region != MAP_FAILED, "map the watched region");
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(region, bytes);
+    CollectedBytes(region, bytes);
+    Require(CollectedBytes(region, bytes) == 0, "an armed region reports no writes");
+    FiberStorage storage{};
+    auto* fiber = reinterpret_cast<FiberObject*>(&storage);
+    Require(_sceFiberInitializeImpl_nid_postfix(fiber, "watched", SmallEntry, 0, region, bytes, nullptr, 0) == 0, "initialize a fiber on the watched region");
+    Require(CollectedBytes(region, bytes) == bytes, "a fiber context is reported as written");
+    Require(CollectedBytes(region, bytes) == bytes, "a fiber context is not armed again while the fiber exists");
+    Require(sceFiberFinalize(fiber) == 0, "finalize the fiber");
+    CollectedBytes(region, bytes);
+    Require(CollectedBytes(region, bytes) == 0, "the region is armed again after the fiber is finalized");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(region, bytes);
+    munmap(region, bytes);
+}
+#endif
+
 }
 
 int main(int argc, char** argv) {
@@ -517,6 +561,9 @@ int main(int argc, char** argv) {
     }
     Require(argc == 1, "known test arguments");
     RunSmallContextFirst();
+#ifdef __APPLE__
+    CheckContextLeavesWriteWatch();
+#endif
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == FiberErrorPermission, "no fiber on the thread");
     Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), nullptr, 0) == 0, "initialize first");

@@ -51,7 +51,10 @@ int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const Pthre
 }
 
 int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr) {
-    return toPosix(scePthreadRwlockattrDestroy(attr));
+    if (attr && *attr == DESTROYED_RWLOCKATTR) throw std::runtime_error("pthread_rwlockattr_destroy: destroyed attr");
+    const int result = toPosix(scePthreadRwlockattrDestroy(attr));
+    *attr = DESTROYED_RWLOCKATTR;
+    return result;
 }
 
 int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr) {
@@ -77,7 +80,7 @@ int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr,
 }
 
 int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type) {
-    if (!attr || !*attr) throw std::runtime_error("pthread_rwlockattr_gettype_np: null attr");
+    if (!attr || !*attr || *attr == DESTROYED_RWLOCKATTR) throw std::runtime_error("pthread_rwlockattr_gettype_np: null attr");
     if (!type) throw std::runtime_error("pthread_rwlockattr_gettype_np: null type");
     *type = (*attr)->type;
     return 0;

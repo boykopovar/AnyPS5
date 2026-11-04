@@ -46,8 +46,8 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value="[]") as gh:
             self.assertEqual(pr_overlap.open_prs("topic/one&two"), {})
         gh.assert_called_once_with(
-            "api", "--paginate",
-            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100",
+            "api", "--include",
+            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100&page=1",
         )
 
     def test_single_page_preserves_author_head_and_dependencies(self):

@@ -69,6 +69,20 @@ def main():
         assert warning.returncode == 0, (warning.stdout, warning.stderr)
         assert "--windows was not specified" in warning.stderr, warning.stderr
         assert named_exe.read_bytes().startswith(b"\x7fELF"), "The filename must not select the output format"
+
+        padded = fixture()
+        padded[9:16] = bytes(range(1, 8))
+        source.write_bytes(padded)
+        idents = {}
+        for index, mode in enumerate(([], ["--linux-fixed-base", "0x800000"], ["--lazy-binding"])):
+            target = Path(directory) / f"padded{index}.elf"
+            result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(target)],
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 0, (mode, result.stdout, result.stderr)
+            ident = target.read_bytes()[:16]
+            if ident[7:] != bytes(9):
+                idents[" ".join(mode) or "default"] = ident.hex()
+        assert not idents, idents
     print("Linux load alignment test passed")
 
 
