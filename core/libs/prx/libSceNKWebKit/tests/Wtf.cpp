@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <source_location>
+#include <thread>
 
 namespace {
 
@@ -634,6 +635,130 @@ void TestUTFConversions() {
     Throws([&] { FromUTF8(U8(""), std::size_t(0x80000000)); });
 }
 
+void TestAtoms() {
+    const auto Add8 = &_ZN3WTF14AtomStringImpl3addEPKhj;
+    const auto Add16 = &_ZN3WTF14AtomStringImpl3addEPKDsj;
+    const auto Lookup8 = &_ZN3WTF14AtomStringImpl6lookUpEPKhj;
+    const auto Lookup16 = &_ZN3WTF14AtomStringImpl6lookUpEPKDsj;
+    const auto AddImpl = &_ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE;
+    const auto LookupImpl = &_ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE;
+    const auto AddPart = &_ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj;
+    const auto Literal = &_ZN3WTF14AtomStringImpl10addLiteralEPKcj;
+    const auto Static = &_ZN3WTF14AtomStringImpl3addEPKNS_10StringImpl16StaticStringImplE;
+    const auto Utf8 = &_ZN3WTF10AtomString16fromUTF8InternalEPKcS2_;
+    const auto UpperAtom = &_ZNK3WTF10AtomString23convertToASCIIUppercaseEv;
+    Check(!Lookup8(U8("atom"), 4).impl);
+    {
+        auto first = Add8(U8("atom"), 4);
+        auto second = Add16(u"atom", 4);
+        Check(first.impl == second.impl && (first.impl->hashAndFlags & 16));
+        Check(first.impl->hashAndFlags >> 8 == _ZNK3WTF10StringImpl14concurrentHashEv(first.impl));
+        Check(Lookup8(U8("atom"), 4).impl == first.impl);
+        Check(Lookup16(u"atom", 4).impl == first.impl);
+        auto ordinary = Create8(U8("atom"), 4);
+        Check(LookupImpl(*ordinary.impl).impl == first.impl);
+        Check(AddImpl(*ordinary.impl).impl == first.impl && !(ordinary.impl->hashAndFlags & 16));
+        std::thread other([&] {
+            Check(!Lookup8(U8("atom"), 4).impl);
+            auto own = Add8(U8("atom"), 4);
+            Check(own.impl != first.impl);
+        });
+        other.join();
+    }
+    Check(!Lookup8(U8("atom"), 4).impl);
+    {
+        auto direct = Add8(U8("direct"), 6);
+        _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(direct.impl, nullptr));
+        Check(!Lookup8(U8("direct"), 6).impl);
+    }
+    {
+        auto ordinary = Create16(u"adopt", 5);
+        auto adopted = AddImpl(*ordinary.impl);
+        Check(adopted.impl == ordinary.impl && ordinary.impl->refCount == 4);
+        Check(!(adopted.impl->hashAndFlags & 4));
+    }
+    Check(!Lookup8(U8("adopt"), 5).impl);
+    Check(!Add8(nullptr, 5).impl && !Add16(nullptr, 0).impl);
+    auto empty = Add8(U8(""), 0);
+    Check(empty.impl == Add16(u"", 0).impl && (empty.impl->refCount & 1));
+    Check(!Lookup8(U8(""), 0).impl && LookupImpl(*empty.impl).impl == empty.impl);
+    {
+        const unsigned char latin[] = {0xE9};
+        auto wide = Add16(u"\u00e9", 1);
+        Check((wide.impl->hashAndFlags & 4) && Add8(latin, 1).impl == wide.impl);
+        auto unicode = Add16(u"\u0100", 1);
+        Check(!(unicode.impl->hashAndFlags & 4));
+        const unsigned char embedded[] = {'a', 0, 'b'};
+        Check(Add8(embedded, 3).impl == Add16(u"a\0b", 3).impl);
+    }
+    static const unsigned char literal[] = "static atom";
+    StringImpl staticImpl{1, 11, literal, 4};
+    {
+        auto atom = Static(&staticImpl);
+        Check(atom.impl != &staticImpl && atom.impl->data == literal);
+        Check(staticImpl.refCount == 1 && staticImpl.hashAndFlags == 4);
+        Check(Literal(reinterpret_cast<const char*>(literal), 11).impl == atom.impl);
+    }
+    Check(!Lookup8(literal, 11).impl && !std::memcmp(literal, "static atom", 11));
+    static const char16_t wideLiteral[] = u"wide static";
+    StringImpl wideStatic{1, 11, wideLiteral, 0};
+    {
+        auto atom = Static(&wideStatic);
+        Check(atom.impl->data == wideLiteral && !(atom.impl->hashAndFlags & 4));
+        Check(Add16(wideLiteral, 11).impl == atom.impl);
+    }
+    {
+        auto atom = Literal("literal atom", 12);
+        Check(!std::memcmp(atom.impl->data, "literal atom", 12));
+    }
+    {
+        auto base = Create8(U8("abcdefghijklmnopqrstuvwx"), 24);
+        auto part = AddPart(base.impl, 1, 20);
+        Check((part.impl->hashAndFlags & 3) == 2 && base.impl->refCount == 4);
+        Text(part, "bcdefghijklmnopqrstu");
+        Check(Add8(U8("bcdefghijklmnopqrstu"), 20).impl == part.impl);
+        Check(AddPart(base.impl, 99, 1).impl == empty.impl);
+        Check(!AddPart(nullptr, 0, 1).impl);
+    }
+    Text(_ZN3WTF10AtomString6numberEi(std::numeric_limits<int>::min()), "-2147483648");
+    Text(_ZN3WTF10AtomString6numberEj(std::numeric_limits<unsigned>::max()), "4294967295");
+    Text(_ZN3WTF10AtomString6numberEm(std::numeric_limits<std::uint64_t>::max()), "18446744073709551615");
+    Text(_ZN3WTF10AtomString6numberEy(std::uint64_t(0)), "0");
+    {
+        auto number = Add8(U8("42"), 2);
+        Check(_ZN3WTF10AtomString6numberEi(42).impl == number.impl);
+    }
+    {
+        auto ascii = Utf8("utf8", nullptr);
+        Check(ascii.impl == Add8(U8("utf8"), 4).impl);
+        auto latin = Utf8("\xc3\xa9", nullptr);
+        Check(!(latin.impl->hashAndFlags & 4) && Add16(u"\u00e9", 1).impl == latin.impl);
+        auto emoji = Utf8("\xf0\x9f\x98\x80", nullptr);
+        Check(emoji.impl == Add16(u"\U0001f600", 2).impl);
+        const char bounded[] = {'x', 0, 'y'};
+        Check(Utf8(bounded, bounded + 3).impl == Add16(u"x\0y", 3).impl);
+        Check(!Utf8("\xc0\x80", nullptr).impl);
+        Check(!Utf8("\xed\xa0\x80", nullptr).impl);
+        Check(!Utf8("\xe2\x82", nullptr).impl);
+    }
+    {
+        auto lower = Add8(U8("case"), 4);
+        auto upper = UpperAtom(&lower);
+        Text(upper, "CASE");
+        Check(upper.impl == Add16(u"CASE", 4).impl && UpperAtom(&upper).impl == upper.impl);
+        String null;
+        Check(!UpperAtom(&null).impl);
+    }
+    StringImpl* survivor = nullptr;
+    std::thread departing([&] {
+        auto atom = Add8(U8("survivor"), 8);
+        survivor = std::exchange(atom.impl, nullptr);
+    });
+    departing.join();
+    Check(survivor && !(survivor->hashAndFlags & 16));
+    Release(survivor);
+}
+
 void TestDestroy() {
     auto narrow = Create8(U8("destroy narrow"), 14);
     _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(narrow.impl, nullptr));
@@ -808,6 +933,7 @@ void Run() {
     TestUTFConversions();
     TestSubstrings();
     TestDestroy();
+    TestAtoms();
     TestCStrings();
     TestPrimitiveState();
     TestIntegersAndConstructors();
