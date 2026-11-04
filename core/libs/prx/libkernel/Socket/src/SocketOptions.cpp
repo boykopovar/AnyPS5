@@ -430,8 +430,12 @@ int SetIpLevelOption(std::uintptr_t native, SocketOptionState& state, bool ipv4,
             const auto joinedInterface = static_cast<std::uint32_t>(*found);
             std::memcpy(&request.imr_interface, &joinedInterface, sizeof(joinedInterface));
         }
-        if (::setsockopt(handle, IPPROTO_IP, join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<NativeOptionValue>(&request), sizeof(request)))
+        if (::setsockopt(handle, IPPROTO_IP, join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, reinterpret_cast<NativeOptionValue>(&request), sizeof(request))) {
+#ifndef _WIN32
+            if (errno == ENODEV) return ErrorAddressNotAvailable;
+#endif
             return HostError();
+        }
         if (join) state.memberships.push_back(key);
         else state.memberships.erase(found);
         return 0;
