@@ -61,5 +61,13 @@ int main() {
     std::memset(&info, 0x5a, sizeof(info));
     Require(sceSharePlayGetCurrentConnectionInfoA(&info) == notInitialized);
     for (const auto value : std::as_bytes(std::span(&info, 1))) Require(value == std::byte{0x5a});
+    std::memset(plain, 0x5a, sizeof(plain));
+    Require(sceSharePlayGetCurrentConnectionInfo(plainInfo) == notInitialized);
+    for (std::size_t i = 0; i < sizeof(plain); ++i) Require(plain[i] == 0x5a);
+    Require(sceSharePlayGetCurrentConnectionInfo(nullptr) == notInitialized);
+    Require(sceSharePlayGetCurrentConnectionInfoA(nullptr) == notInitialized);
+    Require(sceSharePlayProhibitController(0) == notInitialized);
+    Require(sceSharePlayProhibitController(1) == notInitialized);
+    Require(sceSharePlayProhibitController(2) == notInitialized);
     Require(sceSharePlayTerminate() == notInitialized);
 }

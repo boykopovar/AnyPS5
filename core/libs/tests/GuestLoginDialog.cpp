@@ -75,6 +75,7 @@ int main() {
     Require(sceLoginDialogClose() == 0);
     Require(sceLoginDialogTerminate() == 0);
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
+    Require(sceLoginDialogClose() == kErrNotInitialized);
     Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
     Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
@@ -91,6 +92,7 @@ int main() {
     Require(result.result == kResultUserCanceled);
     Require(sceLoginDialogTerminate() == 0);
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
+    Require(sceLoginDialogClose() == kErrNotInitialized);
     Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
     Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
     Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);

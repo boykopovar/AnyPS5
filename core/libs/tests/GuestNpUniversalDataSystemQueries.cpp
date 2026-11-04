@@ -49,18 +49,18 @@ int main() {
     NpUniversalDataSystemEvent* event = nullptr;
     CHECK(sceNpUniversalDataSystemCreateEvent("QueryEvent", nullptr, &event, nullptr) == 0 && event != nullptr);
     std::size_t size = 0;
-    CHECK(RejectsArgument([&] { sceNpUniversalDataSystemEventEstimateSize(nullptr, &size); }));
-    CHECK(RejectsArgument([&] { sceNpUniversalDataSystemEventEstimateSize(event, nullptr); }));
-    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, &size) == 0 && size == 3);
+    CHECK(sceNpUniversalDataSystemEventEstimateSize(nullptr, &size) == static_cast<int>(0x80553116u));
+    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, nullptr) == static_cast<int>(0x80553102u));
+    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, &size) == 0 && size == 34);
 
     char text[8];
     std::memset(text, 'x', sizeof(text));
     std::size_t length = 0;
-    CHECK(RejectsArgument([&] { sceNpUniversalDataSystemEventToString(nullptr, text, sizeof(text), &length); }));
+    CHECK(sceNpUniversalDataSystemEventToString(nullptr, text, sizeof(text), &length) == static_cast<int>(0x80553116u));
     CHECK(text[0] == 'x' && length == 0);
-    CHECK(sceNpUniversalDataSystemEventToString(event, text, sizeof(text), &length) == 0 && length == 3 && std::strcmp(text, "{}") == 0);
+    CHECK(sceNpUniversalDataSystemEventToString(event, text, sizeof(text), &length) == 0 && length == 61 && std::strcmp(text, "{\n    \"") == 0);
     length = 0;
-    CHECK(sceNpUniversalDataSystemEventToString(event, nullptr, 0, &length) == 0 && length == 3);
+    CHECK(sceNpUniversalDataSystemEventToString(event, nullptr, 0, &length) == 0 && length == 61);
     char tiny[2] = {'x', 'x'};
     CHECK(sceNpUniversalDataSystemEventToString(event, tiny, sizeof(tiny), nullptr) == 0 && tiny[0] == '{' && tiny[1] == '\0');
     CHECK(sceNpUniversalDataSystemDestroyEvent(event) == 0);

@@ -5,6 +5,7 @@ import gzip
 import html
 import json
 import math
+import os
 import sys
 import zlib
 from pathlib import Path
@@ -15,6 +16,11 @@ thread, the largest slices per frame, the longest waits, the largest GPU batches
 recorded them (when the trace carries batch ids) and, with --stacks, the hottest functions of an
 APS5_SAMPLE_WORKER collapsed-stack file. The summary line is read from aps5-summary.jsonl next to the trace
 unless --summary names another file.
+
+Buffer-full markers report lost events even without a summary. Slice-based timings, waits and batch
+inventories then describe retained events only; untraced time is not evidence of idle time.
+The gpu thread's busy time is the union of its retained ranges within the frame window; the producer's summary
+and the per-slice inventories retain accumulated durations and can count overlapping work separately.
 
 A summary file written by APS5_TRACE_SUMMARY_EVERY (aps5-summary.jsonl, or any .jsonl) is digested as a table with
 one row per interval and a text sparkline of the frame p99 and of the GPU busy time per present; the lines of
@@ -64,6 +70,7 @@ class Trace:
         self.presents = []
         self.folded = collections.defaultdict(float)
         self.batched = []
+        self.losses = []
         if not isinstance(document, (list, dict)):
             raise ValueError("trace must be an event array or object")
         events = document if isinstance(document, list) else document.get("traceEvents", [])
@@ -86,6 +93,8 @@ class Trace:
                     raise ValueError(f"trace event {index}: name must be a string")
                 ts = _event_number(event, "ts", index)
                 dur = _event_number(event, "dur", index)
+                if dur < 0:
+                    raise ValueError(f"trace event {index}: dur must be non-negative")
                 self.slices[tid].append([ts, dur, name, 0, False])
                 args = _event_args(event, index)
                 if "batch" in args:
@@ -95,10 +104,18 @@ class Trace:
                     self.batched.append((tid, ts, dur, name, batch))
             elif phase == "i" and event.get("name") == "present":
                 self.presents.append((_event_number(event, "ts", index), _event_args(event, index).get("present")))
+            elif phase == "i" and event.get("name") == "trace buffer full":
+                tid = _event_tid(event, index)
+                ts = _event_number(event, "ts", index)
+                lost = _event_args(event, index).get("events_lost")
+                if isinstance(lost, bool) or not isinstance(lost, int) or lost < 0:
+                    raise ValueError(f"trace event {index}: args.events_lost must be a nonnegative integer")
+                if lost:
+                    self.losses.append((tid, ts, lost))
             elif phase == "C":
                 tid = _event_tid(event, index)
                 self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
-        self.presents.sort()
+        self.presents.sort(key=lambda present: present[0])
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))
             stack = []
@@ -111,7 +128,7 @@ class Trace:
                 stack.append(entry)
 
     def select_threads(self, names):
-        available = self.threads.keys() | self.slices.keys() | self.folded.keys()
+        available = self.threads.keys() | self.slices.keys() | self.folded.keys() | {tid for tid, _, _ in self.losses}
         unknown = set(names) - {self.name(tid) for tid in available}
         if unknown:
             raise ValueError("unknown thread: " + ", ".join(sorted(unknown)))
@@ -120,6 +137,7 @@ class Trace:
         self.slices = {tid: slices for tid, slices in self.slices.items() if tid in selected}
         self.folded = {tid: value for tid, value in self.folded.items() if tid in selected}
         self.batched = [entry for entry in self.batched if entry[0] in selected]
+        self.losses = [entry for entry in self.losses if entry[0] in selected]
 
     def name(self, tid):
         return self.threads.get(tid, f"tid {tid}")
@@ -142,7 +160,23 @@ def load_trace(path):
         return Trace(document)
 
 
-def load_summary_lines(path, numbered=False):
+def resolve_summary_path(path):
+    path = Path(path)
+    try:
+        resolved = Path(os.path.realpath(path))
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise ValueError(f"{path}: summary file is a symbolic link loop: {error}") from error
+        raise ValueError(f"{path}: summary file is a symbolic link loop")
+    return resolved
+
+
+def load_summary_lines(path, numbered=False, label=None):
+    display = label if label is not None else path
     records = []
     for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
         if not line.strip():
@@ -150,18 +184,25 @@ def load_summary_lines(path, numbered=False):
         try:
             record = json.loads(line)
         except json.JSONDecodeError as error:
-            raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+            raise ValueError(f"{display}:{number}: invalid JSON: {error.msg}") from error
+        except RecursionError as error:
+            raise ValueError(f"{display}:{number}: JSON nesting is too deep") from error
         if not isinstance(record, dict):
-            raise ValueError(f"{path}:{number}: summary record must be an object")
+            raise ValueError(f"{display}:{number}: summary record must be an object")
         records.append((number, record) if numbered else record)
     return records
 
 
 def load_summary(path, trace_path):
-    candidate = Path(path) if path else Path(trace_path).with_name("aps5-summary.jsonl")
-    if not candidate.exists():
-        return None
-    lines = load_summary_lines(candidate)
+    if path:
+        candidate = resolve_summary_path(path)
+    else:
+        hint = Path(trace_path).with_name("aps5-summary.jsonl")
+        if not hint.exists() and not hint.is_symlink():
+            return None
+        candidate = resolve_summary_path(hint)
+    label = Path(path) if path else hint
+    lines = load_summary_lines(candidate, label=label)
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
@@ -187,12 +228,45 @@ def load_stacks(path):
     return stacks
 
 
+def persistent_peaks(values):
+    parent = list(range(len(values)))
+    peak = list(range(len(values)))
+    active = [False] * len(values)
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    peaks = []
+    for index in sorted(range(len(values)), key=lambda position: (-values[position], position)):
+        active[index] = True
+        for neighbour in (index - 1, index + 1):
+            if not 0 <= neighbour < len(values) or not active[neighbour]:
+                continue
+            first, second = find(index), find(neighbour)
+            if first == second:
+                continue
+            low, high = sorted((first, second), key=lambda root: (-values[peak[root]], peak[root]))[::-1]
+            peaks.append((peak[low], values[peak[low]] - values[index]))
+            parent[low] = high
+    if values:
+        top = peak[find(0)]
+        peaks.append((top, values[top] - min(values)))
+    return sorted((entry for entry in peaks if entry[1] > 0), key=lambda entry: (-entry[1], entry[0]))
+
+
 def digest(trace, summary=None, stacks=None, worst=5, top=10):
     window_ms = summary["window"]["ms"] if summary else None
     frames = trace.frames(window_ms * 1000.0 if window_ms is not None else None)
     span_us = frames[-1][2] - frames[0][1] if frames else 0.0
     count = max(len(frames), 1)
     result = {"summary": summary, "frames": len(frames), "window_ms": span_us / 1000.0}
+    if trace.losses or (summary and summary.get("trace_dropped")):
+        result["trace_incomplete"] = True
+        result["event_loss"] = [{"thread": trace.name(tid), "at_ms": ts / 1000.0, "events_lost": lost}
+                                for tid, ts, lost in trace.losses]
 
     slowest = []
     for index, begin, end, present in sorted(frames, key=lambda frame: frame[1] - frame[2])[:worst]:
@@ -206,6 +280,10 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
                         "slices": [{"name": name, "thread": thread, "ms": us / 1000.0} for (name, thread), us in inside.most_common(4)]})
     result["slowest_frames"] = slowest
 
+    durations = [(end - begin) / 1000.0 for _, begin, end, _ in frames]
+    result["persistent_spikes"] = [{"present": frames[index][3], "ms": durations[index], "at_ms": frames[index][1] / 1000.0, "persistence_ms": persistence}
+                                   for index, persistence in persistent_peaks(durations)[:top]]
+
     threads = []
     totals = collections.Counter()
     waits = []
@@ -214,14 +292,20 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
         traced = 0.0
         waited = 0.0
         leaders = collections.Counter()
+        gpu = trace.name(tid) == "gpu"
+        covered_until = -math.inf
         for ts, dur, name, depth, nested in slices:
-            overlap = max(min(ts + dur, frames[-1][2]) - max(ts, frames[0][1]), 0.0) if frames else dur
+            begin = max(ts, frames[0][1]) if frames else ts
+            end = min(ts + dur, frames[-1][2]) if frames else ts + dur
+            overlap = max(end - begin, 0.0)
             if overlap > 0:
                 totals[name] += overlap
-                if depth == 0:
-                    traced += overlap
-                    if not is_wait(name):
-                        leaders[name] += overlap
+                if depth == 0 or gpu:
+                    contribution = max(end - max(begin, covered_until), 0.0) if gpu else overlap
+                    covered_until = max(covered_until, end)
+                    traced += contribution
+                    if contribution > 0 and not is_wait(name):
+                        leaders[name] += contribution
                 if is_wait(name) and not nested:
                     waited += overlap
             if is_wait(name) and not nested and (overlap > 0 or not frames):
@@ -307,12 +391,21 @@ def markdown(result):
         lines.append("```")
     else:
         lines.append(f"{result['frames']} frames over {result['window_ms']:.1f} ms (no summary line found)")
+    if result.get("trace_incomplete"):
+        lines += ["", "**Incomplete trace:** recorded data was lost. Slice-based timings, waits and batch inventories cover retained events only; missing slices are not idle time. Summary statistics are reported separately."]
+        for loss in result["event_loss"]:
+            lines.append(f"- {table_cell(loss['thread'])}: {loss['events_lost']} events lost; buffer full at {loss['at_ms']:.1f} ms")
     lines.append("")
     lines.append("**Slowest frames** (largest slices inside each, inclusive)")
     lines.append("")
     for frame in result["slowest_frames"]:
         parts = ", ".join(f"{entry['name']} ({entry['thread']}) {entry['ms']:.1f}" for entry in frame["slices"])
         lines.append(f"- present {frame['present']}: {frame['ms']:.1f} ms at {frame['at_ms']:.0f} ms: {parts}")
+    lines.append("")
+    lines.append("**Persistent spikes** (frame time above the fastest frame that separates it from a longer frame; one entry per stall, not per frame)")
+    lines.append("")
+    for spike in result["persistent_spikes"]:
+        lines.append(f"- present {spike['present']}: {spike['ms']:.1f} ms at {spike['at_ms']:.0f} ms, persistence {spike['persistence_ms']:.1f} ms")
     lines.append("")
     lines.append("**Threads** (ms per frame)")
     lines.append("")
@@ -380,8 +473,9 @@ def validate_interval(record):
     frames = record.get("frame_ms")
     if not isinstance(frames, dict):
         raise ValueError("frame_ms must be an object")
-    for field in ("p50", "p90", "p99", "max"):
-        interval_number(frames.get(field), f"frame_ms.{field}")
+    values = [interval_number(frames.get(field), f"frame_ms.{field}") for field in ("p50", "p90", "p99", "max")]
+    if values != sorted(values):
+        raise ValueError("frame_ms must satisfy p50 <= p90 <= p99 <= max")
     interval_number(record.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
     for field in ("worker_busy_pct", "top_phases_ms_per_frame"):
         values = record.get(field, {})
@@ -463,12 +557,21 @@ def main(arguments=None):
     parser.add_argument("--top", type=nonnegative_integer, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
-    if options.summary and not Path(options.summary).is_file():
-        parser.error(f"summary file not found: {options.summary}")
+    if options.summary:
+        try:
+            summary_path = resolve_summary_path(options.summary)
+        except ValueError as error:
+            parser.error(str(error))
+        if not summary_path.is_file():
+            parser.error(f"summary file not found: {options.summary}")
     if options.thread and options.trace.endswith(".jsonl"):
         parser.error("--thread requires an event trace, not interval summaries")
+    if options.stacks and options.trace.endswith(".jsonl"):
+        parser.error("--stacks requires an event trace, not interval summaries")
     if options.trace.endswith(".jsonl"):
         result = digest_intervals(load_intervals(options.trace))
+        if options.summary:
+            parser.error("--summary requires an event trace, not interval summaries")
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))
         return 0
     try:
@@ -478,8 +581,11 @@ def main(arguments=None):
     trace = load_trace(options.trace)
     if options.thread:
         trace.select_threads(options.thread)
-    result = digest(trace, load_summary(options.summary, options.trace),
-                    stacks, options.frames, options.top)
+    summary = load_summary(options.summary, options.trace)
+    try:
+        result = digest(trace, summary, stacks, options.frames, options.top)
+    except KeyError as error:
+        parser.exit(2, f"FAIL: the summary line has no {error} field\n")
     if options.thread:
         result["thread_filter"] = sorted(set(options.thread))
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))

@@ -56,12 +56,13 @@ std::vector<std::string> WindowsImportBuilder::ReadLibraries(const Domain::SysVD
     const auto addIfMissing = [&](const char* library) {
         if (unique.insert(library).second) result.emplace_back(library);
     };
-    if (unique.contains("libSceLibcInternal.prx") || unique.contains("libkernel.prx"))
-        addIfMissing("libc.prx");
-    if (unique.contains("libkernel_sys.prx") || unique.contains("libkernel_web.prx")) {
+    if (unique.contains("libkernel.prx") || unique.contains("libkernel_sys.prx") || unique.contains("libkernel_web.prx")) {
         addIfMissing("libkernel.prx");
-        addIfMissing("libc.prx");
+        addIfMissing("libkernel_sys.prx");
+        addIfMissing("libkernel_web.prx");
     }
+    if (unique.contains("libSceLibcInternal.prx") || unique.contains("libkernel.prx") || unique.contains("libkernel_sys.prx") || unique.contains("libkernel_web.prx"))
+        addIfMissing("libc.prx");
     return result;
 }
 
