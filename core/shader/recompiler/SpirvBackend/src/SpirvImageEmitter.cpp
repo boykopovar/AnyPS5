@@ -635,7 +635,7 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
     const auto sampleBits = Binary(state, spv::OpBitwiseAnd, u32, layout, ConstantU32(state, 0xffu));
     const auto samples = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 8u)), ConstantU32(state, 0xffu));
     const auto fragments = Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 16u));
-    const auto unknownBase = Binary(state, spv::OpISub, u32, ConstantU32(state, 8u), fragments);
+    const auto fragmentMask = Binary(state, spv::OpISub, u32, fragments, ConstantU32(state, 1u));
     const auto packedLow = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, u32, packedLow, texel, 0u);
     const auto packedHigh = state.module.AllocateId();
@@ -650,8 +650,10 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
         const auto highField = state.module.AllocateId();
         state.module.AddFunction(spv::OpBitFieldUExtract, u32, highField, packedHigh, shift, sampleBits);
         const auto field = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), offset, ConstantU32(state, 32u)), highField, lowField);
-        const auto fragment = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), field, fragments), Binary(state, spv::OpIAdd, u32, field, unknownBase), field);
-        const auto nibble = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, sample), samples), fragment, ConstantU32(state, 0u));
+        const auto index = Binary(state, spv::OpBitwiseAnd, u32, field, fragmentMask);
+        const auto unknown = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, u32, field, fragments), ConstantU32(state, 0u));
+        const auto nibbleValue = Select(state, u32, unknown, Binary(state, spv::OpBitwiseOr, u32, index, ConstantU32(state, 8u)), index);
+        const auto nibble = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, sample), samples), nibbleValue, ConstantU32(state, 0u));
         const auto masked = Binary(state, spv::OpBitwiseAnd, u32, nibble, ConstantU32(state, 0xfu));
         auto& expanded = sample < 8u ? expandedLow : expandedHigh;
         expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, masked, ConstantU32(state, (sample & 7u) * 4u)));
