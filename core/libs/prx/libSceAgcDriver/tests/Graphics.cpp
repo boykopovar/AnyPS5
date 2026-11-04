@@ -507,7 +507,8 @@ void stateTests() {
     queue = makeState();
     queue.context[0x8e] = 0xff;
     queue.context[0x8f] = 0xff;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 0");
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.colors.size() == 1 && state.colors[0].slot == 0, "a zero color export format exported a color target");
     queue = makeState();
     queue.context[0x200] = 2;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "depth");
@@ -2396,7 +2397,20 @@ void CompactedExportTests() {
     const auto withHole = AgcDriver::Graphics::DecodeState(disabledFirst);
     Require(withHole.colors.size() == 1 && withHole.colors[0].slot == 4 && withHole.colors[0].exportIndex == 1 && withHole.blends.size() == 2 && withHole.blends[0].colorWriteMask == 0, "COLOR_INVALID shifted a later MRT export");
     queue.context[0x1c5] = 0x90009u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 0");
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.colors.size() == 1 && state.colors[0].slot == 0 && state.colors[0].exportIndex == 0, "a zero color export format exported a color target");
+    queue.context[0x1c5] = 0x40u;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.colors.size() == 1 && state.colors[0].slot == 4 && state.colors[0].exportIndex == 1 && state.blends.size() == 2 && state.blends[0].colorWriteMask == 0, "a zero export format shifted a later MRT export");
+    auto resolve = makeState();
+    resolve.context[0x1b3] = 2;
+    resolve.context[0x1b4] = 2;
+    resolve.context[0x1c5] = 0;
+    resolve.context[0x202] = 0xcc0030u;
+    const auto resolveReason = AgcDriver::Graphics::DrawRejection(resolve, false);
+    Require(resolveReason.empty(), "the precheck rejected a resolve draw whose every export format is zero: " + resolveReason);
+    resolve.context[0x1c5] = 9;
+    Require(AgcDriver::Graphics::DrawRejection(resolve, false).find("CB_COLOR_CONTROL") != std::string::npos, "the precheck accepted a resolve draw with a color export");
     queue.context[0x8e] = 0xf000fu;
     queue.context[0x8f] = 0xf0f0fu;
     queue.context[0x1c5] = 0x999u;
@@ -13179,6 +13193,29 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
     Require(mock.live == 0, "the pipeline journal test leaked Vulkan objects");
 }
 
+void faultOnlyTemplateRecordTests() {
+    const bool keep = std::getenv("APS5_KEEP_TEMPLATE_RECORDS") != nullptr;
+    const bool guarded = std::getenv("APS5_LOOP_GUARD") != nullptr;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.limits.maxStorageBufferRange = 1u << 27;
+    ShaderRecompiler::RecompileResult program;
+    program.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+    ShaderRecompiler::DescriptorBinding fault{ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::FaultBuffer, 0, 5, 1, {}, false};
+    ShaderRecompiler::DescriptorBinding data{ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::FlattenedSrt, 0, 6, 1, {}, false};
+    data.guestDescriptor = {0x11u, 0x22u, 0x33u, 0x44u};
+    program.bindings = {fault, data};
+    const std::array<AgcDriver::Graphics::CompiledShader, 1> stages{{{ShaderRecompiler::ShaderStage::TessellationControl, &program, 0}}};
+    {
+        AgcDriver::Graphics::ShaderResources resources(context, stages, AgcDriver::Graphics::ColorTarget{}, 0, 0, 0, {});
+        Require(AgcDriver::Graphics::ShaderResources::NeverReusable(stages) == guarded, "a fault-only build's reusability does not follow APS5_LOOP_GUARD");
+        Require(resources.Reusable() == !guarded, "a fault-only build's reuse does not follow APS5_LOOP_GUARD");
+        const bool kept = resources.DataWordsHash() == AgcDriver::Graphics::ShaderResources::DataWordsHash(stages[0]);
+        Require(kept == (keep || !guarded), "a build's template data words were kept or dropped against its reusability");
+    }
+    Require(mock.live == 0, "the fault-only template record test leaked Vulkan objects");
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "200");
@@ -13190,6 +13227,10 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--linear-volume-nonresident") {
             LinearVolumeNonResidentTests();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--fault-only-template-records") {
+            faultOnlyTemplateRecordTests();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-cache") {
