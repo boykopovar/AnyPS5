@@ -714,14 +714,15 @@ void testGpuClockCopyBehindGpuWork() {
     std::fill_n(destination, bytes / 4, 0u);
     std::vector<std::uint64_t> clocks(2, 0);
     const auto drainsBefore = AgcDriver::DriverDetail::storesDrained.load();
-    const auto cpuStoresBefore = AgcDriver::DriverDetail::storesOnCpu.load();
+    const auto storesWithoutDrain = [] { return AgcDriver::DriverDetail::storesOnCpu.load() + AgcDriver::DriverDetail::storesOnGpu.load() + AgcDriver::DriverDetail::storesBehindCompletions.load(); };
+    const auto storesBefore = storesWithoutDrain();
     submit(0, commands(memoryCopy(destination, source, bytes), gpuClockCopy(&clocks[0]), gpuClockCopy(&clocks[1]), writeData(&done, 1)));
     waitFor(&done, 1, "the label after a GPU-clock COPY_DATA never landed");
     AgcDriverWaitIdle_nid_postfix();
     check(destination[0] == 0x3c3c3c3cu && destination[bytes / 4 - 1] == 0x3c3c3c3cu, "the GPU copy before the GPU-clock COPY_DATA did not land");
     check(clocks[0] != 0 && clocks[1] >= clocks[0], "a GPU-clock COPY_DATA did not store an increasing clock");
     check(AgcDriver::DriverDetail::storesDrained.load() == drainsBefore, "a GPU-clock COPY_DATA into host memory behind GPU work drained the device");
-    check(AgcDriver::DriverDetail::storesOnCpu.load() == cpuStoresBefore + 2, "a GPU-clock COPY_DATA into host memory behind GPU work was not stored on the CPU");
+    check(storesWithoutDrain() == storesBefore + 2, "a GPU-clock COPY_DATA into host memory behind GPU work was not stored without a drain");
     GuestHeap::GuestHeapFree_nid_postfix(destination);
     GuestHeap::GuestHeapFree_nid_postfix(source);
 }
