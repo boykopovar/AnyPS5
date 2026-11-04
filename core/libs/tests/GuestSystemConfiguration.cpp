@@ -1004,6 +1004,28 @@ static void CheckNameToMib() {
     }
     Require(*__error_nid_postfix() == 13);
 
+    for (const char* name : {"kern.sched.name", "kern.smp.maxcpus", "kern.stackprot", "kern.timecounter.hardware"}) {
+        int absentMib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+        std::size_t absentSize = 3;
+        Require(sysctlnametomib_nid_postfix(name, absentMib, &absentSize) == 0);
+        unsigned char absentBuffer[64];
+        std::memset(absentBuffer, 0xaa, sizeof(absentBuffer));
+        std::size_t absentLength = sizeof(absentBuffer);
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(absentMib, static_cast<std::uint32_t>(absentSize), absentBuffer, &absentLength, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(absentLength == sizeof(absentBuffer) && Untouched(absentBuffer, sizeof(absentBuffer)));
+        absentLength = 77;
+        *__error_nid_postfix() = 13;
+        Require(sysctl_nid_postfix(absentMib, static_cast<std::uint32_t>(absentSize), nullptr, &absentLength, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+        Require(absentLength == 77);
+    }
+
+    int absentShort[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t absentShortSize = 2;
+    *__error_nid_postfix() = 13;
+    Require(sysctlnametomib_nid_postfix("kern.smp.maxcpus", absentShort, &absentShortSize) == -1 && *__error_nid_postfix() == 12);
+    Require(absentShortSize == 2 && absentShort[0] == 1 && absentShort[1] == 2147482816 && absentShort[2] == 0x5a5a5a5a);
+
     int mib[4] = {};
     std::size_t size = 4;
     Require(sysctlnametomib_nid_postfix("hw.ncpu", mib, &size) == 0 && size == 2);
