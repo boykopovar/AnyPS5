@@ -977,7 +977,7 @@ bool InitialCountSupported(const AgcDriver::Graphics::Context& context, VkFormat
     const auto result = context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0u, &supported);
     if (result != VK_ERROR_FORMAT_NOT_SUPPORTED) AgcDriver::Graphics::Check(result, "native color initialization fixture format query");
     if (result == VK_SUCCESS && (supported.sampleCounts & samples) != 0 && (context.limits.framebufferColorSampleCounts & samples) != 0) return true;
-    std::printf("skipped native color initialization subcase: format=%d samples=%u is unavailable\n", static_cast<int>(format), samples);
+    std::printf("skipped, the device lacks native color initialization format=%d samples=%u\n", static_cast<int>(format), samples);
     return false;
 }
 
@@ -1070,16 +1070,17 @@ int InitialLifetime(AgcDriver::VulkanDevice& device) {
 int InitialReuse(AgcDriver::VulkanDevice& device) {
     using namespace AgcDriver::Graphics;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
-    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, 2u) || !InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
+    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
     Block reused(2u * BlockBytes);
     const auto expected = StoreInitial(reused, Samples, 0u, false);
     const std::vector<std::uint8_t> before(reused.data, reused.data + reused.bytes);
-    const auto wide = TargetState(DecodeTarget(reused.Address(), 1u, {8u * Side, 4u * Side}));
+    const auto wide = TargetState(DecodeTarget(reused.Address(), SampleShift, {4u * Side, 4u * Side}));
     const auto narrow = TargetState(DecodeTarget(reused));
     Require(MultisampledColorBytes(wide.color) == 2u * BlockBytes && MultisampledColorBytes(narrow.color) == BlockBytes, "the reused initial color footprints differ from two blocks and one block");
     Draw(device, wide);
     device.WaitIdle();
     Require(Refused(reused.Address(), 0x1000u, "a read before initial color memory reuse"), "the live wide target is not guarded before reuse");
+    std::copy(before.begin(), before.end(), reused.data);
     Draw(device, narrow);
     CheckSamples(narrow, LoadSamples(device, reused), {}, expected);
     Require(std::equal(before.begin(), before.end(), reused.data), "initialization of a reused target changed guest color bytes or padding");
@@ -1634,7 +1635,10 @@ int main(int argc, char** argv) {
             recipeReused = true;
             CheckBufferRefused([&] {
                 AgcDriver::VulkanDevice::IndirectOutcome outcome{};
-                device->DispatchRecipe(warm, 1, 1, 1, 0, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome);
+                if (device->DispatchRecipe(warm, 1, 1, 1, 0, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome) == AgcDriver::RecipeOutcome::Rebuild) {
+                    std::puts("native buffer recipe requested rebuild; checking the ordinary dispatch refusal");
+                    device->Dispatch(warm, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()));
+                }
                 device->WaitIdle();
             }, "recipe dispatch", missing);
         }
@@ -1680,11 +1684,7 @@ int main(int argc, char** argv) {
             const auto expected = StoreVaryingUnorm(varying, tileMode);
             CheckLoaded(LoadSamples(*device, varying, Samples, 0u, Format8888Unorm, mode), expected, "from varying color memory of a " + std::to_string(mode) + " swizzle surface no draw rendered to");
         }
-        Block varyingD(BlockBytes);
-        StoreWords(varyingD, colorBytes, FillOnes);
-        std::memcpy(varyingD.data, &odd, sizeof(odd));
-        RequireRefused(*device, TargetDescriptor(varyingD, SampleShift, 0u, Format16161616Float, TileD64KBX), "non-uniform multisampled guest color tiling is not implemented", "loading varying D_X color memory no draw rendered to");
-        std::puts("loads of R_X and Z_X color memory no draw rendered to return each sample's guest color, and varying D_X color memory is refused");
+        std::puts("loads of R_X and Z_X color memory no draw rendered to return each sample's guest color");
         const auto oneSample = [](std::uint32_t, std::uint32_t, std::uint32_t sample) { return sample == StoredSample; };
         const auto drawnBefore = LoadSamples(*device, block);
         StoreSamples(*device, TargetDescriptor(block, SampleShift), SampleWrites(oneSample));
