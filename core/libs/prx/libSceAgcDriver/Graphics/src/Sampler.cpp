@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <string>
 
@@ -102,10 +103,10 @@ namespace AgcDriver::Graphics {
         return sampler;
     }
 
-    void RequireFilterMinmax(const Context& context, VkFormat format, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
+    void RequireFilterMinmax(const Context& context, VkFormat format, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
         bool filtered = false;
-        for (std::uint32_t element = 0; element < 32u; ++element) {
-            if (((samplerMask >> element) & 1u) == 0u) continue;
+        for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
+            const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
             if (element >= samplers.size()) Require(false, "a sampled texture is paired with sampler element " + std::to_string(element) + ", which its shader does not bind");
             filtered = filtered || samplers[element]->RequiresFilterMinmax();
         }
@@ -123,29 +124,31 @@ namespace AgcDriver::Graphics {
         return requiresNonSeamlessCube;
     }
 
-    bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
+    bool ForcesDegammaOn(std::uint32_t guestFormat, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
         if (IsSrgbTextureFormat(guestFormat) || IgnoresForcedDegamma(guestFormat)) return false;
-        for (std::uint32_t element = 0; element < 32u && element < samplers.size(); ++element) {
-            if (((samplerMask >> element) & 1u) != 0u && samplers[element]->ForcesDegamma()) return true;
+        for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
+            const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
+            if (element < samplers.size() && samplers[element]->ForcesDegamma()) return true;
         }
         return false;
     }
 
-    void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
+    void RequireBorderSwizzle(std::uint32_t bcSwizzle, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
         constexpr std::uint32_t BcSwizzleXyzw = 0u;
         constexpr std::uint32_t BcSwizzleZyxw = 4u;
         if (bcSwizzle == BcSwizzleXyzw || bcSwizzle == BcSwizzleZyxw) return;
-        for (std::uint32_t element = 0; element < 32u; ++element) {
-            if (((samplerMask >> element) & 1u) == 0u) continue;
+        for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
+            const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
             if (element >= samplers.size()) Require(false, "a sampled texture is paired with sampler element " + std::to_string(element) + ", which its shader does not bind");
             if (samplers[element]->ReadsOpaqueBlackBorder()) Require(false, "a sampled texture whose BC swizzle " + std::to_string(bcSwizzle) + " moves the alpha channel is sampled through an opaque black border, which is not implemented");
         }
     }
 
-    void RequireNonSeamlessCube(bool cube, std::uint32_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
+    void RequireNonSeamlessCube(bool cube, std::uint64_t samplerMask, std::span<const std::shared_ptr<Sampler>> samplers) {
         if (!cube) return;
-        for (std::uint32_t element = 0; element < 32u && element < samplers.size(); ++element) {
-            if (((samplerMask >> element) & 1u) != 0u && samplers[element]->RequiresNonSeamlessCube()) Require(false, "a cube texture is sampled through a sampler that disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
+        for (auto mask = samplerMask; mask != 0u; mask &= mask - 1u) {
+            const auto element = static_cast<std::uint32_t>(std::countr_zero(mask));
+            if (element < samplers.size() && samplers[element]->RequiresNonSeamlessCube()) Require(false, "a cube texture is sampled through a sampler that disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
         }
     }
 
