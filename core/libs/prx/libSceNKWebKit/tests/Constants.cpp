@@ -61,9 +61,13 @@ int main() {
     Require(WKFrameIsFrameSet() == 0);
     Require(WKIconDatabaseCopyIconDataForPageURL() == 0);
     Require(WKIconDatabaseCopyIconURLForPageURL() == 0);
+    Require(WKKeyValueStorageManagerDeleteAllEntries() == 0);
+    Require(WKKeyValueStorageManagerDeleteEntriesForOrigin() == 0);
     Require(WKKeyValueStorageManagerGetCreationTimeKey() == 0);
+    Require(WKKeyValueStorageManagerGetKeyValueStorageOrigins() == 0);
     Require(WKKeyValueStorageManagerGetModificationTimeKey() == 0);
     Require(WKKeyValueStorageManagerGetOriginKey() == 0);
+    Require(WKKeyValueStorageManagerGetStorageDetailsByOrigin() == 0);
     Require(WKOpenPanelParametersCopyCapture() == 0);
     Require(WKOpenPanelParametersGetMediaCaptureType() == 0);
     Require(WKPageGetFrameSetLargestFrame() == 0);
