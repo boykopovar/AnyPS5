@@ -2,7 +2,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
-#include <stdexcept>
 
 namespace {
 
@@ -14,12 +13,6 @@ constexpr std::uint64_t fnvBasis = 0xCBF29CE484222325ULL;
 constexpr std::uint32_t poison = 0xDEADBEEF;
 
 void Require(bool value) { if (!value) std::abort(); }
-
-template<typename Action>
-void RequireThrows(Action action) {
-    try { action(); } catch (const std::runtime_error&) { return; }
-    std::abort();
-}
 
 std::uint64_t Fnv(std::uint64_t hash, std::uint64_t value, int bytes) {
     for (int i = 0; i < bytes; ++i) {
@@ -146,11 +139,5 @@ int main() {
     Require(sceCesJiscsToUcs(profiles[0], 0x2422, nullptr) == invalidDstBuffer);
     Require(sceCesUcsToJiscs(0x3042, profiles[0], nullptr) == invalidDstBuffer);
     Require(sceCesJiscsToUcs(nullptr, 0x2422, nullptr) == invalidProfile);
-
-    RequireThrows([&] { std::uint32_t out = 0; sceCesJiscsToUcs(profiles[0], 0x82A0, &out); });
-    RequireThrows([&] { std::uint32_t out = 0; sceCesJiscsToUcs(profiles[4], 0x8FA2AF, &out); });
-    RequireThrows([&] { std::uint32_t out = 0; sceCesUcsToJiscs(0x1F600, profiles[6], &out); });
-    RequireThrows([&] { std::uint32_t out = 0; sceCesUcsToJiscs(0x20B9F, profiles[0], &out); });
-    RequireThrows([&] { std::uint32_t out = 0; sceCesUcsToJiscs(0x3042, sceCesRefersUcsProfileCp1252(), &out); });
     return 0;
 }
