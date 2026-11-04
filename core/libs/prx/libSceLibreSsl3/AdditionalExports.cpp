@@ -433,9 +433,6 @@ int APS5_VABI X509_ALGOR_get0_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_shutdown_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
