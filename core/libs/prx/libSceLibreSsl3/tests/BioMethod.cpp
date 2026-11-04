@@ -116,4 +116,12 @@ int main() {
         Require(BIO_meth_set_read_nid_postfix(method, &Read) == 1 && method->read == &Read && !method->write);
         BIO_meth_free_nid_postfix(method);
     }
+    {
+        auto* method = BIO_meth_new_nid_postfix(5, Name);
+        Require(BIO_meth_set_ctrl_nid_postfix(method, &Control) == 1 && method->control == &Control);
+        auto* bio = BIO_new_nid_postfix(method);
+        Require(bio && BIO_ctrl_nid_postfix(bio, 7, 9, nullptr) == 16);
+        Require(BIO_free_nid_postfix(bio) == 1);
+        BIO_meth_free_nid_postfix(method);
+    }
 }
