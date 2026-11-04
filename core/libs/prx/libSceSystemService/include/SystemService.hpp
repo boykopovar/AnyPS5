@@ -20,7 +20,11 @@ struct ShellCoreErrorDialogParam {
 
 struct SystemServiceDaemonEvent;
 struct SystemServiceLocalProcessStatus;
-struct SystemServicePSButtonEvent;
+struct SystemServicePSButtonEvent {
+    std::int32_t eventType;
+    std::uint32_t dataAt8;
+    std::uint64_t dataAt0;
+};
 struct SystemServicePrivacyDefinitionData;
 struct SystemServicePrivacyDefinitionVersion;
 struct SystemServiceTitleWorkaroundInfo;
@@ -255,6 +259,7 @@ int APS5_VABI sceCoredumpSequenceHandlerGetCoredumpStatusByAppId(void);
 int APS5_VABI sceCoredumpSequenceHandlerCancelCoredump(void);
 int APS5_VABI sceSystemServiceIsBgmPlaying(void);
 int APS5_VABI sceShellCoreUtilIsBgmPlaying(void);
+int APS5_VABI sceSystemServiceUnknown_M_KwxF0amiw(void);
 int APS5_VABI sceAppMessagingClearEventFlag(std::int32_t appId, std::uint64_t flags);
 int APS5_VABI sceAppMessagingReceiveMsg(AppMessagingMessage* message);
 int APS5_VABI sceAppMessagingSendMsg(std::uint32_t appId, std::uint32_t messageId, const void* data, std::size_t size, std::uint32_t flags);

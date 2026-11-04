@@ -91,8 +91,8 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     Require(!forceUnormCoords || unnormalizedProven, "guest sampler descriptor uses unnormalized coordinates which are not implemented");
     if (forceUnormCoords) {
         Require(!isAnisoFilter(xyMagFilter) && !isAnisoFilter(xyMinFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
-        Require(clampX == 0u || clampX == 2u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only clamp-to-last-texel and clamp-to-border are implemented");
-        Require(clampY == 0u || clampY == 2u || clampY == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only clamp-to-last-texel and clamp-to-border are implemented");
+        Require(clampX <= 3u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only wrap, mirror, clamp-to-last-texel, mirror-once and clamp-to-border are implemented");
+        Require(clampY <= 3u || clampY == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only wrap, mirror, clamp-to-last-texel, mirror-once and clamp-to-border are implemented");
         Require(!mcCoordTrunc, "guest sampler descriptor uses unnormalized coordinates with MC_COORD_TRUNC, which is not implemented");
     } else {
         Require(!unnormalizedProven, "guest sampler descriptor is bound as unnormalized without FORCE_UNNORMALIZED");
@@ -170,6 +170,16 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         result.maxAnisotropy = 1.0f;
     }
     return result;
+}
+
+bool HoldsLodAtZero(std::span<const std::uint32_t, 4> words) {
+    return (words[0] & (1u << 15u)) == 0u && (((words[2] >> 26u) & 3u) == 0u || ((words[1] >> 12u) & 0xfffu) == 0u);
+}
+
+std::array<std::uint32_t, 4> PinnedLodSamplerWords(std::span<const std::uint32_t, 4> words, std::uint32_t lod) {
+    std::array<std::uint32_t, 4> pinned{words[0], (words[1] & ~0xffffffu) | lod | (lod << 12u), words[2], words[3]};
+    if (((pinned[2] >> 26u) & 3u) == 0u) pinned[2] |= 1u << 26u;
+    return pinned;
 }
 
 std::optional<std::array<std::uint32_t, 4>> SingleLevelSamplerWords(std::span<const std::uint32_t, 4> words, bool singleLevelImage, bool mipmappedImage) {
