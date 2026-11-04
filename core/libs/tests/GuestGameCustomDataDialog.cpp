@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 
 namespace {
 
@@ -48,6 +49,10 @@ int main() {
     Require(sceGameCustomDataDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
+
+    for (const std::uintptr_t address : {std::uintptr_t{1}, ~std::uintptr_t{0xfff}}) {
+        Require(sceGameCustomDataDialogGetResultA(reinterpret_cast<void*>(address)) == kErrArgNull);
+    }
 
     Require(sceGameCustomDataDialogClose() == 0);
     Require(sceGameCustomDataDialogTerminate() == 0);
