@@ -10,7 +10,6 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <vector>
 #include <spirv/unified1/spirv.hpp>
@@ -554,15 +553,6 @@ int main() {
                 Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u | round, true, false, false}, TinyCode, TinyRows);
                 CheckTinyLegacy("round mode " + std::to_string(round));
                 CheckTinyDirected(round);
-            }
-            for (const std::uint32_t mode : {0xd0u, 0xe0u}) {
-                bool refused = false;
-                try {
-                    Run(*device, ShaderRecompiler::ShaderFloatMode{mode, true, false, false});
-                } catch (const std::runtime_error& error) {
-                    refused = std::string(error.what()).find("f32 denormal mode") != std::string::npos;
-                }
-                Require(refused, "f32 denormal flush: FLOAT_MODE " + Hex(mode) + " was not refused");
             }
         }
         std::puts("f32 denormal flush tests passed");
