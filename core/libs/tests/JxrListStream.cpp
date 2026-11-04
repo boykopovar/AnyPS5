@@ -192,4 +192,23 @@ int main() {
         stream = MakeList();
         Require(CloseWS_List_nid_postfix(&stream) == 0 && !stream && liveBlocks == 0);
     }
+    {
+        Jxr::Stream* stream = reinterpret_cast<Jxr::Stream*>(1);
+        zeroedCallsBeforeFailure = 0;
+        Require(CreateWS_List_nid_postfix(&stream) == -101 && !stream && liveBlocks == 0);
+        Require(CreateWS_List_nid_postfix(&stream) == 0 && stream && liveBlocks == 1);
+        Require(stream->state[0] == reinterpret_cast<std::uintptr_t>(FirstLink(stream) + sizeof(void*)) && !Next(FirstLink(stream)));
+        Require(stream->state[1] == 4096 && stream->state[2] == 0 && stream->state[3] == 0 && stream->memory == 0);
+        Require(stream->close == &CloseWS_List_nid_postfix && !stream->end && stream->read == &ReadWS_List_nid_postfix);
+        Require(stream->write == &WriteWS_List_nid_postfix && stream->setPosition == &SetPosWS_List_nid_postfix);
+        Require(stream->getPosition == &GetPosWS_List_nid_postfix);
+        const auto data = Pattern(10000);
+        Require(stream->write(stream, data.data(), 4096) == 0 && stream->write(stream, data.data() + 4096, 4096) == 0);
+        Require(stream->write(stream, data.data() + 8192, 1808) == 0);
+        std::size_t position = 0;
+        Require(stream->getPosition(stream, &position) == 0 && position == 10000 && liveBlocks == 3);
+        std::vector<std::uint8_t> read(10000);
+        Require(stream->setPosition(stream, 0) == 0 && stream->read(stream, read.data(), 10000) == 0 && read == data);
+        Require(stream->close(&stream) == 0 && !stream && liveBlocks == 0);
+    }
 }
