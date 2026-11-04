@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libc/include/RunReport.hpp"
@@ -1910,7 +1911,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
 // over the target's pages, the DCC key scan of TextureClearKeys, then UnchangedSince), with the
 // [draws] target-lookup accounting. `lookup` makes (or finds) the image; DrawWithRecipe refreshes
 // the stored object instead.
-std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const std::function<std::shared_ptr<StorageTexture>()>& lookup) {
+template<typename TLookup>
+std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, const State& state, const ColorTarget& color, DrawOutcome& outcome, bool profile, const TLookup& lookup) {
     const auto lookupStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto walkedBefore = profile ? GuestMemory::ThreadCollectedBytes() : 0;
     std::shared_ptr<StorageTexture> resident;
@@ -2399,7 +2401,9 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
         else if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); });
         else recorder.OnComplete([resources] { resources->WriteBackBuffers(); });
     }
-    std::vector<bool> storeNow(residents.size(), false);
+    InlineList<std::uint8_t, 8> storeFlags;
+    for (std::size_t index = 0; index < residents.size(); ++index) storeFlags.EmplaceBack(0);
+    auto storeNow = storeFlags.Span();
     for (std::size_t index = 0; index < residents.size(); ++index) {
         if (residents[index] == nullptr) continue;
         if (residents[index]->Descriptor().tileMode == TextureTileMode::kLinear) storeNow[index] = !residents[index]->MarkDrawn(index < slices.size() ? slices[index].first : 0u, index < slices.size() ? slices[index].second : 0u, scissor) || !residents[index]->Cached();
@@ -2429,8 +2433,8 @@ struct RecordedDraw {
     const std::shared_ptr<Framebuffer>& framebuffer;
     Recorder* recorder = nullptr;
     std::span<const VkImageView> targetViews;
-    std::vector<std::shared_ptr<StorageTexture>> targets;
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> targetSlices;
+    std::span<const std::shared_ptr<StorageTexture>> targets;
+    std::span<const std::pair<std::uint32_t, std::uint32_t>> targetSlices;
     std::vector<std::shared_ptr<void>> multisampleTargets;
     std::vector<std::shared_ptr<StorageTexture>> proxies;
     std::vector<VkImage> multisampleImages;
@@ -2670,12 +2674,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     passReads.insert(passReads.end(), inputs.inPlaceReads.begin(), inputs.inPlaceReads.end());
     const auto passImages = resources.StorageImages();
-    std::vector<std::pair<VkImage, bool>> passAttachments;
-    passAttachments.reserve(record.targets.size());
+    InlineList<std::pair<VkImage, bool>, 16> passAttachments;
     for (const auto& target : record.targets) {
-        if (target != nullptr) passAttachments.emplace_back(target->Image(), true);
+        if (target != nullptr) passAttachments.EmplaceBack(target->Image(), true);
     }
-    for (const auto image : record.multisampleImages) passAttachments.emplace_back(image, true);
+    for (const auto image : record.multisampleImages) passAttachments.EmplaceBack(image, true);
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
     static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(passReads.begin(), passReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }) || resources.WritesOverlap(begin, static_cast<std::size_t>(end - begin)); }, unknownMemory));
     const auto drawUse = resources.BeginDrawUse(*recorder);
@@ -2706,7 +2709,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         passWrites = hazardWrites;
         passWriteOnly = writeOnly;
     }
-    const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
+    const PassAccess passAccess{passReads, passWrites, passImages, passAttachments.Span(), unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
@@ -3601,13 +3604,15 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     const auto& reordered = prepared.reordered;
     const auto& reorderPass = prepared.reorderPass;
     const auto& depthLocations = prepared.depthLocations;
+    InlineList<std::pair<std::uint32_t, std::uint32_t>, 8> slices;
+    for (const auto& binding : targets) slices.EmplaceBack(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u);
     if (lean) {
         RecordedDraw record{resources, pipeline, framebuffer};
         record.recorder = recorder;
         record.moved = resolved.moved;
         record.targetViews = targetViews;
         record.targets = owners;
-        for (const auto& binding : targets) record.targetSlices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u);
+        record.targetSlices = slices.Span();
         for (const auto& binding : targets) {
             if (binding.proxied) record.proxies.push_back(binding.resident);
             if (binding.multisampled) {
@@ -3877,7 +3882,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("SubmitAndWait");
     timer.phase(PhaseRecord);
     if (recorded) {
-        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, [&] { std::vector<std::pair<std::uint32_t, std::uint32_t>> slices; for (const auto& binding : targets) slices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u); return slices; }(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome, drawUse, prepared.spaceKeep != nullptr ? prepared.spaceKeep.get() : nullptr);
+        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, slices.Span(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome, drawUse, prepared.spaceKeep != nullptr ? prepared.spaceKeep.get() : nullptr);
         timer.phase(PhaseKeep);
         if (outcome.waited) {
             // The wait the dispatch path makes for such work (source 3, "address-based"): the
@@ -4103,8 +4108,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     // what the lookup would return, and Refresh brings it up to date exactly as the lookup's does
     // (FlushPending, the whole-surface collect and UnchangedSince, the key scan). An image gone
     // from the cache is a miss: the ordinary path looks up anew.
-    std::vector<std::shared_ptr<StorageTexture>> targets;
-    targets.reserve(recipe.targets.size());
+    InlineList<std::shared_ptr<StorageTexture>, 8> targets;
     for (std::size_t index = 0; index < recipe.targets.size(); ++index) {
         timer.phase(PhaseSetup);
         if (state.colors[index].fmaskAddress != 0) GuardOneFragmentFmask(context, state.colors[index]);
@@ -4117,7 +4121,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         });
         timer.phase(PhaseReadTarget);
         if (resident == nullptr) return miss(DrawRecipeMiss::TargetGone);
-        targets.push_back(std::move(resident));
+        targets.EmplaceBack(std::move(resident));
     }
     if (recipe.hasDepth) {
         timer.phase(PhaseSetup);
@@ -4158,7 +4162,8 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     if (pipeline == nullptr) return miss(DrawRecipeMiss::ObjectsGone);
     auto framebuffer = recipe.framebuffer.lock();
     if (framebuffer == nullptr) {
-        const std::vector<std::shared_ptr<void>> framebufferOwners(targets.begin(), targets.end());
+        const auto stored = targets.Span();
+        const std::vector<std::shared_ptr<void>> framebufferOwners(stored.begin(), stored.end());
         framebuffer = pipeline->AcquireFramebuffer(recipe.targetViews, framebufferOwners, state.renderExtent, state.renderLayers);
     }
     timer.phase(PhasePipeline);
@@ -4167,8 +4172,10 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.recorder = recorder;
     record.completion = outcome.completion;
     record.targetViews = recipe.targetViews;
-    record.targets = std::move(targets);
-    for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
+    record.targets = targets.Span();
+    InlineList<std::pair<std::uint32_t, std::uint32_t>, 8> slices;
+    for (const auto& color : state.colors) slices.EmplaceBack(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
+    record.targetSlices = slices.Span();
     record.pushBytes = &recipe.pushBytes;
     record.pushStages = recipe.pushStages;
     record.depthLocations = passDepthLocations(context, state, *record.pipeline);

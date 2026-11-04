@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/InlineList.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -847,8 +848,6 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     for (const auto& owner : owners) resident = resident && owner != nullptr;
     const auto depthReleases = attachments > colorAttachments ? DepthSurfacesReleased() : 0u;
     if (resident) {
-        // Entries whose views are gone can never match again and go as soon as no recorded draw holds
-        // them (Kept keeps its framebuffer until the batch completes).
         std::erase_if(framebuffers, [&](const CachedFramebuffer& entry) {
             if (entry.framebuffer.use_count() != 1) return false;
             if (entry.depthReleases != depthReleases) return true;
@@ -900,7 +899,9 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
     if (dynamicRendering) {
         const auto views = framebuffer.Views();
         Require(views.size() == attachments, "render targets do not match the pipeline's attachments");
-        std::vector<VkRenderingAttachmentInfoKHR> colors(colorSlots.size(), VkRenderingAttachmentInfoKHR{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR});
+        InlineList<VkRenderingAttachmentInfoKHR, 8> colorStorage;
+        for (std::size_t slot = 0; slot < colorSlots.size(); ++slot) colorStorage.EmplaceBack(VkRenderingAttachmentInfoKHR{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR});
+        auto colors = colorStorage.Span();
         for (std::size_t slot = 0; slot < colorSlots.size(); ++slot) {
             if (colorSlots[slot] == ~0u) continue;
             colors[slot].imageView = views[colorSlots[slot]];
@@ -1353,7 +1354,6 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             store.index[hash] = std::prev(store.entries.end());
         }
         while (store.entries.size() > storeBound(store)) {
-            // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
             const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
             if (victim == store.entries.end()) break;
             const auto evictedHash = victim->hash;
