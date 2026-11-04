@@ -5,7 +5,11 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -291,8 +295,23 @@ static EGLint SurfaceValue(EGLDisplay display, EGLSurface surface, EGLint attrib
     return value;
 }
 
-static void ProcAddress(const char* name, __eglMustCastToProperFunctionPointerType expected) {
-    Require(eglGetProcAddress_nid_postfix(name) == expected);
+static __eglMustCastToProperFunctionPointerType Expected(const char* name, __eglMustCastToProperFunctionPointerType linked) {
+#ifdef _WIN32
+    const std::string symbol = std::string(name) + "_nid_postfix";
+    const auto resolved = reinterpret_cast<__eglMustCastToProperFunctionPointerType>(GetProcAddress(GetModuleHandleA("libSceGLSlimVSH.prx"), symbol.c_str()));
+    if (!resolved) {
+        std::fprintf(stderr, "%s is not exported by libSceGLSlimVSH\n", symbol.c_str());
+        std::abort();
+    }
+    return resolved;
+#else
+    (void)name;
+    return linked;
+#endif
+}
+
+static void ProcAddress(const char* name, __eglMustCastToProperFunctionPointerType linked) {
+    Require(eglGetProcAddress_nid_postfix(name) == Expected(name, linked));
 }
 
 #define ProcEqual(name) ProcAddress(#name, reinterpret_cast<__eglMustCastToProperFunctionPointerType>(&name##_nid_postfix))
