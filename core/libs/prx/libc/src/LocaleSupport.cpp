@@ -628,6 +628,14 @@ void GuestLocale::ReleaseStringStorage(String& string) {
 
 extern "C" {
 
+const GuestLocale::NumPutVtable* LibcNumPutMethods_nid_no_patch() {
+    return &g_numPutVtable;
+}
+
+const GuestLocale::TimePutVtable* LibcTimePutMethods_nid_no_patch() {
+    return &g_timePutVtable;
+}
+
 int APS5_VABI isupper_nid_postfix(int c) { return ClassifyCharacter(c, 0x02); }
 int APS5_VABI islower_nid_postfix(int c) { return ClassifyCharacter(c, 0x10); }
 int APS5_VABI isalpha_nid_postfix(int c) { return ClassifyCharacter(c, 0x12); }

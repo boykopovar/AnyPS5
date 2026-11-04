@@ -267,5 +267,7 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+extern "C" const GuestLocale::NumPutVtable* LibcNumPutMethods_nid_no_patch();
+extern "C" const GuestLocale::TimePutVtable* LibcTimePutMethods_nid_no_patch();
 
 #endif
