@@ -2,6 +2,16 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/FontLibrary.cmake)
 add_sce_font_library(libSceFont)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_font_interface_contracts_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontInterfaceContracts.cpp)
+    target_include_directories(guest_font_interface_contracts_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_interface_contracts_tests PRIVATE libSceFont libc)
+    configure_windows_unwind(guest_font_interface_contracts_tests)
+    add_test(NAME guest_font_interface_contracts COMMAND guest_font_interface_contracts_tests)
+    if(WIN32)
+        set_tests_properties(guest_font_interface_contracts PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
+    endif()
+
     add_test_executable(guest_font_tests ${LIBS_INCLUDE_DIR}/tests/GuestFont.cpp)
     target_include_directories(guest_font_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_font_tests PRIVATE libSceFont libSceFontFt libc)

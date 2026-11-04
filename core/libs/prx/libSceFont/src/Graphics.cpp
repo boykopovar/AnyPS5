@@ -306,6 +306,22 @@ std::uint8_t MappedFlags(std::uint8_t flags) {
 
 namespace Font {
 
+int OutlineVertexesInterfaceInit(void* interface, const void* first, const void* second, std::uint64_t count) {
+    if (!interface) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    struct OutlineInterface {
+        std::uint64_t tag;
+        const void* first;
+        const void* second;
+        std::uint64_t count;
+        std::uint64_t reserved[2];
+    };
+    static_assert(sizeof(OutlineInterface) == 0x30);
+    const bool valid = first != nullptr && count >= 1 && count <= 3;
+    const OutlineInterface value = valid ? OutlineInterface{0xf08, first, second, count, {}} : OutlineInterface{};
+    std::memcpy(interface, &value, sizeof(value));
+    return valid ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
+}
+
 void SetGraphicsErrorCallback(GraphicsErrorCallback callback) {
     g_errorCallback.store(callback);
 }
