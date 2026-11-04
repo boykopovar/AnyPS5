@@ -363,8 +363,8 @@ std::optional<std::string> SafeText(std::string_view text, const HostIdentifiers
     if (text.empty() || !ValidUtf8(text, characters) || characters > MaxTextCharacters) return std::nullopt;
     if (std::ranges::any_of(text, [](unsigned char character) { return character < 0x20u || character == 0x7fu; })) return std::nullopt;
     if (NamesHost(text, host)) return std::nullopt;
-    static const std::regex addresses(R"(((^|[^0-9])\d{1,3}(\.\d{1,3}){3}($|[^0-9]))|(([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2})|((^|[^0-9A-Za-z:])(([0-9A-Fa-f]{1,4})?:){2,7}[0-9A-Fa-f]{0,4}($|[^0-9A-Za-z:]))|(\d{8,})|([0-9A-Fa-f]{16,})|([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}))");
-    static const std::regex paths(R"((^|[\s"'(=,;:|<>\[{])(/[^\s/]|~/|%[A-Za-z_]+%|[A-Za-z]:[\\/]|\\\\|file:))");
+    static const std::regex& addresses = *new std::regex(R"(((^|[^0-9])\d{1,3}(\.\d{1,3}){3}($|[^0-9]))|(([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2})|((^|[^0-9A-Za-z:])(([0-9A-Fa-f]{1,4})?:){2,7}[0-9A-Fa-f]{0,4}($|[^0-9A-Za-z:]))|(\d{8,})|([0-9A-Fa-f]{16,})|([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}))");
+    static const std::regex& paths = *new std::regex(R"((^|[\s"'(=,;:|<>\[{])(/[^\s/]|~/|%[A-Za-z_]+%|[A-Za-z]:[\\/]|\\\\|file:))");
     const std::string owned(text);
     if (owned.find('@') != std::string::npos || owned.find("://") != std::string::npos) return std::nullopt;
     if (std::regex_search(owned, addresses) || std::regex_search(owned, paths)) return std::nullopt;
@@ -665,7 +665,7 @@ Report Sanitized(Report report, const HostIdentifiers& host) {
     text(report.machine.osVersion, versionNames);
     if (report.machine.cpu && NamesHost(*report.machine.cpu, machineNames)) report.machine.cpu.reset();
     if (report.machine.cpu) {
-        static const std::regex clock(R"((.*[^ @]) +@ +[0-9]{1,2}([.,][0-9]{1,3})? ?[GMgm][Hh][Zz])");
+        static const std::regex& clock = *new std::regex(R"((.*[^ @]) +@ +[0-9]{1,2}([.,][0-9]{1,3})? ?[GMgm][Hh][Zz])");
         std::smatch parts;
         if (std::regex_match(*report.machine.cpu, parts, clock) && parts[1].str().find('@') == std::string::npos) report.machine.cpu = parts[1].str();
     }
@@ -1196,7 +1196,7 @@ struct Component {
 std::mutex componentsMutex;
 
 std::vector<Component>& Components() {
-    static std::vector<Component> components;
+    static std::vector<Component>& components = *new std::vector<Component>;
     return components;
 }
 
@@ -1331,11 +1331,11 @@ Report Collector::Snapshot(Exit exit, Stop stop, std::optional<std::int64_t> exi
         report.game = game->cache;
     }
     if (report.game.titleId) {
-        static const std::regex titleId("^[A-Z]{4}[0-9]{5}$");
+        static const std::regex& titleId = *new std::regex("^[A-Z]{4}[0-9]{5}$");
         if (!std::regex_match(*report.game.titleId, titleId)) report.game.titleId.reset();
     }
     if (report.game.contentVersion) {
-        static const std::regex version("^[0-9A-Za-z._-]{1,32}$");
+        static const std::regex& version = *new std::regex("^[0-9A-Za-z._-]{1,32}$");
         if (!std::regex_match(*report.game.contentVersion, version)) report.game.contentVersion.reset();
     }
     if (report.game.name) report.game.name = SafeText(*report.game.name, host);
