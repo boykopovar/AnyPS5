@@ -33,7 +33,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7429 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Inspector frontend dispatcher placement new](../../../core/libs/prx/libSceNKWebKit/src/InspectorDispatchers.cpp) (libSceNKWebKit) - tested on the host, not against console binaries; the console module's code for these 40 `FrontendDispatcher` `operator new` and `operator new[]` overloads is unverified. They return their location argument and ignore the size, as `WTF_MAKE_FAST_ALLOCATED` defines them in the pinned [`FastMalloc.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastMalloc.h) for the classes the pinned [`generate-inspector-protocol-bindings.py`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/JavaScriptCore/inspector/scripts/generate-inspector-protocol-bindings.py) generates.
+
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7389 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -5353,9 +5355,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector21CSSFrontendDispatcherC2ERNS_14FrontendRouterE` | `Sr+YQoaMQds` |
 | `_ZN9Inspector21CSSFrontendDispatcherdaEPv` | `kCyuvXqGXu0` |
 | `_ZN9Inspector21CSSFrontendDispatcherdlEPv` | `TumAKF0QLX0` |
-| `_ZN9Inspector21CSSFrontendDispatchernaEmPv` | `QABMTc77l10` |
 | `_ZN9Inspector21CSSFrontendDispatchernwEm` | `JaNjljrSqyg` |
-| `_ZN9Inspector21CSSFrontendDispatchernwEmPv` | `VXzAXY+RUM4` |
 | `_ZN9Inspector21DOMFrontendDispatcher15documentUpdatedEv` | `jwsSD7ZhRvw` |
 | `_ZN9Inspector21DOMFrontendDispatcher16attributeRemovedEiRKN3WTF6StringE` | `xzkqkH5qWbc` |
 | `_ZN9Inspector21DOMFrontendDispatcher16childNodeRemovedEii` | `v+mo-+xOSx8` |
@@ -5373,10 +5373,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector21DOMFrontendDispatcherC2ERNS_14FrontendRouterE` | `Eb3SYtDAAj0` |
 | `_ZN9Inspector21DOMFrontendDispatcherdaEPv` | `a1S5ypgxOOI` |
 | `_ZN9Inspector21DOMFrontendDispatcherdlEPv` | `UvxHBngd1H8` |
-| `_ZN9Inspector21DOMFrontendDispatchernaEmPv` | `kihUpacjs+I` |
 | `_ZN9Inspector21DOMFrontendDispatchernaEm` | `hdkkR+M8CDc` |
 | `_ZN9Inspector21DOMFrontendDispatchernwEm` | `H0jxp-CXk3o` |
-| `_ZN9Inspector21DOMFrontendDispatchernwEmPv` | `CgBCrLvqRUQ` |
 | `_ZN9Inspector21HeapBackendDispatcherC1ERNS_17BackendDispatcherEPNS_28HeapBackendDispatcherHandlerE` | `zd3EU-HBSf8` |
 | `_ZN9Inspector21HeapBackendDispatcherC2ERNS_17BackendDispatcherEPNS_28HeapBackendDispatcherHandlerE` | `vfjcDZZ8eBY` |
 | `_ZN9Inspector21HeapBackendDispatcherD1Ev` | `yu0tB6uMU5s` |
@@ -5463,10 +5461,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector22HeapFrontendDispatcherC2ERNS_14FrontendRouterE` | `JYuYFcPEJhw` |
 | `_ZN9Inspector22HeapFrontendDispatcherdaEPv` | `MYopeEAoQeU` |
 | `_ZN9Inspector22HeapFrontendDispatcherdlEPv` | `lz5UM9uG8w0` |
-| `_ZN9Inspector22HeapFrontendDispatchernaEmPv` | `Bea-ElS5IZA` |
 | `_ZN9Inspector22HeapFrontendDispatchernaEm` | `wW-C9fYsgnU` |
 | `_ZN9Inspector22HeapFrontendDispatchernwEm` | `Nhyhn2JgQ1M` |
-| `_ZN9Inspector22HeapFrontendDispatchernwEmPv` | `s8GYJeFHkAM` |
 | `_ZN9Inspector22InspectorDebuggerAgent11addListenerERNS0_8ListenerE` | `gVyCSJTFRbY` |
 | `_ZN9Inspector22InspectorDebuggerAgent11didContinueEv` | `O6bxDsGmlvg` |
 | `_ZN9Inspector22InspectorDebuggerAgent12assertPausedERN3WTF6StringE` | `Hkm3Dfu-aW4` |
@@ -5510,10 +5506,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector22PageFrontendDispatcherC2ERNS_14FrontendRouterE` | `wWyRB5M4a3Y` |
 | `_ZN9Inspector22PageFrontendDispatcherdaEPv` | `wvB-vvrz6Es` |
 | `_ZN9Inspector22PageFrontendDispatcherdlEPv` | `QHTLo69uRWI` |
-| `_ZN9Inspector22PageFrontendDispatchernaEmPv` | `u3NmAGMYF2E` |
 | `_ZN9Inspector22PageFrontendDispatchernaEm` | `e+sSKboL3VY` |
 | `_ZN9Inspector22PageFrontendDispatchernwEm` | `2ljzHKoKet8` |
-| `_ZN9Inspector22PageFrontendDispatchernwEmPv` | `n2jDNez3pz8` |
 | `_ZN9Inspector22RemoteAutomationTarget11setIsPairedEb` | `VyeMG5If2f8` |
 | `_ZN9Inspector22RemoteAutomationTargetC2Ev` | `R1UArToVtOY` |
 | `_ZN9Inspector22RemoteAutomationTargetD0Ev` | `ewpJla+Xdkk` |
@@ -5556,10 +5550,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector24CanvasFrontendDispatcherC2ERNS_14FrontendRouterE` | `z8TY8SaPtIw` |
 | `_ZN9Inspector24CanvasFrontendDispatcherdaEPv` | `NVkKQ0n1t8U` |
 | `_ZN9Inspector24CanvasFrontendDispatcherdlEPv` | `1O9g6WFku7c` |
-| `_ZN9Inspector24CanvasFrontendDispatchernaEmPv` | `9uLllMP6nhU` |
 | `_ZN9Inspector24CanvasFrontendDispatchernaEm` | `yBzQ4LTnp8U` |
 | `_ZN9Inspector24CanvasFrontendDispatchernwEm` | `NJt4CMd3J74` |
-| `_ZN9Inspector24CanvasFrontendDispatchernwEmPv` | `GpDR4arH8lM` |
 | `_ZN9Inspector24ConsoleBackendDispatcher6createERNS_17BackendDispatcherEPNS_31ConsoleBackendDispatcherHandlerE` | `lJ3w1fkalI0` |
 | `_ZN9Inspector24ConsoleBackendDispatcherC1ERNS_17BackendDispatcherEPNS_31ConsoleBackendDispatcherHandlerE` | `XFzf4GhJqa0` |
 | `_ZN9Inspector24ConsoleBackendDispatcherC2ERNS_17BackendDispatcherEPNS_31ConsoleBackendDispatcherHandlerE` | `wSISvG5+77c` |
@@ -5593,9 +5585,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector24TargetFrontendDispatcherC2ERNS_14FrontendRouterE` | `IqvI72sPVyw` |
 | `_ZN9Inspector24TargetFrontendDispatcherdaEPv` | `b3LcL-LNpus` |
 | `_ZN9Inspector24TargetFrontendDispatcherdlEPv` | `LrKTHvwbMM0` |
-| `_ZN9Inspector24TargetFrontendDispatchernaEmPv` | `4rIiwRN5juk` |
 | `_ZN9Inspector24TargetFrontendDispatchernaEm` | `kP1VqcMdVqk` |
-| `_ZN9Inspector24TargetFrontendDispatchernwEmPv` | `LrVLyMhdlF4` |
 | `_ZN9Inspector24WorkerFrontendDispatcher13workerCreatedERKN3WTF6StringES4_S4_` | `Nk-XIvILlUQ` |
 | `_ZN9Inspector24WorkerFrontendDispatcher16workerTerminatedERKN3WTF6StringE` | `apl6KD3oTLg` |
 | `_ZN9Inspector24WorkerFrontendDispatcher25dispatchMessageFromWorkerERKN3WTF6StringES4_` | `4Mbb6GJcxos` |
@@ -5603,25 +5593,19 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector24WorkerFrontendDispatcherC2ERNS_14FrontendRouterE` | `qyEX-fuiboI` |
 | `_ZN9Inspector24WorkerFrontendDispatcherdaEPv` | `qYjc+6V1cmo` |
 | `_ZN9Inspector24WorkerFrontendDispatcherdlEPv` | `ZAWn29mGSe8` |
-| `_ZN9Inspector24WorkerFrontendDispatchernaEmPv` | `5I8V274Iw9Y` |
 | `_ZN9Inspector24WorkerFrontendDispatchernaEm` | `y7Y2k8D6Bv4` |
-| `_ZN9Inspector24WorkerFrontendDispatchernwEmPv` | `X3xFNY5k+MQ` |
 | `_ZN9Inspector24WorkerFrontendDispatchernwEm` | `Yy7p8z0z7Nk` |
 | `_ZN9Inspector25BrowserFrontendDispatcherC1ERNS_14FrontendRouterE` | `TuNDnlmOxTw` |
 | `_ZN9Inspector25BrowserFrontendDispatcherC2ERNS_14FrontendRouterE` | `kbzzvMGjXIA` |
 | `_ZN9Inspector25BrowserFrontendDispatcherdaEPv` | `er6KKExFGgc` |
 | `_ZN9Inspector25BrowserFrontendDispatcherdlEPv` | `eWWZEruU6eQ` |
-| `_ZN9Inspector25BrowserFrontendDispatchernaEmPv` | `BQyTr76CMQc` |
 | `_ZN9Inspector25BrowserFrontendDispatchernaEm` | `oYJAITu1ga8` |
 | `_ZN9Inspector25BrowserFrontendDispatchernwEm` | `Fa3M9vt2GNg` |
-| `_ZN9Inspector25BrowserFrontendDispatchernwEmPv` | `8p8NfEvYtak` |
 | `_ZN9Inspector25ConsoleFrontendDispatcherC1ERNS_14FrontendRouterE` | `gHW1YCnRe9s` |
 | `_ZN9Inspector25ConsoleFrontendDispatcherC2ERNS_14FrontendRouterE` | `nVn730pUTh4` |
 | `_ZN9Inspector25ConsoleFrontendDispatcherdaEPv` | `7ht8b5GNMMY` |
 | `_ZN9Inspector25ConsoleFrontendDispatcherdlEPv` | `tkfkwdKXdSM` |
-| `_ZN9Inspector25ConsoleFrontendDispatchernaEmPv` | `XjmU-UvchPg` |
 | `_ZN9Inspector25ConsoleFrontendDispatchernaEm` | `y25WcIE0ly0` |
-| `_ZN9Inspector25ConsoleFrontendDispatchernwEmPv` | `zvvWMJWZYmk` |
 | `_ZN9Inspector25ConsoleFrontendDispatchernwEm` | `fejyIlCPzIA` |
 | `_ZN9Inspector25DatabaseBackendDispatcher6createERNS_17BackendDispatcherEPNS_32DatabaseBackendDispatcherHandlerE` | `o34cne4Sze8` |
 | `_ZN9Inspector25DatabaseBackendDispatcherC1ERNS_17BackendDispatcherEPNS_32DatabaseBackendDispatcherHandlerE` | `t4zuLZWFIwE` |
@@ -5644,17 +5628,13 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector25NetworkFrontendDispatcherdaEPv` | `HH3KJFVK2Kg` |
 | `_ZN9Inspector25NetworkFrontendDispatcherdlEPv` | `C5ifI-ABvq0` |
 | `_ZN9Inspector25NetworkFrontendDispatchernaEm` | `LJj90HDolFE` |
-| `_ZN9Inspector25NetworkFrontendDispatchernaEmPv` | `SJZPlWOFp24` |
 | `_ZN9Inspector25NetworkFrontendDispatchernwEm` | `JHBmUO0py9w` |
-| `_ZN9Inspector25NetworkFrontendDispatchernwEmPv` | `a39DFeFUxK0` |
 | `_ZN9Inspector25RuntimeFrontendDispatcherC1ERNS_14FrontendRouterE` | `Fcve1msoJH0` |
 | `_ZN9Inspector25RuntimeFrontendDispatcherC2ERNS_14FrontendRouterE` | `CpHAdNB7hs4` |
 | `_ZN9Inspector25RuntimeFrontendDispatcherdaEPv` | `fO2b1mAdv+w` |
 | `_ZN9Inspector25RuntimeFrontendDispatcherdlEPv` | `IT-rstTbKL8` |
-| `_ZN9Inspector25RuntimeFrontendDispatchernaEmPv` | `LCPCX6fHPQY` |
 | `_ZN9Inspector25RuntimeFrontendDispatchernaEm` | `TsCf6iWDcSo` |
 | `_ZN9Inspector25RuntimeFrontendDispatchernwEm` | `8pokA8LyOtk` |
-| `_ZN9Inspector25RuntimeFrontendDispatchernwEmPv` | `JbWUV6K+82c` |
 | `_ZN9Inspector25TimelineBackendDispatcher6createERNS_17BackendDispatcherEPNS_32TimelineBackendDispatcherHandlerE` | `aY2-NdiJ7es` |
 | `_ZN9Inspector25TimelineBackendDispatcherC1ERNS_17BackendDispatcherEPNS_32TimelineBackendDispatcherHandlerE` | `3u2GoRYVhr8` |
 | `_ZN9Inspector25TimelineBackendDispatcherC2ERNS_17BackendDispatcherEPNS_32TimelineBackendDispatcherHandlerE` | `aMhqQdD0-Ho` |
@@ -5671,10 +5651,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector26DatabaseFrontendDispatcherC2ERNS_14FrontendRouterE` | `QpFhGrmIqhE` |
 | `_ZN9Inspector26DatabaseFrontendDispatcherdaEPv` | `DB4go2kMtxo` |
 | `_ZN9Inspector26DatabaseFrontendDispatcherdlEPv` | `vEGSpl7lJQY` |
-| `_ZN9Inspector26DatabaseFrontendDispatchernaEmPv` | `crUhCyhBS3k` |
 | `_ZN9Inspector26DatabaseFrontendDispatchernaEm` | `sJIve7S2o-0` |
 | `_ZN9Inspector26DatabaseFrontendDispatchernwEm` | `FeHJNqnyMNg` |
-| `_ZN9Inspector26DatabaseFrontendDispatchernwEmPv` | `vtxQvXlNvHk` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher19globalObjectClearedEv` | `To0+90ONW9w` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher19scriptFailedToParseERKN3WTF6StringES4_iiS4_` | `a-YNP4O13AU` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher25playBreakpointActionSoundEi` | `nz2Vn7gXKYE` |
@@ -5684,8 +5662,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector26DebuggerFrontendDispatcherdaEPv` | `bjbrUuq+lso` |
 | `_ZN9Inspector26DebuggerFrontendDispatcherdlEPv` | `jk04YK+R0HU` |
 | `_ZN9Inspector26DebuggerFrontendDispatchernaEm` | `EZOP9rEdz30` |
-| `_ZN9Inspector26DebuggerFrontendDispatchernaEmPv` | `bM5szLq16Ds` |
-| `_ZN9Inspector26DebuggerFrontendDispatchernwEmPv` | `7lO9jFyTA4A` |
 | `_ZN9Inspector26DebuggerFrontendDispatchernwEm` | `uGChIgrdASs` |
 | `_ZN9Inspector26InspectorBackendDispatcher6createERNS_17BackendDispatcherEPNS_33InspectorBackendDispatcherHandlerE` | `4mDB1uYisIk` |
 | `_ZN9Inspector26InspectorBackendDispatcherC1ERNS_17BackendDispatcherEPNS_33InspectorBackendDispatcherHandlerE` | `HngShRrV5kE` |
@@ -5706,8 +5682,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector26TimelineFrontendDispatcherdaEPv` | `DJLMNkz6oP8` |
 | `_ZN9Inspector26TimelineFrontendDispatcherdlEPv` | `15DNj4tGe8c` |
 | `_ZN9Inspector26TimelineFrontendDispatchernaEm` | `JsiXZ27Fmcg` |
-| `_ZN9Inspector26TimelineFrontendDispatchernaEmPv` | `NcCsEd0v9bM` |
-| `_ZN9Inspector26TimelineFrontendDispatchernwEmPv` | `M7nvMGJySqk` |
 | `_ZN9Inspector26TimelineFrontendDispatchernwEm` | `nrg-o7sXbKk` |
 | `_ZN9Inspector27AnimationFrontendDispatcher13targetChangedERKN3WTF6StringE` | `hd9m4Ozb-zU` |
 | `_ZN9Inspector27AnimationFrontendDispatcher13trackingStartEd` | `bb5o-YHu8vM` |
@@ -5718,8 +5692,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector27AnimationFrontendDispatcherdaEPv` | `mcHjNU1s-LI` |
 | `_ZN9Inspector27AnimationFrontendDispatcherdlEPv` | `GnqKwm4KHMA` |
 | `_ZN9Inspector27AnimationFrontendDispatchernaEm` | `G7yXWAlfjTw` |
-| `_ZN9Inspector27AnimationFrontendDispatchernaEmPv` | `cj7hx7O-vF4` |
-| `_ZN9Inspector27AnimationFrontendDispatchernwEmPv` | `KaUFjN7Vu+s` |
 | `_ZN9Inspector27AnimationFrontendDispatchernwEm` | `U2Ewy7tmla0` |
 | `_ZN9Inspector27CSSBackendDispatcherHandlerC2ERKS0_` | `EgHudGJawMs` |
 | `_ZN9Inspector27CSSBackendDispatcherHandlerC2Ev` | `CEQjJzzBB+M` |
@@ -5742,19 +5714,15 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector27InspectorFrontendDispatcherC2ERNS_14FrontendRouterE` | `72Xc-Zdql7E` |
 | `_ZN9Inspector27InspectorFrontendDispatcherdaEPv` | `OX-s5D0nKW8` |
 | `_ZN9Inspector27InspectorFrontendDispatcherdlEPv` | `3040bxCvolo` |
-| `_ZN9Inspector27InspectorFrontendDispatchernaEmPv` | `up4R3KfldIo` |
 | `_ZN9Inspector27InspectorFrontendDispatchernaEm` | `gftOFNpk4Cg` |
 | `_ZN9Inspector27InspectorFrontendDispatchernwEm` | `4PQ+-MoYPRw` |
-| `_ZN9Inspector27InspectorFrontendDispatchernwEmPv` | `EPdBkepv-2k` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcher18layerTreeDidChangeEv` | `eS6QfGn5eCY` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcherC1ERNS_14FrontendRouterE` | `ZI4mwckKD1s` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcherC2ERNS_14FrontendRouterE` | `7WjTCZdhnXE` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcherdaEPv` | `lMjUdn4xQqk` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcherdlEPv` | `ETSlSSaZxGw` |
 | `_ZN9Inspector27LayerTreeFrontendDispatchernaEm` | `EyqqC2OwC9M` |
-| `_ZN9Inspector27LayerTreeFrontendDispatchernaEmPv` | `QOQ5LTPxvK4` |
 | `_ZN9Inspector27LayerTreeFrontendDispatchernwEm` | `Guk9aLNk+yE` |
-| `_ZN9Inspector27LayerTreeFrontendDispatchernwEmPv` | `zmtI0YFu-VU` |
 | `_ZN9Inspector27PerGlobalObjectWrapperWorld10addWrapperEPN3JSC14JSGlobalObjectEPNS1_8JSObjectE` | `GXnv8GxjAYw` |
 | `_ZN9Inspector27PerGlobalObjectWrapperWorld10getWrapperEPN3JSC14JSGlobalObjectE` | `RVTSv7erUVw` |
 | `_ZN9Inspector27PerGlobalObjectWrapperWorld16clearAllWrappersEv` | `aTRth+22E8I` |
@@ -5775,9 +5743,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector28DOMStorageFrontendDispatcherdaEPv` | `zN1Nt4FdDG0` |
 | `_ZN9Inspector28DOMStorageFrontendDispatcherdlEPv` | `nClGsf5G8Bs` |
 | `_ZN9Inspector28DOMStorageFrontendDispatchernaEm` | `GgSXKx2xATk` |
-| `_ZN9Inspector28DOMStorageFrontendDispatchernaEmPv` | `sBxCIRS9NKs` |
 | `_ZN9Inspector28DOMStorageFrontendDispatchernwEm` | `5B+TSfX4cRc` |
-| `_ZN9Inspector28DOMStorageFrontendDispatchernwEmPv` | `ZRga3V8LApU` |
 | `_ZN9Inspector28HeapBackendDispatcherHandlerC2ERKS0_` | `IDYAnLE0+kM` |
 | `_ZN9Inspector28HeapBackendDispatcherHandlerC2Ev` | `tai-HSaPBZU` |
 | `_ZN9Inspector28HeapBackendDispatcherHandlerD0Ev` | `k4HfprWhc0Q` |
@@ -5876,9 +5842,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector32ScriptProfilerFrontendDispatcherC2ERNS_14FrontendRouterE` | `ui4s+3Sg6is` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatcherdaEPv` | `wn316XLYBO8` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatcherdlEPv` | `C-PgX-qZLhk` |
-| `_ZN9Inspector32ScriptProfilerFrontendDispatchernaEmPv` | `eIWOmJNeKUs` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatchernaEm` | `SyQOI661UwU` |
-| `_ZN9Inspector32ScriptProfilerFrontendDispatchernwEmPv` | `lcKHRKrE2sY` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatchernwEm` | `QviDmlafc6I` |
 | `_ZN9Inspector32TimelineBackendDispatcherHandlerC2ERKS0_` | `kFw-B-SsQUM` |
 | `_ZN9Inspector32TimelineBackendDispatcherHandlerD2Ev` | `WRfSxgIk43M` |
@@ -5909,10 +5873,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcherC2ERNS_14FrontendRouterE` | `PZnzfneCpcI` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcherdaEPv` | `im5DNzT35to` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcherdlEPv` | `hoAwJetLmro` |
-| `_ZN9Inspector34ApplicationCacheFrontendDispatchernaEmPv` | `eaUO-kQF49o` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatchernaEm` | `zEdJ-HenBsU` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatchernwEm` | `3ItcbZh5emo` |
-| `_ZN9Inspector34ApplicationCacheFrontendDispatchernwEmPv` | `NnRO7tgv4Ok` |
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerC2ERKS0_` | `ti05wqo4hwA` |
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerC2Ev` | `8Y6RLatuTeM` |
 | `_ZN9Inspector34DOMStorageBackendDispatcherHandlerD0Ev` | `kfT6hC5SF+g` |
