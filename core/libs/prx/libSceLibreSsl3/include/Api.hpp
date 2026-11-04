@@ -283,7 +283,7 @@ int APS5_VABI Unknown_4pEl_minus_5DmrrM_nid_no_patch();
 int APS5_VABI BIO_meth_set_write_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::write) write);
 int APS5_VABI BIO_meth_set_create_nid_postfix();
 int APS5_VABI X509_CRL_free_nid_postfix();
-int APS5_VABI BIO_meth_set_read_nid_postfix();
+int APS5_VABI BIO_meth_set_read_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::read) read);
 int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix();
 int APS5_VABI SSL_CTX_set_max_early_data_nid_postfix();
 int APS5_VABI Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch();

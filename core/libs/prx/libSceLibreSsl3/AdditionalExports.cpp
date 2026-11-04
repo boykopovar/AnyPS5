@@ -218,9 +218,6 @@ int APS5_VABI X509_CRL_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_set_read_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI EC_POINT_set_affine_coordinates_GFp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
