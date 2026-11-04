@@ -33,7 +33,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7429 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7396 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -1189,9 +1189,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC19HeapSnapshotBuilderdaEPv` | `ndHeGl-LhLE` |
 | `_ZN3JSC19HeapSnapshotBuilderdlEPv` | `9903eIDpTjw` |
 | `_ZN3JSC19HeapSnapshotBuildernaEm` | `BhGJXRKJg5c` |
-| `_ZN3JSC19HeapSnapshotBuildernaEmPv` | `tRrh53bVLq4` |
-| `_ZN3JSC19HeapSnapshotBuildernwEm10NotNullTagPv` | `B0HIBmg7JR4` |
-| `_ZN3JSC19HeapSnapshotBuildernwEmPv` | `z+hRdf8ZPp0` |
 | `_ZN3JSC19HeapSnapshotBuildernwEm` | `QLsj+YmMqu0` |
 | `_ZN3JSC19InlineWatchpointSet11inflateSlowEv` | `hRVJOIGfek0` |
 | `_ZN3JSC19InlineWatchpointSet7fireAllERNS_2VMEPKc` | `uMuGhA2DXkw` |
@@ -1349,10 +1346,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3JSC4Yarr17RegularExpressiondaEPv` | `1+Y+ykZkTwg` |
 | `_ZN3JSC4Yarr17RegularExpressiondlEPv` | `XBeeGMsUfMY` |
 | `_ZN3JSC4Yarr17RegularExpressionnaEm` | `C7Fqw7M-LiE` |
-| `_ZN3JSC4Yarr17RegularExpressionnaEmPv` | `SkGtNek9SeI` |
-| `_ZN3JSC4Yarr17RegularExpressionnwEm10NotNullTagPv` | `4Mm-D4wuWxg` |
 | `_ZN3JSC4Yarr17RegularExpressionnwEm` | `4lP1J2jYQBU` |
-| `_ZN3JSC4Yarr17RegularExpressionnwEmPv` | `CZT07J4ApsE` |
 | `_ZN3JSC4callEPNS_14JSGlobalObjectENS_7JSValueERKNS_8CallDataES2_RKNS_7ArgListE` | `iX56hX3H4Yk` |
 | `_ZN3JSC6Config25disableFreezingForTestingEv` | `bEXUKe-l3WM` |
 | `_ZN3JSC6JSCell14deletePropertyEPS0_PNS_14JSGlobalObjectENS_12PropertyNameE` | `12Rb63-+3s4` |
@@ -5088,9 +5082,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc11IsoTLSEntryD1Ev` | `JmOEMbPsk8A` |
 | `_ZN7bmalloc11IsoTLSEntryD2Ev` | `r4zVk342NH4` |
 | `_ZN7bmalloc11IsoTLSEntrydlEPv` | `Dg05dR7Cut0` |
-| `_ZN7bmalloc11IsoTLSEntrynaEmPv` | `v3EVw6+3tLM` |
 | `_ZN7bmalloc11IsoTLSEntrynaEm` | `vMsePZhPOLY` |
-| `_ZN7bmalloc11IsoTLSEntrynwEmPv` | `6a1KgkULyqs` |
 | `_ZN7bmalloc11IsoTLSEntrynwEm` | `cg5bcS+k9P8` |
 | `_ZN7bmalloc12IsoTLSLayout3addEPNS_11IsoTLSEntryE` | `tMWlx2AgEiY` |
 | `_ZN7bmalloc13IsoSharedPage9tryCreateEv` | `A4P8aG8cGz0` |
@@ -5108,7 +5100,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7bmalloc15IsoHeapImplBaseD1Ev` | `lkqZwKJZ0oo` |
 | `_ZN7bmalloc15IsoHeapImplBaseD2Ev` | `Tv53+aRRcwY` |
 | `_ZN7bmalloc15IsoHeapImplBasedlEPv` | `3Xsf6cttiRo` |
-| `_ZN7bmalloc15IsoHeapImplBasenaEmPv` | `T4RZ2R4QNj8` |
 | `_ZN7bmalloc15IsoHeapImplBasenaEm` | `lekMQNRdlRs` |
 | `_ZN7bmalloc15IsoHeapImplBasenwEm` | `E0pHVD7uJ+E` |
 | `_ZN7bmalloc17getPerProcessDataEjPKcmm` | `FbvROv13LwA` |
@@ -5145,9 +5136,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector14ConsoleMessageD2Ev` | `JHSSw7eLWAg` |
 | `_ZN9Inspector14ConsoleMessagedaEPv` | `txl9WEJMVGk` |
 | `_ZN9Inspector14ConsoleMessagedlEPv` | `GWfexl813eg` |
-| `_ZN9Inspector14ConsoleMessagenaEmPv` | `M7c9P1DiVjE` |
 | `_ZN9Inspector14ConsoleMessagenaEm` | `VlL7D8EyZ1M` |
-| `_ZN9Inspector14ConsoleMessagenwEmPv` | `lWzHkMyiyp0` |
 | `_ZN9Inspector14ConsoleMessagenwEm` | `Uhlr4ATPsWQ` |
 | `_ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE` | `Q4f93lSW0lk` |
 | `_ZN9Inspector14FrontendRouter18disconnectFrontendERNS_15FrontendChannelE` | `9Z0gNNdVsQo` |
@@ -5179,9 +5168,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector14InspectorAgentD2Ev` | `evOComLiuD4` |
 | `_ZN9Inspector14InspectorAgentdaEPv` | `LU4M2+VIi8U` |
 | `_ZN9Inspector14InspectorAgentdlEPv` | `fXmilqjYipI` |
-| `_ZN9Inspector14InspectorAgentnaEmPv` | `XNZA9DDHP1o` |
-| `_ZN9Inspector14InspectorAgentnwEm10NotNullTagPv` | `qQwC0qx1Sdo` |
-| `_ZN9Inspector14InspectorAgentnwEmPv` | `qjNxRFy6JC0` |
 | `_ZN9Inspector14InspectorAgentnwEm` | `hjHWPtJ4p4E` |
 | `_ZN9Inspector15AsyncStackTrace18didCancelAsyncCallEv` | `91bSJvzfgEA` |
 | `_ZN9Inspector15AsyncStackTrace20didDispatchAsyncCallEv` | `67P8MiTuxKc` |
@@ -5288,10 +5274,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector18InspectorHeapAgentdaEPv` | `fyEt+b7Vf2k` |
 | `_ZN9Inspector18InspectorHeapAgentdlEPv` | `HdqkxFL0nGo` |
 | `_ZN9Inspector18InspectorHeapAgentnaEm` | `6Voi0Jp1SqE` |
-| `_ZN9Inspector18InspectorHeapAgentnaEmPv` | `5Z1c0doVn20` |
-| `_ZN9Inspector18InspectorHeapAgentnwEm10NotNullTagPv` | `4CiIyjuiGiE` |
 | `_ZN9Inspector18InspectorHeapAgentnwEm` | `BLWN2--HrXA` |
-| `_ZN9Inspector18InspectorHeapAgentnwEmPv` | `DZF93h86bFk` |
 | `_ZN9Inspector19InspectorAuditAgent11muteConsoleEv` | `i3jcNNLDrjA` |
 | `_ZN9Inspector19InspectorAuditAgent13unmuteConsoleEv` | `vGOMeCbW94Q` |
 | `_ZN9Inspector19InspectorAuditAgent19populateAuditObjectEPN3JSC14JSGlobalObjectERNS1_6StrongINS1_8JSObjectELNS1_30ShouldStrongDestructorGrabLockE0EEE` | `Vn6ks6XTMtQ` |
@@ -5304,10 +5287,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector19InspectorAuditAgentD2Ev` | `6jTdIXHSF4E` |
 | `_ZN9Inspector19InspectorAuditAgentdaEPv` | `wYRIszRYC0Y` |
 | `_ZN9Inspector19InspectorAuditAgentdlEPv` | `qXTJPJYZQrA` |
-| `_ZN9Inspector19InspectorAuditAgentnaEmPv` | `w7coJpIhnaY` |
 | `_ZN9Inspector19InspectorAuditAgentnaEm` | `h9CpAVBkQJM` |
 | `_ZN9Inspector19InspectorAuditAgentnwEm` | `4x33lGf0eEE` |
-| `_ZN9Inspector19InspectorAuditAgentnwEmPv` | `SjUQXWH4oQc` |
 | `_ZN9Inspector20CSSBackendDispatcher6createERNS_17BackendDispatcherEPNS_27CSSBackendDispatcherHandlerE` | `hEA4jRhQHeE` |
 | `_ZN9Inspector20CSSBackendDispatcherC1ERNS_17BackendDispatcherEPNS_27CSSBackendDispatcherHandlerE` | `LN2PdsxVp4k` |
 | `_ZN9Inspector20CSSBackendDispatcherC2ERNS_17BackendDispatcherEPNS_27CSSBackendDispatcherHandlerE` | `uk137jXZTd8` |
@@ -5343,8 +5324,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector20InspectorTargetAgentdaEPv` | `G0gdWIZvnKI` |
 | `_ZN9Inspector20InspectorTargetAgentdlEPv` | `4ulPySgBJGQ` |
 | `_ZN9Inspector20InspectorTargetAgentnaEm` | `K42ka7NaGvY` |
-| `_ZN9Inspector20InspectorTargetAgentnaEmPv` | `9z-T9X9IMXE` |
-| `_ZN9Inspector20InspectorTargetAgentnwEmPv` | `MVpW7W1+7cE` |
 | `_ZN9Inspector20InspectorTargetAgentnwEm` | `zyCqcJqhpds` |
 | `_ZN9Inspector21CSSFrontendDispatcher17styleSheetChangedERKN3WTF6StringE` | `ki3Vuu7oPhg` |
 | `_ZN9Inspector21CSSFrontendDispatcher17styleSheetRemovedERKN3WTF6StringE` | `OxDS41BqXws` |
@@ -5398,9 +5377,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector21InjectedScriptManagerD2Ev` | `jPHPessHa1Q` |
 | `_ZN9Inspector21InjectedScriptManagerdlEPv` | `Or5qGUqr53A` |
 | `_ZN9Inspector21InjectedScriptManagernaEm` | `JMBlA4Sqkek` |
-| `_ZN9Inspector21InjectedScriptManagernaEmPv` | `zcD6WcvPfrs` |
-| `_ZN9Inspector21InjectedScriptManagernwEm10NotNullTagPv` | `icCnwM4vE+E` |
-| `_ZN9Inspector21InjectedScriptManagernwEmPv` | `2oT3cKT3h5w` |
 | `_ZN9Inspector21InjectedScriptManagernwEm` | `y6xETTqSGWM` |
 | `_ZN9Inspector21InspectorConsoleAgent10countResetEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `1UFWAsaTuXg` |
 | `_ZN9Inspector21InspectorConsoleAgent10stopTimingEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `C3uEVqmgg48` |
@@ -5418,9 +5394,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector21InspectorConsoleAgentdaEPv` | `z9oMRRuS3fk` |
 | `_ZN9Inspector21InspectorConsoleAgentdlEPv` | `JxzDXFEr-jg` |
 | `_ZN9Inspector21InspectorConsoleAgentnaEm` | `7G7hHL9msVg` |
-| `_ZN9Inspector21InspectorConsoleAgentnaEmPv` | `nsqL77brn7c` |
-| `_ZN9Inspector21InspectorConsoleAgentnwEm10NotNullTagPv` | `8FKB-KCBLXU` |
-| `_ZN9Inspector21InspectorConsoleAgentnwEmPv` | `8IEd1z5hqb8` |
 | `_ZN9Inspector21InspectorConsoleAgentnwEm` | `WYWJIM3mt+M` |
 | `_ZN9Inspector21InspectorRuntimeAgent21injectedScriptManagerEv` | `MyM-PBaGyn4` |
 | `_ZN9Inspector21InspectorRuntimeAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE` | `e9w1QH3vMDw` |
@@ -5433,11 +5406,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector21InspectorRuntimeAgentD2Ev` | `ME+KyIgladA` |
 | `_ZN9Inspector21InspectorRuntimeAgentdaEPv` | `BtNM6TJROc4` |
 | `_ZN9Inspector21InspectorRuntimeAgentdlEPv` | `NObsUCdW7IE` |
-| `_ZN9Inspector21InspectorRuntimeAgentnaEmPv` | `dairlPhr80o` |
 | `_ZN9Inspector21InspectorRuntimeAgentnaEm` | `ebYz12wDUNI` |
-| `_ZN9Inspector21InspectorRuntimeAgentnwEm10NotNullTagPv` | `bBAsdwQLvIs` |
 | `_ZN9Inspector21InspectorRuntimeAgentnwEm` | `8P3ImXX5UX8` |
-| `_ZN9Inspector21InspectorRuntimeAgentnwEmPv` | `BxYkFlE891I` |
 | `_ZN9Inspector21PageBackendDispatcher6createERNS_17BackendDispatcherEPNS_28PageBackendDispatcherHandlerE` | `QUJD3ow+ARM` |
 | `_ZN9Inspector21PageBackendDispatcherC1ERNS_17BackendDispatcherEPNS_28PageBackendDispatcherHandlerE` | `IYEzYmDr9lQ` |
 | `_ZN9Inspector21PageBackendDispatcherC2ERNS_17BackendDispatcherEPNS_28PageBackendDispatcherHandlerE` | `bMH1rw20+e8` |
@@ -5796,10 +5766,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN9Inspector28InspectorScriptProfilerAgentD1Ev` | `XAqBKPLfJnQ` |
 | `_ZN9Inspector28InspectorScriptProfilerAgentdaEPv` | `HFxRr3-fCPc` |
 | `_ZN9Inspector28InspectorScriptProfilerAgentdlEPv` | `ZAURFIgPZk8` |
-| `_ZN9Inspector28InspectorScriptProfilerAgentnaEmPv` | `F0e60JHYx9M` |
 | `_ZN9Inspector28InspectorScriptProfilerAgentnaEm` | `wQRrOOXbxlM` |
-| `_ZN9Inspector28InspectorScriptProfilerAgentnwEm10NotNullTagPv` | `X26HnO3yPb8` |
-| `_ZN9Inspector28InspectorScriptProfilerAgentnwEmPv` | `NV1hReHpVgo` |
 | `_ZN9Inspector28InspectorScriptProfilerAgentnwEm` | `mOBKWn-eJc0` |
 | `_ZN9Inspector28PageBackendDispatcherHandlerC2ERKS0_` | `Eh7uskcjFl4` |
 | `_ZN9Inspector28PageBackendDispatcherHandlerC2Ev` | `xAE5zO3kEi0` |
