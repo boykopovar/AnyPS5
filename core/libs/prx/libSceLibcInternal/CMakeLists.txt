@@ -195,9 +195,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_libc_internal_vector_algorithms_tests PRIVATE libSceLibcInternal libkernel libc)
     configure_windows_unwind(guest_libc_internal_vector_algorithms_tests)
     add_test(NAME guest_libc_internal_vector_algorithms COMMAND guest_libc_internal_vector_algorithms_tests)
-    set_tests_properties(guest_libc_internal_vector_algorithms PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_libc_internal_value_extrema_zero COMMAND guest_libc_internal_vector_algorithms_tests native-zero)
+    add_test(NAME guest_libc_internal_value_extrema_special COMMAND guest_libc_internal_vector_algorithms_tests native-special)
+    set_tests_properties(guest_libc_internal_vector_algorithms guest_libc_internal_value_extrema_zero guest_libc_internal_value_extrema_special PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_libc_internal_vector_algorithms PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_libc_internal_vector_algorithms guest_libc_internal_value_extrema_zero guest_libc_internal_value_extrema_special PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
 endif()
