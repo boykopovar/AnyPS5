@@ -5581,7 +5581,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.NotePendingRead(arguments, 12, Graphics::Recorder::ReadKind::Indirect);
     }
     VkImage clearedMirror = VK_NULL_HANDLE;
-    if (argumentImport == nullptr && Graphics::DepthClearDispatchSkipActive()) {
+    if (argumentImport == nullptr && !overlapCapable && Graphics::DepthClearDispatchSkipActive()) {
         for (const auto& [image, written] : resources.StorageImages()) {
             if (written && Graphics::PlanDepthClearDispatchSkip(context, image)) {
                 clearedMirror = image;
@@ -5679,6 +5679,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     recorder.EndGpuTiming(gpuTiming);
     if (marker != 0) state->bufferMarker(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, state->markerBuffer, sizeof(std::uint32_t), marker);
     if (overlapCapable) {
+        Graphics::Require(!mirrorCleared, "an overlap-capable dispatch took the depth-clear mirror skip");
         recorder.DeferDispatchBarrier(overlapQueue, runOwners, runAccesses);
         resources.CopyBacksAfterRun(record.resources);
     } else {
