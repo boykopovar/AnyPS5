@@ -517,6 +517,7 @@ struct Replay {
             if (skipped.Overlaps(*chunk)) continue;
             auto bytes = reader.Read(*chunk);
             auto* const target = reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk->address));
+            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
             for (auto at = static_cast<std::size_t>((4 - chunk->address % 4) % 4); at + 4 <= bytes.size(); at += 4) {
                 std::uint32_t value = 0;
                 std::memcpy(&value, bytes.data() + at, sizeof(value));
@@ -528,7 +529,6 @@ struct Replay {
                 controls.emplace_back(reinterpret_cast<std::uint32_t*>(target + at), value);
                 std::memcpy(bytes.data() + at, target + at, sizeof(value));
             }
-            AgcDriverPrepareCommandWrite_nid_no_patch(chunk->address, static_cast<std::size_t>(chunk->bytes));
             std::memcpy(target, bytes.data(), bytes.size());
             deltaBytes += chunk->bytes;
         }
