@@ -741,9 +741,13 @@ void HostProbeTest() {
 #endif
     const auto current = RunReport::CurrentHostIdentifiers();
     const auto versionNames = RunReport::MachineNames(current, true);
-    const auto machineNames = RunReport::MachineNames(current, false);
     if (host.osVersion) Require(RunReport::SafeText(*host.osVersion, versionNames).has_value(), "the OS version would be filtered out of the report: " + *host.osVersion);
-    if (host.cpu) Require(RunReport::SafeText(*host.cpu, machineNames).has_value(), "the CPU model would be filtered out of the report: " + *host.cpu);
+    if (host.cpu) {
+        auto report = SampleReport();
+        report.machine.cpu = *host.cpu;
+        const auto output = RunReport::Serialize(report, current);
+        Require(output.find("\"cpu\": null") == std::string::npos, "the CPU model would be filtered out of the report: " + *host.cpu);
+    }
 #endif
 }
 

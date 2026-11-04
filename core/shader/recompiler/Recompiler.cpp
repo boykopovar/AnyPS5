@@ -1,3 +1,4 @@
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "Recompiler.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
 #include "StencilReplay.hpp"
@@ -1446,7 +1447,8 @@ void NoteShader(int what) {
 }
 
 void NoteFailureOnce() {
-    thread_local std::exception_ptr counted;
+    struct CountedStorage {};
+    auto& counted = HostThreadLocal<std::exception_ptr, CountedStorage>();
     const auto current = std::current_exception();
     if (current == nullptr || current == counted) return;
     counted = current;
