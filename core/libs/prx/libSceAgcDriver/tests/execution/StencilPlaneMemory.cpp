@@ -118,6 +118,35 @@ void CheckConsumedStencilClear(AgcDriver::VulkanDevice& device, const DepthFastC
     Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "the consumed stencil clear was stored twice");
 }
 
+void CheckGuestWriteBeforeRepeatedClears(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, std::uint32_t swizzle) {
+    auto* blocks = static_cast<std::byte*>(AllocateBlocks(DepthBytes + StencilBytes + Block));
+    auto* depth = reinterpret_cast<float*>(blocks);
+    auto* stencil = reinterpret_cast<std::uint8_t*>(blocks + DepthBytes);
+    auto* htile = reinterpret_cast<std::uint32_t*>(blocks + DepthBytes + StencilBytes);
+    const auto htileBytes = AgcDriver::Graphics::HtileMetadataBytes(PlaneExtent);
+    std::fill(depth, depth + PlaneTexels, 1.0f);
+    Fill(stencil, 0u);
+    std::fill(htile, htile + htileBytes / sizeof(*htile), 0xffffffffu);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto stencilBase = reinterpret_cast<std::uintptr_t>(stencil);
+    const Surface surface{reinterpret_cast<std::uintptr_t>(depth), stencilBase, reinterpret_cast<std::uintptr_t>(htile), true, VK_FORMAT_D32_SFLOAT_S8_UINT, 0, 0, swizzle};
+    Require(Draw(device, shaders, surface, {.depthTest = true, .depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x18u)}, PlaneExtent, Colors) == PlaneTexels, "the draw before the guest write did not cover the plane");
+    Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "the stencil drawn before the guest write was not stored");
+    device.WaitIdle();
+    Require(Holding(stencil, 0x18u) == StencilBytes, "the stencil drawn before the guest write did not reach guest memory");
+    Fill(stencil, 0x77u);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    for (int clear = 0; clear < 2; ++clear) {
+        std::fill(htile, htile + htileBytes / sizeof(*htile), 0u);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        AgcDriver::Graphics::NoteDepthMetadataFill(surface.htile, htileBytes, 0u);
+    }
+    static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes));
+    device.WaitIdle();
+    Require(Holding(stencil, 0x77u) == StencilBytes, "stale stencil planes re-marked by HTILE clears were stored over the guest's write after their last store");
+    Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a stencil plane the guest wrote after its last store stayed stale");
+}
+
 }
 
 int main() {
@@ -145,6 +174,7 @@ int main() {
 
         CheckConsumedStencilClear(*device, shaders, swizzle, true);
         CheckConsumedStencilClear(*device, shaders, swizzle, false);
+        CheckGuestWriteBeforeRepeatedClears(*device, shaders, swizzle);
 
         std::size_t readOnlyFailures = 0;
         const auto checkReadOnly = [&](const DrawOptions& options, const char* name) {
