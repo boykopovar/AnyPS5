@@ -1078,6 +1078,7 @@ struct VulkanDevice::State {
             // sets and samplers they borrowed can go.
             copiedWriters->clear();
             resourceCache.Clear();
+            Graphics::ClearRetainedSpaces(device);
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
             Graphics::ClearImageMirrors(device);
