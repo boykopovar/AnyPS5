@@ -539,12 +539,13 @@ KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFi
 
 int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
     if (!name) throw std::invalid_argument("sceKernelIsModuleLoaded: null name");
-    std::string copy;
-    const int copied = CopyGuestString_nid_no_patch(name, 256, copy);
-    if (copied != 0) return SCE_KERNEL_ERROR_EFAULT;
     KernelModule handles[0x300];
     std::size_t count = 0;
     if (const int result = sceKernelGetModuleListInternal(handles, std::size(handles), &count)) return result;
+    std::string copy;
+    const int copied = CopyGuestString_nid_no_patch(name, 256, copy);
+    if (copied == 63) return SCE_KERNEL_ERROR_ESRCH;
+    if (copied != 0) return SCE_KERNEL_ERROR_EFAULT;
     for (std::size_t i = 0; i < count; ++i) {
         ModuleInfo info{};
         info.st_size = sizeof(info);
