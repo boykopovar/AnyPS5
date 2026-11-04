@@ -18,7 +18,7 @@
 namespace {
 
 constexpr std::size_t PacketSize = 4096;
-alignas(8192) std::array<std::uint8_t, 16384> ringStorage;
+alignas(8192) std::array<std::uint8_t, 24576> ringStorage;
 std::span<std::uint8_t, 8192> ring(reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(ringStorage.data()) + 16383) & ~std::uintptr_t{16383}), 8192);
 std::array<std::uint8_t, PacketSize> output;
 std::vector<char> calls;

@@ -1,5 +1,10 @@
 # libSceRemoteplay technical debt
 
+### Additional callable exports
+
+- [Remoteplay export `HV7jZe1frbM`](../../../core/libs/prx/libSceRemoteplay/Export.cpp) is a function record with qualifier `D#A` in older and later version-labelled modules; both map library ID 3 and module ID 0 to `libSceRemoteplay`. Older module words: `0x08540001`, `0x03200004`; later: `0x13590001`, `0x13600007`. The older module contains 44 function NIDs; sorted-LF SHA-256: `dbfa653ec4819a116d5271c2db9a177acb6dfefc0915322b10ef21611fbe0844`, using the [static ELF membership procedure](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298). Version labels do not authenticate retail provenance; the digest identifies the NID set only. Independent verification requires a matching image. The name, signature and behavior are unverified; this declaration throws.
+
+
 ### Silent stubs
 
 - [sceRemoteplayGetConnectionStatus](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID: on the console the value comes from the session service, and the wrapper retries once through another internal query when that answers `0x80020003`; this tree has no session, so the value and the retry path are unmodelled
