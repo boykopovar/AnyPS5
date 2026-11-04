@@ -596,7 +596,7 @@ void APS5_VABI cairo_set_dash(CairoContext* context, const double* dashes,
     double offTotal = 0;
     for (int i = 1; i < numDashes; i += 2) offTotal += copy[i];
     const double period = (numDashes % 2 == 0 ? total : total * 2);
-    if (numDashes > 0 && (period < 1.0 / 256.0 ||
+    if (numDashes > 0 && ((numDashes % 2 != 0 && period < 1.0 / 256.0) ||
                           (numDashes % 2 == 0 && offTotal < 1.0 / 512.0))) {
         delete[] copy;
         copy = nullptr;
