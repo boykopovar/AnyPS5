@@ -23,6 +23,8 @@
 #include <sys/event.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#elif defined(__EMSCRIPTEN__)
+#include <unistd.h>
 #else
 #include <dirent.h>
 #include <fcntl.h>
@@ -68,6 +70,7 @@ public:
         stopSignal = ends[1];
         ::fcntl(stopEvent, F_SETFD, FD_CLOEXEC);
         ::fcntl(stopSignal, F_SETFD, FD_CLOEXEC);
+#elif defined(__EMSCRIPTEN__)
 #else
         stopEvent = ::eventfd(0, EFD_CLOEXEC);
         if (stopEvent < 0) {
@@ -463,6 +466,19 @@ int OpenHostWatch(int descriptor, std::uint32_t, HostWatch& host) {
         throw std::runtime_error("EVFILT_VNODE: kqueue failed, errno=" + std::to_string(error));
     }
     return 0;
+}
+
+#elif defined(__EMSCRIPTEN__)
+
+struct HostWatch {};
+
+void CloseHostWatch(HostWatch&) {}
+
+void RunHostWatch(std::shared_ptr<VnodeWatch>, HostWatch) {}
+
+int OpenHostWatch(int, std::uint32_t, HostWatch&) {
+    NotImplemented_nid_no_patch("EVFILT_VNODE in WebAssembly");
+    return GUEST_EINVAL;
 }
 
 #else
