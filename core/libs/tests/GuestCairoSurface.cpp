@@ -185,7 +185,7 @@ void CheckSimilarAndSubsurfaces() {
     }
     CairoSurface* subsection = cairo_surface_create_for_rectangle(parent, 1.5, 2.5, 3.5, 4.5);
     assert(subsection && cairo_surface_status(subsection) == 0);
-    assert(cairo_surface_get_type(subsection) == 23);
+    assert(cairo_surface_get_type(subsection) == 0);
     assert(cairo_surface_get_content(subsection) == 0x3000);
     assert(cairo_image_surface_get_format(subsection) == -1);
     assert(cairo_image_surface_get_data(subsection) == nullptr);
