@@ -33,9 +33,11 @@ int AddEvent(KernelEqueue eq, std::uint32_t queue, std::uintptr_t ident, void* u
     event.event.ident = ident;
     event.event.filter = EvfiltGraphicsCore;
     event.event.flags = EV_ADD | EV_CLEAR;
+    event.event.data = static_cast<intptr_t>(queue);
     event.event.udata = udata;
-    event.filter.triggerFunc = [](KernelEqueueEvent* e, void*) {
-        e->event.data = e->triggered ? e->event.data + 1 : 1;
+    event.filter.triggerFunc = [](KernelEqueueEvent* e, void* data) {
+        if (data == nullptr) throw std::runtime_error("graphics event triggered without its interrupt data");
+        e->event.data = static_cast<intptr_t>(*static_cast<const std::uint64_t*>(data));
         e->triggered = true;
     };
     event.filter.resetFunc = [](KernelEqueueEvent* e) {
@@ -67,20 +69,17 @@ int DeleteEvent(KernelEqueue eq, std::uintptr_t ident, const char* caller) {
 
 }
 
-bool AgcDriverDeliverEopInterrupt(std::uint32_t queue) {
+void AgcDriverDeliverEopInterrupt(std::uint32_t queue, std::uint32_t context) {
     std::vector<Registration> registrations;
     {
         std::lock_guard lock(g_mutex);
         registrations = g_registrations;
     }
-    bool delivered = false;
     for (const auto& registration : registrations) {
-        if (registration.queue == queue) {
-            EqueueTriggerEvent_nid_postfix(registration.eq, registration.ident, EvfiltGraphicsCore, nullptr);
-            delivered = true;
-        }
+        if (registration.queue != queue) continue;
+        std::uint64_t data = static_cast<std::uint64_t>(static_cast<std::uint8_t>(registration.queue)) | (static_cast<std::uint64_t>(context) << 16u);
+        EqueueTriggerEvent_nid_postfix(registration.eq, registration.ident, EvfiltGraphicsCore, &data);
     }
-    return delivered;
 }
 
 extern "C" {
