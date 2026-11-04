@@ -765,6 +765,27 @@ void testAvcPictureMetadata() {
         expected.maxDecFrameBuffering = 16;
         check(hash(output) == hashes[picture] && avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " with an inferred DPB size differs");
     }) == ippp.size(), "AVC pictures with an inferred DPB size are missing");
+
+    std::vector<AvcPictureInfo> plain;
+    decodeAll(66, ippp, [&](const OutputInfo& output, std::size_t) { plain.push_back(queryAvc(output)); });
+    check(plain.size() == ippp.size() && ippp[2][4] == 0x09, "the IPPP fixture's third unit does not open with its delimiter");
+    auto samePps = ippp;
+    const std::array<std::uint8_t, 8> chromaOffset{0, 0, 0, 1, 0x68, 0xce, 0x0f, 0xc8};
+    samePps[2].insert(samePps[2].begin() + 6, chromaOffset.begin(), chromaOffset.end());
+    check(decodeAll(66, samePps, [&](const OutputInfo& output, std::size_t picture) {
+        auto expected = plain[picture];
+        if (picture == 2) expected.pictureParameterSetPresentFlag = 1;
+        check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " after a PPS replaced under the same SPS differs");
+    }) == ippp.size(), "AVC pictures after a PPS replaced under the same SPS are missing");
+    auto otherSps = ippp;
+    const std::array<std::uint8_t, 35> secondSpsAndPps{0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x0a, 0x56, 0x84, 0x7b, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x22, 0x6a,
+        0, 0, 0, 1, 0x68, 0xa3, 0x83, 0xcb, 0x20};
+    otherSps[2].insert(otherSps[2].begin() + 6, secondSpsAndPps.begin(), secondSpsAndPps.end());
+    check(decodeAll(66, otherSps, [&](const OutputInfo& output, std::size_t picture) {
+        check(hash(output) == hashes[picture], "AVC picture " + std::to_string(picture) + " decodes differently after a PPS moved to an identical SPS 1");
+        if (picture < 2) check(avcFields(queryAvc(output)) == avcFields(plain[picture]), "AVC picture " + std::to_string(picture) + " before a PPS moved to another SPS differs");
+        else checkUnprojected(output, sizeof(AvcPictureInfo));
+    }) == ippp.size(), "AVC pictures after a PPS moved to another SPS are missing");
 }
 
 void testEmptyAccessUnit() {
