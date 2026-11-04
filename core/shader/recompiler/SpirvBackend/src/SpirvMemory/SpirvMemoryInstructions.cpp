@@ -940,6 +940,18 @@ std::uint32_t Atomic32(SpirvValueEmitContext& ctx, const IrValue& inst, const Me
 std::uint32_t BufferAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     static_cast<void>(BufferMemory(ctx, inst));
+    if (state.requirements.bufferInt64AtomicsSplit) {
+        if (!IsSplittableBufferAtomic64(&inst)) ctx.Fail(inst, "64-bit buffer atomic needs shaderBufferInt64Atomics");
+        const auto data = Unary(state, spv::OpBitcast, TypeScalarU64(state), ctx.Arg(inst, inst.ArgumentCount() - 2u));
+        const auto low = Unary(state, spv::OpUConvert, TypeU32(state), data);
+        const auto high = Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), data, BdaConstant(state, 32u)));
+        std::uint32_t index = 0u;
+        EmitRuntimeBufferAtomicHalves(ctx, inst, ActiveArgument(ctx, inst), [&](std::uint32_t pointer) {
+            state.module.AddFunction(SpirvAtomicOpcode(inst.Opcode()), TypeU32(state), state.module.AllocateId(), pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), index++ == 0u ? low : high);
+        });
+        EmitDeviceAtomicMemoryBarrier(state);
+        return ConstantU64(state, 0u);
+    }
     return EmitRuntimeBufferAtomic(ctx, inst, 64u, ActiveArgument(ctx, inst), [&](std::uint32_t pointer) {
         const auto value = Unary(state, spv::OpBitcast, TypeScalarU64(state), ctx.Arg(inst, inst.ArgumentCount() - 2u));
         const auto old = state.module.AllocateId();
@@ -1394,9 +1406,11 @@ std::uint32_t LockedLdsUpdate(SpirvEmitterState& state, std::uint32_t type, std:
     state.module.AddFunction(spv::OpSelectionMerge, attemptMerge, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, acquired, critical, attemptMerge);
     EmitLabel(state, critical);
+    if (state.ldsLockFences) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireMask | LdsMemorySemantics(state)));
     state.insideLdsLock = true;
     const auto old = update();
     state.insideLdsLock = false;
+    if (state.ldsLockFences) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsReleaseMask | LdsMemorySemantics(state)));
     const auto released = state.module.AllocateId();
     state.module.AddFunction(spv::OpAtomicExchange, TypeU32(state), released, lock, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsReleaseMask | LdsMemorySemantics(state)), ConstantU32(state, 0u));
     const auto criticalExit = state.currentLabel;
@@ -1566,7 +1580,15 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
             EmitIfCondition(state, poisoned, [&] {
                 const auto record = Binary(state, spv::OpIAdd, u32, ConstantU32(state, records), Binary(state, spv::OpIMul, u32, Binary(state, spv::OpISub, u32, flag, ConstantU32(state, 1u)), ConstantU32(state, 3u)));
                 const auto stage = ConstantU32(state, static_cast<std::uint32_t>(resources.stage) << BdaAbi::SrtGuardStageShift);
-                state.module.AddFunction(spv::OpAtomicStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, BdaAbi::SrtGuardWord)), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), Binary(state, spv::OpBitwiseOr, u32, record, stage));
+                const auto word = BdaWord(state, state.faultBufferVariable, ConstantU32(state, BdaAbi::SrtGuardWord));
+                const auto scope = ConstantU32(state, spv::ScopeDevice);
+                const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
+                const auto value = Binary(state, spv::OpBitwiseOr, u32, record, stage);
+                if (state.bdaStopsInvocations) {
+                    state.module.AddFunction(spv::OpAtomicStore, word, scope, relaxed, value);
+                } else {
+                    state.module.AddFunction(spv::OpAtomicCompareExchange, u32, state.module.AllocateId(), word, scope, relaxed, relaxed, value, ConstantU32(state, 0u));
+                }
             });
             StopBdaInvocationIf(state, poisoned);
         }

@@ -196,6 +196,13 @@ int main() {
     Require(*__error_nid_postfix() == 20);
     Require(opendir_nid_postfix("") == nullptr && *__error_nid_postfix() == 2);
     Require(closedir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(opendir_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(readdir_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    rewinddir_nid_postfix(nullptr);
+    Require(*__error_nid_postfix() == 9);
     const std::u8string folder = u8"セーブ";
     const std::u8string file = u8"été.txt";
     Require(std::filesystem::create_directory(root / std::filesystem::path(folder)));
