@@ -1,6 +1,7 @@
 # libkernel_sys technical debt
 
 - [sceKernelGetCpuUsage, sceKernelGetThreadName, sceKernelLwfsAllocateBlock, sceKernelLwfsLseek, sceKernelLwfsSetAttribute, sceKernelLwfsWrite, sceKernelSetCompressionAttribute and sceKernelSetFsstParam](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - throw through `NotImplemented_nid_no_patch`; behaviour and the PS5 prototypes are unmeasured. The parameter lists come from a single source, the PS4 OpenOrbis `libkernel.h`, with no second reference: `off_t` and `ssize_t` are taken as 64-bit, the `Lwfs*` and `Set*` parameters are unnamed there (the names here are guesses), and the `Proc_Stats` of `sceKernelGetCpuUsage` is declared as `void*` because its layout is unknown.
+- [sceKernelGetPhysPageSize](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) returns `PS5_PAGE_SIZE` (16 KiB), the guest page granularity used by libkernel's direct-memory and mapping implementation. The export has no arguments. Console behaviour is unverified
 ### Silent stubs
 - [fchmodat](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - `AT_SYMLINK_NOFOLLOW` on a symbolic link (on Windows and Linux)
 - [sceKernelCallIndirectBuffer2](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - always writes a zero result, as `sceAmprAmmSubmitCommandBuffer2` does here; in firmware 13.42 the library passes the result pointer to a kernel ioctl, and what the kernel writes there is not known

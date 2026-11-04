@@ -1234,6 +1234,7 @@ int main() {
     CharUpperBuffW(hostDirectorySpelling.data(), static_cast<DWORD>(hostDirectorySpelling.size()));
     Require(SetCurrentDirectoryW(hostDirectorySpelling.c_str()) != 0);
 #endif
+    Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     CheckRawGetcwd();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
