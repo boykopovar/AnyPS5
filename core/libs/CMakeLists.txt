@@ -488,6 +488,16 @@ if(BUILD_TESTING)
         add_test(NAME nid_elf_layout COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_elf_layout.py $<TARGET_FILE:nid_patcher>)
     endif()
+    add_test_executable(guest_appinstutil_declarations_tests tests/GuestAppInstUtilDeclarations.cpp)
+    target_include_directories(guest_appinstutil_declarations_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_appinstutil_declarations_tests PRIVATE libSceAppInstUtil libkernel libc)
+    configure_windows_unwind(guest_appinstutil_declarations_tests)
+    add_test(NAME guest_appinstutil_declarations COMMAND guest_appinstutil_declarations_tests)
+    set_tests_properties(guest_appinstutil_declarations PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_appinstutil_declarations PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAppInstUtil>")
+    endif()
     add_test_executable(guest_kernel_sys_pwrite_tests tests/GuestKernelSysPwrite.cpp
         nid/src/NidCompute.cpp nid/src/Sha1.cpp)
     target_include_directories(guest_kernel_sys_pwrite_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
