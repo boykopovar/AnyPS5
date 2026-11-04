@@ -255,9 +255,11 @@ void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, st
     for (const auto& store : stores) device.Dispatch(store, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
     const std::string subject = "storage flush ordering, " + std::to_string(images) + (images == 1 ? " image" : " images") + (unrelated ? " under another stamped write" : "");
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * images, nullptr, "test"), subject + " stored again in the open batch: the first store left no results pending");
-    const bool imported = AgcDriver::Graphics::ExistingHostImportFor(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), first, ImageBytes * images) != nullptr;
+    const auto& context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const bool imported = AgcDriver::Graphics::ExistingHostImportFor(context, first, ImageBytes * images) != nullptr;
+    const bool compared = imported && AgcDriver::Graphics::ComparedHostImportCovers(context, first, ImageBytes * images);
     const bool skips = images == 1 && imported && !unrelated;
-    const std::string what = subject + (imported ? "" : " without a host import") + " stored again in the open batch: ";
+    const std::string what = subject + (imported ? compared ? " over a compared host import" : "" : " without a host import") + " stored again in the open batch: ";
     for (const auto& restore : restores) device.Dispatch(restore, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(RestoreImageCode.data()));
     if (unrelated) {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -266,9 +268,11 @@ void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, st
     }
     const auto open = OpenSerial();
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * images, nullptr, "test"), what + "the second store left no results pending");
-    if (skips) Require(OpenSerial() == open, what + "the second store waited for the GPU to finish the image's own earlier store");
-    else if (unrelated) Require(OpenSerial() != open, what + "the second store did not wait for a stamped write that is not the image's own");
-    else Require(OpenSerial() != open, what + "the second store did not wait for the earlier store, which only a single image with a host import may skip");
+    if (!compared || unrelated) {
+        if (skips) Require(OpenSerial() == open, what + "the second store waited for the GPU to finish the image's own earlier store");
+        else if (unrelated) Require(OpenSerial() != open, what + "the second store did not wait for a stamped write that is not the image's own");
+        else Require(OpenSerial() != open, what + "the second store did not wait for the earlier store, which only a single image with a host import may skip");
+    }
     device.WaitIdle();
     for (std::size_t index = 0; index < images; ++index) {
         const auto* words = guest.Words() + (offset + index * ImageBytes) / 4u;
@@ -284,10 +288,11 @@ void RunStoredAloneAfterJoint(AgcDriver::VulkanDevice& device, const GuestBlock&
     for (const auto& store : stores) device.Dispatch(store, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
     const std::string what = "storage flush ordering, 1 image stored alone after a joint store of 2 images in the open batch: ";
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * 2u, nullptr, "test"), what + "the joint store left no results pending");
+    const bool compared = AgcDriver::Graphics::ComparedHostImportCovers(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), first, ImageBytes * 2u);
     device.Dispatch(restore, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(RestoreImageCode.data()));
     const auto open = OpenSerial();
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes, nullptr, "test"), what + "the second store left no results pending");
-    Require(OpenSerial() != open, what + "the second store did not wait for the joint store, whose writes are not the image's own");
+    Require(compared || OpenSerial() != open, what + "the second store did not wait for the joint store, whose writes are not the image's own");
     device.WaitIdle();
     const auto* words = guest.Words() + offset / 4u;
     Require(words[0] == Restored && words[FarDword] == Restored, what + "the newer texels did not land over the joint store");
