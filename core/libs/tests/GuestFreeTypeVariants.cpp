@@ -172,8 +172,9 @@ int main() {
         FacePair noVariants(library, nativeLibrary, VariationFont(true, false));
         FacePair noBase(library, nativeLibrary, VariationFont(false, true));
         FacePair noMap(library, nativeLibrary, VariationFont(false, false));
-        Require(regular.guest->num_charmaps == 4 && noBase.guest->charmap != nullptr && noMap.guest->num_charmaps == 0);
-        Require(noBase.guest->charmap->encoding_id == 5);
+        Require(regular.guest->num_charmaps == 4 && noBase.guest->num_charmaps == 1 && noMap.guest->num_charmaps == 0);
+        Require(noBase.guest->charmap == nullptr && noBase.native->charmap == nullptr);
+        Require(noBase.guest->charmaps[0]->platform_id == 0 && noBase.guest->charmaps[0]->encoding_id == 5);
         Require(regular.guest->charmap->encoding_id == 10);
         Require(CopyList(FT_Face_GetVariantSelectors_nid_postfix(regular.guest)) == std::vector<std::uint32_t>({0xFE0F, 0xE0100}));
         Require(CopyList(FT_Face_GetCharsOfVariant_nid_postfix(regular.guest, 0xFE0F)) == std::vector<std::uint32_t>({'A', 'B', 'C', 0x4E00, 0x1F600}));
@@ -194,7 +195,7 @@ int main() {
             Require(FT_Face_GetCharVariantIndex_nid_postfix(regular.guest, 'A', 0xFE0F) == (map->encoding_id == 1 ? 3u : 0u));
             CompareQueries(regular.guest, regular.native, scalars, lists);
         }
-        Require(FT_Face_GetCharVariantIndex_nid_postfix(noBase.guest, 'A', 0xE0100) == 3);
+        Require(FT_Face_GetCharVariantIndex_nid_postfix(noBase.guest, 'A', 0xE0100) == 0);
         Require(FT_Face_GetCharVariantIndex_nid_postfix(noBase.guest, 'A', 0xFE0F) == 0);
         Require(FT_Face_GetCharVariantIsDefault_nid_postfix(noBase.guest, 'A', 0xFE0F) == 1);
         CompareQueries(noVariants.guest, noVariants.native, scalars, lists);
