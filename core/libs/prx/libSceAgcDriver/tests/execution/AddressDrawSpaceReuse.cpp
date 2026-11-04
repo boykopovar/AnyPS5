@@ -309,7 +309,7 @@ struct Scene {
     Pages pixels{TargetLayout.Bytes()};
     Pages vertices{BlockBytes};
     Pages code{BlockBytes};
-    Pages constants{BlockBytes};
+    Pages constants{BlockBytes * 2};
     Pages spare{BlockBytes};
     Pages ring{BlockBytes};
     bool cachedVertex = false;
