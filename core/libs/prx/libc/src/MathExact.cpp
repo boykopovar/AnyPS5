@@ -170,6 +170,79 @@ short NormalizeFraction(void* value) {
     return exponent;
 }
 
+template<typename TBits, int FractionBits, int ExponentBits>
+short ScaleFieldBits(void* value, std::int64_t exponent) {
+    constexpr TBits Sign = TBits{1} << (FractionBits + ExponentBits);
+    constexpr TBits Hidden = TBits{1} << FractionBits;
+    constexpr TBits FractionMask = Hidden - 1;
+    constexpr std::int64_t Maximum = (std::int64_t{1} << ExponentBits) - 1;
+    TBits bits;
+    std::memcpy(&bits, value, sizeof(bits));
+    const TBits sign = bits & Sign;
+    TBits fraction = bits & FractionMask;
+    std::int64_t field = static_cast<std::int64_t>((bits >> FractionBits) & Maximum);
+    if (field == Maximum) return fraction != 0 ? NotANumber : Infinite;
+    if (field == 0) {
+        if (fraction == 0) return Zero;
+        const int shift = FractionBits + 1 - static_cast<int>(std::bit_width(fraction));
+        fraction = (fraction << shift) & FractionMask;
+        field = 1 - shift;
+    }
+    if (exponent > 0 && Maximum - field <= exponent) {
+        bits = sign | (static_cast<TBits>(Maximum) << FractionBits);
+        std::memcpy(value, &bits, sizeof(bits));
+        return Infinite;
+    }
+    if (-field < exponent) {
+        bits = sign | (static_cast<TBits>(exponent + field) << FractionBits) | fraction;
+        std::memcpy(value, &bits, sizeof(bits));
+        return Finite;
+    }
+    const auto shifted = static_cast<std::int64_t>(static_cast<std::uint64_t>(exponent) + static_cast<std::uint64_t>(field - 1));
+    if (shifted < -(FractionBits + 1) || shifted >= 0) {
+        std::memcpy(value, &sign, sizeof(sign));
+        return Zero;
+    }
+    const int drop = static_cast<int>(-shifted);
+    const TBits significand = Hidden | fraction;
+    TBits result = significand >> drop;
+    const TBits lost = significand & ((TBits{1} << drop) - 1);
+    const TBits half = TBits{1} << (drop - 1);
+    if (lost > half || (lost == half && (result & 1) != 0)) ++result;
+    bits = sign | result;
+    std::memcpy(value, &bits, sizeof(bits));
+    return result != 0 ? Finite : Zero;
+}
+
+template<typename TBits, int FractionBits, int ExponentBits>
+short UnscaleFieldBits(short* exponent, void* value) {
+    constexpr TBits Sign = TBits{1} << (FractionBits + ExponentBits);
+    constexpr TBits FractionMask = (TBits{1} << FractionBits) - 1;
+    constexpr int Maximum = (1 << ExponentBits) - 1;
+    constexpr int Half = (1 << (ExponentBits - 1)) - 2;
+    TBits bits;
+    std::memcpy(&bits, value, sizeof(bits));
+    TBits fraction = bits & FractionMask;
+    int field = static_cast<int>((bits >> FractionBits) & Maximum);
+    if (field == Maximum) {
+        *exponent = 0;
+        return fraction != 0 ? NotANumber : Infinite;
+    }
+    if (field == 0) {
+        if (fraction == 0) {
+            *exponent = 0;
+            return Zero;
+        }
+        const int shift = FractionBits + 1 - static_cast<int>(std::bit_width(fraction));
+        fraction = (fraction << shift) & FractionMask;
+        field = 1 - shift;
+    }
+    bits = (bits & Sign) | (static_cast<TBits>(Half) << FractionBits) | fraction;
+    std::memcpy(value, &bits, sizeof(bits));
+    *exponent = static_cast<short>(field - Half);
+    return Finite;
+}
+
 template<typename TFloat>
 int Compare(TFloat x, TFloat y) {
     if (x < y) return 1;
@@ -411,6 +484,13 @@ short APS5_VABI _LDunscale_nid_postfix(short* exponent, long double* value) {
     *value = ExtendedValue(bits);
     return UnscaleBinary(exponent, value);
 }
+
+short APS5_VABI _ZNSt8__sce_v27_DscaleEPdl_nid_postfix(double* value, std::int64_t exponent) { return ScaleFieldBits<std::uint64_t, 52, 11>(value, exponent); }
+short APS5_VABI _ZNSt8__sce_v28_FDscaleEPfl_nid_postfix(float* value, std::int64_t exponent) { return ScaleFieldBits<std::uint32_t, 23, 8>(value, exponent); }
+short APS5_VABI _ZNSt8__sce_v28_LDscaleEPel_nid_postfix(double* value, std::int64_t exponent) { return ScaleFieldBits<std::uint64_t, 52, 11>(value, exponent); }
+short APS5_VABI _ZNSt8__sce_v29_DunscaleEPsPd_nid_postfix(short* exponent, double* value) { return UnscaleFieldBits<std::uint64_t, 52, 11>(exponent, value); }
+short APS5_VABI _ZNSt8__sce_v210_FDunscaleEPsPf_nid_postfix(short* exponent, float* value) { return UnscaleFieldBits<std::uint32_t, 23, 8>(exponent, value); }
+short APS5_VABI _ZNSt8__sce_v210_LDunscaleEPsPe_nid_postfix(short* exponent, double* value) { return UnscaleFieldBits<std::uint64_t, 52, 11>(exponent, value); }
 
 short APS5_VABI _Dnorm_nid_postfix(std::uint16_t* words) { return NormalizeFraction<std::uint64_t, 52>(words); }
 short APS5_VABI _FDnorm_nid_postfix(std::uint16_t* words) { return NormalizeFraction<std::uint32_t, 23>(words); }
