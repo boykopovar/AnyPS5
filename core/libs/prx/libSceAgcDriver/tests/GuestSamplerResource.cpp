@@ -487,9 +487,11 @@ void RunGuestSamplerResourceTests() {
     RunNonSeamlessCubeTests(base);
     RunSamplerReductionTests(base);
 
-    Fields badDegamma = base;
-    badDegamma.disableDegamma = true;
-    rejectFields(badDegamma, "disables degamma");
+    Fields degamma = base;
+    degamma.disableDegamma = true;
+    const auto degammaResult = DecodeSamplerResource(pack(degamma));
+    Require(degammaResult.disableDegamma && !plain.disableDegamma, "disableDegamma must be decoded into disableDegamma");
+    Require(degammaResult.magFilter == plain.magFilter && degammaResult.minFilter == plain.minFilter && degammaResult.mipmapMode == plain.mipmapMode && degammaResult.maxLod == plain.maxLod && degammaResult.minLod == plain.minLod && degammaResult.lodBias == plain.lodBias && degammaResult.anisotropyEnable == plain.anisotropyEnable && degammaResult.addressModeU == plain.addressModeU && degammaResult.addressModeV == plain.addressModeV && degammaResult.addressModeW == plain.addressModeW, "disableDegamma must not change the host sampler state");
 
     Fields secLodBias = base;
     secLodBias.lodBiasSec = 1;
