@@ -1,0 +1,15 @@
+add_library(libScePlayReady SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libScePlayReady PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePlayReady)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_playready_tests ${LIBS_INCLUDE_DIR}/tests/GuestPlayReady.cpp)
+    target_include_directories(guest_playready_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_playready_tests PRIVATE libScePlayReady libkernel libc)
+    configure_windows_unwind(guest_playready_tests)
+    add_test(NAME guest_playready COMMAND guest_playready_tests)
+    if(WIN32)
+        set_tests_properties(guest_playready PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>")
+    endif()
+endif()

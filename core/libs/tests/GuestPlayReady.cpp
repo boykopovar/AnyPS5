@@ -96,5 +96,6 @@ int main() {
     CheckInitParams();
     CheckVersion();
     CheckVersionString();
+    Require(scePlayReadyMemGetStats() == static_cast<int>(0x80004001), "scePlayReadyMemGetStats returns 0x80004001");
     return 0;
 }
