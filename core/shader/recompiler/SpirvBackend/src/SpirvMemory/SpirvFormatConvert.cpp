@@ -345,10 +345,17 @@ void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state) {
 }
 
 std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t subid, std::uint32_t control) {
-    if ((control & 0xc000u) == 0xc000u) {
-        const std::uint32_t mask = control & 0x1fu;
-        const std::uint32_t rotate = (control >> 5u) & 0x1fu;
-        const std::uint32_t rotateDelta = (control & 0x400u) != 0u ? ((32u - rotate) & 0x1fu) : rotate;
+    const auto mode = control & 0xffffu;
+    if ((mode & 0xe000u) == 0xe000u) {
+        const auto lane = EmitAndConstant(state, subid, 31);
+        const auto swapped = EmitBinaryU32(state, spv::OpBitwiseXor, lane, ConstantU32(state, mode & 0x1fu));
+        const auto base = EmitAndConstant(state, subid, 0xffffffe0u);
+        return EmitOrU32(state, base, swapped);
+    }
+    if ((mode & 0xc000u) == 0xc000u) {
+        const std::uint32_t mask = mode & 0x1fu;
+        const std::uint32_t rotate = (mode >> 5u) & 0x1fu;
+        const std::uint32_t rotateDelta = (mode & 0x400u) != 0u ? ((32u - rotate) & 0x1fu) : rotate;
         const auto lane = EmitAndConstant(state, subid, 31);
         const auto rotatedSum = EmitAddU32(state, lane, ConstantU32(state, rotateDelta));
         const auto rotated = EmitAndConstant(state, rotatedSum, 31);
@@ -358,7 +365,7 @@ std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t su
         const auto base = EmitAndConstant(state, subid, 0xffffffe0u);
         return EmitOrU32(state, base, combined);
     }
-    if ((control & 0x8000u) != 0u) {
+    if ((mode & 0x8000u) != 0u) {
         const auto lane2 = state.module.AllocateId();
         const auto shift = state.module.AllocateId();
         const auto perm0 = state.module.AllocateId();
@@ -367,7 +374,7 @@ std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t su
         const auto target = state.module.AllocateId();
         state.module.AddFunction(spv::OpBitwiseAnd, TypeU32(state), lane2, subid, ConstantU32(state, 3));
         state.module.AddFunction(spv::OpShiftLeftLogical, TypeU32(state), shift, lane2, ConstantU32(state, 1));
-        state.module.AddFunction(spv::OpShiftRightLogical, TypeU32(state), perm0, ConstantU32(state, control), shift);
+        state.module.AddFunction(spv::OpShiftRightLogical, TypeU32(state), perm0, ConstantU32(state, mode), shift);
         state.module.AddFunction(spv::OpBitwiseAnd, TypeU32(state), perm, perm0, ConstantU32(state, 3));
         state.module.AddFunction(spv::OpBitwiseAnd, TypeU32(state), base, subid, ConstantU32(state, 0xfffffffcu));
         state.module.AddFunction(spv::OpBitwiseOr, TypeU32(state), target, base, perm);
@@ -380,9 +387,9 @@ std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t su
     const auto base = state.module.AllocateId();
     const auto target = state.module.AllocateId();
     state.module.AddFunction(spv::OpBitwiseAnd, TypeU32(state), lane, subid, ConstantU32(state, 31));
-    state.module.AddFunction(spv::OpBitwiseAnd, TypeU32(state), masked, lane, ConstantU32(state, control & 0x1fu));
-    state.module.AddFunction(spv::OpBitwiseOr, TypeU32(state), ored, masked, ConstantU32(state, (control >> 5u) & 0x1fu));
-    state.module.AddFunction(spv::OpBitwiseXor, TypeU32(state), xored, ored, ConstantU32(state, (control >> 10u) & 0x1fu));
+    state.module.AddFunction(spv::OpBitwiseAnd, TypeU32(state), masked, lane, ConstantU32(state, mode & 0x1fu));
+    state.module.AddFunction(spv::OpBitwiseOr, TypeU32(state), ored, masked, ConstantU32(state, (mode >> 5u) & 0x1fu));
+    state.module.AddFunction(spv::OpBitwiseXor, TypeU32(state), xored, ored, ConstantU32(state, (mode >> 10u) & 0x1fu));
     state.module.AddFunction(spv::OpBitwiseAnd, TypeU32(state), base, subid, ConstantU32(state, 0xffffffe0u));
     state.module.AddFunction(spv::OpBitwiseOr, TypeU32(state), target, base, xored);
     return target;
