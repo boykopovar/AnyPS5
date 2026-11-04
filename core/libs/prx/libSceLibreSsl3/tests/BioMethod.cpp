@@ -99,4 +99,16 @@ int main() {
         BIO_meth_free_nid_postfix(nullptr);
         Require(liveBlocks == 0);
     }
+    {
+        auto* method = BIO_meth_new_nid_postfix(3, Name);
+        Require(BIO_meth_set_write_nid_postfix(method, &Write) == 1 && method->write == &Write);
+        auto* bio = BIO_new_nid_postfix(method);
+        Require(bio && bio->method == method);
+        bio->initialized = 1;
+        Require(BIO_write_nid_postfix(bio, "abc", 3) == 3 && written == 3 && bio->bytesWritten == 3);
+        Require(BIO_free_nid_postfix(bio) == 1);
+        Require(BIO_meth_set_write_nid_postfix(method, nullptr) == 1 && method->write == nullptr);
+        BIO_meth_free_nid_postfix(method);
+        Require(liveBlocks == 0);
+    }
 }
