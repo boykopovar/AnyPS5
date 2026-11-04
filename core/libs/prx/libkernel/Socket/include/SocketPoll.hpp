@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace KernelSocketPoll {
 constexpr short Readable = 0x1;
@@ -33,6 +34,14 @@ struct NativeOwner {
 };
 
 using NativeLookup = bool (*)(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native);
+
+struct Description {
+    std::shared_ptr<void> owner;
+    std::uintptr_t native;
+    int family;
+    int type;
+    bool nonblocking;
+};
 }
 
 extern "C" void KernelSetSocketForwards_nid_no_patch(const KernelSocketPoll::Forwards* forwards);
@@ -50,3 +59,5 @@ extern "C" bool KernelFindSocketNative_nid_no_patch(int descriptor, std::shared_
 extern "C" bool KernelLookupSocketNative_nid_no_patch(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native);
 extern "C" int KernelReserveSocketNumber_nid_no_patch(std::uintptr_t native);
 extern "C" void KernelReleaseSocketNumber_nid_no_patch(int number);
+extern "C" bool KernelDescribeSocket_nid_no_patch(int descriptor, KernelSocketPoll::Description* description);
+extern "C" void KernelListSockets_nid_no_patch(std::vector<int>* descriptors);
