@@ -124,4 +124,12 @@ int main() {
         Require(BIO_free_nid_postfix(bio) == 1);
         BIO_meth_free_nid_postfix(method);
     }
+    {
+        auto* method = BIO_meth_new_nid_postfix(6, Name);
+        Require(BIO_meth_set_create_nid_postfix(method, &Create) == 1 && method->create == &Create);
+        auto* bio = BIO_new_nid_postfix(method);
+        Require(bio && bio->initialized == 1 && bio->data == &payload);
+        Require(BIO_free_nid_postfix(bio) == 1);
+        BIO_meth_free_nid_postfix(method);
+    }
 }
