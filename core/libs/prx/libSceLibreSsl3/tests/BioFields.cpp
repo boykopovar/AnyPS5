@@ -23,4 +23,8 @@ int main() {
     Require(bio.data == nullptr);
     BIO_set_data_nid_postfix(&bio, &payload);
     Require(bio.data == &payload);
+    BIO_set_init_nid_postfix(&bio, 1);
+    Require(bio.initialized == 1);
+    BIO_set_init_nid_postfix(&bio, 0);
+    Require(bio.initialized == 0 && bio.data == &payload);
 }
