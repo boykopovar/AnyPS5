@@ -8,6 +8,7 @@
 #include <thread>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -16,10 +17,55 @@
 
 namespace AgcDriver::Pm4 {
 
+namespace {
+
+std::atomic<bool> importableGdsRequested{false};
+std::atomic<bool> gdsShared{false};
+std::atomic<bool> gdsImportable{false};
+
+}
+
+void RequestImportableGds(bool requested) {
+    importableGdsRequested.store(requested, std::memory_order_release);
+}
+
+bool ImportableGdsRequested() {
+    return importableGdsRequested.load(std::memory_order_acquire);
+}
+
+bool GdsShared() {
+    static_cast<void>(GdsAddress());
+    return gdsShared.load(std::memory_order_acquire);
+}
+
+bool GdsImportable() {
+    static_cast<void>(GdsAddress());
+    return gdsImportable.load(std::memory_order_acquire);
+}
+
+void RejectGdsImport() {
+    gdsImportable.store(false, std::memory_order_release);
+}
+
 std::uint64_t GdsAddress() {
     static const std::uint64_t address = [] {
         constexpr int ReadWrite = 0x3;
         constexpr int PrivateAnonymous = 0x1002;
+        constexpr int Shared = 0x1;
+        constexpr int OpenReadWrite = 0x2;
+        const char* const anonymousSharedMemory = reinterpret_cast<const char*>(1);
+        if (ImportableGdsRequested() && std::getenv("APS5_NO_SHARED_GDS") == nullptr) {
+            if (const int descriptor = shm_open_nid_postfix(anonymousSharedMemory, OpenReadWrite, 0600); descriptor >= 0) {
+                void* shared = ftruncate_nid_postfix(descriptor, GdsBytes) == 0 ? mmap_nid_postfix(nullptr, GdsBytes, ReadWrite, Shared, descriptor, 0) : nullptr;
+                close_nid_postfix(descriptor);
+                if (shared != nullptr && shared != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1))) {
+                    std::memset(shared, 0, GdsBytes);
+                    gdsShared.store(true, std::memory_order_release);
+                    gdsImportable.store(true, std::memory_order_release);
+                    return reinterpret_cast<std::uint64_t>(shared);
+                }
+            }
+        }
         void* mapped = mmap_nid_postfix(nullptr, GdsBytes, ReadWrite, PrivateAnonymous, -1, 0);
         if (mapped == nullptr || mapped == reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1))) throw std::runtime_error("cannot allocate the global data share");
         return reinterpret_cast<std::uint64_t>(mapped);
@@ -289,7 +335,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     // Header bit 1 selects the compute shader type and bit 2 (register writes) resets the filter CAM;
     // neither changes what the packet writes.
     const auto flags = header & 0xffu;
-    const bool registerWrite = opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a;
+    const bool registerWrite = opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a || (opcode == 0x37 && ((packet[1] >> 8u) & 0xfu) == 0);
     auto allowedFlags = opcode == 0x11 || opcode == 0x15 || opcode == 0x16 ? 2u : registerWrite ? 6u : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
     if (opcode != 0x20 && opcode != 0x22) allowedFlags |= 1u;
     if ((flags & ~allowedFlags) != 0) throw std::runtime_error("PM4 header flags 0x" + ToHex(flags) + " are not implemented");
@@ -650,10 +696,10 @@ std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, co
             return StoreWrite{destination, {}, copyDataSource(packet, queue, bytes)};
         }
         case 0x50: {
-            if (packet.size() < 7 || dmaDestination(packet) == DmaSelectGds) return std::nullopt;
+            if (packet.size() < 7) return std::nullopt;
             if (dmaDestination(packet) == DmaDestinationNowhere) return StoreWrite{address(packet[2], packet[3]), {}, {}};
             const std::size_t bytes = DmaBytes(packet);
-            const auto destination = address(packet[4], packet[5]);
+            const auto destination = dmaDestination(packet) == DmaSelectGds ? GdsAddress() + packet[4] : address(packet[4], packet[5]);
             if (!fits(destination, bytes)) return std::nullopt;
             return StoreWrite{destination, {}, dmaSourceBytes(packet)};
         }

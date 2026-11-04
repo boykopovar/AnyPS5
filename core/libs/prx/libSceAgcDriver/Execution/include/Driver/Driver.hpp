@@ -121,8 +121,16 @@ public:
     static std::uint64_t DrawCacheBytes();
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
+    static void SetCaptureCheckHook(void (*hook)());
 
 private:
+    class RecaptureScope {
+    public:
+        RecaptureScope();
+        ~RecaptureScope();
+        RecaptureScope(const RecaptureScope&) = delete;
+        RecaptureScope& operator=(const RecaptureScope&) = delete;
+    };
     friend class SampledReadScope;
     friend struct PendingView;
     friend struct PacketTimer;
@@ -239,6 +247,7 @@ private:
     static void countCopy(int path, std::size_t bytes, std::chrono::steady_clock::time_point started, std::chrono::steady_clock::time_point locked, const VulkanDevice::CopyOutcome* outcome = nullptr);
     void noteCopyWriter(std::uint64_t program, std::uint64_t begin, std::uint64_t end, std::uint32_t queue, std::span<const std::byte> value = {}, std::uint64_t generation = 0);
     static bool copyKnownValues();
+    static bool storedKnownValues();
     static bool knownValueVerify();
     bool copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<const std::uint32_t> packet, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, const std::shared_ptr<VulkanDevice>& localDevice, std::uint64_t programAddress);
     void traceCopyRefused(const VulkanDevice::CopyOutcome& outcome, std::uint64_t source, std::uint64_t destination, std::size_t bytes, const std::shared_ptr<VulkanDevice>& localDevice);
@@ -291,7 +300,9 @@ private:
     bool labelPacketQueues(std::span<const std::uint32_t> packet, std::uint32_t opcode);
     bool enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue);
     bool enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, const QueueState& state);
-    void commitDmaStore(std::uint32_t queue, std::uint64_t address, std::span<const std::byte> bytes);
+    bool enqueueSampleDumpPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue);
+    bool enqueueConstantRamDump(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, const QueueState& state);
+    void commitStore(std::uint32_t queue, std::uint64_t address, std::span<const std::byte> bytes);
     void commitLabel(std::uint32_t queue, std::uint64_t address, std::span<const std::byte> bytes, bool endOfPipeInterrupt);
     void submitDueAfterCommit(VulkanDevice* localDevice);
     std::optional<WrittenBuffer> newestWriterLocked(std::uint64_t begin, std::uint64_t end) const;
@@ -321,20 +332,21 @@ private:
     static void notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received);
     void landPendingWaits(std::uint32_t queue);
     struct ResolvedDispatch {
-        std::uint64_t address = 0, key = 0, indirectArguments = 0;
+        std::uint64_t address = 0, key = 0, indirectArguments = 0, forgetAtCapture = 0;
         std::array<std::uint32_t, 5> packet{};
         std::shared_ptr<const ShaderSnapshot> registeredShader;
         std::shared_ptr<const ShaderRecompiler::RecompileResult> compiledResult;
         std::shared_ptr<DispatchVariant> keepVariant, attachVariant;
+        std::shared_ptr<DispatchEntry> missedEntry;
         std::shared_ptr<ShaderMemory> shaderMemory;
         std::vector<ShaderRecompiler::MemoryRegion> captured;
         std::vector<std::uint32_t> liveWords;
         std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
-        bool dataHit = false, cached = false, validated = false;
+        bool dataHit = false, cached = false, validated = false, missedDiffering = false, noDispatchCache = false;
         std::chrono::steady_clock::time_point resolvedAt{};
     };
     struct GroupCaptureStats {
-        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, memoryMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, deviceRejects = 0, argumentMismatches = 0;
+        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, memoryMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, unknownWrites = 0, deviceRejects = 0, argumentMismatches = 0;
         double resolveMs = 0, resolveMaxMs = 0, ageMs = 0, ageMaxMs = 0;
         std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
     };
@@ -365,6 +377,8 @@ private:
     bool recordLabelsForPacket(VulkanDevice* localDevice, std::uint32_t queue);
     void recordQueuedLabelsBeforeRead(std::uint32_t queue);
     bool recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> regions);
+    static void runCaptureCheckHook();
+    static bool capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared = {});
     void noteQueuedLabels(std::uint32_t queue);
     void recordQueuedLabelsByTry(std::uint32_t queue, std::atomic<std::uint64_t>& counter);
     static void recordQueuedLabelsFromHook();
