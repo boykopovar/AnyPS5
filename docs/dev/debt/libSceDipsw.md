@@ -1,5 +1,6 @@
 # libSceDipsw technical debt
 
 ### Unknown function info
+- [sceKernelGetDiableBinaryVersionCheckValue](../../../core/libs/prx/libSceDipsw/Export.cpp) throws on every call. Its name and NID `LLKjFBEhTrc` are confirmed in the pinned [PS5 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscedipsw-f4b41af254.jsonl); signature and behavior remain unknown. The parameterless `int` declaration is an import placeholder, not a verified prototype or working implementation.
 
 - [sceKernelCheckDipsw, sceKernelInitializeDipsw, sceKernelIsAssistMode, sceKernelIsDevelopmentMode, sceKernelIsDisableRazor, sceKernelReadDipswData, sceKernelSetDipsw, sceKernelUnsetDipsw and sceKernelWriteDipswData](../../../core/libs/prx/libSceDipsw/Export.cpp) (libSceDipsw) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceDipsw.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified

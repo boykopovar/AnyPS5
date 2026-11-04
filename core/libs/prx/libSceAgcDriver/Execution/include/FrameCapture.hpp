@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver {
@@ -132,6 +133,8 @@ private:
 
 std::string_view FrameCallName(FrameCallKind kind);
 bool AllZero(std::span<const std::byte> bytes);
+using GuestRead = void (*)(std::uint64_t address, std::span<std::byte> destination);
+std::uint64_t ReadAroundRanges(std::uint64_t address, std::span<std::byte> bytes, std::span<const std::pair<std::uint64_t, std::uint64_t>> skipped, GuestRead read);
 
 }
 

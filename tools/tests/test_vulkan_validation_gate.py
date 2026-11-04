@@ -80,6 +80,22 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             self.assertFalse(output.exists())
 
+    def test_relative_executable_follows_the_test_working_directory(self):
+        for mode in ("default", "absolute", "relative"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                build = Path(directory).resolve()
+                working = build if mode == "default" else build / "working directory"
+                working.mkdir(exist_ok=True)
+                executable = working / "probe"
+                executable.write_bytes(b"original executable")
+                properties = [] if mode == "default" else [{"name": "WORKING_DIRECTORY",
+                    "value": str(working if mode == "absolute" else working.relative_to(build))}]
+                tests = [{"name": "probe", "command": ["./probe"], "properties": properties}]
+                before = gate.artifact_hashes(build, tests, [])
+                self.assertIn(str(executable), before)
+                executable.write_bytes(b"changed executable")
+                self.assertNotEqual(before, gate.artifact_hashes(build, tests, []))
+
     def test_relative_command_files_follow_the_test_working_directory(self):
         for mode in ("default", "absolute", "relative"):
             for definition in (False, True):
@@ -318,6 +334,20 @@ class AttributionTests(FixtureTests):
                 self.assertTrue(ready.exists())
                 time.sleep(1.1)
                 self.assertFalse(marker.exists())
+
+    def test_symlink_loops_are_setup_errors(self):
+        (self.root / "first").symlink_to("second")
+        (self.root / "second").symlink_to("first")
+        loop, source = self.root / "first", self.source("base")
+        for baseline, output in ((source, loop / "evidence"), ((loop, source[1]), self.root / "evidence")):
+            with self.subTest(baseline=baseline[0], output=output):
+                arguments = ["--baseline", str(baseline[0]), baseline[1], "--candidate", str(source[0]), source[1],
+                             "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+                stderr = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                    self.assertEqual(gate.main(arguments), 2)
+                self.assertIn("validation gate:", stderr.getvalue())
+                self.assertFalse((self.root / "evidence").exists())
 
 
 if __name__ == "__main__":

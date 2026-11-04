@@ -1,7 +1,8 @@
-add_library(libSceUserService SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceUserService SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
 target_include_directories(libSceUserService PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceUserService PRIVATE libSceSystemService)
 configure_windows_unwind(libSceUserService)
+target_sources(libSceUserService PRIVATE LegacyExports.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_user_service_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserService.cpp)
@@ -22,6 +23,18 @@ if(BUILD_TESTING)
     add_test(NAME guest_user_service_user_name COMMAND guest_user_service_user_name_tests)
     if(WIN32)
         set_tests_properties(guest_user_service_user_name PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_user_service_user_kind_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceUserKind.cpp)
+    target_include_directories(guest_user_service_user_kind_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_user_kind_tests PRIVATE libSceUserService libSceSystemService)
+    add_test(NAME guest_user_service_user_kind COMMAND guest_user_service_user_kind_tests)
+    set_tests_properties(guest_user_service_user_kind PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_user_kind PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
 endif()
