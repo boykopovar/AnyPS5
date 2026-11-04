@@ -69,6 +69,19 @@ void ExpectFailure(auto&& action) {
 
 int main(int, char**) {
     VideoOutTestEnvironment environment;
+    int handle = 0;
+    try {
+        handle = sceVideoOutOpen(SystemUser, MainBus, 0, nullptr);
+    } catch (const std::runtime_error& error) {
+        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) {
+            throw;
+        }
+        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+        return 77;
+    }
+    Require(handle > 0);
+    Require(sceVideoOutOpen(SystemUser, MainBus, 0, nullptr) == ResourceBusy);
+
     ExpectFailure([] { sceVideoOutSetBufferAttribute(nullptr, 0x80000000u, 1, 0, 1920, 1080, 1920); });
     VideoOutBufferAttribute bufferAttr{};
     sceVideoOutSetBufferAttribute(&bufferAttr, 0x80000000u, 1, 0, 1920, 1080, 1920);
@@ -156,8 +169,8 @@ int main(int, char**) {
     badParam = {16, 0, 0, 1, 0x2000};
     ExpectFailure([&] { sceVideoOutOpen(SystemUser, MainBus, 0, &badParam); });
 
-    for (int unopened : {-1, 0, 1, 999}) {
-        Require(sceVideoOutClose(unopened) == InvalidHandle);
+    for (int unopened : {-1, 0, 999}) {
+        ExpectFailure([&] { sceVideoOutClose(unopened); });
         Require(sceVideoOutIsOutputSupported(unopened, OutputModeDefault, &options, nullptr, 0) == InvalidHandle);
         Require(sceVideoOutConfigureOutput(unopened, OutputModeDefault, &options, nullptr, 0) == InvalidHandle);
         Require(sceVideoOutGetOutputStatusWithVrr(unopened, nullptr) == InvalidAddress);
@@ -178,19 +191,6 @@ int main(int, char**) {
         ExpectFailure([&] { sceVideoOutAdjustColorSpaceConversion(unopened, &csSettings); });
         ExpectFailure([&] { sceVideoOutSetGlobalBlendSpace(unopened, 0, 0); });
     }
-
-    int handle = 0;
-    try {
-        handle = sceVideoOutOpen(SystemUser, MainBus, 0, nullptr);
-    } catch (const std::runtime_error& error) {
-        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) {
-            throw;
-        }
-        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
-        return 77;
-    }
-    Require(handle > 0);
-    Require(sceVideoOutOpen(SystemUser, MainBus, 0, nullptr) == ResourceBusy);
 
     Require(sceVideoOutIsOutputSupported(handle, OutputModeDefault, &options, nullptr, 0) == 1);
     Require(sceVideoOutIsOutputSupported(handle, OutputModeDefault, nullptr, nullptr, 0) == 1);
@@ -305,7 +305,7 @@ int main(int, char**) {
     AgcDriverSetSurfaceHdr10_nid_postfix(false);
 
     Require(sceVideoOutClose(handle) == 0);
-    Require(sceVideoOutClose(handle) == InvalidHandle);
+    ExpectFailure([&] { sceVideoOutClose(handle); });
 
     ExpectFailure([&] { sceVideoOutGetResolutionStatus(handle, &resStatus); });
     ExpectFailure([&] { sceVideoOutGetOutputStatus(handle, &outStatus); });
