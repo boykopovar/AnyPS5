@@ -50,6 +50,7 @@ inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
 inline constexpr std::uint32_t FmaskFormatBase = 57472u;
 inline constexpr std::uint32_t MirrorUnnormalizedBase = 57536u;
 inline constexpr std::uint32_t MinLodBase = 57600u;
+inline constexpr std::uint32_t VolumeGatherBase = 57664u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;
