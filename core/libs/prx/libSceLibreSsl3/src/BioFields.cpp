@@ -14,4 +14,9 @@ void APS5_VABI BIO_set_data_nid_postfix(LibreSsl::Bio* bio, void* data) {
     bio->data = data;
 }
 
+void APS5_VABI BIO_set_init_nid_postfix(LibreSsl::Bio* bio, int init) {
+    if (!bio) throw std::invalid_argument("BIO_set_init requires a BIO");
+    bio->initialized = init;
+}
+
 }
