@@ -411,6 +411,24 @@ ImageMemoEntry& imageMemoSlot(std::span<const std::uint32_t> words) {
     return (*imageMemo)[(hash ^ (hash >> 29u)) % ImageMemoSlots];
 }
 
+struct SampledKeyProofEntry {
+    std::uint64_t dccAddress = 0;
+    std::uint64_t guestBytes = 0;
+    std::uint32_t format = 0;
+    bool dccAlphaOnMsb = false;
+    DccKeyProof proof;
+};
+
+constexpr std::size_t SampledKeyProofSlots = 1024;
+struct SampledKeyProofTag {};
+
+SampledKeyProofEntry& sampledKeyProofSlot(std::uint64_t dccAddress, std::uint64_t guestBytes, std::uint32_t format, bool dccAlphaOnMsb) {
+    auto& proofs = HostThreadLocal<std::unique_ptr<std::array<SampledKeyProofEntry, SampledKeyProofSlots>>, SampledKeyProofTag>();
+    if (proofs == nullptr) proofs = std::make_unique<std::array<SampledKeyProofEntry, SampledKeyProofSlots>>();
+    const auto hash = dccAddress ^ (guestBytes * 0x9e3779b97f4a7c15ull) ^ (static_cast<std::uint64_t>(format) << 32u) ^ (dccAlphaOnMsb ? 0x94d049bb133111ebull : 0ull);
+    return (*proofs)[(hash ^ (hash >> 29u)) % SampledKeyProofSlots];
+}
+
 const ImageMemoEntry& decodedImage(VkDevice device, std::span<const std::uint32_t> words) {
     auto& slot = imageMemoSlot(words);
     const auto allocation = ImageAllocationIdentity(words);
@@ -476,6 +494,7 @@ TextureCounters& TextureCounts() {
 }
 
 thread_local std::uint64_t sampledLookupKeyScans = 0;
+thread_local std::uint64_t sampledLookupKeyProofs = 0;
 
 void reportTextureCounters() {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -883,10 +902,25 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     std::optional<DccKeys> scanned;
     const auto scanKeys = [&] {
         if (scanned.has_value()) return *scanned;
+        if (resource.dccAddress == 0) {
+            scanned = DccKeys::Uncompressed;
+            return *scanned;
+        }
         const auto scanStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        scanned = TextureClearKeys(resource, guestBytes);
-        if (resource.dccAddress != 0) ++sampledLookupKeyScans;
-        if (profile && resource.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, scanStart);
+        auto& memo = sampledKeyProofSlot(resource.dccAddress, guestBytes, resource.format, resource.dccAlphaOnMsb);
+        if (memo.dccAddress != resource.dccAddress || memo.guestBytes != guestBytes || memo.format != resource.format || memo.dccAlphaOnMsb != resource.dccAlphaOnMsb) {
+            memo.dccAddress = resource.dccAddress;
+            memo.guestBytes = guestBytes;
+            memo.format = resource.format;
+            memo.dccAlphaOnMsb = resource.dccAlphaOnMsb;
+            memo.proof = {};
+        }
+        const auto scans = KeyProofCounts().scanned;
+        const auto proofs = KeyProofCounts().proved;
+        scanned = ProvedClearKeys(resource, guestBytes, memo.proof);
+        if (KeyProofCounts().scanned != scans) ++sampledLookupKeyScans;
+        if (KeyProofCounts().proved != proofs) ++sampledLookupKeyProofs;
+        if (profile) LookupOutcomes::Add(LookupOutcomes::DccScan, scanStart);
         return *scanned;
     };
     auto& counters = TextureCounts();
@@ -1214,11 +1248,12 @@ std::list<CachedStorageTexture>::iterator findStorageByImage(StorageTextureCache
 }
 
 // Evicts an entry: its pending results go to guest memory first (the image may die with the entry).
-std::shared_ptr<StorageTexture> evictStorage(StorageTextureCache& cache, std::list<CachedStorageTexture>::iterator it) {
+std::shared_ptr<StorageTexture> evictStorage(StorageTextureCache& cache, std::list<CachedStorageTexture>::iterator it, bool store = true) {
     auto texture = it->texture;
     it->texture->SetCached(false);
     noteUncached(it->texture);
-    it->texture->Flush();
+    if (store) it->texture->Flush();
+    else it->texture->Detach();
     cache.bytes -= it->accounted;
     cache.index.erase(it->key);
     cache.byImage.erase(it->texture.get());
@@ -1337,8 +1372,10 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (const auto found = findStorage(cache, {context.device, SurfaceKey(context, allocated)}); found != cache.entries.end()) evicted.push_back(evictStorage(cache, found));
         }
         auto it = findStorage(cache, key);
+        std::shared_ptr<StorageTexture> detached;
         if (it != cache.entries.end() && MetadataMoved(*it->texture, resource)) {
-            evicted.push_back(evictStorage(cache, it));
+            detached = evictStorage(cache, it, false);
+            evicted.push_back(detached);
             it = cache.entries.end();
         }
         if (it != cache.entries.end()) {
@@ -1350,12 +1387,15 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
         } else {
             if (guestBytes == 0) guestBytes = DescribeSurface(resource).guestBytes;
-            if (StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(guestBytes), nullptr, "storage image creation", PublishScope::None) && profile) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
+            bool flushed = false;
+            auto handOver = StorageTexture::PrepareCreation(context, resource, guestBytes, std::move(detached), flushed);
+            if (flushed && profile) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
             std::shared_ptr<StorageTexture> created;
             {
                 const CacheHold reclaimable(storageCacheReclaimable);
                 created = StorageTexture::Create(context, *context.detiler, resource, mip);
             }
+            created->AdoptHandOver(std::move(handOver));
             CachedStorageTexture entry{key, mip, std::move(created)};
             static const bool keepNew = std::getenv("APS5_NO_KEEP_NEW_STORAGE") == nullptr;
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
@@ -2920,7 +2960,7 @@ bool LabelShaderKey(std::span<const std::uint32_t> key, std::size_t at, std::siz
             labels[at + i] = static_cast<std::uint8_t>(component);
         }
         at += words;
-        for (int flags = 0; flags < 9; ++flags) {
+        for (int flags = 0; flags < 10; ++flags) {
             if (at >= end) return false;
             const auto count = 1 + (static_cast<std::size_t>(key[at]) + 31) / 32;
             if (!label(at, count, Component::Other)) return false;
@@ -4006,8 +4046,8 @@ ChurnProfile& Churn() {
 
 // Charges word `diff` of `key` to the binding of the ContentKey that starts at `at` (the layout of
 // ShaderResources::ContentKey), moving `at` past that key; false when `diff` lies beyond it.
-bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::size_t& at, std::size_t diff) {
-    if (at + 5 > key.size() || diff < at + 5) {
+bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::size_t& at, std::size_t end, std::size_t diff) {
+    if (at + 5 > end || diff < at + 5) {
         ++profile.layout;
         return true;
     }
@@ -4015,7 +4055,7 @@ bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::s
     const auto bindings = key[at + 4];
     at += 5;
     for (std::uint32_t binding = 0; binding < bindings; ++binding) {
-        if (at + 8 > key.size() || diff < at + 8) {
+        if (at + 8 > end || diff < at + 8) {
             ++profile.layout;
             return true;
         }
@@ -4031,14 +4071,26 @@ bool chargeShaderKey(ChurnCounts& profile, const ResourceCache::Key& key, std::s
             return true;
         }
         at += descriptorWords;
-        for (int flags = 0; flags < 4; ++flags) {
-            if (at >= key.size()) {
+        for (int flags = 0; flags < 10; ++flags) {
+            if (at >= end) {
                 ++profile.layout;
                 return true;
             }
             const auto words = 1 + (static_cast<std::size_t>(key[at]) + 31) / 32;
             if (diff < at + words) {
                 ++profile.layout;
+                return true;
+            }
+            at += words;
+        }
+        for (const auto listRole : {ShaderRecompiler::DescriptorRole::GuestSamplers, ShaderRecompiler::DescriptorRole::GuestImages}) {
+            if (at >= end) {
+                ++profile.layout;
+                return true;
+            }
+            const auto words = 1 + static_cast<std::size_t>(key[at]);
+            if (diff < at + words) {
+                ++profile.roles[static_cast<std::size_t>(listRole)];
                 return true;
             }
             at += words;
@@ -4167,15 +4219,24 @@ void ResourceCache::noteMiss(const Key& key) {
             ++counts.sameKey;
         } else if (draw) {
             std::size_t at = 4;
-            bool charged = false;
+            bool charged = diff < at;
+            if (charged) ++counts.layout;
             for (std::uint32_t stage = 0; stage < key[3] && at < key.size() && !charged; ++stage) {
-                ++at;
-                charged = chargeShaderKey(counts, key, at, diff);
+                const auto end = std::min(key.size(), at + 1 + static_cast<std::size_t>(key[at]));
+                if (diff == at) {
+                    ++counts.layout;
+                    charged = true;
+                } else if (diff < end) {
+                    ++at;
+                    if (!chargeShaderKey(counts, key, at, end, diff)) ++counts.layout;
+                    charged = true;
+                }
+                at = end;
             }
             if (!charged) ++counts.drawWords;
         } else {
             std::size_t at = 0;
-            if (!chargeShaderKey(counts, key, at, diff)) ++counts.layout;
+            if (!chargeShaderKey(counts, key, at, key.size(), diff)) ++counts.layout;
         }
         if (trace) {
             ContentKeyDiff parts;
@@ -4637,6 +4698,7 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     const auto byteSize = guestBufferBytes(words);
     if (byteSize == 0 || address == 0) {
         allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
+        allocations.back().oversized = address != 0 && descriptor.GetSize() != 0;
         return allocations.size() - 1;
     }
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
@@ -5574,6 +5636,10 @@ void ShaderResources::resolveImageTables() {
 
 std::uint64_t SampledLookupKeyScans() {
     return sampledLookupKeyScans;
+}
+
+std::uint64_t SampledLookupKeyProofs() {
+    return sampledLookupKeyProofs;
 }
 
 std::uint64_t SampledTexturesCleared() {
