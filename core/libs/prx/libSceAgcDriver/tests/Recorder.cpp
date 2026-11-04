@@ -11225,13 +11225,40 @@ void uncountedPassTests(const Device& device) {
     Require(!recorder.QueuesSampleDumps(), "a recorder without buffer device addresses counted samples in segments");
     const auto base = recorder.SamplesTotal();
     cover.Draw(recorder);
-    recorder.RecordUncounted([&](VkCommandBuffer commands) { cover.Record(commands); });
+    const VkRect2D area{{0, 0}, {8, 8}};
+    auto* tracked = recorder.GraphicsState();
+    if (tracked != nullptr) CommandState::SetScissor(tracked, context, recorder.Commands(), area);
+    recorder.RecordUncounted([&](VkCommandBuffer commands) {
+        if (tracked != nullptr) {
+            Require(!tracked->Known(CommandState::Scissor), "the graphics state stayed known entering an uncounted recording");
+            CommandState::SetScissor(tracked, context, commands, area);
+            Require(tracked->Known(CommandState::Scissor), "the uncounted recording could not set the scissor");
+        }
+        cover.Record(commands);
+    });
+    if (tracked != nullptr) Require(!tracked->Known(CommandState::Scissor), "the graphics state stayed known after an uncounted recording");
     cover.Draw(recorder);
     recorder.Submit();
     recorder.Sync();
     const auto counted = recorder.SamplesTotal() - base;
     Require(counted != 0, "the draws around an uncounted pass were not counted");
     if (context.occlusionQueryPrecise) Require(counted == 2 * CoverPass::Samples, "the batch-wide occlusion query counted " + std::to_string(counted) + " samples, not the " + std::to_string(2 * CoverPass::Samples) + " of the two draws around an uncounted pass");
+    Recorder plain(context);
+    const auto plainCommands = plain.Commands();
+    if (auto* state = plain.GraphicsState(); state != nullptr) {
+        CommandState::SetScissor(state, context, plainCommands, area);
+        Require(state->Known(CommandState::Scissor), "the plain recorder could not set the scissor");
+        try {
+            plain.RecordUncounted([&](VkCommandBuffer commands) {
+                CommandState::SetScissor(state, context, commands, VkRect2D{{0, 0}, {4, 4}});
+                throw std::runtime_error("uncounted recording failed");
+            });
+        } catch (const std::runtime_error&) {
+        }
+        Require(!state->Known(CommandState::Scissor), "the graphics state stayed known after an uncounted recording threw");
+    }
+    plain.Submit();
+    plain.Sync();
 }
 
 void cmaskPassTests(const Device& device, Recorder& recorder) {

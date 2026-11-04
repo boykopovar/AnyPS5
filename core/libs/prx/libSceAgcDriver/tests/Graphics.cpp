@@ -9023,7 +9023,13 @@ void sampleOrderTests() {
             depthOrderEvents.clear();
             SampleOrderPass pass{rowSwap, {16, 8}, {}, standIn};
             std::copy(pixelZero.begin(), pixelZero.end(), pass.locations.begin());
-            RecordSampleOrder(context, commands, pass, std::span(&target, 1u), false, kept);
+            CommandState tracker;
+            tracker.Begin(commands);
+            CommandState::SetViewport(&tracker, context, commands, VkViewport{0.0f, 0.0f, 16.0f, 8.0f, 0.0f, 1.0f});
+            CommandState::BindPipeline(&tracker, context, commands, makeHandle<VkPipeline>(), CommandState::DynamicSlots(PipelineLibraryDynamicStates()));
+            Require(tracker.Known(CommandState::Viewport) && tracker.BoundPipeline() != VK_NULL_HANDLE, "the sample order test could not give its tracker a known state");
+            RecordSampleOrder(context, commands, pass, std::span(&target, 1u), false, kept, &tracker);
+            Require(!tracker.Known(CommandState::Viewport) && tracker.BoundPipeline() == VK_NULL_HANDLE, "recording the sample order left the graphics state known");
             const auto events = onTarget();
             if (standIn) {
                 Require(events.size() == 3 && located(events[0], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, depthStencil, {1, 1}, pixelZero) && events[1].copy && events[1].from == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && located(events[2], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, depthStencil, {1, 1}, pixelZero), "the depth swap did not copy its target between transitions that name the stand-in sample locations it was rendered with");
@@ -13472,6 +13478,320 @@ void faultOnlyTemplateRecordTests() {
     Require(mock.live == 0, "the fault-only template record test leaked Vulkan objects");
 }
 
+std::vector<std::string> stateLog;
+std::vector<VkPipeline> statePipelines;
+
+std::uint64_t statePipelineId(VkPipeline pipeline) {
+    const auto found = std::find(statePipelines.begin(), statePipelines.end(), pipeline);
+    if (found != statePipelines.end()) return static_cast<std::uint64_t>(found - statePipelines.begin());
+    statePipelines.push_back(pipeline);
+    return statePipelines.size() - 1u;
+}
+
+std::uint64_t stateWord(float value) { return std::bit_cast<std::uint32_t>(value); }
+std::uint64_t stateWord(std::uint32_t value) { return value; }
+std::uint64_t stateWord(std::int32_t value) { return static_cast<std::uint32_t>(value); }
+std::uint64_t stateWord(VkPipeline value) { return statePipelineId(value); }
+
+template<typename... TArguments>
+std::string stateLine(const char* name, TArguments... arguments) {
+    std::string line = name;
+    ((line += ' ' + std::to_string(stateWord(arguments))), ...);
+    return line;
+}
+
+template<typename... TArguments>
+void stateNote(const char* name, TArguments... arguments) {
+    stateLog.push_back(stateLine(name, arguments...));
+}
+
+VKAPI_ATTR void VKAPI_CALL stateBind(VkCommandBuffer, VkPipelineBindPoint point, VkPipeline pipeline) { stateNote("bind", static_cast<std::uint32_t>(point), pipeline); }
+VKAPI_ATTR void VKAPI_CALL stateViewport(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkViewport* viewport) { stateNote("viewport", viewport->x, viewport->y, viewport->width, viewport->height, viewport->minDepth, viewport->maxDepth); }
+VKAPI_ATTR void VKAPI_CALL stateScissor(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkRect2D* scissor) { stateNote("scissor", scissor->offset.x, scissor->offset.y, scissor->extent.width, scissor->extent.height); }
+VKAPI_ATTR void VKAPI_CALL stateDepthBounds(VkCommandBuffer, float minimum, float maximum) { stateNote("bounds", minimum, maximum); }
+VKAPI_ATTR void VKAPI_CALL stateDepthBias(VkCommandBuffer, float constant, float clamp, float slope) { stateNote("bias", constant, clamp, slope); }
+VKAPI_ATTR void VKAPI_CALL stateCullMode(VkCommandBuffer, VkCullModeFlags mode) { stateNote("cull", static_cast<std::uint32_t>(mode)); }
+VKAPI_ATTR void VKAPI_CALL stateFrontFace(VkCommandBuffer, VkFrontFace face) { stateNote("front", static_cast<std::uint32_t>(face)); }
+VKAPI_ATTR void VKAPI_CALL stateDepthTest(VkCommandBuffer, VkBool32 enable) { stateNote("depthtest", static_cast<std::uint32_t>(enable)); }
+VKAPI_ATTR void VKAPI_CALL stateDepthWrite(VkCommandBuffer, VkBool32 enable) { stateNote("depthwrite", static_cast<std::uint32_t>(enable)); }
+VKAPI_ATTR void VKAPI_CALL stateDepthCompare(VkCommandBuffer, VkCompareOp compare) { stateNote("depthcompare", static_cast<std::uint32_t>(compare)); }
+VKAPI_ATTR void VKAPI_CALL stateBoundsTest(VkCommandBuffer, VkBool32 enable) { stateNote("boundstest", static_cast<std::uint32_t>(enable)); }
+VKAPI_ATTR void VKAPI_CALL stateStencilTest(VkCommandBuffer, VkBool32 enable) { stateNote("stenciltest", static_cast<std::uint32_t>(enable)); }
+VKAPI_ATTR void VKAPI_CALL stateStencilOp(VkCommandBuffer, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp) { stateNote("stencilop", static_cast<std::uint32_t>(faces), static_cast<std::uint32_t>(failOp), static_cast<std::uint32_t>(passOp), static_cast<std::uint32_t>(depthFailOp), static_cast<std::uint32_t>(compareOp)); }
+VKAPI_ATTR void VKAPI_CALL stateCompareMask(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t mask) { stateNote("comparemask", static_cast<std::uint32_t>(faces), mask); }
+VKAPI_ATTR void VKAPI_CALL stateWriteMask(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t mask) { stateNote("writemask", static_cast<std::uint32_t>(faces), mask); }
+VKAPI_ATTR void VKAPI_CALL stateReference(VkCommandBuffer, VkStencilFaceFlags faces, std::uint32_t reference) { stateNote("reference", static_cast<std::uint32_t>(faces), reference); }
+
+void expectStateLog(const std::vector<std::string>& expected, const std::string& what) {
+    if (stateLog != expected) {
+        std::string actual;
+        for (const auto& line : stateLog) actual += "[" + line + "]";
+        std::string wanted;
+        for (const auto& line : expected) wanted += "[" + line + "]";
+        stateLog.clear();
+        throw std::runtime_error(what + ": recorded " + actual + " but expected " + wanted);
+    }
+    stateLog.clear();
+}
+
+void commandStateTests() {
+    using namespace AgcDriver::Graphics;
+    using Slot = CommandState::Slot;
+    constexpr auto front = VK_STENCIL_FACE_FRONT_BIT;
+    constexpr auto back = VK_STENCIL_FACE_BACK_BIT;
+    constexpr auto both = VK_STENCIL_FACE_FRONT_AND_BACK;
+    DeviceFunctions functions;
+    functions.cmdBindPipeline = stateBind;
+    functions.cmdSetViewport = stateViewport;
+    functions.cmdSetScissor = stateScissor;
+    functions.cmdSetDepthBounds = stateDepthBounds;
+    functions.cmdSetDepthBias = stateDepthBias;
+    functions.cmdSetCullMode = stateCullMode;
+    functions.cmdSetFrontFace = stateFrontFace;
+    functions.cmdSetDepthTestEnable = stateDepthTest;
+    functions.cmdSetDepthWriteEnable = stateDepthWrite;
+    functions.cmdSetDepthCompareOp = stateDepthCompare;
+    functions.cmdSetDepthBoundsTestEnable = stateBoundsTest;
+    functions.cmdSetStencilTestEnable = stateStencilTest;
+    functions.cmdSetStencilOp = stateStencilOp;
+    functions.cmdSetStencilCompareMask = stateCompareMask;
+    functions.cmdSetStencilWriteMask = stateWriteMask;
+    functions.cmdSetStencilReference = stateReference;
+    auto context = mockContext();
+    context.functions = &functions;
+    stateLog.clear();
+    statePipelines.clear();
+    const auto commands = makeHandle<VkCommandBuffer>();
+    const auto pipeline = [&](std::size_t index) {
+        while (statePipelines.size() <= index) statePipelines.push_back(makeHandle<VkPipeline>());
+        return statePipelines[index];
+    };
+    const auto library = CommandState::DynamicSlots(PipelineLibraryDynamicStates());
+    const std::array<VkDynamicState, 2> viewportScissor{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    const auto fixed = CommandState::DynamicSlots(viewportScissor);
+    Require(library == (1u << CommandState::SlotCount) - 1u, "the pipeline library's dynamic states do not cover every tracked slot");
+    Require(fixed == (CommandState::Mask(Slot::Viewport) | CommandState::Mask(Slot::Scissor)), "the viewport and scissor dynamic states mapped to other slots");
+    const auto pipelineA = pipeline(0);
+    const auto pipelineB = pipeline(1);
+    const auto pipelineC = pipeline(2);
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        for (const auto mode : {1u, 1u, 2u, 2u, 1u}) CommandState::SetCullMode(&tracker, context, commands, mode);
+        expectStateLog({stateLine("cull", 1u), stateLine("cull", 2u), stateLine("cull", 1u)}, "unknown, unchanged and changed cull modes");
+        CommandState::SetCullMode(nullptr, context, commands, 1u);
+        CommandState::SetCullMode(nullptr, context, commands, 1u);
+        expectStateLog({stateLine("cull", 1u), stateLine("cull", 1u)}, "an absent tracker");
+        tracker.Invalidate();
+        CommandState::SetCullMode(&tracker, context, commands, 1u);
+        CommandState::SetCullMode(&tracker, context, commands, 1u);
+        expectStateLog({stateLine("cull", 1u)}, "a cull mode after invalidation");
+    }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        const VkViewport positive{0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f};
+        auto negative = positive;
+        negative.minDepth = -0.0f;
+        negative.x = -0.0f;
+        CommandState::SetViewport(&tracker, context, commands, positive);
+        CommandState::SetViewport(&tracker, context, commands, positive);
+        CommandState::SetViewport(&tracker, context, commands, negative);
+        CommandState::SetViewport(&tracker, context, commands, negative);
+        CommandState::SetViewport(&tracker, context, commands, positive);
+        expectStateLog({stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f), stateLine("viewport", -0.0f, 0.0f, 640.0f, 480.0f, -0.0f, 1.0f), stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f)}, "viewports that differ in the sign of zero");
+        CommandState::SetDepthBias(&tracker, context, commands, 0.0f, 0.0f, 0.0f);
+        CommandState::SetDepthBias(&tracker, context, commands, -0.0f, 0.0f, 0.0f);
+        CommandState::SetDepthBias(&tracker, context, commands, -0.0f, 0.0f, 0.0f);
+        CommandState::SetDepthBias(&tracker, context, commands, -0.0f, 0.0f, -0.0f);
+        const auto nan = std::bit_cast<float>(0x7fc00000u);
+        const auto otherNan = std::bit_cast<float>(0x7fc00001u);
+        CommandState::SetDepthBias(&tracker, context, commands, nan, 0.0f, -0.0f);
+        CommandState::SetDepthBias(&tracker, context, commands, nan, 0.0f, -0.0f);
+        CommandState::SetDepthBias(&tracker, context, commands, otherNan, 0.0f, -0.0f);
+        expectStateLog({stateLine("bias", 0.0f, 0.0f, 0.0f), stateLine("bias", -0.0f, 0.0f, 0.0f), stateLine("bias", -0.0f, 0.0f, -0.0f), stateLine("bias", nan, 0.0f, -0.0f), stateLine("bias", otherNan, 0.0f, -0.0f)}, "depth bias tuples compared by bit pattern");
+        CommandState::SetDepthBounds(&tracker, context, commands, 0.0f, 1.0f);
+        CommandState::SetDepthBounds(&tracker, context, commands, 0.0f, 1.0f);
+        CommandState::SetDepthBounds(&tracker, context, commands, -0.0f, 1.0f);
+        CommandState::SetScissor(&tracker, context, commands, {{0, 0}, {640, 480}});
+        CommandState::SetScissor(&tracker, context, commands, {{0, 0}, {640, 480}});
+        CommandState::SetScissor(&tracker, context, commands, {{0, 1}, {640, 480}});
+        expectStateLog({stateLine("bounds", 0.0f, 1.0f), stateLine("bounds", -0.0f, 1.0f), stateLine("scissor", 0, 0, 640u, 480u), stateLine("scissor", 0, 1, 640u, 480u)}, "depth bounds and scissor rectangles");
+        CommandState::SetFrontFace(&tracker, context, commands, VK_FRONT_FACE_CLOCKWISE);
+        CommandState::SetFrontFace(&tracker, context, commands, VK_FRONT_FACE_CLOCKWISE);
+        CommandState::SetFrontFace(&tracker, context, commands, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+        for (const VkBool32 enable : {1u, 1u, 0u}) {
+            CommandState::SetDepthTestEnable(&tracker, context, commands, enable);
+            CommandState::SetDepthWriteEnable(&tracker, context, commands, enable);
+            CommandState::SetDepthBoundsTestEnable(&tracker, context, commands, enable);
+            CommandState::SetStencilTestEnable(&tracker, context, commands, enable);
+        }
+        CommandState::SetDepthCompareOp(&tracker, context, commands, VK_COMPARE_OP_LESS);
+        CommandState::SetDepthCompareOp(&tracker, context, commands, VK_COMPARE_OP_LESS);
+        CommandState::SetDepthCompareOp(&tracker, context, commands, VK_COMPARE_OP_ALWAYS);
+        expectStateLog({stateLine("front", static_cast<std::uint32_t>(VK_FRONT_FACE_CLOCKWISE)), stateLine("front", static_cast<std::uint32_t>(VK_FRONT_FACE_COUNTER_CLOCKWISE)),
+                        stateLine("depthtest", 1u), stateLine("depthwrite", 1u), stateLine("boundstest", 1u), stateLine("stenciltest", 1u),
+                        stateLine("depthtest", 0u), stateLine("depthwrite", 0u), stateLine("boundstest", 0u), stateLine("stenciltest", 0u),
+                        stateLine("depthcompare", static_cast<std::uint32_t>(VK_COMPARE_OP_LESS)), stateLine("depthcompare", static_cast<std::uint32_t>(VK_COMPARE_OP_ALWAYS))}, "face, enable and compare state");
+    }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        const auto keep = static_cast<std::uint32_t>(VK_STENCIL_OP_KEEP);
+        const auto replace = static_cast<std::uint32_t>(VK_STENCIL_OP_REPLACE);
+        const auto always = static_cast<std::uint32_t>(VK_COMPARE_OP_ALWAYS);
+        CommandState::SetStencilReference(&tracker, context, commands, front, 4u);
+        CommandState::SetStencilReference(&tracker, context, commands, front, 4u);
+        CommandState::SetStencilReference(&tracker, context, commands, both, 4u);
+        CommandState::SetStencilReference(&tracker, context, commands, both, 4u);
+        CommandState::SetStencilReference(&tracker, context, commands, back, 4u);
+        CommandState::SetStencilReference(&tracker, context, commands, both, 5u);
+        CommandState::SetStencilReference(&tracker, context, commands, front, 4u);
+        CommandState::SetStencilReference(&tracker, context, commands, both, 4u);
+        expectStateLog({stateLine("reference", static_cast<std::uint32_t>(front), 4u), stateLine("reference", static_cast<std::uint32_t>(back), 4u), stateLine("reference", static_cast<std::uint32_t>(both), 5u), stateLine("reference", static_cast<std::uint32_t>(front), 4u), stateLine("reference", static_cast<std::uint32_t>(back), 4u)}, "front and back stencil references");
+        CommandState::SetStencilCompareMask(&tracker, context, commands, front, 0xffu);
+        CommandState::SetStencilCompareMask(&tracker, context, commands, back, 0x0fu);
+        CommandState::SetStencilCompareMask(&tracker, context, commands, both, 0x0fu);
+        CommandState::SetStencilWriteMask(&tracker, context, commands, both, 0xffu);
+        CommandState::SetStencilWriteMask(&tracker, context, commands, front, 0xffu);
+        CommandState::SetStencilWriteMask(&tracker, context, commands, back, 0u);
+        expectStateLog({stateLine("comparemask", static_cast<std::uint32_t>(front), 0xffu), stateLine("comparemask", static_cast<std::uint32_t>(back), 0x0fu), stateLine("comparemask", static_cast<std::uint32_t>(front), 0x0fu), stateLine("writemask", static_cast<std::uint32_t>(both), 0xffu), stateLine("writemask", static_cast<std::uint32_t>(back), 0u)}, "front and back stencil masks");
+        CommandState::SetStencilOp(&tracker, context, commands, front, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS);
+        CommandState::SetStencilOp(&tracker, context, commands, back, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS);
+        CommandState::SetStencilOp(&tracker, context, commands, both, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS);
+        CommandState::SetStencilOp(&tracker, context, commands, front, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_REPLACE, VK_COMPARE_OP_ALWAYS);
+        CommandState::SetStencilOp(&tracker, context, commands, both, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS);
+        expectStateLog({stateLine("stencilop", static_cast<std::uint32_t>(front), keep, replace, keep, always), stateLine("stencilop", static_cast<std::uint32_t>(back), keep, replace, keep, always), stateLine("stencilop", static_cast<std::uint32_t>(front), keep, replace, replace, always), stateLine("stencilop", static_cast<std::uint32_t>(front), keep, replace, keep, always)}, "front and back stencil operations");
+    }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        const VkViewport viewport{0.0f, 0.0f, 64.0f, 64.0f, 0.0f, 1.0f};
+        CommandState::BindPipeline(&tracker, context, commands, pipelineA, library);
+        CommandState::BindPipeline(&tracker, context, commands, pipelineA, library);
+        CommandState::SetCullMode(&tracker, context, commands, 1u);
+        CommandState::SetViewport(&tracker, context, commands, viewport);
+        CommandState::BindPipeline(&tracker, context, commands, pipelineA, library);
+        expectStateLog({stateLine("bind", 0u, pipelineA), stateLine("cull", 1u), stateLine("viewport", 0.0f, 0.0f, 64.0f, 64.0f, 0.0f, 1.0f)}, "a repeated bind of a fully dynamic pipeline");
+        CommandState::BindPipeline(&tracker, context, commands, pipelineB, fixed);
+        CommandState::SetViewport(&tracker, context, commands, viewport);
+        Require(!tracker.Known(Slot::CullMode) && tracker.Known(Slot::Viewport) && tracker.BoundPipeline() == pipelineB, "binding a pipeline with static cull mode kept the cull mode known");
+        CommandState::BindPipeline(&tracker, context, commands, pipelineA, library);
+        CommandState::SetCullMode(&tracker, context, commands, 1u);
+        CommandState::SetViewport(&tracker, context, commands, viewport);
+        expectStateLog({stateLine("bind", 0u, pipelineB), stateLine("bind", 0u, pipelineA), stateLine("cull", 1u)}, "dynamic, static, dynamic pipelines");
+        CommandState::BindPipeline(&tracker, context, commands, pipelineC, fixed);
+        CommandState::BindPipeline(&tracker, context, commands, pipelineC, fixed);
+        CommandState::SetViewport(&tracker, context, commands, {0.0f, 0.0f, 32.0f, 64.0f, 0.0f, 1.0f});
+        CommandState::BindPipeline(&tracker, context, commands, pipelineC, fixed);
+        expectStateLog({stateLine("bind", 0u, pipelineC), stateLine("viewport", 0.0f, 0.0f, 32.0f, 64.0f, 0.0f, 1.0f)}, "a static pipeline after a setter of its dynamic state");
+        CommandState::SetCullMode(&tracker, context, commands, 2u);
+        CommandState::BindPipeline(&tracker, context, commands, pipelineC, fixed);
+        CommandState::BindPipeline(&tracker, context, commands, pipelineC, fixed);
+        expectStateLog({stateLine("cull", 2u), stateLine("bind", 0u, pipelineC)}, "a static pipeline after a setter of its static state");
+        CommandState::BindPipeline(&tracker, context, commands, pipelineC, library);
+        expectStateLog({stateLine("bind", 0u, pipelineC)}, "a handle bound with another dynamic state mask");
+        tracker.Invalidate();
+        CommandState::BindPipeline(&tracker, context, commands, pipelineC, library);
+        Require(tracker.BoundPipeline() == pipelineC, "a bind after invalidation was not recorded");
+        expectStateLog({stateLine("bind", 0u, pipelineC)}, "a bind after invalidation");
+        CommandState::BindPipeline(nullptr, context, commands, pipelineC, library);
+        CommandState::BindPipeline(nullptr, context, commands, pipelineC, library);
+        expectStateLog({stateLine("bind", 0u, pipelineC), stateLine("bind", 0u, pipelineC)}, "an absent tracker binding");
+    }
+
+    {
+        CommandState tracker;
+        tracker.Begin(commands);
+        const auto generation = tracker.Generation();
+        CommandState::BindPipeline(&tracker, context, commands, pipelineA, library);
+        CommandState::SetCullMode(&tracker, context, commands, 1u);
+        tracker.Begin(commands);
+        Require(tracker.Generation() == generation + 1u && tracker.BoundPipeline() == VK_NULL_HANDLE && !tracker.Known(Slot::CullMode), "beginning the same command buffer again did not start a new recording");
+        CommandState::BindPipeline(&tracker, context, commands, pipelineA, library);
+        CommandState::SetCullMode(&tracker, context, commands, 1u);
+        CommandState::SetCullMode(&tracker, context, commands, 1u);
+        expectStateLog({stateLine("bind", 0u, pipelineA), stateLine("cull", 1u), stateLine("bind", 0u, pipelineA), stateLine("cull", 1u)}, "a reused command buffer handle");
+        const auto other = makeHandle<VkCommandBuffer>();
+        CommandState::SetCullMode(&tracker, context, other, 1u);
+        Require(tracker.Commands() == other && tracker.Generation() == generation + 2u, "a tracker used with another command buffer was not restarted");
+        expectStateLog({stateLine("cull", 1u)}, "another command buffer");
+    }
+
+    {
+        const auto before = pipelineSampleLocations.size();
+        mock = MockVulkan{};
+        auto pipelineContext = mockContext();
+        pipelineContext.deviceProc = sampleLocationProc;
+        pipelineContext.device = makeHandle<VkDevice>();
+        pipelineContext.functions = &functions;
+        pipelineContext.depthBounds = true;
+        pipelineContext.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+        pipelineContext.limits.framebufferDepthSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+        pipelineContext.limits.maxFramebufferWidth = 64;
+        pipelineContext.limits.maxFramebufferHeight = 64;
+        pipelineContext.limits.maxFramebufferLayers = 1;
+        State state{};
+        state.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+        state.depthBias = true;
+        state.depthBiasConstant = 2.0f;
+        state.depthBiasSlope = 1.0f;
+        state.depthBoundsTest = true;
+        state.minDepthBounds = 0.25f;
+        state.maxDepthBounds = 0.75f;
+        state.viewport = {0.0f, 0.0f, 64.0f, 64.0f, 0.0f, 1.0f};
+        state.scissor = {{0, 0}, {64, 64}};
+        ShaderRecompiler::RecompileResult vertex, fragment;
+        vertex.spirv = makeModule({});
+        fragment.spirv = makeModule({.fragment = true});
+        vertex.variantId = 1;
+        fragment.variantId = 2;
+        const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+        const std::array<std::uint32_t, 1> mainKey{41};
+        const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, mainKey, {}};
+        {
+            Pipeline first(pipelineContext, state, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+            Pipeline second(pipelineContext, state, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+            CommandState tracker;
+            tracker.Begin(commands);
+            stateLog.clear();
+            statePipelines.clear();
+            first.Continue(commands, state, &tracker);
+            const auto bound = tracker.BoundPipeline();
+            Require(bound != VK_NULL_HANDLE, "a pipeline continued through a tracker was not recorded as bound");
+            const auto lines = stateLog;
+            Require(lines.size() == 5 && lines[0] == stateLine("bind", 0u, bound), "the first continued draw did not bind and set every dynamic state");
+            expectStateLog(lines, "the first continued draw");
+            first.Continue(commands, state, &tracker);
+            expectStateLog({}, "an unchanged continued draw");
+            auto moved = state;
+            moved.scissor = {{1, 1}, {32, 32}};
+            moved.depthBiasConstant = 3.0f;
+            first.Continue(commands, moved, &tracker);
+            expectStateLog({stateLine("scissor", 1, 1, 32u, 32u), stateLine("bias", 3.0f, 0.0f, 1.0f)}, "a continued draw that changes the scissor and the depth bias");
+            second.Continue(commands, moved, &tracker);
+            const auto next = tracker.BoundPipeline();
+            Require(next != bound, "a second pipeline was not recorded as bound");
+            expectStateLog({stateLine("bind", 0u, next)}, "a second pipeline with the same dynamic state");
+            first.Continue(commands, moved, &tracker);
+            expectStateLog({stateLine("bind", 0u, bound)}, "the first pipeline again");
+            first.Continue(commands, state, nullptr);
+            Require(stateLog.size() == 5, "a continued draw without a tracker skipped commands");
+            stateLog.clear();
+        }
+        ClearPipelineLibraries(pipelineContext.device);
+        Require(mock.live == 0, "the command state pipeline tests leaked Vulkan objects");
+        mock = MockVulkan{};
+        pipelineSampleLocations.resize(before);
+    }
+    stateLog.clear();
+    statePipelines.clear();
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "200");
@@ -13500,6 +13820,11 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unused-stencil-reference") {
             stencilReferenceUnusedTests();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--command-state") {
+            commandStateTests();
+            std::cout << "graphics command state suppression tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--command-batch-fence-failure") {
@@ -13845,6 +14170,7 @@ int main(int argc, char** argv) {
         orderedPixelShaderTests();
         stencilRefExportTests();
         stencilReferenceUnusedTests();
+        commandStateTests();
         stencilLogicOperationTests();
         aliasedBufferViewTests();
         LineStripTests();

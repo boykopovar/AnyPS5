@@ -31,6 +31,96 @@ namespace AgcDriver::Graphics {
 class Buffer;
 class DeviceBuffer;
 
+class CommandState {
+public:
+    enum Slot : std::uint32_t {
+        Viewport,
+        Scissor,
+        DepthBias,
+        DepthBounds,
+        CullMode,
+        FrontFace,
+        DepthTest,
+        DepthWrite,
+        DepthCompare,
+        DepthBoundsTest,
+        StencilTest,
+        StencilOpFront,
+        StencilOpBack,
+        CompareMaskFront,
+        CompareMaskBack,
+        WriteMaskFront,
+        WriteMaskBack,
+        ReferenceFront,
+        ReferenceBack,
+        SlotCount
+    };
+    static constexpr std::uint32_t Mask(Slot slot) { return 1u << slot; }
+    static std::uint32_t DynamicSlots(std::span<const VkDynamicState> states);
+
+    void Begin(VkCommandBuffer commands);
+    void Invalidate() noexcept;
+    VkCommandBuffer Commands() const { return commands; }
+    std::uint64_t Generation() const { return generation; }
+    bool Known(Slot slot) const { return (valid & Mask(slot)) != 0; }
+    VkPipeline BoundPipeline() const { return pipelineKnown ? pipeline : VK_NULL_HANDLE; }
+
+    static void BindPipeline(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkPipeline pipeline, std::uint32_t dynamicSlots);
+    static void SetViewport(CommandState* tracker, const Context& context, VkCommandBuffer commands, const VkViewport& viewport);
+    static void SetScissor(CommandState* tracker, const Context& context, VkCommandBuffer commands, const VkRect2D& scissor);
+    static void SetDepthBias(CommandState* tracker, const Context& context, VkCommandBuffer commands, float constant, float clamp, float slope);
+    static void SetDepthBounds(CommandState* tracker, const Context& context, VkCommandBuffer commands, float minimum, float maximum);
+    static void SetCullMode(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkCullModeFlags mode);
+    static void SetFrontFace(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkFrontFace face);
+    static void SetDepthTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable);
+    static void SetDepthWriteEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable);
+    static void SetDepthCompareOp(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkCompareOp compare);
+    static void SetDepthBoundsTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable);
+    static void SetStencilTestEnable(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkBool32 enable);
+    static void SetStencilOp(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp);
+    static void SetStencilCompareMask(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t mask);
+    static void SetStencilWriteMask(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t mask);
+    static void SetStencilReference(CommandState* tracker, const Context& context, VkCommandBuffer commands, VkStencilFaceFlags faces, std::uint32_t reference);
+
+private:
+    struct StencilOps {
+        VkStencilOp failOp;
+        VkStencilOp passOp;
+        VkStencilOp depthFailOp;
+        VkCompareOp compareOp;
+        bool operator==(const StencilOps&) const = default;
+    };
+    void attach(VkCommandBuffer recording);
+    void wrote(std::uint32_t slots) { valid |= slots; overwritten |= slots; }
+    template<typename TValue, typename TEqual, typename TEmit>
+    static void apply(CommandState* tracker, VkCommandBuffer commands, Slot slot, TValue CommandState::*field, const TValue& value, TEqual equal, TEmit emit);
+    template<typename TValue, typename TEmit>
+    static void applyFaces(CommandState* tracker, VkCommandBuffer commands, Slot first, VkStencilFaceFlags faces, std::array<TValue, 2> CommandState::*field, const TValue& value, TEmit emit);
+
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+    std::uint64_t generation = 0;
+    std::uint32_t valid = 0;
+    std::uint32_t overwritten = 0;
+    std::uint32_t dynamicSlots = 0;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    bool pipelineKnown = false;
+    VkViewport viewport{};
+    VkRect2D scissor{};
+    std::array<float, 3> depthBias{};
+    std::array<float, 2> depthBounds{};
+    VkCullModeFlags cullMode = 0;
+    VkFrontFace frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    VkBool32 depthTest = 0;
+    VkBool32 depthWrite = 0;
+    VkCompareOp depthCompare = VK_COMPARE_OP_NEVER;
+    VkBool32 depthBoundsTest = 0;
+    VkBool32 stencilTest = 0;
+    std::array<StencilOps, 2> stencilOps{};
+    std::array<std::uint32_t, 2> compareMasks{};
+    std::array<std::uint32_t, 2> writeMasks{};
+    std::array<std::uint32_t, 2> references{};
+};
+
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
 // Sync waits for every batch, then runs its completion actions (write-backs) in order. Objects handed
@@ -255,6 +345,7 @@ public:
     void PrepareSampleSlot();
     void EndPassSamples();
     void RecordUncounted(const std::function<void(VkCommandBuffer)>& record);
+    CommandState* GraphicsState();
     struct SampleDumpStatistics {
         std::uint64_t queued;
         std::uint64_t queuedInPass;
@@ -606,6 +697,7 @@ private:
     };
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
+        CommandState graphicsState;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;

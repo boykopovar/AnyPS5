@@ -2473,7 +2473,7 @@ void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block
     std::memcpy(block.data() + ShaderRecompiler::DepthRemapPushOffsetBytes, words.data(), sizeof(words));
 }
 
-void recordStencilReplay(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
+void recordStencilReplay(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0, CommandState* tracker = nullptr) {
     State selected = state;
     auto block = bytes != nullptr ? *bytes : AssemblePushConstants(shaders);
     if (bytes == nullptr) {
@@ -2491,7 +2491,7 @@ void recordStencilReplay(const Context& context, VkCommandBuffer commands, const
             selected.stencilReplayReference = reference;
             selected.stencilFront.reference = reference;
             selected.stencilBack.reference = reference;
-            context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
+            CommandState::SetStencilReference(tracker, context, commands, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
             std::memcpy(block.data() + referenceOffset, &reference, sizeof(reference));
             pipeline->PushConstants(commands, stages, block);
             recordDrawCommands(context, commands, selected, piece, inputs, nullptr, VK_NULL_HANDLE, 0, nullptr, unusedSubdraw, firstIndex);
@@ -2733,6 +2733,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     outcome.passBegun = !continued;
     outcome.passBreak = start.reason;
     const auto commands = start.commands;
+    auto* const tracker = recorder->GraphicsState();
     if (!continued) {
         recorder->PrepareSampleSlot();
         PerformanceTrace::Count(PerformanceTrace::RenderPassScope);
@@ -2761,7 +2762,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     bool rewritten = false;
     if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
     if (continued) {
-        record.pipeline->Continue(commands, state);
+        record.pipeline->Continue(commands, state, tracker);
     } else {
         for (const auto& proxy : record.proxies) {
             proxy->RecordAttachmentProxyLoad(commands, VK_IMAGE_LAYOUT_GENERAL);
@@ -2794,12 +2795,12 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         // layout, which a lean draw renders in: no transitions.
         if (!record.reordered.empty()) {
             std::vector<std::shared_ptr<void>> kept;
-            RecordSampleOrder(context, commands, record.reorderPass, record.reordered, true, kept);
+            RecordSampleOrder(context, commands, record.reorderPass, record.reordered, true, kept, tracker);
             for (auto& object : kept) recorder->Keep(std::move(object));
         }
         for (const auto& write : record.staged) RecordStagedClear(context, commands, *write.temporary);
         APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
-        record.pipeline->Begin(commands, *record.framebuffer, state.renderExtent, state);
+        record.pipeline->Begin(commands, *record.framebuffer, state.renderExtent, state, tracker);
     }
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     if (drawBindings != nullptr) {
@@ -2827,15 +2828,15 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     noteDrawFaultToken(context, *recorder, commands, shaders, draw, record.indirect != nullptr);
     if (record.stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     else {
-        recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages);
+        recordStencilReplay(context, commands, state, draw, inputs, record.stencilReplay, shaders, resources, record.pushBytes, record.pushStages, tracker);
         for (const auto& [reference, pipeline] : record.stencilReplay) recorder->Keep(pipeline);
     }
     if (record.pipeline->SplitsFaces()) {
-        record.pipeline->ContinueBackFaces(commands, state);
+        record.pipeline->ContinueBackFaces(commands, state, tracker);
         recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
     if (record.pipeline->SplitsSecondChannel()) {
-        record.pipeline->ContinueSecondChannel(commands);
+        record.pipeline->ContinueSecondChannel(commands, tracker);
         recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
     recorder->EndGpuTiming(eachDrawTiming);
@@ -2856,7 +2857,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             }
             if (!reordered.empty()) {
                 std::vector<std::shared_ptr<void>> kept;
-                RecordSampleOrder(context, passCommands, reorderPass, reordered, false, kept);
+                RecordSampleOrder(context, passCommands, reorderPass, reordered, false, kept, recorder->GraphicsState());
                 for (auto& object : kept) recorder->Keep(std::move(object));
             }
             if (depthLocations) {
