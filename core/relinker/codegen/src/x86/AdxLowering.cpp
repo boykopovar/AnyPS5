@@ -165,9 +165,6 @@ std::optional<AdxOperands> DecodeAdx(const std::uint8_t* data, const std::size_t
     } else {
         std::vector<std::uint8_t> prefixes(data, data + opcode);
         operands.Memory = DecodeMemoryOperand(data, length, modrmOffset, static_cast<std::uint8_t>(rex & (kRexX | kRexB)), std::move(prefixes));
-        const auto address32 = std::find(data, data + opcode, PrefixAddressSize) != data + opcode;
-        if (address32 && operands.Memory->RipRelative)
-            operands.Memory->RipRelative = false;
         if (modrmOffset + operands.Memory->EncodedSize != length)
             throw CodegenException("ADCX/ADOX memory operand has trailing bytes");
     }

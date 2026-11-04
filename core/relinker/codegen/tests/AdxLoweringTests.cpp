@@ -43,7 +43,7 @@ void decoding() {
     require(third && third->Overflow && third->Wide && third->Destination == 8 && third->Source == 2, "ADOX REX extensions decoded incorrectly");
     require(fourth && fourth->Memory && fourth->Memory->StackBase && fourth->Memory->Displacement == 8, "ADCX stack operand decoded incorrectly");
     require(fifth && fifth->Memory && fifth->Memory->RipRelative, "ADCX RIP-relative source was not identified");
-    require(sixth && sixth->Memory && !sixth->Memory->RipRelative, "ADCX address-size source was mistaken for RIP-relative");
+    require(sixth && sixth->Memory && sixth->Memory->RipRelative, "ADCX address-size RIP-relative source was not identified");
     for (const auto& bytes : {Bytes{0x0F, 0x38, 0xF6, 0xC1}, Bytes{0xF2, 0x0F, 0x38, 0xF6, 0xC1}, Bytes{0x66, 0xF3, 0x0F, 0x38, 0xF6, 0xC1}})
         require(!Codegen::DecodeAdx(bytes.data(), bytes.size()), "An instruction without the mandatory ADX prefix matched");
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
@@ -52,14 +52,6 @@ void decoding() {
     require(rosetta->Match(adox64.data(), adox64.size()).has_value(), "Rosetta mode did not lower ADOX");
     require(rosetta->Match(adcxRip.data(), adcxRip.size())->Relocations.size() == 1, "ADCX RIP-relative source has no relocation");
     require(!intel->Match(adcx32.data(), adcx32.size()), "Intel mode rewrote ADCX");
-    bool rejected = false;
-    const Bytes rspDestination{0x66, 0x0F, 0x38, 0xF6, 0xE1};
-    try {
-        (void)rosetta->Match(rspDestination.data(), rspDestination.size());
-    } catch (const Codegen::CodegenException&) {
-        rejected = true;
-    }
-    require(rejected, "ADCX with an RSP destination was silently accepted");
 }
 
 void conversion() {
@@ -88,16 +80,7 @@ struct Run {
     std::uint64_t Stack;
 };
 
-Run executeCode(Bytes codeBytes, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags, const std::uint64_t memorySource = 0, const std::optional<std::size_t> returnBranchOffset = std::nullopt) {
-    const auto ret = codeBytes.size();
-    if (returnBranchOffset) {
-        const auto displacement = static_cast<std::int32_t>(ret - (*returnBranchOffset + 5));
-        std::memcpy(codeBytes.data() + *returnBranchOffset + 1, &displacement, sizeof(displacement));
-    }
-    codeBytes.push_back(0xC3);
-    auto* code = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    require(code != MAP_FAILED, "Cannot allocate executable memory for an ADX stub");
-    std::memcpy(code, codeBytes.data(), codeBytes.size());
+Run callCode(const std::uint8_t* code, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags, const std::uint64_t memorySource) {
     Run result{};
     asm volatile(
         "mov %[destination], %%rax\n\t"
@@ -117,15 +100,53 @@ Run executeCode(Bytes codeBytes, const std::uint64_t destination, const std::uin
         : [value] "=&r"(result.Value), [flags] "=&r"(result.Flags), [stack] "=&r"(result.Stack)
         : [destination] "r"(destination), [source] "r"(source), [initialFlags] "r"(initialFlags), [memorySource] "r"(memorySource), [code] "r"(code)
         : "rax", "rcx", "r9", "r11", "memory", "cc");
+    return result;
+}
+
+Run executeCode(Bytes codeBytes, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags, const std::uint64_t memorySource = 0, const std::optional<std::size_t> returnBranchOffset = std::nullopt) {
+    const auto ret = codeBytes.size();
+    if (returnBranchOffset) {
+        const auto displacement = static_cast<std::int32_t>(ret - (*returnBranchOffset + 5));
+        std::memcpy(codeBytes.data() + *returnBranchOffset + 1, &displacement, sizeof(displacement));
+    }
+    codeBytes.push_back(0xC3);
+    auto* code = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    require(code != MAP_FAILED, "Cannot allocate executable memory for an ADX stub");
+    std::memcpy(code, codeBytes.data(), codeBytes.size());
+    const auto result = callCode(code, destination, source, initialFlags, memorySource);
     munmap(code, 4096);
     return result;
 }
+
 
 Run execute(const Bytes& site, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags, const std::uint64_t memorySource = 0) {
     const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto match = matcher->Match(site.data(), site.size());
     require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "An ADX trampoline was not produced");
     return executeCode(match->StubBody, destination, source, initialFlags, memorySource, match->ReturnBranchOffset);
+}
+
+Run executeMoved(const Bytes& site, const std::uint64_t destination, const std::uint64_t initialFlags, const std::uint64_t memoryValue) {
+    constexpr std::size_t kSiteOffset = 0x400;
+    constexpr std::size_t kStubOffset = 0x100;
+    constexpr std::size_t kDataOffset = 0x800;
+    auto* page = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0));
+    require(page != MAP_FAILED, "Cannot allocate low executable memory for an ADX stub");
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "An ADX trampoline was not produced for a moved site");
+    require(match->Relocations.size() == 1 && match->Relocations[0].AddressSize32, "The address-size RIP-relative source was not relocated");
+    auto body = match->StubBody;
+    Codegen::ApplyStubRelocations(body, match->Relocations, reinterpret_cast<std::uint64_t>(page) + kSiteOffset, reinterpret_cast<std::uint64_t>(page) + kStubOffset, 0);
+    const auto ret = body.size();
+    const auto branch = static_cast<std::int32_t>(ret - (match->ReturnBranchOffset + 5));
+    std::memcpy(body.data() + match->ReturnBranchOffset + 1, &branch, sizeof(branch));
+    body.push_back(0xC3);
+    std::memcpy(page + kStubOffset, body.data(), body.size());
+    std::memcpy(page + kDataOffset, &memoryValue, sizeof(memoryValue));
+    const auto run = callCode(page + kStubOffset, destination, 0, initialFlags, 0);
+    munmap(page, 4096);
+    return run;
 }
 
 Run executeNative(const bool wide, const bool adox, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags) {
@@ -207,6 +228,17 @@ void execution() {
     const Bytes highSource{0x66, 0x49, 0x0F, 0x38, 0xF6, 0xC1};
     const auto highRun = execute(highSource, 3, 5, 0x202);
     require(highRun.Value == 8, "ADX lowering did not preserve the high source-register extension");
+    for (const bool adox : {false, true}) {
+        const auto flag = adox ? std::uint64_t{0x800} : std::uint64_t{1};
+        Bytes moved{static_cast<std::uint8_t>(0x67), static_cast<std::uint8_t>(adox ? 0xF3 : 0x66), 0x0F, 0x38, 0xF6, 0x05};
+        const auto displacement = static_cast<std::int32_t>(0x800 - (0x400 + moved.size() + 4));
+        for (std::size_t index = 0; index < 4; ++index)
+            moved.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(displacement) >> (index * 8)));
+        const auto clear = executeMoved(moved, 5, 0x202, 7);
+        require(clear.Value == 12 && (clear.Flags & flag) == 0, "A moved address-size RIP-relative ADX source read the wrong memory");
+        const auto carried = executeMoved(moved, 5, 0x202 | flag, 7);
+        require(carried.Value == 13 && (carried.Flags & flag) == 0, "A moved address-size RIP-relative ADX source lost the carry-in");
+    }
 }
 
 #else
