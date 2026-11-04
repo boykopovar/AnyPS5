@@ -1,7 +1,7 @@
 if(BUILD_TESTING)
     add_test(NAME agc_driver_depth_plane_sampling_evicting COMMAND agc_driver_depth_plane_sampling_tests --evicting)
     set_tests_properties(agc_driver_depth_plane_sampling_evicting PROPERTIES ENVIRONMENT "APS5_DEPTH_PLANE_COPY_MIB=1" SKIP_RETURN_CODE 77 TIMEOUT 120)
-    add_test(NAME agc_driver_depth_plane_sampling_unimported COMMAND agc_driver_depth_plane_sampling_tests)
+    add_test(NAME agc_driver_depth_plane_sampling_unimported COMMAND agc_driver_depth_plane_sampling_tests --require-write-watch)
     set_tests_properties(agc_driver_depth_plane_sampling_unimported PROPERTIES ENVIRONMENT "APS5_NO_HOST_IMPORT=1" SKIP_RETURN_CODE 77 TIMEOUT 120)
     if(WIN32)
         set_tests_properties(agc_driver_depth_plane_sampling_evicting agc_driver_depth_plane_sampling_unimported PROPERTIES ENVIRONMENT_MODIFICATION

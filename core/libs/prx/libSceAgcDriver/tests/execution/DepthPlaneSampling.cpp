@@ -358,11 +358,11 @@ void GuestDepthBitsCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std:
     }
 }
 
-void GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+bool GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
     auto* base = block.At(ReloadOffset);
     if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uintptr_t>(base), SliceBytes)) {
         std::puts("guest memory has no write watch: the guest write after a draw is not checked");
-        return;
+        return false;
     }
     const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
     DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX));
@@ -371,6 +371,7 @@ void GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block,
     FillSlice(base, SliceBytes, Bits(0.75f), 4u);
     Load(device, base, shape, 0, output);
     Expect(output, Bits(0.75f), "D32 plane the guest wrote after a draw, sampled before its surface is bound again");
+    return true;
 }
 
 void ExpectMemory(const std::uint8_t* base, std::uint64_t bytes, float expected, const std::string& what) {
@@ -383,14 +384,14 @@ void ExpectMemory(const std::uint8_t* base, std::uint64_t bytes, float expected,
     }
 }
 
-void AliasedStoreAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+bool AliasedStoreAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
     auto* base = block.At(AliasOffset);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
     constexpr VkExtent2D extent{128, 256};
     const auto bytes = AgcDriver::Graphics::DepthSliceBytes(extent, 4u);
     if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(address, static_cast<std::size_t>(bytes))) {
         std::puts("guest memory has no write watch: an aliased image stored after a draw is not checked");
-        return;
+        return false;
     }
     const auto swizzle = AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX);
     const Shape shape{Format32Float, extent.width, extent.height, Type2D, 0, Swizzle64KbZX};
@@ -414,6 +415,7 @@ void AliasedStoreAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& bloc
     static_cast<void>(AgcDriver::Graphics::KeepNewerDepthUnits(address, static_cast<std::size_t>(bytes), after, [&] { return AgcDriver::GuestMemory::MarkPossiblyWritten(address, static_cast<std::size_t>(bytes)); }));
     Load(device, base, shape, 0, output);
     Expect(output, Bits(DrawnDepth), "D32 plane sampled after a GPU write recorded after its draw completed");
+    return true;
 }
 
 void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
@@ -551,7 +553,9 @@ void RefusalCase(AgcDriver::VulkanDevice& device, GuestBlock& block) {
 
 int main(int argc, char** argv) {
     try {
-        const bool evicting = argc > 1 && std::string(argv[1]) == "--evicting";
+        const std::vector<std::string> arguments(argv + 1, argv + argc);
+        const bool evicting = std::find(arguments.begin(), arguments.end(), "--evicting") != arguments.end();
+        const bool requireWriteWatch = std::find(arguments.begin(), arguments.end(), "--require-write-watch") != arguments.end();
         GuestBlock block;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -573,9 +577,9 @@ int main(int argc, char** argv) {
         present();
         GuestDepthBitsCase(*device, block, output);
         present();
-        GuestWriteAfterDrawCase(*device, block, output);
+        const bool guestWriteChecked = GuestWriteAfterDrawCase(*device, block, output);
         present();
-        AliasedStoreAfterDrawCase(*device, block, output);
+        const bool aliasedStoreChecked = AliasedStoreAfterDrawCase(*device, block, output);
         present();
         FirstSliceCase(*device, block, output);
         present();
@@ -591,6 +595,10 @@ int main(int argc, char** argv) {
             const auto kept = AgcDriver::Graphics::DepthPlaneCopyCount();
             Require(kept >= 1 && kept < 8, std::to_string(kept) + " depth plane copies were kept with a 1 MiB budget, expected at least the newest and fewer than the 8 an unbounded cache keeps");
             FrameCopiesCase(*device, block, output);
+        }
+        if (requireWriteWatch && !(guestWriteChecked && aliasedStoreChecked)) {
+            std::puts("skipped, the host has no write watch over guest memory, which the guest write and aliased store cases after a draw need");
+            return VulkanTestSkipped;
         }
         std::puts("depth plane sampling tests passed");
         return 0;
