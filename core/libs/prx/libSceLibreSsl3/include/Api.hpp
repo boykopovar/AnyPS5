@@ -336,7 +336,7 @@ int APS5_VABI X509_set_issuer_name_nid_postfix();
 int APS5_VABI X509_add_ext_nid_postfix();
 int APS5_VABI tls_connect_socket_nid_postfix();
 int APS5_VABI SSL_CTX_set_quic_method_nid_postfix();
-int APS5_VABI X509_gmtime_adj_nid_postfix();
+Asn1String* APS5_VABI X509_gmtime_adj_nid_postfix(Asn1String* time, std::int64_t adjustment);
 int APS5_VABI SSL_process_quic_post_handshake_nid_postfix();
 int APS5_VABI Unknown_aLdgrI2jAF0_nid_no_patch();
 int APS5_VABI EC_POINT_clear_free_nid_postfix();
