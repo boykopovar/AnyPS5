@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <type_traits>
 
 using SetOperator = void (APS5_VABI*)(CairoContext*, int);
@@ -37,6 +38,35 @@ void CheckOperator(CairoContext* context) {
     assert(cairo_get_operator(context) == 28);
     cairo_restore(context);
     assert(cairo_get_operator(context) == 28);
+}
+
+struct ExpectedStep {
+    int type;
+    double x;
+    double y;
+};
+
+void CheckRectangle(CairoContext* context, double x, double y, double width, double height,
+                    std::initializer_list<ExpectedStep> expected) {
+    cairo_new_path(context);
+    cairo_rectangle(context, x, y, width, height);
+    CairoPath* path = cairo_copy_path(context);
+    assert(path && path->status == 0);
+    int total = 0;
+    for (const auto& step : expected) total += step.type == 3 ? 1 : 2;
+    assert(path->num_data == total);
+    int offset = 0;
+    for (const auto& step : expected) {
+        const int length = step.type == 3 ? 1 : 2;
+        assert(path->data[offset].header.type == step.type);
+        assert(path->data[offset].header.length == length);
+        if (length == 2) {
+            assert(std::abs(path->data[offset + 1].point.x - step.x) < 1e-5);
+            assert(std::abs(path->data[offset + 1].point.y - step.y) < 1e-5);
+        }
+        offset += length;
+    }
+    cairo_path_destroy(path);
 }
 
 void TraceRectangle(CairoContext* context, double x, double y, double width, double height) {
@@ -69,6 +99,38 @@ int main() {
     cairo_surface_destroy(surface);
     assert(context);
     CheckOperator(context);
+    CheckRectangle(context, 0, 0, 20, 12,
+                   {{0, 0, 0}, {1, 20, 0}, {1, 20, 12}, {1, 0, 12}, {3, 0, 0}, {0, 0, 0}});
+    CheckRectangle(context, 2, 3, -4, 11,
+                   {{0, 2, 3}, {1, -2, 3}, {1, -2, 14}, {1, 2, 14}, {3, 0, 0}, {0, 2, 3}});
+    CheckRectangle(context, 4, 2, 0, 7,
+                   {{0, 4, 2}, {1, 4, 9}, {3, 0, 0}, {0, 4, 2}});
+    CheckRectangle(context, 4, 2, 0.001, 7,
+                   {{0, 4, 2}, {1, 4, 9}, {3, 0, 0}, {0, 4, 2}});
+    CheckRectangle(context, 5, 8, 9, 0,
+                   {{0, 5, 8}, {1, 14, 8}, {3, 0, 0}, {0, 5, 8}});
+    CheckRectangle(context, 5, 8, 9, 0.001,
+                   {{0, 5, 8}, {1, 14, 8}, {3, 0, 0}, {0, 5, 8}});
+    CheckRectangle(context, 5, 8, 0, 0,
+                   {{0, 5, 8}, {3, 0, 0}, {0, 5, 8}});
+    CheckRectangle(context, 5, 8, 0.001, 0.001,
+                   {{0, 5, 8}, {3, 0, 0}, {0, 5, 8}});
+    CheckRectangle(context, 10, 20, 3, -6,
+                   {{0, 10, 20}, {1, 13, 20}, {1, 13, 14}, {1, 10, 14},
+                    {3, 0, 0}, {0, 10, 20}});
+    cairo_save(context);
+    cairo_translate(context, 11, -3);
+    cairo_scale(context, 2, 3);
+    CheckRectangle(context, 2, 3, -4, 11,
+                   {{0, 2, 3}, {1, -2, 3}, {1, -2, 14}, {1, 2, 14}, {3, 0, 0}, {0, 2, 3}});
+    cairo_restore(context);
+    cairo_save(context);
+    cairo_scale(context, 8, 8);
+    CheckRectangle(context, 5, 8, 0.001, 0.001,
+                   {{0, 5, 8}, {1, 5.0009765625, 8},
+                    {1, 5.0009765625, 8.0009765625}, {1, 5, 8.0009765625},
+                    {3, 0, 0}, {0, 5, 8}});
+    cairo_restore(context);
     constexpr std::array<std::array<double, 4>, 11> rectangles{{
         {{0, 0, 20, 12}}, {{2, 3, -4, 11}}, {{10, 20, 3, -6}},
         {{4, 2, 0, 7}}, {{5, 8, 9, 0}}, {{0, 0, 0, 0}},
@@ -94,6 +156,14 @@ int main() {
     cairo_translate(context, 11.25, -2.75);
     cairo_rotate(context, 0.2187);
     cairo_scale(context, 1.25, 1.75);
+    CheckRectangle(context, 5, 8, 9, 0,
+                   {{0, 4.999239074344777, 8.000652404521887},
+                    {1, 13.998124608813919, 8.001179125233069},
+                    {3, 0, 0}, {0, 4.999239074344777, 8.000652404521887}});
+    CheckRectangle(context, 5, 8, 9, 0.001,
+                   {{0, 4.999239074344777, 8.000652404521887},
+                    {1, 13.998124608813919, 8.001179125233069},
+                    {3, 0, 0}, {0, 4.999239074344777, 8.000652404521887}});
     for (int iteration = 0; iteration < 512; ++iteration) {
         std::array<double, 4> values{};
         for (double& value : values) {
