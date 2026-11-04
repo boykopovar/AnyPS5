@@ -109,6 +109,17 @@ public:
         reset(reinterpret_cast<std::uintptr_t>(address), bytes);
     }
 
+    void MapZero(void* address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        if (zeroSection == nullptr && (zeroSection = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READONLY, 0, static_cast<DWORD>(pageBytes), nullptr)) == nullptr) fail("create the read-only zero guest page");
+        const auto start = reinterpret_cast<std::uintptr_t>(address);
+        reset(start, bytes);
+        for (auto cursor = start; cursor < start + bytes; cursor += pageBytes) {
+            split(cursor, pageBytes);
+            if (!map(zeroSection, GetCurrentProcess(), reinterpret_cast<void*>(cursor), 0, pageBytes, MEM_REPLACE_PLACEHOLDER, PAGE_READONLY, nullptr, 0)) fail("map the read-only zero guest page");
+        }
+    }
+
     void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false, DWORD viewProtection = PAGE_EXECUTE_READWRITE, std::size_t sectionBytes = SIZE_MAX, std::vector<std::pair<std::uintptr_t, std::size_t>>* createdPrivate = nullptr) {
         if (sectionBytes < bytes && (resident || sectionBytes == 0 || bytes - sectionBytes >= pageBytes)) throw std::runtime_error("shared guest mapping extends a whole page past its section");
         std::lock_guard lock(mutex);
@@ -410,8 +421,9 @@ public:
         if (page < run->second.end) run->second.imported = true;
     }
 
-    void* MapAlias(std::uintptr_t address, std::size_t bytes) {
+    void* MapAlias(std::uintptr_t address, std::size_t bytes, bool* boundsRefused = nullptr) {
         std::lock_guard lock(mutex);
+        if (boundsRefused != nullptr) *boundsRefused = false;
         const auto refuse = [&](const char* reason) {
             char text[192];
             std::snprintf(text, sizeof(text), "read-write alias of shared guest memory 0x%llx+0x%llx: %s", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), reason);
@@ -422,7 +434,10 @@ public:
             const auto found = views.find(address + done);
             if (found == views.end() || !found->second.resident) continue;
             const auto run = std::prev(residentRuns.upper_bound(address + done));
-            if (run->first < address || run->second.end > address + bytes) throw refuse("a resident run of direct memory extends outside the range");
+            if (run->first < address || run->second.end > address + bytes) {
+                if (boundsRefused != nullptr) *boundsRefused = true;
+                throw refuse("a resident run of direct memory extends outside the range");
+            }
             for (auto page = views.find(run->first); page != views.end() && page->first < run->second.end; ++page) {
                 if (page->second.hostWrites != 0) return nullptr;
             }
@@ -1477,6 +1492,7 @@ private:
     static inline std::atomic<std::uint64_t> queries{0};
 #endif
     std::mutex mutex;
+    HANDLE zeroSection = nullptr;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;
     UnmapFunction unmap = nullptr;
