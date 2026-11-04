@@ -68,9 +68,36 @@ int APS5_VABI sceAjmBatchJobEncode(AjmBatchInfo* info, uint32_t instance, const 
 }
 
 const char* APS5_VABI sceAjmStrError(int error) {
- (void)error;
- AjmStub(__func__);
- return nullptr;
+    static const char* const messages[] = {
+        "context does not exist",
+        "instance does not exist",
+        "batch does not exist",
+        "invalid parameter",
+        "not enough memory",
+        "not enough resources",
+        "codec is not supported",
+        "codec is already registered in the context",
+        "codec is not registered in the context",
+        "wrong revision in the flags",
+        "flag is not supported",
+        "busy",
+        "priority is invalid",
+        "in progress",
+        "operation cannot be performed at the moment",
+        "malformed batch",
+        "error at job creation",
+        "invalid opcode",
+        "priority violation",
+        "buffer is too big",
+        "invalid address",
+        "batch was cancelled",
+        "specified memory area is already registered",
+        "specified memory area is not registered",
+    };
+    if (error == 0) return "ok";
+    const std::uint32_t index = static_cast<std::uint32_t>(error) - 0x80930002u;
+    if (index < sizeof(messages) / sizeof(messages[0])) return messages[index];
+    return "(unknown)";
 }
 
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* param) {
