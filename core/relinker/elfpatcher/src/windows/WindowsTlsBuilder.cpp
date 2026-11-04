@@ -134,7 +134,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         if (header.Type != 1 || (header.Flags & 1) == 0)
             continue;
         std::uint64_t decodedEnd = 0;
-        for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+        for (auto instruction = std::lower_bound(instructions.begin(), instructions.end(), header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
             if (scanned % 4096 == 0) report(7000 + 2000 * scanned / std::max<std::size_t>(instructions.size(), 1));
             ++scanned;
             const auto offset = *instruction - header.MappedAddress;

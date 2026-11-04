@@ -15,6 +15,8 @@ if(BUILD_TESTING)
         add_test(NAME ${testName} COMMAND agc_driver_alpha_to_coverage_tests --dcc-compared-import ${samples})
         list(APPEND multisampledDccClearTests ${testName})
     endforeach()
-    set_tests_properties(agc_driver_dithered_alpha_to_coverage agc_driver_two_sample_dithered_alpha_to_coverage PROPERTIES
+    add_test(NAME agc_driver_alpha_to_coverage_sample_mask_export COMMAND agc_driver_alpha_to_coverage_tests --sample-mask8)
+    add_test(NAME agc_driver_two_sample_alpha_to_coverage_sample_mask_export COMMAND agc_driver_alpha_to_coverage_tests --sample-mask2)
+    set_tests_properties(agc_driver_dithered_alpha_to_coverage agc_driver_two_sample_dithered_alpha_to_coverage agc_driver_alpha_to_coverage_sample_mask_export agc_driver_two_sample_alpha_to_coverage_sample_mask_export PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()

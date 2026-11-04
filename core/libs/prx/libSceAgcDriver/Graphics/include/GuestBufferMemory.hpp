@@ -24,6 +24,7 @@ void ShutdownGuestBufferWorkers();
 struct GuestMemorySnapshot {
     std::uint64_t address;
     std::span<const std::byte> bytes;
+    bool compared = false;
 };
 
 // A guest allocation imported with VK_EXT_external_memory_host, usable by the GPU in place.
@@ -56,6 +57,15 @@ inline VkDeviceSize HostImportOffset(const HostImport& import, std::uint64_t add
     return address - import.base + import.lead;
 }
 
+struct HostImportStart {
+    std::uint64_t guest;
+    VkDeviceAddress device;
+};
+
+inline HostImportStart HostImportBufferStart(const HostImport& import) {
+    return {import.base - import.lead, import.address - import.lead};
+}
+
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
 
 struct ImportProbe {
@@ -69,6 +79,7 @@ struct ImportProbe {
     std::uint32_t writtenAfterSettle = 0;
     std::uint32_t writtenByCpu = 0;
     std::uint32_t writtenAfterFill = 0;
+    std::uint32_t staleAfterFill = 0;
 };
 
 ImportProbe ProbeImportWriteProtection(const Context& context);
@@ -104,7 +115,10 @@ void ReportHostImports();
 // address)` in the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+void RequireGpuLockBeforeImports(const char* where);
+bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
+std::shared_ptr<HostImport> UnregisteredHostImport(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
 void SetHostImportRangeWindow(std::uint64_t bytes);
@@ -190,6 +204,8 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
+void SetDeviceLocalFullForTests(bool full);
+std::uint64_t StagingShadowsRefused();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -211,6 +227,7 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
 bool SyncLeaseWork();
 void CountLeaseOutcome(bool synced, std::uint64_t batchSerial);
 void FinishLeaseWork();
+bool LeaseWorkPending();
 struct LeaseStats {
     std::uint64_t deferred = 0;
     std::uint64_t synced = 0;
@@ -379,6 +396,16 @@ public:
     // regions was recorded (ShaderResources::MarkGpuWrites), under GuestMemory::GpuMutex. A use that
     // never calls it (a synchronous draw) stores the staging bytes from the CPU in WriteBack.
     void RecordCopyBacks(Recorder& recorder);
+    bool HasGpuCopies() const {
+        for (const auto& region : regions) if (region.gpuCopy) return true;
+        return false;
+    }
+    void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
+    bool HasHostGpuCopies() const {
+        for (const auto& region : regions) if (region.gpuCopy && !region.deviceLocal) return true;
+        return false;
+    }
+    void MarkStagedWrites() const;
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
@@ -453,7 +480,9 @@ private:
         bool gpuCopy = false;
         VkBuffer copySource = VK_NULL_HANDLE;
         std::uint64_t copySourceBase = 0;
+        VkDeviceAddress copySourceAddress = 0;
         bool copiedBack = false;
+        std::shared_ptr<Buffer> shadowCopy;
         // An element the shader updates atomically lies inside (AddWritable's `atomic`).
         bool atomic = false;
         bool swept = false;
@@ -520,6 +549,7 @@ private:
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     void takeHeapReferences();
+    void releaseHeapReferences() noexcept;
     Context context;
     bool stagingAllowed = false;
     bool addressStaging = true;
