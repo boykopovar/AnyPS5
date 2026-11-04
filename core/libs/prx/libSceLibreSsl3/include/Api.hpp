@@ -346,7 +346,7 @@ int APS5_VABI ECDSA_do_sign_nid_postfix();
 int APS5_VABI SSL_CTX_set_ciphersuites_nid_postfix();
 int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix();
 void APS5_VABI RSA_get0_crt_params_nid_postfix(const LibreSsl3Rsa* rsa, const void** dmp1, const void** dmq1, const void** iqmp);
-int APS5_VABI BIO_set_data_nid_postfix();
+void APS5_VABI BIO_set_data_nid_postfix(LibreSsl::Bio* bio, void* data);
 int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix();
 int APS5_VABI X509_ALGOR_get0_nid_postfix();
 int APS5_VABI BIO_set_shutdown_nid_postfix();
