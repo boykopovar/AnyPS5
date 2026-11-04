@@ -46,3 +46,11 @@ test('capture diagnostics are fully translated', () => {
     assert.equal(diagnostic('sv', message), 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.');
     assert.equal(diagnostic('ar-EG', message), 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.');
 });
+
+test('Egyptian diagnostics translate setting refusals with their names and ranges', () => {
+    assert.equal(diagnostic('ar-EG', 'MouseSensitivity is set more than once.'), 'MouseSensitivity متكرر ومش لازم يتحدد أكتر من مرة.');
+    assert.equal(diagnostic('ar-EG', 'LeftStickDeadzone must be a whole percentage from 0 to 90.'), 'LeftStickDeadzone لازم يكون رقم صحيح من 0 لـ 90.');
+    assert.equal(diagnostic('ar-EG', 'MouseSensitivity must be a number greater than 0 and at most 10.'), 'MouseSensitivity لازم يكون رقم أكبر من 0 وبحد أقصى 10.');
+    assert.equal(diagnostic('ar-EG', 'MouseCurve must be a number from 0.2 to 5.'), 'MouseCurve لازم يكون رقم من 0.2 لـ 5.');
+    assert.equal(diagnostic('ar-EG', 'MadeUp: unknown input setting.'), 'الإعداد MadeUp مش معروف.');
+});
