@@ -229,7 +229,10 @@ def collect_shaders():
     isa = {}
     for line in ISA.read_text(encoding="utf-8", errors="ignore").splitlines():
         if line and not line.startswith("#"):
-            name, encoding = line.split()
+            parts = line.split()
+            if len(parts) != 2:
+                raise ValueError(f"tools/rdna_isa.txt: expected 'name encoding' per line, got: {line}")
+            name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
     enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
