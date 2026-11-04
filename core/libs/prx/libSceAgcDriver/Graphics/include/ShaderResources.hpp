@@ -194,7 +194,6 @@ public:
     VkDescriptorSetLayout FragmentLayout() const { return fragment.layout; }
     bool SplitSets() const { return splitSets; }
     PipelineSetLayouts SetLayouts() const { return {_layout, fragment.layout, splitSets, layoutKey, fragmentLayoutKey}; }
-    void RequireGuestBuffers() const { requireGuestBuffers(); }
     void Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const;
     struct DrawBindings {
         DrawBindings() = default;
@@ -221,6 +220,7 @@ public:
         std::size_t size;
         std::span<const std::uint32_t> words;
     };
+    void RequireGuestBuffers(std::span<const MovedBuffer> moved = {}) const { requireGuestBuffers(moved); }
     struct DrawUse {
         DrawUse() = default;
         DrawUse(const DrawUse&) = delete;
