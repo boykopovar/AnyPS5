@@ -109,8 +109,17 @@ std::vector<std::uint32_t> SpirvModule::Finalize() const {
     module.insert(module.end(), typeDeclarations.begin(), typeDeclarations.end());
     module.insert(module.end(), declarations.begin(), declarations.end());
     module.insert(module.end(), globalVariables.begin(), globalVariables.end());
+    const auto functionsStart = module.size();
     module.insert(module.end(), functionInstructions.begin(), functionInstructions.end());
     module.insert(module.end(), helperFunctionInstructions.begin(), helperFunctionInstructions.end());
+    if (inlineFunctions) {
+        std::vector<std::uint32_t> entryIds;
+        for (std::size_t offset = 0; offset < entryPoints.size(); offset += entryPoints[offset] >> spv::WordCountShift) entryIds.push_back(entryPoints[offset + 2u]);
+        for (std::size_t offset = functionsStart; offset < module.size(); offset += module[offset] >> spv::WordCountShift) {
+            if ((module[offset] & spv::OpCodeMask) != spv::OpFunction || std::ranges::find(entryIds, module[offset + 2u]) != entryIds.end()) continue;
+            module[offset + 3u] = (module[offset + 3u] & ~static_cast<std::uint32_t>(spv::FunctionControlDontInlineMask)) | static_cast<std::uint32_t>(spv::FunctionControlInlineMask);
+        }
+    }
     return module;
 }
 
@@ -126,6 +135,10 @@ void SpirvModule::EndHelperFunction() {
     std::swap(functionInstructions, helperFunctionInstructions);
     std::swap(ballots, helperBallots);
     inHelperFunction = false;
+}
+
+void SpirvModule::InlineFunctions() {
+    inlineFunctions = true;
 }
 
 void SpirvModule::RequireVersion(std::uint32_t version) {
