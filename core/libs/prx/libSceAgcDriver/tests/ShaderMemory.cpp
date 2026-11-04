@@ -8922,7 +8922,8 @@ void verifyPixelInputs() {
     const auto linear = noPerspectiveLocations(byPair);
     require(linear.size() == 1u && linear[0] == 1u, "only the parameter interpolated through the linear pair must be NoPerspective");
     static constexpr std::array<std::uint32_t, 7> bothPairs{0xc8100000u, 0xc8110001u, 0xc8140002u, 0xc8150003u, 0xf800180fu, 0x05040504u, 0xbf810000u};
-    expectFailure([&] { static_cast<void>(noPerspectiveLocations(bothPairs)); }, "interpolated through both a perspective and a linear I/J pair", "a parameter read through both pairs was given one interpolation");
+    const auto both = ShaderRecompiler::Recompile(twoParameterRequest(bothPairs));
+    require(both.barycentricEmulation.active && both.barycentricEmulation.smooth && both.barycentricEmulation.linear, "a parameter read through both pairs did not fall back to both barycentrics");
 
     static constexpr std::array<std::uint32_t, 1> code{0xbf810000u};
     RecompileRequest request{};
