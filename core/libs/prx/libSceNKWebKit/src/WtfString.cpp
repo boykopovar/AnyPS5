@@ -1253,6 +1253,32 @@ bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const URL* a, 
     return URLPort(first) == URLPort(second);
 }
 
+bool APS5_VABI _ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    return EqualImpls(first.impl, second.impl)
+        && first.bits == second.bits
+        && first.userStart == second.userStart
+        && first.userEnd == second.userEnd
+        && first.passwordEnd == second.passwordEnd
+        && first.hostEnd == second.hostEnd
+        && first.pathAfterLastSlash == second.pathAfterLastSlash
+        && first.pathEnd == second.pathEnd
+        && first.queryEnd == second.queryEnd;
+}
+
+bool APS5_VABI _ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE(const URL* self) {
+    const auto& url = Checked(self);
+    return (url.bits >> 6) <= url.userStart
+        && url.userStart <= url.userEnd
+        && url.userEnd <= url.passwordEnd
+        && url.passwordEnd <= url.hostEnd
+        && url.hostEnd + ((url.bits >> 3) & 7) <= url.pathAfterLastSlash
+        && url.pathAfterLastSlash <= url.pathEnd
+        && url.pathEnd <= url.queryEnd
+        && url.queryEnd <= View(url.impl).length;
+}
+
 void APS5_VABI _ZN3WTF3URL10invalidateEv(URL* self) {
     auto& url = Checked(self);
     url.bits = 0;
