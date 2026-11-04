@@ -47,8 +47,6 @@ int APS5_VABI _ZN3JSC22JSFinalizationRegistry9deadCountERKN3WTF6LockerINS_10JSCe
 int APS5_VABI _ZNK3WTF6String12toUIntStrictEPbi();
 int APS5_VABI _ZN3WTF20ParallelHelperClientC1EONS_6RefPtrINS_18ParallelHelperPoolENS_13DumbPtrTraitsIS2_EEEE();
 int APS5_VABI _ZN3JSC11ProxyObjectC1ERNS_2VMEPNS_9StructureE();
-int APS5_VABI _ZN9Inspector22InspectorDebuggerAgentnwEmPv();
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBasenwEmPv();
 int APS5_VABI _ZN3JSC17DebuggerCallFrame20positionForCallFrameERNS_2VMEPNS_9CallFrameE();
 int APS5_VABI _ZN3WTF24AutomaticThreadCondition6createEv();
 int APS5_VABI _ZN3JSC16InternalFunctionC1ERNS_2VMEPNS_9StructureENS_14NativeFunctionES5_();
@@ -148,7 +146,6 @@ int APS5_VABI _ZThn24_N9Inspector18InspectorHeapAgentD0Ev();
 int APS5_VABI _ZN9Inspector32DebuggerBackendDispatcherHandlerD2Ev();
 int APS5_VABI _ZN9Inspector28DOMDebuggerBackendDispatcherD0Ev();
 int APS5_VABI _ZN3WTF4Lock16unlockFairlySlowEv();
-int APS5_VABI _ZN9Inspector14ConsoleMessagenwEm10NotNullTagPv();
 int APS5_VABI _ZN3JSC10JSFunction6createERNS_2VMEPNS_14JSGlobalObjectEiRKN3WTF6StringENS_14NativeFunctionENS_9IntrinsicES9_PKNS_6DOMJIT9SignatureE();
 int APS5_VABI _ZNK9Inspector15RemoteInspector26listingForAutomationTargetERKNS_22RemoteAutomationTargetE();
 int APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgentD2Ev();
