@@ -110,4 +110,16 @@ std::int64_t APS5_VABI GetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_
     return Success;
 }
 
+std::int64_t APS5_VABI CloseWS_List_nid_postfix(Jxr::Stream** stream) {
+    if (!stream || !*stream) throw std::invalid_argument("CloseWS_List requires a stream");
+    for (auto* link = Next(reinterpret_cast<std::uint8_t*>(*stream + 1)); link;) {
+        auto* next = Next(link);
+        free_nid_postfix(link);
+        link = next;
+    }
+    free_nid_postfix(*stream);
+    *stream = nullptr;
+    return Success;
+}
+
 }
