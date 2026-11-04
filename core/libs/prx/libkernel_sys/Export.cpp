@@ -34,6 +34,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -446,6 +447,10 @@ std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
 }
 
+std::int64_t APS5_VABI pwrite_nid_postfix(int d, const void* buf, std::size_t nbytes, std::int64_t offset) {
+    return PosixPwrite_nid_no_patch(d, buf, nbytes, offset);
+}
+
 int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id) {
     if (id == nullptr) return GuestEinval;
     return sceKernelGetOpenPsId(id);
@@ -771,6 +776,11 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
     error = SetWorkingDirectory_nid_no_patch(path);
     if (error != 0) return static_cast<int>(Fail(error));
     return 0;
+}
+
+int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size) {
+    if (buffer == nullptr) return static_cast<int>(Fail(GuestEfault));
+    return getcwd_nid_postfix(buffer, size) == nullptr ? -1 : 0;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
