@@ -186,6 +186,7 @@ void walkGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vir
 }
 
 void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, const std::vector<StrictDataRegion>* data, bool followCodeAddresses, std::unordered_set<VirtualAddress>& reachable, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData) {
+    if (reachable.empty()) reachable.reserve(text.size() / 4);
     if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr)
         throw RelinkerException("Text section range exceeds the address space");
     std::vector<std::uint8_t> state(text.size(), 0);

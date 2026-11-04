@@ -58,7 +58,7 @@
  *
  * Developed at SunSoft, a Sun Microsystems, Inc. business.
  * Permission to use, copy, modify, and distribute this
- * software is freely granted, provided that this notice 
+ * software is freely granted, provided that this notice
  * is preserved.
  * ====================================================
  */
@@ -499,7 +499,107 @@ double APS5_VABI hypot_nid_postfix(double x, double y) {
     }
     return std::hypot(x, y);
 }
-float APS5_VABI log10f_nid_postfix(float x) { return std::log10(x); }
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/e_log10f.c: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/e_log10f.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+static bool Log9Reduce(float& x, std::int32_t& k, float& special) {
+    static volatile float zero = 0.0f;
+    const float two25 = static_cast<float>(3.3554432000e+07);
+    k = 0;
+    std::int32_t hx = std::bit_cast<std::int32_t>(x);
+    if (hx < 0x00800000) {
+        if ((hx & 0x7fffffff) == 0) {
+            special = -std::numeric_limits<float>::infinity();
+            return false;
+        }
+        if (hx < 0) {
+            _Feraise_nid_postfix(0x01);
+            special = (x - x) / zero;
+            return false;
+        }
+        k -= 25;
+        x *= two25;
+        hx = std::bit_cast<std::int32_t>(x);
+    }
+    if (hx >= 0x7f800000) {
+        special = x + x;
+        return false;
+    }
+    k += (hx >> 23) - 127;
+    hx &= 0x007fffff;
+    const std::int32_t i = (hx + 0x4afb0d) & 0x800000;
+    x = std::bit_cast<float>(hx | (i ^ 0x3f800000));
+    k += i >> 23;
+    return true;
+}
+
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/k_logf.h: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/k_logf.h */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+static float Log9Kernel(float x) {
+    const float Lg1 = 0xaaaaaa.0p-24f;
+    const float Lg2 = 0xccce13.0p-25f;
+    const float Lg3 = 0x91e9ee.0p-25f;
+    const float Lg4 = 0xf89e26.0p-26f;
+    std::int32_t ix = std::bit_cast<std::int32_t>(x);
+    const float f = x - 1.0f;
+    if ((0x007fffff & (0x8000 + ix)) < 0xc000) {
+        if (f == 0.0f) {
+            return 0.0f;
+        }
+        return f * f * (static_cast<float>(0.33333333333333333) * f - 0.5f);
+    }
+    const float s = f / (2.0f + f);
+    const float z = s * s;
+    ix &= 0x007fffff;
+    std::int32_t i = ix - (0x6147a << 3);
+    const float w = z * z;
+    const std::int32_t j = (0x6b851 << 3) - ix;
+    const float t1 = w * (Lg2 + w * Lg4);
+    const float t2 = z * (Lg1 + w * Lg3);
+    i |= j;
+    const float R = t2 + t1;
+    if (i > 0) {
+        const float hfsq = 0.5f * f * f;
+        return s * (hfsq + R) - hfsq;
+    }
+    return s * (R - f);
+}
+
+float APS5_VABI log10f_nid_postfix(float x) {
+    const float ivln10hi = static_cast<float>(4.3432617188e-01);
+    const float ivln10lo = static_cast<float>(-3.1689971365e-05);
+    const float log10_2hi = static_cast<float>(3.0102920532e-01);
+    const float log10_2lo = static_cast<float>(7.9034151668e-07);
+    std::int32_t k;
+    float special;
+    if (!Log9Reduce(x, k, special)) {
+        return special;
+    }
+    const float y = static_cast<float>(k);
+    const float f = Log9Kernel(x);
+    x = x - 1.0f;
+    const float hi = std::bit_cast<float>(std::bit_cast<std::int32_t>(x) & static_cast<std::int32_t>(0xfffff000));
+    const float lo = x - hi;
+    const float z = y * log10_2lo + (x + f) * ivln10lo + (lo + f) * ivln10hi + hi * ivln10hi;
+    return z + y * log10_2hi;
+}
 float APS5_VABI logbf_nid_postfix(float x) {
     const std::uint32_t bits = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
     if (bits == 0) {
@@ -681,10 +781,8 @@ float APS5_VABI copysignf_nid_postfix(float x, float y) {
 int APS5_VABI abs_nid_postfix(int x) { return x < 0 ? static_cast<int>(0u - static_cast<unsigned>(x)) : x; }
 double APS5_VABI trunc_nid_postfix(double x) { return std::isnan(x) ? x + x : std::trunc(x); }
 double APS5_VABI ceil_nid_postfix(double x) { return std::isnan(x) ? x + x : std::ceil(x); }
-double APS5_VABI floor_nid_postfix(double x) { return std::isnan(x) ? x + x : std::floor(x); }
 float APS5_VABI truncf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::trunc(x); }
 float APS5_VABI ceilf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::ceil(x); }
-float APS5_VABI floorf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::floor(x); }
 double APS5_VABI fma_nid_postfix(double x, double y, double z) { return std::fma(x, y, z); }
 float APS5_VABI fmaf_nid_postfix(float x, float y, float z) { return std::fma(x, y, z); }
 double APS5_VABI fmin_nid_postfix(double x, double y) { return GuestFmin(x, y); }
@@ -757,7 +855,84 @@ long double APS5_VABI frexpl_nid_postfix(long double x, int* exponent) {
     if (!std::isfinite(x)) return x;
     return std::frexp(x, exponent);
 }
-double APS5_VABI exp_nid_postfix(double x) { return std::exp(x); }
+/*
+ * ====================================================
+ * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_exp.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_exp.c */
+double APS5_VABI exp_nid_postfix(double x) {
+    static constexpr double halF[2] = {0.5, -0.5};
+    static constexpr double ln2HI[2] = {6.93147180369123816490e-01, -6.93147180369123816490e-01};
+    static constexpr double ln2LO[2] = {1.90821492927058770002e-10, -1.90821492927058770002e-10};
+    static volatile double huge = 1.0e+300;
+    static volatile double twom1000 = 9.33263618503218878990e-302;
+    const double invln2 = 1.44269504088896338700e+00;
+    const double P1 = 1.66666666666666019037e-01;
+    const double P2 = -2.77777777770155933842e-03;
+    const double P3 = 6.61375632143793436117e-05;
+    const double P4 = -1.65339022054652515390e-06;
+    const double P5 = 4.13813679705723846039e-08;
+    double hi = 0.0;
+    double lo = 0.0;
+    std::int32_t k = 0;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    std::uint32_t hx = static_cast<std::uint32_t>(bits >> 32);
+    const std::int32_t xsb = (hx >> 31) & 1;
+    hx &= 0x7fffffff;
+    if (hx >= 0x40862e42) {
+        if (hx >= 0x7ff00000) {
+            if (((hx & 0xfffff) | static_cast<std::uint32_t>(bits)) != 0) {
+                return x + x;
+            }
+            return xsb == 0 ? x : 0.0;
+        }
+        if (x > 7.09782712893383973096e+02) {
+            errno = ERANGE;
+            return huge * huge;
+        }
+        if (x < -7.45133219101941108420e+02) {
+            errno = ERANGE;
+            return twom1000 * twom1000;
+        }
+    }
+    if (x == 1.0) {
+        return std::bit_cast<double>(std::uint64_t{0x4005bf0a8b145769});
+    }
+    if (hx > 0x3fd62e42) {
+        if (hx < 0x3ff0a2b2) {
+            hi = x - ln2HI[xsb];
+            lo = ln2LO[xsb];
+            k = 1 - xsb - xsb;
+        } else {
+            k = static_cast<std::int32_t>(invln2 * x + halF[xsb]);
+            const double t = k;
+            hi = x - t * ln2HI[0];
+            lo = t * ln2LO[0];
+        }
+        x = hi - lo;
+    } else if (hx < 0x3e300000) {
+        return 1.0 + x;
+    }
+    const double t = x * x;
+    const double twopk = std::bit_cast<double>(static_cast<std::uint64_t>(0x3ff + (k >= -1021 ? k : k + 1000)) << 52);
+    const double c = x - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    if (k == 0) {
+        return 1.0 - ((x * c) / (c - 2.0) - x);
+    }
+    const double y = 1.0 - ((lo - (x * c) / (2.0 - c)) - hi);
+    if (k >= -1021) {
+        if (k == 1024) {
+            return y * 2.0 * 0x1p1023;
+        }
+        return y * twopk;
+    }
+    return y * twopk * twom1000;
+}
 double APS5_VABI atan_nid_postfix(double x) {
     static constexpr double atanhi[] = {4.63647609000806093515e-01, 7.85398163397448278999e-01, 9.82793723247329054082e-01, 1.57079632679489655800e+00};
     static constexpr double atanlo[] = {2.26987774529616870924e-17, 3.06161699786838301793e-17, 1.39033110312309984516e-17, 6.12323399573676603587e-17};
@@ -1417,7 +1592,7 @@ static double SinhLdexpExpHalf(double x) {
  *
  * Developed at SunSoft, a Sun Microsystems, Inc. business.
  * Permission to use, copy, modify, and distribute this
- * software is freely granted, provided that this notice 
+ * software is freely granted, provided that this notice
  * is preserved.
  * ====================================================
  */
@@ -1986,7 +2161,31 @@ float APS5_VABI logf_nid_postfix(float x) {
     }
     return k == 0 ? f - s * (f - R) : dk * ln2_hi - ((s * (f - R) - dk * ln2_lo) - f);
 }
-float APS5_VABI log2f_nid_postfix(float x) { return std::log2(x); }
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/e_log2f.c: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/e_log2f.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+float APS5_VABI log2f_nid_postfix(float x) {
+    const float ivln2hi = static_cast<float>(1.4428710938e+00);
+    const float ivln2lo = static_cast<float>(-1.7605285393e-04);
+    std::int32_t k;
+    float special;
+    if (!Log9Reduce(x, k, special)) {
+        return special;
+    }
+    const float f = Log9Kernel(x);
+    x = x - 1.0f;
+    const float hi = std::bit_cast<float>(std::bit_cast<std::int32_t>(x) & static_cast<std::int32_t>(0xfffff000));
+    const float lo = x - hi;
+    return (x + f) * ivln2lo + (lo + f) * ivln2hi + hi * ivln2hi + k;
+}
 static double KernelLog(double x) {
     const double Lg1 = 6.666666666666735130e-01;
     const double Lg2 = 3.999999999940941908e-01;
