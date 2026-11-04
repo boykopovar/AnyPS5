@@ -662,8 +662,10 @@ int main() {
     std::memset(countryCode, 0x5a, sizeof(countryCode));
     char untouchedCountryCode[4]{};
     std::memset(untouchedCountryCode, 0x5a, sizeof(untouchedCountryCode));
-    Require(sceNpGetAccountCountryA(0x10000, countryCode) == SignedOut, "sceNpGetAccountCountryA must report the user as signed out");
+    Require(sceNpGetAccountCountryA(InitialUserId, countryCode) == SignedOut, "sceNpGetAccountCountryA must report the user as signed out");
     Require(std::memcmp(countryCode, untouchedCountryCode, sizeof(countryCode)) == 0, "sceNpGetAccountCountryA must leave the country code untouched");
+    Require(sceNpGetAccountCountryA(0x10000, countryCode) == UserNotFound, "sceNpGetAccountCountryA must find no user with an id that is not registered");
+    Require(std::memcmp(countryCode, untouchedCountryCode, sizeof(countryCode)) == 0, "sceNpGetAccountCountryA must leave the country code untouched for an unknown user");
     Require(sceNpGetAccountCountryA(0x10000, nullptr) == InvalidArgument, "sceNpGetAccountCountryA must reject a null country code");
     NpOnlineId onlineId{};
     std::memset(&onlineId, 0x5a, sizeof(onlineId));

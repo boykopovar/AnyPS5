@@ -7,6 +7,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <atomic>
@@ -866,8 +867,11 @@ int APS5_VABI sceNpSetGamePresenceOnlineA(int reqId, int userId, uint32_t presen
 }
 
 int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code) {
-    (void)user_id;
     if (!country_code) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    UserServiceRegisteredUserIdList users{};
+    if (user_id != USER_SERVICE_USER_ID_INVALID && sceUserServiceGetRegisteredUserIdList(&users) == USER_SERVICE_OK &&
+        std::find(std::begin(users.user_id), std::end(users.user_id), user_id) == std::end(users.user_id))
+        return SCE_NP_ERROR_USER_NOT_FOUND;
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 

@@ -1,6 +1,7 @@
 # libSceNpManager technical debt
 
 - [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
+- [sceNpGetAccountCountryA](../../../core/libs/prx/libSceNpManager/Export.cpp): an id that is not a registered user returns `SCE_NP_ERROR_USER_NOT_FOUND` and leaves the output alone, as a PS5 on system software 12.40 answered for an unknown id with a non-null output. A registered user and `-1` still get `SCE_NP_ERROR_SIGNED_OUT`; neither was probed. Neither was a registered user who is logged out, whom the registered list here does not hold.
 
 ### Silent stubs
 
