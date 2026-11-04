@@ -1,5 +1,6 @@
 #include "ElfFixture.hpp"
 #include "RelinkerProcess.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -28,6 +29,8 @@ const Bytes kModuleCode = {
 };
 constexpr std::uint64_t kSites[] = {10, 16};
 constexpr std::size_t kSiteLength = 6;
+
+using SseStub = std::uint64_t APS5_VABI (std::uint64_t, std::uint64_t);
 
 std::uint64_t expected(const std::uint64_t value, const std::uint64_t destination) {
     return (destination & ~0xFF0000ull) | (((value >> 8) & 0xFF) << 16);
@@ -62,7 +65,7 @@ int main(const int argc, char** argv) {
             require(site + 5 + displacement >= kCodeSize, "Guest module SSE4a stub is inside the original code segment");
         }
 
-        const auto function = image.At<std::uint64_t(std::uint64_t, std::uint64_t)>(0);
+        const auto function = image.At<SseStub>(0);
         for (const auto [value, destination] : {std::pair{0x1122334455667788ull, 0x0123456789ABCDEFull}, {0ull, ~0ull}, {~0ull, 0ull}, {0x9E3779B97F4A7C15ull, 0x0F1E2D3C4B5A6978ull}})
             require(function(value, destination) == expected(value, destination), "Relinked guest module trampolines computed the wrong value");
         std::cout << "Guest Intel trampoline execution tests passed\n";

@@ -5,7 +5,6 @@
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
-#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -13,7 +12,10 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
-#include <string>
+#include <thread>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
+#endif
 
 namespace {
 
@@ -61,6 +63,24 @@ PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
     return created;
 }
 
+std::atomic<std::uint64_t> g_mutexYields{0};
+
+template<typename TNative>
+bool spinAcquire(PthreadMutex mutex, TNative& native) {
+    static const bool multiprocessor = std::thread::hardware_concurrency() > 1;
+    const int spins = multiprocessor ? mutex->_spinloops.load(std::memory_order_relaxed) : 0;
+    return MutexOperations::SpinAcquire(spins, mutex->_yieldloops.load(std::memory_order_relaxed), [&] {
+        return mutex->_owner.load(std::memory_order_relaxed) == std::thread::id{} && native.try_lock();
+    }, [] {
+#if defined(__x86_64__) || defined(_M_X64)
+        _mm_pause();
+#endif
+    }, [] {
+        g_mutexYields.fetch_add(1, std::memory_order_relaxed);
+        std::this_thread::yield();
+    });
+}
+
 template<typename TAcquire>
 int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool tryOnly) {
     if (!mutex)
@@ -76,18 +96,29 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     }
     if (owned && mutex->_count == std::numeric_limits<int>::max())
         throw std::overflow_error("Recursive mutex lock count overflow");
+    const auto take = [&](auto& native) {
+        return (!tryOnly && !owned && spinAcquire(mutex, native)) || acquire(native);
+    };
     if (mutex->_type == MutexType::Recursive) {
-        if (!acquire(mutex->_rmtx))
+        if (!take(mutex->_rmtx))
             return unavailable;
         ++mutex->_count;
     } else {
-        if (!acquire(mutex->_mtx))
+        if (!take(mutex->_mtx))
             return unavailable;
     }
     mutex->_owner.store(thread, std::memory_order_release);
     return 0;
 }
 
+}
+
+bool MutexOperations::SpinAcquire(PthreadMutex mutex, std::timed_mutex& native) {
+    return spinAcquire(mutex, native);
+}
+
+bool MutexOperations::SpinAcquire(PthreadMutex mutex, std::recursive_timed_mutex& native) {
+    return spinAcquire(mutex, native);
 }
 
 bool MutexOperations::IsOwned(const PthreadMutex* mutex) {
@@ -144,10 +175,7 @@ int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) {
 }
 
 int APS5_VABI scePthreadMutexattrSetkind(PthreadMutexattr* attr, int kind) {
-    if (!attr || !*attr) return sceKernelError(posixFailure);
-    if (kind < static_cast<int>(MutexType::ErrorCheck) || kind > static_cast<int>(MutexType::Adaptive))
-        NotImplemented_nid_no_patch("scePthreadMutexattrSetkind with a kind other than 1 to 4");
-    return scePthreadMutexattrSettype(attr, kind);
+    return sceKernelError(pthread_mutexattr_setkind_np_nid_postfix(attr, kind));
 }
 
 int APS5_VABI scePthreadMutexattrGetkind(PthreadMutexattr attr) {
@@ -170,6 +198,8 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char*) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
+    if (attr && *attr && ((*attr)->type < MutexType::ErrorCheck || (*attr)->type > MutexType::Adaptive))
+        return SCE_KERNEL_ERROR_EINVAL;
     auto replacement = std::make_unique<PthreadMutexPrivate>();
     if (attr && *attr)
         replacement->SetType((*attr)->type);
@@ -284,6 +314,10 @@ int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
         return SCE_KERNEL_ERROR_EINVAL;
     current->_yieldloops = count;
     return 0;
+}
+
+std::uint64_t MutexYieldsForTest_nid_no_patch() {
+    return g_mutexYields.load(std::memory_order_relaxed);
 }
 
 int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {

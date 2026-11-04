@@ -13,6 +13,17 @@ void Require(bool value) { if (!value) std::abort(); }
 }
 
 int main() {
+    Require(sceShareInitialize(0, 0, 0) == 0);
+    Require(sceShareFeaturePermit(0) == 0);
+    Require(sceShareFeaturePermit(1) == 0);
+    Require(sceShareFeatureProhibit(0) == 0);
+    Require(sceShareFeatureProhibit(1) == 0);
+    Require(sceShareRegisterContentEventCallback(nullptr, nullptr) == 0);
+    Require(sceShareUnregisterContentEventCallback(nullptr) == 0);
+    Require(sceShareSetCaptureSource(0, nullptr) == 0);
+    Require(sceShareSetContentParam(nullptr) == 0);
+    Require(sceShareSetContentParam("test") == 0);
+    Require(sceShareSetScreenshotOverlayImage(nullptr, 0, 0, 0) == 0);
     constexpr std::int32_t notSupported = static_cast<std::int32_t>(0x81960007);
     std::uint8_t param[64]{};
 
@@ -64,10 +75,12 @@ int main() {
     Require(sceShareGetCurrentStatus(0, reinterpret_cast<ShareCurrentStatus*>(status)) == invalidParam);
     Require(status[0] == 0x5a);
     Require(sceShareGetCurrentStatus(1, nullptr) == invalidParam);
+    Require(sceShareGetCurrentStatus(1, reinterpret_cast<ShareCurrentStatus*>(0x10)) == invalidParam);
     std::uint32_t running[2]{0xffffffffu, 0x5a5a5a5au};
     Require(sceShareGetRunningStatus(running) == 0);
     Require(running[0] == 0 && running[1] == 0x5a5a5a5au);
     Require(sceShareGetRunningStatus(nullptr) == invalidParam);
+    Require(sceShareGetRunningStatus(reinterpret_cast<std::uint32_t*>(0x10)) == invalidParam);
     Require(sceShareSetContentParamForApplicationTitle("title") == 0);
     Require(sceShareSetContentParamForApplicationTitle(nullptr) == invalidParam);
     Require(sceShareSetContentParamForApplicationTitle("") == invalidParam);
@@ -75,5 +88,6 @@ int main() {
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == 0);
     title.push_back('a');
     Require(sceShareSetContentParamForApplicationTitle(title.c_str()) == invalidParam);
+    Require(sceShareTerminate() == 0);
     return 0;
 }
