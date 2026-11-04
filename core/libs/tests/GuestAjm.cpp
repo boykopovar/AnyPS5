@@ -944,6 +944,33 @@ void TestBatchJobCountRange(std::uint32_t context) {
     Require(info.offset == 0);
 }
 
+void TestBatchJobRunSplitChecks() {
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    constexpr int outOfResources = static_cast<int>(0x80930007);
+    constexpr int jobCreation = static_cast<int>(0x80930012);
+    std::vector<std::uint8_t> storage(256);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+    const AjmBuffer buffer{storage.data(), 16};
+    std::int64_t result = -1;
+    const std::size_t wrapped = (std::size_t{1} << 32) + 1;
+    Require(sceAjmBatchJobRunSplit(nullptr, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, 1, &result, 7) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 1, &buffer, 1, &result, sizeof(result)) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, nullptr, 1, &result, sizeof(result)) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 1, nullptr, 0, nullptr, 0) == invalidParameter);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, wrapped, &buffer, 1, &result, sizeof(result)) == jobCreation);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, wrapped, &result, sizeof(result)) == jobCreation);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 300, &buffer, 0, &result, sizeof(result)) == jobCreation);
+    Require(info.offset == 0);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == 0 && info.offset == 64);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 5, &buffer, 5, &result, sizeof(result)) == 0 && info.offset == storage.size());
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, &result, sizeof(result)) == jobCreation);
+    Require(sceAjmBatchJobClearContext(&info, 0, &result) == outOfResources);
+    Require(info.offset == storage.size());
+}
+
 void TestBatchWaitRelease(std::uint32_t context) {
     constexpr int invalidBatch = static_cast<int>(0x80930004);
     std::vector<std::uint8_t> batch(64);
@@ -1622,19 +1649,15 @@ void TestBuildersWithoutBuffers(std::uint32_t context) {
     Require(std::all_of(std::begin(results), std::end(results), [](std::int64_t result) { return result == 0; }));
     Require(resample.result == 0 && resample.internalResult == 0 && resample.ratio == 1.0f && resample.samples == 0);
 
-    const auto nullListThrows = [&](std::size_t inputs, std::size_t outputs) {
+    std::int64_t runResult = -1;
+    const auto nullListRefused = [&](std::size_t inputs, std::size_t outputs) {
         const auto before = info.offset;
-        try {
-            sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, inputs, nullptr, outputs, nullptr, 0);
-        } catch (const std::runtime_error&) {
-            return info.offset == before;
-        }
-        return false;
+        return sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, inputs, nullptr, outputs, &runResult, sizeof(runResult)) == static_cast<int>(0x80930005) && info.offset == before;
     };
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
-    Require(nullListThrows(1, 0) && nullListThrows(0, 1) && nullListThrows(2, 3));
+    Require(nullListRefused(1, 0) && nullListRefused(0, 1) && nullListRefused(2, 3));
     offset = 0;
-    Require(built(sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, 0, nullptr, 0, nullptr, 0)));
+    Require(built(sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, 0, nullptr, 0, &runResult, sizeof(runResult))));
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
@@ -2608,14 +2631,8 @@ int main(int argc, char** argv) {
     std::vector<std::uint8_t> batch(4096);
     AjmBatchInfo batchInfo{};
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &batchInfo) == 0);
-    bool nullBuffersThrow = false;
-    try {
-        sceAjmBatchJobRunSplit(&batchInfo, 0, 0, nullptr, 1, nullptr, 0, nullptr, 0);
-
-    } catch (const std::runtime_error&) {
-        nullBuffersThrow = true;
-    }
-    Require(nullBuffersThrow && batchInfo.offset == 0);
+    std::int64_t runResult = -1;
+    Require(sceAjmBatchJobRunSplit(&batchInfo, 0, 0, nullptr, 1, nullptr, 0, &runResult, sizeof(runResult)) == invalidParameter && batchInfo.offset == 0);
     TestMp3ParseFrame();
     TestMp3ParseOfl();
     TestMp3MetadataBounds();
@@ -2645,6 +2662,7 @@ int main(int argc, char** argv) {
     TestGetStatistics(context);
     TestBatchBounds(context);
     TestBatchJobCountRange(context);
+    TestBatchJobRunSplitChecks();
     TestBatchWaitRelease(context);
     TestInstanceHandleLifetime(context);
     TestBatchCancel(context);
