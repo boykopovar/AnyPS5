@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include "general/VabiMacros.hpp"
 
 struct GuestTm;
@@ -188,6 +189,13 @@ struct OutputIterator {
     Streambuf* buffer;
 };
 
+struct InputIterator {
+    std::uint64_t words[2];
+};
+
+static_assert(sizeof(InputIterator) == 0x10);
+static_assert(std::is_trivially_copyable_v<InputIterator>);
+
 struct TimePutVtable {
     FacetVtable facet;
     OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
@@ -211,6 +219,38 @@ struct CtypeVtable {
     char (APS5_VABI *widen)(const Facet* self, char character);
     const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, char* destination);
 };
+
+template<typename TString>
+struct MoneyGetVtable {
+    FacetVtable facet;
+    InputIterator (APS5_VABI *getLongDouble)(const Facet* self, InputIterator first, InputIterator last, bool international, IosBase* stream, std::int32_t* state, long double* value);
+    InputIterator (APS5_VABI *getString)(const Facet* self, InputIterator first, InputIterator last, bool international, IosBase* stream, std::int32_t* state, TString* value);
+};
+
+template<typename TCharacter, typename TString>
+struct MoneyPutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *putLongDouble)(const Facet* self, OutputIterator out, bool international, IosBase* stream, TCharacter fill, long double units);
+    OutputIterator (APS5_VABI *putString)(const Facet* self, OutputIterator out, bool international, IosBase* stream, TCharacter fill, const TString* digits);
+};
+
+using CharMoneyGetVtable = MoneyGetVtable<String>;
+using WideMoneyGetVtable = MoneyGetVtable<void>;
+using CharMoneyPutVtable = MoneyPutVtable<char, String>;
+using WideMoneyPutVtable = MoneyPutVtable<std::uint16_t, void>;
+
+static_assert(offsetof(CharMoneyGetVtable, getLongDouble) == 0x20);
+static_assert(offsetof(CharMoneyGetVtable, getString) == 0x28);
+static_assert(sizeof(CharMoneyGetVtable) == 0x30);
+static_assert(offsetof(WideMoneyGetVtable, getLongDouble) == 0x20);
+static_assert(offsetof(WideMoneyGetVtable, getString) == 0x28);
+static_assert(sizeof(WideMoneyGetVtable) == 0x30);
+static_assert(offsetof(CharMoneyPutVtable, putLongDouble) == 0x20);
+static_assert(offsetof(CharMoneyPutVtable, putString) == 0x28);
+static_assert(sizeof(CharMoneyPutVtable) == 0x30);
+static_assert(offsetof(WideMoneyPutVtable, putLongDouble) == 0x20);
+static_assert(offsetof(WideMoneyPutVtable, putString) == 0x28);
+static_assert(sizeof(WideMoneyPutVtable) == 0x30);
 
 static_assert(offsetof(StreambufVtable, overflow) == 0x20);
 static_assert(offsetof(Streambuf, putNext) == 0x40);
