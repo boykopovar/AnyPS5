@@ -9,6 +9,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <vector>
 
 namespace {
@@ -17,6 +20,19 @@ void Require(bool condition, std::source_location location = std::source_locatio
     if (condition) return;
     std::fprintf(stderr, "JXR list stream check failed at line %u\n", location.line());
     std::abort();
+}
+
+template <typename Function>
+Function Exported(Function linked, const char* name) {
+#ifdef _WIN32
+    void* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceJxr.prx"), name));
+    Require(symbol != nullptr);
+    (void)linked;
+    return reinterpret_cast<Function>(symbol);
+#else
+    (void)name;
+    return linked;
+#endif
 }
 
 int liveBlocks = 0;
@@ -199,9 +215,9 @@ int main() {
         Require(CreateWS_List_nid_postfix(&stream) == 0 && stream && liveBlocks == 1);
         Require(stream->state[0] == reinterpret_cast<std::uintptr_t>(FirstLink(stream) + sizeof(void*)) && !Next(FirstLink(stream)));
         Require(stream->state[1] == 4096 && stream->state[2] == 0 && stream->state[3] == 0 && stream->memory == 0);
-        Require(stream->close == &CloseWS_List_nid_postfix && !stream->end && stream->read == &ReadWS_List_nid_postfix);
-        Require(stream->write == &WriteWS_List_nid_postfix && stream->setPosition == &SetPosWS_List_nid_postfix);
-        Require(stream->getPosition == &GetPosWS_List_nid_postfix);
+        Require(stream->close == Exported(&CloseWS_List_nid_postfix, "CloseWS_List_nid_postfix") && !stream->end && stream->read == Exported(&ReadWS_List_nid_postfix, "ReadWS_List_nid_postfix"));
+        Require(stream->write == Exported(&WriteWS_List_nid_postfix, "WriteWS_List_nid_postfix") && stream->setPosition == Exported(&SetPosWS_List_nid_postfix, "SetPosWS_List_nid_postfix"));
+        Require(stream->getPosition == Exported(&GetPosWS_List_nid_postfix, "GetPosWS_List_nid_postfix"));
         const auto data = Pattern(10000);
         Require(stream->write(stream, data.data(), 4096) == 0 && stream->write(stream, data.data() + 4096, 4096) == 0);
         Require(stream->write(stream, data.data() + 8192, 1808) == 0);
