@@ -12,9 +12,16 @@ struct LibreSsl3Asn1String {
     std::int64_t flags;
 };
 
+inline constexpr int LibreSsl3Asn1Undefined = -1;
+
+struct LibreSsl3Asn1Type {
+    int type;
+    void* value;
+};
+
 struct LibreSsl3X509Algor {
     void* algorithm;
-    void* parameter;
+    LibreSsl3Asn1Type* parameter;
 };
 
 struct LibreSsl3X509Pubkey {
@@ -25,7 +32,10 @@ struct LibreSsl3X509Pubkey {
 
 static_assert(sizeof(LibreSsl3Asn1String) == 24);
 static_assert(offsetof(LibreSsl3Asn1String, data) == 8);
+static_assert(sizeof(LibreSsl3Asn1Type) == 16);
+static_assert(offsetof(LibreSsl3Asn1Type, value) == 8);
 static_assert(sizeof(LibreSsl3X509Algor) == 16);
+static_assert(offsetof(LibreSsl3X509Algor, parameter) == 8);
 static_assert(sizeof(LibreSsl3X509Pubkey) == 24);
 static_assert(offsetof(LibreSsl3X509Pubkey, publicKey) == 8);
 
@@ -260,7 +270,7 @@ int APS5_VABI PEM_write_bio_PrivateKey_nid_postfix();
 int APS5_VABI RSA_get0_crt_params_nid_postfix();
 int APS5_VABI BIO_set_data_nid_postfix();
 int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix();
-int APS5_VABI X509_ALGOR_get0_nid_postfix();
+void APS5_VABI X509_ALGOR_get0_nid_postfix(const void** outObject, int* outType, const void** outValue, const LibreSsl3X509Algor* algor);
 int APS5_VABI BIO_set_shutdown_nid_postfix();
 int APS5_VABI ASN1_STRING_set_nid_postfix();
 int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix();
