@@ -152,11 +152,12 @@ void Player::deliver(const Event& event) {
         autoStart();
         return;
     }
+    const auto closed = controllerClosed;
     if (callback.event_callback) {
         std::int32_t warning = event.warning;
         callback.event_callback(callback.object_ptr, event.id, 0, event.id == EventWarningId ? &warning : nullptr);
     }
-    if (event.ticket != 0) deliveredWarnings.store(event.ticket, std::memory_order_release);
+    if (event.ticket != 0 && !*closed) deliveredWarnings.store(event.ticket, std::memory_order_release);
 }
 
 bool Player::readyLocked() const {

@@ -1,6 +1,8 @@
 #include "prx/libSceAvPlayer/include/Api.hpp"
 #include <algorithm>
 #include <array>
+#include <memory>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -1725,12 +1727,19 @@ struct ClosingEvents {
     AvPlayerInternal* player = nullptr;
     AvPlayerInternal* replacement = nullptr;
     std::int32_t closeEvent;
+    std::shared_ptr<std::atomic<bool>> controllerExited = std::make_shared<std::atomic<bool>>(false);
     bool closed = false;
 };
 
-void APS5_VABI CloseOnEvent(void* object, std::int32_t id, std::int32_t, void*) {
+void APS5_VABI CloseOnEvent(void* object, std::int32_t id, std::int32_t, void* data) {
     auto& events = *static_cast<ClosingEvents*>(object);
     if (id != events.closeEvent) return;
+    if (id == EventWarning) Check(data != nullptr && *static_cast<std::int32_t*>(data) == LoopingBack, "callback-close warning is not the loop warning");
+    struct Exit {
+        std::shared_ptr<std::atomic<bool>> done;
+        ~Exit() { done->store(true, std::memory_order_release); }
+    };
+    thread_local Exit exited{events.controllerExited};
     std::lock_guard lock(events.mutex);
     Check(sceAvPlayerClose(events.player) == 0, "close from event callback failed");
     events.player = nullptr;
@@ -1752,9 +1761,24 @@ void TestCloseFromEventCallback(std::int32_t event) {
         Check(events.player != nullptr, "callback-close init failed");
         Check(sceAvPlayerAddSource(events.player, "/app0/avplayer.mp4") == 0, "callback-close source failed");
     }
+    if (event == EventWarning) {
+        Check(WaitFor([&] {
+            std::lock_guard lock(events.mutex);
+            return sceAvPlayerStreamCount(events.player) > 0;
+        }), "callback-close loop source never became ready");
+        std::lock_guard lock(events.mutex);
+        Check(sceAvPlayerEnableStream(events.player, VideoStream) == 0, "callback-close loop video failed");
+        Check(sceAvPlayerSetAvSyncMode(events.player, 1) == 0, "callback-close loop sync mode failed");
+        Check(sceAvPlayerSetLooping(events.player, 1) == 0, "callback-close loop looping failed");
+        Check(sceAvPlayerStart(events.player) == 0, "callback-close loop start failed");
+    }
     Check(WaitFor([&] {
         std::lock_guard lock(events.mutex);
         if (events.closed) return true;
+        if (event == EventWarning) {
+            AvPlayerFrameInfoEx video{};
+            if (sceAvPlayerGetVideoDataEx(events.player, &video)) CheckVideoFrame(video);
+        }
         if (event == EventStop) {
             AvPlayerFrameInfoEx video{};
             AvPlayerFrameInfo audio{};
@@ -1763,6 +1787,7 @@ void TestCloseFromEventCallback(std::int32_t event) {
         }
         return false;
     }), "event callback did not finish closing the player");
+    Check(WaitFor([&] { return events.controllerExited->load(std::memory_order_acquire); }), "closed player's event thread did not exit");
     {
         std::lock_guard lock(events.mutex);
         Check(sceAvPlayerClose(events.replacement) == 0, "replacement player close failed");
@@ -2303,6 +2328,7 @@ int main(int argc, char** argv) {
             WriteMovie();
             TestCloseFromEventCallback(EventReady);
             TestCloseFromEventCallback(EventStop);
+            TestCloseFromEventCallback(EventWarning);
             std::puts("AvPlayer callback close tests passed");
             return 0;
         }
