@@ -27,4 +27,8 @@ int main() {
     Require(bio.initialized == 1);
     BIO_set_init_nid_postfix(&bio, 0);
     Require(bio.initialized == 0 && bio.data == &payload);
+    bio.shutdown = 1;
+    Require(BIO_get_shutdown_nid_postfix(&bio) == 1);
+    bio.shutdown = 0;
+    Require(BIO_get_shutdown_nid_postfix(&bio) == 0);
 }
