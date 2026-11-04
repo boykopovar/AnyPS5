@@ -40,7 +40,7 @@
 - [X509_getm_notBefore, X509_getm_notAfter, X509_get0_notBefore, X509_get0_notAfter, X509_get0_signature](../../../core/libs/prx/libSceLibreSsl3/src/X509Validity.cpp) (libSceLibreSsl3) - nothing is checked on the console. The `X509`, `X509_CINF` and `X509_VAL` layouts and the results follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `x509_local.h`, `x509_set.c` and `x_x509.c`, the version in the [firmware 13.40 measurements](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214). No export of this module creates a certificate yet, so only certificates the caller builds reach them. A null certificate in `X509_get0_signature` throws when an output is requested, where LibreSSL dereferences it; with both outputs null the call returns without reading the certificate, as in LibreSSL
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
-- [BIO_meth_new, BIO_meth_free, BIO_meth_set_write, BIO_meth_set_read and BIO_meth_set_ctrl](../../../core/libs/prx/libSceLibreSsl3/src/BioMethod.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_meth.c) `bio_meth.c`, `BIO_meth_new` returns a zeroed `BIO_METHOD` from the guest heap with its type and name, or null without an error when the allocation fails, `BIO_meth_free` frees it, and each setter stores its callback and returns 1. The 80-byte `BIO_METHOD` is laid out as in 2.5.4, so the forwarded libSceLibreSsl `BIO_new`, `BIO_write`, `BIO_ctrl` and `BIO_free` call the callbacks. A null method passed to a setter, which LibreSSL dereferences, throws. Closes when: compared with the console.
+- [BIO_meth_new, BIO_meth_free, BIO_meth_set_write, BIO_meth_set_read, BIO_meth_set_ctrl and BIO_meth_set_create](../../../core/libs/prx/libSceLibreSsl3/src/BioMethod.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_meth.c) `bio_meth.c`, `BIO_meth_new` returns a zeroed `BIO_METHOD` from the guest heap with its type and name, or null without an error when the allocation fails, `BIO_meth_free` frees it, and each setter stores its callback and returns 1. The 80-byte `BIO_METHOD` is laid out as in 2.5.4, so the forwarded libSceLibreSsl `BIO_new`, `BIO_write`, `BIO_ctrl` and `BIO_free` call the callbacks. A null method passed to a setter, which LibreSSL dereferences, throws. Closes when: compared with the console.
 
 - [tls_config_parse_protocols](../../../core/libs/prx/libSceLibreSsl3/src/TlsProtocols.cpp) has no independent console execution or TLS configuration interoperability verification. Parsing follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libtls). A null output pointer throws instead of an upstream fault. Tests use caller-owned text/output and guest-heap allocation failure; other TLS configuration and handshake exports remain unimplemented. Closes when: console grammar and TLS configuration interoperability are measured.
 
@@ -50,7 +50,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 170 remaining callable exports: 160 155 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 169 remaining callable exports: 159 155 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -75,7 +75,6 @@
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
 | `SSL_set_accept_state` | `5BoCLZK9mGk` |
-| `BIO_meth_set_create` | `5NBoRJYLH0U` |
 | `X509_CRL_free` | `5PWK0cYOpHs` |
 | `i2d_SSL_SESSION` | `5aSlVeVSKVc` |
 | `tls_config_error` | `5ex+694ri90` |
