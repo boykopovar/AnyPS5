@@ -384,7 +384,7 @@ jobs:
             configuration: Release
             architectures: x86_64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: ${{ matrix.architectures == 'x86_64' && 15 || 5 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -424,7 +424,7 @@ jobs:
           - os: macos-15
             architectures: x86_64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: ${{ matrix.architectures == 'x86_64' && 15 || 5 }}
     steps:
       - uses: actions/checkout@v7
         with:
