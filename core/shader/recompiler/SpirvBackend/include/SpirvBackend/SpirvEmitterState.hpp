@@ -103,6 +103,8 @@ struct SpirvEmitterState {
     bool splitSubgroup = false;
     bool spannedWave = false;
     std::uint32_t spannedExchangeVariable = 0;
+    std::uint32_t spannedBallotVariable = 0;
+    std::uint32_t spannedBallotParityVariable = 0;
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
     bool depthRangeRemap = false;
@@ -238,7 +240,6 @@ struct SpirvEmitterState {
     std::uint32_t meshWindowBaseVariable = 0;
     std::unordered_set<const IrValue*> meshWindowBufferStores;
     std::unordered_set<const IrValue*> meshWindowBufferLoads;
-    std::vector<bool> meshWindowEntryLive;
     std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t samplerVariable = 0;
     std::vector<SpirvTableImageVariable> tableImageVariables;
