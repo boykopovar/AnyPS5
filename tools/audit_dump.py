@@ -103,7 +103,7 @@ def report_overlaps_dump(report, dump):
         return True
     exists = report.exists()
     for path in dump.rglob("*"):
-        if path.is_symlink() and path.is_dir() and destination.is_relative_to(comparison_path(path)):
+        if path.is_dir() and destination.is_relative_to(comparison_path(path)):
             return True
         if exists and path.is_file() and report.samefile(path):
             return True
@@ -134,6 +134,10 @@ def main(argv=None):
             parser.error(f"{report}: cannot check JSON output against the input dump: {error}")
         if overlaps:
             parser.error(f"{report}: JSON output overlaps the input dump")
+        if report.is_dir():
+            parser.error(f"{report}: JSON output is a directory")
+        if not report.resolve().parent.is_dir():
+            parser.error(f"{report.resolve().parent}: no such directory")
     with tempfile.TemporaryDirectory() as temporary:
         work = Path(args.work) if args.work else Path(temporary)
         source, output = work / "source", work / "output"
