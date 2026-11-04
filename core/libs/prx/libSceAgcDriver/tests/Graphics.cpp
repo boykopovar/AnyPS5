@@ -13179,6 +13179,29 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
     Require(mock.live == 0, "the pipeline journal test leaked Vulkan objects");
 }
 
+void faultOnlyTemplateRecordTests() {
+    const bool keep = std::getenv("APS5_KEEP_TEMPLATE_RECORDS") != nullptr;
+    const bool guarded = std::getenv("APS5_LOOP_GUARD") != nullptr;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.limits.maxStorageBufferRange = 1u << 27;
+    ShaderRecompiler::RecompileResult program;
+    program.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+    ShaderRecompiler::DescriptorBinding fault{ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::FaultBuffer, 0, 5, 1, {}, false};
+    ShaderRecompiler::DescriptorBinding data{ShaderRecompiler::DescriptorKind::StorageBuffer, ShaderRecompiler::DescriptorRole::FlattenedSrt, 0, 6, 1, {}, false};
+    data.guestDescriptor = {0x11u, 0x22u, 0x33u, 0x44u};
+    program.bindings = {fault, data};
+    const std::array<AgcDriver::Graphics::CompiledShader, 1> stages{{{ShaderRecompiler::ShaderStage::TessellationControl, &program, 0}}};
+    {
+        AgcDriver::Graphics::ShaderResources resources(context, stages, AgcDriver::Graphics::ColorTarget{}, 0, 0, 0, {});
+        Require(AgcDriver::Graphics::ShaderResources::NeverReusable(stages) == guarded, "a fault-only build's reusability does not follow APS5_LOOP_GUARD");
+        Require(resources.Reusable() == !guarded, "a fault-only build's reuse does not follow APS5_LOOP_GUARD");
+        const bool kept = resources.DataWordsHash() == AgcDriver::Graphics::ShaderResources::DataWordsHash(stages[0]);
+        Require(kept == (keep || !guarded), "a build's template data words were kept or dropped against its reusability");
+    }
+    Require(mock.live == 0, "the fault-only template record test leaked Vulkan objects");
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "200");
@@ -13190,6 +13213,10 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--linear-volume-nonresident") {
             LinearVolumeNonResidentTests();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--fault-only-template-records") {
+            faultOnlyTemplateRecordTests();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-cache") {
