@@ -542,6 +542,11 @@ static int ControlUserFx2(Ngs2Voice& voice, std::uint32_t index, const Ngs2Custo
 
 static Ngs2Voice* PatchDest(const Ngs2Voice& voice, const Ngs2VoicePatchParam& patch);
 
+static void CheckSubmixerFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
+    if (param.index >= voice.rack->maxFilters) APS5_INVALID_ARG_EX;
+    if (param.type != 0) throw std::runtime_error("NGS2: submixer filter type " + std::to_string(param.type) + " is not implemented");
+}
+
 static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     if (param.header.size < sizeof(Ngs2SamplerVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
     if (param.index >= voice.rack->maxFilters) throw Ngs2ReturnCode{PS4_LIBRARY ? SCE_NGS2_ERROR_PS4_INVALID_FILTER_INDEX : SCE_NGS2_ERROR_INVALID_PARAM_ID};
@@ -614,6 +619,10 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
     }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX)
         return ParamAs<Ngs2SubmixerVoiceUserFxParam>(param);
+    if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER) {
+        CheckSubmixerFilter(voice, ParamAs<Ngs2SamplerVoiceFilterParam>(param));
+        return CopyParam(param);
+    }
     if (voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER && param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) {
         const auto& value = ParamAs<Ngs2SubmixerVoiceSetupParam>(param);
         if (value.flags != 0) throw std::runtime_error("NGS2: submixer setup flags are not implemented");
@@ -1026,6 +1035,12 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_SUBMIXER:
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER) {
                 SetPeakMeter(voice, ParamAs<Ngs2VoicePeakMeterParam>(param).detect_type);
+                return;
+            }
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER) {
+                const auto& filter = ParamAs<Ngs2SamplerVoiceFilterParam>(param);
+                CheckSubmixerFilter(voice, filter);
+                if (filter.index < voice.filters.size()) voice.filters[filter.index] = {};
                 return;
             }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {

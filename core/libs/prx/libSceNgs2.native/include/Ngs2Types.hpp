@@ -104,6 +104,7 @@ static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER = 0x10000
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP = 0x20000000;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX = 0x20000004;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER = 0x20000005;
+static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_FILTER = 0x20000006;
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_SETUP = 0x20010000;
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_I3DL2 = 0x20010001;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_SETUP = 0x30000000;
