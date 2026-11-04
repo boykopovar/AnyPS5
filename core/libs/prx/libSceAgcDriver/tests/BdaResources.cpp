@@ -2327,6 +2327,65 @@ void spaceReadsAcrossImportsMergedTests(const Context& context, const BdaTestAcc
     ::operator delete(block, std::align_val_t{window});
 }
 
+void spacePatchedAfterImportChangeTests(const Context& context) {
+    constexpr std::size_t bytes = 65536;
+    ClearHostImports(context.device);
+    auto importing = context;
+    importing.hostImportAlignment = bytes;
+    std::array<void*, 4> blocks{};
+    std::array<std::uintptr_t, 4> at{};
+    const auto change = [&](std::size_t index, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, blocks[index], bytes, true, false, index < 2);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, blocks[index]);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    for (std::size_t index = 0; index < blocks.size(); ++index) {
+        blocks[index] = ::operator new(bytes, std::align_val_t{bytes});
+        std::memset(blocks[index], static_cast<int>(0x40 + index), bytes);
+        at[index] = reinterpret_cast<std::uintptr_t>(blocks[index]);
+        change(index, true);
+    }
+    const auto use = [&](std::size_t index) {
+        GuestBufferMemory leased(importing);
+        leased.AddReadable(at[index], 32);
+        leased.Upload(false);
+        leased.WriteBack();
+    };
+    const auto build = [&](int pass) {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        for (std::size_t index = 0; index < 2; ++index) {
+            const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin <= at[index] && at[index] + 64 <= range.end; });
+            Require(found != ranges.end(), "a block of a patched address space is missing from its BDA table (build " + std::to_string(pass) + ")");
+            const auto* import = ExistingHostImportFor(importing, at[index], 64);
+            Require(import != nullptr && found->deviceAddress + (at[index] - found->begin) == import->address + (at[index] - import->base), "a block of a patched address space is not mapped in place in its import (build " + std::to_string(pass) + ")");
+        }
+        leased.WriteBack();
+    };
+    NoteHostImportFrame();
+    NoteHostImportFrame();
+    use(2);
+    Require(HostImportCovers(importing, at[2], 16), "a registered range without GPU access was not imported");
+    build(0);
+    Require(HostImportCovers(importing, at[0], 16) && HostImportCovers(importing, at[1], 16), "an address-based build did not import its blocks");
+    NoteHostImportFrame();
+    NoteHostImportFrame();
+    SetHostImportBudget(HostImportLiveBytes());
+    const auto epoch = HostImportEpoch();
+    use(3);
+    Require(HostImportCovers(importing, at[3], 16) && !HostImportCovers(importing, at[2], 16) && HostImportEpoch() != epoch, "a range over the budget did not evict the least recent import");
+    const auto before = AddressSpaceCounters();
+    build(1);
+    const auto after = AddressSpaceCounters();
+    if (after.enabled) Require(after.hits == before.hits + 1 && after.patchedEpoch == before.patchedEpoch + 1 && after.rebuiltEpoch == before.rebuiltEpoch, "an import change outside the cached address space rebuilt it instead of patching it");
+    SetHostImportBudget(0);
+    for (std::size_t index = 0; index < blocks.size(); ++index) change(index, false);
+    for (auto* block : blocks) ::operator delete(block, std::align_val_t{bytes});
+}
+
 void spaceWriteMergedPastImportTests(const Context& context, const BdaTestAccess& access) {
     constexpr std::size_t piece = 65536;
     constexpr std::size_t window = 2 * piece;
@@ -4777,6 +4836,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     spaceReadAcrossImportsTests(context, access);
     spaceReadAcrossImportsWrittenTests(context);
     spaceReadsAcrossImportsMergedTests(context, access);
+    spacePatchedAfterImportChangeTests(context);
     spaceWriteMergedPastImportTests(context, access);
     spaceReadOverWritableImportTableTests(context);
     importJoinTests(context);
