@@ -67,6 +67,7 @@ inline HostImportStart HostImportBufferStart(const HostImport& import) {
 }
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
+enum class SnapshotService : std::uint8_t { Served, Outside, Partial, Changed };
 
 struct ImportProbe {
     const char* failure = nullptr;
@@ -118,6 +119,7 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
 void RequireGpuLockBeforeImports(const char* where);
 bool ImportsHeldByThisThread();
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
+std::shared_ptr<HostImport> UnregisteredHostImport(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
 void SetHostImportRangeWindow(std::uint64_t bytes);
@@ -154,6 +156,7 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
 // re-checks with HostImportFor when it binds the import.
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
 bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
+std::uint64_t HostImportSetGeneration();
 struct RegisteredPiece {
     std::uint64_t address;
     std::uint64_t bytes;
@@ -203,6 +206,8 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
 bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
+void SetDeviceLocalFullForTests(bool full);
+std::uint64_t StagingShadowsRefused();
 
 // Identity of the read-only image mirror serving [address, address + bytes) (the counterpart of
 // HostImportSerial for main-image ranges, which no import serves): a serial unique for the life of
@@ -224,6 +229,7 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
 bool SyncLeaseWork();
 void CountLeaseOutcome(bool synced, std::uint64_t batchSerial);
 void FinishLeaseWork();
+bool LeaseWorkPending();
 struct LeaseStats {
     std::uint64_t deferred = 0;
     std::uint64_t synced = 0;
@@ -282,6 +288,16 @@ void ClearSnapshotCopies(VkDevice device);
 std::vector<std::uint64_t> AddressTableKey(std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::span<const ShaderRecompiler::BdaAbi::Range> own);
 void ClearImageMirrors(VkDevice device);
 void ClearHostImports(VkDevice device);
+
+struct RetainedAddressSpace {
+    std::shared_ptr<const void> space;
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint64_t recorder = 0;
+    std::uint64_t serial = 0;
+    RetainedAddressSpace* next = nullptr;
+};
+void ClearRetainedSpaces(VkDevice device);
+std::size_t RetainedSpaceCount();
 
 struct AddressCopy {
     std::uint64_t begin;
@@ -405,6 +421,14 @@ public:
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
+    bool SpaceOnly() const;
+    std::shared_ptr<const void> ReleaseSpace();
+    bool RetakeSpace();
+    bool SpaceHeld() const;
+    void HoldSpaceThrough(std::uint64_t recorder, std::uint64_t serial);
+    bool ReleaseCompletedSpace(std::uint64_t recorder, std::uint64_t completedThrough);
+    static void ReleaseRetainedSpaces(std::uint64_t recorder, std::uint64_t completedThrough);
+    SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const;
     std::size_t CopiedBytes() const {
         std::size_t bytes = 0;
         for (const auto& region : regions) if (region.buffer != nullptr) bytes += static_cast<std::size_t>((region.bufferEnd != 0 ? region.bufferEnd : region.end) - region.begin);
@@ -431,6 +455,7 @@ public:
         std::vector<std::pair<std::uint64_t, std::uint64_t>> own;
     };
     std::optional<SplitReads> SplitInPlaceReads() const;
+    bool InPlaceReadsOverlap(std::uint64_t address, std::size_t bytes) const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const;
     void DeviceReads(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const;
 
@@ -554,6 +579,11 @@ private:
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).
     std::shared_ptr<const AddressSpace> space;
+    std::weak_ptr<const AddressSpace> releasedSpace;
+    std::uint64_t spaceHeldThrough = 0;
+    std::uint64_t spaceHeldBy = 0;
+    std::unique_ptr<RetainedAddressSpace> retention;
+    void ensureRetention();
     mutable std::uint64_t tableSerial = 0;
     mutable std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> tableRanges;
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while

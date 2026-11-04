@@ -323,6 +323,25 @@ struct LibreSslEvpCipherCtx {
     unsigned char final[32];
 };
 
+struct EcGroup;
+struct EcKey;
+
+struct LibreSslEvpCipher {
+    int nid;
+    int blockSize;
+    int keyLength;
+    int ivLength;
+    std::uint64_t flags;
+    void* init;
+    void* doCipher;
+    void* cleanup;
+    int contextSize;
+    void* setAsn1Parameters;
+    void* getAsn1Parameters;
+    void* control;
+    void* applicationData;
+};
+
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
@@ -380,20 +399,20 @@ int APS5_VABI DTLSv1_client_method_nid_postfix(void);
 int APS5_VABI DTLSv1_server_method_nid_postfix(void);
 int APS5_VABI ECDH_compute_key_nid_postfix(void);
 int APS5_VABI ECDSA_sign_nid_postfix(void);
-int APS5_VABI ECDSA_size_nid_postfix(void);
+int APS5_VABI ECDSA_size_nid_postfix(const EcKey* key);
 int APS5_VABI ECDSA_verify_nid_postfix(void);
-int APS5_VABI EC_GROUP_free_nid_postfix(void);
-int APS5_VABI EC_GROUP_get_degree_nid_postfix(void);
-int APS5_VABI EC_GROUP_new_by_curve_name_nid_postfix(void);
+void APS5_VABI EC_GROUP_free_nid_postfix(EcGroup* group);
+int APS5_VABI EC_GROUP_get_degree_nid_postfix(const EcGroup* group);
+EcGroup* APS5_VABI EC_GROUP_new_by_curve_name_nid_postfix(int nid);
 int APS5_VABI EC_KEY_check_key_nid_postfix(void);
-int APS5_VABI EC_KEY_free_nid_postfix(void);
+void APS5_VABI EC_KEY_free_nid_postfix(EcKey* key);
 int APS5_VABI EC_KEY_generate_key_nid_postfix(void);
-int APS5_VABI EC_KEY_get0_group_nid_postfix(void);
+const EcGroup* APS5_VABI EC_KEY_get0_group_nid_postfix(const EcKey* key);
 int APS5_VABI EC_KEY_get0_private_key_nid_postfix(void);
 int APS5_VABI EC_KEY_get0_public_key_nid_postfix(void);
-int APS5_VABI EC_KEY_new_nid_postfix(void);
-int APS5_VABI EC_KEY_new_by_curve_name_nid_postfix(void);
-int APS5_VABI EC_KEY_set_group_nid_postfix(void);
+EcKey* APS5_VABI EC_KEY_new_nid_postfix(void);
+EcKey* APS5_VABI EC_KEY_new_by_curve_name_nid_postfix(int nid);
+int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group);
 int APS5_VABI EC_KEY_set_private_key_nid_postfix(void);
 int APS5_VABI EC_KEY_set_public_key_nid_postfix(void);
 int APS5_VABI EC_POINT_free_nid_postfix(void);
@@ -427,7 +446,7 @@ int APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(void);
 void APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(LibreSslEvpCipherCtx* ctx);
 LibreSslEvpCipherCtx* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(LibreSslEvpCipherCtx* ctx, int pad);
-int APS5_VABI EVP_CIPHER_block_size_nid_postfix(void);
+int APS5_VABI EVP_CIPHER_block_size_nid_postfix(const LibreSslEvpCipher* cipher);
 int APS5_VABI EVP_CipherFinal_ex_nid_postfix(void);
 int APS5_VABI EVP_CipherInit_ex_nid_postfix(void);
 int APS5_VABI EVP_CipherUpdate_nid_postfix(void);
