@@ -442,7 +442,7 @@ void storeClearTexels(const Context& context, const ColorTarget& color, const st
 }
 
 void storeSingleTexels(const Context& context, const ColorTarget& color) {
-    Require(color.tileMode != ColorTileMode::Linear, "comp-to-single DCC keys of a linear color target");
+    Require(!ColorTileModeIsLinear(color.tileMode), "comp-to-single DCC keys of a linear color target");
     const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
     Require(surface.Bytes() == color.bytes, "comp-to-single DCC keys over a color target whose layout differs from its surface");
     StorageTexture::FlushPending(color.address, color.bytes, nullptr, "comp-to-single expansion");
@@ -1100,7 +1100,7 @@ std::uint32_t CachedFragmentOutputs(const Context& context, std::span<const Comp
     }
     std::uint32_t outputs = 0;
     try {
-        for (const auto location : ValidateShaders(shaders, state, context.subgroup, context.fragmentShaderBarycentric, context.descriptorIndexing, context.imageInt64Atomics, context.geometryShader, context.sampleRateShading, context.bufferInt64Atomics, context.shaderClipDistance, context.shaderCullDistance, context.viewportIndexLayer, context.runtimeDescriptorArray, context.demoteToHelperInvocation, context.shaderTerminateInvocation, context.meshShader, context.shaderResourceMinLod)) {
+        for (const auto location : ValidateShaders(shaders, state, context.subgroup, context.fragmentShaderBarycentric, context.descriptorIndexing, context.imageInt64Atomics, context.geometryShader, context.sampleRateShading, context.bufferInt64Atomics, context.shaderClipDistance, context.shaderCullDistance, context.viewportIndexLayer, context.runtimeDescriptorArray, context.demoteToHelperInvocation, context.shaderTerminateInvocation, context.meshShader, context.shaderResourceMinLod, context.fmaFloat16)) {
             Require(location < 32, "fragment output location exceeds the output mask");
             outputs |= 1u << location;
         }
@@ -1671,8 +1671,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.indexOffset = 0;
     } else if (draw.indexed) {
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        const bool fanGeometry = state.stages.mesh && state.stages.mesh->inputPrimitive == 5;
-        const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart) && !fanGeometry;
+        const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart);
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
         const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
         DrawInputCopy copy;
@@ -1712,9 +1711,8 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             }
         }
         Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
-        Require(!fanGeometry || !state.primitiveRestart || *highest != (draw.indexSize == 2 ? 0xffffu : 0xffffffffu), "primitive restart in a triangle fan geometry draw is unsupported");
         inputs.maxIndex = *highest;
-        if (skipRestart && state.stages.mesh && state.stages.mesh->inputPrimitive == 6) {
+        if (skipRestart && state.stages.mesh && (state.stages.mesh->inputPrimitive == 5 || state.stages.mesh->inputPrimitive == 6)) {
             const auto indexSpan = import != nullptr ? std::span<const std::byte>(reinterpret_cast<const std::byte*>(draw.indexAddress), static_cast<std::size_t>(indexBytes)) : copy.buffer->Bytes().first(static_cast<std::size_t>(indexBytes));
             inputs.restartTable = MeshRestartTable(indexSpan, draw.indexSize);
         }
@@ -2511,6 +2509,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
+    resources.RequireGuestBuffers();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || !record.staged.empty() || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
@@ -3011,7 +3010,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
         static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR") == nullptr;
         const bool linearResident = residentLinear && residentTargets && context.detiler != nullptr && color.tileMode == ColorTileMode::Linear && (ExistingHostImportFor(context, color.address, colorLayout.Bytes()) != nullptr || (GuestMemory::Watched(color.address, colorLayout.Bytes()) && HostImportFor(context, color.address, colorLayout.Bytes(), ImportRequester::ColorTarget) != nullptr));
-        if ((binding.gpuTiling || ((color.tileMode != ColorTileMode::Linear || linearResident) && context.detiler != nullptr)) && residentTargets) {
+        if ((binding.gpuTiling || ((!ColorTileModeIsLinear(color.tileMode) || linearResident) && context.detiler != nullptr)) && residentTargets) {
             // The lookup refreshes the image on every draw (StorageTexture::Refresh: FlushPending,
             // CollectWrites over the target's pages, the DCC key scan of TextureClearKeys, then
             // UnchangedSince). The page walk is skipped while the worker's collect epoch lasts
@@ -3104,7 +3103,6 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     }
     if (state.depth) {
         targetViews.push_back(DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state)));
-        if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     }
     timer.phase(PhasePrepare);
     const bool recordDraws = RecordDraws();
@@ -3112,6 +3110,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
     auto& resolved = prepared.resolved;
     resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    if (state.depth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     auto& resources = resolved.resources;
     for (std::size_t index = 0; index < targets.size(); ++index) {
         auto& binding = targets[index];
@@ -3890,7 +3889,6 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     if (recipe.hasDepth) {
         timer.phase(PhaseSetup);
         const auto depthView = DepthSurfaceViewWithStencilWriteIntent(context, *state.depth, state.depthWrite, state.stencilTest, writesStencilTarget(state));
-        if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
         timer.phase(PhaseReadTarget);
         if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);
     }
@@ -3913,6 +3911,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         return miss(DrawRecipeMiss::Proof);
     }
     CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
+    if (recipe.hasDepth && writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     SharedResourceCache().Touch(recipe.key);
     countCache(&DrawProfile::cacheHits);
     timer.phase(PhaseLookup);
@@ -3959,7 +3958,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
 namespace {
 
 std::shared_ptr<StorageTexture> metadataPassResident(const Context& context, const ColorTarget& color) {
-    if (color.tileMode == ColorTileMode::Linear || context.detiler == nullptr) return nullptr;
+    if (ColorTileModeIsLinear(color.tileMode) || context.detiler == nullptr) return nullptr;
     const auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
     return resident != nullptr && resident->GuestBytes() == color.bytes ? resident : nullptr;
 }
@@ -3990,7 +3989,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
     if (pass.mode == ColorMetadataPass::Mode::Resolve) {
         Require(pass.source.has_value() && pass.targets.size() == 1, "CB resolve without its source and destination");
         const auto& destination = pass.targets.front();
-        Require(destination.tileMode != ColorTileMode::Linear && context.detiler != nullptr, "CB resolve into a target without a resident image is not implemented");
+        Require(!ColorTileModeIsLinear(destination.tileMode) && context.detiler != nullptr, "CB resolve into a target without a resident image is not implemented");
         const auto resident = CachedStorageSurface(context, SurfaceForTarget(destination));
         Require(resident->Attachable(), "storage format cannot be a color attachment");
         ResolveMultisampleTarget(context, *pass.source, *resident, resident->AttachmentView(destination.format, destination.mip));
