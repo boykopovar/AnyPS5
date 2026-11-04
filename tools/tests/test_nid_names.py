@@ -427,6 +427,12 @@ class PublicHeaderDataAliases(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "ExampleData: expected exactly one header declaration"):
             self.run_audit('extern const char ExampleData[];\nextern const char ExampleData[];\n', source)
 
+    def test_public_type_with_base_clause_is_duplicate_checked(self):
+        header = 'class ExampleBase {};\nclass ExampleType final : public ExampleBase {\n};\n'
+        self.run_audit(header, 'int placeholder = 0;\n')
+        with self.assertRaisesRegex(RuntimeError, "duplicate public type ExampleType"):
+            self.run_audit(header, 'class ExampleType final : public ExampleBase {\n};\n')
+
     def test_function_definition_cannot_be_declared_as_data(self):
         source = 'int APS5_VABI ExampleFunction() { return 1; }\n'
         self.run_audit('int APS5_VABI ExampleFunction();\n', source)
