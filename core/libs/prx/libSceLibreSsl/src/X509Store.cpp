@@ -1,4 +1,120 @@
+/* Derived from LibreSSL 2.5.4 (openbsd 2e2c612066aa993717528a0249c15c51128d61cb): src/lib/libcrypto/x509/x509_lu.c (v 1.23);
+ * src/lib/libcrypto/x509/x509_vpm.c (v 1.15); src/lib/libcrypto/x509/by_file.c (v 1.21); src/lib/libcrypto/x509/x509_cmp.c (v 1.27);
+ * src/lib/libcrypto/stack/stack.c (v 1.19); src/lib/libcrypto/objects/obj_dat.c (v 1.39) */
+/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
+ * All rights reserved.
+ *
+ * This package is an SSL implementation written
+ * by Eric Young (eay@cryptsoft.com).
+ * The implementation was written so as to conform with Netscapes SSL.
+ *
+ * This library is free for commercial and non-commercial use as long as
+ * the following conditions are aheared to.  The following conditions
+ * apply to all code found in this distribution, be it the RC4, RSA,
+ * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
+ * included with this distribution is covered by the same copyright terms
+ * except that the holder is Tim Hudson (tjh@cryptsoft.com).
+ *
+ * Copyright remains Eric Young's, and as such any Copyright notices in
+ * the code are not to be removed.
+ * If this package is used in a product, Eric Young should be given attribution
+ * as the author of the parts of the library used.
+ * This can be in the form of a textual message at program startup or
+ * in documentation (online or textual) provided with the package.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *    "This product includes cryptographic software written by
+ *     Eric Young (eay@cryptsoft.com)"
+ *    The word 'cryptographic' can be left out if the rouines from the library
+ *    being used are not cryptographic related :-).
+ * 4. If you include any Windows specific code (or a derivative thereof) from
+ *    the apps directory (application code) you must include an acknowledgement:
+ *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ * The licence and distribution terms for any publically available version or
+ * derivative of this code cannot be changed.  i.e. this code cannot simply be
+ * copied and put under another distribution licence
+ * [including the GNU Public Licence.]
+ */
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
+ * project 2000.
+ */
+/* ====================================================================
+ * Copyright (c) 2000-2005 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -38,8 +154,21 @@ namespace {
 constexpr int MinimumNodes = 4;
 constexpr std::uint64_t PolicyCheck = 0x80;
 constexpr std::uint64_t PolicyMask = 0x80 | 0x100 | 0x200 | 0x400;
+constexpr int X509Library = 11;
+constexpr int AnyFunction = 0xfff;
+constexpr int MallocFailure = 65;
+constexpr int CertificateObject = 1;
+constexpr int CrlObject = 2;
 
 using Compare = int (APS5_VABI*)(const void*, const void*);
+
+struct Object {
+    std::int32_t type;
+    LibreSslX509* certificate;
+};
+
+static_assert(sizeof(Object) == 16);
+static_assert(offsetof(Object, certificate) == 8);
 
 struct Stack {
     std::int32_t num;
@@ -54,9 +183,28 @@ static_assert(offsetof(Stack, data) == 8);
 static_assert(offsetof(Stack, numAlloc) == 20);
 static_assert(offsetof(Stack, comp) == 24);
 
-int APS5_VABI CompareObjects(const void*, const void*) {
-    NotImplemented_nid_no_patch("X509_STORE object comparison");
-    return 0;
+const LibreSslX509Name* Subject(const Object* object) {
+    const auto* certificate = object->certificate;
+    if (!certificate || !certificate->certificateInfo || !certificate->certificateInfo->subject) NotImplemented_nid_no_patch("X509_STORE object comparison");
+    return certificate->certificateInfo->subject;
+}
+
+int CompareNames(const LibreSslX509Name* left, const LibreSslX509Name* right) {
+    if (left->modified || right->modified) NotImplemented_nid_no_patch("X509_NAME_cmp: re-encoding a modified name");
+    const int difference = left->canonEnclen - right->canonEnclen;
+    if (difference) return difference;
+    if (left->canonEnclen <= 0) return 0;
+    return std::memcmp(left->canonEnc, right->canonEnc, static_cast<std::size_t>(left->canonEnclen));
+}
+
+int APS5_VABI CompareObjects(const void* leftPointer, const void* rightPointer) {
+    const auto* left = *static_cast<const Object* const*>(leftPointer);
+    const auto* right = *static_cast<const Object* const*>(rightPointer);
+    const int difference = left->type - right->type;
+    if (difference) return difference;
+    if (left->type == CrlObject) NotImplemented_nid_no_patch("X509_STORE CRL comparison");
+    if (left->type != CertificateObject) return 0;
+    return CompareNames(Subject(left), Subject(right));
 }
 
 int APS5_VABI LoadFile(LibreSslX509Lookup*, int, const char*, std::int64_t, char**) {
@@ -107,6 +255,48 @@ bool Push(Stack* stack, void* element, const char* function) {
     ++stack->num;
     stack->sorted = 0;
     return true;
+}
+
+void Sort(Stack* stack, const char* function) {
+    if (stack->sorted) return;
+    if (stack->num > 0) {
+        char** const elements = Elements(stack, function);
+        const Compare compare = stack->comp;
+        std::sort(elements, elements + stack->num, [compare](char* const& left, char* const& right) { return compare(&left, &right) < 0; });
+    }
+    stack->sorted = 1;
+}
+
+int Find(Stack* stack, void* element, const char* function) {
+    if (!stack) return -1;
+    if (!stack->comp) {
+        for (int index = 0; index < stack->num; ++index)
+            if (Elements(stack, function)[index] == element) return index;
+        return -1;
+    }
+    Sort(stack, function);
+    if (!element || stack->num == 0) return -1;
+    char** const elements = Elements(stack, function);
+    int low = 0;
+    int high = stack->num;
+    int index = 0;
+    int result = 0;
+    while (low < high) {
+        index = (low + high) / 2;
+        result = stack->comp(&element, &elements[index]);
+        if (result < 0) high = index;
+        else if (result > 0) low = index + 1;
+        else break;
+    }
+    if (result != 0) return -1;
+    while (index > 0 && stack->comp(&element, &elements[index - 1]) == 0) --index;
+    return index;
+}
+
+void FreeObject(Object* object) {
+    if (object->type == CertificateObject) X509_free_nid_postfix(object->certificate);
+    else if (object->type == CrlObject) NotImplemented_nid_no_patch("X509_STORE_free: stored CRLs");
+    free_nid_postfix(object);
 }
 
 void FreeLookup(LibreSslX509Lookup* lookup, bool shutdown, const char* function) {
@@ -196,7 +386,11 @@ void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store) {
     }
     FreeStack(lookupMethods);
     auto* objects = static_cast<Stack*>(store->objects);
-    if (HoldsElements(objects, __func__)) NotImplemented_nid_no_patch("X509_STORE_free: stored certificates and CRLs");
+    if (objects && objects->num > 0) {
+        char** const elements = Elements(objects, __func__);
+        for (int index = 0; index < objects->num; ++index)
+            if (elements[index]) FreeObject(reinterpret_cast<Object*>(elements[index]));
+    }
     FreeStack(objects);
     FreeStack(static_cast<Stack*>(store->exData));
     FreeVerifyParam(store->param, __func__);
@@ -208,6 +402,36 @@ int APS5_VABI X509_STORE_set_flags_nid_postfix(LibreSslX509Store* store, std::ui
     store->param->flags |= flags;
     if (flags & PolicyMask) store->param->flags |= PolicyCheck;
     return 1;
+}
+
+int APS5_VABI X509_STORE_add_cert_nid_postfix(LibreSslX509Store* store, LibreSslX509* certificate) {
+    if (!certificate) return 0;
+    if (!store) NotImplemented_nid_no_patch(__func__);
+    auto* object = static_cast<Object*>(malloc_nid_postfix(sizeof(Object)));
+    if (!object) {
+        LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
+        return 0;
+    }
+    object->type = CertificateObject;
+    object->certificate = certificate;
+    std::atomic_ref<std::int32_t>(certificate->references).fetch_add(1);
+    const auto release = [&] {
+        std::atomic_ref<std::int32_t>(certificate->references).fetch_sub(1);
+        free_nid_postfix(object);
+    };
+    auto* objects = static_cast<Stack*>(store->objects);
+    bool pushed = false;
+    try {
+        if (Find(objects, object, __func__) != -1) NotImplemented_nid_no_patch("X509_STORE_add_cert: X509_cmp of certificates with the same subject");
+        pushed = Push(objects, object, __func__);
+    } catch (...) {
+        release();
+        throw;
+    }
+    if (pushed) return 1;
+    LibreSslPutError_nid_no_patch(X509Library, AnyFunction, MallocFailure);
+    release();
+    return 0;
 }
 
 LibreSslX509LookupMethod* APS5_VABI X509_LOOKUP_file_nid_postfix(void) {
