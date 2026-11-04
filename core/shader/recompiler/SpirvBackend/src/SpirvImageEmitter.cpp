@@ -637,15 +637,17 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
     const auto fragments = Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 16u));
     const auto packed = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, u32, packed, texel, 0u);
-    auto expanded = ConstantU32(state, 0u);
-    for (std::uint32_t sample = 0; sample < 8u; ++sample) {
+    auto expandedLow = ConstantU32(state, 0u);
+    auto expandedHigh = ConstantU32(state, 0u);
+    for (std::uint32_t sample = 0; sample < 16u; ++sample) {
         const auto field = state.module.AllocateId();
         state.module.AddFunction(spv::OpBitFieldUExtract, u32, field, packed, Binary(state, spv::OpIMul, u32, sampleBits, ConstantU32(state, sample)), sampleBits);
         const auto fragment = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), field, fragments), ConstantU32(state, 8u), field);
         const auto nibble = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, sample), samples), fragment, ConstantU32(state, 0u));
-        expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, nibble, ConstantU32(state, sample * 4u)));
+        auto& expanded = sample < 8u ? expandedLow : expandedHigh;
+        expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, nibble, ConstantU32(state, (sample & 7u) * 4u)));
     }
-    const std::array<std::uint32_t, 4> components{expanded, ConstantU32(state, 0u), ConstantU32(state, 0u), ConstantU32(state, 0u)};
+    const std::array<std::uint32_t, 4> components{expandedLow, expandedHigh, ConstantU32(state, 0u), ConstantU32(state, 0u)};
     std::uint32_t selected[4] = {};
     for (std::uint32_t component = 0; component < 4u; component++) selected[component] = RuntimeSwizzledComponent(state, RuntimeImageSwizzle(state, resource, component), components);
     const auto result = state.module.AllocateId();
