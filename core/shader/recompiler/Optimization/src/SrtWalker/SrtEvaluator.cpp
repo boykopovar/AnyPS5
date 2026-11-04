@@ -8,10 +8,13 @@
 #include <cstdlib>
 #include <string>
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -84,6 +87,10 @@ bool BasicEvaluator<TNode>::EvaluateWide(TNode value, std::uint64_t& result) {
         return false;
     }
     const TNode& inst = value;
+    if (_masked && inst.Type() == IrType::Bool && ActiveMaskImplies(_activeMask, inst)) {
+        result = 1u;
+        return true;
+    }
     if (_masked && IsRuntimeSelect(inst.Opcode()) && inst.ArgumentCount() == 3 && ActiveMaskImplies(_activeMask, inst.Argument(0))) {
         return EvaluateWide(inst.Argument(1), result);
     }
@@ -150,6 +157,10 @@ bool BasicEvaluator<TNode>::EvaluateExtract(const TNode& inst, std::uint64_t& re
         return false;
     }
     const auto component = static_cast<std::uint32_t>(index.ImmediateBits());
+    if (inst.Opcode() == IrOpcode::CompositeExtractU32x4) {
+        const TNode source = inst.Argument(0);
+        return component < 4u && source.Opcode() == IrOpcode::CompositeConstructU32x4 && source.ArgumentCount() == 4u && EvaluateWide(source.Argument(component), result);
+    }
     if (component >= 2u) {
         return false;
     }
@@ -239,6 +250,9 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     } else {
         const auto relative = (immediate & ~std::int64_t {3}) + static_cast<std::int64_t>(static_cast<std::uint32_t>(offset) & ~3u);
         if (!AddSignedAddress(base & ~std::uint64_t {3}, relative, address)) {
+            if (_inaccessible != nullptr && _runtime.accessible != nullptr && LoadedFromMemory(*handle.Value())) {
+                *_inaccessible = {inst.Value(), ((base & ~std::uint64_t {3}) + static_cast<std::uint64_t>(relative)) & AddressMask};
+            }
             return false;
         }
     }
@@ -316,6 +330,7 @@ std::optional<std::size_t> evaluatedArguments(IrOpcode opcode) {
         case IrOpcode::SLessThan32:
         case IrOpcode::ULessThan32:
         case IrOpcode::UGreaterThan32:
+        case IrOpcode::UGreaterThanEqual32:
         case IrOpcode::LogicalAnd:
         case IrOpcode::LogicalOr:
         case IrOpcode::LogicalXor: return 2u;
@@ -353,6 +368,12 @@ std::optional<bool> evaluableAlone(const IrResourcePlan& program, const IrValue&
         case IrOpcode::LoadAddressU32:
         case IrOpcode::ReadConstBuffer: return IsRawRead(program, value);
         case IrOpcode::Phi: return std::nullopt;
+        case IrOpcode::CompositeExtractU32x4: {
+            const auto* source = value.ArgumentCount() == 2u && value.Argument(0) != nullptr ? value.Argument(0)->Resolve() : nullptr;
+            const auto* index = value.ArgumentCount() == 2u && value.Argument(1) != nullptr ? value.Argument(1)->Resolve() : nullptr;
+            if (source == nullptr || source->Opcode() != IrOpcode::CompositeConstructU32x4 || source->ArgumentCount() != 4u || index == nullptr || !index->HasImmediate() || index->Type() != IrType::U32 || index->ImmediateU32() >= 4u) return false;
+            return std::nullopt;
+        }
         case IrOpcode::CompositeExtractU64:
         case IrOpcode::CompositeExtractU32x2: {
             if (value.ArgumentCount() < 2) return true;
@@ -381,28 +402,35 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
 
 template<typename TNode>
 bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask, std::unordered_set<const IrValue*>& firstLanes) {
-    std::unordered_map<const IrValue*, bool> known;
+    std::array<std::byte, 2048> scratch;
+    std::pmr::monotonic_buffer_resource arena(scratch.data(), scratch.size());
+    std::pmr::unordered_map<const IrValue*, bool> known(&arena);
     const auto takesActiveArm = [activeMask](const IrValue* current) {
         return activeMask != nullptr && IsRuntimeSelect(current->Opcode()) && current->ArgumentCount() == 3 && ActiveMaskImplies(activeMask, current->Argument(0));
     };
-    const auto requirements = [&program, &takesActiveArm](IrValue* current) {
-        std::vector<IrValue*> required;
+    std::pmr::vector<IrValue*> required(&arena);
+    const auto requirements = [&program, &takesActiveArm, &required](IrValue* current) {
+        required.clear();
         if (takesActiveArm(current)) {
             required.push_back(current->Argument(1) != nullptr ? current->Argument(1)->Resolve() : nullptr);
-            return required;
+            return;
         }
         if (current->Opcode() == IrOpcode::ReadConst) {
             required.push_back(program.srtReads[current->Argument(1)->Resolve()->ImmediateU32()].value);
-            return required;
+            return;
         }
         if (current->IsPhi()) {
             required.push_back(ResolveInvariantPhi(program, current));
-            return required;
+            return;
         }
         const auto resolved = [](IrValue* value) { return value != nullptr ? value->Resolve() : nullptr; };
+        if (current->Opcode() == IrOpcode::CompositeExtractU32x4) {
+            required.push_back(resolved(current->Argument(0)->Resolve()->Argument(current->Argument(1)->Resolve()->ImmediateU32())));
+            return;
+        }
         if (current->Opcode() == IrOpcode::CompositeExtractU64) {
             required.push_back(resolved(current->Argument(0)));
-            return required;
+            return;
         }
         if (current->Opcode() == IrOpcode::CompositeExtractU32x2) {
             auto* source = current->Argument(0)->Resolve();
@@ -412,21 +440,25 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
                 required.push_back(resolved(source->Argument(0)));
                 required.push_back(resolved(source->Argument(1)));
             }
-            return required;
+            return;
         }
         const auto arguments = *evaluatedArguments(current->Opcode());
         for (std::size_t index = 0; index < arguments; ++index) {
             auto* argument = current->Argument(index);
             required.push_back(argument != nullptr ? argument->Resolve() : nullptr);
         }
-        return required;
     };
-    std::unordered_set<const IrValue*> expanding;
-    std::vector<std::pair<IrValue*, bool>> pending{{value->Resolve(), false}};
+    std::pmr::unordered_set<const IrValue*> expanding(&arena);
+    std::pmr::vector<std::pair<IrValue*, bool>> pending(&arena);
+    pending.emplace_back(value->Resolve(), false);
     while (!pending.empty()) {
         const auto [current, expanded] = pending.back();
         pending.pop_back();
         if (known.contains(current)) continue;
+        if (activeMask != nullptr && current->Type() == IrType::Bool && ActiveMaskImplies(activeMask, current)) {
+            known.emplace(current, true);
+            continue;
+        }
         if (current->Opcode() == IrOpcode::ReadFirstLane && current->ArgumentCount() >= 2) {
             auto* source = current->Argument(0) != nullptr ? current->Argument(0)->Resolve() : nullptr;
             const auto* mask = current->Argument(1) != nullptr ? current->Argument(1)->Resolve() : nullptr;
@@ -443,7 +475,7 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
             continue;
         }
         if (!expanded && !expanding.insert(current).second) continue;
-        const auto required = requirements(current);
+        requirements(current);
         if (!expanded) {
             pending.emplace_back(current, true);
             for (auto* argument : required) {
@@ -461,18 +493,29 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
 
 template<typename TNode>
 bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* value) {
+    std::unordered_map<const IrValue*, bool> decided;
+    return MayDecide(program, value, decided);
+}
+
+template<typename TNode>
+bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* value, std::unordered_map<const IrValue*, bool>& decided) {
     if (value == nullptr) return false;
-    if (MayEvaluate(program, value)) return true;
     value = value->Resolve();
-    const auto decides = [&program, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index)); };
-    switch (value->Opcode()) {
-        case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
-        case IrOpcode::LogicalAnd:
-        case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
-        case IrOpcode::ULessThan32:
-        case IrOpcode::UGreaterThan32: return value->ArgumentCount() == 2u && (MayEvaluate(program, value->Argument(0)) || MayEvaluate(program, value->Argument(1)));
-        default: return false;
-    }
+    if (const auto found = decided.find(value); found != decided.end()) return found->second;
+    const auto decides = [&program, &decided, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index), decided); };
+    const auto decidable = [&] {
+        if (MayEvaluate(program, value)) return true;
+        switch (value->Opcode()) {
+            case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
+            case IrOpcode::LogicalAnd:
+            case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
+            case IrOpcode::ULessThan32:
+            case IrOpcode::UGreaterThan32: return value->ArgumentCount() == 2u && (MayEvaluate(program, value->Argument(0)) || MayEvaluate(program, value->Argument(1)));
+            default: return false;
+        }
+    }();
+    decided.emplace(value, decidable);
+    return decidable;
 }
 
 template<typename TNode>
@@ -486,6 +529,7 @@ EvaluatorReads BasicEvaluator<TNode>::Reads(const IrResourcePlan& program, const
     switch (value.Opcode()) {
         case IrOpcode::LoadAddressU32:
         case IrOpcode::ReadConstBuffer: return IsRawRead(program, value) ? EvaluatorReads::Closure : EvaluatorReads::Nothing;
+        case IrOpcode::CompositeConstructU32x4:
         case IrOpcode::CompositeConstructU32x2:
         case IrOpcode::IAddCarry32:
         case IrOpcode::GetUserData:
@@ -495,6 +539,7 @@ EvaluatorReads BasicEvaluator<TNode>::Reads(const IrResourcePlan& program, const
         case IrOpcode::BitCastU32F32:
         case IrOpcode::BitCastF32U32:
         case IrOpcode::CompositeExtractU64:
+        case IrOpcode::CompositeExtractU32x4:
         case IrOpcode::CompositeExtractU32x2:
         case IrOpcode::ReadConst: return EvaluatorReads::Arguments;
         default: return evaluatedArguments(value.Opcode()) ? EvaluatorReads::Arguments : EvaluatorReads::Nothing;
@@ -540,7 +585,8 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
         case IrOpcode::BitCastU32F32:
         case IrOpcode::BitCastF32U32: return Arg(inst, 0, result);
         case IrOpcode::CompositeExtractU64:
-        case IrOpcode::CompositeExtractU32x2: return EvaluateExtract(inst, result);
+        case IrOpcode::CompositeExtractU32x2:
+        case IrOpcode::CompositeExtractU32x4: return EvaluateExtract(inst, result);
         case IrOpcode::CompositeConstructU64:
             if (!binary()) {
                 return false;
@@ -825,6 +871,12 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             }
             return false;
         }
+        case IrOpcode::UGreaterThanEqual32:
+            if (binary()) {
+                result = static_cast<std::uint32_t>(a) >= static_cast<std::uint32_t>(b) ? 1u : 0u;
+                return true;
+            }
+            return false;
         case IrOpcode::IEqual32:
             if (binary()) {
                 result = static_cast<std::uint32_t>(a) == static_cast<std::uint32_t>(b) ? 1u : 0u;
