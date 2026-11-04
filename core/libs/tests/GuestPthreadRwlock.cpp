@@ -157,7 +157,9 @@ static void CheckDestroyLifecycle() {
     Require(held == DestroyedRwlock);
     Require(scePthreadRwlockUnlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockRdlock(&held) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockWrlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockTryrdlock(&held) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockTrywrlock(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockDestroy(&held) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_rwlock_rdlock_nid_postfix(&held) == GUEST_EINVAL);
     Require(held == DestroyedRwlock);
@@ -443,8 +445,26 @@ static void CheckSceAttrLifecycle() {
     Require(throws([] { scePthreadRwlockattrInit(nullptr); }));
 }
 
+static void CheckSceTryLocks() {
+    PthreadRwlock lock = nullptr;
+    Require(scePthreadRwlockInit(&lock, nullptr, "sce try") == SCE_OK && lock != nullptr);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&lock) == SCE_OK);
+}
+
 int main() {
     CheckSceAttrLifecycle();
+    CheckSceTryLocks();
     CheckAttrSettype();
     CheckAttrProcessSharing();
     CheckAttrType();

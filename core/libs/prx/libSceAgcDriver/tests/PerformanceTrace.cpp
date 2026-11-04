@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "zlib.h"
 #include <atomic>
 #include <condition_variable>
@@ -513,9 +514,27 @@ void ReplaceGzipFile() {
     try { AgcDriver::TraceFile::ReplaceGzip(path, "{\"third\":3}\n"); } catch (const std::exception&) { writeFailed = true; }
     const auto keptAfterWrite = ReadGzip(path);
 #endif
+#ifdef __linux__
+    bool fullFailed = false;
+    bool fullLeft = false;
+    if (std::filesystem::exists("/dev/full")) {
+        const auto fullPath = directory / "aps5-bench-full.json.gz";
+        auto fullTemporary = fullPath;
+        fullTemporary += ".tmp";
+        std::filesystem::create_symlink("/dev/full", fullTemporary);
+        try { AgcDriver::TraceFile::ReplaceGzip(fullPath, "{\"full\":1}\n"); } catch (const std::exception&) { fullFailed = true; }
+        std::error_code linkError;
+        fullLeft = std::filesystem::symlink_status(fullTemporary, linkError).type() != std::filesystem::file_type::not_found;
+    } else {
+        fullFailed = true;
+    }
+#endif
     std::filesystem::remove_all(directory);
     Check(failed && blockedKept && !temporaryLeft, "a replace that could not move its file over the destination did not fail cleanly or left its temporary file");
     Check(kept == "{\"second\":2}\n", "a failed replace of another file damaged the benchmark file");
+#ifdef __linux__
+    Check(fullFailed && !fullLeft, "a replace whose write failed left its temporary file behind");
+#endif
 #ifndef _WIN32
     Check(writeFailed && keptAfterWrite == "{\"second\":2}\n", "a failed rewrite damaged the previous benchmark file");
 #endif
@@ -529,6 +548,66 @@ void BenchSwitch() {
         try { AgcDriver::TraceBench::Parse(text, every); }
         catch (const std::invalid_argument&) { rejected = true; }
         Check(rejected, "a malformed or unsupported APS5_TRACE_BENCH was accepted");
+    }
+}
+
+void CaptureOwnsSnapshots() {
+    auto capture = std::make_shared<AgcDriver::TraceCapture>();
+    const auto origin = Clock::now();
+    capture->process = 7;
+    capture->summary.commit = "capture";
+    capture->summary.trace = "aps5-trace-capture-7.json.gz";
+    capture->summary.firstPresent = 5;
+    capture->presents = {origin, origin + milliseconds(16)};
+    std::string expectedEvents, expectedSummary;
+    {
+        std::string scope = "Driver.Packet", stage = "draw", gpuName = "batch";
+        std::atomic<std::uint64_t> presents{1};
+        TraceThread thread("queue worker 0x0", presents, 2);
+        thread.Add(scope.c_str(), stage.c_str(), origin + milliseconds(2), origin + milliseconds(2) + microseconds(30));
+        thread.Add(scope.c_str(), nullptr, origin + milliseconds(1), origin + milliseconds(1) + microseconds(40));
+        thread.Add(scope.c_str(), nullptr, origin + milliseconds(3), origin + milliseconds(3) + microseconds(30));
+        auto snapshot = thread.Collect();
+        std::vector<TraceThread::Slice> gpu{{gpuName.c_str(), nullptr, origin + microseconds(5), microseconds(10), 42}};
+        std::vector<TraceThread::Snapshot> snapshots{snapshot, {"gpu", gpu, {}, false}};
+        expectedEvents = TraceFormat::Events(7, origin, snapshots, 0, capture->presents, 5);
+        expectedSummary = TraceFormat::Summary(capture->summary, snapshots, capture->presents);
+        for (auto& value : snapshots) capture->Add(std::move(value));
+        thread.Add(scope.c_str(), nullptr, origin + milliseconds(4), origin + milliseconds(4) + microseconds(30));
+        gpu.clear();
+        scope.assign("changed scope");
+        stage.assign("changed stage");
+        gpuName.assign("changed gpu");
+    }
+    Check(TraceFormat::Events(capture->process, capture->presents.front(), capture->threads, capture->presenter, capture->presents, capture->summary.firstPresent) == expectedEvents, "closed capture borrowed slices or labels, changed ordering or included a late append");
+    Check(TraceFormat::Summary(capture->summary, capture->threads, capture->presents) == expectedSummary, "closed capture changed totals or loss cutoff");
+}
+
+void CaptureWriterDrainAndFailure() {
+    for (const bool fail : {false, true}) {
+        auto capture = std::make_shared<AgcDriver::TraceCapture>();
+        capture->process = 7;
+        capture->summary.trace = "aps5-trace-capture-7.json.gz";
+        const auto origin = Clock::now();
+        capture->presents = {origin, origin + milliseconds(16)};
+        std::weak_ptr<AgcDriver::TraceCapture> released = capture;
+        unsigned calls = 0;
+        std::string events, line;
+        AgcDriver::ProfileOutput output([capture = std::move(capture), &calls, &events, &line, fail](std::string_view) mutable {
+            auto closed = std::move(capture);
+            ++calls;
+            const auto text = TraceFormat::Events(closed->process, closed->presents.front(), closed->threads, closed->presenter, closed->presents, closed->summary.firstPresent);
+            if (fail) throw std::runtime_error("closed capture write failed");
+            events = text;
+            line = TraceFormat::Summary(closed->summary, closed->threads, closed->presents);
+        });
+        Check(output.Write("aps5-trace-capture-7.json.gz"), "closed capture was not queued");
+        output.Stop();
+        bool failed = false;
+        try { output.Flush(); }
+        catch (const std::runtime_error& error) { failed = std::string_view(error.what()) == "closed capture write failed"; }
+        Check(failed == fail && calls == 1 && released.expired(), "closed capture stop lost or repeated its job, hid a failure or retained its payload");
+        Check(fail ? events.empty() && line.empty() : !events.empty() && line.find("aps5-trace-capture-7.json.gz") != std::string::npos, "closed capture events and summary lost their pairing");
     }
 }
 
@@ -607,6 +686,8 @@ int main() {
         BenchWriterKeepsNewest();
         BenchWriterStopWrites();
         BenchSwitch();
+        CaptureOwnsSnapshots();
+        CaptureWriterDrainAndFailure();
         GzipFile();
         ReplaceGzipFile();
         AppendLines();

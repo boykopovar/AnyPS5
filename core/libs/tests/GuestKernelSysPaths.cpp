@@ -206,6 +206,12 @@ int main(int argc, char** argv) {
             stream >> contents;
             Require(contents == "data");
             Require(link("data", base, "link") == -1 && *error() == 17);
+            std::filesystem::create_directory(root / "child");
+            Require(link("../data", -100, (root / "child" / "parent").string().c_str()) == 0);
+            std::ifstream parentStream(root / "child" / "parent");
+            std::string parentContents;
+            parentStream >> parentContents;
+            Require(parentContents == "data");
             Require(link("data", -100, (root / "cwd").string().c_str()) == 0);
             Require(link("data", -1, ("/" + (root / "absolute").string()).c_str()) == 0);
         }
@@ -220,16 +226,6 @@ int main(int argc, char** argv) {
         Require(link("", base, "missing") == -1 && *error() == 2);
         Require(link(std::string(1024, 'x').c_str(), -1, "missing") == -1 && *error() == 63);
         Require(link("data", base, std::string(256, 'x').c_str()) == -1 && *error() == 63);
-#ifndef _WIN32
-        bool refused = false;
-        try { link("../data", base, "refused"); } catch (const std::runtime_error&) { refused = true; }
-        Require(refused && !std::filesystem::exists(root / "refused"));
-#endif
-#ifdef _WIN32
-    } else if (test == "symlinkat_refused") {
-        const auto link = LoadFunction<int (APS5_VABI*)(const char*, int, const char*)>(sys, "symlinkat", patched);
-        link("../data", base, "refused");
-#endif
     } else {
         Require(false);
     }
