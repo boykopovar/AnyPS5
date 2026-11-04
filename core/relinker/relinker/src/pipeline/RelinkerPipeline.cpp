@@ -87,6 +87,8 @@ RelinkResult RelinkerPipeline::Relink() {
     ByteCount gotSize = 0;
 
     for (const auto& ph : programHeaders) {
+        if (ph.Type == PT_LOAD && (ph.Flags & ~7u) != 0)
+            throw RelinkerException("Unsupported PT_LOAD permission flags", ph.Offset);
         if (ph.Type == PT_LOAD && (ph.Flags & PF_X) != 0) {
             auto segment = elfReader->ReadSegment(ph);
             if (!segment.empty()) {

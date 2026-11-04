@@ -52,6 +52,52 @@ static void TestTypeIDs() {
     WKRenderObjectGetTypeID();
 }
 
+static void CheckOriginString(const void* string, const char* expected) {
+    Require(WKStringIsEqualToUTF8CString(string, expected));
+    WKRelease(string);
+}
+
+static void TestSecurityOrigin() {
+    struct Case {
+        const char* protocol;
+        const char* host;
+        int port;
+        unsigned expectedPort;
+        const char* text;
+    };
+    for (const Case& value : {
+        Case{"http", "example.com", 8080, 8080, "http://example.com:8080"},
+        Case{"http", "host_name", 0, 0, "http://host_name"},
+        Case{"http", "example.com", 80, 80, "http://example.com:80"},
+        Case{"https", "EXAMPLE", 65536, 0, "https://EXAMPLE"},
+        Case{"custom", "host", -1, 65535, "custom://host:65535"},
+        Case{"custom", "host", -65536, 0, "custom://host:0"},
+        Case{"file", "host", 42, 42, "file://"},
+        Case{"FILE", "host", 0, 0, "FILE://host"},
+        Case{"", "", 0, 0, ""},
+        Case{"http", "a b%_c", 0, 0, "http://a b%_c"}
+    }) {
+        const auto* protocol = WKStringCreateWithUTF8CString(value.protocol);
+        const auto* host = WKStringCreateWithUTF8CString(value.host);
+        const auto* origin = WKSecurityOriginCreate(protocol, host, value.port);
+        WKRelease(protocol);
+        WKRelease(host);
+        Require(WKGetTypeID(origin) == WKSecurityOriginGetTypeID());
+        Require(WKSecurityOriginGetPort(origin) == value.expectedPort);
+        CheckOriginString(WKSecurityOriginCopyProtocol(origin), value.protocol);
+        CheckOriginString(WKSecurityOriginCopyHost(origin), value.host);
+        CheckOriginString(WKSecurityOriginCopyToString(origin), value.text);
+        WKRelease(origin);
+    }
+    auto nullString = NKWebKit::Make<NKWebKit::String>();
+    const auto* origin = WKSecurityOriginCreate(nullString.Get(), nullString.Get(), 0);
+    for (const auto* copy : {WKSecurityOriginCopyProtocol(origin), WKSecurityOriginCopyHost(origin), WKSecurityOriginCopyToString(origin)}) {
+        Require(NKWebKit::Cast<NKWebKit::String>(copy, __func__)->null);
+        WKRelease(copy);
+    }
+    WKRelease(origin);
+}
+
 static void TestRetainRelease() {
     auto* s = WKStringCreateWithUTF8CString("hello");
     Require(WKGetTypeID(s) == WKStringGetTypeID());
@@ -362,6 +408,7 @@ static void TestCertificateInfo() {
 
 int main() {
     TestTypeIDs();
+    TestSecurityOrigin();
     TestRetainRelease();
     TestStrings();
     TestURL();
