@@ -46,7 +46,7 @@ class EnvironmentJsonTests(unittest.TestCase):
             root.mkdir()
             (root / "a.cpp").write_text('auto a = EnvInt("APS5_COUNT", -4);\nauto b = EnvInt("APS5_COUNT", 2);\n', encoding="utf-8")
             doc = root / "reference.md"
-            doc.write_text("`APS5_STALE`", encoding="utf-8")
+            doc.write_text("| `APS5_STALE` | |\n", encoding="utf-8")
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 status = env_reference.main(["--root", str(root), "--check", "--doc", str(doc), "--json"])
@@ -57,7 +57,7 @@ class EnvironmentJsonTests(unittest.TestCase):
             self.assertEqual(data["variables"], [{"name": "APS5_COUNT", "reads": [
                 {"path": (root / "a.cpp").as_posix(), "line": 1, "kind": "integer", "default": "-4"},
                 {"path": (root / "a.cpp").as_posix(), "line": 2, "kind": "integer", "default": "2"}]}])
-            doc.write_text("`APS5_COUNT`", encoding="utf-8")
+            doc.write_text("| `APS5_COUNT` | |\n", encoding="utf-8")
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(env_reference.main(["--root", str(root), "--check", "--doc", str(doc), "--json"]), 0)
 
@@ -83,7 +83,7 @@ class EnvironmentJsonTests(unittest.TestCase):
             (root / "a.cpp").write_text("".join(f'auto v{index} = EnvInt("{name}", 1);\n' for index, name in enumerate(names)), encoding="utf-8")
             doc = root / "reference.md"
             stale = [name + "_OLD" for name in names]
-            for text, missing, extra in ((" ".join(f"`{name}`" for name in names + stale), [], sorted(stale)), ("", sorted(names), [])):
+            for text, missing, extra in (("\n".join(f"| `{name}` | |" for name in names + stale), [], sorted(stale)), ("", sorted(names), [])):
                 doc.write_text(text, encoding="utf-8")
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
