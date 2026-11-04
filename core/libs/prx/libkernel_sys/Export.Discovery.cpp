@@ -11,6 +11,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -139,16 +140,6 @@ int APS5_VABI ipmimgr_call_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI is_in_sandbox_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldload_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI kmq_notify_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -266,17 +257,7 @@ int APS5_VABI pthread_multi_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_mutex_getprioceiling_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_mutex_init_for_mono_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -348,19 +329,22 @@ int APS5_VABI ptrace_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pwrite_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI reboot_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI revoke_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI revoke_nid_postfix(const char* path) {
+    constexpr std::uint16_t typeMask = 0170000;
+    constexpr std::uint16_t characterDevice = 0020000;
+    constexpr int guestEinval = 22;
+    FileStat status{};
+    if (stat_nid_postfix(path, &status) != 0) return -1;
+    if ((status.st_mode & typeMask) != characterDevice) {
+        *__error_nid_postfix() = guestEinval;
+        return -1;
+    }
+    NotImplemented_nid_no_patch("revoke of a character device");
 }
 
 int APS5_VABI rfork_thread_nid_postfix(void) {
@@ -418,11 +402,6 @@ int APS5_VABI sceKernelAddResource(void) {
 }
 
 int APS5_VABI sceKernelAllocateDirectMemory2(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelAllocateDirectMemoryForApp(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -921,8 +900,7 @@ int APS5_VABI sceKernelGetParentApp(void) {
 }
 
 int APS5_VABI sceKernelGetPhysPageSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(PS5_PAGE_SIZE);
 }
 
 int APS5_VABI sceKernelGetProcessName(void) {
@@ -1343,11 +1321,6 @@ int APS5_VABI sceKernelIsGenuineN(void) {
     return 1;
 }
 
-int APS5_VABI sceKernelIsInSandbox(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelIsM2DeviceAttached(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1503,11 +1476,6 @@ int APS5_VABI sceKernelPrepareToSuspendProcess(void) {
 }
 
 int APS5_VABI sceKernelProtectDirectMemory(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelProtectDirectMemoryForPID(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2034,23 +2002,8 @@ int APS5_VABI scePthreadMulti(void) {
     return error == 0 ? 0 : SceKernelError(error);
 }
 
-int APS5_VABI scePthreadMutexGetprioceiling(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI scePthreadMutexInitForInternalLibc(PthreadMutex* mutex, const PthreadMutexattr* attr) {
     return SceResult(pthread_mutex_init_nid_postfix(mutex, attr));
-}
-
-int APS5_VABI scePthreadMutexIsowned(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI scePthreadMutexSetprioceiling(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI scePthreadMutexattrGetgen(const PthreadMutexattr* attr, int* generation) {
@@ -2103,18 +2056,16 @@ int APS5_VABI scePthreadTimedjoin(void) {
     return 0;
 }
 
-int APS5_VABI sched_setscheduler_nid_postfix(int pid, int policy, const KernelSchedParam* param) {
+int APS5_VABI sched_setscheduler_nid_postfix(int pid, int, const KernelSchedParam* param) {
+    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (param == nullptr) return fail(14);
-    if (pid != 0 && pid == getpid_nid_postfix()) NotImplemented_nid_no_patch("sched_setscheduler: the first thread of the process, which its own pid selects, is not tracked");
-    if (pid != 0) return fail(3);
-    if (policy != 1 && policy != 2 && policy != 3) return fail(22);
-    if (scePthreadSetschedparam(scePthreadSelf(), policy, param) != 0)
-        NotImplemented_nid_no_patch("sched_setscheduler: a policy and priority scePthreadSetschedparam does not accept, where FreeBSD answers EPERM or EINVAL and the console's answer is unverified");
-    return 0;
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return fail(GuestEfault);
+    if (pid != 0 && pid != getpid_nid_postfix()) return fail(GuestEsrch);
+    return fail(GuestEperm);
 }
 
 int APS5_VABI set_phys_fmem_limit_nid_postfix(void) {
@@ -2161,22 +2112,7 @@ int APS5_VABI sysc_s00_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI tcgetsid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI tcsetsid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI unmount_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI utrace_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -4,6 +4,7 @@
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -70,24 +71,20 @@ std::string expectFailure(TAction action) {
 void testEvents() {
     KernelEvent event{};
     event.filter = -14;
-    event.ident = 0x40;
-    event.data = 123;
-    check(sceAgcDriverGetEqEventType(&event) == 0x40, "graphics event uses wrong field");
+    event.ident = 0x20;
+    event.data = (0x38 << 16) | 0x20;
+    check(sceAgcDriverGetEqEventType(&event) == ((0x38 << 16) | 0x20), "graphics event type is not the event data");
+    check(sceAgcDriverGetEqContextId(&event) == 0x38, "graphics event context id is not the data's upper bits");
+    event.data = static_cast<std::intptr_t>((std::uint64_t{0x0fffffff} << 16u) | 0x28);
+    check(sceAgcDriverGetEqContextId(&event) == 0x0fffffffu, "graphics event context id lost its upper bits");
+    check(sceAgcDriverGetEqEventType(&event) == static_cast<int>(0xffff0028u), "graphics event type is not the data's low word");
     event.filter = -1;
     event.data = -17;
     check(sceAgcDriverGetEqEventType(&event) == -17, "non-graphics event uses wrong field");
     event.data = std::numeric_limits<std::intptr_t>::max();
     expectFailure([&] { sceAgcDriverGetEqEventType(&event); });
-    event.filter = -14;
-    event.ident = std::numeric_limits<std::uintptr_t>::max();
-    expectFailure([&] { sceAgcDriverGetEqEventType(&event); });
     expectFailure([] { sceAgcDriverGetEqEventType(nullptr); });
     expectFailure([&] { sceAgcDriverGetEqEventType(reinterpret_cast<const KernelEvent*>(reinterpret_cast<const std::byte*>(&event) + 1)); });
-    event.ident = 0x29;
-    check(sceAgcDriverGetEqContextId(&event) == 0x29, "graphics event context id uses wrong field");
-    event.ident = std::numeric_limits<std::uintptr_t>::max();
-    expectFailure([&] { sceAgcDriverGetEqContextId(&event); });
-    event.ident = 1;
     event.filter = -1;
     expectFailure([&] { sceAgcDriverGetEqContextId(&event); });
     expectFailure([] { sceAgcDriverGetEqContextId(nullptr); });
@@ -219,6 +216,9 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverAddEqEvent(eq, 0, &graphicsTag) == 0, "graphics event registration failed");
     check(sceAgcDriverAddEqEvent(eq, 0x20, &computeTag) == 0, "compute event registration failed");
     expectFailure([] { sceAgcDriverAddEqEvent(0, 0, nullptr); });
+    expectFailure([&] { sceAgcDriverAddEqEvent(eq, -1, &graphicsTag); });
+    expectFailure([] { sceAgcDriverDeleteEqEvent(0, 0); });
+    expectFailure([&] { sceAgcDriverDeleteEqEvent(eq, -1); });
     struct Output final : AgcDriver::IVideoOutput, AgcDriver::IFlipRequest, std::enable_shared_from_this<Output> {
         std::atomic<int> ready{0};
         std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return shared_from_this(); }
@@ -234,58 +234,47 @@ void testEndOfPipeInterrupts() {
     AgcDriverWaitIdle_nid_postfix();
     check(output->ready.load() == 1, "flip-only queue flip was not handed to its output");
     check(AgcDriver::Graphics::HostImportFramesEnded() == 1, "the first flip did not end a host import frame");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "flip on a queue that never requested a release interrupt did not raise its event");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip-only queue event was not cleared");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a flip raised the graphics end-of-pipe event");
     std::array<std::uint32_t, 8> words{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     check(sceAgcDriverSubmitDcb(&packet) == 0 && sceAgcDriverSubmitDcb(&packet) == 0, "interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(owner->GetTriggeredEvents(events.data(), 2) == 1, "graphics end-of-pipe interrupt was not delivered to its queue only");
-    check(events[0].filter == -14 && events[0].udata == &graphicsTag && events[0].data == 2 && sceAgcDriverGetEqEventType(events.data()) == 0, "graphics end-of-pipe event encoding is wrong");
+    check(events[0].filter == -14 && events[0].udata == &graphicsTag && events[0].data == 0 && sceAgcDriverGetEqEventType(events.data()) == 0, "graphics end-of-pipe event encoding is wrong");
     check(sceAgcDriverGetEqContextId(events.data()) == 0, "graphics end-of-pipe event reports another context");
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "delivered interrupt was not cleared");
+    words[7] = 0x38;
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "interrupt submit with a context failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == (0x38 << 16), "graphics end-of-pipe event does not carry the release's interrupt context");
+    check(sceAgcDriverGetEqContextId(events.data()) == 0x38 && sceAgcDriverGetEqEventType(events.data()) == (0x38 << 16), "graphics end-of-pipe event reports another context");
+    words[7] = 0xf0000041u;
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "interrupt submit with high context bits failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && sceAgcDriverGetEqContextId(events.data()) == 0x41, "the interrupt context kept bits above its 28 bits");
+    words[7] = 0x38;
     check(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "compute interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &computeTag && sceAgcDriverGetEqEventType(events.data()) == 0x20, "compute end-of-pipe interrupt missing");
-    check(sceAgcDriverGetEqContextId(events.data()) == 0x20, "compute end-of-pipe event reports another context");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &computeTag && events[0].data == ((0x38 << 16) | 0x20) && sceAgcDriverGetEqEventType(events.data()) == ((0x38 << 16) | 0x20), "compute end-of-pipe interrupt missing");
+    check(sceAgcDriverGetEqContextId(events.data()) == 0x38, "compute end-of-pipe event reports another context");
+    words[7] = 0;
     words[2] = 0;
     check(sceAgcDriverSubmitDcb(&packet) == 0, "plain release submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "release without INT_SEL raised an interrupt");
-    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after a release interrupt submit failed");
-    AgcDriverWaitIdle_nid_postfix();
-    check(output->ready.load() == 2, "flip after a release interrupt was not handed to its output");
-    check(AgcDriver::Graphics::HostImportFramesEnded() == 2, "a flip packet executed on the queue did not end a host import frame");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip on a queue that already raised its own release interrupt raised a second event");
-    words[2] = 1u << 24u;
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "release before sustained flips submit failed");
-    AgcDriverWaitIdle_nid_postfix();
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a release interrupt did not deliver on a queue whose flip event is suppressed");
-    std::uint32_t sustainedFlips = 0;
-    std::uint32_t flipsUntilEvent = 0;
-    while (sustainedFlips < 8 && flipsUntilEvent == 0) {
-        check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "sustained flip submit failed");
+    for (int index = 0; index < 8; ++index) {
+        check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after a release submit failed");
         AgcDriverWaitIdle_nid_postfix();
-        ++sustainedFlips;
-        check(output->ready.load() == static_cast<int>(2 + sustainedFlips), "sustained flip was not handed to its output");
-        if (owner->GetTriggeredEvents(events.data(), 2) != 0) flipsUntilEvent = sustainedFlips;
+        check(output->ready.load() == 2 + index, "flip after a release was not handed to its output");
+        check(AgcDriver::Graphics::HostImportFramesEnded() == static_cast<std::uint64_t>(2 + index), "a flip packet executed on the queue did not end a host import frame");
+        check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a flip after a release raised the graphics end-of-pipe event");
     }
-    check(flipsUntilEvent != 0, "a flip never raised an event again on a queue whose own release interrupts stopped");
-    check(flipsUntilEvent > 2, "a flip raised an event within two flips of the queue's own release interrupt");
-    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after the latch cleared submit failed");
+    words[2] = 2u << 24u;
+    words[7] = AgcDriverReserveEopFlip_nid_postfix(AgcDriver::FlipInfo{7, 0, 1, 0});
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "end-of-pipe flip release submit failed");
     AgcDriverWaitIdle_nid_postfix();
-    check(output->ready.load() == static_cast<int>(3 + sustainedFlips), "flip after the latch cleared was not handed to its output");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a flip did not raise an event after the latch cleared");
-    words[2] = 1u << 24u;
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "release after a cleared latch submit failed");
-    AgcDriverWaitIdle_nid_postfix();
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a release interrupt did not deliver after the latch cleared");
-    for (int index = 0; index < 2; ++index) {
-        check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip paired with a release interrupt submit failed");
-        AgcDriverWaitIdle_nid_postfix();
-        check(output->ready.load() == static_cast<int>(4 + sustainedFlips + index), "flip paired with a release interrupt was not handed to its output");
-        check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a flip raised an event within two flips of the queue's own release interrupt");
-    }
+    check(output->ready.load() == 10, "end-of-pipe flip was not handed to its output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a release that carries a flip raised the graphics end-of-pipe event");
     const auto framesBefore = AgcDriver::Graphics::HostImportFramesEnded();
     const auto readyBefore = output->ready.load();
     std::thread([] { AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{7, -1, 1, 0}); }).join();
@@ -311,6 +300,7 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverDeleteEqEvent(eq, 0x20) == 0, "compute event deletion failed");
     owner.reset();
     check(sceKernelDeleteEqueue(eq) == 0, "event queue deletion failed");
+    expectFailure([&] { sceAgcDriverDeleteEqEvent(eq, 0); });
 }
 
 std::array<std::uint32_t, 5> writeData(volatile std::uint32_t* address, std::uint32_t value) {
@@ -349,9 +339,9 @@ std::vector<std::uint32_t> commands(const std::array<std::uint32_t, N>&... packe
     return words;
 }
 
-std::array<std::uint32_t, 8> endOfPipeLabel(volatile std::uint32_t* address, std::uint32_t value) {
+std::array<std::uint32_t, 8> endOfPipeLabel(volatile std::uint32_t* address, std::uint32_t value, std::uint32_t context) {
     const auto target = reinterpret_cast<std::uintptr_t>(address);
-    return {0xc0064900, 0x514, (1u << 29u) | (2u << 24u), static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(static_cast<std::uint64_t>(target) >> 32u), value, 0, 0};
+    return {0xc0064900, 0x514, (1u << 29u) | (2u << 24u), static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(static_cast<std::uint64_t>(target) >> 32u), value, 0, context};
 }
 
 void testEndOfPipeLabelsWithoutWork() {
@@ -362,12 +352,12 @@ void testEndOfPipeLabelsWithoutWork() {
     int tag = 0;
     check(sceAgcDriverAddEqEvent(eq, 0, &tag) == 0, "graphics event registration failed");
     submit(0x20, commands(waitEqual(&second, 2), writeData(&done, 1)));
-    submit(0, commands(endOfPipeLabel(&first, 1), endOfPipeLabel(&second, 2)));
+    submit(0, commands(endOfPipeLabel(&first, 1, 0x11), endOfPipeLabel(&second, 2, 0x12)));
     waitFor(&done, 1, "an end-of-pipe label with no work before it never landed");
     check(first == 1 && second == 2, "end-of-pipe labels with no work before them landed wrong");
     AgcDriverWaitIdle_nid_postfix();
     std::array<KernelEvent, 2> events{};
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &tag && events[0].data == 2, "end-of-pipe labels with no work before them lost their interrupts");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &tag && sceAgcDriverGetEqContextId(events.data()) == 0x12, "end-of-pipe labels with no work before them lost their interrupts");
     check(sceAgcDriverDeleteEqEvent(eq, 0) == 0, "graphics event deletion failed");
     owner.reset();
     check(sceKernelDeleteEqueue(eq) == 0, "event queue deletion failed");
@@ -695,6 +685,44 @@ void testLargeDataFill() {
     GuestHeap::GuestHeapFree_nid_postfix(produced);
 }
 
+void labelResetByItsQueueBeforeItLanded(bool wide, std::size_t resetWord) {
+    alignas(64) static volatile std::uint32_t gate = 0, second = 0;
+    gate = 0;
+    second = 0;
+    constexpr std::uint32_t fillBytes = 4u << 20u, blockBytes = fillBytes + (1u << 20u);
+    auto* block = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, blockBytes));
+    auto* label = static_cast<volatile std::uint32_t*>(block + (fillBytes + 65536) / 4);
+    auto* reset = label + resetWord;
+    const std::uint64_t awaited = 1ull << (resetWord * 32u);
+    submit(0x20, commands(dataFill(block, 0, blockBytes)));
+    AgcDriverWaitIdle_nid_postfix();
+    const auto gpuLabelsBefore = AgcDriver::DriverDetail::gpuLabels.load();
+    if (wide) submit(0x20, commands(waitEqual(&gate, 1), waitEqual64(label, awaited, ~0ull), dataFill(block, 0x5a5a5a5au, fillBytes), writeData(reset, 0), waitEqual64(label, awaited, ~0ull), writeData(&second, 1)));
+    else submit(0x20, commands(waitEqual(&gate, 1), waitEqual(label, 1), dataFill(block, 0x5a5a5a5au, fillBytes), writeData(label, 0), waitEqual(label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(reset, 1)));
+    waitFor(reset, 1, "producer label never landed");
+    gate = 1;
+    waitFor(reset, 0, "the consumer's reset of the label never landed");
+    check(AgcDriver::DriverDetail::gpuLabels.load() > gpuLabelsBefore, "the consumer's reset of the label was not stored on the GPU behind the fill");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, !wide ? "a wait passed on a label value its own queue had already reset, before the reset reached memory, or the wait expired"
+                       : resetWord == 0 ? "an 8-byte wait passed on a label whose low dword its own queue had already reset, before the reset reached memory, or the wait expired"
+                                        : "an 8-byte wait passed on a label whose high dword its own queue had already reset, before the reset reached memory, or the wait expired");
+    submit(0, commands(writeData(reset, 1)));
+    waitFor(&second, 1, "the consumer did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+    GuestHeap::GuestHeapFree_nid_postfix(block);
+}
+
+void testLabelResetByItsQueueBeforeItLanded() {
+    labelResetByItsQueueBeforeItLanded(false, 0);
+}
+
+void testWideLabelPartlyResetByItsQueueBeforeItLanded() {
+    labelResetByItsQueueBeforeItLanded(true, 0);
+    labelResetByItsQueueBeforeItLanded(true, 1);
+}
+
 void testCopyIntoHostMemory() {
     constexpr std::size_t words = 32768;
     constexpr auto bytes = static_cast<std::uint32_t>(words * 4);
@@ -818,6 +846,23 @@ void testHeaderWithoutProgramAddress() {
     header.shader.sh_registers = header.registers.data();
     header.shader.num_sh_registers = header.registers.size();
     AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+void testRegisterList() {
+    using AgcDriver::DriverDetail::RegisterList;
+    const AgcDriver::Registers userConfig{{0x24a, 1}, {0x24b, 2}, {0x25b, 3}};
+    const RegisterList list(userConfig);
+    check(list.size() == 3 && list.Expand() == userConfig, "a register list does not hold its registers' offsets and values");
+    check(list.find(0x24b) != list.end() && list.find(0x24b)->second == 2 && list.find(0x24c) == list.end() && list.find(0x200) == list.end(), "a register list found the wrong register");
+    RegisterList added;
+    added.emplace(0x25b, 3);
+    added.emplace(0x24a, 1);
+    added.emplace(0x24b, 2);
+    added.emplace(0x24a, 9);
+    check(added == list, "a register list is not kept in offset order, or a second emplace replaced a value");
+    AgcDriver::DriverDetail::DecodedShaderState decoded{{{0x08a, 7}}, AgcDriver::InitialContextRegisters(), userConfig};
+    const AgcDriver::DriverDetail::RegisteredShaderState state(decoded);
+    check(state.shader.Expand() == decoded.shader && state.context.Expand() == decoded.context && state.userConfig.Expand() == decoded.userConfig, "a registered state did not keep the decoded registers");
 }
 
 void testRegisteredFloatMode() {
@@ -1030,8 +1075,13 @@ void testRegisteredFastLaunchWorkgroupVertex() {
     const std::array<ShaderRegister, 6> context{{
         {0x2d5u, 0x00482030u}, {0x1ffu, 32u}, {0x2ceu, 32u}, {0x2d3u, 64u}, {0x29bu, 2u}, {0x2abu, 4u},
     }};
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    const std::array<ShaderRegister, 2> strip{{{0x242u, 6u}, {0x25bu, 0x201u}}};
+    AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, strip);
+    const auto prepared = driver.PreparedEntryHashes(&header.shader);
     const std::array<ShaderRegister, 2> primitive{{{0x242u, 1u}, {0x25bu, 0x201u}}};
     AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+    check(driver.PreparedEntryHashes(&header.shader) == prepared, "a registered fast-launch program resolved with a triangle strip was not prepared as for a point list");
 }
 
 void testWorkerFailure() {
@@ -1056,7 +1106,11 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--eop-interrupts") {
             testEndOfPipeInterrupts();
-            LibcRunShutdown_nid_postfix();
+            std::array<std::uint32_t, 8> typed{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0x08000038u};
+            Packet typedPacket{typed.data(), static_cast<std::uint32_t>(typed.size()), 0, {}};
+            check(sceAgcDriverSubmitDcb(&typedPacket) == 0, "typed interrupt context submit failed");
+            check(expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }).find("typed interrupt context") != std::string::npos, "a release with a typed interrupt context did not fail");
+            check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("typed interrupt context") != std::string::npos, "shutdown lost the typed interrupt context failure");
             std::puts("AGC end-of-pipe interrupt queue mode tests passed");
             return 0;
         }
@@ -1180,7 +1234,10 @@ int main(int argc, char** argv) {
         testHeaderWithoutProgramAddress();
         testCopyIntoHostMemory();
         testLargeDataFill();
+        testLabelResetByItsQueueBeforeItLanded();
+        testWideLabelPartlyResetByItsQueueBeforeItLanded();
         testSmallCopyBehindPendingSource();
+        testRegisterList();
         testRegisteredFloatMode();
         testDispatchFloatMode();
         testReadOnlyResummarize();
