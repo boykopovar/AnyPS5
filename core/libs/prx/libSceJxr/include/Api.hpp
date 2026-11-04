@@ -10,6 +10,11 @@ std::int64_t APS5_VABI PKFree_nid_postfix(void** memory);
 std::int64_t APS5_VABI PixelFormatLookup_nid_postfix(JxrPixelInfo* value, std::uint8_t mode);
 std::int64_t APS5_VABI readIS_nid_postfix(void* codec, Jxr::BitIo* io);
 std::int64_t APS5_VABI writeIS_nid_postfix(void* codec, Jxr::BitIo* io);
+void APS5_VABI setUniformQuantizer_nid_postfix(void* codec, std::size_t band);
+void APS5_VABI useDCQuantizer_nid_postfix(void* codec, std::size_t tile);
+void APS5_VABI useLPQuantizer_nid_postfix(void* codec, std::size_t count, std::size_t tile);
+std::int32_t APS5_VABI getDCACPredMode_nid_postfix(void* codec, std::size_t column);
+void APS5_VABI updatePredInfo_nid_postfix(void* codec, void* macroblock, std::size_t column, std::int32_t format);
 
 int APS5_VABI AllocateCodingContextDec_nid_postfix();
 int APS5_VABI CloseWS_List_nid_postfix();
@@ -120,7 +125,6 @@ int APS5_VABI getBit32_SB_nid_postfix();
 int APS5_VABI getBit32_nid_postfix();
 int APS5_VABI getBool16_nid_postfix();
 int APS5_VABI getByteRead_SB_nid_postfix();
-int APS5_VABI getDCACPredMode_nid_postfix();
 int APS5_VABI getPosRead_nid_postfix();
 int APS5_VABI getSizeRead_nid_postfix();
 int APS5_VABI getSizeWrite_nid_postfix();
@@ -135,13 +139,9 @@ int APS5_VABI putBit16z_nid_postfix();
 int APS5_VABI putBit32_nid_postfix();
 int APS5_VABI remapQP_nid_postfix();
 int APS5_VABI setBitIOPointers_nid_postfix();
-int APS5_VABI setUniformQuantizer_nid_postfix();
 int APS5_VABI slideOneMBRow_nid_postfix();
 void APS5_VABI swapMRPtr_nid_postfix(void* codec);
 int APS5_VABI termPostProc_nid_postfix();
 int APS5_VABI updatePostProcInfo_nid_postfix();
-int APS5_VABI updatePredInfo_nid_postfix();
-int APS5_VABI useDCQuantizer_nid_postfix();
-int APS5_VABI useLPQuantizer_nid_postfix();
 
 }
