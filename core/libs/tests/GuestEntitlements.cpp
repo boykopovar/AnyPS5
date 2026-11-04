@@ -125,21 +125,27 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(directory);
     {
         std::ofstream ini(file, std::ios::binary);
-        ini << "# owned add-ons\nFIRSTADDON0000\n  SECONDADDON ; second\n";
+        ini << "# owned add-ons\nFIRSTADDON0000\n  SECONDADDON ; second\nSIXTEENCHARLABEL\n";
         Require(static_cast<bool>(ini));
     }
     SetEntitlements(file);
     NpEntitlementAccessAddcontEntitlementInfo list[3]{};
     std::uint32_t hits = 0;
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, list, 3, &hits) == 0);
-    Require(hits == 2);
+    Require(hits == 3);
     Require(std::strcmp(list[0].entitlement_label.data, "FIRSTADDON0000") == 0);
     Require(std::strcmp(list[1].entitlement_label.data, "SECONDADDON") == 0);
+    Require(std::strcmp(list[2].entitlement_label.data, "SIXTEENCHARLABEL") == 0);
     NpUnifiedEntitlementLabel label{};
     std::memcpy(label.data, "SECONDADDON", 11);
     NpEntitlementAccessAddcontEntitlementInfo info{};
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &label, &info) == 0);
     Require(std::strcmp(info.entitlement_label.data, "SECONDADDON") == 0 && info.package_type == 3 && info.download_status == 4);
+    NpUnifiedEntitlementLabel sixteen{};
+    std::memcpy(sixteen.data, "SIXTEENCHARLABEL", 16);
+    NpEntitlementAccessAddcontEntitlementInfo sixteenInfo{};
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &sixteen, &sixteenInfo) == 0);
+    Require(std::strcmp(sixteenInfo.entitlement_label.data, "SIXTEENCHARLABEL") == 0 && sixteenInfo.package_type == 3 && sixteenInfo.download_status == 4);
     const auto log = CaptureStderr(QueryUnlistedTwiceAndListedOnce);
     Require(Occurrences(log, "[entitlements] the title asked for the add-on LOGGEDADDON, which ") == 1);
     Require(log.find(file.filename().string() + " does not list, so it is reported as not installed\n") != std::string::npos);
