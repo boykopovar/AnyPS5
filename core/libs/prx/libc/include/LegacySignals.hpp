@@ -21,6 +21,8 @@ void RegisterSigvec_nid_no_patch(LegacySigaction_nid_no_patch action);
 int LegacySigvec_nid_no_patch(int signal, const GuestSignalVector* replacement, GuestSignalVector* previous);
 int APS5_VABI sigvec_nid_disambig1(int signal, const GuestSignalVector* replacement, GuestSignalVector* previous);
 int APS5_VABI sigvec_nid_postfix(int signal, const GuestSignalVector* replacement, GuestSignalVector* previous);
+int APS5_VABI sigblock_nid_postfix(int mask);
+int APS5_VABI sigsetmask_nid_postfix(int mask);
 
 }
 

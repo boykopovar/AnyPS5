@@ -259,6 +259,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_signal_list PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
+    add_test_executable(guest_sigmask_tests ${LIBS_INCLUDE_DIR}/tests/GuestSigmask.cpp)
+    target_include_directories(guest_sigmask_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sigmask_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_sigmask_tests)
+    add_test(NAME guest_sigmask COMMAND guest_sigmask_tests)
+    set_tests_properties(guest_sigmask PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_sigmask PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
