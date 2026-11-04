@@ -42,6 +42,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pad_controller_queries PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
     endif()
+    add_test_executable(guest_pad_firmware_checks_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadFirmwareChecks.cpp)
+    target_include_directories(guest_pad_firmware_checks_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pad_firmware_checks_tests PRIVATE libScePad libc)
+    configure_windows_unwind(guest_pad_firmware_checks_tests)
+    add_test(NAME guest_pad_firmware_checks COMMAND guest_pad_firmware_checks_tests)
+    if(WIN32)
+        set_tests_properties(guest_pad_firmware_checks PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
+    endif()
 endif()
 
 if(BUILD_TESTING)

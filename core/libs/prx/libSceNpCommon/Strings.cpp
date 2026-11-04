@@ -1,4 +1,5 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <cstddef>
@@ -229,8 +230,8 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
 
 int CopyToBuffer(char* dst, std::size_t size, const char* src, std::size_t length) {
     if (size < length + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-    std::strncpy(dst, src, size - 1);
-    dst[size - 1] = '\0';
+    std::memcpy(dst, src, length);
+    std::memset(dst + length, 0, size - length);
     return 0;
 }
 
@@ -748,7 +749,7 @@ int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std:
                 *jid = {};
                 return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
             }
-            std::memcpy(buffer + used, pieces[i].data(), pieces[i].size());
+            std::copy(pieces[i].begin(), pieces[i].end(), buffer + used);
             buffer[used + pieces[i].size()] = '\0';
             copies[i] = buffer + used;
         }

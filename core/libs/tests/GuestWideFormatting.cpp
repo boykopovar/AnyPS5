@@ -234,6 +234,15 @@ static void CheckSwprintf() {
     Require(swprintf_nid_postfix(buffer, 8, u"[%3s]", "A\xc0\x80") == 5 && buffer == std::u16string(u"[  A]"), "a field with characters is padded");
     errno = 0;
     Require(swprintf_nid_postfix(buffer, 8, u"[%.0s]", "\x80") == -1 && errno == 86, "precision zero still decodes the first character");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"x%cy", 0x80) == -1 && errno == 86 && buffer == std::u16string(u"x"), "%c of a continuation byte fails with EILSEQ");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%3c]", 0xe9) == -1 && errno == 0 && buffer == std::u16string(u"["), "%c of a lead byte fails without errno");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"%lc|%c", 0x20ac, 0xff) == -1 && errno == 86 && buffer == std::u16string(u"\u20ac|"), "%c keeps the output before it");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%c]", 0x141) == 3 && buffer == std::u16string(u"[A]"), "%c converts the low byte");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%c]", -1) == -1 && errno == 0, "%c of EOF fails without errno");
     Require(swprintf_nid_postfix(buffer, 8, u"") == 0 && buffer[0] == 0, "swprintf empty format");
     for (auto& unit : buffer) unit = u'x';
     Require(swprintf_nid_postfix(buffer, 3, u"%ls", u"abcd") < 0, "swprintf truncation result");
