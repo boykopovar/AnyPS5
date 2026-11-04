@@ -152,11 +152,11 @@ struct NarrowFmask {
     std::uint32_t samples;
     std::uint32_t fragments;
     std::uint32_t sampleBits;
-    std::uint32_t identity;
-    std::uint32_t expandedIdentity;
+    std::uint64_t identity;
+    std::uint64_t expandedIdentity;
 };
 
-constexpr std::array<NarrowFmask, 8> NarrowFormats{{
+constexpr std::array<NarrowFmask, 10> NarrowFormats{{
     {156u, 5u, 1u, 2u, 1u, 1u, 0x02u, 0x80u},
     {157u, 5u, 1u, 4u, 1u, 1u, 0x0eu, 0x8880u},
     {158u, 5u, 1u, 8u, 1u, 1u, 0xfeu, 0x88888880u},
@@ -165,6 +165,8 @@ constexpr std::array<NarrowFmask, 8> NarrowFormats{{
     {161u, 5u, 1u, 4u, 4u, 2u, 0xe4u, 0x3210u},
     {163u, 11u, 2u, 8u, 2u, 2u, 0xaaa4u, 0x88888810u},
     {165u, 20u, 4u, 8u, 4u, 4u, 0x44443210u, 0x88883210u},
+    {162u, 11u, 2u, 16u, 1u, 1u, 0xfffeull, 0x8888888888888880ull},
+    {164u, 20u, 4u, 16u, 2u, 2u, 0xaaaaaaa4ull, 0x8888888888888810ull},
 }};
 
 std::uint32_t Stored(const NarrowFmask& fmask, std::uint32_t x, std::uint32_t y, std::uint32_t layer, std::uint32_t round) {
@@ -173,11 +175,11 @@ std::uint32_t Stored(const NarrowFmask& fmask, std::uint32_t x, std::uint32_t y,
     return fmask.bytes == 4u ? value : value & ((1u << (fmask.bytes * 8u)) - 1u);
 }
 
-std::uint32_t Expanded(const NarrowFmask& fmask, std::uint32_t stored) {
-    std::uint32_t expanded = 0;
+std::uint64_t Expanded(const NarrowFmask& fmask, std::uint32_t stored) {
+    std::uint64_t expanded = 0;
     for (std::uint32_t sample = 0; sample < fmask.samples; ++sample) {
         const auto fragment = (stored >> (sample * fmask.sampleBits)) & ((1u << fmask.sampleBits) - 1u);
-        expanded |= (fragment >= fmask.fragments ? 8u : fragment) << (sample * 4u);
+        expanded |= static_cast<std::uint64_t>(fragment >= fmask.fragments ? 8u : fragment) << (sample * 4u);
     }
     return expanded;
 }
@@ -185,7 +187,7 @@ std::uint32_t Expanded(const NarrowFmask& fmask, std::uint32_t stored) {
 void RunNarrow(AgcDriver::VulkanDevice& device, const NarrowFmask& fmask, bool layered, bool registration) {
     auto code = Code;
     if (layered) code[4] = 0xf0001f28u;
-    Require(Expanded(fmask, fmask.identity) == fmask.expandedIdentity, "FMASK " + std::to_string(fmask.format) + " reference does not expand PAL's identity value");
+    Require(Expanded(fmask, static_cast<std::uint32_t>(fmask.identity)) == fmask.expandedIdentity, "FMASK " + std::to_string(fmask.format) + " reference does not expand PAL's identity value");
     for (std::uint32_t round = 0; round < 2u; ++round) {
         FillWith(layered, 0u, fmask.surfaceFormat, fmask.bytes, [&](std::uint32_t x, std::uint32_t y, std::uint32_t layer) { return Stored(fmask, x, y, layer, round); });
         for (std::uint32_t lane = 0; lane < Threads; ++lane) {
@@ -195,12 +197,13 @@ void RunNarrow(AgcDriver::VulkanDevice& device, const NarrowFmask& fmask, bool l
             Input[lane * 4u + 3u] = 0u;
         }
         Output.fill(Sentinel);
-        const auto shader = Compile(device, code, Image(layered, 0u, 4u, fmask.format), registration);
+        const auto shader = Compile(device, code, Image(layered, 0u, fmask.samples > 8u ? 0xfacu : 4u, fmask.format), registration);
         device.Dispatch(shader, 1u, 1u, 1u);
         device.WaitIdle();
         for (std::uint32_t lane = 0; lane < Threads; ++lane) {
             const auto stored = Stored(fmask, Input[lane * 4u], Input[lane * 4u + 1u], layered ? Input[lane * 4u + 2u] + 1u : 0u, round);
-            const std::array expected{Expanded(fmask, stored), 0u, 0u, 0u};
+            const auto expanded = Expanded(fmask, stored);
+            const std::array<std::uint32_t, 4> expected{static_cast<std::uint32_t>(expanded), static_cast<std::uint32_t>(expanded >> 32u), 0u, 0u};
             for (std::uint32_t component = 0; component < 4u; ++component) Require(Output[lane * 4u + component] == expected[component], "FMASK " + std::to_string(fmask.format) + " load did not expand its mapping: round " + std::to_string(round) + ", lane " + std::to_string(lane) + ", component " + std::to_string(component) + ", read " + std::to_string(Output[lane * 4u + component]) + ", expected " + std::to_string(expected[component]));
         }
         Require(std::all_of(Output.begin() + Threads * 4u, Output.end(), [](auto value) { return value == Sentinel; }), "FMASK load wrote outside its output");
@@ -219,7 +222,7 @@ int main() {
                 for (const auto& fmask : NarrowFormats) RunNarrow(*device, fmask, layered, registration);
             }
         }
-        std::cout << "FMASK image reads passed: 104 dispatches, 13312 component checks, 8 compression refusals\n";
+        std::cout << "FMASK image reads passed: 120 dispatches, 15360 component checks, 8 compression refusals\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
