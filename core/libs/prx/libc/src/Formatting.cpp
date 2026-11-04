@@ -884,7 +884,7 @@ static int FormatSecure(const char* badArgument, const char* badFormat, char* bu
 }
 
 static int FormatTerminated(const char* badArgument, const char* badFormat, const char* overflow, char* buffer, size_t size, const char* format, const void* args) {
-    if (buffer == nullptr || size == 0 || size > secureSizeMax) {
+    if (buffer == nullptr || size == 0 || size > SonyRsizeMax) {
         ReportConstraint(badArgument);
         return 0;
     }
