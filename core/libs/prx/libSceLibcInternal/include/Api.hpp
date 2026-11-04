@@ -53,6 +53,7 @@ int APS5_VABI utime_nid_postfix(const char* path, const LibcUtimbuf* times);
 int APS5_VABI getopt_nid_postfix(int count, char* const* arguments, const char* options);
 int APS5_VABI getopt_long_nid_postfix(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index);
 int APS5_VABI getopt_long_only_nid_postfix(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index);
+std::uint16_t APS5_VABI __truncdfhf2_nid_postfix(double value);
 int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address);
 std::uint32_t APS5_VABI inet_addr_nid_postfix(const char* text);
 char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
