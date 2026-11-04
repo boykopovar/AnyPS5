@@ -408,10 +408,6 @@ int APS5_VABI WriteWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WriteWS_List_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const void* buffer, std::size_t size) {
     if (!stream) APS5_INVALID_ARG_EX;
     auto& state = stream->state;
