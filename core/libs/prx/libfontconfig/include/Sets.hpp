@@ -24,5 +24,6 @@ void APS5_VABI FcFontSetDestroy(FcFontSet* set);
 FcObjectSet* APS5_VABI FcObjectSetBuild(const char* first, ...);
 void APS5_VABI FcObjectSetDestroy(FcObjectSet* set);
 void APS5_VABI FcPatternDestroy(FcPattern* pattern);
+FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern* pattern);
 
 }

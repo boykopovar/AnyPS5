@@ -1,5 +1,6 @@
 #include "prx/libfontconfig/include/InventoryExports.hpp"
 #include "prx/libfontconfig/include/Sets.hpp"
+#include "prx/libfontconfig/include/Sets.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 
@@ -65,7 +66,7 @@ int APS5_VABI FcPatternAddDouble() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcPatternDuplicate() {
+FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern*) {
     NotImplemented_nid_no_patch(__func__);
 }
 

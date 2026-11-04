@@ -1,9 +1,9 @@
 # libfontconfig technical debt
 
-### Functional set operations
+### Functional
 
-- [Font sets and object sets](../../../core/libs/prx/libfontconfig/Sets.cpp) follow Fontconfig 2.15.0 [fcfs.c](https://github.com/fontconfig/fontconfig/blob/72b9a48f57de6204d99ce1c217b5609ee92ece9b/src/fcfs.c) and [fclist.c](https://github.com/fontconfig/fontconfig/blob/72b9a48f57de6204d99ce1c217b5609ee92ece9b/src/fclist.c) for ownership, copies, and allocations in blocks of 32 fonts or four object names. Console ABI and version are unverified. Native tests cover 300 patterns and duplicate names. `FcFontSetAdd(NULL, ...)` returns false rather than dereferencing null. Object-name order depends on pointer allocation addresses and is not portable; only membership is compared.
-- [Populated font-set destruction](../../../core/libs/prx/libfontconfig/Sets.cpp) calls `FcPatternDestroy`, which remains an unconditional throwing stub in this branch. [PR #14435](https://github.com/boykopovar/AnyPS5/pull/14435) implements the pattern destructor; until it lands, only empty-set destruction is usable at runtime. The isolated tests inject a typed destructor to check ownership.
+- [Font sets and object sets](../../../core/libs/prx/libfontconfig/Sets.cpp) are based on disassembly of firmware 13.42 `libfontconfig.sprx` (SHA-256 `74d7414445f8687c1d22a92fa3c994d2e5fa304e6699dc84dcc5459af7da8472`), not the stock desktop Fontconfig layout. Font-set capacity is stored in bytes, grows by sixteen pointers, and stops at 1024 entries; each insertion duplicates the caller's pattern. Object sets allocate their pointer arrays inline and preserve the original argument order with duplicated names. Host safety returns on null destroy and null add, where the firmware accesses pointers without such checks. Console runtime behavior beyond disassembly is not verified.
+- [Pattern-dependent font-set operations](../../../core/libs/prx/libfontconfig/Sets.cpp) require `FcPatternDuplicate` and `FcPatternDestroy`, which still throw in this branch. [PR #14435](https://github.com/boykopovar/AnyPS5/pull/14435) supplies the real pattern operations; until it lands, only empty-set lifecycle and object sets work at runtime. Source-linked tests supply typed pattern duplication/destruction mocks and check independent ownership, 1024-capacity bounds, and ordering.
 
 ### Callable exports
 

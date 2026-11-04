@@ -19,7 +19,6 @@ int APS5_VABI FcInitBringUptoDate();
 int APS5_VABI FcPatternGetString();
 int APS5_VABI FcFontRenderPrepare();
 int APS5_VABI FcPatternAddDouble();
-int APS5_VABI FcPatternDuplicate();
 int APS5_VABI FcFontMatch();
 int APS5_VABI FcPatternFilter();
 int APS5_VABI FcConfigCreate();
