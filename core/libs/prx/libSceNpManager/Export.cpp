@@ -1063,8 +1063,13 @@ int APS5_VABI sceNpGetUserIdByAccountId(uint64_t account_id, int* user_id) {
 }
 
 int APS5_VABI sceNpGetSandboxInfo(void* sandbox_info) {
-    (void)sandbox_info;
-    NotImplemented_nid_no_patch(__func__);
+    if (!sandbox_info) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    static constexpr char Platform[] = "RETAIL";
+    static constexpr char Environment[] = "LIVE";
+    auto* info = static_cast<char*>(sandbox_info);
+    std::memset(info, 0, 0x50);
+    std::memcpy(info, Platform, sizeof(Platform));
+    std::memcpy(info + 0x28, Environment, sizeof(Environment));
     return 0;
 }
 
