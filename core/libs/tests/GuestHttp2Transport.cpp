@@ -968,7 +968,7 @@ void RedirectFailures(int ssl) {
 
 void Success(int ssl, Mode mode, bool disableCa = false) {
     std::fprintf(stderr, "HTTP2 success scenario %d\n", static_cast<int>(mode));
-    Server server(mode, mode == Mode::Normal && !disableCa ? "localhost" : "127.0.0.1");
+    Server server(mode, "/another", 302, mode == Mode::Normal && !disableCa ? "localhost" : "127.0.0.1");
     Client client(ssl);
     if (disableCa) Require(sceHttp2SslDisableOption(client.tmpl, 0x20) == 0, "disable known CA check");
     if (mode == Mode::Normal && !disableCa) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify localhost certificate name");
@@ -1109,7 +1109,7 @@ void GzipFailure(int ssl, Mode mode, const char* message) {
 
 void Async(int ssl) {
     std::fprintf(stderr, "HTTP2 async scenario\n");
-    Server server(Mode::Normal, "localhost");
+    Server server(Mode::Normal, "/another", 302, "localhost");
     Client client(ssl);
     Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify async host name");
     client.Create(server.Url("localhost"));
@@ -1148,7 +1148,7 @@ void Async(int ssl) {
 
 void AsyncWithoutQueue(int ssl) {
     std::fprintf(stderr, "HTTP2 async without a kernel queue scenario\n");
-    Server server(Mode::Normal, "localhost");
+    Server server(Mode::Normal, "/another", 302, "localhost");
     Client client(ssl);
     Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify queueless async host name");
     client.Create(server.Url("localhost"));
@@ -1200,7 +1200,7 @@ struct AsyncQueue {
 
 void AsyncOptionalArguments(int ssl) {
     std::fprintf(stderr, "HTTP2 async optional arguments scenario\n");
-    Server server(Mode::Normal, "localhost");
+    Server server(Mode::Normal, "/another", 302, "localhost");
     Client client(ssl);
     Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify async optional host name");
     client.Create(server.Url("localhost"));
@@ -1230,7 +1230,7 @@ void AsyncOptionalArguments(int ssl) {
 
 void AsyncBlockingWait(int ssl) {
     std::fprintf(stderr, "HTTP2 async blocking wait scenario\n");
-    Server server(Mode::StallResponse, "localhost");
+    Server server(Mode::StallResponse, "/another", 302, "localhost");
     Client client(ssl);
     client.Create(server.Url("localhost"));
     AsyncQueue queue(client.request);
