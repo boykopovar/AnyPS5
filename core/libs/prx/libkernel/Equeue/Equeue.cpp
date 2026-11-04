@@ -843,9 +843,6 @@ int APS5_VABI sceKernelDeleteTimerEvent(KernelEqueue eq, int id) {
 }
 
 int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata) {
-    if (eq == 0) {
-        return EQUEUE_OK;
-    }
     KernelEqueueEvent event{};
     event.event.ident = static_cast<uintptr_t>(id);
     event.event.filter = EVFILT_AMPR;
@@ -868,9 +865,7 @@ int APS5_VABI sceKernelAddAmprEvent(KernelEqueue eq, int id, void* udata) {
             e->event.data = 0;
         }
     };
-    EqueueAddEvent_nid_postfix(eq, event);
-
-    return EQUEUE_OK;
+    return EqueueAddEvent_nid_postfix(eq, event);
 }
 
 int APS5_VABI sceKernelAddAmprSystemEvent(KernelEqueue eq, int id, void* udata) {
