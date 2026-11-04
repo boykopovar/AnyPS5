@@ -274,6 +274,19 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibcInternal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Sigvec.cpp)
+target_sources(libSceLibcInternal PRIVATE WideCtype.cpp)
+if(BUILD_TESTING)
+    add_test_executable(guest_libc_internal_wide_ctype_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcInternalWideCtype.cpp)
+    target_include_directories(guest_libc_internal_wide_ctype_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_internal_wide_ctype_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_libc_internal_wide_ctype_tests)
+    add_test(NAME guest_libc_internal_wide_ctype COMMAND guest_libc_internal_wide_ctype_tests)
+    set_tests_properties(guest_libc_internal_wide_ctype PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_internal_wide_ctype PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()
 
 if(BUILD_TESTING AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
     add_test_executable(guest_sigvec_modules_tests
