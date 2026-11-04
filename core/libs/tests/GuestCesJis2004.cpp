@@ -11,6 +11,7 @@ namespace {
 constexpr int invalidParameter = static_cast<int>(0x805C0001);
 constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
 constexpr int invalidEncode = static_cast<int>(0x805C0014);
+constexpr int outOfCodeSpace = static_cast<int>(0x805C0015);
 constexpr int unassignedCode = static_cast<int>(0x805C0020);
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -143,7 +144,36 @@ void CheckShiftJis() {
 
 }
 
+void CheckLevels() {
+    std::uint32_t hash = 0x811C9DC5u;
+    std::uint32_t assigned = 0;
+    for (std::uint32_t plane = 0; plane < 4; ++plane) {
+        for (std::uint32_t row = 0; row < 256; ++row) {
+            for (std::uint32_t cell = 0; cell < 256; ++cell) {
+                std::uint32_t level = 0xEEEEEEEE;
+                const int result = sceCesJisGetLevel(static_cast<std::uint8_t>(plane), static_cast<std::uint8_t>(row), static_cast<std::uint8_t>(cell), &level);
+                hash = (hash ^ (static_cast<std::uint32_t>(result) & 0xFF)) * 0x01000193u;
+                hash = (hash ^ (level & 0xFF)) * 0x01000193u;
+                if (result == 0) ++assigned;
+            }
+        }
+    }
+    Require(hash == 0xD41EFACBu && assigned == 11233);
+    std::uint32_t level = 0;
+    Require(sceCesJisGetLevel(1, 4, 2, &level) == 0 && level == 1);
+    Require(sceCesJisGetLevel(1, 48, 1, &level) == 0 && level == 2);
+    Require(sceCesJisGetLevel(1, 13, 1, &level) == 0 && level == 3);
+    Require(sceCesJisGetLevel(1, 4, 87, &level) == 0 && level == 3);
+    Require(sceCesJisGetLevel(1, 4, 92, &level) == unassignedCode && level == 3);
+    Require(sceCesJisGetLevel(2, 1, 1, &level) == 0 && level == 4);
+    Require(sceCesJisGetLevel(2, 2, 1, &level) == unassignedCode && level == 4);
+    Require(sceCesJisGetLevel(3, 1, 1, &level) == outOfCodeSpace && level == 0);
+    Require(sceCesJisGetLevel(1, 95, 1, &level) == outOfCodeSpace && level == 0);
+    Require(sceCesJisGetLevel(1, 0x21, 0x21, nullptr) == invalidParameter);
+}
+
 int main() {
+    CheckLevels();
     CheckEuc();
     CheckShiftJis();
     return 0;

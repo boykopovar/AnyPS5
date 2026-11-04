@@ -167,6 +167,20 @@ inline void PreciseSleepFromNanosWithSlack(std::uint64_t startNanos, unsigned lo
         while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &req, nullptr) == EINTR) {
         }
     }
+#elif defined(__APPLE__)
+    (void)allowLowSlack;
+    constexpr unsigned long long kSpinTailNanos = 100000ULL;
+    constexpr unsigned long long kMaxWakeMarginNanos = 5000000ULL;
+    if (nanos > kSpinTailNanos) [[unlikely]] {
+        const unsigned long long beforeTail = nanos - kSpinTailNanos;
+        const unsigned long long margin = beforeTail * 3ULL / 10ULL;
+        const unsigned long long sleepNanos = beforeTail - (margin < kMaxWakeMarginNanos ? margin : kMaxWakeMarginNanos);
+        struct timespec req;
+        req.tv_sec = static_cast<time_t>(sleepNanos / 1000000000ULL);
+        req.tv_nsec = static_cast<long>(sleepNanos % 1000000000ULL);
+        while (nanosleep(&req, &req) == -1 && errno == EINTR) {
+        }
+    }
 #else
     (void)allowLowSlack;
     constexpr unsigned long long kSpinTailNanos = 100000ULL;

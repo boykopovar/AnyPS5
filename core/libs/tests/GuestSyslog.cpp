@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -42,7 +43,7 @@ int main(int argc, char** argv) {
 #else
     Require(argc == 1);
 #endif
-    auto* captured = std::tmpfile();
+    auto* captured = TemporaryFile::Open();
     Require(captured != nullptr);
     std::fflush(stderr);
 #ifdef _WIN32

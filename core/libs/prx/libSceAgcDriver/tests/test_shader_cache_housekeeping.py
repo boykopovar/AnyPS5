@@ -28,7 +28,8 @@ def main():
         outside = sandbox / 'outside'
         outside.mkdir()
         environment = dict(os.environ, ANYPS5_NO_SHADER_CACHE='0',
-                           ANYPS5_SHADER_CACHE_DIR=str(sandbox / 'bootstrap'))
+                           ANYPS5_SHADER_CACHE_DIR=str(sandbox / 'bootstrap'),
+                           TZ='AAA+12' if time.localtime().tm_gmtoff >= 0 else 'AAA-12')
 
         def run():
             return subprocess.run([executable, '--housekeeping-safety'], cwd=outside,

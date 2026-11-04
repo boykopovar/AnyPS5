@@ -125,13 +125,52 @@ void Unsupported() {
     RequireThrows([&] { X509_STORE_free_nid_postfix(store); }, "null element array");
 }
 
+const char* Host(const LibreSslX509VerifyParam* param, int index) {
+    const auto* hosts = static_cast<const Stack*>(param->id->hosts);
+    return hosts && index < hosts->num ? hosts->data[index] : nullptr;
+}
+
+int HostCount(const LibreSslX509VerifyParam* param) {
+    const auto* hosts = static_cast<const Stack*>(param->id->hosts);
+    return hosts ? hosts->num : -1;
+}
+
+void Hosts() {
+    auto* store = X509_STORE_new_nid_postfix();
+    auto* param = store->param;
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "example.com", 0) == 1, "a terminated name is set");
+    Require(HostCount(param) == 1 && std::strcmp(Host(param, 0), "example.com") == 0, "the name is copied into a one-name list");
+    const auto* hosts = static_cast<const Stack*>(param->id->hosts);
+    Require(hosts->comp == nullptr && hosts->numAlloc == 4 && hosts->sorted == 0, "the host list is a plain stack");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "www.example.org.extra", 15) == 1, "a counted name is set");
+    Require(HostCount(param) == 1 && std::strcmp(Host(param, 0), "www.example.org") == 0, "set replaces the list and copies the counted bytes");
+    char unterminated[] = {'a', '.', 'b'};
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, unterminated, sizeof(unterminated)) == 1 && std::strcmp(Host(param, 0), "a.b") == 0,
+        "a counted name needs no terminator");
+    const char embedded[] = {'a', '\0', 'b'};
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, embedded, sizeof(embedded)) == 0, "an embedded NUL is refused");
+    Require(HostCount(param) == 1 && std::strcmp(Host(param, 0), "a.b") == 0, "a refused name keeps the list");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "", 0) == 1 && param->id->hosts == nullptr, "an empty name clears the list");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "c.d", 0) == 1, "a name after clearing");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 5) == 1 && param->id->hosts == nullptr, "a null name clears the list");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 0) == 1 && param->id->hosts == nullptr, "clearing an empty list");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "last.example", 0) == 1, "a name that the store frees");
+    RequireThrows([] { X509_VERIFY_PARAM_set1_host_nid_postfix(nullptr, "a", 0); }, "null verify parameters");
+    auto* id = param->id;
+    param->id = nullptr;
+    RequireThrows([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "verify parameters without an identity");
+    param->id = id;
+    X509_STORE_free_nid_postfix(store);
+}
+
 int allocations = 0;
 int callocs = 0;
 int frees = 0;
 int failCallocAt = 0;
+int failAllocationAt = 0;
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
-    ++allocations;
+    if (++allocations == failAllocationAt) return nullptr;
     return std::malloc(size);
 }
 
@@ -166,6 +205,24 @@ void Allocator() {
         Require(X509_STORE_new_nid_postfix() == nullptr, "a failed verify parameter allocation fails the store");
         Require(frees == allocations + failing - 1, "a failed store releases what it allocated");
     }
+    failCallocAt = 0;
+
+    store = X509_STORE_new_nid_postfix();
+    allocations = callocs = frees = 0;
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(store->param, "a.example", 0) == 1 && allocations == 3 && frees == 0,
+        "a first name allocates its copy, the stack and its array");
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(store->param, "b.example", 0) == 1 && allocations == 6 && frees == 3,
+        "a new name frees the old list");
+    allocations = frees = 0;
+    failAllocationAt = 1;
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(store->param, "c.example", 0) == 0 && store->param->id->hosts == nullptr && frees == 3,
+        "a failed copy leaves the list cleared");
+    allocations = frees = 0;
+    failAllocationAt = 2;
+    Require(X509_VERIFY_PARAM_set1_host_nid_postfix(store->param, "d.example", 0) == 0 && store->param->id->hosts == nullptr && frees == 1,
+        "a failed stack frees the copy");
+    failAllocationAt = 0;
+    X509_STORE_free_nid_postfix(store);
 }
 
 } // namespace
@@ -182,4 +239,5 @@ int main(int argc, char**) {
     References();
     Identity();
     Unsupported();
+    Hosts();
 }
