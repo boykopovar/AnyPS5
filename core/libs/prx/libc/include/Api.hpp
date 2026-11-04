@@ -1657,6 +1657,10 @@ long long APS5_VABI _Stollx_nid_postfix(const char* text, char** end, int base, 
 unsigned long long APS5_VABI _Stoullx_nid_postfix(const char* text, char** end, int base, int* error);
 std::uint64_t APS5_VABI _Stoulx_nid_postfix(const char* text, char** end, int base, int* error);
 std::int64_t APS5_VABI _Stolx_nid_postfix(const char* text, char** end, int base, int* error);
+long long APS5_VABI _ZNSt8__sce_v27_StollxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error);
+unsigned long long APS5_VABI _ZNSt8__sce_v28_StoullxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error);
+std::int64_t APS5_VABI _ZNSt8__sce_v26_StolxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error);
+std::uint64_t APS5_VABI _ZNSt8__sce_v27_StoulxEPKcPPciPi_nid_postfix(const char* text, char** end, int base, int* error);
 std::size_t APS5_VABI _ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPKS2__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
