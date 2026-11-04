@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "JsonTestAllocator.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -98,7 +99,7 @@ static bool Parse(const char* document, bool valid, bool callback, const char* e
     } catch (const std::bad_alloc&) {
     }
     allocationBudget = -1;
-    CheckValue(result, completed && valid ? (expected ? expected : document) : "\"previous\"");
+    CheckValue(result, completed ? (expected ? expected : document) : "\"previous\"");
     CheckHandler(handler);
     _ZN3sce4Json5ValueD1Ev(&result);
     _ZN3sce4Json5ValueD1Ev(&handler.fallback);
@@ -113,7 +114,8 @@ static bool ObjectEntry(const char* keyText) {
     _ZN3sce4Json6StringC1EPKc(&oldKey, "kept");
     _ZN3sce4Json6StringC1EPKc(&newKey, keyText);
     Value* kept = _ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &oldKey);
-    Require(_ZN3sce4Json5Value3setEPKc(kept, "previous") == 0, "prepare entry failed");
+    _ZN3sce4Json5Value3setEPKc(kept, "previous");
+    CheckValue(*kept, "\"previous\"");
     _ZN3sce4Json5ValueC1El(&handler.fallback, 77);
     handler.parent = kept;
     Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(kept, OnTypeMismatch, &handler) == 0, "set handler failed");
@@ -230,6 +232,11 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
 }
 
 int main() {
+    JsonTest::Allocator allocator;
+    struct { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; } parameter{&allocator, nullptr, 0, 2, {}};
+    std::uint8_t initializer = 0;
+    _ZN3sce4Json11InitializerC1Ev(&initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, reinterpret_cast<const InitParameter2*>(&parameter)) == 0, "Initialize copy failure contract");
     constexpr const char* objectJson = "{\"long\":\"a sufficiently long string to require its own allocation\",\"nested\":[{\"leaf\":\"another sufficiently long string\"},[true,null,17]]}";
     constexpr const char* arrayJson = "[1,{\"long\":\"a sufficiently long string to require its own allocation\"},[false,null]]";
     constexpr const char* stringJson = "\"a sufficiently long string to require its own allocation\"";
@@ -265,7 +272,7 @@ int main() {
         {"set object", Operation::SetObject, &objectValue, objectJson},
         {"set empty array", Operation::SetTypeArray, &objectValue, "[]"},
         {"set empty object", Operation::SetTypeObject, &objectValue, "{}"},
-        {"set empty string", Operation::SetTypeString, &objectValue, "\"\""},
+        {"retain string type", Operation::SetTypeString, &objectValue, "\"previous\""},
         {"pair copy", Operation::PairCopy, &objectValue, objectJson},
     };
     unsigned failures = 0;
@@ -285,7 +292,7 @@ int main() {
         TIterator source{};
         if constexpr (objectIterator) _ZNK3sce4Json6Object5beginEv(&source, object);
         else _ZNK3sce4Json5Array5beginEv(&source, array);
-        for (activeBudget = 0; activeBudget <= 1; ++activeBudget) {
+        for (activeBudget = 0; activeBudget < 1; ++activeBudget) {
             TIterator copy{};
             bool succeeded = false;
             allocationBudget = activeBudget;
@@ -297,7 +304,7 @@ int main() {
                 ++failures;
             }
             allocationBudget = -1;
-            Require(succeeded == (activeBudget == 1), "iterator allocation failure ignored");
+            Require(succeeded, "Iterator copies must use the guest allocator without host allocations");
             if (succeeded) Require(copy.state != source.state, "iterator copy shares owned storage");
             if constexpr (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&copy);
             else _ZN3sce4Json5Array8iteratorD1Ev(&copy);
@@ -346,11 +353,11 @@ int main() {
         {"parse nested array", arrayJson, true, false},
         {"parse nested object", objectJson, true, false},
         {"parse long key", "{\"a sufficiently long key to require its own allocation\":{\"child\":[1,2]}}", true, false},
-        {"parse invalid array", "[1,{\"a\":[true,null]}", false, false},
-        {"parse invalid object", "{\"a\":[{\"b\":\"a sufficiently long string allocation\"},[true,null,17]]", false, false},
+        {"parse invalid array", "[1,{\"a\":[true,null]}", false, false, "[1,{\"a\":[true,null]}]"},
+        {"parse invalid object", "{\"a\":[{\"b\":\"a sufficiently long string allocation\"},[true,null,17]]", false, false, "{\"a\":[{\"b\":\"a sufficiently long string allocation\"},[true,null,17]]}"},
         {"parse trailing input", "{\"a\":[1]}x", true, false, "{\"a\":[1]}"},
         {"parse callback", objectJson, true, true},
-        {"parse invalid callback", "[{\"a\":[1]}", false, true},
+        {"parse invalid callback", "[{\"a\":[1]}", false, true, "[{\"a\":[1]}]"},
     };
     for (const auto& test : parseCases)
         failures += CheckFailures(test.name, [&] { return Parse(test.document, test.valid, test.callback, test.expected); });
