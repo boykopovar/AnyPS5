@@ -477,6 +477,7 @@ struct TextureCounters {
     // ShaderResources::refreshOwnObjects).
     std::atomic<std::uint64_t> ownRefreshes{0};
     std::atomic<std::uint64_t> tablesReused{0};
+    std::atomic<std::uint64_t> tableEntryLookups{0};
     std::atomic<std::uint64_t> tablesReplayed{0};
     std::atomic<std::uint64_t> tablesResolved{0};
     std::atomic<std::uint64_t> tableWritesKept{0};
@@ -2033,6 +2034,9 @@ struct ReusedTable {
     std::vector<std::uint32_t> samplers;
     std::vector<std::string> bound;
     bool replayable = false;
+    std::vector<std::list<CachedTexture>::iterator> entries;
+    std::uint64_t erasures = 0;
+    bool entriesKnown = false;
 };
 
 constexpr std::size_t ReusedTableCount = 4;
@@ -2065,16 +2069,23 @@ bool TableCurrent(ReusedTable& table) {
     return GuestMemory::UnchangedSinceAll(table.queries);
 }
 
-bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<Texture>>& cached) {
+bool CachedTableTextures(ReusedTable& table, std::vector<std::shared_ptr<Texture>>& cached) {
     auto& cache = Textures();
     std::lock_guard lock(cache.mutex);
-    std::vector<std::list<CachedTexture>::iterator> entries;
-    entries.reserve(table.queries.size());
-    for (const auto& element : table.elements) {
-        if (element.rejected) continue;
-        const auto it = findTexture(cache, element.key);
-        if (it == cache.entries.end() || it->texture != element.texture.lock()) return false;
-        entries.push_back(it);
+    auto& entries = table.entries;
+    if (!table.entriesKnown || table.erasures != cache.erasures) {
+        table.entriesKnown = false;
+        TextureCounts().tableEntryLookups.fetch_add(1, std::memory_order_relaxed);
+        entries.clear();
+        entries.reserve(table.queries.size());
+        for (const auto& element : table.elements) {
+            if (element.rejected) continue;
+            const auto it = findTexture(cache, element.key);
+            if (it == cache.entries.end() || it->texture != element.texture.lock()) return false;
+            entries.push_back(it);
+        }
+        table.erasures = cache.erasures;
+        table.entriesKnown = true;
     }
     cached.reserve(entries.size());
     for (const auto it : entries) {
@@ -5769,7 +5780,7 @@ std::uint64_t SampledTexturesCleared() {
 
 ImageTableReuseCounts ImageTableReuses() {
     const auto& counters = TextureCounts();
-    return {counters.tablesReused.load(std::memory_order_relaxed) + counters.tablesReplayed.load(std::memory_order_relaxed), counters.tablesResolved.load(std::memory_order_relaxed), counters.tablesReplayed.load(std::memory_order_relaxed), counters.tableWritesKept.load(std::memory_order_relaxed), counters.tableWritesMade.load(std::memory_order_relaxed), counters.variantSurfaces.load(std::memory_order_relaxed), counters.variantSubstituted.load(std::memory_order_relaxed), counters.variantRejected.load(std::memory_order_relaxed)};
+    return {counters.tablesReused.load(std::memory_order_relaxed) + counters.tablesReplayed.load(std::memory_order_relaxed), counters.tablesResolved.load(std::memory_order_relaxed), counters.tablesReplayed.load(std::memory_order_relaxed), counters.tableWritesKept.load(std::memory_order_relaxed), counters.tableWritesMade.load(std::memory_order_relaxed), counters.variantSurfaces.load(std::memory_order_relaxed), counters.variantSubstituted.load(std::memory_order_relaxed), counters.variantRejected.load(std::memory_order_relaxed), counters.tableEntryLookups.load(std::memory_order_relaxed)};
 }
 
 void ShaderResources::finishImageTables() {

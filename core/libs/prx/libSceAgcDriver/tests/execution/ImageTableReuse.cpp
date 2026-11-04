@@ -290,6 +290,7 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
         return;
     }
     Expect(before, 2, 1, "three dispatches of one table in one epoch");
+    Require(AgcDriver::Graphics::ImageTableReuses().entryLookups - before.entryLookups == 1u, "image table reuse: a table reused twice while the texture cache dropped nothing looked its textures up again on the second reuse");
     if (std::getenv("APS5_NO_TABLE_REPLAY") == nullptr) Require(AgcDriver::Graphics::ImageTableReuses().replayed - before.replayed == 2u, "image table reuse: three dispatches of one table in one epoch did not replay the bound table twice");
     ExpectWrites(before, 3, 0, "three dispatches of one table in one epoch");
 
