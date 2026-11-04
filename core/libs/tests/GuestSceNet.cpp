@@ -60,8 +60,15 @@ static bool FailResolverLookup(const char* hostname, int family, std::vector<std
     return false;
 }
 
+static std::atomic<int> blockedResolverLookup{0};
+
 static bool LoopbackResolverLookup(const char* hostname, int family, std::vector<std::array<std::uint8_t, 16>>& addresses) {
-    if (hostname == nullptr || std::strcmp(hostname, "guest-sce-net.resolver-epoll") != 0 || family != AF_INET) return false;
+    if (hostname != nullptr && std::strcmp(hostname, "guest-sce-net.resolver-blocked") == 0) {
+        blockedResolverLookup = 1;
+        while (blockedResolverLookup == 1) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } else if (hostname == nullptr || std::strcmp(hostname, "guest-sce-net.resolver-epoll") != 0 || family != AF_INET) {
+        return false;
+    }
     addresses.push_back({127, 0, 0, 1});
     return true;
 }
@@ -782,7 +789,7 @@ static void CheckEmptyEpoll() {
 }
 
 static void CheckResolverEpoll() {
-    constexpr std::uint32_t in = 0x1, descid = 0x10000;
+    constexpr std::uint32_t in = 0x1, hup = 0x10, descid = 0x10000;
     constexpr int async = 0x1;
     ScopedResolverLookupOverride lookupOverride(LoopbackResolverLookup);
     const int resolver = sceNetResolverCreate("epoll-resolver", 0, 0);
@@ -830,6 +837,16 @@ static void CheckResolverEpoll() {
     Require(Failed(sceNetEpollControl(writer, 3, resolver, nullptr), 2));
     Require(sceNetEpollDestroy(writer) == 0);
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1);
+
+    auto aborted = std::async(std::launch::async, [resolver, &address] {
+        return sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-blocked", &address, 0, 0, async);
+    });
+    while (blockedResolverLookup != 1) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(sceNetResolverAbort(resolver, 0) == 0);
+    blockedResolverLookup = 0;
+    Require(aborted.get() == 0);
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == static_cast<int>(0x80410104u));
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == (in | descid | hup));
 
     Require(sceNetResolverDestroy(resolver) == 0);
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
