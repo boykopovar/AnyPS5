@@ -132,4 +132,13 @@ int main() {
         Require(BIO_free_nid_postfix(bio) == 1);
         BIO_meth_free_nid_postfix(method);
     }
+    {
+        auto* method = BIO_meth_new_nid_postfix(7, Name);
+        Require(BIO_meth_set_destroy_nid_postfix(method, &Destroy) == 1 && method->destroy == &Destroy);
+        auto* bio = BIO_new_nid_postfix(method);
+        Require(bio && destroyed == 0);
+        Require(BIO_free_nid_postfix(bio) == 1 && destroyed == 1);
+        BIO_meth_free_nid_postfix(method);
+        Require(liveBlocks == 0);
+    }
 }
