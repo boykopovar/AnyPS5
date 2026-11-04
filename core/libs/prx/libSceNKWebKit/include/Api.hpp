@@ -34,7 +34,6 @@ int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocalC2EPNS_19InspectorControl
 int APS5_VABI _ZN7WebCore23ScaleTransformOperation5blendEPKNS_18TransformOperationEdb();
 int APS5_VABI _ZN7WebCore14XMLHttpRequestD1Ev();
 int APS5_VABI _ZN3JSC20TypedArrayControllerC2Ev();
-int APS5_VABI _ZN7WebCore14StaticNodeListnaEmPv();
 int APS5_VABI _ZN3WTF21RefCountedLeakCounter16suppressMessagesEPKc();
 int APS5_VABI _ZN9Inspector26LayerTreeBackendDispatcherD0Ev();
 int APS5_VABI _ZN3JSC49throwConstructorCannotBeCalledAsFunctionTypeErrorEPNS_14JSGlobalObjectERNS_10ThrowScopeEPKc();
