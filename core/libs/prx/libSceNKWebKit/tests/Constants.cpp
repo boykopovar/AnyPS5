@@ -146,6 +146,12 @@ int main() {
     Require(_ZNK7WebCore6Quirks32isNeverRichlyEditableForTouchBarEv() == 0);
     Require(_ZNK7WebCore6Quirks49isTouchBarUpdateSupressedForHiddenContentEditableEv() == 0);
     Require(_ZNK7WebCore6Quirks50shouldIgnoreAriaForFastPathContentObservationCheckEv() == 0);
+    Require(_ZNK7WebCore6Quirks44shouldAvoidResizingWhenInputViewBoundsChangeEv() == 0);
+    Require(_ZNK7WebCore6Quirks47shouldAvoidScrollingWhenFocusedContentIsVisibleEv() == 0);
+    Require(_ZNK7WebCore6Quirks47shouldIgnoreContentObservationForSyntheticClickEb() == 0);
+    Require(_ZNK7WebCore6Quirks56shouldDispatchSyntheticMouseEventsWhenModifyingSelectionEv() == 0);
+    Require(_ZNK7WebCore6Quirks61shouldUseLegacySelectPopoverDismissalBehaviorInDataActivationEv() == 0);
+    Require(_ZNK7WebCore6Quirks62shouldLayOutAtMinimumWindowWidthWhenIgnoringScalingConstraintsEv() == 0);
     Require(_ZNK7WebCore8Document22touchEventHandlerCountEv() == 0);
     Require(_ZNK7bmalloc11IsoTLSEntry9alignmentEv() == static_cast<int>(0x00000008u));
     Require(_ZNK9Inspector15InspectorTarget13isProvisionalEv() == 0);

@@ -530,6 +530,30 @@ int APS5_VABI _ZNK7WebCore6Quirks50shouldIgnoreAriaForFastPathContentObservation
     return 0;
 }
 
+int APS5_VABI _ZNK7WebCore6Quirks44shouldAvoidResizingWhenInputViewBoundsChangeEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK7WebCore6Quirks47shouldAvoidScrollingWhenFocusedContentIsVisibleEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK7WebCore6Quirks47shouldIgnoreContentObservationForSyntheticClickEb() {
+    return 0;
+}
+
+int APS5_VABI _ZNK7WebCore6Quirks56shouldDispatchSyntheticMouseEventsWhenModifyingSelectionEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK7WebCore6Quirks61shouldUseLegacySelectPopoverDismissalBehaviorInDataActivationEv() {
+    return 0;
+}
+
+int APS5_VABI _ZNK7WebCore6Quirks62shouldLayOutAtMinimumWindowWidthWhenIgnoringScalingConstraintsEv() {
+    return 0;
+}
+
 int APS5_VABI _ZNK7WebCore8Document22touchEventHandlerCountEv() {
     return 0;
 }
