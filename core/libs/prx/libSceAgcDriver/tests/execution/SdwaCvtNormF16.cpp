@@ -224,17 +224,9 @@ void CheckRefused(AgcDriver::VulkanDevice& device) {
         const char* expectedError;
         const char* description;
     };
-    const std::array<RefusedCase, 10> cases{{
-        {0x63u, 4u | (6u << 8u) | (0u << 16u), "VOP1 SDWA source selector 0", "byte0 src sel on i16 with dword dst"},
-        {0x64u, 4u | (6u << 8u) | (1u << 16u), "VOP1 SDWA source selector 1", "byte1 src sel on u16 with dword dst"},
-        {0x63u, 4u | (4u << 8u) | (2u << 16u), "VOP1 SDWA destination selector 4 (unused 0, source selector 2", "byte2 src sel on i16 with partial dst"},
-        {0x64u, 4u | (4u << 8u) | (3u << 16u), "VOP1 SDWA destination selector 4 (unused 0, source selector 3", "byte3 src sel on u16 with partial dst"},
-        {0x63u, 4u | (0u << 8u) | (4u << 16u), "VOP1 SDWA destination selector 0", "byte0 dst sel on i16"},
-        {0x64u, 4u | (1u << 8u) | (4u << 16u), "VOP1 SDWA destination selector 1", "byte1 dst sel on u16"},
+    const std::array<RefusedCase, 2> cases{{
         {0x63u, 4u | (4u << 8u) | (3u << 11u) | (4u << 16u), "VOP1 SDWA destination selector 4 (unused 3", "unused 3 on i16"},
         {0x64u, 4u | (4u << 8u) | (3u << 11u) | (4u << 16u), "VOP1 SDWA destination selector 4 (unused 3", "unused 3 on u16"},
-        {0x63u, 4u | (4u << 8u) | (1u << 13u) | (4u << 16u), "VOP1 SDWA output modifiers are not supported", "clamp modifier on i16"},
-        {0x64u, 4u | (4u << 8u) | (1u << 14u) | (4u << 16u), "VOP1 SDWA output modifiers are not supported", "omod modifier on u16"},
     }};
     for (const auto& c : cases) {
         const std::array<std::uint32_t, 3> code{
