@@ -1050,6 +1050,42 @@ void VKAPI_PTR ReportBudget(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2*
     }
 }
 
+struct BudgetReportAgeProbe {
+    std::uint64_t budget = 8ull << 30u;
+    unsigned queries = 0;
+} budgetReportAge;
+
+void VKAPI_PTR ReportBudgetAge(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    ++budgetReportAge.queries;
+    auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
+    for (std::uint32_t heap = 0; heap < VK_MAX_MEMORY_HEAPS; ++heap) {
+        reported->heapBudget[heap] = budgetReportAge.budget;
+        reported->heapUsage[heap] = 0;
+    }
+}
+
+void budgetReportAgeTests(Context context) {
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    const auto heap = LargestDeviceLocalHeap(context.memory);
+    Require(heap.has_value(), "the budget report age fixture needs a device-local heap");
+    context.memory.memoryHeaps[*heap].size = std::max<VkDeviceSize>(context.memory.memoryHeaps[*heap].size, 16 * GiB);
+    context.memoryProperties2 = ReportBudgetAge;
+    Require(StorageTextureCacheBudget(context) == 4 * GiB, "the initial storage limit is not 4 GiB");
+    const auto queries = budgetReportAge.queries;
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    budgetReportAge.budget = 2 * GiB;
+    Require(SampledTextureCacheBudget(context) == 2 * GiB, "sampled did not use the reduced heap budget");
+    Require(budgetReportAge.queries == queries + 1, "reporting the storage limit issued an extra memory budget query");
+    Require(StorageTextureCacheBudget(context) == 4 * GiB, "reporting refreshed the still-active cached storage limit");
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    reported.heapBudget[*heap] = budgetReportAge.budget;
+    Require(StorageTextureBudget(context.memory, &reported, 0, 0) == GiB, "the fresh storage calculation does not differ from the active cached limit");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    Require(StorageTextureCacheBudget(context) == GiB, "storage did not refresh after its own cache interval");
+    Require(budgetReportAge.queries == queries + 2, "storage did not issue exactly one query when its cache interval expired");
+    std::puts("sampled budget report age tests passed");
+}
+
 std::uint64_t ExpectedBudget(const Context& context) {
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
@@ -1319,10 +1355,10 @@ int main(int argc, char** argv) {
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
         const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack";
 #ifdef _WIN32
-        if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
+        if (!memory && mode != "budget-report-age") _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
         if (std::getenv("APS5_TEMPLATE_AUDIT_MS") == nullptr) _putenv_s("APS5_TEMPLATE_AUDIT_MS", "250");
 #else
-        if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
+        if (!memory && mode != "budget-report-age") setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
         setenv("APS5_TEMPLATE_AUDIT_MS", "250", 0);
 #endif
         std::unique_ptr<Device> device;
@@ -1339,6 +1375,16 @@ int main(int argc, char** argv) {
             return 0;
         }
         auto context = device->GetContext();
+        if (mode == "budget-report-age") {
+            try {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                budgetReportAgeTests(context);
+                return 0;
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "FAIL: %s\n", error.what());
+                return 1;
+            }
+        }
         if (disableStorageImageMultisample) {
             PlaceholderImages placeholders(context);
             for (std::uint32_t heap = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;

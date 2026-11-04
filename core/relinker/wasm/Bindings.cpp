@@ -62,10 +62,10 @@ emscripten::val Convert(const emscripten::val& request, const emscripten::val& c
         for (unsigned index = 0; index < count; ++index) {
             const auto module = modules[index];
             const auto path = Io::NativePath(module["name"].as<std::string>());
-            if (path.is_absolute() || path.lexically_normal() != path || path.begin() == path.end() || *path.begin() != "sce_module") throw std::invalid_argument("Invalid module path");
+            if (path.is_absolute() || path.lexically_normal() != path || path.begin() == path.end() ||
+                (*path.begin() != "sce_module" && *path.begin() != "sce_modules" && *path.begin() != "prx")) throw std::invalid_argument("Invalid module path");
             input.Modules.push_back({Io::NativePath("/input") / path, ReadBytes(module["bytes"], remaining)});
         }
-        input.RuntimeDirectories.push_back("/input/sce_module");
         if (!request["icon"].isNull()) input.Icon = ReadBytes(request["icon"], remaining);
         Relinker::ConversionOptions options;
         options.Target = target == "windows" ? Relinker::TargetSystem::Windows : Relinker::TargetSystem::Linux;

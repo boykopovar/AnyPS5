@@ -1,11 +1,18 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAcm/include/InventoryExports.hpp"
 #include "prx/libSceAcm/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <bit>
 #include <mutex>
+#include <numeric>
 #include <unordered_set>
 #include <unordered_map>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -13,10 +20,75 @@ namespace {
 
 constexpr int SCE_ACM_ERROR_BAD_CONTEXT = static_cast<int>(0x81940002);
 constexpr int SCE_ACM_ERROR_BAD_POINTER = static_cast<int>(0x81940006);
+constexpr int SCE_ACM_ERROR_BATCH_FULL = static_cast<int>(0x81940009);
+constexpr int SCE_ACM_ERROR_ALIGNMENT = static_cast<int>(0x8194000A);
+constexpr std::size_t ReverbDescriptorSize = 0x280;
 
 std::mutex g_mutex;
 std::unordered_set<AcmContextId> g_contexts;
 std::atomic<uint32_t> g_nextId{1};
+
+struct ReverbEntry {
+    const void* samples;
+    std::uint32_t length;
+    std::uint32_t startOffset;
+    std::uint32_t total;
+    const void* metadata;
+    const void* filterMetadata;
+    void* workspace;
+    void* output;
+    float gain;
+    bool wideSamples;
+};
+
+std::uint64_t Address(const void* pointer) {
+    return reinterpret_cast<std::uintptr_t>(pointer);
+}
+
+int AppendReverbJob(AcmBatchInfo& batch, std::uint32_t blockSize, const ReverbEntry& input, const ReverbEntry* entries, std::uint32_t count) {
+    const auto offset = batch.offset;
+    const auto capacity = batch.buffer_size;
+    if (capacity < ReverbDescriptorSize || offset > capacity - ReverbDescriptorSize || capacity - ReverbDescriptorSize - offset < 40) return SCE_ACM_ERROR_BATCH_FULL;
+    std::array<std::uint32_t, 8> order{};
+    std::iota(order.begin(), order.begin() + count, 0u);
+    std::stable_sort(order.begin(), order.begin() + count, [entries](std::uint32_t left, std::uint32_t right) { return entries[left].length > entries[right].length; });
+    std::array<std::byte, ReverbDescriptorSize> descriptor{};
+    const auto put = [&descriptor](std::size_t position, auto value) { std::memcpy(descriptor.data() + position, &value, sizeof(value)); };
+    const auto putEntry = [&put](std::uint32_t slot, const ReverbEntry& entry, std::uint32_t length) {
+        put(8 * slot, Address(entry.samples));
+        put(0x48 + 4 * slot, length);
+        put(0x80 + 8 * slot, Address(entry.metadata));
+        put(0xC8 + 4 * slot, entry.startOffset);
+        put(0x100 + 8 * slot, Address(entry.filterMetadata));
+        put(0x148 + 4 * slot, entry.total);
+    };
+    std::uint32_t longest = 0;
+    std::uint32_t wideMask = input.wideSamples ? 1u : 0u;
+    bool hasMetadata = input.metadata || input.filterMetadata;
+    for (std::uint32_t position = 0; position < count; ++position) {
+        const auto& entry = entries[order[position]];
+        longest = std::max(longest, entry.length);
+        putEntry(position + 1, entry, entry.length);
+        descriptor[0x16C + order[position]] = static_cast<std::byte>(position);
+        wideMask |= (entry.wideSamples ? 1u : 0u) << (position + 1);
+        hasMetadata = hasMetadata || entry.metadata || entry.filterMetadata;
+        put(0x180 + 8 * position, Address(entry.workspace));
+        put(0x1C0 + 4 * position, entry.gain);
+        put(0x200 + 8 * position, Address(entry.output));
+    }
+    putEntry(0, input, longest);
+    put(0x174, 2 * blockSize);
+    put(0x178, wideMask);
+    put(0x17C, count + 1);
+    auto* buffer = static_cast<std::byte*>(batch.buffer);
+    const auto descriptorOffset = capacity - ReverbDescriptorSize;
+    std::memcpy(buffer + descriptorOffset, descriptor.data(), descriptor.size());
+    const std::array<std::uint64_t, 5> words{0x028000000000000D, Address(buffer + descriptorOffset), blockSize == 1024 || hasMetadata ? 0x1000Au : 0x1030Au, 0x10A, 0x20A};
+    std::memcpy(buffer + offset, words.data(), sizeof(words));
+    batch.offset = offset + sizeof(words);
+    batch.buffer_size = descriptorOffset;
+    return 0;
+}
 
 int EncodeTransforms(AcmBatchInfo* batch, bool inverse, std::int32_t transformSize, std::uint32_t transformCount, std::int32_t inputFormat, const void* const* inputs, std::int32_t outputFormat, void* const* outputs, std::int32_t flags) {
     const std::int32_t conflictingFlags = inverse ? 5 : 3;
@@ -100,6 +172,50 @@ int EncodeTransforms(AcmBatchInfo* batch, bool inverse, std::int32_t transformSi
 
 extern "C" {
 
+int APS5_VABI sceAcmChain_Audio3dPO1_Clear() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderObject() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_Activate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_Output() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcm_ConvReverb_SharedIr_2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO2_Activate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderPassthroughObject() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO2_RenderDelay() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmGetTelemetry() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcm_ConvReverb_SharedInput_2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_commands, size_t batch_size, AcmBatchError* batch_error, AcmBatchId* batch) {
     (void)batch_commands;
     (void)batch_size;
@@ -159,6 +275,80 @@ int APS5_VABI sceAcmContextDestroy(AcmContextId context) {
 }
 
 int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t mode, AcmReverbInput* input, std::uint32_t outputCount, const AcmReverbFilter* const* filters, const float* gains, const AcmReverbOutput* const* outputs) {
+    if (!batch || mode != 1 || !input || !filters) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto blockSize = input->blockSize;
+    if (blockSize != 128 && blockSize != 256 && blockSize != 512 && blockSize != 1024) return SCE_ACM_ERROR_BAD_POINTER;
+    for (std::uint32_t index = 0; index < outputCount; ++index) {
+        if (!filters[index] || filters[index]->blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
+    }
+    const auto blockCount = input->blockCount;
+    if (!input->history || blockCount == 0) return SCE_ACM_ERROR_BAD_POINTER;
+    input->currentBlock = (input->availableBlocks == 0 || input->currentBlock == 0 ? blockCount : input->currentBlock) - 1;
+    input->availableBlocks = std::min(input->availableBlocks + 1, blockCount);
+    const auto channelCount = input->channelCount;
+    if (channelCount == 0 || channelCount > 256 || !input->inputChannels || input->sampleFormat > 1) return SCE_ACM_ERROR_BAD_POINTER;
+    const bool wideSamples = input->sampleFormat == 0;
+    const std::uint32_t slotBytes = blockSize * (wideSamples ? 8 : 4);
+    const std::uint32_t current = input->currentBlock;
+    std::vector<const void*> sources(channelCount);
+    std::vector<void*> destinations(channelCount);
+    for (std::uint32_t channel = 0; channel < channelCount; ++channel) {
+        const auto* history = input->history[channel];
+        if (!history || history->blockMetadata || !history->samples || !input->inputChannels[channel]) return SCE_ACM_ERROR_BAD_POINTER;
+        const auto position = wideSamples ? channel : channelCount - 1 - channel;
+        sources[position] = input->inputChannels[channel];
+        destinations[position] = static_cast<std::byte*>(history->samples) + current * slotBytes;
+    }
+    AcmBatchInfo work = *batch;
+    if (const auto result = sceAcm_FFT(&work, static_cast<std::int32_t>(2 * blockSize), channelCount, 0, sources.data(), wideSamples ? 0 : 1, destinations.data(), 9)) return result;
+    if (outputCount == 0 || !outputs) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto headerOffset = work.offset;
+    if (headerOffset > work.buffer_size || work.buffer_size - headerOffset < 8) return SCE_ACM_ERROR_BATCH_FULL;
+    work.offset += 8;
+    const auto available = input->availableBlocks;
+    const auto start = current >= blockCount ? current - blockCount : current;
+    std::uint64_t flags = 0;
+    std::uint32_t smallestBlockCount = blockCount;
+    for (std::uint32_t channel = 0; channel < channelCount; ++channel) {
+        const ReverbEntry inputEntry{input->history[channel]->samples, available, start * slotBytes, blockCount * slotBytes, nullptr, nullptr, nullptr, nullptr, 0.0f, wideSamples};
+        flags |= std::uint64_t{1} << (wideSamples ? 21 : 20);
+        std::array<ReverbEntry, 8> entries{};
+        std::uint32_t entryCount = 0;
+        for (std::uint32_t outputIndex = 0; outputIndex < outputCount; ++outputIndex) {
+            const auto* filter = filters[outputIndex];
+            const auto* output = outputs[outputIndex];
+            const auto filterChannels = filter->channelCount;
+            if (!filter->channels || !output || !output->workspace || !output->samples || filter->blockSize != blockSize || output->blockSize != blockSize || filterChannels == 0 || output->channelCount != std::max(channelCount, filterChannels)) return SCE_ACM_ERROR_BAD_POINTER;
+            if (filterChannels != channelCount && channelCount != 1 && filterChannels != 1) return SCE_ACM_ERROR_BAD_POINTER;
+            if (Address(filter->blockMetadata) & 3) return SCE_ACM_ERROR_ALIGNMENT;
+            if (filter->sampleFormat > 1) return SCE_ACM_ERROR_BAD_POINTER;
+            const bool wideFilter = filter->sampleFormat == 0;
+            flags |= (filterChannels != 1 && channelCount == 1 ? std::uint64_t{1} << 17 : 0) | (filterChannels == 1 && channelCount != 1 ? std::uint64_t{1} << 18 : 0) | (filterChannels == channelCount ? std::uint64_t{1} << 19 : 0) | (std::uint64_t{1} << (wideFilter ? 23 : 22)) | (filter->blockMetadata ? std::uint64_t{1} << 27 : 0) | (std::uint64_t{1} << (filterChannels == 1 ? 39 : (0x47 - std::countl_zero(filterChannels - 1)) & 63));
+            smallestBlockCount = std::min(smallestBlockCount, filter->blockCount);
+            const auto first = filterChannels == channelCount ? channel : 0;
+            const auto last = filterChannels == channelCount ? channel + 1 : channelCount == 1 ? filterChannels : 1;
+            const auto length = std::min(available, filter->blockCount);
+            for (auto filterChannel = first; filterChannel < last; ++filterChannel) {
+                const auto outputChannel = channel - first + filterChannel;
+                const auto* block = filter->channels[filterChannel];
+                if (!block || !block->samples || !output->workspace[outputChannel] || !output->samples[outputChannel]) return SCE_ACM_ERROR_BAD_POINTER;
+                if ((Address(block->blockMetadata) & 3) || ((Address(block->samples) | Address(output->workspace[outputChannel]) | Address(output->samples[outputChannel])) & 127)) return SCE_ACM_ERROR_ALIGNMENT;
+                if (block->blockMetadata) flags |= std::uint64_t{1} << 26;
+                entries[entryCount++] = {block->samples, length, 0, 0xFFFFFFFF, block->blockMetadata, filter->blockMetadata, output->workspace[outputChannel], output->samples[outputChannel], gains ? gains[outputIndex] : 1.0f, wideFilter};
+                if (entryCount == entries.size()) {
+                    if (const auto result = AppendReverbJob(work, blockSize, inputEntry, entries.data(), entryCount)) return result;
+                    entryCount = 0;
+                }
+            }
+        }
+        if (entryCount) {
+            if (const auto result = AppendReverbJob(work, blockSize, inputEntry, entries.data(), entryCount)) return result;
+        }
+    }
+    flags |= (std::uint64_t{std::min(outputCount - 1, 15u)} << 29) | (std::uint64_t{1} << ((64 - std::countl_zero(channelCount)) & 63)) | (std::uint64_t{std::min(smallestBlockCount, 7u)} << 45);
+    const std::uint64_t header = ((flags & 0xFFFF) ? std::uint64_t{1} << 63 : flags) | ((0x0B + static_cast<std::uint64_t>(std::countr_zero(blockSize >> 7))) << 8);
+    std::memcpy(static_cast<std::byte*>(work.buffer) + headerOffset, &header, sizeof(header));
+    *batch = work;
     return 0;
 }
 
@@ -210,7 +400,12 @@ int APS5_VABI sceAcm_Panner(AcmBatchInfo* batch, std::uint32_t sourceCount, cons
 }
 
 int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!batch || priority >= 4) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto offset = batch->offset;
+    if (offset > batch->buffer_size || batch->buffer_size - offset < 8) return static_cast<int>(0x81940009);
+    const std::uint64_t job = 0x10 | (static_cast<std::uint64_t>(priority) << 8);
+    std::memcpy(static_cast<std::byte*>(batch->buffer) + offset, &job, sizeof(job));
+    batch->offset = offset + sizeof(job);
     return 0;
 }
 
@@ -227,5 +422,34 @@ int APS5_VABI sceAcmBatchJobNotification() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9+f3tPdeyP0", libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch);
+
+int APS5_VABI libSceAcmUnknown_DvsnlQr4yyk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DvsnlQr4yyk", libSceAcmUnknown_DvsnlQr4yyk_nid_no_patch);
+
+int APS5_VABI libSceAcmUnknown_PLNywpi1zR4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PLNywpi1zR4", libSceAcmUnknown_PLNywpi1zR4_nid_no_patch);
+
+int APS5_VABI libSceAcmUnknown_YpYvibqaqz0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("YpYvibqaqz0", libSceAcmUnknown_YpYvibqaqz0_nid_no_patch);
+
+int APS5_VABI libSceAcmUnknown_ngDRON91_plus__minus_Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ngDRON91+-Y", libSceAcmUnknown_ngDRON91_plus__minus_Y_nid_no_patch);
 
 }
