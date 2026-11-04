@@ -582,9 +582,7 @@ int APS5_VABI sceSystemServicePowerTick(void) {
 }
 
 int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
- if (event == nullptr) {
-  return SYSTEM_SERVICE_ERROR_PARAMETER;
- }
+ (void)event;
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
 
