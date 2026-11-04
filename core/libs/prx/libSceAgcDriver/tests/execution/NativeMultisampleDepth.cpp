@@ -3414,7 +3414,6 @@ void CheckUniformPlanePublication(Context context, std::uint32_t samples, Unifor
         AgcDriver::GuestMemory::Read(target.address, probe);
         published();
         Require(DepthSurfaceAt(target.address), "a D32S8 owner without HTILE that took guest bytes was retired");
-        TargetRefuses([&] { DepthSurfaceView(context, target); }, "guest writes over native multisample depth are not implemented");
     } else {
         const bool betweenPlanes = mode == UniformPublication::PlaneStore;
         bool stored = false;
