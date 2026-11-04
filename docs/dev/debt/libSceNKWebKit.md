@@ -12,6 +12,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 ### Functional
 
+- [WKSessionStateCreateFromData and WKSessionStateCopyData](../../../core/libs/prx/libSceNKWebKit/src/SessionState.cpp) (libSceNKWebKit) - wrap and expose raw session state data without parsing or validating WebKit back-forward list history contents. Value objects follow the pinned WebKit source; console execution and ABI are unverified.
+
 - [Constant-return exports](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 137 exports answer with a fixed value in the PS5 11.00 module: 111 execute `xor eax,eax; ret`, 13 `mov eax,imm32; ret` and 13 `mov al,1; ret` (addresses and bodies from the 11.00 `libSceNKWebKit.sprx`, SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`; NIDs recomputed from the declared names). The 124 EAX-writing bodies measure the 32-bit return; the 13 `mov al,1` bodies write only the low byte, so for them only AL is measured and the upper bits are unspecified. The declared prototypes stay the no-parameter `int` placeholders, so no other width, pointer or floating-point return is claimed. Only 11.00 was measured.
 - [Security origins](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKSecurityOriginCopyDatabaseIdentifier` still throws pending `encodeForFileName` (#14858). `WKSecurityOriginCreateFromString` and `WKSecurityOriginCreateFromDatabaseIdentifier` still throw; URL parsing and default-port normalization (#13766) are not wired into origin creation. Value objects follow [the pinned WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source); console execution and ABI are unverified.
 
@@ -748,8 +750,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKSendDisplayConfigurationChangedMessageForTesting` | `CQsllLq8d7I` |
 | `WKSerializedScriptValueCreate` | `10fsdhg9448` |
 | `WKSerializedScriptValueDeserialize` | `GzcqLy9vAYY` |
-| `WKSessionStateCopyData` | `Uybzrh+1nJE` |
-| `WKSessionStateCreateFromData` | `AMrPlFNJec8` |
 | `WKTextCheckerSetTestingMode` | `uhbwdrVWKnk` |
 | `WKURLCopyHostName` | `eL7PAmyp2fs` |
 | `WKURLCopyLastPathComponent` | `zjB-cbY-OcE` |
