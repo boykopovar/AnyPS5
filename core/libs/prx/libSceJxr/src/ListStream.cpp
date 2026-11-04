@@ -30,6 +30,12 @@ std::uint8_t* PacketAt(std::uintptr_t buffer, const char* function) {
     return reinterpret_cast<std::uint8_t*>(buffer);
 }
 
+std::uint8_t* Next(const std::uint8_t* link) {
+    std::uint8_t* next;
+    std::memcpy(&next, link, sizeof(next));
+    return next;
+}
+
 }
 
 extern "C" {
@@ -53,6 +59,28 @@ std::int64_t APS5_VABI WriteWS_List_nid_postfix(Jxr::Stream* stream, const void*
         std::memcpy(PacketAt(state[Buffer], __func__) - sizeof(void*), &link, sizeof(link));
         state[Buffer] = reinterpret_cast<std::uintptr_t>(link + sizeof(void*));
         state[Capacity] += PacketLength;
+        state[Position] = 0;
+        ++state[Packets];
+    }
+    return Success;
+}
+
+std::int64_t APS5_VABI ReadWS_List_nid_postfix(Jxr::Stream* stream, void* data, std::size_t size) {
+    auto& state = State(stream, __func__);
+    if (state[Position] + size < state[Position]) return BufferOverflow;
+    if (state[Capacity] < state[Position] + PacketLength * state[Packets] + size)
+        size = state[Capacity] - state[Position] - PacketLength * state[Packets];
+    if (state[Position] > PacketLength) throw std::invalid_argument("ReadWS_List: position beyond the packet");
+    if (size && !data) throw std::invalid_argument("ReadWS_List: null destination");
+    auto* target = static_cast<std::uint8_t*>(data);
+    while (size) {
+        const std::size_t chunk = std::min(PacketLength - state[Position], size);
+        if (chunk) std::memcpy(target, PacketAt(state[Buffer], __func__) + state[Position], chunk);
+        state[Position] += chunk;
+        target += chunk;
+        size -= chunk;
+        if (state[Position] != PacketLength) continue;
+        state[Buffer] = reinterpret_cast<std::uintptr_t>(Next(PacketAt(state[Buffer], __func__) - sizeof(void*))) + sizeof(void*);
         state[Position] = 0;
         ++state[Packets];
     }
