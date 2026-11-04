@@ -19,4 +19,8 @@ int main() {
     int payload = 0;
     bio.data = &payload;
     Require(BIO_get_data_nid_postfix(&bio) == &payload);
+    BIO_set_data_nid_postfix(&bio, nullptr);
+    Require(bio.data == nullptr);
+    BIO_set_data_nid_postfix(&bio, &payload);
+    Require(bio.data == &payload);
 }
