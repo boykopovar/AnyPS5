@@ -3348,7 +3348,7 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
-enum class ReuseCase { VertexRead, IndexRead, StorageTexture, CpuRead, DmaCopy, Rebind };
+enum class ReuseCase { VertexRead, IndexRead, StorageTexture, NewDepthTarget, CpuRead, DmaCopy, Rebind };
 void CheckReusePublication(Context context, ReuseCase use) {
     constexpr std::uint32_t samples = 4u;
     constexpr VkExtent2D extent{256u, 64u};
@@ -3417,6 +3417,13 @@ void CheckReusePublication(Context context, ReuseCase use) {
         alias.dstSelW = 5u;
         Require(CachedStorageSurface(context, alias) != nullptr, "a storage texture over a reused native depth owner's stencil page was not created");
     }
+    if (use == ReuseCase::NewDepthTarget) {
+        auto other = target;
+        other.extent = {128u, 64u};
+        const auto otherView = DepthSurfaceView(context, other);
+        Require(otherView != VK_NULL_HANDLE && otherView != view && DepthSurfacesSerial() == serial + 1u, "a new native depth attachment over a reused owner's planes did not import");
+        Require(DepthSurfaceAt(other.address), "a new native depth attachment over a reused owner's planes is not resident");
+    }
     const auto published = guestStencil();
     for (std::size_t offset = 0u; offset < stencilBytes; ++offset) {
         Require(published[offset] == (offset < 4096u ? held[offset] : host[offset]), "a reuse publication did not keep the guest's undecided stencil bytes and the host's decided ones");
@@ -3428,6 +3435,10 @@ void CheckReusePublication(Context context, ReuseCase use) {
                 Require(std::memcmp(reinterpret_cast<const void*>(target.address + depthLayout.Offset(x, y, 0u, sample)), &value, 4u) == 0, "a reuse publication did not publish the host's depth samples");
             }
         }
+    }
+    if (use != ReuseCase::NewDepthTarget) {
+        const auto before = DepthSurfacesSerial();
+        Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE && DepthSurfacesSerial() == before + 1u, "a reuse publication left its native depth owner resident");
     }
 }
 
@@ -3478,7 +3489,7 @@ int main(int argc, char** argv) {
             CheckDepthPublication(publishing, 4u, PublicationWrite::Completion, true);
             for (const auto write : {PublicationWrite::SameDepth, PublicationWrite::SameStencil, PublicationWrite::SameHtile, PublicationWrite::ChangedHull, PublicationWrite::Possible, PublicationWrite::ImportSameValue}) CheckDepthPublication(publishing, 4u, write, true);
             CheckDepthPublication(publishing, 4u, PublicationWrite::DccAcquisition, true);
-            for (const auto use : {ReuseCase::VertexRead, ReuseCase::IndexRead, ReuseCase::StorageTexture, ReuseCase::CpuRead, ReuseCase::DmaCopy, ReuseCase::Rebind}) CheckReusePublication(publishing, use);
+            for (const auto use : {ReuseCase::VertexRead, ReuseCase::IndexRead, ReuseCase::StorageTexture, ReuseCase::NewDepthTarget, ReuseCase::CpuRead, ReuseCase::DmaCopy, ReuseCase::Rebind}) CheckReusePublication(publishing, use);
             return 0;
         }
         CheckDrawFeedback();
