@@ -27,7 +27,7 @@ add_library(anyps5_http2_transport STATIC EXCLUDE_FROM_ALL Transport.cpp
     ${http2ZlibDir}/adler32.c ${http2ZlibDir}/crc32.c ${http2ZlibDir}/inffast.c
     ${http2ZlibDir}/inflate.c ${http2ZlibDir}/inftrees.c ${http2ZlibDir}/zutil.c)
 target_include_directories(anyps5_http2_transport PRIVATE ${LIBS_INCLUDE_DIR} ${http2ZlibDir})
-target_link_libraries(anyps5_http2_transport PRIVATE libSceNet libSceSsl libkernel libc nghttp2_static)
+target_link_libraries(anyps5_http2_transport PRIVATE libSceHttp libSceNet libSceSsl libkernel libc nghttp2_static)
 set_target_properties(anyps5_http2_transport PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(anyps5_http2_transport INTERFACE LINKER:--exclude-libs,libanyps5_http2_transport.a)
@@ -71,6 +71,24 @@ if(BUILD_TESTING)
         add_test(NAME guest_http2_dns_first COMMAND guest_http2_transport_tests --dns-first)
         set_tests_properties(guest_http2_dns_first PROPERTIES TIMEOUT 30)
         set_tests_properties(guest_http2 guest_http2_cookies guest_http2_options guest_http2_transport guest_http2_early_response guest_http2_dns_first guest_http2_system_roots PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
+    endif()
+    add_test(NAME guest_http2_http1 COMMAND guest_http2_transport_tests --http1)
+    set_tests_properties(guest_http2_http1 PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_http2_http1 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
+    endif()
+    add_test(NAME guest_http2_ssl_callbacks COMMAND guest_http2_transport_tests --ssl-callbacks)
+    set_tests_properties(guest_http2_ssl_callbacks PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_http2_ssl_callbacks PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
+    endif()
+    add_test(NAME guest_http2_redirects COMMAND guest_http2_transport_tests --redirects)
+    set_tests_properties(guest_http2_redirects PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_http2_redirects PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
     endif()
 endif()
