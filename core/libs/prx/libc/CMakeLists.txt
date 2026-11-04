@@ -99,6 +99,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Multibyte.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuneLocale.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/GetSubOpt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
@@ -114,6 +115,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/TimeExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Mergesort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostErrno.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileLock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
@@ -707,6 +709,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_math PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_math_elementary_tests ${LIBS_INCLUDE_DIR}/tests/GuestMathElementary.cpp)
+    target_include_directories(guest_math_elementary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_math_elementary_tests PRIVATE libc)
+    configure_windows_unwind(guest_math_elementary_tests)
+    add_test(NAME guest_math_elementary COMMAND guest_math_elementary_tests)
+    if(WIN32)
+        set_tests_properties(guest_math_elementary PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_dsign_tests ${LIBS_INCLUDE_DIR}/tests/GuestDsign.cpp)
     target_include_directories(guest_dsign_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_dsign_tests PRIVATE libc)
@@ -963,6 +974,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_std_thread_hardware_concurrency PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_std_thread_hardware_concurrency PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_libc_shared_mutex_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcSharedMutex.cpp)
+    target_include_directories(guest_libc_shared_mutex_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_shared_mutex_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_libc_shared_mutex_tests)
+    add_test(NAME guest_libc_shared_mutex COMMAND guest_libc_shared_mutex_tests)
+    set_tests_properties(guest_libc_shared_mutex PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_shared_mutex PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_libc_static_imports_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcStaticImports.cpp)
