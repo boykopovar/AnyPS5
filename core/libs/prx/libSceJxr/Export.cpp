@@ -64,10 +64,6 @@ int APS5_VABI AllocateCodingContextDec_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI CreateWS_List_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI CreateWS_Memory_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
