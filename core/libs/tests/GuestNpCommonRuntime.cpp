@@ -79,6 +79,12 @@ void TestSemaphoresAndFlags() {
     std::uint64_t result = 0;
     Require(sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear event flag reports the busy error");
     Require(sceNpSetEventFlag(flag, 1) == 0 && sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == 0 && result == 1, "a set bit is polled");
+    Require(sceNpSetEventFlag(flag, 6) == 0 && sceNpClearEventFlag(flag, 5) == 0, "bits are set and then masked");
+    Require(sceNpPollEventFlag(flag, 2, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a bit outside the clear mask is cleared");
+    Require(sceNpPollEventFlag(flag, 5, EventFlagWaitAnd, &result) == 0 && result == 5, "bits inside the clear mask stay set");
+    int waiting = -1;
+    Require(sceNpCancelEventFlag(flag, 0x10, &waiting) == 0 && waiting == 0, "a cancel with no waiter reports none");
+    Require(sceNpPollEventFlag(flag, 0x10, EventFlagWaitAnd, &result) == 0 && result == 0x10, "a cancel sets the pattern it is given");
     Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
 }
 
@@ -1182,6 +1188,9 @@ void TestHexAndCopies() {
     Require(sceNpStrcpyToBuf(copy, 5, "Hello") == NpBufferTooSmall, "a string without room for its terminator is refused");
     Require(sceNpStrncpyToBuf(copy, 6, "Hello World", 5) == 0 && Equals(copy, "Hello"), "the length limit sizes the copy");
     Require(sceNpStrncpyToBuf(copy, 5, "Hello World", 5) == NpBufferTooSmall, "the limited string still needs a terminator");
+    const char unterminated[] = {'A', 'B', 'C', 'D', 'E', 'F', '\0'};
+    Require(sceNpStrncpyToBuf(copy, 8, unterminated, 4) == 0 && Equals(copy, "ABCD"),
+        "a source without a terminator within the limit is cut at the limit");
 }
 
 }
