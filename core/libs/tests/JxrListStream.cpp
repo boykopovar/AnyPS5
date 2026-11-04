@@ -151,4 +151,25 @@ int main() {
         FreeList(stream);
         Require(liveBlocks == 0);
     }
+    {
+        auto* stream = MakeList();
+        const auto data = Pattern(9000);
+        Fill(stream, data);
+        Require(liveBlocks == 3);
+        auto* second = Next(FirstLink(stream));
+        auto* third = Next(second);
+        Require(SetPosWS_List_nid_postfix(stream, 5000) == 0 && Offset(stream) == 5000 && stream->state[3] == 1);
+        Require(stream->state[0] == reinterpret_cast<std::uintptr_t>(second + sizeof(void*)));
+        std::uint8_t byte = 0;
+        Require(ReadWS_List_nid_postfix(stream, &byte, 1) == 0 && byte == data[5000]);
+        Require(SetPosWS_List_nid_postfix(stream, 0) == 0 && Offset(stream) == 0);
+        Require(stream->state[0] == reinterpret_cast<std::uintptr_t>(FirstLink(stream) + sizeof(void*)));
+        Require(SetPosWS_List_nid_postfix(stream, 8192) == 0 && stream->state[2] == 0 && stream->state[3] == 2);
+        Require(stream->state[0] == reinterpret_cast<std::uintptr_t>(third + sizeof(void*)));
+        Require(SetPosWS_List_nid_postfix(stream, 20000) == 0 && stream->state[2] == 0 && stream->state[3] == 3);
+        Require(stream->state[0] == reinterpret_cast<std::uintptr_t>(third + sizeof(void*)));
+        Require(SetPosWS_List_nid_postfix(stream, 12287) == 0 && stream->state[2] == 4095 && stream->state[3] == 2);
+        FreeList(stream);
+        Require(liveBlocks == 0);
+    }
 }
