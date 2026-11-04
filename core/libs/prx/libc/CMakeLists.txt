@@ -1,5 +1,22 @@
 if(BUILD_TESTING)
+    add_test_executable(guest_owned_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestOwnedMemory.cpp)
+    target_include_directories(guest_owned_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_owned_memory_tests PRIVATE libc)
+    configure_windows_unwind(guest_owned_memory_tests)
+    add_test(NAME guest_owned_memory COMMAND guest_owned_memory_tests)
+    set_tests_properties(guest_owned_memory PROPERTIES TIMEOUT 30)
     if(WIN32)
+        set_tests_properties(guest_owned_memory PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    if(WIN32)
+        add_test_executable(guest_owned_memory_limits_tests ${LIBS_INCLUDE_DIR}/tests/GuestOwnedMemoryLimits.cpp)
+        target_include_directories(guest_owned_memory_limits_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_compile_definitions(guest_owned_memory_limits_tests PRIVATE GUEST_OWNED_LIMIT_TEST=1)
+        configure_host_test_executable(guest_owned_memory_limits_tests)
+        add_test(NAME guest_owned_memory_limits COMMAND guest_owned_memory_limits_tests)
+        set_tests_properties(guest_owned_memory_limits PROPERTIES TIMEOUT 30)
+
         add_test_executable(windows_mappings_release_tests ${LIBS_INCLUDE_DIR}/tests/WindowsMappingsRelease.cpp)
         target_include_directories(windows_mappings_release_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(windows_mappings_release_tests PRIVATE libc)
@@ -89,6 +106,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LogFile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/GuestGs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/x86_64/CallTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
@@ -1382,11 +1400,18 @@ if(BUILD_TESTING)
     endif()
     add_test_executable(guest_syslog_tests ${LIBS_INCLUDE_DIR}/tests/GuestSyslog.cpp)
     target_include_directories(guest_syslog_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_syslog_tests PRIVATE libc)
+    target_link_libraries(guest_syslog_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_syslog_tests)
     add_test(NAME guest_syslog COMMAND guest_syslog_tests)
     if(WIN32)
-        set_tests_properties(guest_syslog PROPERTIES ENVIRONMENT_MODIFICATION
+        add_test_executable(guest_syslog_reload_tests ${LIBS_INCLUDE_DIR}/tests/GuestSyslog.cpp)
+        target_include_directories(guest_syslog_reload_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_compile_definitions(guest_syslog_reload_tests PRIVATE SYSLOG_RELOAD_TEST)
+        target_link_libraries(guest_syslog_reload_tests PRIVATE libc)
+        add_dependencies(guest_syslog_reload_tests libkernel)
+        configure_windows_unwind(guest_syslog_reload_tests)
+        add_test(NAME guest_syslog_reload COMMAND guest_syslog_reload_tests $<TARGET_FILE:libkernel>)
+        set_tests_properties(guest_syslog guest_syslog_reload PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(mspace_tests ${LIBS_INCLUDE_DIR}/tests/Mspace.cpp)

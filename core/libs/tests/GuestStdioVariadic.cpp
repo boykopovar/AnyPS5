@@ -287,6 +287,34 @@ int main() {
     tailInput->Close();
     delete tailInput;
 
+    struct ClampedCharacterCase {
+        const char* input;
+        const char* format;
+        unsigned capacity;
+        const char* stored;
+        int count;
+        int next;
+    };
+    const ClampedCharacterCase clampedCases[] = {
+        {"abc", "%8c%n", 2u, "ab", 2, 'c'},
+        {"abc", "%8c%n", 4u, "abc", 3, EOF},
+        {"abcdef", "%8c%n", 4u, "abcd", 4, 'e'},
+        {"abc", "%2147483648c%n", 4u, "a", 1, 'b'},
+        {"abc", "%4294967298c%n", 4u, "ab", 2, 'c'},
+    };
+    for (const auto& item : clampedCases) {
+        FileStream* clampedInput = SeededStream(item.input);
+        char clamped[8];
+        std::memset(clamped, 0x5a, sizeof(clamped));
+        count = -77;
+        const std::size_t storedLength = std::strlen(item.stored);
+        Require(fscanf_s_nid_postfix(clampedInput, item.format, clamped, item.capacity, &count) == 1 && count == item.count, "fscanf_s clamps a %c width to the destination size");
+        Require(std::memcmp(clamped, item.stored, storedLength) == 0 && clamped[storedLength] == 0x5a, "fscanf_s stores the clamped %c characters only");
+        Require(NextByte(clampedInput) == item.next, "fscanf_s leaves the stream after the clamped %c field");
+        clampedInput->Close();
+        delete clampedInput;
+    }
+
     FileStream* nullInput = SeededStream("5 6");
     Require(fscanf_s_nid_postfix(nullInput, "%d", static_cast<int*>(nullptr)) == EOF, "fscanf_s null destination");
     Require(fscanf_s_nid_postfix(nullInput, static_cast<const char*>(nullptr)) == EOF, "fscanf_s null format");
