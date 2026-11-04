@@ -1780,6 +1780,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_socket_options COMMAND guest_socket_options_tests)
     add_test(NAME guest_socket_options_multicast COMMAND guest_socket_options_tests multicast)
     set_tests_properties(guest_socket_options guest_socket_options_multicast PROPERTIES TIMEOUT 30)
+    set_tests_properties(guest_socket_options_multicast PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(guest_socket_options guest_socket_options_multicast PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
