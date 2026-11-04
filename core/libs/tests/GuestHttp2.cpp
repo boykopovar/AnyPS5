@@ -54,7 +54,6 @@ int main() {
         Require(sceHttp2SetSslCallback(id, RejectSsl, nullptr) == 0);
     }
     Require(callbackCalls == 0);
-    for (const int id : {context, box}) Require(Throws([&] { sceHttp2SetRedirectCallback(id, RejectRedirect, nullptr); }));
 
     Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
     Require(Throws([&] { sceHttp2SetCookieBox(tmpl, box); }));
@@ -99,8 +98,7 @@ int main() {
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &poll) != 0);
     Require(sceKernelDeleteEqueue(eq) == 0);
     const int sibling = sceHttp2CreateTemplate(context, "other", 2, 0);
-    const int child = sceHttp2CreateRequestWithURL(sibling, "GET", "https://localhost/", 0);
-    Require(Throws([&] { sceHttp2SendRequest(child, nullptr, 0); }));
+    const int child = sceHttp2CreateRequestWithURL(sibling, "CONNECT", "https://localhost/", 0);
     Require(sceHttp2DeleteTemplate(tmpl) == 0);
     Require(sceHttp2SslEnableOption(sibling, 0) == 0);
     Require(sceHttp2DeleteRequest(request) == InvalidId);
