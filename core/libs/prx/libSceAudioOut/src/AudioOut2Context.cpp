@@ -72,6 +72,18 @@ AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx) {
     return found == g_contexts.end() ? nullptr : *found;
 }
 
+void AudioOut2DestroyAllContexts() {
+    for (;;) {
+        AudioOut2ContextHandle handle = 0;
+        {
+            std::lock_guard lock(g_contextsLock);
+            if (g_contexts.empty()) return;
+            handle = reinterpret_cast<AudioOut2ContextHandle>(*g_contexts.begin());
+        }
+        sceAudioOut2ContextDestroy(handle);
+    }
+}
+
 static Clock::duration GrainDuration(const AudioOut2Context& context) {
     return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(static_cast<double>(context.grain) / AUDIO_OUT2_SAMPLE_RATE));
 }
@@ -484,6 +496,14 @@ int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const
     for (uint32_t index = 0; index < num; index++) {
         AUDIOOUT2_TRACE("t=%.3f ContextSetAttributes ctx %p: id=0x%x size=%zu value=%p (ignored)\n", AudioOut2TraceSeconds(), static_cast<void*>(context), attributes[index].attribute_id, attributes[index].value_size, attributes[index].value);
     }
+    return 0;
+}
+
+int APS5_VABI sceAudioOut2ContextBedWrite(AudioOut2ContextHandle ctx, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint32_t layout, uint8_t flag) {
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    (void)arg2; (void)arg3; (void)arg4; (void)arg5; (void)layout; (void)flag;
+    if (!AudioOut2FindContext(ctx)) return ErrorInvalidParam;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
