@@ -26,11 +26,11 @@
 - [sk_new, sk_push and sk_free](../../../core/libs/prx/libSceLibreSsl3/src/Stack.cpp) (libSceLibreSsl3) - follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/stack/stack.c) `stack.c` with libSceLibreSsl's 32-byte `_STACK` layout, which `stack_local.h` keeps there. Stacks and element arrays come from the guest heap, so the forwarded `sk_pop_free` can release them. Nothing is checked on the console. Where LibreSSL faults or overflows, they throw: `sk_push` on a null stack, on a negative element count, on a null element array it does not regrow, or when the element array cannot double without overflowing `int`
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
-- [BIO_meth_new, BIO_meth_free, BIO_meth_set_write, BIO_meth_set_read, BIO_meth_set_ctrl and BIO_meth_set_create](../../../core/libs/prx/libSceLibreSsl3/src/BioMethod.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_meth.c) `bio_meth.c`, `BIO_meth_new` returns a zeroed `BIO_METHOD` from the guest heap with its type and name, or null without an error when the allocation fails, `BIO_meth_free` frees it, and each setter stores its callback and returns 1. The 80-byte `BIO_METHOD` is laid out as in 2.5.4, so the forwarded libSceLibreSsl `BIO_new`, `BIO_write`, `BIO_ctrl` and `BIO_free` call the callbacks. A null method passed to a setter, which LibreSSL dereferences, throws. Closes when: compared with the console.
+- [BIO_meth_new, BIO_meth_free, BIO_meth_set_write, BIO_meth_set_read, BIO_meth_set_ctrl, BIO_meth_set_create and BIO_meth_set_destroy](../../../core/libs/prx/libSceLibreSsl3/src/BioMethod.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/bio/bio_meth.c) `bio_meth.c`, `BIO_meth_new` returns a zeroed `BIO_METHOD` from the guest heap with its type and name, or null without an error when the allocation fails, `BIO_meth_free` frees it, and each setter stores its callback and returns 1. The 80-byte `BIO_METHOD` is laid out as in 2.5.4, so the forwarded libSceLibreSsl `BIO_new`, `BIO_write`, `BIO_ctrl` and `BIO_free` call the callbacks. A null method passed to a setter, which LibreSSL dereferences, throws. Closes when: compared with the console.
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 169 callable exports: 159 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 168 callable exports: 158 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -158,7 +158,6 @@
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
 | `X509_digest` | `k1AHUWet-oU` |
 | `X509V3_set_ctx` | `kO-jQ3HS9kE` |
-| `BIO_meth_set_destroy` | `kPCJUQuguzE` |
 | `BIO_set_flags` | `lLHlEb1nt5U` |
 | `tls_config_set_ciphers` | `lTdt9OsPAV0` |
 | `SSL_set_alpn_protos` | `lyk0UDADPAc` |
