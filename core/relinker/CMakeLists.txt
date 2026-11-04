@@ -6,6 +6,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/guest/GuestImageReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/guest/GuestModuleBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsPePatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsExportBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsIconResourceBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsPeFormat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsLoadImage.cpp
@@ -626,6 +627,9 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME cli_help COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/cli/tests/test_help.py $<TARGET_FILE:relinker>)
+        add_test(NAME windows_executable_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_executable_exports.py $<TARGET_FILE:relinker>)
+        set_tests_properties(windows_executable_exports PROPERTIES TIMEOUT 20)
         add_test(NAME windows_fixed_base COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_fixed_base.py $<TARGET_FILE:relinker>)
         set_tests_properties(windows_fixed_base PROPERTIES TIMEOUT 20)
@@ -733,6 +737,10 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_entry_argv.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_fixed_base COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_fixed_base.py $<TARGET_FILE:relinker>)
+        add_test(NAME linux_main_stack_entry COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_main_stack_entry.py
+            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
+        add_asan_test_options(linux_main_stack_entry verify_asan_link_order=0)
         add_test(NAME linux_program_header_order COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_program_header_order.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_input_program_headers COMMAND ${Python3_EXECUTABLE}
@@ -841,6 +849,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_absolute_symbols.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_module_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_identity.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_symbolic_modules COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbolic_modules.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
