@@ -91,7 +91,7 @@ void CheckSimpleReplacement() {
     Require(!source->HasUses() && source->OperandUses().empty());
     Require(first->Argument(0) == target && first->Argument(1) == target && first->Argument(2) == target);
     Require(second->Argument(0) == target);
-    const std::vector<IrUse> expected{{existing, 0}, {first, 2}, {first, 1}, {second, 0}, {first, 0}};
+    const IrUseList expected{{existing, 0}, {first, 2}, {first, 1}, {second, 0}, {first, 0}};
     Require(target->OperandUses() == expected);
     Require(std::ranges::equal(target->Uses(), std::vector<IrValue*>({existing, first, first, second, first})));
     first->ReplaceArgument(1, source);
@@ -110,10 +110,10 @@ void CheckTailArgumentRemoval() {
     last->AddArgument(source);
     last->AddArgument(source);
     last->ReplaceArgument(0, nullptr);
-    Require(source->OperandUses() == std::vector<IrUse>({{first, 0}, {last, 1}}));
+    Require(source->OperandUses() == IrUseList({{first, 0}, {last, 1}}));
     last->ReplaceArgument(1, graph.Value(3));
-    Require(source->OperandUses() == std::vector<IrUse>({{first, 0}}));
-    Require(graph.Value(3)->OperandUses() == std::vector<IrUse>({{last, 1}}));
+    Require(source->OperandUses() == IrUseList({{first, 0}}));
+    Require(graph.Value(3)->OperandUses() == IrUseList({{last, 1}}));
     first->Invalidate();
     Require(!source->HasUses() && first->Argument(0) == nullptr);
 }

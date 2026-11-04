@@ -109,17 +109,14 @@ int APS5_VABI sceCompanionHttpdGetEvent(void* event) {
 }
 
 int APS5_VABI sceCompanionHttpdAddHeader(const char* key, const char* value, void* response) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdSetStatus(int status, void* response) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdSetBody(const char* body, std::uint64_t size, void* response) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

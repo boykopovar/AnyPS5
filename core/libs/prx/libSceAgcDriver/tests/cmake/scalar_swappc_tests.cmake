@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(scalar_swappc_tests ${LIBS_INCLUDE_DIR}/tests/ScalarSwappc.cpp)
+    target_link_libraries(scalar_swappc_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(scalar_swappc_tests)
+    add_test(NAME scalar_swappc COMMAND scalar_swappc_tests)
+    if(WIN32)
+        set_tests_properties(scalar_swappc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
