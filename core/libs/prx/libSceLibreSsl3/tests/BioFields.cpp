@@ -31,4 +31,8 @@ int main() {
     Require(BIO_get_shutdown_nid_postfix(&bio) == 1);
     bio.shutdown = 0;
     Require(BIO_get_shutdown_nid_postfix(&bio) == 0);
+    BIO_set_shutdown_nid_postfix(&bio, 1);
+    Require(bio.shutdown == 1 && bio.initialized == 0);
+    BIO_set_shutdown_nid_postfix(&bio, 0);
+    Require(bio.shutdown == 0);
 }
