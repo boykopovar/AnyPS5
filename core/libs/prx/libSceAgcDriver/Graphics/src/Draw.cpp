@@ -3712,6 +3712,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     if (recorded && recorder->HasQueuedStores() && (resources->HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
     if (recorded) prepared.spaceKeep = reserveSpaceKeep(*recorder, *resources);
+    auto* const tracker = recorded ? recorder->GraphicsState() : nullptr;
     if (recorded) recorder->PrepareSampleSlot();
     APS5_LOG_CHARS_OUT_DEBUG("CommandBatch created");
     // The draw's [gputime] class range: from its first barrier to the download barrier.
@@ -3795,9 +3796,9 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
     }
     std::vector<std::shared_ptr<void>> reorderKept;
-    RecordSampleOrder(context, commands, reorderPass, reordered, true, reorderKept);
+    RecordSampleOrder(context, commands, reorderPass, reordered, true, reorderKept, tracker);
     APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
-    pipeline->Begin(commands, *framebuffer, state.renderExtent, state);
+    pipeline->Begin(commands, *framebuffer, state.renderExtent, state, tracker);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     const auto drawUse = recorded ? resources->BeginDrawUse(*recorder) : nullptr;
     resources->BindDrawUse(commands, pipeline->Layout(), drawUse.get());
@@ -3810,15 +3811,15 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     if (recorded) noteDrawFaultToken(context, *recorder, commands, shaders, draw, args != nullptr);
     if (stencilReplay.empty()) recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     else {
-        recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources);
+        recordStencilReplay(context, commands, state, draw, inputs, stencilReplay, shaders, *resources, nullptr, 0, tracker);
         if (recorded) for (const auto& [reference, selectedPipeline] : stencilReplay) recorder->Keep(selectedPipeline);
     }
     if (pipeline->SplitsFaces()) {
-        pipeline->ContinueBackFaces(commands, state);
+        pipeline->ContinueBackFaces(commands, state, tracker);
         recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     }
     if (pipeline->SplitsSecondChannel()) {
-        pipeline->ContinueSecondChannel(commands);
+        pipeline->ContinueSecondChannel(commands, tracker);
         recordDrawCommands(context, commands, state, draw, inputs, args != nullptr ? &indirect : nullptr, argumentBuffer, argumentOffset, prepared.trace, subdraw);
     }
     if (meshArguments != nullptr && recorded) recorder->Keep(meshArguments);
@@ -3831,7 +3832,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
     if (recorded) recorder->EndPassSamples();
     EndRenderPass(context, commands);
-    RecordSampleOrder(context, commands, reorderPass, reordered, false, reorderKept);
+    RecordSampleOrder(context, commands, reorderPass, reordered, false, reorderKept, tracker);
     if (depthLocations) {
         RecordDepthSampleLocations(context, commands, *depthLocations);
         countBarrier(2);

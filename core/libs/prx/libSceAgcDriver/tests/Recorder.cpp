@@ -40,6 +40,7 @@
 #include "ImageTableAbi.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include "HostImportLifetime.hpp"
+#include "CommandStateLog.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "SampleLod_spv.h"
 #include "BufferUpdate_spv.h"
@@ -11261,6 +11262,126 @@ void uncountedPassTests(const Device& device) {
     plain.Sync();
 }
 
+class CommandBufferReuse {
+public:
+    explicit CommandBufferReuse(Context& context) : context(context), resolver(context.deviceProc) {
+        Require(active == nullptr, "nested command buffer reuse");
+        active = this;
+        context.deviceProc = resolve;
+    }
+    ~CommandBufferReuse() {
+        context.deviceProc = resolver;
+        if (!retained.empty()) reinterpret_cast<PFN_vkFreeCommandBuffers>(resolver(context.device, "vkFreeCommandBuffers"))(context.device, pool, static_cast<std::uint32_t>(retained.size()), retained.data());
+        active = nullptr;
+    }
+    CommandBufferReuse(const CommandBufferReuse&) = delete;
+    CommandBufferReuse& operator=(const CommandBufferReuse&) = delete;
+    std::uint32_t Reused() const { return reused; }
+
+private:
+    static VKAPI_ATTR VkResult VKAPI_CALL allocateBuffers(VkDevice device, const VkCommandBufferAllocateInfo* info, VkCommandBuffer* buffers) {
+        if (info->commandBufferCount == 1 && !active->retained.empty()) {
+            *buffers = active->retained.back();
+            active->retained.pop_back();
+            ++active->reused;
+            return VK_SUCCESS;
+        }
+        return reinterpret_cast<PFN_vkAllocateCommandBuffers>(active->resolver(device, "vkAllocateCommandBuffers"))(device, info, buffers);
+    }
+    static VKAPI_ATTR void VKAPI_CALL freeBuffers(VkDevice, VkCommandPool pool, std::uint32_t count, const VkCommandBuffer* buffers) {
+        active->pool = pool;
+        active->retained.insert(active->retained.end(), buffers, buffers + count);
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkAllocateCommandBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(allocateBuffers);
+        if (std::strcmp(name, "vkFreeCommandBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(freeBuffers);
+        return active->resolver(device, name);
+    }
+    Context& context;
+    PFN_vkGetDeviceProcAddr resolver;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    std::vector<VkCommandBuffer> retained;
+    std::uint32_t reused = 0;
+    static inline CommandBufferReuse* active = nullptr;
+};
+
+void graphicsStateTests(const Device& device) {
+    using namespace CommandStateLog;
+    const bool suppressing = std::getenv("APS5_NO_STATE_SUPPRESSION") == nullptr;
+    auto context = device.GetContext();
+    const auto hooks = stateFunctions();
+    context.functions = &hooks;
+    statePipelines.clear();
+    stateLog.clear();
+    const auto drawn = [&](Recorder& recorder, VkPipeline pipeline) {
+        const auto commands = recorder.Commands();
+        stateTrackedDraw(recorder.GraphicsState(), context, commands, pipeline);
+    };
+    const auto first = stateFakePipeline(0);
+    const auto second = stateFakePipeline(1);
+    const auto full = stateTrackedDrawLines(first);
+    const auto none = [&](VkPipeline pipeline) { return suppressing ? std::vector<std::string>{} : stateTrackedDrawLines(pipeline); };
+    {
+        CommandBufferReuse reuse(context);
+        Recorder recorder(context);
+        VkCommandBuffer previous = VK_NULL_HANDLE;
+        for (std::uint32_t round = 0; round < 3; ++round) {
+            drawn(recorder, first);
+            const auto commands = recorder.Commands();
+            Require((recorder.GraphicsState() != nullptr) == suppressing, "the recorder's graphics state does not follow APS5_NO_STATE_SUPPRESSION");
+            if (round != 0) Require(commands == previous && reuse.Reused() == round, "the reopened batch did not reuse its command buffer handle");
+            previous = commands;
+            expectStateLog(full, "the first draw of batch " + std::to_string(round));
+            drawn(recorder, first);
+            expectStateLog(none(first), "an identical second draw of batch " + std::to_string(round));
+            recorder.Submit();
+            recorder.Sync();
+        }
+    }
+    {
+        Recorder one(context);
+        Recorder other(context);
+        drawn(one, first);
+        expectStateLog(full, "the first recorder's first draw");
+        drawn(other, first);
+        expectStateLog(full, "the second recorder's first draw after the first recorder's");
+        Require(!suppressing || one.GraphicsState() != other.GraphicsState(), "two recorders share one graphics state");
+        drawn(one, first);
+        expectStateLog(none(first), "the first recorder's repeated draw after the second recorder's first");
+        drawn(other, second);
+        expectStateLog(suppressing ? std::vector<std::string>{stateLine("bind", 0u, second)} : stateTrackedDrawLines(second), "the second recorder binding another pipeline");
+        drawn(one, first);
+        expectStateLog(none(first), "the first recorder's draw after the second recorder bound another pipeline");
+        drawn(other, second);
+        expectStateLog(none(second), "the second recorder's repeated draw of its pipeline");
+        one.Submit();
+        other.Submit();
+        one.Sync();
+        other.Sync();
+    }
+    {
+        Recorder recorder(context);
+        drawn(recorder, first);
+        expectStateLog(full, "the draw before an uncounted recording");
+        recorder.RecordUncounted([](VkCommandBuffer) {});
+        drawn(recorder, first);
+        expectStateLog(full, "the same draw after an uncounted recording");
+        drawn(recorder, first);
+        expectStateLog(none(first), "the same draw once more");
+        try {
+            recorder.RecordUncounted([](VkCommandBuffer) { throw std::runtime_error("uncounted recording failed"); });
+        } catch (const std::runtime_error&) {
+        }
+        drawn(recorder, first);
+        expectStateLog(full, "the same draw after an uncounted recording that threw");
+        recorder.Submit();
+        recorder.Sync();
+    }
+    statePipelines.clear();
+    stateLog.clear();
+    std::cout << "graphics state through the recorder passed (" << (suppressing ? "suppressing" : "unsuppressed") << ")\n";
+}
+
 void cmaskPassTests(const Device& device, Recorder& recorder) {
     namespace GuestMemory = AgcDriver::GuestMemory;
     auto context = device.GetContext();
@@ -15303,6 +15424,10 @@ int main(int argc, char** argv) {
             }
             sampleDumpTests(device, recorder);
             std::cout << "Occlusion counter dump tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--graphics-state-only") {
+            graphicsStateTests(device);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--uncounted-passes-only") {
