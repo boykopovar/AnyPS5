@@ -8,6 +8,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include "JsonTestAllocator.hpp"
 #include "ProcessParametersFixture.hpp"
 
 using SceMetadataReaderWriter::Metadata;
@@ -414,7 +415,14 @@ int main() {
     TestConstruction();
     TestNullArguments();
     TestValueAssignment();
+    JsonTest::Allocator allocator;
+    const SceJson2::InitParameter2 parameter{&allocator, nullptr, 0, 0, {}};
+    alignas(16) std::array<std::uint8_t, 16> initializer{};
+    SceJson2::_ZN3sce4Json11InitializerC1Ev(initializer.data());
+    Require(SceJson2::_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer.data(), &parameter) == 0);
     TestSerialize();
     TestDeserialize();
+    Require(SceJson2::_ZN3sce4Json11Initializer9terminateEv(initializer.data()) == 0);
+    SceJson2::_ZN3sce4Json11InitializerD1Ev(initializer.data());
     return 0;
 }
