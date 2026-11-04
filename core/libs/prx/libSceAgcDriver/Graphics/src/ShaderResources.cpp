@@ -1579,6 +1579,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         bool& flag;
         ~Done() { flag = false; }
     } done{releasing};
+    const auto releasedBefore = ImageMemoryReleasedBytes();
     std::uint64_t freed = 0;
     std::size_t sampledEntries = 0;
     std::size_t storageEntries = 0;
@@ -1595,15 +1596,11 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
             for (auto it = cache.entries.end(); it != cache.entries.begin() && freed < bytes;) {
                 --it;
                 if (it->texture.use_count() != 1 || (it->source != nullptr && it->source->Dirty())) continue;
-                const auto allocated = it->texture->AllocationBytes();
-                const auto sourceBytes = it->source != nullptr ? it->source->AllocationBytes() : 0u;
-                const std::weak_ptr<StorageTexture> source = it->source;
                 const auto next = std::next(it);
                 eraseTexture(cache, it);
                 ++cache.counts.evicted;
                 ++sampledEntries;
-                freed += allocated;
-                if (source.expired()) freed += sourceBytes;
+                freed = ImageMemoryReleasedBytes() - releasedBefore;
                 it = next;
             }
         }
@@ -1643,8 +1640,8 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                     }
                     resources.clear();
                     ++storageEntries;
-                    if (image.use_count() == 1) freed += image->AllocationBytes();
                     image.reset();
+                    freed = ImageMemoryReleasedBytes() - releasedBefore;
                     if (!removed) {
                         storageSkipped = true;
                         break;
@@ -1655,6 +1652,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
             }
         }
     }
+    freed = ImageMemoryReleasedBytes() - releasedBefore;
     std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s, %zu with pending results kept\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept);
     return freed;
 }
