@@ -9,6 +9,15 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 
 The following nine state helpers in [PendingExportsRound7.cpp](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) are implemented from firmware 13.60 static analysis. Ghidra 12.1.4 decompilation and instruction inspection show the exported entries and field operations below. Unreadable or null host-mapped guest objects return false for predicates, and null clear targets are ignored as defensive emulator fallbacks. Failed clear copies are not atomic: on a partially accessible destination, a writable prefix may be zeroed before the copy reports failure (notably on Linux with `process_vm_writev`). The firmware functions themselves do not have null branches. No console runtime test was available.
 
+- [_ZNK3sce2np9EventFlag6IsInitEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `st-oQvV7HVI`, `0x1d9e0`) returns whether the 32-bit field at `this + 0x10` is nonzero.
+- [_ZNK3sce2np7RingBuf6IsFullEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `bvJ207-8qBQ`, `0x18970`) returns whether the 64-bit fields at `this + 0x20` and `this + 0x28` are equal.
+- [_ZNK3sce2np10EventQueue6IsInitEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `VI8AHrfLdqY`, `0x1e030`) returns whether the 16-bit field at `this + 0x98` is nonzero.
+- [_ZNK3sce2np5Mutex6IsInitEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `Yc+qj4TIEY0`, `0x1e4b0`) returns the boolean state stored at `this + 0x10`.
+- [_ZN3sce2np13RingBufMemory6IsInitEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `zdRXyt-65kA`, `0x19630`) returns whether the pointer at `this + 0x8` is non-null.
+- [_ZN3sce2np3ipc10IpmiClient11IsConnectedEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `prj9aMR74bA`, `0x2dc0`) returns whether the 32-bit field at `this + 0x18` is zero.
+- [_ZN3sce2np7Callout10IsTimedoutEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `xxOTJpEyoj4`, `0x1d740`) returns whether the signed 32-bit field at `this + 0x10` is positive or equals `-2`.
+- [_ZN3sce2np13NpTitleSecret5ClearEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `X0vEo7cZamA`, `0x1aaa0`) clears four consecutive 32-byte regions at offsets `0x8`, `0x28`, `0x48` and `0x68`; it preserves the first eight bytes.
+- [_ZN3sce2np8JsonNull5ClearEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `88GKkivBFhI`, `0x14f10`) returns without reading or writing object state.
 
 
 - [sceNpCloseSema](../../../core/libs/prx/libSceNpCommon/PendingExports.cpp) (NID `8hPzfjZzV88`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
