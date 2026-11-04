@@ -1163,12 +1163,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
         return *target;
     }
     const auto& use = requested;
-    const auto bytes = MultisampledColorBytes(use);
-    Require(bytes <= std::numeric_limits<std::size_t>::max(), "initial multisample color exceeds host address space");
-    Require(bytes <= std::numeric_limits<std::uint64_t>::max() - use.address, "initial multisample color range overflows");
-    GuestMemory::CollectWritesUncached(use.address, static_cast<std::size_t>(bytes));
-    RequireNoMultisampleTarget(use.address, static_cast<std::size_t>(bytes), "initializing a multisampled color target");
-    ClaimMultisampleTargetMemory(use.address, bytes);
+    ClaimMultisampleTargetMemory(use.address, MultisampledColorBytes(use));
     auto target = std::make_shared<MultisampleTarget>(context, use);
     target->Keep();
     targets().push_back(std::move(target));
