@@ -209,9 +209,10 @@ int main(int argc, char** argv) {
     Require(close_nid_postfix(pair[0]) == 0);
     Require(NotConnected(pair[1]) && Unnamed(pair[1], getsockname_nid_postfix));
     Require(Readable(pair[1], In | Hup) && recv_nid_postfix(pair[1], received, sizeof(received), 0) == 0);
-    std::int64_t sent = 0;
-    for (int i = 0; i < 100 && sent >= 0; ++i) sent = send_nid_postfix(pair[1], ping, sizeof(ping), NoSignal);
-    Require(sent == -1 && *__error_nid_postfix() == 32);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        *__error_nid_postfix() = 0;
+        Require(send_nid_postfix(pair[1], ping, sizeof(ping), NoSignal) == -1 && *__error_nid_postfix() == 32);
+    }
     Require(close_nid_postfix(pair[1]) == 0);
     Require(close_nid_postfix(pair[1]) == -1 && *__error_nid_postfix() == 9);
 
@@ -268,6 +269,23 @@ int main(int argc, char** argv) {
     Require(Unnamed(pair[1], getpeername_nid_postfix) && Exchange(pair[1], copy, "copy"));
     Require(close_nid_postfix(copy) == 0 && NotConnected(pair[1]));
     Require(close_nid_postfix(pair[1]) == 0);
+#ifdef _WIN32
+    Require(socketpair_nid_postfix(Unix, Datagram | NonBlocking, 0, pair) == 0);
+    Require(Queue(pair[0], pair[1], "q") && close_nid_postfix(pair[0]) == 0);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 1 && datagram[0] == 'q');
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), Peek) == -1 && *__error_nid_postfix() == 54);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 54);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 35);
+    Require(send_nid_postfix(pair[1], "x", 1, 0) == -1 && *__error_nid_postfix() == 39);
+    Require(close_nid_postfix(pair[1]) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Datagram | NonBlocking, 0, pair) == 0);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(send_nid_postfix(pair[1], "x", 1, 0) == -1 && *__error_nid_postfix() == 54);
+    Require(send_nid_postfix(pair[1], "x", 1, 0) == -1 && *__error_nid_postfix() == 39);
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == -1 && *__error_nid_postfix() == 35);
+    Require(close_nid_postfix(pair[1]) == 0);
+#endif
 
     Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
     Require(send_nid_postfix(pair[0], "c", 1, 0) == 1 && Readable(pair[1]));
