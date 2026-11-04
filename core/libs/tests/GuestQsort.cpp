@@ -353,6 +353,98 @@ bool CheckMergesort() {
     return correct;
 }
 
+std::vector<int> mergesortCalls;
+
+int APS5_VABI RecordKeys(const void* left, const void* right) {
+    const auto* first = static_cast<const Element*>(left);
+    const auto* second = static_cast<const Element*>(right);
+    mergesortCalls.push_back(first->tag * 100 + second->tag);
+    return (first->key > second->key) - (first->key < second->key);
+}
+
+bool CheckMergesortComparisons() {
+    InitializeHeap();
+    struct Case {
+        std::vector<int> keys;
+        std::vector<int> calls;
+    };
+    const std::vector<Case> cases = {
+        {{3, 1, 2, 5, 4}, {1, 2, 102, 3, 304, 4}},
+        {{9, 4, 7, 1, 8, 2, 6, 3, 5, 0, 9, 4, 7, 1, 8, 2, 6, 3, 5, 0, 11},
+         {1617, 1618, 1718, 1619, 1819, 1719, 1620, 1, 203, 405, 607, 809, 1011, 1213, 1415, 102, 304, 506, 708, 910, 1112, 1314, 1419, 103, 102, 2, 507, 704,
+          406, 911, 1108, 810, 1315, 1512, 1214, 305, 501, 107, 106, 206, 204, 4, 913, 1311, 1115, 1112, 812, 1210, 1014, 309, 313, 513, 515, 715, 711, 111,
+          1106, 608, 612, 212, 1204, 414, 1400, 10, 919, 1903, 317, 1713, 1705, 1715, 1707, 1701, 118, 1811, 1808, 1806, 616, 1602, 220, 2012, 2004, 2014, 2000,
+          2010}},
+        {{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 0, 30, 29, 28, 27},
+         {2223, 2224, 2324, 2225, 2325, 2425, 1, 203, 405, 607, 809, 1011, 1213, 1415, 1617, 1819, 2021, 102, 304, 506, 708, 910, 1112, 1314, 1516, 1718,
+          1920, 2125, 20, 21, 25, 125, 2502, 2503, 2504, 2505, 2506, 2507, 2508, 2510, 2514, 2519}},
+        {{40, 41, 42, 43, 44, 45, 46, 47, 0, 1, 2, 3, 4, 5, 6, 7, 48, 49, 50, 51, 52, 53, 54, 55, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17},
+         {3031, 3132, 3233, 1, 203, 405, 607, 809, 1011, 1213, 1415, 1617, 1819, 2021, 2223, 2425, 2627, 2829, 102, 304, 506, 708, 910, 1112, 1314, 1516, 1718,
+          1920, 2122, 2324, 2526, 2728, 2930, 8, 9, 10, 11, 12, 13, 14, 15, 17, 16, 116, 1602, 1604, 1607, 824, 2409, 2411, 2415, 2407, 2403, 2401, 2400, 25, 26,
+          28, 32, 33}},
+    };
+    bool correct = true;
+    for (const auto& sample : cases) {
+        std::vector<Element> elements;
+        for (std::size_t index = 0; index < sample.keys.size(); ++index) elements.push_back({sample.keys[index], static_cast<int>(index)});
+        mergesortCalls.clear();
+        correct &= mergesort_nid_postfix(elements.data(), elements.size(), sizeof(Element), RecordKeys) == 0;
+        if (mergesortCalls != sample.calls) {
+            std::fprintf(stderr, "mergesort of %zu elements made %zu comparisons in a different order than FreeBSD's merge.c (%zu expected)\n",
+                sample.keys.size(), mergesortCalls.size(), sample.calls.size());
+            correct = false;
+        }
+        for (std::size_t index = 1; index < elements.size(); ++index) {
+            correct &= elements[index - 1].key < elements[index].key ||
+                (elements[index - 1].key == elements[index].key && elements[index - 1].tag < elements[index].tag);
+        }
+    }
+    return correct;
+}
+
+bool CheckMergesortUnalignedElements() {
+    InitializeHeap();
+    constexpr std::size_t Size = 12;
+    constexpr std::size_t Count = 1000;
+    std::vector<unsigned char> storage(Count * Size + 8);
+    unsigned char* const base = storage.data() + 4;
+    for (std::size_t index = 0; index < Count; ++index) {
+        const Element element{static_cast<int>((index / 50) % 2 ? Count - index : (index * 7919) % 13), static_cast<int>(index)};
+        std::memcpy(base + index * Size, &element, sizeof(element));
+        std::memset(base + index * Size + sizeof(element), static_cast<int>(index & 0xff), Size - sizeof(element));
+    }
+    bool correct = mergesort_nid_postfix(base, Count, Size, CompareKeys) == 0;
+    Element previous{};
+    for (std::size_t index = 0; index < Count; ++index) {
+        Element element;
+        std::memcpy(&element, base + index * Size, sizeof(element));
+        correct &= base[index * Size + sizeof(element)] == static_cast<unsigned char>(element.tag & 0xff);
+        if (index != 0) correct &= previous.key < element.key || (previous.key == element.key && previous.tag < element.tag);
+        previous = element;
+    }
+    if (!correct) std::fprintf(stderr, "mergesort of unaligned 12-byte elements failed\n");
+    return correct;
+}
+
+std::uintptr_t heapsortBase = 0;
+std::uintptr_t heapsortLimit = 0;
+std::size_t heapsortStride = 0;
+bool heapsortArgumentsValid = true;
+int heapsortCompareCalls = 0;
+
+int APS5_VABI RecordingCompareKeys(const void* left, const void* right) {
+    ++heapsortCompareCalls;
+    const auto inArray = [](const void* candidate) {
+        const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(candidate);
+        return address >= heapsortBase && address < heapsortLimit
+            && (address - heapsortBase) % heapsortStride == 0;
+    };
+    const bool leftInArray = inArray(left);
+    const bool rightInArray = inArray(right);
+    if (!leftInArray && !rightInArray) heapsortArgumentsValid = false;
+    return CompareKeys(left, right);
+}
+
 bool CheckHeapsort() {
     bool correct = true;
     for (const std::size_t count : {0, 1, 2, 3, 7, 16, 33, 1000}) {
@@ -365,6 +457,60 @@ bool CheckHeapsort() {
             correct &= before.key <= after.key;
         }
     }
+    for (const std::size_t count : {0, 1, 2, 3, 7, 16, 33, 1000}) {
+        std::vector<Element> elements;
+        for (std::size_t index = 0; index < count; ++index) elements.push_back({static_cast<int>((index * 7919) % 11), static_cast<int>(index)});
+        std::vector<int> counts(11);
+        for (const auto& element : elements) ++counts[element.key];
+        correct &= heapsort_nid_postfix(elements.data(), count, sizeof(Element), CompareKeys) == 0;
+        for (std::size_t index = 1; index < count; ++index) correct &= elements[index - 1].key <= elements[index].key;
+        std::vector<bool> seen(count);
+        for (const auto& element : elements) {
+            if (element.key < 0 || element.key >= 11 || element.tag < 0 || static_cast<std::size_t>(element.tag) >= count) {
+                correct = false;
+                continue;
+            }
+            --counts[element.key];
+            correct &= !seen[element.tag] && element.key == (element.tag * 7919) % 11;
+            seen[element.tag] = true;
+        }
+        for (const int remaining : counts) correct &= remaining == 0;
+    }
+    {
+        unsigned char payload[8] = {5, 2, 4, 1, 3, 2, 5, 1};
+        correct &= heapsort_nid_postfix(payload, 8, 1, CompareFirstByte) == 0;
+        const unsigned char expected[8] = {1, 1, 2, 2, 3, 4, 5, 5};
+        correct &= std::memcmp(payload, expected, sizeof(payload)) == 0;
+    }
+    {
+        struct ThreeByte { unsigned char key; unsigned char tag[2]; };
+        ThreeByte records[6] = {{4, {1,17}}, {1, {2,29}}, {4, {3,43}}, {2, {4,61}}, {0, {5,83}}, {3, {6,107}}};
+        static_assert(sizeof(ThreeByte) == 3);
+        const auto original = std::to_array(records);
+        correct &= heapsort_nid_postfix(records, 6, sizeof(ThreeByte), CompareFirstByte) == 0;
+        for (std::size_t index = 1; index < 6; ++index) correct &= records[index - 1].key <= records[index].key;
+        std::array<bool, 6> seen{};
+        for (const auto& record : records) {
+            if (record.tag[0] < 1 || record.tag[0] > 6) {
+                correct = false;
+                continue;
+            }
+            const auto index = record.tag[0] - 1;
+            correct &= !seen[index] && record.key == original[index].key && record.tag[1] == original[index].tag[1];
+            seen[index] = true;
+        }
+    }
+    {
+        std::vector<Element> elements;
+        for (int index = 0; index < 64; ++index) elements.push_back({(index * 11) % 7, index});
+        heapsortBase = reinterpret_cast<std::uintptr_t>(elements.data());
+        heapsortStride = sizeof(Element);
+        heapsortLimit = heapsortBase + elements.size() * heapsortStride;
+        heapsortArgumentsValid = true;
+        heapsortCompareCalls = 0;
+        correct &= heapsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), RecordingCompareKeys) == 0 && heapsortArgumentsValid && heapsortCompareCalls > 0;
+        for (std::size_t index = 1; index < elements.size(); ++index) correct &= elements[index - 1].key <= elements[index].key;
+    }
     unsigned char bytes[3] = {3, 1, 2};
     *__error_nid_postfix() = 0;
     correct &= heapsort_nid_postfix(nullptr, 0, 0, nullptr) == 0;
@@ -372,6 +518,8 @@ bool CheckHeapsort() {
     correct &= heapsort_nid_postfix(&single, 1, 0, nullptr) == 0;
     correct &= heapsort_nid_postfix(bytes, 3, 0, CompareFirstByte) == -1 && *__error_nid_postfix() == 22 && bytes[0] == 3;
     correct &= heapsort_nid_postfix(nullptr, 0, 4, CompareKeys) == 0;
+    correct &= heapsort_nid_postfix(nullptr, 1, 4, CompareKeys) == 0;
+    correct &= heapsort_nid_postfix(nullptr, 1, 0, CompareKeys) == 0;
     if (!correct) std::fprintf(stderr, "heapsort failed\n");
     return correct;
 }
@@ -405,6 +553,8 @@ int main() {
         for (const std::size_t count : {0, 1, 2, 6, 7, 8, 40, 41, 1000})
             correct &= ExpectSorted(size, count);
     correct &= CheckMergesort();
+    correct &= CheckMergesortComparisons();
+    correct &= CheckMergesortUnalignedElements();
     correct &= CheckHeapsort();
     return correct ? 0 : 1;
 }

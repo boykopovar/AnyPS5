@@ -324,6 +324,7 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
     if (now - lastReport < 3000000000ULL) return;
     lastReport = now;
     std::vector<std::pair<std::string, Site>> hot(sites.begin(), sites.end());
+    std::erase_if(hot, [](const auto& item) { return item.second.calls == 0; });
     std::sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.second.nanos > b.second.nanos; });
     std::fprintf(stderr, "[waits]");
     for (std::size_t i = 0; i < hot.size() && i < 8; ++i) {
@@ -582,6 +583,10 @@ static int ReadClock(int clockId, KernelTimespec* tp) {
 }
 
 int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
+    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32)) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
     KernelTimespec value{};
     if (ReadClock(clockId, &value) != 0) return -1;
     if (tp == nullptr) {
@@ -724,9 +729,8 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
         *__error_nid_postfix() = GUEST_EINVAL;
         return -1;
     }
-    char requested[48];
-    std::snprintf(requested, sizeof(requested), "%lld.%09lld", static_cast<long long>(time.tv_sec), static_cast<long long>(time.tv_nsec));
-    throw std::runtime_error(std::string("clock_settime: setting CLOCK_REALTIME to ") + requested + " is not supported, the host clock is not changed");
+    NotImplemented_nid_no_patch("clock_settime");
+    return 0;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
