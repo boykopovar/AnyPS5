@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -119,6 +120,34 @@ int main() {
         Require(stream->state[1] == 8192 && stream->state[3] == 1 && liveBlocks == 2 && !Next(second));
         Require(WriteWS_List_nid_postfix(stream, data.data() + 8192, 8) == 0 && liveBlocks == 3);
         Require(stream->state[1] == 12288 && stream->state[2] == 8 && stream->state[3] == 2);
+        FreeList(stream);
+        Require(liveBlocks == 0);
+    }
+    {
+        auto* stream = MakeList();
+        const auto data = Pattern(5000);
+        Fill(stream, data);
+        Require(liveBlocks == 2);
+        auto* first = FirstLink(stream) + sizeof(void*);
+        auto* second = Next(FirstLink(stream));
+        stream->state[0] = reinterpret_cast<std::uintptr_t>(first);
+        stream->state[2] = 0;
+        stream->state[3] = 0;
+        std::vector<std::uint8_t> read(8192, 0xcc);
+        Require(ReadWS_List_nid_postfix(stream, read.data(), 3000) == 0 && Offset(stream) == 3000);
+        Require(ReadWS_List_nid_postfix(stream, read.data() + 3000, 2000) == 0 && Offset(stream) == 5000);
+        Require(stream->state[0] == reinterpret_cast<std::uintptr_t>(second + sizeof(void*)) && stream->state[3] == 1);
+        Require(std::memcmp(read.data(), data.data(), 5000) == 0);
+        Require(ReadWS_List_nid_postfix(stream, read.data() + 5000, 3192) == 0);
+        Require(stream->state[0] == sizeof(void*) && stream->state[2] == 0 && stream->state[3] == 2);
+        Require(std::all_of(read.begin() + 5000, read.end(), [](std::uint8_t value) { return value == 0; }));
+        read.assign(16, 0xcc);
+        Require(ReadWS_List_nid_postfix(stream, read.data(), 16) == 0 && read[0] == 0xcc && Offset(stream) == 8192);
+        stream->state[2] = 1;
+        Require(ReadWS_List_nid_postfix(stream, read.data(), SIZE_MAX) == -103 && stream->state[2] == 1);
+        stream->state = {reinterpret_cast<std::uintptr_t>(second + sizeof(void*)), 8192, 900, 1};
+        Require(ReadWS_List_nid_postfix(stream, read.data(), 16) == 0 && Offset(stream) == 5012);
+        Require(std::memcmp(read.data(), data.data() + 4996, 4) == 0 && read[4] == 0);
         FreeList(stream);
         Require(liveBlocks == 0);
     }
