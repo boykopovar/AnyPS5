@@ -1,4 +1,6 @@
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -6,11 +8,6 @@
 #include <fstream>
 #include <source_location>
 #include <string>
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI revoke_nid_postfix(const char* path);
-}
 
 namespace {
 
