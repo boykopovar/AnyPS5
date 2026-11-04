@@ -470,10 +470,6 @@ int APS5_VABI SSL_get_peer_quic_transport_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_get_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY2PKCS8_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
