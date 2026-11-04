@@ -153,6 +153,7 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         offset += header.ProgramHeaderEntrySize;
     }
 
+    std::vector<ProgramHeader> relroProtections;
     for (auto& relro : headers) {
         if (relro.Type != PT_OS_RELRO || relro.MemorySize == 0) continue;
         bool covered = false;
@@ -169,10 +170,18 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
                 throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
             if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
                 throw RelinkerException("Segment offset out of bounds", relro.Offset);
+            auto protection = relro;
+            protection.Type = PT_GNU_RELRO;
+            protection.Flags = PF_R;
+            relroProtections.push_back(protection);
             relro.Type = PT_LOAD;
             relro.Flags = PF_R | PF_W;
+        } else {
+            relro.Type = PT_GNU_RELRO;
+            relro.Flags = PF_R;
         }
     }
+    headers.insert(headers.end(), relroProtections.begin(), relroProtections.end());
 
     bool hasTls = false;
     for (const auto& tls : headers) {
@@ -223,6 +232,10 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
         sh.Link = _readU32At(offset + 0x28);
         sh.Info = _readU32At(offset + 0x2c);
         sh.EntrySize = _readU64At(offset + kShdrEntSizeOffset);
+
+        if (sh.Type == SHT_SYMTAB && sh.EntrySize != kSymEntrySize) {
+            throw RelinkerException("Invalid symbol table entry size", offset + kShdrEntSizeOffset);
+        }
 
         if (sh.Type != SHT_NULL && sh.Type != SHT_NOBITS && sh.SectionSize != 0) {
             if (!_rangeFits(sh.Offset, sh.SectionSize, _fileBuffer.size())) {

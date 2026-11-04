@@ -90,7 +90,7 @@ int APS5_VABI sceCompositorGetSecondaryMemoryAddress();
 int APS5_VABI sceCompositorGetSecondaryMemorySize();
 int APS5_VABI sceCompositorGetTFRing();
 int APS5_VABI sceCompositorGetVirtualCanvasHandle();
-int APS5_VABI sceCompositorIsVirtualCanvasHandle();
+bool APS5_VABI sceCompositorIsVirtualCanvasHandle(std::uint32_t handle);
 int APS5_VABI sceCompositorMemoryPoolCommit();
 int APS5_VABI sceCompositorMemoryPoolCreate();
 int APS5_VABI sceCompositorPermanentMemoryCreate();
