@@ -19,7 +19,6 @@ constexpr int kColor = 0x1000;
 constexpr int kAlpha = 0x2000;
 constexpr int kColorAlpha = 0x3000;
 constexpr int kImageSurfaceType = 0;
-constexpr int kSubsurfaceType = 23;
 constexpr int kInvalidFormatValue = -1;
 
 int BitsPerPixel(int format) {
@@ -232,9 +231,8 @@ int APS5_VABI cairo_surface_status(CairoSurface* surface) {
     return surface ? State(surface)->status : kNullPointer;
 }
 
-int APS5_VABI cairo_surface_get_type(CairoSurface* surface) {
-    return surface && State(surface)->status == kSuccess && !State(surface)->isImage
-               ? kSubsurfaceType : kImageSurfaceType;
+int APS5_VABI cairo_surface_get_type(CairoSurface*) {
+    return kImageSurfaceType;
 }
 
 int APS5_VABI cairo_surface_get_content(CairoSurface* surface) {
