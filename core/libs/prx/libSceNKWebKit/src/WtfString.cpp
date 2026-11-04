@@ -1,3 +1,4 @@
+#include "WtfURLSetters.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
@@ -1091,10 +1092,10 @@ std::string URLBytes(std::u16string_view text, unsigned mode = 2) {
     return {Bytes(converted), converted.buffer->length};
 }
 
-std::string EncodeURL(std::u16string_view text, unsigned component) {
+std::string EncodeURL(std::u16string_view text, unsigned component, unsigned mode = 2) {
     std::string result;
     constexpr char hex[] = "0123456789ABCDEF";
-    for (unsigned char byte : URLBytes(text)) {
+    for (unsigned char byte : URLBytes(text, mode)) {
         bool escape = byte < 0x20 || byte > 0x7E;
         if (component) escape |= byte == ' ' || byte == '"' || byte == '<' || byte == '>';
         if (component == 1 || component == 2) escape |= byte == '#' || byte == '?' || byte == '`' || byte == '{' || byte == '}';
@@ -1571,3 +1572,20 @@ void APS5_VABI _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(URL* self
 }
 
 }
+
+
+namespace NKWebKit::URLSetters {
+
+StringView View_nid_no_patch(const StringImpl* value) { return View(value); }
+StringView Slice_nid_no_patch(StringView view, unsigned start, unsigned length) { return Slice(view, start, length); }
+std::u16string URLUnits_nid_no_patch(StringView view) { return URLUnits(view); }
+std::string URLBytes_nid_no_patch(std::u16string_view text, unsigned mode) { return URLBytes(text, mode); }
+unsigned URLDefaultPort_nid_no_patch(std::string_view scheme) { return URLDefaultPort(scheme); }
+StringImpl* CopyImpl_nid_no_patch(StringView view) { return CopyImpl(view); }
+char16_t Unit_nid_no_patch(StringView view, unsigned index) { return Unit(view, index); }
+unsigned HostStart_nid_no_patch(const URL& url) { return HostStart(url); }
+unsigned PathStart_nid_no_patch(const URL& url) { return PathStart(url); }
+char16_t AsciiCase_nid_no_patch(char16_t value, bool lower) { return AsciiCase(value, lower); }
+std::string EncodeURL_nid_no_patch(std::u16string_view text, unsigned component, unsigned mode) { return EncodeURL(text, component, mode); }
+
+}  // namespace NKWebKit::URLSetters
