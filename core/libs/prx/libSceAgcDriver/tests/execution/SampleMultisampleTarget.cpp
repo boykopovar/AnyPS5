@@ -1592,6 +1592,31 @@ void RequirePublicationRefused(const AgcDriver::Graphics::Context& context, cons
     Require(refusal.find(expected) != std::string::npos, "native color publication was not refused: " + refusal);
 }
 
+int InitialReuse(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
+    Block reused(2u * BlockBytes);
+    StoreInitial(reused, Samples, 0u, false);
+    const auto wide = TargetState(DecodeTarget(reused.Address(), SampleShift, {4u * Side, 4u * Side}));
+    const auto narrow = DecodeTarget(reused);
+    Require(MultisampledColorBytes(wide.color) == reused.bytes && MultisampledColorBytes(narrow) == BlockBytes, "the reused initial color footprints differ from two blocks and one block");
+    Draw(device, wide);
+    device.WaitIdle();
+    const auto previous = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, wide.color);
+    const auto* begin = reinterpret_cast<const std::byte*>(reused.data);
+    Require(previous.current != previous.original, "the reuse control has no newer GPU samples");
+    Require(std::equal(previous.original.begin(), previous.original.end(), begin), "the reuse control published before replacement");
+    MaterializeMultisampleTargetClear(context, narrow);
+    const auto replacement = ReadMultisampleTargetColorSnapshot_nid_no_patch(context, narrow);
+    Require(std::equal(replacement.original.begin(), replacement.original.end(), previous.current.begin()), "replacement imported stale guest bytes instead of the old owner's GPU samples");
+    Require(replacement.current == replacement.original, "replacement initialization changed the published samples or padding");
+    Require(std::equal(previous.current.begin(), previous.current.end(), begin), "replacement lost the old owner's samples outside its own footprint");
+    RequireReadbackRefused(context, wide.color, "requires an existing resident target");
+    std::puts("native color initial reuse: a 4x replacement imports the old owner's actual GPU samples and preserves its complete footprint");
+    return 0;
+}
+
 int ReusedPublication(AgcDriver::VulkanDevice& device, std::string_view cause, bool automatic) {
     using namespace AgcDriver::Graphics;
     Require(cause == "live" || cause == "claimed" || cause == "written", "unknown publication reuse case");
@@ -1975,6 +2000,7 @@ int main(int argc, char** argv) {
             InitialContents(*device, true);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-reuse") return InitialReuse(*device);
         if (argc == 2 && std::string_view(argv[1]) == "--initial-lifetime") return InitialLifetime(*device);
         if (argc == 2 && std::string_view(argv[1]) == "--initial") {
             InitialContents(*device);
