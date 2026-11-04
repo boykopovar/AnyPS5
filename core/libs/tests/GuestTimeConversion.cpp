@@ -75,6 +75,9 @@ static GuestTm UtcTime(std::int64_t timer) {
 static void CheckAsctime(const GuestTm& brokenDown, const char* expected) {
     const char* text = asctime_nid_postfix(&brokenDown);
     Require(text != nullptr && std::strcmp(text, expected) == 0, "asctime did not format the broken-down time");
+    char buffer[26]{};
+    Require(asctime_r_nid_postfix(&brokenDown, buffer) == buffer && std::strcmp(buffer, expected) == 0,
+        "asctime_r did not format the broken-down time");
 }
 
 struct UtcCase {
@@ -496,6 +499,17 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(std::strcmp(ctime_nid_postfix(&underflow), "??? ??? ?? ??:??:?? ????\n") == 0 && *__error_nid_postfix() == 22,
         "ctime of an unrepresentable time did not report it");
+    char asctimeBuffer[26]{};
+    *__error_nid_postfix() = 0;
+    Require(asctime_r_nid_postfix(nullptr, asctimeBuffer) == asctimeBuffer && std::strcmp(asctimeBuffer, "??? ??? ?? ??:??:?? ????\n") == 0
+        && *__error_nid_postfix() == 22, "asctime_r of a null time did not report it");
+    bool nullBufferThrew = false;
+    try {
+        asctime_r_nid_postfix(&roundTrip, nullptr);
+    } catch (const std::invalid_argument&) {
+        nullBufferThrew = true;
+    }
+    Require(nullBufferThrew, "asctime_r accepted a null buffer");
     {
         std::barrier finish(3);
         std::array<const char*, 2> texts{};

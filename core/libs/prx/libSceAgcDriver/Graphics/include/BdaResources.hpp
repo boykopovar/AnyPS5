@@ -25,6 +25,8 @@ public:
     BdaResources(const BdaResources&) = delete;
     BdaResources& operator=(const BdaResources&) = delete;
     VkDescriptorBufferInfo Table() const;
+    std::span<const std::byte> TableBytes() const;
+    bool TableGuardCurrent(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> TakeWrittenPages() const;
@@ -32,6 +34,7 @@ public:
     bool StorePages() const { return pages != nullptr; }
     void RecordStorePageGather(Recorder& recorder) const;
     static std::uint32_t StorePageSlots();
+    void CheckUse(const BdaResources* record) const;
     void NoteUse(std::uint64_t serial);
     bool TakeFaultSlot(const Context& context);
     bool HoldsFaultSlot() const { return faultChunk != nullptr; }
@@ -80,10 +83,11 @@ private:
     // The page table is read-only to the shader, so consecutive builds mapping the same ranges to the
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
-    void markWrittenPages() const;
+    void checkFault(const BdaResources& record) const;
+    void markWrittenPages(const BdaResources& record) const;
     void collectStorePages() const;
     void attachStorePages() const;
-    void checkSrtGuard() const;
+    void checkSrtGuard(const BdaResources& faults) const;
     std::span<std::byte> faultBytes() const;
     std::shared_ptr<Buffer> table;
     VkDevice faultDevice = VK_NULL_HANDLE;
@@ -101,6 +105,7 @@ private:
     mutable bool pagesOverflowed = false;
     mutable std::vector<GuestBufferMemory::StorePage> storePages;
     std::size_t tableBytes = 0;
+    std::uint64_t tableGuardSerial = 0;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<SrtGuardFaults> srtGuards;
