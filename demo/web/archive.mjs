@@ -176,11 +176,14 @@ export class Archive {
     const files = this.entries.filter(entry => !entry.directory);
     while (files.every(entry => entry.filename.slice(prefix.length).includes("/"))) {
       const first = files[0].filename.slice(prefix.length).split("/")[0];
-      if (["sce_sys", "sce_module"].includes(first) || !this.entries.every(entry => (entry.directory && prefix.startsWith(entry.filename)) || entry.filename.startsWith(prefix + first + "/"))) break;
+      if (["sce_sys", "sce_module", "sce_modules", "prx"].includes(first) || !this.entries.every(entry => (entry.directory && prefix.startsWith(entry.filename)) || entry.filename.startsWith(prefix + first + "/"))) break;
       prefix += first + "/";
     }
     this.prefix = prefix;
     this.files = this.entries.filter(entry => entry.filename.startsWith(prefix) && entry.filename !== prefix).map(entry => ({ entry, name: entry.filename.slice(prefix.length) }));
+    const moduleDirs = ["sce_module", "sce_modules", "prx"];
+    const present = directory => this.files.some(item => item.name.startsWith(directory + "/"));
+    if (present("sce_module") && present("sce_modules")) throw new Error("Both sce_module and sce_modules exist in the app root");
     const executables = [];
     this.modules = [];
     const selfContainers = [];
@@ -189,10 +192,11 @@ export class Archive {
       const item = this.files[index];
       report({ phase: "Inspecting files", input: item.name, completed: index, total: this.files.length });
       if (item.entry.directory || item.name.startsWith("sce_sys/")) continue;
-      if (!item.name.startsWith("sce_module/") && item.name.includes("/")) continue;
-      if (item.name.startsWith("sce_module/") && item.name.endsWith(".guest.prx")) continue;
+      const moduleDir = moduleDirs.find(directory => item.name.startsWith(directory + "/"));
+      if (!moduleDir && item.name.includes("/")) continue;
+      if (moduleDir && item.name.endsWith(".guest.prx")) continue;
       const header = await headerBytes(item.entry);
-      if (item.name.startsWith("sce_module/")) {
+      if (moduleDir) {
         if (isElf(header)) this.modules.push(item);
         else if (isSelf(header)) selfModules.push(item.name);
       } else if (isElf(header)) {
@@ -214,7 +218,7 @@ export class Archive {
     const warnings = [];
     if (!this.files.some(item => item.name.startsWith("sce_sys/"))) warnings.push("sce_sys is missing. The Windows executable will have no app icon.");
     else if (!this.icon) warnings.push("sce_sys/icon0.png is missing. The Windows executable will have no app icon.");
-    if (!this.files.some(item => item.name.startsWith("sce_module/"))) warnings.push("sce_module is missing. If the original app included this folder, leaving it out can prevent the app from starting.");
+    if (!moduleDirs.some(present)) warnings.push("sce_module, sce_modules and prx are missing. If the original app included a module folder, leaving it out can prevent the app from starting.");
     if (selfModules.length > 0) warnings.push(`${selfModules.join(", ")} is a SELF container and was skipped: unwrap it to include that module.`);
     this.totalBytes = total;
     return { name: this.executable.name, files: files.length, modules: this.modules.length, totalBytes: total, selectedBytes: this.selectedBytes, windowsSelectedBytes: this.windowsSelectedBytes, windowsIconTooLarge: (this.icon?.entry.uncompressedSize ?? 0) > ICON_LIMIT, root: prefix, warnings };
@@ -357,7 +361,7 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     claim(outputName);
     if (converted.diagnostics) claim("windows-diagnostics-imports.txt");
     for (const module of converted.modules) {
-      if (!module.name.startsWith("app0/sce_module/")) throw new Error("Invalid converted module path");
+      if (!["app0/sce_module/", "app0/sce_modules/", "app0/prx/"].some(prefix => module.name.startsWith(prefix))) throw new Error("Invalid converted module path");
       claim(module.name);
     }
     const outputEntries = [

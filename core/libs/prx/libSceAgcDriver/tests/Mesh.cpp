@@ -92,6 +92,8 @@ std::size_t CellPixel(std::uint32_t triangle) {
 alignas(256) std::array<Vertex, 3 * Triangles> Scrambled{};
 alignas(256) std::array<std::uint16_t, 3 * Triangles> Indices{};
 alignas(256) std::array<Vertex, 3 * Triangles> Ordered{};
+constexpr std::uint32_t WideFastLaunchSkipped = 65535;
+alignas(256) std::array<Vertex, 3 * (WideFastLaunchSkipped + Triangles)> WideFastLaunch{};
 alignas(256) std::array<Vertex, 2 * Columns + 2> Strip{};
 
 constexpr std::uint32_t LineStrips = 4;
@@ -383,6 +385,10 @@ int main() {
             const bool drawn = triangle >= Triangles / 4u && triangle < Triangles / 4u + Triangles / 2u;
             Require(PixelIs(CellPixel(triangle), drawn ? TriangleColor(triangle) : Background), "fast-launch subgroups from a start vertex: triangle " + std::to_string(triangle) + " pixel " + PixelText(CellPixel(triangle)));
         }
+        std::copy(Ordered.begin(), Ordered.end(), WideFastLaunch.begin() + 3u * WideFastLaunchSkipped);
+        ClearPixels();
+        DrawMesh(device, {FastLaunchSubgroup, {0, WideFastLaunchSkipped + Triangles, 0, 1, 0, false}, VertexBufferDescriptor(WideFastLaunch.data(), static_cast<std::uint32_t>(WideFastLaunch.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, 32u, VK_CULL_MODE_NONE, FastLaunchCode, 0x482030u});
+        CheckTriangles("fast-launch draw of 65,575 one-primitive groups");
         bool fastLaunchIndexedRefused = false;
         try {
             DrawMesh(device, {FastLaunchSubgroup, {reinterpret_cast<std::uintptr_t>(Indices.data()), Triangles, 2, 1, 0, true}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, 32u, VK_CULL_MODE_NONE, FastLaunchCode, 0x482030u});
