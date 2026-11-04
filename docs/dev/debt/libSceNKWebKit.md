@@ -1842,8 +1842,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF3URL15hostIsIPAddressENS_10StringViewE` | `yMosJYTG-QI` |
 | `_ZN3WTF3URL17removeCredentialsEv` | `U0i8CT7bRsg` |
 | `_ZN3WTF3URL21setFragmentIdentifierENS_10StringViewE` | `piUmuhIuQBs` |
-| `_ZN3WTF3URL23fakeURLWithRelativePartENS_10StringViewE` | `d5zAkrYGC2w` |
-| `_ZN3WTF3URL25fileURLWithFileSystemPathENS_10StringViewE` | `kQyNibZId5k` |
 | `_ZN3WTF3URL32removeQueryAndFragmentIdentifierEv` | `StUsdXpZIa8` |
 | `_ZN3WTF3URL7setHostENS_10StringViewE` | `RoG6zFjMczI` |
 | `_ZN3WTF3URL7setPathENS_10StringViewE` | `LZyPi2q90gA` |
@@ -6046,7 +6044,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZNK3WTF3URL16isMatchingDomainENS_10StringViewE` | `Ub4JvxZ0KE4` |
 | `_ZNK3WTF3URL17lastPathComponentEv` | `ElXcYHtYqtE` |
 | `_ZNK3WTF3URL19protocolHostAndPortEv` | `q8fEMeIqd5w` |
-| `_ZNK3WTF3URL21truncatedForUseAsBaseEv` | `uekVJTVqBGc` |
 | `_ZNK3WTF3URL24strippedForUseAsReferrerEv` | `CyN41AniueA` |
 | `_ZNK3WTF3URL4dumpERNS_11PrintStreamE` | `ITwB6pPwmRc` |
 | `_ZNK3WTF3URL4userEv` | `ETN4mn+-5l0` |
