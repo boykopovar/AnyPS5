@@ -583,7 +583,7 @@ static const char* APS5_VABI BadVariantAccessWhat_nid_no_patch(const ExceptionOb
 static const char* APS5_VABI BadFunctionCallWhat_nid_no_patch(const ExceptionObject*) { return "bad function call"; }
 static const char* APS5_VABI BadAnyCastWhat_nid_no_patch(const ExceptionObject*) { return "Bad any_cast"; }
 static const char* APS5_VABI FutureErrorWhat_nid_no_patch(const ExceptionObject* self) {
-    return FutureErrorMessage(*reinterpret_cast<const int*>(&reinterpret_cast<const SystemErrorObject*>(self)->code));
+    return FutureErrorMessage(reinterpret_cast<const SystemErrorObject*>(self)->code.reserved);
 }
 }
 
