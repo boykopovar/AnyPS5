@@ -2082,7 +2082,11 @@ int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint
     const std::uint64_t buffers = static_cast<std::uint64_t>(input_buffers_num) + output_buffers_num;
     const std::uint64_t limit = UINT64_MAX - sizeof(PackedJob);
     if (buffers < input_buffers_num || info->offset > limit || buffers > (limit - info->offset) / sizeof(AjmBuffer)) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (a job size past 64 bits)");
-    if (info->offset + sizeof(PackedJob) + buffers * sizeof(AjmBuffer) > info->size) return SCE_AJM_ERROR_JOB_CREATION;
+    const std::uint64_t end = info->offset + sizeof(PackedJob) + buffers * sizeof(AjmBuffer);
+    if (end > info->size) {
+        info->offset = end;
+        return SCE_AJM_ERROR_JOB_CREATION;
+    }
     if (input_buffers_num > 0xffu || output_buffers_num > 0xffu) NotImplemented_nid_no_patch("sceAjmBatchJobRunSplit (more than 255 input or output buffers in one job)");
     return AppendRun(info, instance, flags, input_buffers, input_buffers_num, output_buffers, output_buffers_num, sideband_output, sideband_output_size);
 }

@@ -960,15 +960,17 @@ void TestBatchJobRunSplitChecks() {
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 1, &buffer, 1, &result, sizeof(result)) == invalidParameter);
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, nullptr, 1, &result, sizeof(result)) == invalidParameter);
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 1, nullptr, 0, nullptr, 0) == invalidParameter);
-    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, wrapped, &buffer, 1, &result, sizeof(result)) == jobCreation);
-    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, wrapped, &result, sizeof(result)) == jobCreation);
-    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 300, &buffer, 0, &result, sizeof(result)) == jobCreation);
     Require(info.offset == 0);
+    const auto refusedFor = [&](std::size_t inputs, std::size_t outputs) {
+        AjmBatchInfo fresh{};
+        Require(sceAjmBatchInitialize(storage.data(), storage.size(), &fresh) == 0);
+        return sceAjmBatchJobRunSplit(&fresh, 0, 0, &buffer, inputs, &buffer, outputs, &result, sizeof(result)) == jobCreation && fresh.offset == 0x20 + (inputs + outputs) * 16;
+    };
+    Require(refusedFor(wrapped, 1) && refusedFor(1, wrapped) && refusedFor(300, 0) && refusedFor(15, 0));
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, &buffer, 1, &result, sizeof(result)) == 0 && info.offset == 64);
     Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 5, &buffer, 5, &result, sizeof(result)) == 0 && info.offset == storage.size());
-    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, &result, sizeof(result)) == jobCreation);
-    Require(sceAjmBatchJobClearContext(&info, 0, &result) == outOfResources);
-    Require(info.offset == storage.size());
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, &result, sizeof(result)) == jobCreation && info.offset == storage.size() + 0x20);
+    Require(sceAjmBatchJobClearContext(&info, 0, &result) == outOfResources && info.offset == storage.size() + 0x20);
 }
 
 void TestBatchWaitRelease(std::uint32_t context) {
