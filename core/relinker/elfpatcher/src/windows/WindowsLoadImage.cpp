@@ -111,7 +111,7 @@ std::uint32_t WindowsLoadImage::GetEntryRva() const {
 }
 
 std::uint64_t WindowsLoadImage::GetRelocatedAddress(const std::uint64_t address) const {
-    if (address < firstAddress || address - firstAddress > size)
+    if (address < firstAddress || address - firstAddress >= size)
         throw Domain::RelinkerException("Relative relocation addend is outside the ELF image", address);
     return imageBase + LoadRva + address - firstAddress;
 }
