@@ -2325,7 +2325,9 @@ void DepthSurface::PublishToGuest() {
     } scope{publicationInProgress};
     publicationInProgress = true;
     if (publicationFailure) std::rethrow_exception(publicationFailure);
-    Require(target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && hostFormat == target.format && publication.size() == 3u, "sample-preserving guest publication of native multisample depth is not implemented for this owner");
+    const bool htile = !uniformPlaneTarget(target);
+    Require(target.format == VK_FORMAT_D32_SFLOAT_S8_UINT && hostFormat == target.format && publication.size() == (htile ? 3u : 2u), "sample-preserving guest publication of native multisample depth is not implemented for this owner");
+    const std::size_t stencilPlane = publication.size() - 1u;
     Require(sampling.refusal.empty(), sampling.refusal);
     RequireStencilProven();
     Require(!clearPending && clearGeneration == 0u && stencilClearGeneration == 0u && pendingClear == 0u, "native multisample depth publication with an unapplied clear is not implemented");
@@ -2360,7 +2362,7 @@ void DepthSurface::PublishToGuest() {
         if (auto* recorder = RecorderFor(context)) recorder->Sync();
     }
     std::array<std::vector<std::byte>, 3> result;
-    for (std::size_t index : {0u, 2u}) {
+    for (const std::size_t index : {std::size_t{0u}, stencilPlane}) {
         const auto elementBytes = index == 0u ? 4u : 1u;
         const auto aspect = index == 0u ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_STENCIL_BIT;
         const auto format = index == 0u ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_R8_UINT;
@@ -2392,12 +2394,14 @@ void DepthSurface::PublishToGuest() {
         result[index] = publication[index].Expand();
         layout.Tile(linear.Bytes().first(static_cast<std::size_t>(layout.LinearBytes())), result[index]);
     }
-    result[1] = publication[1].Expand();
-    for (std::size_t offset = 0u; offset < result[1].size(); offset += 4u) {
-        std::uint32_t word;
-        std::memcpy(&word, result[1].data() + offset, 4u);
-        word = expandedHtileWord(word, !target.htileDepthOnly, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
-        std::memcpy(result[1].data() + offset, &word, 4u);
+    if (htile) {
+        result[1] = publication[1].Expand();
+        for (std::size_t offset = 0u; offset < result[1].size(); offset += 4u) {
+            std::uint32_t word;
+            std::memcpy(&word, result[1].data() + offset, 4u);
+            word = expandedHtileWord(word, !target.htileDepthOnly, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+            std::memcpy(result[1].data() + offset, &word, 4u);
+        }
     }
     std::array<std::vector<std::byte>, 3> current;
     std::array<bool, 3> tookGuest{};
