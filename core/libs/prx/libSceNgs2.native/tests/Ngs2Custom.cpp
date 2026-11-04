@@ -1061,7 +1061,7 @@ static void TestCustomFilterCodes() {
     Patch(voice, master);
 
     Ngs2CustomVoiceFilterParam filter{};
-    filter.header = {8, 0, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER};
+    filter.header = {static_cast<std::uint32_t>(sizeof(Ngs2CustomVoiceFilterParam)), 0, SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER};
     filter.type = 1;
     filter.param.fcq.frequency = 1000.0f;
     filter.param.fcq.q = 0.707f;
