@@ -175,6 +175,181 @@ static void switched_stack(void) {
     line("stack saved", a + b * 3 == mix(6) + mix(7) * 3);
 }
 
+long callee_pops(long first, int how);
+
+__asm__(".text\n"
+        "drop_arguments:\n"
+        "    mov 8(%rsp), %rax\n"
+        "    add 16(%rsp), %rax\n"
+        "    add %rdi, %rax\n"
+        "    mov (%rsp), %rcx\n"
+        "    lea 24(%rsp), %rdx\n"
+        "    mov %rdx, %rsp\n"
+        "    push %rcx\n"
+        "    ret\n"
+        "drop_arguments_through_jump:\n"
+        "    lea drop_arguments(%rip), %r11\n"
+        "    jmp *%r11\n"
+        "jump_back:\n"
+        "    mov 8(%rsp), %rax\n"
+        "    add 16(%rsp), %rax\n"
+        "    add %rdi, %rax\n"
+        "    mov $16, %edx\n"
+        "    pop %rcx\n"
+        "    add %rdx, %rsp\n"
+        "    jmp *%rcx\n"
+        ".globl callee_pops\n"
+        ".type callee_pops, @function\n"
+        "callee_pops:\n"
+        "    push %rbp\n"
+        "    mov %rsp, %rbp\n"
+        "    push $20\n"
+        "    push $300\n"
+        "    cmp $1, %esi\n"
+        "    je 1f\n"
+        "    ja 3f\n"
+        "    call drop_arguments\n"
+        "    jmp 2f\n"
+        "1:  call drop_arguments_through_jump\n"
+        "    jmp 2f\n"
+        "3:  call jump_back\n"
+        "2:  mov %rsp, %rcx\n"
+        "    sub %rbp, %rcx\n"
+        "    imul $1000, %rcx\n"
+        "    add %rcx, %rax\n"
+        "    pop %rbp\n"
+        "    ret\n");
+
+long nest(long depth, long* frame);
+long nest_balanced(long depth, long* frame);
+
+__asm__(".text\n"
+        ".globl nest\n"
+        ".type nest, @function\n"
+        "nest:\n"
+        "    push %rbp\n"
+        "    mov %rsp, %rbp\n"
+        "    push %rdi\n"
+        "    push %rsi\n"
+        "    cmp $2, %rdi\n"
+        "    jne 1f\n"
+        "    mov %rsp, 8(%rsi)\n"
+        "    mov %rbp, 16(%rsi)\n"
+        "1:  test %rdi, %rdi\n"
+        "    jz 3f\n"
+        "    dec %rdi\n"
+        "    call nest\n"
+        "2:  mov -16(%rbp), %rsi\n"
+        "    incq (%rsi)\n"
+        "    mov -8(%rbp), %rax\n"
+        "    leave\n"
+        "    ret\n"
+        "3:  mov 16(%rsi), %rbp\n"
+        "    mov 8(%rsi), %rsp\n"
+        "    lea 2b(%rip), %rcx\n"
+        "    jmp *%rcx\n"
+        "discard_frames:\n"
+        "    mov 16(%rdi), %rbp\n"
+        "    mov 8(%rdi), %rsp\n"
+        "    sub $8, %rsp\n"
+        "    ret\n"
+        ".globl nest_balanced\n"
+        ".type nest_balanced, @function\n"
+        "nest_balanced:\n"
+        "    push %rbp\n"
+        "    mov %rsp, %rbp\n"
+        "    push %rdi\n"
+        "    push %rsi\n"
+        "    cmp $2, %rdi\n"
+        "    jne 1f\n"
+        "    mov %rsp, 8(%rsi)\n"
+        "    mov %rbp, 16(%rsi)\n"
+        "1:  test %rdi, %rdi\n"
+        "    jnz 2f\n"
+        "    mov %rsi, %rdi\n"
+        "    call discard_frames\n"
+        "    ud2\n"
+        "2:  dec %rdi\n"
+        "    call nest_balanced\n"
+        "    mov -16(%rbp), %rsi\n"
+        "    incq (%rsi)\n"
+        "    mov -8(%rbp), %rax\n"
+        "    add $16, %rsp\n"
+        "    pop %rbp\n"
+        "    ret\n");
+
+long resume_trampoline(long* handler_stack);
+
+__asm__(".text\n"
+        ".globl resume_trampoline\n"
+        ".type resume_trampoline, @function\n"
+        "resume_trampoline:\n"
+        "    push %rbp\n"
+        "    mov %rsp, %rbp\n"
+        "    mov %rsp, (%rdi)\n"
+        "    call throwing_handler\n"
+        "1:  add $1000, %rax\n"
+        "    pop %rbp\n"
+        "    ret\n"
+        "throwing_handler:\n"
+        "    push %rbx\n"
+        "    call throw_to_handler\n"
+        "    mov $-1, %rax\n"
+        "    pop %rbx\n"
+        "    ret\n"
+        "throw_to_handler:\n"
+        "    mov (%rdi), %rsp\n"
+        "    lea enter_at_handler(%rip), %rcx\n"
+        "    jmp *%rcx\n"
+        "enter_at_handler:\n"
+        "    lea 1b(%rip), %rbx\n"
+        "    push %rbx\n"
+        "    lea catch_handler(%rip), %rcx\n"
+        "    jmp *%rcx\n"
+        "catch_handler:\n"
+        "    mov $7, %eax\n"
+        "    ret\n");
+
+static void resumed_outer_frame(void) {
+    long frame[3];
+    frame[0] = 0;
+    line("outer frame resumed by a jump", nest(2, frame));
+    line("outer frame continued", frame[0]);
+    frame[0] = 0;
+    line("outer balanced frame resumed by a ret", nest_balanced(2, frame));
+    line("outer frame continued", frame[0]);
+    line("trampoline resumed through a handler", resume_trampoline(frame));
+}
+
+long split_frame(long first);
+
+__asm__(".text\n"
+        ".globl split_frame\n"
+        ".type split_frame, @function\n"
+        "split_frame:\n"
+        "    push %rbp\n"
+        "    mov %rsp, %rbp\n"
+        "    push $40\n"
+        "    lea 1f(%rip), %rax\n"
+        "    jmp *%rax\n"
+        "1:  pop %rsi\n"
+        "    call adapt_arguments\n"
+        "    pop %rbp\n"
+        "    ret\n"
+        "adapt_arguments:\n"
+        "    sub $8, %rsp\n"
+        "    pushq 8(%rsp)\n"
+        "    mov %rdi, 16(%rsp)\n"
+        "    mov %rsi, 8(%rsp)\n"
+        "    jmp drop_arguments\n");
+
+static void popped_arguments(void) {
+    line("callee pops", callee_pops(1, 0));
+    line("callee pops through a jump", callee_pops(4000, 1));
+    line("callee pops and jumps back", callee_pops(50000, 2));
+    line("callee pops for a split frame", split_frame(1000));
+}
+
 int main(void) {
     basic();
     zero_value();
@@ -183,6 +358,8 @@ int main(void) {
     recursive();
     through_pointer();
     switched_stack();
+    popped_arguments();
+    resumed_outer_frame();
     return 0;
 }
 

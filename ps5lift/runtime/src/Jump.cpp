@@ -53,6 +53,8 @@ void Jump(Ps5LiftState* state, const bool mask) {
     state->X87Control = Get<std::uint16_t>(buffer, 68);
     state->ResumeRip = Get<std::uint64_t>(buffer, 0);
     state->ResumeRsp = state->Gpr[PS5LIFT_RSP];
+    state->ReturnSlot = 0;
+    state->UnwindPassed = 0;
     state->Unwinding = 1;
 }
 

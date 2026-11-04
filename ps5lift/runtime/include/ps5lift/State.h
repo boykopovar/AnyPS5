@@ -56,7 +56,9 @@ typedef struct Ps5LiftState {
     uint64_t ResumeRip;
     uint64_t ResumeRsp;
     uint8_t Unwinding;
-    uint8_t UnwindPadding[7];
+    uint8_t UnwindPassed;
+    uint8_t UnwindPadding[6];
+    uint64_t ReturnSlot;
 } Ps5LiftState;
 
 enum Ps5LiftX87Operation {
@@ -210,6 +212,8 @@ void ps5lift_use_program(const Ps5LiftProgram* program);
 
 void ps5lift_dispatch(Ps5LiftState* state, uint64_t target);
 Ps5LiftFunction ps5lift_resolve(uint64_t target);
+Ps5LiftFunction ps5lift_resolve_jump(Ps5LiftState* state, uint64_t target);
+[[noreturn]] void ps5lift_fail_unresumed(const Ps5LiftState* state, const char* frames);
 #define PS5LIFT_MXCSR_MASK 0xffffu
 
 void ps5lift_apply_mxcsr(Ps5LiftState* state);

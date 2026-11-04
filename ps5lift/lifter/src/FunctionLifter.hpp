@@ -141,6 +141,7 @@ private:
     llvm::Value* Pop(const unsigned bits = 64);
     void CallGuest(llvm::Value* callee, const RegisterEffects& effects, llvm::ArrayRef<llvm::Value*> extra = {});
     void ResumeIfStackSwitched(llvm::Value* rsp, llvm::Value* popped);
+    void JumpTo(llvm::Value* function);
     llvm::BasicBlock* UnwindBlock();
     llvm::FunctionCallee DispatchCallee();
     void TailCall(const std::uint64_t target);

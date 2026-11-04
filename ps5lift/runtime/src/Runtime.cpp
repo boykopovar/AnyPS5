@@ -211,7 +211,7 @@ void* RunMain(void* argument) {
     state.Gpr[PS5LIFT_RSP] = rsp;
     Initialize(entryStack[0], rsp + 8, rsp + 24);
     function(&state);
-    if (state.Unwinding) ps5lift_fail("nothing on the main thread's guest stack resumes at 0x%" PRIx64, state.ResumeRip);
+    if (state.Unwinding) ps5lift_fail_unresumed(&state, "on the main thread's guest stack");
     std::fflush(stdout);
     std::_Exit(static_cast<int>(state.Gpr[PS5LIFT_RAX] & 0xff));
 }
@@ -337,6 +337,37 @@ extern "C" Ps5LiftFunction ps5lift_resolve(const std::uint64_t target) {
     const auto function = Ps5Lift::LookupFunction(target);
     if (function == nullptr) ps5lift_fail("indirect branch to 0x%" PRIx64 ", which was not lifted", target);
     return function;
+}
+
+namespace {
+
+struct ReturnJump {
+    std::uint64_t Rip = 0;
+    std::uint64_t Rsp = 0;
+};
+
+thread_local ReturnJump LastReturnJump;
+
+void ReturnByJump(Ps5LiftState*) {}
+
+}
+
+extern "C" Ps5LiftFunction ps5lift_resolve_jump(Ps5LiftState* state, const std::uint64_t target) {
+    if (const auto function = Ps5Lift::LookupFunction(target)) return function;
+    state->ResumeRip = target;
+    state->ResumeRsp = state->Gpr[PS5LIFT_RSP];
+    state->ReturnSlot = 0;
+    state->UnwindPassed = 0;
+    state->Unwinding = 1;
+    LastReturnJump = {target, state->ResumeRsp};
+    return ReturnByJump;
+}
+
+extern "C" void ps5lift_fail_unresumed(const Ps5LiftState* state, const char* frames) {
+    if (state->ResumeRip == LastReturnJump.Rip && state->ResumeRsp == LastReturnJump.Rsp) {
+        ps5lift_fail("indirect jump to 0x%" PRIx64 ", which was not lifted and where no call %s returns", state->ResumeRip, frames);
+    }
+    ps5lift_fail("a longjmp, exception or ret on a switched stack resumes at 0x%" PRIx64 ", where no frame %s resumes", state->ResumeRip, frames);
 }
 
 extern "C" void ps5lift_dispatch(Ps5LiftState* state, const std::uint64_t target) {

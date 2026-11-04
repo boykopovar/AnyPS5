@@ -50,6 +50,8 @@ bool AssignsStackPointer(const Instruction& instruction) {
     case ZYDIS_MNEMONIC_LEA:
         if (instruction.Operands[1].mem.base == ZYDIS_REGISTER_RSP) return false;
         break;
+    case ZYDIS_MNEMONIC_LEAVE:
+        return true;
     default:
         break;
     }
@@ -551,7 +553,25 @@ void FunctionLifter::CallGuest(llvm::Value* callee, const RegisterEffects& effec
     else _builder.CreateCall(_module.GuestType(), callee, arguments);
     auto* returned = llvm::BasicBlock::Create(Context(), "returned", _host);
     auto* unwinding = _builder.CreateICmpNE(StateLoad(_builder.getInt8Ty(), offsetof(Ps5LiftState, Unwinding)), _builder.getInt8(0));
-    _builder.CreateCondBr(unwinding, UnwindBlock(), returned, llvm::MDBuilder(Context()).createBranchWeights(1, 1u << 20));
+    auto* stopped = llvm::BasicBlock::Create(Context(), "unwinding", _host);
+    _builder.CreateCondBr(unwinding, stopped, returned, llvm::MDBuilder(Context()).createBranchWeights(1, 1u << 20));
+    _builder.SetInsertPoint(stopped);
+    auto* popped = llvm::BasicBlock::Create(Context(), "returned_popped", _host);
+    auto* passed = llvm::BasicBlock::Create(Context(), "unwind_passes", _host);
+    auto* slot = Gpr(PS5LIFT_RSP);
+    auto* exact = _builder.CreateICmpEQ(StateLoad(I64(), offsetof(Ps5LiftState, ReturnSlot)), slot);
+    auto* first = _builder.CreateAnd(_builder.CreateICmpEQ(StateLoad(_builder.getInt8Ty(), offsetof(Ps5LiftState, UnwindPassed)), _builder.getInt8(0)),
+                                     _builder.CreateICmpUGT(StateLoad(I64(), offsetof(Ps5LiftState, ResumeRsp)), slot));
+    auto* here = _builder.CreateAnd(_builder.CreateICmpEQ(StateLoad(I64(), offsetof(Ps5LiftState, ResumeRip)), _builder.getInt64(_instruction->Next())),
+                                    _builder.CreateOr(exact, first));
+    _builder.CreateCondBr(here, popped, passed);
+    _builder.SetInsertPoint(passed);
+    StateStore(_builder.getInt8(1), offsetof(Ps5LiftState, UnwindPassed));
+    _builder.CreateBr(UnwindBlock());
+    _builder.SetInsertPoint(popped);
+    StateStore(_builder.getInt8(0), offsetof(Ps5LiftState, Unwinding));
+    Reload(RegisterSet{1} << PS5LIFT_RSP);
+    _builder.CreateBr(returned);
     _builder.SetInsertPoint(returned);
     Reload(effects.Written);
 }
@@ -563,6 +583,8 @@ void FunctionLifter::ResumeIfStackSwitched(llvm::Value* rsp, llvm::Value* popped
     _builder.SetInsertPoint(switched);
     StateStore(Load(rsp, 64, false), offsetof(Ps5LiftState, ResumeRip));
     StateStore(popped, offsetof(Ps5LiftState, ResumeRsp));
+    StateStore(rsp, offsetof(Ps5LiftState, ReturnSlot));
+    StateStore(_builder.getInt8(0), offsetof(Ps5LiftState, UnwindPassed));
     StateStore(_builder.getInt8(1), offsetof(Ps5LiftState, Unwinding));
     SetGpr(PS5LIFT_RSP, popped);
     Flush();
@@ -610,8 +632,34 @@ llvm::FunctionCallee FunctionLifter::DispatchCallee() {
 void FunctionLifter::TailCall(const std::uint64_t target) {
     if (!_module.Functions().contains(target)) throw std::runtime_error("Control leaves 0x" + Hex(_function.Entry) + " for undiscovered 0x" + Hex(target));
     Flush();
-    _builder.CreateCall(_module.Guest(target), {_state})->setTailCallKind(llvm::CallInst::TCK_MustTail);
+    JumpTo(_module.Guest(target));
+}
+
+void FunctionLifter::JumpTo(llvm::Value* function) {
+    auto* rsp = Gpr(PS5LIFT_RSP);
+    auto* tail = llvm::BasicBlock::Create(Context(), "tail_call", _host);
+    auto* switched = llvm::BasicBlock::Create(Context(), "switched_jump", _host);
+    _builder.CreateCondBr(_builder.CreateICmpEQ(rsp, _entryRsp), tail, switched, llvm::MDBuilder(Context()).createBranchWeights(1u << 20, 1));
+    _builder.SetInsertPoint(tail);
+    _builder.CreateCall(_module.GuestType(), function, {_state})->setTailCallKind(llvm::CallInst::TCK_MustTail);
     _builder.CreateRetVoid();
+    _builder.SetInsertPoint(switched);
+    _builder.CreateCall(_module.GuestType(), function, {_state});
+    auto* returned = llvm::BasicBlock::Create(Context(), "switched_returned", _host);
+    _builder.CreateCondBr(_builder.CreateICmpNE(StateLoad(_builder.getInt8Ty(), offsetof(Ps5LiftState, Unwinding)), _builder.getInt8(0)), UnwindBlock(), returned);
+    _builder.SetInsertPoint(returned);
+    auto* slot = StateLoad(I64(), offsetof(Ps5LiftState, ReturnSlot));
+    auto* own = llvm::BasicBlock::Create(Context(), "returned_from_own_slot", _host);
+    auto* other = llvm::BasicBlock::Create(Context(), "returned_from_other_slot", _host);
+    _builder.CreateCondBr(_builder.CreateICmpEQ(slot, _entryRsp), own, other);
+    _builder.SetInsertPoint(own);
+    _builder.CreateRetVoid();
+    _builder.SetInsertPoint(other);
+    StateStore(Load(slot, 64, false), offsetof(Ps5LiftState, ResumeRip));
+    StateStore(StateLoad(I64(), offsetof(Ps5LiftState, Gpr) + 8 * PS5LIFT_RSP), offsetof(Ps5LiftState, ResumeRsp));
+    StateStore(_builder.getInt8(0), offsetof(Ps5LiftState, UnwindPassed));
+    StateStore(_builder.getInt8(1), offsetof(Ps5LiftState, Unwinding));
+    _builder.CreateBr(UnwindBlock());
 }
 
 llvm::BasicBlock* FunctionLifter::Target(const std::uint64_t target) {

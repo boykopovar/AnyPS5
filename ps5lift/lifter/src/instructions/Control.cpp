@@ -81,16 +81,15 @@ void FunctionLifter::Jump() {
         return;
     }
     Flush();
-    auto resolve = _module.Runtime("ps5lift_resolve", llvm::FunctionType::get(_module.Pointer(), {I64()}, false));
-    auto* function = _builder.CreateCall(resolve, {destination});
-    _builder.CreateCall(_module.GuestType(), function, {_state})->setTailCallKind(llvm::CallInst::TCK_MustTail);
-    _builder.CreateRetVoid();
+    auto resolve = _module.Runtime("ps5lift_resolve_jump", llvm::FunctionType::get(_module.Pointer(), {_module.Pointer(), I64()}, false));
+    JumpTo(_builder.CreateCall(resolve, {_state, destination}));
 }
 
 void FunctionLifter::Return() {
     auto* rsp = Gpr(PS5LIFT_RSP);
     auto* popped = _builder.CreateAdd(rsp, _builder.getInt64(8 + (_instruction->Info.operand_count_visible == 1 ? Operand(0).imm.value.u : 0)));
     if (_assignsStackPointer) ResumeIfStackSwitched(rsp, popped);
+    StateStore(rsp, offsetof(Ps5LiftState, ReturnSlot));
     SetGpr(PS5LIFT_RSP, popped);
     Flush();
     _builder.CreateRetVoid();

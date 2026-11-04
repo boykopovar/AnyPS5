@@ -14,3 +14,12 @@ pointer 11
 stack kept 11
 stack switched 13
 stack saved 1
+callee pops 321
+callee pops through a jump 4320
+callee pops and jumps back 50320
+callee pops for a split frame 2040
+outer frame resumed by a jump 2
+outer frame continued 1
+outer balanced frame resumed by a ret 2
+outer frame continued 1
+trampoline resumed through a handler 1007

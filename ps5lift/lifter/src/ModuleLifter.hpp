@@ -108,6 +108,7 @@ private:
         auto* rsp = builder.CreateConstGEP1_64(builder.getInt8Ty(), state, offsetof(Ps5LiftState, Gpr) + 8 * PS5LIFT_RSP);
         auto* load = builder.CreateLoad(builder.getInt64Ty(), rsp);
         load->setMetadata(llvm::LLVMContext::MD_tbaa, _stateTag);
+        builder.CreateStore(load, builder.CreateConstGEP1_64(builder.getInt8Ty(), state, offsetof(Ps5LiftState, ReturnSlot)))->setMetadata(llvm::LLVMContext::MD_tbaa, _stateTag);
         builder.CreateStore(builder.CreateAdd(load, builder.getInt64(8)), rsp)->setMetadata(llvm::LLVMContext::MD_tbaa, _stateTag);
         builder.CreateRetVoid();
     }

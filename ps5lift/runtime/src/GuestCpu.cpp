@@ -165,6 +165,8 @@ extern "C" [[noreturn]] void GuestCpuUnwindResume_nid_no_patch(const std::uint64
     for (int i = 0; i < 16; ++i) state->Gpr[DwarfRegisters[i]] = registers[i];
     state->ResumeRip = registers[DwarfRip];
     state->ResumeRsp = registers[DwarfRsp];
+    state->ReturnSlot = 0;
+    state->UnwindPassed = 0;
     state->Unwinding = 1;
     throw Ps5Lift::Bridge::GuestUnwind{};
 }
