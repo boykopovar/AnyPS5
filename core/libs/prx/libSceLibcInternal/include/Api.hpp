@@ -68,6 +68,7 @@ std::uint32_t APS5_VABI inet_network_nid_postfix(const char* text);
 std::uint32_t APS5_VABI __inet_network_nid_postfix(const char* text);
 int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output);
 void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix);
+int APS5_VABI siginterrupt_nid_postfix(int guest, int flag);
 int APS5_VABI posix_spawnattr_init_nid_postfix(PosixSpawnAttributes** attributes);
 int APS5_VABI posix_spawnattr_destroy_nid_postfix(PosixSpawnAttributes** attributes);
 int APS5_VABI posix_spawnattr_setflags_nid_postfix(PosixSpawnAttributes** attributes, std::int16_t flags);
