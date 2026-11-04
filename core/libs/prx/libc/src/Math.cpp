@@ -116,6 +116,22 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+/* Derived from FreeBSD lib/msun/src/s_cbrtl.c (release/11.4.0) */
+/*-
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ * Copyright (c) 2009-2011, Bruce D. Evans, Steven G. Kargl, David Schultz.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ *
+ * The argument reduction and testing for exceptional cases was
+ * written by Steven G. Kargl with input from Bruce D. Evans
+ * and David A. Schultz.
+ */
 #include "prx/libc/include/Api.hpp"
 #include <mutex>
 #include <array>
@@ -289,6 +305,15 @@ ExtendedParts SplitExtended(long double value) {
     std::memcpy(&parts.mantissa, bytes, sizeof(parts.mantissa));
     std::memcpy(&parts.signExponent, bytes + sizeof(parts.mantissa), sizeof(parts.signExponent));
     return parts;
+}
+
+long double JoinExtended(std::uint64_t mantissa, std::uint16_t signExponent) {
+    unsigned char bytes[sizeof(long double)] = {};
+    std::memcpy(bytes, &mantissa, sizeof(mantissa));
+    std::memcpy(bytes + sizeof(mantissa), &signExponent, sizeof(signExponent));
+    long double value;
+    std::memcpy(&value, bytes, sizeof(value));
+    return value;
 }
 
 long double ClearLowMantissaWord(long double value) {
@@ -499,7 +524,107 @@ double APS5_VABI hypot_nid_postfix(double x, double y) {
     }
     return std::hypot(x, y);
 }
-float APS5_VABI log10f_nid_postfix(float x) { return std::log10(x); }
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/e_log10f.c: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/e_log10f.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+static bool Log9Reduce(float& x, std::int32_t& k, float& special) {
+    static volatile float zero = 0.0f;
+    const float two25 = static_cast<float>(3.3554432000e+07);
+    k = 0;
+    std::int32_t hx = std::bit_cast<std::int32_t>(x);
+    if (hx < 0x00800000) {
+        if ((hx & 0x7fffffff) == 0) {
+            special = -std::numeric_limits<float>::infinity();
+            return false;
+        }
+        if (hx < 0) {
+            _Feraise_nid_postfix(0x01);
+            special = (x - x) / zero;
+            return false;
+        }
+        k -= 25;
+        x *= two25;
+        hx = std::bit_cast<std::int32_t>(x);
+    }
+    if (hx >= 0x7f800000) {
+        special = x + x;
+        return false;
+    }
+    k += (hx >> 23) - 127;
+    hx &= 0x007fffff;
+    const std::int32_t i = (hx + 0x4afb0d) & 0x800000;
+    x = std::bit_cast<float>(hx | (i ^ 0x3f800000));
+    k += i >> 23;
+    return true;
+}
+
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/k_logf.h: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/k_logf.h */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+static float Log9Kernel(float x) {
+    const float Lg1 = 0xaaaaaa.0p-24f;
+    const float Lg2 = 0xccce13.0p-25f;
+    const float Lg3 = 0x91e9ee.0p-25f;
+    const float Lg4 = 0xf89e26.0p-26f;
+    std::int32_t ix = std::bit_cast<std::int32_t>(x);
+    const float f = x - 1.0f;
+    if ((0x007fffff & (0x8000 + ix)) < 0xc000) {
+        if (f == 0.0f) {
+            return 0.0f;
+        }
+        return f * f * (static_cast<float>(0.33333333333333333) * f - 0.5f);
+    }
+    const float s = f / (2.0f + f);
+    const float z = s * s;
+    ix &= 0x007fffff;
+    std::int32_t i = ix - (0x6147a << 3);
+    const float w = z * z;
+    const std::int32_t j = (0x6b851 << 3) - ix;
+    const float t1 = w * (Lg2 + w * Lg4);
+    const float t2 = z * (Lg1 + w * Lg3);
+    i |= j;
+    const float R = t2 + t1;
+    if (i > 0) {
+        const float hfsq = 0.5f * f * f;
+        return s * (hfsq + R) - hfsq;
+    }
+    return s * (R - f);
+}
+
+float APS5_VABI log10f_nid_postfix(float x) {
+    const float ivln10hi = static_cast<float>(4.3432617188e-01);
+    const float ivln10lo = static_cast<float>(-3.1689971365e-05);
+    const float log10_2hi = static_cast<float>(3.0102920532e-01);
+    const float log10_2lo = static_cast<float>(7.9034151668e-07);
+    std::int32_t k;
+    float special;
+    if (!Log9Reduce(x, k, special)) {
+        return special;
+    }
+    const float y = static_cast<float>(k);
+    const float f = Log9Kernel(x);
+    x = x - 1.0f;
+    const float hi = std::bit_cast<float>(std::bit_cast<std::int32_t>(x) & static_cast<std::int32_t>(0xfffff000));
+    const float lo = x - hi;
+    const float z = y * log10_2lo + (x + f) * ivln10lo + (lo + f) * ivln10hi + hi * ivln10hi;
+    return z + y * log10_2hi;
+}
 float APS5_VABI logbf_nid_postfix(float x) {
     const std::uint32_t bits = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
     if (bits == 0) {
@@ -698,7 +823,49 @@ long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); 
 long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
 long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }
 long double APS5_VABI atan2l_nid_postfix(long double y, long double x) { return std::atan2(y, x); }
-long double APS5_VABI cbrtl_nid_postfix(long double x) { return std::cbrt(x); }
+long double APS5_VABI cbrtl_nid_postfix(long double x) {
+    constexpr std::uint32_t B1 = 709958130;
+    constexpr int Bias = 0x3fff;
+    ExtendedParts parts = SplitExtended(x);
+    const std::uint16_t sign = parts.signExponent & 0x8000;
+    int k = parts.signExponent & 0x7fff;
+    if (k == 0x7fff) return x + x;
+    if (k == 0) {
+        if (parts.mantissa == 0) return x;
+        parts = SplitExtended(x * 0x1p514L);
+        k = (parts.signExponent & 0x7fff) - (Bias + 514);
+    } else {
+        k -= Bias;
+    }
+    long double reduced = JoinExtended(parts.mantissa, Bias);
+    switch (k % 3) {
+    case 1:
+    case -2:
+        reduced = 2 * reduced;
+        --k;
+        break;
+    case 2:
+    case -1:
+        reduced = 4 * reduced;
+        k -= 2;
+        break;
+    }
+    const long double scale = JoinExtended(0x8000000000000000ull, static_cast<std::uint16_t>(sign | (Bias + k / 3)));
+    const float estimate = std::bit_cast<float>((std::bit_cast<std::uint32_t>(static_cast<float>(reduced)) & 0x7fffffffu) / 3 + B1);
+    const double dx = static_cast<double>(reduced);
+    double dt = estimate;
+    double dr = dt * dt * dt;
+    dt = dt * (dx + dx + dr) / (dx + dr + dr);
+    dr = dt * dt * dt;
+    dt = dt * (dx + dx + dr) / (dx + dr + dr);
+    const volatile double shift = 0x1p32;
+    const volatile double away = 0x1p-31;
+    long double t = (static_cast<long double>(shift) + away + dt) - 0x1p32L;
+    long double r = reduced / (t * t);
+    r = (r - t) / ((t + t) + r);
+    t = t + t * r;
+    return t * scale;
+}
 long double APS5_VABI erfl_nid_postfix(long double x) { return std::erf(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return std::erfc(x); }
 long double APS5_VABI expm1l_nid_postfix(long double x) { return std::expm1(x); }
@@ -2061,7 +2228,31 @@ float APS5_VABI logf_nid_postfix(float x) {
     }
     return k == 0 ? f - s * (f - R) : dk * ln2_hi - ((s * (f - R) - dk * ln2_lo) - f);
 }
-float APS5_VABI log2f_nid_postfix(float x) { return std::log2(x); }
+/* Adapted from FreeBSD release/9.0.0 lib/msun/src/e_log2f.c: https://github.com/freebsd/freebsd-src/blob/release/9.0.0/lib/msun/src/e_log2f.c */
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+float APS5_VABI log2f_nid_postfix(float x) {
+    const float ivln2hi = static_cast<float>(1.4428710938e+00);
+    const float ivln2lo = static_cast<float>(-1.7605285393e-04);
+    std::int32_t k;
+    float special;
+    if (!Log9Reduce(x, k, special)) {
+        return special;
+    }
+    const float f = Log9Kernel(x);
+    x = x - 1.0f;
+    const float hi = std::bit_cast<float>(std::bit_cast<std::int32_t>(x) & static_cast<std::int32_t>(0xfffff000));
+    const float lo = x - hi;
+    return (x + f) * ivln2lo + (lo + f) * ivln2hi + hi * ivln2hi + k;
+}
 static double KernelLog(double x) {
     const double Lg1 = 6.666666666666735130e-01;
     const double Lg2 = 3.999999999940941908e-01;
@@ -2213,8 +2404,29 @@ float APS5_VABI cbrtf_nid_postfix(float x) {
     T = T * (static_cast<double>(x) + x + r) / (x + r + r);
     return static_cast<float>(T);
 }
-float APS5_VABI remainderf_nid_postfix(float x, float y) { return std::remainder(x, y); }
+static long double PartialRemainder(long double x, long double y, std::uint16_t* status) {
+    long double remainder;
+    asm("1:\n\tfprem1\n\tfnstsw %%ax\n\ttestw $0x400, %%ax\n\tjnz 1b" : "=t"(remainder), "=a"(*status) : "0"(x), "u"(y));
+    return remainder;
+}
 
+static void SetRemainderDomainError(long double x, long double y) {
+    if (!std::isnan(x) && !std::isnan(y) && (y == 0 || std::isinf(x))) {
+        errno = EDOM;
+    }
+}
+
+static int RemquoQuotient(std::uint16_t status, bool negative) {
+    const int quotient = ((status >> 8) & 1) << 2 | ((status >> 14) & 1) << 1 | ((status >> 9) & 1);
+    return negative ? -quotient : quotient;
+}
+
+float APS5_VABI remainderf_nid_postfix(float x, float y) {
+    std::uint16_t status;
+    const long double remainder = PartialRemainder(x, y, &status);
+    SetRemainderDomainError(x, y);
+    return static_cast<float>(remainder);
+}
 float APS5_VABI nextafterf_nid_postfix(float x, float y) {
     const std::uint32_t ux = std::bit_cast<std::uint32_t>(x);
     const std::uint32_t uy = std::bit_cast<std::uint32_t>(y);
@@ -2413,9 +2625,26 @@ int APS5_VABI ilogb_nid_postfix(double x) {
     return std::ilogb(x);
 }
 int APS5_VABI ilogbf_nid_postfix(float x) { return ilogb_nid_postfix(static_cast<double>(x)); }
-double APS5_VABI remainder_nid_postfix(double x, double y) { return std::remainder(x, y); }
-double APS5_VABI remquo_nid_postfix(double x, double y, int* quo) { return std::remquo(x, y, quo); }
-float APS5_VABI remquof_nid_postfix(float x, float y, int* quo) { return std::remquo(x, y, quo); }
+double APS5_VABI remainder_nid_postfix(double x, double y) {
+    std::uint16_t status;
+    const long double remainder = PartialRemainder(x, y, &status);
+    SetRemainderDomainError(x, y);
+    return static_cast<double>(remainder);
+}
+double APS5_VABI remquo_nid_postfix(double x, double y, int* quo) {
+    std::uint16_t status;
+    const long double remainder = PartialRemainder(x, y, &status);
+    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
+    SetRemainderDomainError(x, y);
+    return static_cast<double>(remainder);
+}
+float APS5_VABI remquof_nid_postfix(float x, float y, int* quo) {
+    std::uint16_t status;
+    const long double remainder = PartialRemainder(x, y, &status);
+    *quo = RemquoQuotient(status, std::signbit(x) != std::signbit(y));
+    SetRemainderDomainError(x, y);
+    return static_cast<float>(remainder);
+}
 float APS5_VABI _FSinh_nid_postfix(float x, float y) { return ScaledHyperbolic(x, y, true); }
 float APS5_VABI _FCosh_nid_postfix(float x, float y) { return ScaledHyperbolic(x, y, false); }
 
