@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
+#include "prx/libSceNKWebKit/src/JscApi.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -123,6 +124,8 @@ const void* APS5_VABI WKSecurityOriginCopyHost(const void* value);
 std::uint16_t APS5_VABI WKSecurityOriginGetPort(const void* value);
 const void* APS5_VABI WKSecurityOriginCopyToString(const void* value);
 std::uint32_t APS5_VABI WKSecurityOriginGetTypeID();
+const void* APS5_VABI WKSerializedScriptValueCreate(NKWebKit::JSContextRef context, NKWebKit::JSValueRef value, NKWebKit::JSValueRef* exception);
+NKWebKit::JSValueRef APS5_VABI WKSerializedScriptValueDeserialize(const void* serializedScriptValueRef, NKWebKit::JSContextRef context, NKWebKit::JSValueRef* exception);
 std::uint32_t APS5_VABI WKSerializedScriptValueGetTypeID();
 std::uint32_t APS5_VABI WKSessionStateGetTypeID();
 const void* APS5_VABI WKSizeCreate(NKWebKit::SizeValue size);

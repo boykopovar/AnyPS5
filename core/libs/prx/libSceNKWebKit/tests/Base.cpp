@@ -50,6 +50,7 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
+    Require(WKSerializedScriptValueGetTypeID() == 33);
 }
 
 static void CheckOriginString(const void* string, const char* expected) {
@@ -397,6 +398,71 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestSerializedScriptValue() {
+    Require(WKSerializedScriptValueGetTypeID() == 33);
+    Require(WKSerializedScriptValueCreate(nullptr, nullptr, nullptr) == nullptr);
+    Require(WKSerializedScriptValueDeserialize(nullptr, nullptr, nullptr) == nullptr);
+
+    auto* ctx = JSGlobalContextCreate(nullptr);
+    Require(ctx != nullptr);
+    Require(WKSerializedScriptValueCreate(ctx, nullptr, nullptr) == nullptr);
+
+    auto* numVal = JSValueMakeNumber(ctx, 42.0);
+    auto* serNum = WKSerializedScriptValueCreate(ctx, numVal, nullptr);
+    Require(serNum != nullptr);
+    Require(WKGetTypeID(serNum) == WKSerializedScriptValueGetTypeID());
+    Require(WKSerializedScriptValueDeserialize(serNum, nullptr, nullptr) == nullptr);
+    auto* deNum = WKSerializedScriptValueDeserialize(serNum, ctx, nullptr);
+    Require(deNum != nullptr);
+    Require(JSValueIsNumber(ctx, deNum));
+    Require(JSValueToNumber(ctx, deNum, nullptr) == 42.0);
+
+    auto* retained = WKRetain(serNum);
+    Require(retained == serNum);
+    WKRelease(retained);
+    WKRelease(serNum);
+
+    auto* boolVal = JSValueMakeBoolean(ctx, true);
+    auto* serBool = WKSerializedScriptValueCreate(ctx, boolVal, nullptr);
+    Require(serBool != nullptr);
+    auto* deBool = WKSerializedScriptValueDeserialize(serBool, ctx, nullptr);
+    Require(deBool != nullptr && JSValueIsBoolean(ctx, deBool) && JSValueToBoolean(ctx, deBool));
+    WKRelease(serBool);
+
+    auto* nullVal = JSValueMakeNull(ctx);
+    auto* serNull = WKSerializedScriptValueCreate(ctx, nullVal, nullptr);
+    Require(serNull != nullptr);
+    auto* deNull = WKSerializedScriptValueDeserialize(serNull, ctx, nullptr);
+    Require(deNull != nullptr && JSValueIsNull(ctx, deNull));
+    WKRelease(serNull);
+
+    auto* undefVal = JSValueMakeUndefined(ctx);
+    auto* serUndef = WKSerializedScriptValueCreate(ctx, undefVal, nullptr);
+    Require(serUndef != nullptr);
+    auto* deUndef = WKSerializedScriptValueDeserialize(serUndef, ctx, nullptr);
+    Require(deUndef != nullptr && JSValueIsUndefined(ctx, deUndef));
+    WKRelease(serUndef);
+
+    auto* jsStr = JSStringCreateWithUTF8CString_nid_postfix("hello AnyPS5");
+    Require(jsStr != nullptr);
+    auto* strVal = JSValueMakeString(ctx, jsStr);
+    JSStringRelease_nid_postfix(jsStr);
+    auto* serStr = WKSerializedScriptValueCreate(ctx, strVal, nullptr);
+    Require(serStr != nullptr);
+
+    auto* otherCtx = JSGlobalContextCreate(nullptr);
+    Require(otherCtx != nullptr);
+    auto* deStrOther = WKSerializedScriptValueDeserialize(serStr, otherCtx, nullptr);
+    Require(deStrOther != nullptr && JSValueIsString(otherCtx, deStrOther));
+    auto* outStr = JSValueToStringCopy(otherCtx, deStrOther, nullptr);
+    Require(outStr != nullptr && JSStringIsEqualToUTF8CString(outStr, "hello AnyPS5"));
+    JSStringRelease_nid_postfix(outStr);
+    JSGlobalContextRelease(otherCtx);
+
+    WKRelease(serStr);
+    JSGlobalContextRelease(ctx);
+}
+
 static void TestCertificateInfo() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
@@ -421,6 +487,7 @@ int main() {
     TestURLRequestResponse();
     TestError();
     TestCertificateInfo();
+    TestSerializedScriptValue();
     std::printf("All libSceNKWebKit Base tests passed!\n");
     return 0;
 }

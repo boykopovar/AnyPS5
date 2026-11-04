@@ -101,4 +101,13 @@ public:
     bool valid = false;
 };
 
+class SerializedScriptValue final : public ObjectOf<ObjectType::SerializedScriptValue> {
+public:
+    explicit SerializedScriptValue(std::string data, bool isUndefined = false)
+        : data(std::move(data)), isUndefined(isUndefined) {}
+
+    std::string data;
+    bool isUndefined = false;
+};
+
 }  // namespace NKWebKit

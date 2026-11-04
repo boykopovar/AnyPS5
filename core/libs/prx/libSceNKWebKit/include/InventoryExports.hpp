@@ -796,8 +796,6 @@ int APS5_VABI WKRunLoopInitializeMain();
 int APS5_VABI WKRunLoopRunMain();
 int APS5_VABI WKRunLoopStopMain();
 int APS5_VABI WKSendDisplayConfigurationChangedMessageForTesting();
-int APS5_VABI WKSerializedScriptValueCreate();
-int APS5_VABI WKSerializedScriptValueDeserialize();
 int APS5_VABI WKSessionStateCopyData();
 int APS5_VABI WKSessionStateCreateFromData();
 int APS5_VABI WKTextCheckerSetTestingMode();
