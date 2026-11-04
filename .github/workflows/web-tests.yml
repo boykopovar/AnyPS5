@@ -35,6 +35,8 @@ jobs:
         run: node demo/web/tests/archive-windows.test.mjs demo/web
       - name: Test archive reserved names
         run: node demo/web/tests/archive-reserved.test.mjs demo/web
+      - name: Test library manifest validation
+        run: node --test demo/web/tests/worker-manifest.test.mjs
       - name: Check browser module syntax
         run: |
           node --check demo/web/app.mjs

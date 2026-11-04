@@ -4,7 +4,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
-        src/Stroker.cpp
+        src/Stroker.cpp src/OutlineStorage.cpp src/FaceCompat.cpp src/TrackKerning.cpp
         src/GuestObjects.cpp
         src/Names.cpp
         src/Trigonometry.cpp
@@ -28,6 +28,7 @@ endif()
 target_sources(libSceFreeType PRIVATE src/Glyph.cpp)
 target_link_libraries(libSceFreeType PRIVATE freetype)
 target_sources(libSceFreeType PRIVATE src/SizeRequest.cpp)
+target_sources(libSceFreeType PRIVATE src/OutlineOrientation.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_request_size_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeRequestSize.cpp)
@@ -133,6 +134,33 @@ if(BUILD_TESTING)
         set_tests_properties(guest_freetype_stroker PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
+    add_test_executable(guest_freetype_face_compat_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeFaceCompat.cpp)
+    target_include_directories(guest_freetype_face_compat_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_face_compat_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_face_compat_tests)
+    add_test(NAME guest_freetype_face_compat COMMAND guest_freetype_face_compat_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_face_compat PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_outline_storage_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineStorage.cpp)
+    target_include_directories(guest_freetype_outline_storage_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_outline_storage_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_outline_storage_tests)
+    add_test(NAME guest_freetype_outline_storage COMMAND guest_freetype_outline_storage_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_outline_storage PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_track_kerning_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeTrackKerning.cpp)
+    target_include_directories(guest_freetype_track_kerning_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_track_kerning_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_track_kerning_tests)
+    add_test(NAME guest_freetype_track_kerning COMMAND guest_freetype_track_kerning_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_track_kerning PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)
     target_include_directories(guest_freetype_charmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_charmap_tests PRIVATE libSceFreeType freetype libc)
@@ -180,5 +208,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/MemoryRecord.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/ModuleProperties.cmake")

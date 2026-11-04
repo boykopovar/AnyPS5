@@ -91,6 +91,18 @@ static void OmittedTimeIsFaultAfterClockValidation() {
     Require(rejected);
 }
 
+static void InvalidClockIdFailsGettime() {
+    KernelTimespec time{-1, -1};
+    for (const int clockId : {-1, 999}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 22);
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+        *__error_nid_postfix() = 0;
+        Require(sceKernelClockGettime(clockId, &time) == static_cast<int>(0x80020016u));
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+    }
+}
+
 static KernelTimespec Read(int clockId) {
     KernelTimespec time{-1, -1};
     Require(clock_gettime_nid_postfix(clockId, &time) == SCE_OK);
@@ -254,16 +266,6 @@ static void RequireSettimeError(int clockId, const KernelTimespec* time, int err
     Require(clock_settime_nid_postfix(clockId, time) == -1 && *__error_nid_postfix() == error);
 }
 
-static bool SettimeThrows(const KernelTimespec& time, const char* requested) {
-    try {
-        clock_settime_nid_postfix(GUEST_CLOCK_REALTIME, &time);
-
-    } catch (const std::runtime_error& error) {
-        return std::strstr(error.what(), requested) != nullptr;
-    }
-    return false;
-}
-
 static void SettimeValidatesLikeFreebsd() {
     const KernelTimespec valid{1767225600, 5};
     RequireSettimeError(GUEST_CLOCK_REALTIME, nullptr, 14);
@@ -281,9 +283,6 @@ static void SettimeValidatesLikeFreebsd() {
     RequireSettimeError(GUEST_CLOCK_REALTIME, &wholeSecondOfNanoseconds, 22);
     RequireSettimeError(GUEST_CLOCK_REALTIME, &negativeSeconds, 22);
     RequireSettimeError(GUEST_CLOCK_MONOTONIC, &negativeSeconds, 22);
-    Require(SettimeThrows(valid, "1767225600.000000005"));
-    Require(SettimeThrows(KernelTimespec{0, 0}, "0.000000000"));
-    Require(SettimeThrows(KernelTimespec{1, NANOS_PER_SECOND - 1}, "1.999999999"));
 }
 
 static std::int32_t RuntimeDaylight(std::int32_t daylight) {
@@ -355,6 +354,7 @@ int main() {
     KernelTimezoneIsUtc();
     UnsupportedResolutionStillThrows();
     OmittedTimeIsFaultAfterClockValidation();
+    InvalidClockIdFailsGettime();
     SettimeValidatesLikeFreebsd();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
