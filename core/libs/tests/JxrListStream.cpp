@@ -183,4 +183,13 @@ int main() {
         FreeList(stream);
         Require(liveBlocks == 0);
     }
+    {
+        auto* stream = MakeList();
+        const auto data = Pattern(13000);
+        Fill(stream, data);
+        Require(liveBlocks == 4);
+        Require(CloseWS_List_nid_postfix(&stream) == 0 && !stream && liveBlocks == 0);
+        stream = MakeList();
+        Require(CloseWS_List_nid_postfix(&stream) == 0 && !stream && liveBlocks == 0);
+    }
 }
