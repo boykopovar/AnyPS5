@@ -77,6 +77,22 @@ target_sources(libSceLibcInternal PRIVATE FilesystemStatistics.cpp PathStatistic
 target_sources(libSceLibcInternal PRIVATE Inet.cpp)
 target_sources(libSceLibcInternal PRIVATE InventoryExports6.cpp)
 target_sources(libSceLibcInternal PRIVATE Filesystem.cpp)
+target_sources(libSceLibcInternal PRIVATE BasicString.cpp)
+if(BUILD_TESTING AND (MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    enable_language(ASM)
+    add_test_executable(guest_libc_internal_basic_string_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestLibcInternalBasicString.cpp
+        ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exceptions.S)
+    target_include_directories(guest_libc_internal_basic_string_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libc_internal_basic_string_tests PRIVATE libSceLibcInternal libkernel libc)
+    configure_windows_unwind(guest_libc_internal_basic_string_tests)
+    add_test(NAME guest_libc_internal_basic_string COMMAND guest_libc_internal_basic_string_tests)
+    set_tests_properties(guest_libc_internal_basic_string PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libc_internal_basic_string PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_statvfs_tests ${LIBS_INCLUDE_DIR}/tests/GuestStatvfs.cpp)

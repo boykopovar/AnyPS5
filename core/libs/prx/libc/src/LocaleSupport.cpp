@@ -90,8 +90,6 @@ const GuestLocale::FacetVtable g_copiedLocaleVtable{DestroyCopiedLocale, Destroy
 GuestLocale::Facet* g_classicFacets[1]{};
 GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFacets, 1, 0, false, "C"};
 
-constexpr std::size_t GuestStringInlineCapacity = 15;
-constexpr std::size_t GuestStringCapacityMask = 15;
 constexpr std::size_t GuestStringLargeAllocation = 0x1000;
 constexpr std::size_t GuestLargeAllocationPadding = 0x27;
 constexpr std::uintptr_t GuestLargeAllocationAlignment = 0x20;
@@ -136,9 +134,9 @@ GuestLocale::String* APS5_VABI CollateTransform(GuestLocale::String* result, con
     const auto length = static_cast<std::size_t>(last - first);
     if (length != 0 && std::memchr(first, 0, length) != nullptr) throw std::runtime_error("collate::do_transform: embedded null characters are not supported");
     char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
         data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, first, length);
@@ -220,9 +218,9 @@ GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const 
     if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
     const std::size_t length = std::strlen(source);
     char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
+    std::size_t capacity = GuestLocale::StringInlineCapacity;
+    if (length > GuestLocale::StringInlineCapacity) {
+        capacity = length | GuestLocale::StringCapacityMask;
         data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, source, length);
@@ -404,9 +402,9 @@ const GuestLocale::NumpunctFacet* AsNumpunct(const GuestLocale::Facet* facet) {
 std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
     GuestLocale::String value{};
     method(&value, AsNumpunct(facet));
-    const bool onHeap = value.capacity > GuestStringInlineCapacity;
+    const bool onHeap = value.capacity > GuestLocale::StringInlineCapacity;
     std::string text(onHeap ? value.pointer : value.buffer, value.size);
-    if (onHeap) _ZdlPv_nid_postfix(value.capacity + 1 < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+    if (onHeap) GuestLocale::DeallocateStringStorage(value.pointer, value.capacity + 1);
     return text;
 }
 
@@ -616,14 +614,15 @@ void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
     return reinterpret_cast<void*>(aligned);
 }
 
+void GuestLocale::DeallocateStringStorage(void* storage, std::size_t bytes) {
+    if (bytes >= GuestStringLargeAllocation) storage = static_cast<void**>(storage)[-1];
+    _ZdlPv_nid_postfix(storage);
+}
+
 void GuestLocale::ReleaseStringStorage(String& string) {
-    if (string.capacity > GuestStringInlineCapacity) {
-        void* storage = string.pointer;
-        if (string.capacity + 1 >= GuestStringLargeAllocation) storage = static_cast<void**>(storage)[-1];
-        _ZdlPv_nid_postfix(storage);
-    }
+    if (string.capacity > StringInlineCapacity) DeallocateStringStorage(string.pointer, string.capacity + 1);
     string = {};
-    string.capacity = GuestStringInlineCapacity;
+    string.capacity = StringInlineCapacity;
 }
 
 extern "C" {
