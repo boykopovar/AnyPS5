@@ -79,7 +79,7 @@ int APS5_VABI PKImageEncode_Transcode_nid_postfix();
 int APS5_VABI PKImageEncode_WritePixels_nid_postfix();
 int APS5_VABI PKImageEncode_WriteSource_nid_postfix();
 int APS5_VABI ReadWS_File_nid_postfix();
-int APS5_VABI ReadWS_List_nid_postfix();
+std::int64_t APS5_VABI ReadWS_List_nid_postfix(Jxr::Stream* stream, void* data, std::size_t size);
 int APS5_VABI ReadWS_Memory_nid_postfix();
 int APS5_VABI ResetCodingContext_nid_postfix();
 int APS5_VABI SetPosWS_File_nid_postfix();

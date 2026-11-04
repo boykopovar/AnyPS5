@@ -332,10 +332,6 @@ int APS5_VABI ReadWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ReadWS_List_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI ReadWS_Memory_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
