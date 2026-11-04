@@ -196,7 +196,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     static std::atomic<double> captureMs{0}, keyMs{0}, recompileMs{0}, deviceMs{0};
     static std::atomic<std::uint64_t> cacheHits{0};
     static std::atomic<std::uint64_t> dispatches{0};
-    auto lap = std::chrono::steady_clock::now();
+    auto lap = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
     std::array<double, DriverPhaseCount> phaseMs{};
     auto phaseLap = lap;

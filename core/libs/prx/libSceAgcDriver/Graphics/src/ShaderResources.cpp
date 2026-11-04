@@ -2183,7 +2183,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
     for (const auto& shader : shaders) if (shader.registeredImageViews != nullptr) registeredImageViews.insert(registeredImageViews.end(), shader.registeredImageViews->begin(), shader.registeredImageViews->end());
     Require(registeredImageViewsCurrent(registeredImageViews), "AGC graphics: registered image range changed after resource capture");
     PerformanceTimer frameTiming("Resources.Prepare");
-    const auto stageStart = std::chrono::steady_clock::now();
+    const auto stageStart = BuildProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     phaseStart = stageStart;
     if (BuildProfiled()) {
         auto& profile = ThreadBuilds();
@@ -2592,7 +2592,7 @@ void ShaderResources::buildComplete() {
     BuildLookups lookups;
     Require(!completed, "cannot update a published descriptor heap");
     Require(registeredImageViewsCurrent(registeredImageViews), "AGC graphics: registered image range changed after resource preparation");
-    const auto stageStart = std::chrono::steady_clock::now();
+    const auto stageStart = BuildProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     phaseStart = stageStart;
     try {
         // The lookups run in plan order: Revalidate walks the bindings the same way, and consecutive
