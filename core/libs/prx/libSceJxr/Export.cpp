@@ -340,10 +340,6 @@ int APS5_VABI ReadWS_Memory_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ResetCodingContext_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SetPosWS_File_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -376,14 +372,6 @@ int APS5_VABI WriteWS_Memory_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI advanceMRPtr_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI advanceOneMBRow_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI allocateBitIOInfo_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -409,10 +397,6 @@ int APS5_VABI attachISWrite_nid_postfix() {
 }
 
 int APS5_VABI attach_SB_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI checkImageBuffer_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -512,14 +496,6 @@ int APS5_VABI getSizeWrite_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI getTilePos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI initMRPtr_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI initPostProc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -561,10 +537,6 @@ int APS5_VABI setUniformQuantizer_nid_postfix() {
 }
 
 int APS5_VABI slideOneMBRow_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI swapMRPtr_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
