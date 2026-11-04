@@ -12,4 +12,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_fs_internal_for_vsh PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>")
     endif()
+
+    add_test_executable(guest_fs_internal_for_vsh_catalog_exports_tests ${LIBS_INCLUDE_DIR}/tests/GuestFsInternalForVshCatalogExports.cpp)
+    target_include_directories(guest_fs_internal_for_vsh_catalog_exports_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fs_internal_for_vsh_catalog_exports_tests PRIVATE libSceFsInternalForVsh libkernel libc)
+    configure_windows_unwind(guest_fs_internal_for_vsh_catalog_exports_tests)
+    add_test(NAME guest_fs_internal_for_vsh_catalog_exports COMMAND guest_fs_internal_for_vsh_catalog_exports_tests)
+    set_tests_properties(guest_fs_internal_for_vsh_catalog_exports PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_fs_internal_for_vsh_catalog_exports PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>")
+    endif()
 endif()

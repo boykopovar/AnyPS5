@@ -182,3 +182,54 @@ int APS5_VABI sceFsWsMount();
 int APS5_VABI sceFsWsUmount();
 
 }
+
+extern "C" {
+int APS5_VABI sceFsBfsCopyFile_nid_no_patch(void);
+int APS5_VABI sceFsBfsCreateFakeSpace_nid_no_patch(void);
+int APS5_VABI sceFsBfsDeleteFakeSpace_nid_no_patch(void);
+int APS5_VABI sceFsBfsGetBlockStatus_nid_no_patch(void);
+int APS5_VABI sceFsBfsGetCapacityInfoForTelemetry_nid_no_patch(void);
+int APS5_VABI sceFsBfsGetRwDeactivateStatus_nid_no_patch(void);
+int APS5_VABI sceFsBfsGetRwDeactivateStatusForShutdown_nid_no_patch(void);
+int APS5_VABI sceFsBfsUnmount_nid_no_patch(void);
+int APS5_VABI sceFsDevpfsAllocateFile2_nid_no_patch(void);
+int APS5_VABI sceFsExfatfsMountForCronos_nid_no_patch(void);
+int APS5_VABI sceFsExfatfsUnmount_nid_no_patch(void);
+int APS5_VABI sceFsFgcEmuDisable_nid_no_patch(void);
+int APS5_VABI sceFsFgcEmuEnable_nid_no_patch(void);
+int APS5_VABI sceFsFgcEmuInitializeParams_nid_no_patch(void);
+int APS5_VABI sceFsFgcEmuSetParams_nid_no_patch(void);
+int APS5_VABI sceFsM2StorageGetDebugInfo_nid_no_patch(void);
+int APS5_VABI sceFsM2StorageGetDeviceInfo_nid_no_patch(void);
+int APS5_VABI sceFsM2StorageLocalSandboxMount_nid_no_patch(void);
+int APS5_VABI sceFsM2StorageLocalSandboxUnmount_nid_no_patch(void);
+int APS5_VABI sceFsM2StorageQAC_nid_no_patch(void);
+int APS5_VABI sceFsM2StorageThermalShutdownTest_nid_no_patch(void);
+int APS5_VABI sceFsNTBAddDevice_nid_no_patch(void);
+int APS5_VABI sceFsNTBCreatePartitionTable_nid_no_patch(void);
+int APS5_VABI sceFsNTBCreateSavedataSnapshot_nid_no_patch(void);
+int APS5_VABI sceFsNTBCronosUserPersonalizedKey_nid_no_patch(void);
+int APS5_VABI sceFsNTBGetAttachedDeviceType_nid_no_patch(void);
+int APS5_VABI sceFsNTBGetDeviceInfo_nid_no_patch(void);
+int APS5_VABI sceFsNTBInvalidateBlockRange_nid_no_patch(void);
+int APS5_VABI sceFsNTBRemoveDevice_nid_no_patch(void);
+int APS5_VABI sceFsNTBVerifyPartitionTable_nid_no_patch(void);
+int APS5_VABI sceFsPprSaveDataConvertSize_nid_no_patch(void);
+int APS5_VABI sceFsPprSaveDataConvertToCoW_nid_no_patch(void);
+int APS5_VABI sceFsPprSaveDataGetBlkBitmap_nid_no_patch(void);
+int APS5_VABI sceFsPs4SaveDataGetBlkBitmap_nid_no_patch(void);
+int APS5_VABI sceFsSaveDataDisableWriteThrottling_nid_no_patch(void);
+int APS5_VABI sceFsSaveDataGetBlockNumber_nid_no_patch(void);
+int APS5_VABI sceFsSaveDataGetImageType_nid_no_patch(void);
+int APS5_VABI sceFsSaveDataTrimDeviceFile_nid_no_patch(void);
+int APS5_VABI sceFsTransactionPprNoCowSaveDataMountEx_nid_no_patch(void);
+int APS5_VABI sceFsTransactionPprSaveDataMountEx_nid_no_patch(void);
+int APS5_VABI sceFsTransactionSaveDataReadParamEx_nid_no_patch(void);
+int APS5_VABI sceFsTransactionSaveDataReadParamEx2_nid_no_patch(void);
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx_nid_no_patch(void);
+int APS5_VABI sceFsTransactionSaveDataWriteParamEx2_nid_no_patch(void);
+int APS5_VABI sceFsUfsMkfsForCronos_nid_no_patch(void);
+int APS5_VABI sceFsUfsMountForCronos_nid_no_patch(void);
+int APS5_VABI sceFsUfsUnmountForCronos_nid_no_patch(void);
+int APS5_VABI sceFsUpdatePackageMetadataFlexcont_nid_no_patch(void);
+}
