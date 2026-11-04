@@ -520,10 +520,6 @@ int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_ALGOR_get0_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI BIO_set_shutdown_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
