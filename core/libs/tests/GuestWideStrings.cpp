@@ -25,6 +25,10 @@ bool same(const char16_t* left, const char16_t* right, std::size_t count) {
     return true;
 }
 
+int copyWide(char16_t* dest, std::size_t size, const char16_t* src) {
+    return wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(dest), size, reinterpret_cast<const std::uint16_t*>(src));
+}
+
 }
 
 int main() {
@@ -125,6 +129,7 @@ int main() {
     require(same(buffer, truncated, 4));
 
     char16_t memBuf[16];
+    void* previousHandler = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&ignore_handler_s_nid_postfix));
     require(wmemcpy_s_nid_postfix(memBuf, 16, u"test", 4) == 0 && same(memBuf, u"test", 4));
     require(wmemcpy_s_nid_postfix(memBuf, 16, u"abc", 0) == 0);
     require(wmemcpy_s_nid_postfix(nullptr, 16, u"abc", 3) == 22);
@@ -132,10 +137,12 @@ int main() {
     wmemset_nid_postfix(memBuf, u'Z', 16);
 
     require(wmemcpy_s_nid_postfix(memBuf, 4, u"12345", 5) == 34 && memBuf[0] == 0 && memBuf[3] == 0);
-    require(wmemcpy_s_nid_postfix(memBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a", 1) == 34);
+    require(wmemcpy_s_nid_postfix(memBuf, std::size_t{1} << 61, u"a", 1) == 22);
     wmemcpy_s_nid_postfix(memBuf, 16, u"abcdefgh", 8);
 
     require(wmemcpy_s_nid_postfix(memBuf + 2, 8, memBuf, 4) == 22 && memBuf[2] == 0);
+    wmemset_nid_postfix(memBuf, u'Z', 16);
+    require(wmemcpy_s_nid_postfix(memBuf, 2, u"ab", std::size_t{1} << 61) == 22 && memBuf[0] == 0 && memBuf[1] == 0 && memBuf[2] == u'Z');
 
     wmemcpy_s_nid_postfix(memBuf, 16, u"0123456789", 10);
     require(wmemmove_s_nid_postfix(memBuf + 2, 10, memBuf, 5) == 0);
@@ -145,7 +152,7 @@ int main() {
     require(wmemmove_s_nid_postfix(nullptr, 16, memBuf, 3) == 22);
     require(wmemmove_s_nid_postfix(memBuf, 16, nullptr, 3) == 22 && memBuf[0] == 0);
     require(wmemmove_s_nid_postfix(memBuf, 4, u"12345", 5) == 34 && memBuf[0] == 0);
-    require(wmemmove_s_nid_postfix(memBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a", 1) == 34);
+    require(wmemmove_s_nid_postfix(memBuf, std::size_t{1} << 61, u"a", 1) == 22);
 
     char16_t strBuf[16];
     require(wcsncpy_s_nid_postfix(strBuf, 16, u"hello", 5) == 0 && same(strBuf, u"hello", 6));
@@ -159,24 +166,21 @@ int main() {
     require(wcsncpy_s_nid_postfix(strBuf, 4, u"hello", 5) == 34 && strBuf[0] == 0);
     strBuf[0] = u'X';
     require(wcsncpy_s_nid_postfix(strBuf, 5, u"hello", 5) == 34 && strBuf[0] == 0);
-    require(wcsncpy_s_nid_postfix(strBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a", 1) == 34);
+    require(wcsncpy_s_nid_postfix(strBuf, std::size_t{1} << 61, u"a", 1) == 22);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abcdef", 6);
 
     require(wcsncpy_s_nid_postfix(strBuf + 1, 10, strBuf, 3) == 22 && strBuf[1] == 0);
 
     char16_t cpyBuf[16];
-    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 16, reinterpret_cast<const std::uint16_t*>(u"wide")) == 0 && same(cpyBuf, u"wide", 5));
-    void* previousHandler = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&ignore_handler_s_nid_postfix));
-    require(wcscpy_s_nid_postfix(nullptr, 16, reinterpret_cast<const std::uint16_t*>(u"wide")) == 22);
-    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 0, reinterpret_cast<const std::uint16_t*>(u"wide")) == 22);
-    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 16, nullptr) == 22 && cpyBuf[0] == 0);
-    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 4, reinterpret_cast<const std::uint16_t*>(u"wide")) == 34 && cpyBuf[0] == 0);
+    require(copyWide(cpyBuf, 16, u"wide") == 0 && same(cpyBuf, u"wide", 5));
+    require(copyWide(nullptr, 16, u"wide") == 22);
+    require(copyWide(cpyBuf, 0, u"wide") == 22);
+    require(copyWide(cpyBuf, 16, nullptr) == 22 && cpyBuf[0] == 0);
+    require(copyWide(cpyBuf, 4, u"wide") == 34 && cpyBuf[0] == 0);
     cpyBuf[0] = 0x1234;
-    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, reinterpret_cast<const std::uint16_t*>(u"a")) == 34 && cpyBuf[0] == 0x1234);
-    wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf), 16, reinterpret_cast<const std::uint16_t*>(u"abcdef"));
-
-    require(wcscpy_s_nid_postfix(reinterpret_cast<std::uint16_t*>(cpyBuf + 1), 10, reinterpret_cast<const std::uint16_t*>(cpyBuf)) == 22 && cpyBuf[1] == 0);
-    set_constraint_handler_s_nid_postfix(previousHandler);
+    require(copyWide(cpyBuf, std::size_t{1} << 61, u"a") == 22 && cpyBuf[0] == 0x1234);
+    copyWide(cpyBuf, 16, u"abcdef");
+    require(copyWide(cpyBuf + 1, 10, cpyBuf) == 22 && cpyBuf[1] == 0);
 
     char16_t ncatBuf[16];
     wmemset_nid_postfix(ncatBuf, 0xaaaa, 16);
@@ -199,8 +203,11 @@ int main() {
 
     require(wcsncat_s_nid_postfix(strBuf, 8, u"12345", 5) == 34 && strBuf[0] == 0);
     wmemset_nid_postfix(strBuf, u'x', 4);
-
     require(wcsncat_s_nid_postfix(strBuf, 4, u"a", 1) == 34 && strBuf[0] == 0);
+    wcsncpy_s_nid_postfix(strBuf, 8, u"ab", 2);
+    require(wcsncat_s_nid_postfix(strBuf, 8, strBuf, 2) == 0 && same(strBuf, u"abab", 5));
+    wcsncpy_s_nid_postfix(strBuf, 8, u"ab", 2);
+    require(wcsncat_s_nid_postfix(strBuf, 8, u"c", std::size_t{1} << 61) == 22 && strBuf[0] == 0);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
 
     require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 1, 2) == 0 && same(strBuf, u"abcbc", 6));
@@ -217,6 +224,7 @@ int main() {
     wcsncpy_s_nid_postfix(strBuf, 8, u"123", 3);
 
     require(wcscat_s_nid_postfix(strBuf, 8, nullptr) == 22 && strBuf[0] == 0);
+    set_constraint_handler_s_nid_postfix(previousHandler);
 
     const char16_t* text = u"a世b世c";
     require(wcschr_nid_postfix(text, u'世') == text + 1);
