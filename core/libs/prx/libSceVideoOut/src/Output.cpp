@@ -25,7 +25,7 @@ static VideoOutOutputStatus outputStatus(const auto& cfg) {
     const bool hdr = AgcDriver::CurrentHostHdr().available;
     status.dynamicRange = hdr ? VIDEO_OUT_DYNAMIC_RANGE_HDR : VIDEO_OUT_DYNAMIC_RANGE_SDR;
     status.refreshRate = (cfg.outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
-    status.flags = hdr ? VIDEO_OUT_OUTPUT_STATUS_FLAG_HDR : 0;
+    status.flags = 0;
     return status;
 }
 
@@ -296,6 +296,13 @@ int APS5_VABI sceVideoOutCursorSetImageAddress(int32_t handle, int32_t index, co
 }
 
 int APS5_VABI sceVideoOutCursorSetPosition(int32_t handle, int32_t index, uint32_t, uint32_t) try {
+    if (const int error = cursorHandleError(__func__, handle, index)) return error;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutCursorSet2xMagnify(int32_t handle, int32_t index, bool) try {
     if (const int error = cursorHandleError(__func__, handle, index)) return error;
     return 0;
 } catch (const ProcessShutdown&) {
