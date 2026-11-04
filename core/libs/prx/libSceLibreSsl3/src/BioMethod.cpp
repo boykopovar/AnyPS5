@@ -35,4 +35,10 @@ int APS5_VABI BIO_meth_set_ctrl_nid_postfix(LibreSsl::BioMethod* method, decltyp
     return 1;
 }
 
+int APS5_VABI BIO_meth_set_create_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::create) create) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_create requires a method");
+    method->create = create;
+    return 1;
+}
+
 }
