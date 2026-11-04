@@ -2064,6 +2064,7 @@ int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint6
 }
 
 int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) {
+    if (input_buffers_num > 0xffu || output_buffers_num > 0xffu) return SCE_AJM_ERROR_INVALID_PARAMETER;
     auto header = MakeHeader(JobKind::Run, instance, sideband_output, sideband_output_size);
     header.flags = flags;
     header.inputCount = static_cast<std::uint32_t>(input_buffers_num);
