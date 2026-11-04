@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -168,7 +169,13 @@ void advance(std::uint64_t handle, Decoder& decoder) {
             const auto* au = static_cast<const void*>(decoder.inputs.front().input.auData);
             auto input = decoder.inputs.front().input;
             input.auData = decoder.inputs.front().data.data();
-            sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output);
+            try {
+                sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output);
+            } catch (...) {
+                decoder.inputs.pop_front();
+                decoder.consumed.push_back({au, 0u});
+                throw;
+            }
 
             decoder.inputs.pop_front();
             decoder.consumed.push_back({au, output.isValid ? 1u : 0u});
@@ -231,6 +238,7 @@ int APS5_VABI sceVdecswSetDecodeInput(std::uint64_t handle, const SceVideodec2::
     std::lock_guard lock(decoder->mutex);
     if (decoder->finalized) throw std::runtime_error("Vdecsw: decode input after the sequence was finalized");
     if (input->auData == nullptr || input->auSize == 0) throw std::runtime_error("Vdecsw: empty access unit");
+    if (input->auSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Vdecsw: access unit too large");
     decoder->inputs.push_back({*input, std::vector<std::uint8_t>(input->auData, input->auData + input->auSize)});
     advance(handle, *decoder);
     return 0;
