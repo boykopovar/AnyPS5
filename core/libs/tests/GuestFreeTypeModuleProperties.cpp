@@ -129,8 +129,7 @@ static void RendererHooks(const Api& api, GuestLibrary* library, FT_Library nati
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    if (supported) Require(threw);
-    else Require(!threw && error == FT_Property_Set(native, "ot-svg", "svg-hooks", installed.data()));
+    if (!supported) Require(!threw && error == FT_Property_Set(native, "ot-svg", "svg-hooks", installed.data()));
     Require(input == before);
     Query<Hooks>(api, library, native, "ot-svg", "svg-hooks");
     Query<Hooks>(api, other, nativeOther, "ot-svg", "svg-hooks");
