@@ -17,4 +17,10 @@ void APS5_VABI BIO_meth_free_nid_postfix(LibreSsl::BioMethod* method) {
     free_nid_postfix(method);
 }
 
+int APS5_VABI BIO_meth_set_write_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::write) write) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_write requires a method");
+    method->write = write;
+    return 1;
+}
+
 }
