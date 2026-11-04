@@ -96,6 +96,23 @@ class LabelTests(unittest.TestCase):
         self.assertTrue(debt_report.untested(f"- [sceB]({LINK}) - x", words))
         self.assertIsNone(debt_report.untested(f"- [Nine unnamed exports]({LINK}) - x", words))
 
+    def test_plain_words_count_only_when_exported(self):
+        words = {"start", "writes", "fchmodat"}
+        text = f"- [writes]({LINK}) - `start` and `size`"
+        self.assertIsNone(debt_report.untested(text, words))
+        self.assertFalse(debt_report.untested(text, words, {"start"}))
+        self.assertTrue(debt_report.untested(f"- [fchmodat]({LINK}) - x", set(), {"fchmodat"}))
+        self.assertTrue(debt_report.untested(f"- [sceA]({LINK}) - x", {"start"}))
+
+    def test_exported_names_skip_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root, {
+                "core/libs/prx/libSceExample/Export.cpp": "int APS5_VABI sceA(int a) { return a; }\nextern \"C\" int fchmodat_nid_postfix(int a) { return a; }\n",
+                "core/libs/prx/libSceExample/tests/Example.cpp": "int APS5_VABI sceTestOnly() { return 0; }\n",
+            })
+            self.assertEqual(debt_report.exported_names(root), {"sceA", "fchmodat"})
+
     def test_stale_is_a_link_to_a_file_that_is_gone(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

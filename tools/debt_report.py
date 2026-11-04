@@ -16,6 +16,9 @@ TICKED = re.compile(r"`([a-z_][A-Za-z0-9_]*)`")
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SEPARATOR = re.compile(r",\s*|\s+and\s+|\s+or\s+")
 HELPER_SUFFIX = re.compile(r"_nid_(?:postfix|no_patch(?:_cut)?)$")
+PLAIN = re.compile(r"[a-z]+")
+EXPORTED = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
+POSTFIXED = re.compile(r"\b(\w+?)_nid_postfix\b")
 GENERIC = {"int", "void", "char", "bool", "float", "double", "size_t", "ssize_t", "off_t", "uintptr_t", "intptr_t",
            "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
            "nullptr", "true", "false", "errno", "main", "this"}
@@ -95,8 +98,18 @@ def test_words(root):
     return words
 
 
-def untested(text, words):
-    found = entry_names(text)
+def exported_names(root):
+    names = set()
+    for path in (root / "core" / "libs" / "prx").rglob("*"):
+        if path.suffix in SOURCES and "tests" not in path.relative_to(root).parts and path.is_file():
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            names.update(EXPORTED.findall(text))
+            names.update(POSTFIXED.findall(text))
+    return names
+
+
+def untested(text, words, exported=frozenset()):
+    found = [name for name in entry_names(text) if not PLAIN.fullmatch(name) or name in exported]
     return None if not found else not any(name in words for name in found)
 
 
@@ -105,9 +118,9 @@ def stale(text, root):
     return f"missing link {missing[0]}" if missing else None
 
 
-def labels(entry, root, words):
+def labels(entry, root, words, exported=frozenset()):
     explicit = set(debt_labels(entry.text))
-    chosen = {"closer": [closer(entry.text)], "test": ["no-test"] if untested(entry.text, words) else [], "platform": platforms(entry.text)}
+    chosen = {"closer": [closer(entry.text)], "test": ["no-test"] if untested(entry.text, words, exported) else [], "platform": platforms(entry.text)}
     for family, vocabulary in DEBT_LABELS.items():
         given = [label for label in vocabulary if label in explicit]
         if given:
@@ -119,9 +132,10 @@ def labels(entry, root, words):
 
 def report(root, libraries=None):
     words = test_words(root)
+    exported = exported_names(root)
     rows = []
     for entry in entries(root, libraries):
-        found, reason = labels(entry, root, words)
+        found, reason = labels(entry, root, words, exported)
         rows.append({"file": entry.file, "line": entry.line, "section": entry.section, "names": entry_names(entry.text), "labels": found, "reason": reason})
     return rows
 
