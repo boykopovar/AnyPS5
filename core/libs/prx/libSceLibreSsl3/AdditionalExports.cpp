@@ -563,10 +563,6 @@ int APS5_VABI i2d_PKCS8_PRIV_KEY_INFO_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BN_div_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_CRL_get_ext_d2i_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
