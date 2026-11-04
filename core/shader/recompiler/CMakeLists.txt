@@ -290,6 +290,7 @@ function(add_shader_recompiler target runtimeTarget)
             GcnImagePitch
             GcnImagePow2Pad
             RuntimeAbi::HeapCapacity
+            RuntimeAbi::UintStorageImageBinding
             SampledTextureNumericClass
             SetDebugProbeActive
             SrtEvaluatingBranch
