@@ -1,0 +1,57 @@
+== nearest
+arithmetic dbea67a6d5dd92ec
+unary c06d24bea00c5540
+conversions 19a33fd963207f36
+scale-remainder 708498a3f9eedd19
+constants 7ad7683a8abe46f0
+flags 5b73e229f480995c
+host-extended befe6a161f30d893
+== down
+arithmetic 39fab37a74ac8cb8
+unary 7fdc568af654d5c7
+conversions 7bf3a5b5957d5c15
+scale-remainder ba0d869ce22434e9
+constants f764d59a2e7b1a80
+flags 5b73e229f480995c
+host-extended 0b8c820ae507c4a6
+== up
+arithmetic 5e15ef6968ef04f1
+unary 1fe5c6f7946d6df1
+conversions 6acad6f322138060
+scale-remainder fa4cf09af99243c3
+constants 386c85708f85c06d
+flags 5b73e229f480995c
+host-extended 7541aebe077f8e0d
+== zero
+arithmetic 7e570fafc8142ba5
+unary 7fdc568af654d5c7
+conversions 972fff480649de95
+scale-remainder ba0d869ce22434e9
+constants f764d59a2e7b1a80
+flags 5b73e229f480995c
+host-extended 145d69df4576b18e
+== double-precision
+arithmetic 20511456f02339cb
+unary 5136192d20452bd4
+conversions a11735f93cef52b2
+scale-remainder 72d11857c66e537d
+constants 7ad7683a8abe46f0
+flags f85fc8ff5a2f66fc
+== single-precision
+arithmetic 59f9bdf342b8ce87
+unary 8dff7e98625964d7
+conversions f5608dc2d0975e59
+scale-remainder 3c72bf6b07ee9245
+constants 7ad7683a8abe46f0
+flags f85fc8ff5a2f66fc
+fscale 1*2^+inf = 7fff:8000000000000000 IE 0
+fscale -1*2^+inf = ffff:8000000000000000 IE 0
+fscale 1*2^(2^64) = 7fff:8000000000000000 IE 0
+fscale 1*2^-inf = 0000:0000000000000000 IE 0
+fscale 0*2^+inf = ffff:c000000000000000 IE 1
+fscale inf*2^-inf = ffff:c000000000000000 IE 1
+fistp m16 70000.75 = 8000 C1 0 IE 1
+fistp m16 2.75 = 0003 C1 1 IE 0
+fistp m16 2.25 = 0002 C1 0 IE 0
+fxam freed -1 4300, freed +1 4100
+fx-state eaf46f9d708a26c1

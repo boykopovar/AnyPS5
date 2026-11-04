@@ -67,3 +67,38 @@ jobs:
         with:
           path: .ccache
           key: lifted-libraries-ccache-${{ github.sha }}
+
+  lifter:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 3G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check out ps5lift's submodules
+        run: git submodule update --init --recursive --depth 1 3rdparty/zydis 3rdparty/softfloat
+      - name: Install the toolchain and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build ccache python3 clang-18 lld-18 llvm-18-dev libzstd-dev zlib1g-dev g++-x86-64-linux-gnu
+      - uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: ps5lift-ccache-${{ github.sha }}
+          restore-keys: ps5lift-ccache-
+      - name: Configure
+        run: cmake -S ps5lift -B ps5lift/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/usr/lib/llvm-18/bin/clang -DCMAKE_CXX_COMPILER=/usr/lib/llvm-18/bin/clang++ -DLLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm
+      - name: Build ps5lift
+        run: cmake --build ps5lift/build --parallel 4
+      - name: Test
+        run: ctest --test-dir ps5lift/build --output-on-failure --parallel 4
+      - if: always()
+        run: ccache --show-stats
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ps5lift-ccache-${{ github.sha }}

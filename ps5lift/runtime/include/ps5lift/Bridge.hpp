@@ -273,7 +273,7 @@ inline void RunGuest(Ps5LiftState* state, const std::uint64_t target, const std:
     state->Gpr[PS5LIFT_RSP] = rsp;
     state->Gpr[PS5LIFT_RAX] = static_cast<std::uint64_t>(vectors);
     ps5lift_dispatch(state, target);
-    if (state->Unwinding) ps5lift_fail("a longjmp or exception in guest code that native code called leaves through native code for 0x%" PRIx64, state->ResumeRip);
+    if (state->Unwinding) ps5lift_fail_unresumed(state, "between this native call into guest code and the guest code it called");
     state->Gpr[PS5LIFT_RSP] = savedRsp;
 }
 
