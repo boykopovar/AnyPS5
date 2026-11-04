@@ -161,7 +161,8 @@ enum class InputSetting {
     MouseDecayMs,
     StickModifierScale,
     KeyboardRampMs,
-    TriggerRampMs
+    TriggerRampMs,
+    MouseControlsRightStick
 };
 
 struct InputSettingName {
@@ -181,7 +182,8 @@ constexpr auto settingNames = std::array{
     InputSettingName{"MouseDecayMs", InputSetting::MouseDecayMs},
     InputSettingName{"StickModifierScale", InputSetting::StickModifierScale},
     InputSettingName{"KeyboardRampMs", InputSetting::KeyboardRampMs},
-    InputSettingName{"TriggerRampMs", InputSetting::TriggerRampMs}
+    InputSettingName{"TriggerRampMs", InputSetting::TriggerRampMs},
+    InputSettingName{"MouseStickTarget", InputSetting::MouseControlsRightStick}
 };
 
 const InputSettingName* findSetting(std::string_view name) {
@@ -228,6 +230,13 @@ double parseNumber(std::string_view value, std::string_view name, double minimum
     return parsed;
 }
 
+int parseStickId(std::string_view value) {
+    const auto normalized = upper(value);
+    if (normalized == "LEFT") return 0;
+    if (normalized == "RIGHT") return 1;
+    throw std::runtime_error("mouse target stick must be LEFT or RIGHT");
+}
+
 void applySetting(Pad::InputSettings& settings, InputSetting setting, std::string_view value) {
     switch (setting) {
         case InputSetting::LeftStickDeadzone: settings.leftStickDeadzonePercent = parseDeadzonePercent(value); break;
@@ -242,6 +251,7 @@ void applySetting(Pad::InputSettings& settings, InputSetting setting, std::strin
         case InputSetting::StickModifierScale: settings.stickModifierScale = parseNumber(value, "stick modifier scale", 0.05, 1.0); break;
         case InputSetting::KeyboardRampMs: settings.keyboardRampMs = parseNumber(value, "keyboard ramp", 0.0, 2000.0); break;
         case InputSetting::TriggerRampMs: settings.triggerRampMs = parseNumber(value, "trigger ramp", 0.0, 2000.0); break;
+        case InputSetting::MouseControlsRightStick: settings.mouseControlsRightStick = (parseStickId(value) == 1); break;
     }
 }
 

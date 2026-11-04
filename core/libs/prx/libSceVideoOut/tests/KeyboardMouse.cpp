@@ -642,6 +642,35 @@ void testTitleReadsMouse() {
     check(keyboardMouse.Compose(PadInputState{}).sticks[2] > 128, "motion in mouse mode no longer tilts the stick once the title stops reading the mouse");
 }
 
+void testMouseStickTarget() {
+    auto configuration = defaults();
+    check(configuration.settings.mouseControlsRightStick, "mouse must target right stick by default");
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    PadInputState controller{};
+    controller.sticks = {40, 75, 60, 90};
+    Pad::KeyboardMouse keyboardMouseRight(configuration);
+    keyboardMouseRight.SetMouseMode(true);
+    keyboardMouseRight.Advance(now);
+    keyboardMouseRight.HandleEvent(PadSimulation::MotionEvent(100, 50), now);
+    keyboardMouseRight.Advance(now + std::chrono::milliseconds(10));
+    const auto stateRight = keyboardMouseRight.Compose(controller);
+    check(stateRight.sticks[0] == 40, "mouse must preserve left stick X when targeting right stick");
+    check(stateRight.sticks[1] == 75, "mouse must preserve left stick Y when targeting right stick");
+    check(stateRight.sticks[2] > 128, "mouse must tilt right stick X when targeting right stick");
+    check(stateRight.sticks[3] > 128, "mouse must tilt right stick Y when targeting right stick");
+    configuration.settings.mouseControlsRightStick = false;
+    Pad::KeyboardMouse keyboardMouseLeft(configuration);
+    keyboardMouseLeft.SetMouseMode(true);
+    keyboardMouseLeft.Advance(now);
+    keyboardMouseLeft.HandleEvent(PadSimulation::MotionEvent(100, 50), now);
+    keyboardMouseLeft.Advance(now + std::chrono::milliseconds(10));
+    const auto stateLeft = keyboardMouseLeft.Compose(controller);
+    check(stateLeft.sticks[0] > 128, "mouse must tilt left stick X when targeting left stick");
+    check(stateLeft.sticks[1] > 128, "mouse must tilt left stick Y when targeting left stick");
+    check(stateLeft.sticks[2] == 60, "mouse must preserve right stick X when targeting left stick");
+    check(stateLeft.sticks[3] == 90, "mouse must preserve right stick Y when targeting left stick");
+}
+
 }
 
 int main() {
@@ -677,6 +706,7 @@ int main() {
             {"ToggleMute default key", testToggleMuteDefaultKey},
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
+            {"mouse stick target", testMouseStickTarget}
         };
         for (const auto& [name, test] : tests) {
             test();

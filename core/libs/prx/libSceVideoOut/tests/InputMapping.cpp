@@ -301,10 +301,11 @@ void mouseLookDefault() {
     const auto settings = Pad::LoadInputMapping().settings;
     require(settings.mouseVerticalScale == 1.0 && settings.mouseCurve == 1.0 && settings.mouseMaxSpeed == 1.0, "mouse look scales default to 1");
     require(settings.mouseDeadzoneOffset == 0.2 && settings.mouseSmoothingMs == 10.0 && settings.mouseDecayMs == 30.0, "mouse look timing and offset defaults");
+    require(settings.mouseControlsRightStick, "mouse look targets the right stick by default");
 }
 
 void mouseLookParse() {
-    useConfig("MouseCurve=0.7 ; softer start\nmousedeadzoneoffset = 0.15\nMouseMaxSpeed = 1.5\nMouseSmoothingMs = 0\nMouseDecayMs = 50\nMouseVerticalScale = 0.5\n");
+    useConfig("MouseCurve=0.7 ; softer start\nmousedeadzoneoffset = 0.15\nMouseMaxSpeed = 1.5\nMouseSmoothingMs = 0\nMouseDecayMs = 50\nMouseVerticalScale = 0.5\nMouseStickTarget = Left\n");
     const auto settings = Pad::LoadInputMapping().settings;
     require(settings.mouseCurve == 0.7, "mouse curve is read");
     require(settings.mouseDeadzoneOffset == 0.15, "mouse deadzone offset is read case-insensitively");
@@ -312,6 +313,9 @@ void mouseLookParse() {
     require(settings.mouseSmoothingMs == 0.0, "a 0 smoothing is accepted");
     require(settings.mouseDecayMs == 50.0, "mouse decay is read");
     require(settings.mouseVerticalScale == 0.5, "mouse vertical scale is read");
+    require(!settings.mouseControlsRightStick, "mouse stick target is read");
+    useConfig("mousesticktarget = RIGHT\n");
+    require(Pad::LoadInputMapping().settings.mouseControlsRightStick, "mouse stick target is read case-insensitively");
 }
 
 void mouseLookReject() {
@@ -324,6 +328,9 @@ void mouseLookReject() {
     require(rejects("MouseMaxSpeed = nan\n"), "a non-finite max speed is rejected");
     require(rejects("MouseVerticalScale = 11\n"), "a vertical scale above 10 is rejected");
     require(rejects("MouseDecayMs = 20\nmousedecayms = 30\n"), "a mouse setting given twice is rejected");
+    require(rejects("MouseStickTarget = Center\n"), "an invalid stick target is rejected");
+    require(rejects("MouseStickTarget =\n"), "an empty mouse stick target is rejected");
+    require(rejects("MouseStickTarget = Left\nMouseStickTarget = Right\n"), "a mouse stick target given twice is rejected");
 }
 
 void nonAsciiPaths() {
