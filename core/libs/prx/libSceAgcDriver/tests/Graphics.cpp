@@ -12397,6 +12397,34 @@ void vertexZeroFillTests() {
     Require(std::all_of(bytes.begin() + static_cast<std::ptrdiff_t>(valid), bytes.end(), [](std::byte value) { return value == std::byte{0}; }), "a vertex fetch past the record count did not read as zeros");
 }
 
+std::vector<std::pair<std::uint64_t, std::size_t>> paddedVertexFlushes;
+
+void RecordPaddedVertexFlush(std::uint64_t address, std::size_t bytes) {
+    paddedVertexFlushes.emplace_back(address, bytes);
+}
+
+void vertexZeroFillFlushTests() {
+    using AgcDriver::Graphics::CopyZeroPaddedDrawInput;
+    constexpr std::size_t valid = 24 * 3;
+    constexpr std::size_t fetched = valid + 40;
+    std::vector<std::byte> guest(fetched, std::byte{0x7a});
+    const auto address = reinterpret_cast<std::uint64_t>(guest.data());
+    const auto previous = AgcDriver::GuestMemory::CurrentFlushHook();
+    paddedVertexFlushes.clear();
+    AgcDriver::GuestMemory::SetFlushHook(&RecordPaddedVertexFlush);
+    try {
+        const auto copy = CopyZeroPaddedDrawInput(mockContext(), address, fetched, valid);
+        const auto bytes = copy.buffer->Bytes();
+        Require(std::all_of(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(valid), [](std::byte value) { return value == std::byte{0x7a}; }), "a zero-padded vertex fetch did not copy its valid bytes");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(previous);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(previous);
+    Require(std::any_of(paddedVertexFlushes.begin(), paddedVertexFlushes.end(), [&](const auto& flush) { return flush.first <= address && flush.first + flush.second >= address + valid; }), "a zero-padded vertex fetch read its valid bytes without flushing pending GPU results over them");
+    Require(std::all_of(paddedVertexFlushes.begin(), paddedVertexFlushes.end(), [&](const auto& flush) { return flush.first + flush.second <= address + valid; }), "a zero-padded vertex fetch flushed pending GPU results over the padding it fills with zeros");
+}
+
 void vertexOverhangTests() {
     using AgcDriver::Graphics::CopyZeroPaddedDrawInput;
     constexpr std::size_t page = 65536;
@@ -13641,6 +13669,7 @@ int main(int argc, char** argv) {
         storeAtLabelTests();
         nullVertexDescriptorTests();
         vertexZeroFillTests();
+        vertexZeroFillFlushTests();
         vertexOverhangTests();
         vertexZeroFillMergeTests();
         parallelCompareTests();
