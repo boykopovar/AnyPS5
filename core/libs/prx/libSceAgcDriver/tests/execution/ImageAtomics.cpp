@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -27,6 +29,28 @@ constexpr std::uint32_t Type2D = 9;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 alignas(4096) std::array<std::uint32_t, 4096> Texels{};
+
+constexpr std::uint32_t ContentionGroups = 32;
+constexpr std::uint32_t ContentionThreads = 64;
+constexpr std::uint32_t ContentionValues = ContentionGroups * ContentionThreads;
+constexpr std::uint32_t ContentionExtent = 8;
+alignas(256) std::array<std::uint32_t, ContentionValues> ContentionInput{};
+alignas(256) std::array<std::uint32_t, ContentionValues> ContentionOutput{};
+alignas(4096) std::array<std::uint32_t, 1024> ContentionTexels{};
+
+alignas(256) constexpr std::array<std::uint32_t, 14> ContentionAdd{
+    0x8f118810, 0x34060082, 0x4a060611, 0xe0301000, 0x80000a03, 0xbf8c3f70, 0x7e100280,
+    0x7e120280, 0xf0442108, 0x00020a08, 0xbf8c3f70, 0xe0701000, 0x80010a03, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 14> ContentionUMax{
+    0x8f118810, 0x34060082, 0x4a060611, 0xe0301000, 0x80000a03, 0xbf8c3f70, 0x7e100280,
+    0x7e120280, 0xf05c2108, 0x00020a08, 0xbf8c3f70, 0xe0701000, 0x80010a03, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 10> ReadBack{
+    0x7e100280, 0x7e120280, 0x7e140280, 0xf0442108, 0x00020a08, 0xbf8c3f70, 0x7e060280, 0xe0701000, 0x80010a03, 0xbf810000,
+};
 
 alignas(256) constexpr std::array<std::uint32_t, 102> Code{
     0x34020084, 0x34060086, 0xe0301000, 0x80000401, 0xe0301004, 0x80000501, 0xe0301008, 0x80000601,
@@ -135,6 +159,74 @@ void Check(std::uint32_t format) {
     }
 }
 
+void DispatchContention(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t groups) {
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto input = BufferDescriptor(ContentionInput.data(), static_cast<std::uint32_t>(ContentionInput.size() * 4u));
+    const auto output = BufferDescriptor(ContentionOutput.data(), static_cast<std::uint32_t>(ContentionOutput.size() * 4u));
+    const auto texture = TextureDescriptor(ContentionTexels.data(), ContentionExtent, ContentionExtent, Format32UInt);
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    std::copy(texture.begin(), texture.end(), userData.begin() + 8);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{ContentionThreads, 1, 1}, 0u, {true, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, groups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+std::uint32_t Contend(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, std::uint32_t initial) {
+    ContentionOutput.fill(0xdeadbeefu);
+    ContentionTexels.fill(0u);
+    ContentionTexels[0] = initial;
+    DispatchContention(device, code, waveSize, ContentionGroups);
+    const auto returned = ContentionOutput;
+    ContentionOutput.fill(0xdeadbeefu);
+    DispatchContention(device, ReadBack, waveSize, 1u);
+    const auto final = ContentionOutput[0];
+    ContentionOutput = returned;
+    return final;
+}
+
+void CheckContendedAdd(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    const auto name = "image_atomic_add contended by " + std::to_string(ContentionValues) + " wave" + std::to_string(waveSize) + " threads on one texel";
+    ContentionInput.fill(1u);
+    const auto final = Contend(device, ContentionAdd, waveSize, 0u);
+    std::vector<bool> seen(ContentionValues, false);
+    for (std::uint32_t thread = 0; thread < ContentionValues; ++thread) {
+        const auto returned = ContentionOutput[thread];
+        Require(returned < ContentionValues && !seen[returned], name + ": thread " + std::to_string(thread) + " returned " + std::to_string(returned) + ", which is not a distinct earlier sum");
+        seen[returned] = true;
+    }
+    Require(final == ContentionValues, name + ": the texel holds " + std::to_string(final) + ", expected " + std::to_string(ContentionValues));
+}
+
+void CheckContendedUMax(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    const auto name = "image_atomic_umax contended by " + std::to_string(ContentionValues) + " wave" + std::to_string(waveSize) + " threads on one texel";
+    constexpr std::uint32_t initial = 5u;
+    std::uint64_t state = 0x2545f4914f6cdd1dull + waveSize;
+    std::set<std::uint32_t> values{initial};
+    std::uint32_t expected = initial;
+    for (auto& value : ContentionInput) {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        value = static_cast<std::uint32_t>(state >> 32u);
+        values.insert(value);
+        expected = std::max(expected, value);
+    }
+    const auto final = Contend(device, ContentionUMax, waveSize, initial);
+    for (std::uint32_t thread = 0; thread < ContentionValues; ++thread) {
+        const auto returned = ContentionOutput[thread];
+        Require(values.contains(returned) && returned <= expected, name + ": thread " + std::to_string(thread) + " returned " + std::to_string(returned) + ", which no thread stored");
+    }
+    Require(final == expected, name + ": the texel holds " + std::to_string(final) + ", expected " + std::to_string(expected));
+}
+
 }
 
 int main() {
@@ -145,6 +237,10 @@ int main() {
         for (const auto format : {Format32UInt, Format32SInt, Format32Float}) {
             Run(*device, format);
             Check(format);
+        }
+        for (const auto waveSize : {32u, 64u}) {
+            CheckContendedAdd(*device, waveSize);
+            CheckContendedUMax(*device, waveSize);
         }
         std::puts("image atomics tests passed");
         return 0;
