@@ -25,6 +25,10 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -1727,7 +1731,12 @@ struct ClosingEvents {
     AvPlayerInternal* player = nullptr;
     AvPlayerInternal* replacement = nullptr;
     std::int32_t closeEvent;
+#ifdef _WIN32
+    HANDLE controllerThread = nullptr;
+    ~ClosingEvents() { if (controllerThread) CloseHandle(controllerThread); }
+#else
     std::shared_ptr<std::atomic<bool>> controllerExited = std::make_shared<std::atomic<bool>>(false);
+#endif
     bool closed = false;
 };
 
@@ -1735,11 +1744,16 @@ void APS5_VABI CloseOnEvent(void* object, std::int32_t id, std::int32_t, void* d
     auto& events = *static_cast<ClosingEvents*>(object);
     if (id != events.closeEvent) return;
     if (id == EventWarning) Check(data != nullptr && *static_cast<std::int32_t*>(data) == LoopingBack, "callback-close warning is not the loop warning");
+#ifdef _WIN32
+    events.controllerThread = OpenThread(SYNCHRONIZE, FALSE, GetCurrentThreadId());
+    Check(events.controllerThread != nullptr, "callback-close controller handle failed");
+#else
     struct Exit {
         std::shared_ptr<std::atomic<bool>> done;
         ~Exit() { done->store(true, std::memory_order_release); }
     };
     thread_local Exit exited{events.controllerExited};
+#endif
     std::lock_guard lock(events.mutex);
     Check(sceAvPlayerClose(events.player) == 0, "close from event callback failed");
     events.player = nullptr;
@@ -1787,7 +1801,11 @@ void TestCloseFromEventCallback(std::int32_t event) {
         }
         return false;
     }), "event callback did not finish closing the player");
+#ifdef _WIN32
+    Check(WaitForSingleObject(events.controllerThread, 5000) == WAIT_OBJECT_0, "closed player's event thread did not exit");
+#else
     Check(WaitFor([&] { return events.controllerExited->load(std::memory_order_acquire); }), "closed player's event thread did not exit");
+#endif
     {
         std::lock_guard lock(events.mutex);
         Check(sceAvPlayerClose(events.replacement) == 0, "replacement player close failed");
@@ -2344,7 +2362,7 @@ int main(int argc, char** argv) {
         TestLoopWarningAtPlayback();
         TestAudioLoopWarningAtPlayback();
         TestLoopWarningSharedByStreams();
-    TestLoopWarningWaitsForOldPassAudio();
+        TestLoopWarningWaitsForOldPassAudio();
         TestPlayback();
         TestVp9OpusPlayback();
         TestChangeStream();
