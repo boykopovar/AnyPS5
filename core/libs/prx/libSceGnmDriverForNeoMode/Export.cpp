@@ -117,6 +117,10 @@ std::uint32_t* UpdatePsRegisters(std::uint32_t* cmdbuf, const std::uint32_t* reg
 
 extern "C" {
 
+int APS5_VABI sceGnmIsDebugResetAvailable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceGnmBeginWorkload(std::uint32_t stream, std::uint64_t* workload) {
     if (!workload) return 3;
     *workload = stream < 0x10 ? 1 : 0;
@@ -348,8 +352,8 @@ int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(std::uint32_t* 
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (CompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
+    return 0x100;
 }
 
 int APS5_VABI sceGnmDrawOpaqueAuto(void) {
