@@ -4105,6 +4105,29 @@ void StorageTexture::noteLayersBehind(std::uint32_t firstLayer, std::uint32_t la
 }
 
 namespace {
+
+struct WriteRecords {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, StorageTexture::WriteRecord> byAddress;
+    std::uint64_t serial = 0;
+};
+
+WriteRecords& LayoutWrites() {
+    static WriteRecords records;
+    return records;
+}
+
+}
+
+std::optional<StorageTexture::WriteRecord> StorageTexture::LastWrite(std::uint64_t address) {
+    auto& records = LayoutWrites();
+    std::lock_guard lock(records.mutex);
+    const auto found = records.byAddress.find(address);
+    if (found == records.byAddress.end()) return std::nullopt;
+    return found->second;
+}
+
+namespace {
 std::atomic<std::uint64_t> flipSerial{0};
 std::atomic<std::uint64_t> occasionalLabelStores{0};
 }
@@ -4118,6 +4141,12 @@ std::uint64_t StorageTexture::OccasionalLabelStores() {
 }
 
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
+    {
+        auto& records = LayoutWrites();
+        std::lock_guard lock(records.mutex);
+        if (records.byAddress.size() >= 65536u) records.byAddress.clear();
+        records.byAddress[descriptor.baseAddress] = {descriptor.width, descriptor.height, descriptor.tileMode, descriptor.dimension, descriptor.format, ++records.serial};
+    }
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
