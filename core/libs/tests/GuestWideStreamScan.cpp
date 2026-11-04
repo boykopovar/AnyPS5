@@ -2,6 +2,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include <array>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -56,7 +57,6 @@ static int APS5_VABI ScanInputSized(const char16_t* format, ...) {
     return result;
 }
 
-#ifndef _WIN32
 static int APS5_VABI ScanNarrow(FileStream* stream, const char* format, ...) {
     APS5_VA_BEGIN(format);
     const int result = vfscanf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
@@ -77,7 +77,6 @@ static int APS5_VABI ScanNarrowInput(const char* format, ...) {
     APS5_VA_END();
     return result;
 }
-#endif
 
 static FileStream* Open(const char* text) {
     auto* stream = new FileStream(TemporaryFile::Open());
@@ -91,7 +90,6 @@ static void Close(FileStream* stream) {
     delete stream;
 }
 
-#ifndef _WIN32
 static void CheckNarrowFormatWideFields() {
     std::int32_t value = 0;
     std::int64_t count = -1;
@@ -99,9 +97,9 @@ static void CheckNarrowFormatWideFields() {
     char16_t letter = u'!';
     char narrow[8]{};
 
-    FileStream* stream = Open("  \xc5\xbelu\xc5\xa5 k\xc5\xaf\xc5\x88 7");
-    Require(fscanf_nid_postfix(stream, "%ls %lc", word, &letter) == 2 && std::u16string(word) == u"\u017elu\u0165" && letter == u'k', "fscanf %ls and %lc decode UTF-8");
-    Require(ScanNarrow(stream, "%S%ln %d", word, &count, &value) == 2 && std::u16string(word) == u"\u016f\u0148" && count == 4 && value == 7, "vfscanf %S with %ln counting bytes");
+    FileStream* stream = Open("  zlu ku 7");
+    Require(fscanf_nid_postfix(stream, "%ls %lc", word, &letter) == 2 && std::u16string(word) == u"zlu" && letter == u'k', "fscanf %ls and %lc");
+    Require(ScanNarrow(stream, "%S%ln %d", word, &count, &value) == 2 && std::u16string(word) == u"u" && count == 1 && value == 7, "vfscanf %S with %ln counting bytes");
     Require(fgetc_nid_postfix(stream) == EOF, "the whole input is consumed");
     Close(stream);
 
@@ -110,8 +108,10 @@ static void CheckNarrowFormatWideFields() {
     Close(stream);
 
     stream = Open("ab\xc3\xa9t rest");
-    Require(fscanf_nid_postfix(stream, "%l[a-c]", word) == 1 && std::u16string(word) == u"ab", "a scanset stops at a non-ASCII character");
-    Require(fscanf_nid_postfix(stream, "%l[^ ] %7s", word, narrow) == 2 && std::u16string(word) == u"\u00e9t" && std::strcmp(narrow, "rest") == 0, "the non-ASCII character stays in the stream");
+    Require(fscanf_nid_postfix(stream, "%l[a-c]", word) == 1 && std::u16string(word) == u"ab", "a scanset stops at a byte outside it");
+    *__error_nid_postfix() = 0;
+    Require(fscanf_nid_postfix(stream, "%l[^ ] %7s", word, narrow) == 0 && *__error_nid_postfix() == 86, "a byte after a UTF-8 lead byte fails the field");
+    Require(fgetc_nid_postfix(stream) == 0xc3 && fgetc_nid_postfix(stream) == 0xa9, "the whole invalid multibyte character stays in the stream");
     Close(stream);
 
     char16_t three[5] = {u'!', u'!', u'!', u'!', u'!'};
@@ -140,15 +140,14 @@ static void CheckNarrowFormatWideFields() {
     stream = Open("ab c");
     __stdinp_nid_postfix = stream;
     Require(scanf_nid_postfix("%ls", word) == 1 && std::u16string(word) == u"ab", "scanf %ls reads the guest standard input");
-    Require(ScanNarrowInput(" %C", &letter) == 1 && letter == u'c', "vscanf %C reads the guest standard input");
+    Require(ScanNarrowInput(" %lc", &letter) == 1 && letter == u'c', "vscanf %lc reads the guest standard input");
     __stdinp_nid_postfix = standardInput;
     Close(stream);
 
-    stream = Open("7 \xc5\xbe z");
-    Require(fscanf_nid_postfix(stream, "%3$d %1$ls %2$lc", word, &letter, &value) == 3 && value == 7 && std::u16string(word) == u"\u017e" && letter == u'z', "fscanf positional wide fields");
+    stream = Open("7 xy z");
+    Require(fscanf_nid_postfix(stream, "%3$d %1$ls %2$lc", word, &letter, &value) == 3 && value == 7 && std::u16string(word) == u"xy" && letter == u'z', "fscanf positional wide fields");
     Close(stream);
 }
-#endif
 
 static void CheckConsumption() {
     std::int32_t value = -1;
@@ -245,12 +244,167 @@ static void CheckStandardInput() {
     Close(stream);
 }
 
+static void CheckShortCharacterFields() {
+    const char* inputs[]{"", "a", "ab", "abc", "abcd"};
+    for (const char* input : inputs) {
+        const std::size_t length = std::string(input).size();
+        const std::size_t consumed = length < 3 ? length : 3;
+        for (int mode = 0; mode < 4; ++mode) {
+            FileStream* stream = Open(input);
+            char16_t output[]{0xa55a, 0xa55a, 0xa55a, 0xa55a, 0xa55a};
+            int count = -1;
+            const int result = mode == 0 ? fwscanf_nid_postfix(stream, u"%3lc%n", output + 1, &count)
+                             : mode == 1 ? ScanStream(stream, u"%3lc%n", output + 1, &count)
+                             : mode == 2 ? fwscanf_s_nid_postfix(stream, u"%3lc%n", output + 1, 3u, &count)
+                                         : ScanStreamSized(stream, u"%3lc%n", output + 1, 3u, &count);
+            Require(result == (length == 0 ? EOF : 1), "short stream character assignment count");
+            Require(count == (length == 0 ? -1 : static_cast<int>(consumed)), "short stream character consumed count");
+            for (std::size_t index = 0; index < 5; ++index) {
+                const char16_t expected = index > 0 && index <= consumed ? static_cast<char16_t>(input[index - 1]) : 0xa55a;
+                Require(output[index] == expected, "short stream character exact write extent without terminator");
+            }
+            Require(fgetwc_nid_postfix(stream) == (length > 3 ? 'd' : -1), "short stream character lookahead");
+            Close(stream);
+        }
+    }
+    for (bool sized : {false, true}) {
+        FileStream* stream = Open("ab");
+        int count = -1;
+        const int result = sized ? ScanStreamSized(stream, u"%*3lc%n", &count) : ScanStream(stream, u"%*3lc%n", &count);
+        Require(result == 0 && count == 2, "suppressed short stream field continues to count");
+        Require(fgetwc_nid_postfix(stream) == -1, "suppressed short stream field consumes input");
+        Close(stream);
+    }
+}
+
+static void CheckZeroCapacityCharacterFields() {
+    for (bool indirect : {false, true}) {
+        FileStream* stream = Open("a");
+        char16_t output[]{0xa55a, 0xa55a, 0xa55a};
+        int count = -1;
+        *__error_nid_postfix() = 0;
+        const int result = indirect ? ScanStreamSized(stream, u"%3lc%n", output + 1, 0u, &count)
+                                    : fwscanf_s_nid_postfix(stream, u"%3lc%n", output + 1, 0u, &count);
+        const int error = *__error_nid_postfix();
+        Require(result == 0, "zero-capacity stream character field returns no assignment");
+        Require(count == -1, "zero-capacity stream character field does not reach percent n");
+        Require(error == 0, "zero-capacity stream character field preserves errno");
+        for (const char16_t unit : output) Require(unit == 0xa55a, "zero-capacity stream character field leaves output untouched");
+        Close(stream);
+    }
+}
+
+static void CheckSecureCharacterCapacities() {
+    const char* inputs[]{"", "a", "ab", "abc", "abcd"};
+    for (const char* input : inputs) {
+        const std::size_t length = std::string(input).size();
+        for (unsigned int capacity : {1u, 2u, 3u, 4u}) {
+            const std::size_t limit = capacity < 3 ? capacity : 3;
+            const std::size_t consumed = length < limit ? length : limit;
+            for (bool indirect : {false, true}) {
+                FileStream* stream = Open(input);
+                char16_t output[]{0xa55a, 0xa55a, 0xa55a, 0xa55a, 0xa55a, 0xa55a};
+                int count = -1;
+                *__error_nid_postfix() = 0;
+                const int result = indirect ? ScanStreamSized(stream, u"%3lc%n", output + 1, capacity, &count)
+                                            : fwscanf_s_nid_postfix(stream, u"%3lc%n", output + 1, capacity, &count);
+                Require(result == (length == 0 ? EOF : 1), "positive secure stream character capacity assignment count");
+                Require(count == (length == 0 ? -1 : static_cast<int>(consumed)), "positive secure stream character capacity consumed count");
+                Require(*__error_nid_postfix() == 0, "positive secure stream character capacity preserves errno");
+                for (std::size_t index = 0; index < 6; ++index) {
+                    const char16_t expectedUnit = index > 0 && index <= consumed ? static_cast<char16_t>(input[index - 1]) : 0xa55a;
+                    Require(output[index] == expectedUnit, "positive secure stream character capacity exact writes without terminator");
+                }
+                Require(fgetwc_nid_postfix(stream) == (length > consumed ? input[consumed] : -1),
+                        "positive secure stream character capacity leaves lookahead");
+                Close(stream);
+            }
+        }
+    }
+    for (bool indirect : {false, true}) {
+        FileStream* stream = Open("7 abcZ");
+        char16_t output[]{0xa55a, 0xa55a, 0xa55a, 0xa55a};
+        int value = -1, count = -1;
+        const int result = indirect ? ScanStreamSized(stream, u"%d %3lc%n", &value, output + 1, 2u, &count)
+                                    : fwscanf_s_nid_postfix(stream, u"%d %3lc%n", &value, output + 1, 2u, &count);
+        Require(result == 2 && value == 7 && count == 4, "positive secure stream capacity after another assignment");
+        Require(output[0] == 0xa55a && output[1] == u'a' && output[2] == u'b' && output[3] == 0xa55a,
+                "positive secure stream capacity after another assignment preserves bounds");
+        Require(fgetwc_nid_postfix(stream) == u'c', "positive secure stream capacity after another assignment leaves lookahead");
+        Close(stream);
+    }
+}
+
+static void CheckNarrowWideFailurePosition() {
+    struct Case {
+        const char* input;
+        const char* format;
+        int result;
+        long position;
+        int next;
+        int error;
+        int count;
+        std::array<char16_t, 8> output;
+        const char* remaining;
+    };
+    const Case cases[]{
+        {"\xc3\xa9", "%ls%n", 0, 0, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\xa9"},
+        {"\x61\xc3\xa9", "%ls%n", 0, 1, 195, 86, -77, {0x61, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\xa9"},
+        {"\x61\x62\x80", "%ls%n", 0, 2, 128, 86, -77, {0x61, 0x62, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\x80"},
+        {"\xc3\x20\x61", "%ls%n", -1, 1, 32, 97, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\x20\x61"},
+        {"\xc3", "%ls%n", -1, 1, -1, 97, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, ""},
+        {"\x80", "%ls%n", -1, 0, 128, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\x80"},
+        {"\x61\x80", "%ls%n", 0, 1, 128, 86, -77, {0x61, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\x80"},
+        {"\xc3\xa9", "%1ls%n", -1, 1, 169, 97, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xa9"},
+        {"\x61\xc3\xa9", "%2ls%n", -1, 2, 169, 97, -77, {0x61, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xa9"},
+        {"\x61\xc3\xa9", "%3ls%n", 0, 1, 195, 86, -77, {0x61, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\xa9"},
+        {"\xc3\xa9", "%2lc%n", 0, 0, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\xa9"},
+        {"\x61\xc3\xa9", "%l[^ ]%n", 0, 1, 195, 86, -77, {0x61, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\xa9"},
+        {"\xc3\xa9", "%S%n", 0, 0, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\xa9"},
+        {"\x61\xc3\xa9", "%lS%n", 0, 1, 195, 86, -77, {0x61, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\xa9"},
+        {"\xff\x7a", "%ls%n", -1, 1, 122, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\x7a"},
+        {"\x61\xff\x7a", "%ls%n", 0, 2, 122, 86, -77, {0x61, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\x7a"},
+        {"\xc3\xff\x7a", "%ls%n", 0, 1, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\x7a"},
+        {"\xc3\x80\x7a", "%ls%n", 0, 0, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\x80\x7a"},
+        {"\xc3\xc3\x7a", "%ls%n", 0, 0, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\xc3\x7a"},
+        {"\xc3\xff\x7a", "%2lc%n", 0, 1, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\x7a"},
+        {"\xc3\xff\x7a", "%3ls%n", 0, 1, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\x7a"},
+        {"\xc3\xff\x7a", "%l[^ ]%n", 0, 1, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\x7a"},
+        {"\xff\x7a", "%S%n", -1, 1, 122, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\x7a"},
+        {"\xc3\xff\x7a", "%lS%n", 0, 1, 195, 86, -77, {0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5, 0xa5a5}, "\xc3\x7a"},
+    };
+    for (const auto& item : cases) {
+        for (const bool secure : {false, true}) {
+            for (const bool variadic : {false, true}) {
+                auto* stream = Open(item.input);
+                std::array<char16_t, 8> output;
+                output.fill(0xa5a5);
+                int count = -77;
+                *__error_nid_postfix() = 97;
+                const int result = secure ? (variadic ? ScanNarrowSized(stream, item.format, output.data(), 8u, &count) : fscanf_s_nid_postfix(stream, item.format, output.data(), 8u, &count)) : (variadic ? ScanNarrow(stream, item.format, output.data(), &count) : fscanf_nid_postfix(stream, item.format, output.data(), &count));
+                Require(result == item.result && count == item.count && output == item.output, "wide field failure keeps measured result, count and stored units");
+                Require(*__error_nid_postfix() == item.error, "wide field failure keeps measured errno");
+                Require(ftell_nid_postfix(stream) == item.position, "wide field failure keeps the measured stream position");
+                const int next = fgetc_nid_postfix(stream);
+                Require(next == item.next, "wide field failure leaves the measured next input byte");
+                std::string remaining;
+                if (next != EOF) remaining += static_cast<char>(next);
+                for (int byte; (byte = fgetc_nid_postfix(stream)) != EOF;) remaining += static_cast<char>(byte);
+                Require(remaining == item.remaining, "wide field failure keeps the measured remaining input");
+                Close(stream);
+            }
+        }
+    }
+}
+
 int main() {
+    CheckZeroCapacityCharacterFields();
+    CheckSecureCharacterCapacities();
+    CheckShortCharacterFields();
+    CheckNarrowWideFailurePosition();
     CheckConsumption();
     CheckWideText();
     CheckStandardInput();
-#ifndef _WIN32
     CheckNarrowFormatWideFields();
-#endif
     return 0;
 }
