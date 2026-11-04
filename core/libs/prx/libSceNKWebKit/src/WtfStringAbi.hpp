@@ -71,6 +71,13 @@ struct ProcessPrivileges {
     unsigned storage;
 };
 
+struct SHA1 {
+    std::uint8_t buffer[64];
+    std::size_t cursor;
+    std::uint64_t totalBytes;
+    std::uint32_t hash[5];
+};
+
 static_assert(alignof(StringImpl) == 8);
 static_assert(alignof(StringView) == 8);
 static_assert(alignof(CStringBuffer) == 8);
@@ -94,5 +101,12 @@ static_assert(offsetof(CStringBuffer, refCount) == 0);
 static_assert(offsetof(CStringBuffer, length) == 8);
 static_assert(sizeof(ProcessPrivileges) == 4);
 static_assert(offsetof(ProcessPrivileges, storage) == 0);
+static_assert(std::is_standard_layout_v<SHA1>);
+static_assert(sizeof(SHA1) == 104);
+static_assert(alignof(SHA1) == 8);
+static_assert(offsetof(SHA1, buffer) == 0);
+static_assert(offsetof(SHA1, cursor) == 64);
+static_assert(offsetof(SHA1, totalBytes) == 72);
+static_assert(offsetof(SHA1, hash) == 80);
 
 }  // namespace NKWebKit::WtfAbi

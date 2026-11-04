@@ -9,6 +9,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Media preferences](../../../core/libs/prx/libSceNKWebKit/src/Preferences.cpp) (libSceNKWebKit) - unset `MediaSourceEnabled`, `EncryptedMediaAPIEnabled` and `SourceBufferChangeTypeEnabled` getters throw, and feature-key setters for `EncryptedMediaAPIEnabled`, `SourceBufferChangeTypeEnabled` and `WebMParserEnabled` throw, because the PlayStation media player configuration behind `ENABLE_MEDIA_SOURCE` and `ENABLE_ENCRYPTED_MEDIA` is not in the pinned source. Other defaults evaluate [UnifiedWebPreferences.yaml](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml) for PlayStation; downstream console overrides are unverified.
 
 - [FastBitVector exports](../../../core/libs/prx/libSceNKWebKit/src/WtfFastBitVector.cpp) have no console ABI or behavior verification. The 16-byte owner (word pointer at 0, 64-bit bit count at 8), range clearing, growth and copying follow the paired header and [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastBitVector.cpp). `resizeSlow` preserves the stored bit count and unused bits of existing words; new words are zeroed. Allocation uses the module's `fastMalloc` and `fastFree`. Invalid ranges, null accessed storage, shrinking the word count and overflowing the upstream round-up throw instead of reproducing assertion failures or invalid memory access. Closes when: compared with a console module.
+- [WTF::SHA1](../../../core/libs/prx/libSceNKWebKit/src/WtfSha1.cpp) (libSceNKWebKit) - the object layout and digest are not checked against a console module. The 104-byte layout (`m_buffer[64]` at 0, `m_cursor` at 64, `m_totalBytes` at 72, `m_hash[5]` at 80) and the uppercase hex digest follow the non-Cocoa [SHA1.h](https://github.com/WebKit/WebKit/blob/9809c1a27c82/Source/WTF/wtf/SHA1.h#L85-L96) and [SHA1.cpp](https://github.com/WebKit/WebKit/blob/9809c1a27c82/Source/WTF/wtf/SHA1.cpp#L100-L223). A null object or a cursor of 64 or more throws `std::invalid_argument` before any write, where the source only asserts and then writes past `m_buffer`. Closes when: compared with a console module.
 
 ### Functional
 
@@ -1856,9 +1857,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF4Lock10unlockSlowEv` | `e4I+fGvwugs` |
 | `_ZN3WTF4Lock13safepointSlowEv` | `UX5VJ-OZdTg` |
 | `_ZN3WTF4Lock8lockSlowEv` | `GciZ5UdsizU` |
-| `_ZN3WTF4SHA116computeHexDigestEv` | `Ow27qMGiCBU` |
-| `_ZN3WTF4SHA1C1Ev` | `f4Y+BVScAcc` |
-| `_ZN3WTF4SHA1C2Ev` | `Dq5bk2mU2xw` |
 | `_ZN3WTF5Mutex4lockEv` | `GCXtBIZJoFY` |
 | `_ZN3WTF5Mutex6unlockEv` | `qr+T1Bp3AqE` |
 | `_ZN3WTF5Mutex7tryLockEv` | `fFZmV5BzYC0` |
