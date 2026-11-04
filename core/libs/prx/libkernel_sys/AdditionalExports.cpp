@@ -1820,19 +1820,19 @@ int APS5_VABI sceKernelIccSetWlanBtManuTestMode() {
 }
 
 int APS5_VABI sceKernelIsAuthenticTrinity() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceKernelIsCloudDevkit() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceKernelIsCloudkit() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceKernelIsCronos() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceKernelIsEcoChargeAvailable() {

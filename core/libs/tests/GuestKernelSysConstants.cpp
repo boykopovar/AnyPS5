@@ -20,7 +20,13 @@ int main() {
 
     Require(sceKernelAddResource() == 0);
     Require(sceKernelEventLogInit() == 0);
+    Require(sceKernelIsAuthenticTrinity() == 0);
+    Require(sceKernelIsCloudDevkit() == 0);
+    Require(sceKernelIsCloudkit() == 0);
+    Require(sceKernelIsCronos() == 0);
+    Require(sceKernelIsDebuggerAttached() == 0);
     Require(sceKernelIsGenuineKratosCex() == 0);
+    Require(sceKernelIsM2DeviceAttached() == 0);
     Require(sceKernelReleaseTraceDirectMemory() == 0);
 
     Require(sceKernelHasNeoMode() == 1);
