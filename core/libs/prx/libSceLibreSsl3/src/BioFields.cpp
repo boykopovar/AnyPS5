@@ -29,4 +29,9 @@ void APS5_VABI BIO_set_shutdown_nid_postfix(LibreSsl::Bio* bio, int shutdown) {
     bio->shutdown = shutdown;
 }
 
+void APS5_VABI BIO_set_flags_nid_postfix(LibreSsl::Bio* bio, int flags) {
+    if (!bio) throw std::invalid_argument("BIO_set_flags requires a BIO");
+    bio->flags |= flags;
+}
+
 }
