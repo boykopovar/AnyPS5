@@ -46,12 +46,8 @@ bool GetAppIdThrows(const char* titleId) {
     return Throws([&] { static_cast<void>(sceSystemServiceGetAppId(titleId)); });
 }
 
-bool LncGetAppIdThrows(const char* titleId) {
-    return Throws([&] { static_cast<void>(sceLncUtilGetAppId(titleId)); });
-}
-
 bool OtherTitleHasNoAppId(const char* titleId) {
-    return sceSystemServiceGetAppId(titleId) == SYSTEM_SERVICE_INVALID_TITLE_APP_ID && LncGetAppIdThrows(titleId);
+    return sceSystemServiceGetAppId(titleId) == SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
 }
 
 bool GetAppIdRejects(const char* titleId) {
