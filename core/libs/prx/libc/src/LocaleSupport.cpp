@@ -29,6 +29,7 @@
 
 extern "C" {
 extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 }
@@ -624,6 +625,61 @@ void GuestLocale::ReleaseStringStorage(String& string) {
     }
     string = {};
     string.capacity = GuestStringInlineCapacity;
+}
+
+namespace {
+
+void PutWideCharacter(GuestLocale::OutputIterator& out, std::uint16_t character) {
+    GuestLocale::Streambuf* buffer = out.buffer;
+    if (buffer == nullptr) {
+        out.failed = true;
+        return;
+    }
+    auto** putNext = reinterpret_cast<std::uint16_t**>(buffer->putNext);
+    std::uint16_t* next = *putNext;
+    const std::uint16_t* end = *reinterpret_cast<std::uint16_t**>(buffer->putEnd);
+    if (next != nullptr && static_cast<std::int32_t>(end - next) > 0) {
+        *putNext = next + 1;
+        *next = character;
+        return;
+    }
+    if (buffer->vtable->overflow(buffer, character) == -1) out.failed = true;
+}
+
+char NarrowWide(const GuestLocale::Facet* ctype, std::uint16_t character) {
+    if (ctype != nullptr) return reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable)->narrow(ctype, character, '\0');
+    const int narrowed = wctob_nid_postfix(character);
+    return narrowed == EOF ? '\0' : static_cast<char>(narrowed);
+}
+
+}
+
+extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last) {
+    const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix);
+    const auto put = reinterpret_cast<const GuestLocale::WideTimePutVtable*>(self->vtable)->put;
+    for (; first != last; ++first) {
+        if (NarrowWide(ctype, *first) != '%') {
+            PutWideCharacter(out, *first);
+        } else if (++first == last) {
+            PutWideCharacter(out, first[-1]);
+            break;
+        } else {
+            char specifier = NarrowWide(ctype, *first);
+            char modifier = '\0';
+            const std::uint16_t percent = first[-1];
+            if (specifier == 'E' || specifier == 'O' || specifier == 'Q' || specifier == '#') {
+                if (++first == last) {
+                    PutWideCharacter(out, percent);
+                    PutWideCharacter(out, static_cast<std::uint16_t>(static_cast<unsigned char>(specifier)));
+                    break;
+                }
+                modifier = specifier;
+                specifier = NarrowWide(ctype, *first);
+            }
+            out = put(self, out, stream, fill, time, specifier, modifier);
+        }
+    }
+    return out;
 }
 
 extern "C" {
