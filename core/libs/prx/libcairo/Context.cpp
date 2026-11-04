@@ -522,9 +522,11 @@ void APS5_VABI cairo_rectangle(CairoContext* context, double x, double y,
     hy = Fixed(hy * sy);
     DevicePoint(state, x, y);
     if (!AppendMove(state, x, y)) return;
-    if (width != 0) AppendLine(state, x + wx, y + wy);
-    if (height != 0) AppendLine(state, x + wx + hx, y + wy + hy);
-    if (width != 0 && height != 0) AppendLine(state, x + hx, y + hy);
+    AppendLine(state, x + wx, y + wy);
+    if (state->status != kSuccess) return;
+    AppendLine(state, x + wx + hx, y + wy + hy);
+    if (state->status != kSuccess) return;
+    AppendLine(state, x + hx, y + hy);
     cairo_close_path(context);
 }
 
@@ -587,6 +589,10 @@ void APS5_VABI cairo_curve_to(CairoContext* context, double x1, double y1,
 void APS5_VABI cairo_close_path(CairoContext* context) {
     auto* state = Valid(context);
     if (!state || !state->hasCurrent) return;
+    AppendLine(state, state->startX, state->startY);
+    if (state->status != kSuccess) return;
+    if (state->path && !state->path->empty() && state->path->back().type == 1)
+        state->path->pop_back();
     PathEntry close{};
     close.type = 3;
     if (!Record(state, close)) return;
