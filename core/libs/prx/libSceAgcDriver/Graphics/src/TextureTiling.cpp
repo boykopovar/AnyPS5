@@ -163,8 +163,9 @@ std::uint32_t TexelLevelDimension(std::uint32_t guestDimension, std::uint32_t le
     return std::max((std::max(guestDimension >> level, 1u) + texelScale - 1u) / texelScale, 1u);
 }
 
-std::vector<TileMipLayout> ComputeLinearMipLayout(std::uint32_t bytesPerElement, std::uint32_t texelWidth, std::uint32_t texelHeight, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount) {
+std::vector<TileMipLayout> ComputeLinearMipLayout(std::uint32_t bytesPerElement, std::uint32_t texelWidth, std::uint32_t texelHeight, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount, std::uint32_t linearPitch) {
     const auto compressed = texelWidth != 1u || texelHeight != 1u;
+    Require(linearPitch == 0u || (!compressed && mipCount == 1u && linearPitch >= width), "a linear pitch needs a single-level uncompressed surface no wider than the pitch");
     const auto elementsWidth0 = (width + texelWidth - 1u) / texelWidth;
     const auto elementsHeight0 = (height + texelHeight - 1u) / texelHeight;
     const auto blockWidth = CalcLinearBlockWidth(bytesPerElement);
@@ -174,7 +175,7 @@ std::vector<TileMipLayout> ComputeLinearMipLayout(std::uint32_t bytesPerElement,
     for (auto level = mipCount; level-- > 0;) {
         const auto elementsLevelWidth = std::max(ShiftCeil(elementsWidth0, level), 1u);
         const auto elementsLevelHeight = std::max(ShiftCeil(elementsHeight0, level), 1u);
-        const auto paddedElementsWidth = AlignUp(elementsLevelWidth, blockWidth);
+        const auto paddedElementsWidth = linearPitch != 0u ? linearPitch : AlignUp(elementsLevelWidth, blockWidth);
         const auto size = static_cast<std::uint64_t>(paddedElementsWidth) * elementsLevelHeight * bytesPerElement;
         Require(size != 0, "computed a zero-sized linear texture mip level");
 
@@ -277,7 +278,7 @@ std::vector<TileMipLayout> ComputeTiledMipLayout(TextureTileMode tileMode, std::
 
 }
 
-std::vector<TileMipLayout> ComputeMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount) {
+std::vector<TileMipLayout> ComputeMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount, std::uint32_t linearPitch) {
     Require(width != 0 && height != 0, "cannot compute mip layout for a zero-sized texture");
     Require(mipCount != 0 && mipCount <= 16u, "texture mip count is out of range");
 
@@ -286,7 +287,7 @@ std::vector<TileMipLayout> ComputeMipLayout(TextureTileMode tileMode, std::uint3
     const auto texelWidth = BlockWidth(format);
     const auto texelHeight = BlockHeight(format);
 
-    if (tileMode == TextureTileMode::kLinear) return ComputeLinearMipLayout(bytesPerElement, texelWidth, texelHeight, width, height, mipCount);
+    if (tileMode == TextureTileMode::kLinear) return ComputeLinearMipLayout(bytesPerElement, texelWidth, texelHeight, width, height, mipCount, linearPitch);
     return ComputeTiledMipLayout(tileMode, bytesPerElement, texelWidth, texelHeight, width, height, mipCount);
 }
 
@@ -416,7 +417,17 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
     return result;
 }
 
-std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral, std::uint32_t layers) {
+namespace {
+
+std::uint32_t GcnLevelSlices(std::uint32_t slices, std::uint32_t level, bool pow2Pad, bool volume) {
+    if (!volume || level == 0) return slices;
+    const auto levelSlices = std::max(slices >> level, 1u);
+    return pow2Pad ? std::bit_ceil(levelSlices) : levelSlices;
+}
+
+}
+
+std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral, std::uint32_t layers, bool volume) {
     Require(layers != 0, "a PS4 surface has at least one slice");
     Require(!linearGeneral || tileMode == TextureTileMode::kLinear, "LINEAR_GENERAL is a linear layout");
     Require(width != 0 && height != 0 && pitch >= width, "cannot compute the mip layout of an empty PS4 texture");
@@ -430,10 +441,8 @@ std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::ui
     for (std::uint32_t level = 0; level < mipCount; ++level) {
         auto levelWidth = std::max(pitch >> level, 1u);
         auto levelHeight = std::max(height >> level, 1u);
-        if (pow2Pad && level != 0) {
-            levelWidth = std::bit_ceil(levelWidth);
-            levelHeight = std::bit_ceil(levelHeight);
-        }
+        if (pow2Pad && level != 0) levelWidth = std::bit_ceil(levelWidth);
+        if (pow2Pad && (level != 0 || mipCount > 1)) levelHeight = std::bit_ceil(levelHeight);
         auto rowElements = (levelWidth + texelWidth - 1u) / texelWidth;
         auto rows = (levelHeight + texelHeight - 1u) / texelHeight;
         bool macro = false;
@@ -475,7 +484,7 @@ std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::ui
         mip.tail = false;
         mip.tailX = 0;
         mip.tailY = 0;
-        offset += mip.tiledSize * layers;
+        offset += mip.tiledSize * GcnLevelSlices(layers, level, pow2Pad, volume);
         linearOffset += mip.tiledSize;
     }
     return mips;
@@ -566,14 +575,16 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
 namespace {
 
 SurfaceGeometry describeGcnSurface(const GuestTextureResource& descriptor) {
-    Require(descriptor.dimension != TextureDimension::k3D && descriptor.dimension != TextureDimension::k2DMsaa, "PS4 3D and multisampled textures are not implemented");
-    const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
+    Require(descriptor.dimension != TextureDimension::k2DMsaa, "PS4 multisampled textures are not implemented");
+    const bool volume = descriptor.dimension == TextureDimension::k3D;
+    const bool layered = volume || descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
     SurfaceGeometry geometry;
     geometry.layers = layered ? descriptor.depthOrLastArray + 1u : 1u;
     geometry.levelMajor = geometry.layers > 1u && descriptor.mipCount > 1u;
-    geometry.mips = ComputeGcnMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.gcnPitch, descriptor.gcnPow2Pad, descriptor.mipCount, descriptor.gcnLinearGeneral, geometry.layers);
-    geometry.imageLayers = geometry.layers;
-    geometry.guestBytes = geometry.mips.back().tiledOffset + geometry.mips.back().tiledSize * geometry.layers;
+    geometry.mips = ComputeGcnMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.gcnPitch, descriptor.gcnPow2Pad, descriptor.mipCount, descriptor.gcnLinearGeneral, geometry.layers, volume);
+    geometry.imageLayers = volume ? 1u : geometry.layers;
+    geometry.imageDepth = volume ? geometry.layers : 1u;
+    geometry.guestBytes = geometry.mips.back().tiledOffset + geometry.mips.back().tiledSize * GcnLevelSlices(geometry.layers, descriptor.mipCount - 1u, descriptor.gcnPow2Pad, volume);
     geometry.layerBytes = geometry.guestBytes / geometry.layers;
     for (const auto& mip : geometry.mips) geometry.sliceLinearBytes = std::max(geometry.sliceLinearBytes, mip.linearOffset + mip.linearSize);
     return geometry;
@@ -637,7 +648,7 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
         geometry.mips.push_back({0u, geometry.guestBytes, 0u, geometry.sliceLinearBytes, descriptor.width, descriptor.height, static_cast<std::uint32_t>(align(descriptor.width, blockWidth) / blockWidth), descriptor.width * descriptor.samples * bytesPerElement, false, 0u, 0u});
         return geometry;
     }
-    geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.mipCount);
+    geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.mipCount, descriptor.linearPitch);
     const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
     geometry.layers = layered ? descriptor.depthOrLastArray + 1u : 1u;
     geometry.imageLayers = geometry.layers;
@@ -711,7 +722,7 @@ GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::u
 std::vector<TileMipLayout> ComputeElementMipLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount) {
     Require(width != 0 && height != 0 && mipCount != 0 && mipCount <= 16u, "invalid surface mip chain");
     Require(!IsGcnTiled(tileMode), "PS4 surfaces are laid out by ComputeGcnMipLayout from their pitch");
-    if (tileMode == TextureTileMode::kLinear) return ComputeLinearMipLayout(bytesPerElement, 1u, 1u, width, height, mipCount);
+    if (tileMode == TextureTileMode::kLinear) return ComputeLinearMipLayout(bytesPerElement, 1u, 1u, width, height, mipCount, 0u);
     return ComputeTiledMipLayout(tileMode, bytesPerElement, 1u, 1u, width, height, mipCount);
 }
 
