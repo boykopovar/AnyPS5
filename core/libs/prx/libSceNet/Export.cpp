@@ -394,7 +394,8 @@ std::map<int, std::map<int, std::uint64_t>> g_epoll_resolvers_reported;
 int g_next_sock = 32;
 int g_next_epoll = 0x4000;
 int g_next_pool = 1;
-int g_next_resolver = 0x100;
+constexpr int NET_RESOLVER_ID_FIRST = 1024;
+constexpr int NET_RESOLVER_ID_END = 0x4000;
 bool g_net_inited = false;
 bool g_net_init_param_set = false;
 std::array<std::uint8_t, 32> g_net_init_param{};
@@ -2590,7 +2591,9 @@ int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags) {
     (void)memid;
     if (flags != 0) return fail(NET_EINVAL);
     std::lock_guard lk(g_mutex);
-    const int id = g_next_resolver++;
+    int id = NET_RESOLVER_ID_FIRST;
+    for (auto it = g_resolvers.lower_bound(id); it != g_resolvers.end() && it->first == id; ++it) ++id;
+    if (id >= NET_RESOLVER_ID_END) throw std::runtime_error("sceNetResolverCreate: more than " + std::to_string(NET_RESOLVER_ID_END - NET_RESOLVER_ID_FIRST) + " live resolvers are not implemented");
     g_resolvers[id] = {};
     return id;
 }

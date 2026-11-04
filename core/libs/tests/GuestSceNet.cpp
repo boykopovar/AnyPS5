@@ -795,7 +795,12 @@ static void CheckResolverEpoll() {
     ScopedResolverLookupOverride lookupOverride(LoopbackResolverLookup);
     const int resolver = sceNetResolverCreate("epoll-resolver", 0, 0);
     const int epoll = sceNetEpollCreate("resolver-epoll", 0);
-    Require(resolver >= 0 && epoll >= 0);
+    Require(resolver >= 1024 && resolver < 0x4000 && epoll >= 0x4000);
+    const int second = sceNetResolverCreate("second-resolver", 0, 0);
+    Require(second > resolver && second < 0x4000);
+    Require(sceNetResolverDestroy(second) == 0);
+    Require(sceNetResolverCreate("reused-resolver", 0, 0) == second);
+    Require(sceNetResolverDestroy(second) == 0);
     NetEpollEvent registration{};
     registration.events = in;
     registration.data.u64 = 0x1234;
