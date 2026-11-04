@@ -262,10 +262,10 @@ int main() {
     Require(sceSystemServiceSetNoticeScreenSkipFlag() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceDisableNoticeScreenSkipFlagAutoSet() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceHideSplashScreen() == SYSTEM_SERVICE_OK);
-    Require(sceSystemServiceReceiveEvent(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceReceiveEvent(nullptr) == SYSTEM_SERVICE_ERROR_NO_EVENT);
     SystemServiceEvent event;
     event.event_type = 7;
-    Require(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT);
+    Require(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT && event.event_type == 7);
     TestRunningBigApp();
     TestRunningAppUser();
     TestRunningAppState();
