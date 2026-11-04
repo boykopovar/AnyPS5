@@ -178,8 +178,8 @@ void AddCubicRange(PathRange& range, double start, double first, double second, 
     const auto evaluate = [&](double t) {
         if (t <= 0 || t >= 1) return;
         const double u = 1 - t;
-        range.Add(u * u * u * start + 3 * u * u * t * first +
-                  3 * u * t * t * second + t * t * t * end);
+        range.Add(Fixed(u * u * u * start + 3 * u * u * t * first +
+                        3 * u * t * t * second + t * t * t * end));
     };
     if (a == 0) {
         if (b != 0) evaluate(-c / b);
@@ -717,6 +717,8 @@ void APS5_VABI cairo_path_extents(CairoContext* context, double* x1, double* y1,
             currentX = entry.points[4];
             currentY = entry.points[5];
         } else if (entry.type == 3) {
+            xRange.Add(startX);
+            yRange.Add(startY);
             currentX = startX;
             currentY = startY;
         }

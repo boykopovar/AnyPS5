@@ -47,6 +47,10 @@ int main() {
     Check(c, {0, 0, 100, 75});
     cairo_new_path(c);
     cairo_move_to(c, 0, 0);
+    cairo_curve_to(c, 0, 7, 10, 11, 10, 2);
+    Check(c, {0, 0, 10, 7.203125});
+    cairo_new_path(c);
+    cairo_move_to(c, 0, 0);
     cairo_line_to(c, 10, 0);
     cairo_line_to(c, 10, 10);
     Check(c, {0, 0, 10, 10});
@@ -56,6 +60,11 @@ int main() {
     cairo_move_to(c, 0, 0);
     cairo_line_to(c, -3, -4);
     Check(c, {-3, -4, 0, 0});
+    cairo_new_path(c);
+    cairo_move_to(c, 5, 8);
+    Check(c, {0, 0, 0, 0});
+    cairo_close_path(c);
+    Check(c, {5, 8, 5, 8});
     cairo_new_path(c);
     cairo_translate(c, 5, 9);
     cairo_rotate(c, 0.5);
