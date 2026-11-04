@@ -212,6 +212,32 @@ void APS5_VABI _ZN3WTF10ParkingLot9unparkAllEPKv(const void* address) {
 
 }
 
+extern "C" {
+
+void APS5_VABI _ZN3WTF15BinarySemaphore6signalEv(NKWebKit::WtfAbi::BinarySemaphore* self) {
+    CheckAddress(self);
+    UnparkOne(&self->isSet, [&](UnparkResult) -> std::intptr_t {
+        std::atomic_ref(self->isSet).store(true);
+        return 0;
+    });
+}
+
+bool APS5_VABI _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE(NKWebKit::WtfAbi::BinarySemaphore* self, const WTF::TimeWithDynamicClockType& timeout) {
+    CheckAddress(self);
+    std::atomic_ref flag(self->isSet);
+    for (;;) {
+        bool acquired = false;
+        const auto result = Park(&self->isSet, [&] {
+            acquired = flag.exchange(false);
+            return !acquired;
+        }, [] {}, timeout);
+        if (acquired) return true;
+        if (!result.wasUnparked) return flag.exchange(false);
+    }
+}
+
+}
+
 namespace NKWebKit {
 
 WtfAbi::ParkResult ParkLock_nid_no_patch(std::uint8_t* address, std::uint8_t value) {

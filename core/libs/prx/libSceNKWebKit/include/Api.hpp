@@ -10,7 +10,6 @@ int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11getPropertyERK
 int APS5_VABI _ZN9Inspector21InjectedScriptManagerdaEPv();
 int APS5_VABI _ZN9Inspector8Protocol13BindingTraitsINS0_8Timeline13TimelineEventEE26assertValueHasExpectedTypeEPN3WTF8JSONImpl5ValueE();
 int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2ERNS_2VME();
-int APS5_VABI _ZN3WTF15BinarySemaphore6signalEv();
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal11isUnderTestEv();
 int APS5_VABI _ZN7WebCore15JSDOMWindowBaseD1Ev();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent24continueUntilNextRunLoopERN3WTF6StringE();

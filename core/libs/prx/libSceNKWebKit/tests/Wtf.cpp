@@ -383,9 +383,11 @@ static void TestJscAndPal() {
 void TestAdditionalWtf();
 
 void TestParkingLot();
+void TestBinarySemaphore();
 
 int main() {
     TestParkingLot();
+    TestBinarySemaphore();
     TestAdditionalWtf();
     TestMemoryAllocations();
     TestAllocationBoundaries();
@@ -1238,4 +1240,62 @@ void TestParkingLot() {
     Require(UnparkCount(&address, 20) == 0);
     UnparkAll(&address);
     TestLockContention();
+}
+
+void TestBinarySemaphore() {
+    using NKWebKit::WtfAbi::BinarySemaphore;
+    constexpr auto signal = _ZN3WTF15BinarySemaphore6signalEv;
+    constexpr auto wait = _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE;
+    BinarySemaphore semaphore{};
+    for (auto clock : {ClockType::Monotonic, ClockType::Wall, ClockType::Approximate}) {
+        const auto past = Deadline(-1, clock);
+        Require(!wait(&semaphore, past));
+        signal(&semaphore);
+        signal(&semaphore);
+        Require(wait(&semaphore, past));
+        Require(!wait(&semaphore, past));
+        Require(!wait(&semaphore, Deadline(0.002, clock)));
+    }
+    auto until = [](auto predicate) {
+        const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < limit) std::this_thread::yield();
+        Require(predicate());
+    };
+    for (unsigned i = 0; i < 24; ++i) {
+        BinarySemaphore shared{};
+        std::promise<void> entered;
+        auto started = entered.get_future();
+        std::promise<bool> completed;
+        auto result = completed.get_future();
+        std::thread worker([&] {
+            entered.set_value();
+            completed.set_value(wait(&shared, Deadline(5)));
+        });
+        started.wait();
+        Require(result.wait_for(std::chrono::milliseconds(1)) == std::future_status::timeout);
+        signal(&shared);
+        Require(result.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        Require(result.get());
+        worker.join();
+        Require(!wait(&shared, Deadline(-1)));
+    }
+    BinarySemaphore contended{};
+    std::atomic<unsigned> entered{0};
+    std::atomic<unsigned> completed{0};
+    auto consume = [&] {
+        entered.fetch_add(1);
+        Require(wait(&contended, Deadline(5)));
+        completed.fetch_add(1);
+    };
+    std::thread first(consume);
+    std::thread second(consume);
+    until([&] { return entered.load() == 2; });
+    signal(&contended);
+    until([&] { return completed.load() != 0; });
+    Require(completed.load() == 1);
+    signal(&contended);
+    until([&] { return completed.load() == 2; });
+    first.join();
+    second.join();
+    Require(!wait(&contended, Deadline(-1)));
 }
