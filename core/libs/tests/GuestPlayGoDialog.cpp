@@ -29,6 +29,7 @@ int main() {
     Require(scePlayGoDialogInitialize() == 0);
     Require(scePlayGoDialogGetStatus() == 1);
     Require(scePlayGoDialogInitialize() == alreadyInitialized);
+    Require(scePlayGoDialogClose() == static_cast<std::int32_t>(0x80B8000Bu));
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogUpdateStatus() == 1);
 
@@ -53,13 +54,18 @@ int main() {
     Require(scePlayGoDialogTerminate() == 0);
     Require(scePlayGoDialogGetStatus() == 0);
     Require(scePlayGoDialogTerminate() == notInitialized);
-    Require(scePlayGoDialogClose() == notInitialized);
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogOpen(&openParam) == notInitialized);
     Require(scePlayGoDialogGetResult(nullptr) == paramInvalid);
     Require(scePlayGoDialogGetResult(&result) == static_cast<std::int32_t>(0x80B8000Au));
     result.reserved[0] = 0;
     Require(scePlayGoDialogGetResult(&result) == notInitialized);
+    Require(scePlayGoDialogClose() == notInitialized);
     Require(scePlayGoDialogUpdateStatus() == 0);
+    Require(scePlayGoDialogInitialize() == 0);
+    Require(scePlayGoDialogGetStatus() == 1);
+    Require(scePlayGoDialogTerminate() == 0);
+    Require(scePlayGoDialogGetStatus() == 0);
+    Require(scePlayGoDialogTerminate() == notInitialized);
     return 0;
 }
