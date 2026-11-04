@@ -66,7 +66,7 @@ test('all exportable SDL names validate and unsafe comment names are rejected', 
 test('mouse values and action restrictions match the current INI format', () => {
     for (const action of actions) {
         for (const value of mouseValues) {
-            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus'].includes(action));
+            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute'].includes(action));
         }
     }
     assert.ok(validate([binding('Cross', 'MOUSE', 'Button1')]).errors.length);
@@ -162,8 +162,44 @@ test('capture maps physical positions and distinguishes modifiers and keypad', (
     assert.equal(captureKey({code: 'KeyQ', key: 'a'}).value, 'Q');
 });
 
+test('captured media and browser keys round trip through INI bindings', () => {
+    const keys = {
+        MediaTrackNext: 'AudioNext', MediaTrackPrevious: 'AudioPrev', MediaStop: 'AudioStop',
+        MediaPlayPause: 'AudioPlay', MediaSelect: 'MediaSelect',
+        AudioVolumeMute: 'Mute', AudioVolumeUp: 'VolumeUp', AudioVolumeDown: 'VolumeDown',
+        BrowserSearch: 'AC Search', BrowserHome: 'AC Home', BrowserBack: 'AC Back',
+        BrowserForward: 'AC Forward', BrowserStop: 'AC Stop', BrowserRefresh: 'AC Refresh',
+        BrowserFavorites: 'AC Bookmarks'
+    };
+    for (const [code, value] of Object.entries(keys)) {
+        const captured = captureKey({code, key: 'ignored'});
+        assert.deepEqual(captured, {value}, code);
+        const ini = serialize([binding('Cross', 'KEY', captured.value)]);
+        assert.deepEqual(parseIni(ini).entries, [binding('Cross', 'KEY', value)], code);
+    }
+});
+
 test('capture rejects missing identifiers, composition and unsafe punctuation', () => {
     for (const event of [{code: 'Unidentified'}, {key: 'a'}, {code: 'IntlBackslash'}, {code: 'Semicolon'}, {code: 'KeyA', isComposing: true}, {code: 'Quote', key: 'Dead'}, {code: 'KeyA', key: 'Process'}]) {
         assert.ok(captureKey(event).error);
     }
+});
+
+test('extended keypad editing and memory keys capture and round trip', () => {
+    const keys = {
+        NumpadBackspace: 'Keypad Backspace', NumpadClear: 'Keypad Clear',
+        NumpadClearEntry: 'Keypad ClearEntry', NumpadParenLeft: 'Keypad (', NumpadParenRight: 'Keypad )',
+        NumpadMemoryAdd: 'Keypad MemAdd', NumpadMemoryClear: 'Keypad MemClear',
+        NumpadMemoryRecall: 'Keypad MemRecall', NumpadMemoryStore: 'Keypad MemStore',
+        NumpadMemorySubtract: 'Keypad MemSubtract'
+    };
+    for (const [code, value] of Object.entries(keys)) {
+        const captured = captureKey({code, key: 'ignored'});
+        assert.deepEqual(captured, {value}, code);
+        const source = serialize([binding('Cross', 'KEY', captured.value)]);
+        assert.equal(source, `Cross = KEY:${value}\n`);
+        assert.deepEqual(parseIni(source).entries, [binding('Cross', 'KEY', value)]);
+    }
+    assert.deepEqual(captureKey({code: 'Backspace'}), {value: 'Backspace'});
+    assert.deepEqual(captureKey({code: 'NumLock'}), {value: 'Numlock'});
 });

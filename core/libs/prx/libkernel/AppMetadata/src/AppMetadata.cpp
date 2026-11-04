@@ -56,7 +56,25 @@ void ensureTitleLoaded() {
     g_paramSfoAttribute = parsed.paramSfoAttribute;
     std::memcpy(g_userDefinedParams, parsed.userDefinedParams, sizeof(g_userDefinedParams));
     g_titleLoaded = true;
+    if (g_titleId[0] != '\0') {
+        const auto app0 = ResolvePath_nid_no_patch("/app0");
+        AddPathAlias_nid_no_patch((std::string("/mnt/sandbox/") + g_titleId + "_000/app0").c_str(), app0.string().c_str());
+    }
 }
+
+const bool g_sandboxApp0Mounted = [] {
+    try {
+        const auto run = std::filesystem::current_path();
+        const auto metadata = run / "app0" / "sce_sys";
+        if (!std::filesystem::exists(metadata / "param.json") && !std::filesystem::exists(metadata / "param.sfo")) return false;
+        const auto parsed = parseParams(metadata / "param.json", metadata / "param.sfo");
+        if (parsed.titleId.empty()) return false;
+        AddPathAlias_nid_no_patch((std::string("/mnt/sandbox/") + parsed.titleId + "_000/app0").c_str(), (run / "app0").string().c_str());
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}();
 
 const bool g_downloadDataMounted = [] {
     try {

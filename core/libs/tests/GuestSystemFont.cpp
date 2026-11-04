@@ -119,7 +119,11 @@ static std::string CaptureStderr(const std::filesystem::path& path, TRun run) {
 #else
     const int saved = dup(2);
 #endif
-    std::FILE* file = std::fopen(path.string().c_str(), "wb");
+#ifdef _WIN32
+    std::FILE* file = _wfopen(path.c_str(), L"wb");
+#else
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+#endif
     Require(saved >= 0 && file != nullptr);
 #ifdef _WIN32
     Require(_dup2(_fileno(file), 2) == 0);
@@ -493,7 +497,10 @@ int main() {
     Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
     sceFontRenderSurfaceInit(&measuring, untouched.data(), 0, 1, 128, 128);
 
-    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_OK);
+    Require(measured.Horizontal.advance == 60.0f);
+    Require(std::any_of(untouched.begin(), untouched.begin() + 128, [](std::uint8_t value) { return value != 0; }));
+    Require(std::all_of(untouched.begin() + 128, untouched.end(), [](std::uint8_t value) { return value == 0; }));
     sceFontRenderSurfaceInit(&measuring, nullptr, 0, 1, 0, 31);
 
     Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
