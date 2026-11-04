@@ -528,7 +528,7 @@ void TestTitleSecretObjects() {
     auto* owned = static_cast<NpTitleSecretObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleSecretObject), &allocator));
     _ZN3sce2np13NpTitleSecretC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpTitleSecretObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
