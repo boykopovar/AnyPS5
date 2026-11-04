@@ -38,4 +38,8 @@ int main() {
     bio.flags = 0x1;
     BIO_set_flags_nid_postfix(&bio, 0x6);
     Require(bio.flags == 0x7);
+    BIO_clear_flags_nid_postfix(&bio, 0x3);
+    Require(bio.flags == 0x4);
+    BIO_clear_flags_nid_postfix(&bio, 0x8);
+    Require(bio.flags == 0x4);
 }
