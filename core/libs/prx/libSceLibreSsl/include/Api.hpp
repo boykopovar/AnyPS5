@@ -448,7 +448,7 @@ void APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(LibreSslEvpCipherCtx* ctx);
 void APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(LibreSslEvpCipherCtx* ctx);
 LibreSslEvpCipherCtx* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(LibreSslEvpCipherCtx* ctx, int pad);
-int APS5_VABI EVP_CIPHER_block_size_nid_postfix(void);
+int APS5_VABI EVP_CIPHER_block_size_nid_postfix(const LibreSslEvpCipher* cipher);
 int APS5_VABI EVP_CipherFinal_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl);
 int APS5_VABI EVP_CipherInit_ex_nid_postfix(LibreSslEvpCipherCtx* ctx, const LibreSslEvpCipher* cipher, void* engine, const unsigned char* key, const unsigned char* iv, int encrypt);
 int APS5_VABI EVP_CipherUpdate_nid_postfix(LibreSslEvpCipherCtx* ctx, unsigned char* out, int* outl, const unsigned char* in, int inl);

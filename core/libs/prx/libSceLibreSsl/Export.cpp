@@ -285,11 +285,6 @@ int APS5_VABI ENGINE_set_default_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_CIPHER_block_size_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
