@@ -2623,13 +2623,15 @@ std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1
     return HostVectorSize(self, __func__);
 }
 
-void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE5beginEv(void* self) {
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE5beginEv(void* out, void* self) {
+    (void)out;
     (void)self;
     NotImplemented_nid_no_patch(__func__);
     return nullptr;
 }
 
-void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE3endEv(void* self) {
+void* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_17TitleCloudStorage2V110DataStatusEEEE3endEv(void* out, void* self) {
+    (void)out;
     (void)self;
     NotImplemented_nid_no_patch(__func__);
     return nullptr;
