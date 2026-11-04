@@ -65,8 +65,8 @@ void APS5_VABI updatePredInfo_nid_postfix(void* codec, void* macroblock, std::si
 
 int APS5_VABI AllocateCodingContextDec_nid_postfix();
 std::int64_t APS5_VABI CloseWS_List_nid_postfix(Jxr::Stream** stream);
-int APS5_VABI CreateWS_List_nid_postfix();
 std::int64_t APS5_VABI CreateWS_Memory_nid_postfix(Jxr::Stream** stream, void* buffer, std::size_t size);
+std::int64_t APS5_VABI CreateWS_List_nid_postfix(Jxr::Stream** stream);
 int APS5_VABI EOSWS_File_nid_postfix();
 std::int32_t APS5_VABI EOSWS_Memory_nid_postfix(Jxr::Stream* stream);
 int APS5_VABI FreeDescMetadata_nid_postfix();
