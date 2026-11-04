@@ -707,6 +707,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_math PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_math_elementary_tests ${LIBS_INCLUDE_DIR}/tests/GuestMathElementary.cpp)
+    target_include_directories(guest_math_elementary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_math_elementary_tests PRIVATE libc)
+    configure_windows_unwind(guest_math_elementary_tests)
+    add_test(NAME guest_math_elementary COMMAND guest_math_elementary_tests)
+    if(WIN32)
+        set_tests_properties(guest_math_elementary PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_dsign_tests ${LIBS_INCLUDE_DIR}/tests/GuestDsign.cpp)
     target_include_directories(guest_dsign_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_dsign_tests PRIVATE libc)
@@ -1872,6 +1881,12 @@ if(MINGW)
         set_tests_properties(windows_backtrace_report PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>"
             PASS_REGULAR_EXPRESSION "aborting[^~]*SIGABRT. on thread[^~]*stack return address candidates:[^~]*rsp[+]0x")
+        foreach(guardedFault IN ITEMS destination expected outside)
+            add_test(NAME windows_guarded_read_wild_${guardedFault} COMMAND windows_backtrace_report_tests guarded-${guardedFault})
+            set_tests_properties(windows_guarded_read_wild_${guardedFault} PROPERTIES TIMEOUT 20
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>"
+                PASS_REGULAR_EXPRESSION "FATAL: unhandled exception 0xc0000005")
+        endforeach()
         add_test(NAME windows_backtrace_failure_report COMMAND windows_backtrace_report_tests report)
         set_tests_properties(windows_backtrace_failure_report PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>"
