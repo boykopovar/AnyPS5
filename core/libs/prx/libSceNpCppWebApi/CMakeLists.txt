@@ -40,9 +40,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_np_cpp_web_api_alias_intrusive_vector COMMAND guest_np_cpp_web_api_intrusive_ptr_tests alias-vector)
     set_tests_properties(guest_np_cpp_web_api_alias_append guest_np_cpp_web_api_alias_string_vector
         guest_np_cpp_web_api_alias_intrusive_vector PROPERTIES TIMEOUT 30)
+    add_test_executable(guest_np_cpp_web_api_binary_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiBinary.cpp)
+    target_include_directories(guest_np_cpp_web_api_binary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_binary_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_binary_tests)
+    add_test(NAME guest_np_cpp_web_api_binary COMMAND guest_np_cpp_web_api_binary_tests)
     if(WIN32)
         set_tests_properties(guest_np_cpp_web_api_string guest_np_cpp_web_api_alias_append
             guest_np_cpp_web_api_alias_string_vector guest_np_cpp_web_api_alias_intrusive_vector
+            guest_np_cpp_web_api_binary
             PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
