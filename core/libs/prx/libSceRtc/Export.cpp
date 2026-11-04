@@ -426,23 +426,42 @@ int APS5_VABI sceRtcGetTickResolution(void) {
 
 int APS5_VABI sceRtcGetTick(const RtcDateTime* time, RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (const int result = validate(time); result != 0) return result;
-    tick->tick = toTick(*time);
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime;
+    if (!GuestCopyIn_nid_no_patch(&localTime, time, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (const int result = validate(&localTime); result != 0) return result;
+    RtcTick localTick{toTick(localTime)};
+    if (!GuestCopyOut_nid_no_patch(tick, &localTick, sizeof(RtcTick))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcSetTick(RtcDateTime* time, const RtcTick* tick) {
     if (!time || !tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    *time = fromTick(tick->tick);
+    RtcTick localTick;
+    if (!GuestCopyIn_nid_no_patch(&localTick, tick, sizeof(RtcTick))) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime = fromTick(localTick.tick);
+    if (!GuestCopyOut_nid_no_patch(time, &localTime, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcConvertDateTimeToTick(const RtcDateTime* time, RtcTick* tick) {
-    return sceRtcGetTick(time, tick);
+    if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime;
+    if (!GuestCopyIn_nid_no_patch(&localTime, time, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (const int result = validate(&localTime); result != 0) return result;
+    RtcTick localTick{toTick(localTime)};
+    if (!GuestCopyOut_nid_no_patch(tick, &localTick, sizeof(RtcTick))) return SCE_RTC_ERROR_INVALID_POINTER;
+    return 0;
 }
 
 int APS5_VABI sceRtcConvertTickToDateTime(const RtcTick* tick, RtcDateTime* time) {
-    return sceRtcSetTick(time, tick);
+    if (!time || !tick) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcTick localTick;
+    if (!GuestCopyIn_nid_no_patch(&localTick, tick, sizeof(RtcTick))) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime = fromTick(localTick.tick);
+    if (!GuestCopyOut_nid_no_patch(time, &localTime, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+    return 0;
 }
 
 int APS5_VABI sceRtcGetCurrentTick(RtcTick* tick) {
@@ -495,13 +514,18 @@ int APS5_VABI sceRtcConvertLocalTimeToUtc(const RtcTick* local_time, RtcTick* ut
 
 int APS5_VABI sceRtcGetTime_t(const RtcDateTime* time, int64_t* seconds) {
     if (!seconds) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (const int result = validate(time); result != 0) return result;
-    const std::uint64_t tick = toTick(*time);
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime;
+    if (!GuestCopyIn_nid_no_patch(&localTime, time, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (const int result = validate(&localTime); result != 0) return result;
+    const std::uint64_t tick = toTick(localTime);
     if (tick < UNIX_EPOCH_TICK) {
-        *seconds = 0;
+        int64_t zero = 0;
+        if (!GuestCopyOut_nid_no_patch(seconds, &zero, sizeof(int64_t))) return SCE_RTC_ERROR_INVALID_POINTER;
         return SCE_RTC_ERROR_INVALID_YEAR;
     }
-    *seconds = static_cast<int64_t>((tick - UNIX_EPOCH_TICK) / TICKS_PER_SECOND);
+    int64_t localSeconds = static_cast<int64_t>((tick - UNIX_EPOCH_TICK) / TICKS_PER_SECOND);
+    if (!GuestCopyOut_nid_no_patch(seconds, &localSeconds, sizeof(int64_t))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
@@ -509,62 +533,100 @@ int APS5_VABI sceRtcSetTime_t(RtcDateTime* time, int64_t seconds) {
     if (rangeChecked()) {
         if (seconds < 0) return SCE_RTC_ERROR_INVALID_VALUE;
         if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-        *time = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(seconds) * TICKS_PER_SECOND);
+        RtcDateTime localTime = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(seconds) * TICKS_PER_SECOND);
+        if (!GuestCopyOut_nid_no_patch(time, &localTime, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
         return 0;
     }
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    *time = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(static_cast<std::uint32_t>(seconds)) * TICKS_PER_SECOND);
+    RtcDateTime localTime = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(static_cast<std::uint32_t>(seconds)) * TICKS_PER_SECOND);
+    if (!GuestCopyOut_nid_no_patch(time, &localTime, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcConvertDateTimeToTime_t(const RtcDateTime* time, int64_t* seconds) {
-    return sceRtcGetTime_t(time, seconds);
+    if (!seconds) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime;
+    if (!GuestCopyIn_nid_no_patch(&localTime, time, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (const int result = validate(&localTime); result != 0) return result;
+    const std::uint64_t tick = toTick(localTime);
+    if (tick < UNIX_EPOCH_TICK) {
+        int64_t zero = 0;
+        if (!GuestCopyOut_nid_no_patch(seconds, &zero, sizeof(int64_t))) return SCE_RTC_ERROR_INVALID_POINTER;
+        return SCE_RTC_ERROR_INVALID_YEAR;
+    }
+    int64_t localSeconds = static_cast<int64_t>((tick - UNIX_EPOCH_TICK) / TICKS_PER_SECOND);
+    if (!GuestCopyOut_nid_no_patch(seconds, &localSeconds, sizeof(int64_t))) return SCE_RTC_ERROR_INVALID_POINTER;
+    return 0;
 }
 
 int APS5_VABI sceRtcConvertTime_tToDateTime(int64_t seconds, RtcDateTime* time) {
-    return sceRtcSetTime_t(time, seconds);
+    if (rangeChecked()) {
+        if (seconds < 0) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+        RtcDateTime localTime = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(seconds) * TICKS_PER_SECOND);
+        if (!GuestCopyOut_nid_no_patch(time, &localTime, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+        return 0;
+    }
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(static_cast<std::uint32_t>(seconds)) * TICKS_PER_SECOND);
+    if (!GuestCopyOut_nid_no_patch(time, &localTime, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+    return 0;
 }
 
 int APS5_VABI sceRtcGetWin32FileTime(const RtcDateTime* time, uint64_t* win32_time) {
     if (!win32_time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (const int result = validate(time); result != 0) return result;
-    const std::uint64_t tick = toTick(*time);
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime;
+    if (!GuestCopyIn_nid_no_patch(&localTime, time, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (const int result = validate(&localTime); result != 0) return result;
+    const std::uint64_t tick = toTick(localTime);
     if (tick < WIN32_EPOCH_TICK) {
-        *win32_time = 0;
+        uint64_t zero = 0;
+        if (!GuestCopyOut_nid_no_patch(win32_time, &zero, sizeof(uint64_t))) return SCE_RTC_ERROR_INVALID_POINTER;
         return SCE_RTC_ERROR_INVALID_YEAR;
     }
-    *win32_time = (tick - WIN32_EPOCH_TICK) * 10;
+    uint64_t localWin32Time = (tick - WIN32_EPOCH_TICK) * 10;
+    if (!GuestCopyOut_nid_no_patch(win32_time, &localWin32Time, sizeof(uint64_t))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcSetWin32FileTime(RtcDateTime* time, uint64_t win32_time) {
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    *time = fromTick(WIN32_EPOCH_TICK + win32_time / 10);
+    RtcDateTime localTime = fromTick(WIN32_EPOCH_TICK + win32_time / 10);
+    if (!GuestCopyOut_nid_no_patch(time, &localTime, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcGetDosTime(const RtcDateTime* time, uint32_t* dos_time) {
     if (!dos_time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (const int result = validate(time); result != 0) return result;
-    if (time->year < 1980 || time->year > 2107) {
-        *dos_time = time->year < 1980 ? 0 : 0xff9fbf7du;
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcDateTime localTime;
+    if (!GuestCopyIn_nid_no_patch(&localTime, time, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (const int result = validate(&localTime); result != 0) return result;
+    if (localTime.year < 1980 || localTime.year > 2107) {
+        uint32_t localDosTime = localTime.year < 1980 ? 0 : 0xff9fbf7du;
+        if (!GuestCopyOut_nid_no_patch(dos_time, &localDosTime, sizeof(uint32_t))) return SCE_RTC_ERROR_INVALID_POINTER;
         return SCE_RTC_ERROR_INVALID_YEAR;
     }
-    *dos_time = static_cast<uint32_t>(time->year - 1980) << 25 | static_cast<uint32_t>(time->month) << 21
-        | static_cast<uint32_t>(time->day) << 16 | static_cast<uint32_t>(time->hour) << 11
-        | static_cast<uint32_t>(time->minute) << 5 | static_cast<uint32_t>(time->second / 2);
+    uint32_t localDosTime = static_cast<uint32_t>(localTime.year - 1980) << 25 | static_cast<uint32_t>(localTime.month) << 21
+        | static_cast<uint32_t>(localTime.day) << 16 | static_cast<uint32_t>(localTime.hour) << 11
+        | static_cast<uint32_t>(localTime.minute) << 5 | static_cast<uint32_t>(localTime.second / 2);
+    if (!GuestCopyOut_nid_no_patch(dos_time, &localDosTime, sizeof(uint32_t))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcSetDosTime(RtcDateTime* time, uint32_t dos_time) {
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    time->year = static_cast<std::uint16_t>(1980 + (dos_time >> 25));
-    time->month = static_cast<std::uint16_t>(dos_time >> 21 & 0x0f);
-    time->day = static_cast<std::uint16_t>(dos_time >> 16 & 0x1f);
-    time->hour = static_cast<std::uint16_t>(dos_time >> 11 & 0x1f);
-    time->minute = static_cast<std::uint16_t>(dos_time >> 5 & 0x3f);
-    time->second = static_cast<std::uint16_t>((dos_time & 0x1f) * 2);
-    time->microsecond = 0;
+    RtcDateTime localTime;
+    localTime.year = static_cast<std::uint16_t>(1980 + (dos_time >> 25));
+    localTime.month = static_cast<std::uint16_t>(dos_time >> 21 & 0x0f);
+    localTime.day = static_cast<std::uint16_t>(dos_time >> 16 & 0x1f);
+    localTime.hour = static_cast<std::uint16_t>(dos_time >> 11 & 0x1f);
+    localTime.minute = static_cast<std::uint16_t>(dos_time >> 5 & 0x3f);
+    localTime.second = static_cast<std::uint16_t>((dos_time & 0x1f) * 2);
+    localTime.microsecond = 0;
+    if (!GuestCopyOut_nid_no_patch(time, &localTime, sizeof(RtcDateTime))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 

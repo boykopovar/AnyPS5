@@ -845,6 +845,29 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #endif
 }
 
+extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
+#ifdef _WIN32
+    SIZE_T copied = 0;
+    return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
+#elif defined(__linux__)
+    iovec local{destination, bytes};
+    iovec remote{const_cast<void*>(source), bytes};
+    const auto copied = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno != EFAULT) throw std::runtime_error("GuestCopyIn: process_vm_readv failed with errno " + std::to_string(errno));
+    return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
+#elif defined(__APPLE__)
+    mach_vm_size_t copied = 0;
+    return mach_vm_read_overwrite(mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), bytes,
+        reinterpret_cast<mach_vm_address_t>(destination), &copied) == KERN_SUCCESS && copied == bytes;
+#else
+    throw std::runtime_error("GuestCopyIn: no checked read is available on this host");
+#endif
+}
+
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
     auto resolved = ResolveLocked(path, false, true);
     AppArchiveRefuseOnly_nid_no_patch(resolved, path, "reading");
