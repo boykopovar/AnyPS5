@@ -1274,6 +1274,8 @@ int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, i
 void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix();
 void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix();
 int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(const Xtime* target);
+void APS5_VABI _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(Xtime* now);
+Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(const Xtime* target);
 int APS5_VABI _Smtx_init_nid_postfix(void** smtx);
 int APS5_VABI _Smtx_init_with_name_nid_postfix(void** smtx, const char* name);
 int APS5_VABI _Smtx_destroy_nid_postfix(void** smtx);
