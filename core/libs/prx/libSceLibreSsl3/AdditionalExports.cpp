@@ -599,10 +599,6 @@ int APS5_VABI SSL_provide_quic_data_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI d2i_PUBKEY_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
