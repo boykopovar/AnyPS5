@@ -443,10 +443,11 @@ static void TestSerializedScriptValue() {
     Require(deUndef != nullptr && JSValueIsUndefined(ctx, deUndef));
     WKRelease(serUndef);
 
-    auto* jsStr = JSStringCreateWithUTF8CString_nid_postfix("hello AnyPS5");
-    Require(jsStr != nullptr);
-    auto* strVal = JSValueMakeString(ctx, jsStr);
-    JSStringRelease_nid_postfix(jsStr);
+    auto* jsJsonStr = JSStringCreateWithUTF8CString_nid_postfix("\"hello AnyPS5\"");
+    Require(jsJsonStr != nullptr);
+    auto* strVal = JSValueMakeFromJSONString(ctx, jsJsonStr);
+    JSStringRelease_nid_postfix(jsJsonStr);
+    Require(strVal != nullptr);
     auto* serStr = WKSerializedScriptValueCreate(ctx, strVal, nullptr);
     Require(serStr != nullptr);
 
