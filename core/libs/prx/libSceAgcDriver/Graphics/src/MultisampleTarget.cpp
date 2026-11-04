@@ -440,6 +440,7 @@ public:
         });
         cleared = clear;
         drawn = false;
+        ++contents;
     }
 
     void Recreate(const ColorTarget& use) {
@@ -456,6 +457,7 @@ public:
         const auto initial = initialDccClear(use);
         cleared = initial;
         drawn = false;
+        ++contents;
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -507,6 +509,7 @@ public:
         });
         storageWritten = true;
         drawn = true;
+        ++contents;
         return selectedView;
     }
 
@@ -648,9 +651,14 @@ public:
     std::string htileRefusal;
     std::optional<VkClearColorValue> cleared;
     bool drawn = false;
+    std::uint64_t contents = 0;
 
     MultisampleColorAlias Alias() const {
         MultisampleColorAlias alias{target.address, guardedColorBytes(target), target.format, target.samples};
+        alias.active = active;
+        alias.contents = contents;
+        alias.fills = colorFill.Noted();
+        alias.sameRun = colorFill.SameRun();
         const auto newest = [&](MultisampleColorContent content, std::optional<VkClearColorValue> value) {
             alias.newest = content;
             alias.value = value;
@@ -667,6 +675,7 @@ public:
         }
         if (const auto fill = colorFill.Pending()) {
             VkClearColorValue clear{};
+            alias.filledBytes = MultisampledColorBytes(target);
             return MultisampledFillClearColor(target, *fill, clear) ? newest(MultisampleColorContent::Fill, clear) : newest(MultisampleColorContent::Unknown, std::nullopt);
         }
         if (drawn) return newest(MultisampleColorContent::Drawn, std::nullopt);
@@ -1370,29 +1379,35 @@ MultisampledColorFill::MultisampledColorFill(const ColorTarget& target) : addres
 
 void MultisampledColorFill::NoteFill(std::uint64_t fillAddress, std::size_t fillBytes, std::uint32_t pattern) {
     if (bytes == 0 ? fillAddress > address || address >= fillAddress + fillBytes : fillAddress >= address + bytes || address >= fillAddress + fillBytes) return;
+    ++noted;
     char text[192];
     if (bytes == 0) {
         std::snprintf(text, sizeof(text), "a fill of 0x%llx+0x%zx covers the color memory at 0x%llx of a multisampled target whose footprint is not modeled", static_cast<unsigned long long>(fillAddress), fillBytes, static_cast<unsigned long long>(address));
         refusal = text;
+        sameRun = 0;
         return;
     }
     if (fillAddress > address || fillAddress + fillBytes < address + bytes) {
         std::snprintf(text, sizeof(text), "a fill of 0x%llx+0x%zx partly covers the color memory 0x%llx+0x%llx of a multisampled target, leaving its samples mixed", static_cast<unsigned long long>(fillAddress), fillBytes, static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes));
         refusal = text;
+        sameRun = 0;
         return;
     }
     refusal.clear();
+    sameRun = filled == pattern ? sameRun + 1u : 1u;
     filled = pattern;
 }
 
 std::optional<std::uint32_t> MultisampledColorFill::TakeFill() {
     Require(refusal.empty(), refusal);
+    sameRun = 0;
     return std::exchange(filled, std::nullopt);
 }
 
 void MultisampledColorFill::Discard() {
     refusal.clear();
     filled.reset();
+    sameRun = 0;
 }
 
 bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colorFill, const ColorTarget& use, VkClearColorValue& clear) {
@@ -1411,6 +1426,7 @@ SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const Col
     TargetsLock lock;
     auto& found = acquire(context, target);
     found.drawn = true;
+    ++found.contents;
     return {found.image, found.OrderView(), found.orderFormat, target.extent, target.samples, SampleOrderMethod::Storage, found.shared_from_this()};
 }
 
@@ -1418,6 +1434,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
     TargetsLock lock;
     auto& acquired = acquire(context, target);
     acquired.drawn = true;
+    ++acquired.contents;
     if (image != nullptr) *image = acquired.image;
     return acquired.View(target.format);
 }
@@ -1426,6 +1443,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
     TargetsLock lock;
     auto& acquired = acquire(context, target);
     acquired.drawn = true;
+    ++acquired.contents;
     owner = acquired.shared_from_this();
     if (image != nullptr) *image = acquired.image;
     return acquired.View(target.format);
@@ -1781,17 +1799,29 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::u
 }
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes) {
-    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return std::nullopt;
+    const auto aliases = MultisampleColorTargetsOver(address, bytes);
+    if (aliases.empty()) return std::nullopt;
+    return aliases.front();
+}
+
+std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t address, std::size_t bytes) {
+    std::vector<MultisampleColorAlias> aliases;
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return aliases;
     TargetsLock lock;
     std::shared_lock guardLock(guardedMutex());
     for (const auto& range : guarded()) {
         if (address >= range.address + range.bytes || range.address >= address + bytes) continue;
-        for (const auto& target : targets()) {
-            if (target->active == range.active) return target->Alias();
+        if (std::any_of(aliases.begin(), aliases.end(), [&](const MultisampleColorAlias& alias) { return alias.active == range.active; })) continue;
+        const auto target = std::find_if(targets().begin(), targets().end(), [&](const auto& candidate) { return candidate->active == range.active; });
+        if (target != targets().end()) {
+            aliases.push_back((*target)->Alias());
+            continue;
         }
-        return MultisampleColorAlias{range.address, range.bytes, VK_FORMAT_UNDEFINED, range.samples};
+        MultisampleColorAlias alias{range.address, range.bytes, VK_FORMAT_UNDEFINED, range.samples};
+        alias.active = range.active;
+        aliases.push_back(alias);
     }
-    return std::nullopt;
+    return aliases;
 }
 
 void WithMultisampleTargetsLockForTest(const std::function<void()>& inside) {
