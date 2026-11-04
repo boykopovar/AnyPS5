@@ -3556,9 +3556,9 @@ void CheckCoveredOwner(Context context, std::uint32_t samples, CoveredOwner mode
         second = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x40u}, false, true);
         NoteDepthSurfaceWrite(context, target);
         second->Run(recorder.Commands(), 0.5f);
-        TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.stencilAddress, probe); }, "native multisample depth publication over pending storage image writes is not implemented");
-        Require(StorageTexture::AnyPendingOverlaps(written), "refused storage results under a drawn owner were dropped");
-        std::printf("Native depth covered owner samples=%u: storage results over part of a plane still refuse the owner's publication\n", samples);
+        recorder.Sync();
+        Require(StorageTexture::AnyPendingOverlaps(written), "storage results over part of an owner's plane were dropped when the owner was drawn again");
+        std::printf("Native depth covered owner samples=%u: storage results over part of a plane keep the owner\n", samples);
         return;
     }
     auto bound = target;
