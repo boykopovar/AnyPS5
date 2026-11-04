@@ -70,8 +70,11 @@ static int KeepFailure(const std::string& stamp) {
 
     bool threw = false;
     bool reopened = false;
+    int guestErrno = -1;
+    *__error_nid_postfix() = 0;
     try {
         reopened = freopen_nid_postfix(outName.c_str(), "w", __stdoutp_nid_postfix) == __stdoutp_nid_postfix;
+        guestErrno = *__error_nid_postfix();
     } catch (...) {
         threw = true;
     }
@@ -91,6 +94,7 @@ static int KeepFailure(const std::string& stamp) {
     Require(full, "the descriptor table was not filled");
     Require(!threw, "a failure to keep the host standard output escaped from freopen");
     Require(reopened, "freopen failed although only keeping the host standard output failed");
+    Require(guestErrno != EMFILE && guestErrno != ENOMEM, "the failed keep's errno reached the guest after freopen succeeded");
     Require(Has(Contents(outName), "guest-out"), "the guest's stdout line is not in its file");
     Require(!kept, "the host standard output was replaced although keeping it failed");
     std::error_code ignored;
