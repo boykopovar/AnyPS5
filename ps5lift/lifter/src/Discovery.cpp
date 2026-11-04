@@ -86,7 +86,8 @@ bool WritesRegister(const Instruction& instruction, const ZydisRegister reg) {
 std::optional<std::uint64_t> BranchBound(const DecodedFunction& function, const Instruction& compare) {
     const auto branch = function.Instructions.find(compare.Next());
     if (branch == function.Instructions.end()) return std::nullopt;
-    const auto value = compare.Operands[1].imm.value.u;
+    const auto width = compare.Operands[0].size;
+    const auto value = width >= 64 ? compare.Operands[1].imm.value.u : compare.Operands[1].imm.value.u & ((std::uint64_t{1} << width) - 1);
     if (branch->second.Info.mnemonic == ZYDIS_MNEMONIC_JNBE) return value + 1;
     if (branch->second.Info.mnemonic == ZYDIS_MNEMONIC_JNB) return value;
     return std::nullopt;

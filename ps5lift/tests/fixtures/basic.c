@@ -107,6 +107,7 @@ static i64 (*volatile operations[])(i64, i64) = {add, subtract, multiply, divide
 i64 table_index_copied_after_compare(i64 value);
 i64 table_index_copied_before_compare(i64 value);
 i64 table_base_before_loop(i64 value);
+i64 table_byte_index(i64 value);
 i64 overlapping_exchange(volatile u64* word, u64 expected, u64 desired, i64 skip_lock);
 i64 tail_ping(i64 count);
 i64 jump_falls_into_next(i64 value);
@@ -183,6 +184,30 @@ __asm__(".text\n"
         ".pushsection .rodata\n"
         ".p2align 2\n"
         "4:  .long 0b-4b, 1b-4b, 2b-4b, 5b-4b\n"
+        ".popsection\n"
+        ".globl table_byte_index\n"
+        ".type table_byte_index, @function\n"
+        "table_byte_index:\n"
+        "    movzbl %dil, %edx\n"
+        "    cmpb $0x82, %dl\n"
+        "    ja 3f\n"
+        "    lea 4f(%rip), %rax\n"
+        "    movslq (%rax,%rdx,4), %rcx\n"
+        "    add %rax, %rcx\n"
+        "    jmp *%rcx\n"
+        "0:  mov $300, %eax\n"
+        "    ret\n"
+        "1:  mov $301, %eax\n"
+        "    ret\n"
+        "3:  mov $-1, %rax\n"
+        "    ret\n"
+        ".size table_byte_index, .-table_byte_index\n"
+        ".pushsection .rodata\n"
+        ".p2align 2\n"
+        "4:  .rept 0x82\n"
+        "    .long 0b-4b\n"
+        "    .endr\n"
+        "    .long 1b-4b\n"
         ".popsection\n"
         ".globl table_base_before_loop\n"
         ".type table_base_before_loop, @function\n"
@@ -1060,6 +1085,8 @@ int main(void) {
     for (i64 i = 0; i < 4; ++i) line("table after compare", table_index_copied_after_compare(i));
     for (i64 i = 0; i < 4; ++i) line("table before compare", table_index_copied_before_compare(i));
     for (i64 i = 0; i < 5; ++i) line("table base before loop", table_base_before_loop(i));
+    static const i64 byte_indices[] = {0, 0x82, 0x83};
+    for (int i = 0; i < 3; ++i) line("table byte index", table_byte_index(byte_indices[i]));
     static volatile u64 exchanged_word;
     for (i64 skip = 0; skip < 2; ++skip) {
         exchanged_word = 5;
