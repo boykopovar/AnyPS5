@@ -1,6 +1,7 @@
 #pragma once
 #include "prx/libSceIcu/include/LegacyExports.hpp"
 #include "ConstrainedFieldPosition.hpp"
+#include "Enumeration.hpp"
 #include "ErrorName.hpp"
 #include "Invariant.hpp"
 #include "Iterator.hpp"
