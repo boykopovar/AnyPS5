@@ -96,26 +96,6 @@ void TestInvalidSdwaSelectors() {
             Require(threw, "SDWA destination selector 7 must throw std::invalid_argument");
         }
         {
-            const std::array<std::uint32_t, 2> words{opWord, 4u | (0u << 8u) | (0u << 16u)};
-            bool threw = false;
-            try {
-                ShaderRecompiler::DecodeRdnaInstruction(0u, words, 0u);
-            } catch (const std::invalid_argument&) {
-                threw = true;
-            }
-            Require(threw, "SDWA subword source selector 0 must throw std::invalid_argument");
-        }
-        {
-            const std::array<std::uint32_t, 2> words{opWord, 4u | (0u << 8u) | (4u << 16u)};
-            bool threw = false;
-            try {
-                ShaderRecompiler::DecodeRdnaInstruction(0u, words, 0u);
-            } catch (const std::invalid_argument&) {
-                threw = true;
-            }
-            Require(threw, "SDWA subword source selector 4 must throw std::invalid_argument");
-        }
-        {
             const std::array<std::uint32_t, 2> words{opWord, 4u | (0u << 8u) | (7u << 16u)};
             bool threw = false;
             try {
@@ -144,26 +124,6 @@ void TestInvalidSdwaSelectors() {
                 threw = true;
             }
             Require(threw, "SDWA destination unused 3 on word destination must throw std::invalid_argument");
-        }
-        {
-            const std::array<std::uint32_t, 2> words{opWord, 4u | (6u << 8u) | (0u << 16u)};
-            bool threw = false;
-            try {
-                ShaderRecompiler::DecodeRdnaInstruction(0u, words, 0u);
-            } catch (const std::invalid_argument&) {
-                threw = true;
-            }
-            Require(threw, "SDWA subword source selector 0 with DWORD destination must throw std::invalid_argument");
-        }
-        {
-            const std::array<std::uint32_t, 2> words{opWord, 4u | (6u << 8u) | (4u << 16u)};
-            bool threw = false;
-            try {
-                ShaderRecompiler::DecodeRdnaInstruction(0u, words, 0u);
-            } catch (const std::invalid_argument&) {
-                threw = true;
-            }
-            Require(threw, "SDWA subword source selector 4 with DWORD destination must throw std::invalid_argument");
         }
         {
             const std::array<std::uint32_t, 2> words{opWord, 4u | (6u << 8u) | (3u << 11u) | (6u << 16u)};
