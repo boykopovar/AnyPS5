@@ -232,6 +232,16 @@ void TestQueries() {
     Require(sceKernelAprSubmitCommandBufferAndGetResult(nullptr, 0, &result, &first) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null command buffer");
     Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null submission id");
     Require(result == 0xFFFFFFFFu && first == 0, "a rejected APR submission wrote its result or id");
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(reinterpret_cast<const Apr::CommandBufferObject*>(0x10), 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unreadable command buffer object");
+    Apr::CommandBufferObject unreadable{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), nullptr};
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&unreadable, 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a command buffer with an unreadable base");
+    const Apr::CommandBufferObject oversized{Apr::BufferType::Generic, 0, sizeof(memory) + 1, 1, sizeof(memory), memory.data()};
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&oversized, 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past the command buffer capacity");
+    Require(sceKernelAprSubmitCommandBuffer(&oversized, 0) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past the command buffer capacity without an id");
+    Require(first == 0 && result == 0xFFFFFFFFu, "a rejected APR submission wrote its result or id");
     Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, &first) == 0 && result == 0 && first != 0, "APR did not return a result and an id");
     Require(sceKernelAprWaitCommandBuffer(first) == 0, "APR did not wait for the submission");
     for (std::size_t index = 0; index < data.size(); ++index) Require(data[index] == FileByte(100 + index), "APR read through the submission with a result returned incorrect bytes");
