@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include <cstdint>
 #include <cstdio>
