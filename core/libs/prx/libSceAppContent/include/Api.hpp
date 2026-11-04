@@ -38,7 +38,7 @@ int APS5_VABI sceAppContentDownload0Expand(void);
 int APS5_VABI sceAppContentDownload0Shrink(void);
 int APS5_VABI sceAppContentDownload1Expand(void);
 int APS5_VABI sceAppContentDownload1Shrink(void);
-int APS5_VABI sceAppContentDownload2Expand(void);
+int APS5_VABI sceAppContentDownload2Expand(size_t size);
 int APS5_VABI sceAppContentDownload2Shrink(void);
 int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void);
 int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlementId, AppContentAddcontInfo* info);
