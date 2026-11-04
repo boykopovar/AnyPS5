@@ -262,6 +262,12 @@ struct Server {
         }
         linger immediate{1, 0};
         setsockopt(client.fd, SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&immediate), sizeof(immediate));
+#ifdef _WIN32
+        closesocket(client.fd);
+#else
+        close(client.fd);
+#endif
+        client.fd = -1;
     }
 
     void Reset(mbedtls_ssl_context& ssl, mbedtls_net_context& client) {
