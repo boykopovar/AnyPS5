@@ -1103,3 +1103,24 @@ SonyLconv* APS5_VABI localeconv_nid_postfix(void) {
 }
 
 }
+
+const char* GuestLocale::StringData(const String& string) {
+    return string.capacity > sizeof(string.buffer) - 1 ? string.pointer : string.buffer;
+}
+
+GuestLocale::String* GuestLocale::AssignString(String* result, const char* data, std::size_t length) {
+    if (result == nullptr || (data == nullptr && length != 0)) throw std::invalid_argument("string assignment: null argument");
+    constexpr std::size_t inlineCapacity = sizeof(result->buffer) - 1;
+    char* target = result->buffer;
+    std::size_t capacity = inlineCapacity;
+    if (length > inlineCapacity) {
+        capacity = length | inlineCapacity;
+        target = static_cast<char*>(AllocateStringStorage(capacity + 1));
+    }
+    if (length != 0) std::memcpy(target, data, length);
+    target[length] = 0;
+    if (target != result->buffer) result->pointer = target;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}

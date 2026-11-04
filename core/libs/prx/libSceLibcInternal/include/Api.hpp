@@ -5,6 +5,7 @@
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/LegacySignals.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 
@@ -26,6 +27,10 @@ using ThreadDestructorFunction = void (APS5_VABI*)(void*);
 
 extern "C" {
 
+std::int32_t APS5_VABI _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix(const GuestLocale::Facet* self, const GuestLocale::String* name, const GuestLocaleFacade* locale);
+GuestLocale::String* APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix(GuestLocale::String* result, const GuestLocale::Facet* self, std::int32_t catalog, std::int32_t set, std::int32_t message, const GuestLocale::String* dfault);
+void APS5_VABI _ZNKSt8messagesIcE5closeEi_nid_postfix(const GuestLocale::Facet* self, std::int32_t catalog);
+GuestLocale::String* APS5_VABI _ZNKSt8messagesIcE6do_getEiiiRKSs_nid_postfix(GuestLocale::String* result, const GuestLocale::Facet* self, std::int32_t catalog, std::int32_t set, std::int32_t message, const GuestLocale::String* dfault);
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
