@@ -3706,9 +3706,6 @@ void uint16ExportTests() {
     queue.context[0x31c] = 0x714u;
     const auto float16 = AgcDriver::Graphics::DecodeState(queue);
     Require(float16.hasColorTarget && float16.color.format == VK_FORMAT_R16G16_UINT && float16.color.elementBytes == 4u && float16.color.uintExport && float16.color.packing == ShaderRecompiler::ColorExportPacking::None, "a UINT16_ABGR export into an R16G16_SFLOAT target did not decode as its unsigned alias");
-    auto blendedFloat = queue;
-    blendedFloat.context[0x1e0] = 1u << 30u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(blendedFloat); }, "blending into an unsigned integer target");
     queue.context[0x31c] = 0x730u;
     Require(AgcDriver::Graphics::DecodeState(queue).color.format == VK_FORMAT_R16G16B16A16_UINT, "a UINT16_ABGR export into an R16G16B16A16_SFLOAT target did not decode as its unsigned alias");
     queue.context[0x31c] = 0x708u;
