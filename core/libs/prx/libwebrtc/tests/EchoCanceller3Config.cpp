@@ -24,6 +24,22 @@ template<typename TAction> void RequireInvalidArgument(TAction action, std::sour
     Require(false, location);
 }
 
+struct ByteRange {
+    std::size_t first;
+    std::size_t last;
+};
+
+constexpr ByteRange FirmwareUnwrittenPadding[] {{0x71, 0x77}, {0x14e, 0x14f}, {0x179, 0x17f}, {0x184, 0x187}, {0x249, 0x24f}};
+
+bool MembersEqual(const WebRtcEchoCanceller3Config& left, const WebRtcEchoCanceller3Config& right) {
+    for (std::size_t index = 0; index < sizeof(left.bytes); ++index) {
+        bool padding = false;
+        for (const auto& range : FirmwareUnwrittenPadding) padding = padding || (index >= range.first && index <= range.last);
+        if (!padding && left.bytes[index] != right.bytes[index]) return false;
+    }
+    return true;
+}
+
 WebRtcEchoCanceller3Config Pattern(unsigned seed) {
     WebRtcEchoCanceller3Config config;
     for (std::size_t index = 0; index < sizeof(config.bytes); ++index)
@@ -36,16 +52,17 @@ void TestCopyConstructor() {
     WebRtcEchoCanceller3Config copy;
     std::memset(&copy, 0xA5, sizeof(copy));
     _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(&copy, &source);
-    Require(std::memcmp(&copy, &source, sizeof(copy)) == 0);
+    Require(MembersEqual(copy, source));
 }
 
 void TestAssignment() {
     WebRtcEchoCanceller3Config source = Pattern(11);
     WebRtcEchoCanceller3Config target = Pattern(3);
     Require(_ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(&target, &source) == &target);
-    Require(std::memcmp(&target, &source, sizeof(target)) == 0);
+    Require(MembersEqual(target, source));
+    const WebRtcEchoCanceller3Config assigned = target;
     Require(_ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(&target, &target) == &target);
-    Require(std::memcmp(&target, &source, sizeof(target)) == 0);
+    Require(std::memcmp(&target, &assigned, sizeof(target)) == 0);
 }
 
 void TestNullArgumentsThrow() {
