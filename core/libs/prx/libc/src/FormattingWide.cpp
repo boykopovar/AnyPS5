@@ -34,8 +34,10 @@ bool In(char16_t character, const char* set) {
 
 class WideEncodingError : public std::invalid_argument {
 public:
-    explicit WideEncodingError(std::u16string written) : std::invalid_argument("Invalid multibyte string argument"), partial(std::move(written)) {}
+    explicit WideEncodingError(std::u16string written, bool sequence = true)
+        : std::invalid_argument("Invalid multibyte string argument"), partial(std::move(written)), invalidSequence(sequence) {}
     std::u16string partial;
+    bool invalidSequence;
 };
 
 bool AppendUtf16(std::u16string& out, const char* text, std::size_t limit) {
@@ -146,9 +148,9 @@ void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source,
         bool left = false;
         int width = 0;
         int precision = -1;
-        while (In(*format, "-+ #0'")) {
+        while (In(*format, "-+ #0")) {
             if (*format == u'-') left = true;
-            if (*format != u'\'') spec += static_cast<char>(*format);
+            spec += static_cast<char>(*format);
             ++format;
         }
         if (*format == u'*') {
@@ -236,8 +238,13 @@ void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source,
         } else if (conversion == u'c' || conversion == u'C') {
             const int value = args.Next<int>();
             std::u16string text;
-            if (conversion == u'C' || length == "l") text.push_back(static_cast<char16_t>(value));
-            else text.push_back(static_cast<char16_t>(static_cast<unsigned char>(value)));
+            if (conversion == u'C' || length == "l") {
+                text.push_back(static_cast<char16_t>(value));
+            } else {
+                const auto byte = static_cast<unsigned char>(value);
+                if (byte >= 0x80) throw WideEncodingError(out, value != -1 && (byte < 0xc0 || byte >= 0xf0));
+                text.push_back(static_cast<char16_t>(byte));
+            }
             AppendPadded(out, text, left, width);
         } else if (conversion == u's' || conversion == u'S') {
             std::u16string text;
@@ -264,6 +271,10 @@ void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source,
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
+        } else if (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) {
+            std::u16string text = u"%";
+            if (conversion != u'%') text.push_back(conversion);
+            AppendPadded(out, text, left, width);
         } else {
             throw std::invalid_argument("Unsupported format conversion");
         }
@@ -339,7 +350,7 @@ int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const ch
         const std::size_t copied = error.partial.size() < size - 1 ? error.partial.size() : size - 1;
         std::memcpy(buffer, error.partial.data(), copied * sizeof(char16_t));
         buffer[copied] = 0;
-        errno = 86;
+        if (error.invalidSequence) errno = 86;
         return -1;
     } catch (const std::exception&) {
         buffer[0] = 0;
@@ -387,8 +398,8 @@ int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
         const std::u16string text = FormatWide(format, reinterpret_cast<VaList*>(args));
         const std::string bytes = ToUtf8(text);
         if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(__stdoutp_nid_postfix)) == bytes.size()) result = static_cast<int>(text.size());
-    } catch (const WideEncodingError&) {
-        errno = 86;
+    } catch (const WideEncodingError& error) {
+        if (error.invalidSequence) errno = 86;
     } catch (const std::exception&) {
         errno = 22;
     }
@@ -406,8 +417,8 @@ int APS5_VABI vfwprintf_nid_postfix(FileStream* stream, const char16_t* format, 
         const std::u16string text = FormatWide(format, args);
         const std::string bytes = ToUtf8(text);
         if (std::fwrite(bytes.data(), 1, bytes.size(), GetNativeStream(stream)) == bytes.size()) result = static_cast<int>(text.size());
-    } catch (const WideEncodingError&) {
-        errno = 86;
+    } catch (const WideEncodingError& error) {
+        if (error.invalidSequence) errno = 86;
     } catch (const std::exception&) {
         errno = 22;
     }
