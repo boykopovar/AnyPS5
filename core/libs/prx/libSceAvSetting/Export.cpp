@@ -1,8 +1,27 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAvSetting/include/InventoryExports.hpp"
 #include "prx/libSceAvSetting/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
+#include <limits>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+template <typename TValue>
+bool ReadAvSettingField(const void* object, std::size_t offset, TValue& value) noexcept {
+    const auto address = reinterpret_cast<std::uintptr_t>(object);
+    if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    try {
+        return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), sizeof(value));
+    } catch (...) {
+        return false;
+    }
+}
+
+}
 
 extern "C" {
 
@@ -215,14 +234,20 @@ int APS5_VABI sceAvControlIsAudioOutModeSupportedByMonitorInfo() {
     return 0;
 }
 
-int APS5_VABI sceAvControlIsColorimetryHdr() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsColorimetryHdr(std::uint32_t colorimetry) {
+    constexpr std::array<std::uint32_t, 12> isHdr{1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1};
+    return colorimetry >= 9 && colorimetry <= 20 && isHdr[colorimetry - 9] != 0;
 }
 
-int APS5_VABI sceAvControlIsDeepColorSupportedByMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsDeepColorSupportedByMonitorInfo(const void* monitorInfo) {
+    std::uint8_t deepColorFlags = 0;
+    if (!ReadAvSettingField(monitorInfo, 0x74, deepColorFlags)) return false;
+    if ((deepColorFlags & 0x0a) != 0) return true;
+    std::uint8_t deepColorFlags2 = 0;
+    if (!ReadAvSettingField(monitorInfo, 0x75, deepColorFlags2)) return false;
+    if ((deepColorFlags2 & 0x0a) != 0) return true;
+    std::uint8_t hdrFlags = 0;
+    return ReadAvSettingField(monitorInfo, 0x352, hdrFlags) && (hdrFlags & 0x03) != 0;
 }
 
 int APS5_VABI sceAvControlIsDeviceConnected() {
@@ -230,19 +255,22 @@ int APS5_VABI sceAvControlIsDeviceConnected() {
     return 0;
 }
 
-int APS5_VABI sceAvControlIsHdrSupportedByMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsHdrSupportedByMonitorInfo(const void* monitorInfo) {
+    std::uint8_t capabilityFlags = 0;
+    if (!ReadAvSettingField(monitorInfo, 0x358, capabilityFlags) || (capabilityFlags & 0x04) == 0)
+        return false;
+    std::uint8_t hdrFlags = 0;
+    return ReadAvSettingField(monitorInfo, 0x78, hdrFlags) && (hdrFlags & 0x30) != 0;
 }
 
-int APS5_VABI sceAvControlIsModeGen1Vr() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsModeGen1Vr(const void* videoOutMode) {
+    std::uint32_t modeFlags = 0;
+    return ReadAvSettingField(videoOutMode, 0x30, modeFlags) && (modeFlags & 0x02) != 0;
 }
 
-int APS5_VABI sceAvControlIsModeSystemDefault() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsModeSystemDefault(const void* videoOutMode) {
+    std::uint32_t modeFlags = 0;
+    return ReadAvSettingField(videoOutMode, 0x30, modeFlags) && (modeFlags & 0x01) == 0;
 }
 
 int APS5_VABI sceAvControlIsSuspendedProcessOutputModeAvailable() {
@@ -340,24 +368,30 @@ int APS5_VABI sceAvSettingAddCallbacksForSocialScreen() {
     return 0;
 }
 
-int APS5_VABI sceAvSettingCallbackFuncsInit() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+namespace {
+
+void InitializeCallbackFuncs_nid_no_patch(void* callbacks, std::uint32_t size) {
+    if (callbacks == nullptr) return;
+    auto* bytes = static_cast<std::uint8_t*>(callbacks);
+    for (std::uint32_t i = 0; i < size; ++i) bytes[i] = i < sizeof(size) ? static_cast<std::uint8_t>(size >> (8 * i)) : 0;
 }
 
-int APS5_VABI sceAvSettingCallbackFuncsInitForLnc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI sceAvSettingCallbackFuncsInitForLnc_() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceAvSettingCallbackFuncsInit(void* callbacks) {
+    InitializeCallbackFuncs_nid_no_patch(callbacks, 0x20);
 }
 
-int APS5_VABI sceAvSettingCallbackFuncsInit_() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceAvSettingCallbackFuncsInitForLnc(void* callbacks) {
+    InitializeCallbackFuncs_nid_no_patch(callbacks, 0x10);
+}
+
+void APS5_VABI sceAvSettingCallbackFuncsInitForLnc_(void* callbacks) {
+    InitializeCallbackFuncs_nid_no_patch(callbacks, 0x10);
+}
+
+void APS5_VABI sceAvSettingCallbackFuncsInit_(void* callbacks) {
+    InitializeCallbackFuncs_nid_no_patch(callbacks, 0x20);
 }
 
 int APS5_VABI sceAvSettingChangeOutputMode() {
@@ -647,5 +681,149 @@ int APS5_VABI sceAvSettingWaitCallback() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAvSettingUnknown__plus_QkxEV_plus_rZws_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+QkxEV+rZws", libSceAvSettingUnknown__plus_QkxEV_plus_rZws_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_0BKuKlQG8zE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0BKuKlQG8zE", libSceAvSettingUnknown_0BKuKlQG8zE_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_0mMgouCMXQ4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0mMgouCMXQ4", libSceAvSettingUnknown_0mMgouCMXQ4_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_0vwiTglFTz4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0vwiTglFTz4", libSceAvSettingUnknown_0vwiTglFTz4_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_7kywfNahIbw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("7kywfNahIbw", libSceAvSettingUnknown_7kywfNahIbw_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_A143jTEYkNw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("A143jTEYkNw", libSceAvSettingUnknown_A143jTEYkNw_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_DtJ45BO7LtY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DtJ45BO7LtY", libSceAvSettingUnknown_DtJ45BO7LtY_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_Dxe4ybR_minus_NaM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Dxe4ybR-NaM", libSceAvSettingUnknown_Dxe4ybR_minus_NaM_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_GYAho0we28c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("GYAho0we28c", libSceAvSettingUnknown_GYAho0we28c_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_Iv3zoMND6xU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Iv3zoMND6xU", libSceAvSettingUnknown_Iv3zoMND6xU_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_JUxonNYB9xk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JUxonNYB9xk", libSceAvSettingUnknown_JUxonNYB9xk_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_JlZQqZOsTMQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JlZQqZOsTMQ", libSceAvSettingUnknown_JlZQqZOsTMQ_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_MNZaRdvvdU4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("MNZaRdvvdU4", libSceAvSettingUnknown_MNZaRdvvdU4_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_V_minus_IcK9eokeE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("V-IcK9eokeE", libSceAvSettingUnknown_V_minus_IcK9eokeE_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_bM9VthphLmg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("bM9VthphLmg", libSceAvSettingUnknown_bM9VthphLmg_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_bXmd6MGBaNI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("bXmd6MGBaNI", libSceAvSettingUnknown_bXmd6MGBaNI_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_cANt7oF1VsA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cANt7oF1VsA", libSceAvSettingUnknown_cANt7oF1VsA_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_cK_plus_dKi9GYYA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("cK+dKi9GYYA", libSceAvSettingUnknown_cK_plus_dKi9GYYA_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_ftQASJeHi6M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ftQASJeHi6M", libSceAvSettingUnknown_ftQASJeHi6M_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_kvYuLJa0CyU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("kvYuLJa0CyU", libSceAvSettingUnknown_kvYuLJa0CyU_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_m1Wi0Yp38v0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("m1Wi0Yp38v0", libSceAvSettingUnknown_m1Wi0Yp38v0_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_mp2s52Yr4pc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mp2s52Yr4pc", libSceAvSettingUnknown_mp2s52Yr4pc_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_nWFSNYt07Cw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("nWFSNYt07Cw", libSceAvSettingUnknown_nWFSNYt07Cw_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_nhvN5B5bvyc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("nhvN5B5bvyc", libSceAvSettingUnknown_nhvN5B5bvyc_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_osJaW_plus_pc9kw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("osJaW+pc9kw", libSceAvSettingUnknown_osJaW_plus_pc9kw_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_s_minus_Egk_plus_i6sAY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("s-Egk+i6sAY", libSceAvSettingUnknown_s_minus_Egk_plus_i6sAY_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_tIR02KtiDXw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tIR02KtiDXw", libSceAvSettingUnknown_tIR02KtiDXw_nid_no_patch);
+
+int APS5_VABI libSceAvSettingUnknown_xVRs9kzSP7I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("xVRs9kzSP7I", libSceAvSettingUnknown_xVRs9kzSP7I_nid_no_patch);
 
 }

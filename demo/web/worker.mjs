@@ -31,12 +31,17 @@ function reportFor(item, index) {
 }
 
 export async function downloadLibraries(target) {
+  if (target !== "linux" && target !== "windows") throw new Error("Invalid library target");
   report({ phase: "Downloading system libraries" });
   const response = await fetch("./release.json", { cache: "no-cache" });
   if (!response.ok) throw new Error(`Cannot load release manifest (${response.status})`);
   const release = await response.json();
-  const asset = release.platforms[target];
-  if (!asset || !Number.isSafeInteger(asset.size) || asset.size < 0 || asset.size > 512 * 1024 * 1024 || !/^libraries\/(windows|linux)-[a-f0-9]+\.zip$/u.test(asset.path) || !/^[a-f0-9]{64}$/u.test(asset.sha256)) throw new Error("Invalid release manifest");
+  const asset = release?.platforms?.[target];
+  if (!release || typeof release.tag !== "string" || !/^v[0-9A-Za-z][0-9A-Za-z._-]*$/u.test(release.tag) || release.tag.endsWith(".")
+      || !asset || typeof asset.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(asset.sha256)
+      || asset.path !== `libraries/${target}-${asset.sha256}.zip`
+      || !Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > 512 * 1024 * 1024
+      || !Number.isSafeInteger(asset.expandedBytes) || asset.expandedBytes < 0 || asset.expandedBytes > 512 * 1024 * 1024) throw new Error("Invalid release manifest");
   const latestResponse = await fetch("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest", { headers: { Accept: "application/vnd.github+json" } });
   if (!latestResponse.ok) {
     const rateLimited = latestResponse.status === 429 || (latestResponse.status === 403 && latestResponse.headers.get("x-ratelimit-remaining") === "0");

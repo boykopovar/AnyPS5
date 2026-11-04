@@ -43,6 +43,7 @@ extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void
     constexpr std::size_t requestSize = 3120;
     constexpr std::size_t messageOffset = 45;
     constexpr std::size_t messageCapacity = 1024;
+    constexpr std::int32_t systemTextType = 5;
 
     if (size != requestSize || device < 0)
         return invalidArgument;
@@ -53,7 +54,7 @@ extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void
 
     std::int32_t type;
     std::memcpy(&type, request, sizeof(type));
-    if (type != 0 || static_cast<const unsigned char*>(request)[messageOffset - 1] != 0)
+    if ((type != 0 && type != systemTextType) || static_cast<const unsigned char*>(request)[messageOffset - 1] != 0)
         return notSupported;
 
     const auto* message = static_cast<const char*>(request) + messageOffset;
