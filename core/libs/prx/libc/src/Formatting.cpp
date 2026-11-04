@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <memory>
+#include <vector>
 #include <climits>
 #include <stdexcept>
 
@@ -82,12 +83,6 @@ bool HasGuestWideScan(const char* format) {
         if (*format) ++format;
     }
     return false;
-}
-
-bool ScansWideInProcess(const char* format) {
-    if (!HasGuestWideScan(format)) return false;
-    LibcDetail::RequireNoPositionalWideScan(format);
-    return true;
 }
 
 const char* CutAtQuadScanDirective(const char* format, std::string& head) {
@@ -248,9 +243,45 @@ public:
     }
 };
 
+std::size_t NumberedScanArguments(const char* format) {
+    std::size_t highest = 0;
+    std::size_t sequential = 0;
+    bool numbered = false;
+    while ((format = std::strchr(format, '%')) != nullptr) {
+        ++format;
+        if (*format == '%') { ++format; continue; }
+        const std::size_t position = LibcDetail::ArgumentPosition(format);
+        if (position != 0) numbered = true;
+        const bool suppress = *format == '*';
+        while (*format && std::strchr("*0123456789hljztL", *format)) ++format;
+        const char conversion = *format;
+        if (conversion == '\0') break;
+        if (conversion == '[') {
+            ++format;
+            if (*format == '^') ++format;
+            if (*format == ']') ++format;
+            while (*format && *format != ']') ++format;
+            if (*format == '\0') break;
+        }
+        ++format;
+        if (suppress) continue;
+        if (position != 0) highest = std::max(highest, position);
+        else ++sequential;
+    }
+    if (numbered && sequential != 0) LibcDetail::RejectPositionalScan("scanf positional arguments mixed with unnumbered assignments");
+    return numbered ? highest : 0;
+}
+
 template <typename TSource, typename NextPointer, typename NextCapacity>
 int ScanSource(TSource source, const char* format, bool secure, NextPointer nextPointer, NextCapacity nextCapacity) {
     if (format == nullptr) return EOF;
+    std::vector<void*> numbered(NumberedScanArguments(format));
+    if (secure && !numbered.empty()) LibcDetail::RejectPositionalScan("scanf_s positional arguments");
+    for (auto& pointer : numbered) pointer = nextPointer();
+    const auto pointerAt = [&](std::size_t position) {
+        if (numbered.empty()) return nextPointer();
+        return numbered.at(position - 1);
+    };
     int assigned = 0;
     bool converted = false;
     const char* cursor = format;
@@ -270,6 +301,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             continue;
         }
         ++cursor;
+        const std::size_t position = LibcDetail::ArgumentPosition(cursor);
         const bool suppress = *cursor == '*';
         if (suppress) ++cursor;
         unsigned long width = 0;
@@ -299,7 +331,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         ++cursor;
         if (conversion == 'n') {
             if (!suppress) {
-                void* target = nextPointer();
+                void* target = pointerAt(position);
                 if (target == nullptr) return EOF;
                 const auto count = source.Consumed();
                 if (length == "hh") *static_cast<signed char*>(target) = static_cast<signed char>(count);
@@ -319,7 +351,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                 while (std::isspace(source.Peek())) source.Skip();
             }
             if (source.Peek() == EOF) return finish(converted ? assigned : EOF);
-            auto* target = suppress ? nullptr : static_cast<char16_t*>(nextPointer());
+            auto* target = suppress ? nullptr : static_cast<char16_t*>(pointerAt(position));
             unsigned long limit = ULONG_MAX;
             if (secure && !suppress) {
                 const auto capacity = static_cast<unsigned long>(nextCapacity());
@@ -389,7 +421,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         void* target = nullptr;
         if (suppress) directive += '*';
         else {
-            target = nextPointer();
+            target = pointerAt(position);
             if (target == nullptr) return EOF;
         }
         if constexpr (!TSource::Contiguous) if (conversion == 'c' && length != "l") {
@@ -472,7 +504,6 @@ int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPoin
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
-    if (HasGuestWideScan(format)) LibcDetail::RequireNoPositionalWideScan(format);
     const int result = ScanSource(StreamSource(native), format, true, nextPointer, nextCapacity);
     stream->SyncStatus();
     return result;
@@ -569,14 +600,14 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = ScansWideInProcess(format) ? ScanSource(StreamSource(native), format, false, [&] { return __builtin_va_arg(args, void*); }, [] { return 0u; })
-                                                  : LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
+    const int result = HasGuestWideScan(format) ? ScanSource(StreamSource(native), format, false, [&] { return __builtin_va_arg(args, void*); }, [] { return 0u; })
+                                                : LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
     __builtin_sysv_va_end(args);
 #else
     std::va_list args;
     va_start(args, format);
-    const int result = ScansWideInProcess(format) ? ScanSource(StreamSource(native), format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
-                                                  : HostVfscanf(native, format, args);
+    const int result = HasGuestWideScan(format) ? ScanSource(StreamSource(native), format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
+                                                : HostVfscanf(native, format, args);
     va_end(args);
 #endif
     stream->SyncStatus();
@@ -665,7 +696,7 @@ int APS5_VABI sprintf_nid_postfix(char* buffer, const char* format, ...) {
 int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList* args) {
     std::string head;
     format = CutAtQuadScanDirective(format, head);
-    if (ScansWideInProcess(format)) {
+    if (HasGuestWideScan(format)) {
         LibcDetail::FormatArguments arguments(args);
         return ScanGuest(input, format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
     }
@@ -694,8 +725,8 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
     va_start(args, format);
     std::string head;
     format = CutAtQuadScanDirective(format, head);
-    const int result = ScansWideInProcess(format) ? ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
-                                                  : HostVsscanf(input, format, args);
+    const int result = HasGuestWideScan(format) ? ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
+                                                : HostVsscanf(input, format, args);
     va_end(args);
     return result;
 }
@@ -911,7 +942,7 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
     int result = 0;
-    if (ScansWideInProcess(format)) {
+    if (HasGuestWideScan(format)) {
         LibcDetail::FormatArguments arguments(args);
         result = ScanSource(StreamSource(native), format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
     } else {

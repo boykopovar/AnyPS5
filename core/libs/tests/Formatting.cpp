@@ -544,10 +544,22 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         Require(sscanf_nid_postfix("x \x80", "%ls %ls", first, fits) == 1 && std::u16string(first) == u"x");
         Require(sscanf_nid_postfix("\xc3\xa9", "%*ls") == 0 && sscanf_nid_postfix("\x80", "%*ls") == EOF);
         Require(sscanf_nid_postfix("\xc3\xa9", "%*lc") == EOF && sscanf_nid_postfix("a\xc3", "%*ls") == EOF);
+        char16_t second[8] = {};
+        Require(sscanf_nid_postfix("ab cd", "%2$ls %1$ls", first, second) == 2);
+        Require(std::u16string(first) == u"cd" && std::u16string(second) == u"ab");
+        Require(sscanf_nid_postfix("7 xy z", "%3$d %1$ls %2$lc", first, &letter, &number) == 3);
+        Require(number == 7 && std::u16string(first) == u"xy" && letter == u'z');
+        Require(sscanf_nid_postfix("ab cd", "%*ls %2$ls%1$n", &consumed, first) == 1 && consumed == 5 && std::u16string(first) == u"cd");
+        Require(ScanList("h there", "%2$lc %1$ls", first, &letter) == 2 && std::u16string(first) == u"there" && letter == u'h');
+        Require(sscanf_nid_postfix("ab", "%1$ls %2$ls", first, second) == 1 && std::u16string(first) == u"ab");
         char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
-        bool positional = false;
-        try { sscanf_nid_postfix("a b", "%2$ls", untouched); } catch (const std::runtime_error&) { positional = untouched[0] == u'!'; }
-        Require(positional);
+        const auto rejects = [&](auto scan) {
+            try { scan(); } catch (const std::runtime_error&) { return untouched[0] == u'!'; }
+            return false;
+        };
+        Require(rejects([&] { ScanListS("ab", "%1$ls", untouched, 4u); }));
+        Require(rejects([&] { sscanf_nid_postfix("1 ab", "%d %1$ls", untouched); }));
+        Require(rejects([&] { sscanf_nid_postfix("ab 1", "%1$ls %n", untouched); }));
     }
 #ifndef _WIN32
     char narrow[8] = {};
