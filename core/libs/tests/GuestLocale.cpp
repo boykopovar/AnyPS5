@@ -542,6 +542,32 @@ static void CheckCtypeVtableObject() {
     }
 }
 
+static void CheckCtypeCharConversions() {
+    GuestLocale::CtypeVtable vtable{};
+    vtable.widen = &_ZNKSt5ctypeIcE8do_widenEc_nid_postfix;
+    vtable.widenRange = &_ZNKSt5ctypeIcE8do_widenEPKcS2_Pc_nid_postfix;
+    vtable.narrow = &_ZNKSt5ctypeIcE9do_narrowEcc_nid_postfix;
+    vtable.narrowRange = &_ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix;
+    const GuestLocale::Facet facet{&vtable.facet, 0, 0};
+    const auto* slots = reinterpret_cast<const GuestLocale::CtypeVtable*>(facet.vtable);
+    for (int value = CHAR_MIN; value <= CHAR_MAX; ++value) {
+        const char character = static_cast<char>(value);
+        Require(slots->widen(&facet, character) == character);
+        Require(slots->narrow(&facet, character, '?') == character);
+        Require(slots->narrow(&facet, character, '\0') == character);
+    }
+    const char source[] = {'A', '\0', 'z', '\x7f', '\x80', '\xff', ' '};
+    std::array<char, sizeof(source) + 1> destination{};
+    destination.fill('#');
+    Require(slots->widenRange(&facet, source, source + sizeof(source), destination.data()) == source + sizeof(source));
+    Require(std::memcmp(destination.data(), source, sizeof(source)) == 0 && destination.back() == '#');
+    destination.fill('#');
+    Require(slots->narrowRange(&facet, source + 1, source + 5, '?', destination.data()) == source + 5);
+    Require(std::memcmp(destination.data(), source + 1, 4) == 0 && destination[4] == '#');
+    Require(slots->widenRange(&facet, source, source, nullptr) == source);
+    Require(slots->narrowRange(&facet, source + 3, source + 3, '?', nullptr) == source + 3);
+}
+
 static void CheckNumPutVtableObject() {
     Require(sizeof(_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kNumPutCharVtableSlots * sizeof(std::uintptr_t));
     for (std::uintptr_t& slot : _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
@@ -609,6 +635,7 @@ int main() {
     CheckNumPutVtableObject();
     CheckCtypeVtableObject();
     CheckWideCtypeVtableObject();
+    CheckCtypeCharConversions();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
