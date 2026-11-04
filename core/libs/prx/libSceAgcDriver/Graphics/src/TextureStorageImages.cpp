@@ -23,15 +23,10 @@ void StorageTexture::allocateExtraMipImages(VkImageCreateInfo info) {
         info.mipLevels = 1u;
         auto extra = std::make_unique<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
         Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &extra->image), "vkCreateImage extra storage mip");
-        VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, extra->image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "extra storage mip");
-        extra->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory extra storage mip", true);
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, extra->image, extra->memory, 0u), "vkBindImageMemory extra storage mip");
-        Require(extraMipMemoryBytes <= std::numeric_limits<VkDeviceSize>::max() - memoryBytes && requirements.size <= std::numeric_limits<VkDeviceSize>::max() - memoryBytes - extraMipMemoryBytes, "storage image memory accounting overflows");
-        extraMipMemoryBytes += requirements.size;
+        extra->Allocate(context, info, "vkAllocateMemory extra storage mip", true, true);
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, extra->image, extra->allocation.Memory(), extra->allocation.Offset()), "vkBindImageMemory extra storage mip");
+        Require(extraMipMemoryBytes <= std::numeric_limits<VkDeviceSize>::max() - memoryBytes && extra->memoryBytes <= std::numeric_limits<VkDeviceSize>::max() - memoryBytes - extraMipMemoryBytes, "storage image memory accounting overflows");
+        extraMipMemoryBytes += extra->memoryBytes;
         extraMipImages.push_back(std::move(extra));
     }
 }
