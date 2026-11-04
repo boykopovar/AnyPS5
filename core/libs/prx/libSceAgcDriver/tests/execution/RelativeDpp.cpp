@@ -121,13 +121,13 @@ int main() {
         Run(*device, 32, 32, device->ComputeTarget(32));
         Run(*device, 64, 64, device->ComputeTarget(64));
         if (target.subgroupSize < 32u) {
-            std::printf("skipped masked cases, subgroup size %u cannot hold a wave32\n", target.subgroupSize);
+            std::printf("skipped, subgroup size %u cannot hold a wave32\n", target.subgroupSize);
             return VulkanTestSkipped;
         }
         RunMasked(*device, 32, 32, MaskedNoFiCode, 0u, device->ComputeTarget(32));
         RunMasked(*device, 32, 32, MaskedFiCode, 0x20u, device->ComputeTarget(32));
         if (target.subgroupSize < 64u) {
-            std::printf("skipped wave64 masked cases, subgroup size %u cannot hold a wave64\n", target.subgroupSize);
+            std::printf("skipped, subgroup size %u cannot hold a wave64\n", target.subgroupSize);
         } else {
             RunMasked(*device, 64, 64, MaskedNoFiCode, 0u, device->ComputeTarget(64));
             RunMasked(*device, 64, 64, MaskedFiCode, 0x20u, device->ComputeTarget(64));
