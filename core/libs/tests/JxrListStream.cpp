@@ -172,4 +172,15 @@ int main() {
         FreeList(stream);
         Require(liveBlocks == 0);
     }
+    {
+        auto* stream = MakeList();
+        const auto data = Pattern(5000);
+        Fill(stream, data);
+        std::size_t position = 1;
+        Require(GetPosWS_List_nid_postfix(stream, &position) == 0 && position == 5000);
+        Require(SetPosWS_List_nid_postfix(stream, 4097) == 0 && GetPosWS_List_nid_postfix(stream, &position) == 0 && position == 4097);
+        Require(SetPosWS_List_nid_postfix(stream, 9000) == 0 && GetPosWS_List_nid_postfix(stream, &position) == 0 && position == 8192);
+        FreeList(stream);
+        Require(liveBlocks == 0);
+    }
 }
