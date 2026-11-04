@@ -541,7 +541,7 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
     if (color.coverageSamples > color.samples) {
         for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
             for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
-                const auto nibble = layout.Nibble(tileX, tileY);
+                const auto nibble = layout.Nibble(tileX, tileY, color.cmaskSlice);
                 const auto code = (std::to_integer<std::uint32_t>(mask[nibble / 2u]) >> ((nibble % 2u) * 4u)) & 0xfu;
                 if (code != 0u && (code >> 2u) != 3u) {
                     char text[128];

@@ -183,6 +183,19 @@ void oneFragment(AgcDriver::VulkanDevice& device) {
     expect(device, color, [](std::uint32_t, std::uint32_t) { return Stale; }, "a one-fragment target with CMASK codes 0xc and 0xf eliminated");
 }
 
+void oneFragmentSliced(AgcDriver::VulkanDevice& device) {
+    for (const std::uint32_t slice : {2u, 3u}) {
+        auto color = target(ColorTileMode::RenderTarget, slice);
+        color.coverageSamples = 4;
+        const std::string name = "a one-fragment target at slice " + std::to_string(slice);
+        prepare(color, [](std::uint32_t tileX, std::uint32_t tileY) { return tileX == 2 && tileY == 0; }, 3);
+        expectRefused([&] { eliminate(device, color); }, "CMASK code 0x3 of a one-fragment color target is not implemented", name + " with CMASK code 3");
+        prepare(color, [](std::uint32_t, std::uint32_t) { return true; });
+        eliminate(device, color);
+        expect(device, color, [](std::uint32_t, std::uint32_t) { return Clear; }, name + " fast-cleared and eliminated");
+    }
+}
+
 }
 
 int main() {
@@ -205,6 +218,7 @@ int main() {
         for (const std::uint32_t slice : {1u, 2u, 3u, 8u}) run(*device, ColorTileMode::RenderTarget, "SW_64KB_R_X", slice);
         unknownCode(*device);
         oneFragment(*device);
+        oneFragmentSliced(*device);
         device->WaitIdle();
         device.reset();
         {
