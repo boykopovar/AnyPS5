@@ -1,0 +1,94 @@
+#include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <source_location>
+
+namespace {
+
+void Require(bool condition, std::source_location location = std::source_location::current()) {
+    if (condition) return;
+    std::fprintf(stderr, "LibreSSL3 BIO_METHOD check failed at line %u\n", location.line());
+    std::abort();
+}
+
+const char Name[] = "test method";
+int liveBlocks = 0;
+int zeroedCallsBeforeFailure = -1;
+int written = 0;
+int destroyed = 0;
+int payload = 0;
+
+void* APS5_VABI Allocate(std::size_t bytes) {
+    ++liveBlocks;
+    return std::malloc(bytes ? bytes : 1);
+}
+
+void APS5_VABI Release(void* block) {
+    if (block) --liveBlocks;
+    std::free(block);
+}
+
+void* APS5_VABI AllocateZeroed(std::size_t count, std::size_t bytes) {
+    if (zeroedCallsBeforeFailure == 0) {
+        zeroedCallsBeforeFailure = -1;
+        return nullptr;
+    }
+    if (zeroedCallsBeforeFailure > 0) --zeroedCallsBeforeFailure;
+    ++liveBlocks;
+    return std::calloc(count ? count : 1, bytes ? bytes : 1);
+}
+
+void* APS5_VABI Reallocate(void*, std::size_t) { return nullptr; }
+void* APS5_VABI Align(std::size_t, std::size_t) { return nullptr; }
+void* APS5_VABI Realign(void*, std::size_t, std::size_t) { return nullptr; }
+int APS5_VABI PosixAlign(void**, std::size_t, std::size_t) { return 12; }
+
+void InitializeHeap() {
+    void* const api[10] {
+        reinterpret_cast<void*>(&Allocate), reinterpret_cast<void*>(&Release), reinterpret_cast<void*>(&AllocateZeroed),
+        reinterpret_cast<void*>(&Reallocate), reinterpret_cast<void*>(&Align), reinterpret_cast<void*>(&Realign),
+        reinterpret_cast<void*>(&PosixAlign),
+    };
+    ApplicationHeapRegister_nid_no_patch(api);
+}
+
+int APS5_VABI Write(LibreSsl::Bio*, const char*, int size) {
+    written += size;
+    return size;
+}
+
+int APS5_VABI Read(LibreSsl::Bio*, char*, int) { return 0; }
+
+std::int64_t APS5_VABI Control(LibreSsl::Bio*, int command, std::int64_t argument, void*) { return command + argument; }
+
+int APS5_VABI Create(LibreSsl::Bio* bio) {
+    bio->initialized = 1;
+    bio->data = &payload;
+    return 1;
+}
+
+int APS5_VABI Destroy(LibreSsl::Bio*) {
+    ++destroyed;
+    return 1;
+}
+
+}
+
+int main() {
+    InitializeHeap();
+    {
+        auto* method = BIO_meth_new_nid_postfix(0x400 | 25, Name);
+        Require(method && method->type == (0x400 | 25) && method->name == Name);
+        Require(!method->write && !method->read && !method->puts && !method->gets && !method->control);
+        Require(!method->create && !method->destroy && !method->callbackControl);
+        Require(liveBlocks == 1);
+        free_nid_postfix(method);
+        zeroedCallsBeforeFailure = 0;
+        Require(BIO_meth_new_nid_postfix(1, Name) == nullptr && liveBlocks == 0);
+    }
+}
