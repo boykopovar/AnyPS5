@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -57,13 +59,17 @@ ShaderRecompiler::RecompileRequest Request(std::span<const std::uint32_t> userDa
     };
 }
 
-void Run(AgcDriver::VulkanDevice& device, bool registrationModules) {
+void Run(AgcDriver::VulkanDevice& device, bool registrationModules, bool coherent = false) {
+    alignas(256) auto code = Code;
+    if (coherent) code[1] |= 0x4000u;
     const std::string mode = registrationModules ? "registration modules" : "specialized modules";
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(Code.data()), std::as_bytes(std::span(Code))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
     std::array<std::uint32_t, 8> userData{};
     auto target = device.ComputeTarget(Lanes);
     target.registrationModules = registrationModules;
-    const auto request = Request(userData, target, memory);
+    auto request = Request(userData, target, memory);
+    request.shader.code = code;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
     const auto handle = ShaderRecompiler::PrepareShader(request);
     const std::array<Case, 7> cases{{
         {"aligned", 0, 128, true},
@@ -170,11 +176,54 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
         std::copy(input.begin(), input.end(), userData.begin());
         Output.fill(Fill);
         const auto result = ShaderRecompiler::Recompile(request);
+        ShaderRecompiler::DescriptorValue descriptor{};
+        std::copy(input.begin(), input.end(), descriptor.dwords.begin());
+        descriptor.dwordCount = 4u;
+        const auto expectedTail = test.records == 0u ? 0u : (test.stride == 0u ? test.records : test.stride * test.records) & 3u;
+        Require(ShaderRecompiler::BufferSpecializationFields(descriptor, {}, 0u).tail == expectedTail, "scalar buffer size tail differs for stride " + std::to_string(test.stride) + " records " + std::to_string(test.records));
         device.Dispatch(result, 1, 1, 1);
         device.WaitIdle();
         const auto value = test.inBounds ? expected : 0u;
         Require(std::all_of(Output.begin(), Output.end(), [value](std::uint32_t word) { return word == value; }), "scalar buffer bounds differ for stride " + std::to_string(test.stride) + " records " + std::to_string(test.records));
     }
+    std::uint32_t unalignedExpected = 0;
+    std::memcpy(&unalignedExpected, Input.data() + 4u, sizeof(unalignedExpected));
+    for (const auto& [base, records, value] : {std::tuple{Input.data() + 2u, 6u, 0u}, std::tuple{Input.data() + 2u, 8u, unalignedExpected}, std::tuple{static_cast<std::uint8_t*>(nullptr), 8u, 0u}}) {
+        const auto input = BufferDescriptor(base, records);
+        std::copy(input.begin(), input.end(), userData.begin());
+        Output.fill(Fill);
+        const auto result = ShaderRecompiler::Recompile(request);
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        Require(std::all_of(Output.begin(), Output.end(), [value](std::uint32_t word) { return word == value; }), "scalar buffer read differs for base " + Hex(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(base))) + " records " + std::to_string(records) + ": " + Hex(Output[0]));
+    }
+    constexpr std::array<std::uint32_t, 6> storeCode{0x34020082u, 0x7e0402ffu, 0x12345678u, 0xe0701000u, 0x80000201u, 0xbf810000u};
+    auto oversized = BufferDescriptor(reinterpret_cast<const void*>(std::uintptr_t{0x10000000000u}), 0xffffffffu);
+    oversized[1] |= 2u << 16u;
+    std::copy(oversized.begin(), oversized.end(), userData.begin());
+    for (const auto code : {std::span<const std::uint32_t>(scalarCode), std::span<const std::uint32_t>(Code)}) {
+        request.shader.code = code;
+        request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+        Output.fill(Fill);
+        const auto readResult = ShaderRecompiler::Recompile(request);
+        device.Dispatch(readResult, 1, 1, 1);
+        device.WaitIdle();
+        Require(std::all_of(Output.begin(), Output.end(), [](std::uint32_t word) { return word == 0u; }), "read through an oversized V# before any store returned " + Hex(Output[0]));
+    }
+    request.shader.code = storeCode;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(storeCode.data());
+    const auto storeResult = ShaderRecompiler::Recompile(request);
+    device.Dispatch(storeResult, 1, 1, 1);
+    device.WaitIdle();
+    const auto null = BufferDescriptor(nullptr, 8u);
+    std::copy(null.begin(), null.end(), userData.begin());
+    request.shader.code = scalarCode;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(scalarCode.data());
+    Output.fill(Fill);
+    const auto nullResult = ShaderRecompiler::Recompile(request);
+    device.Dispatch(nullResult, 1, 1, 1);
+    device.WaitIdle();
+    Require(std::all_of(Output.begin(), Output.end(), [](std::uint32_t word) { return word == 0u; }), "scalar read through a null V# after a store through an oversized V# returned " + Hex(Output[0]));
     GuestAllocations::Mutation().Remove(Input.data());
 }
 
@@ -237,7 +286,8 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
         try {
             dispatch(code, raw(Output.data(), sizeof(Output), word3));
         } catch (const std::runtime_error& error) {
-            Require(std::string(error.what()).find("buffer descriptor uses an unsupported type") != std::string::npos, std::string(access) + " through V# word 3 " + Hex(word3) + " failed for another reason: " + error.what());
+            const auto message = std::string(error.what());
+            Require(message.find("buffer descriptor uses an unsupported type") != std::string::npos && message.find("first used at pc 0x") != std::string::npos, std::string(access) + " through V# word 3 " + Hex(word3) + " failed for another reason: " + message);
             rejected = true;
         }
         Require(rejected, std::string(access) + " accepted V# word 3 " + Hex(word3));
@@ -258,6 +308,8 @@ int main() {
         for (std::uint32_t index = 0; index < InputBytes; ++index) Input[index] = static_cast<std::uint8_t>(index * 41u + 3u + (index >> 3u));
         Run(*device, false);
         Run(*device, true);
+        Run(*device, false, true);
+        Run(*device, true, true);
         ScalarReads(*device);
         DisabledDescriptors(*device);
         std::puts("buffer descriptor runtime tests passed");

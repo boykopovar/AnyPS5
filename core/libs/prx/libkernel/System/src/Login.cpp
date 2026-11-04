@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <cerrno>
 #include <cstring>
@@ -84,12 +85,25 @@ extern "C" int APS5_VABI getlogin_r_nid_postfix(char* output, int size) {
         std::lock_guard lock(sessionMutex);
         if (sessionLogin) {
             if (sessionLogin->size() + 1 > static_cast<std::size_t>(size)) return 34;
-            std::memcpy(output, sessionLogin->c_str(), sessionLogin->size() + 1);
-            return 0;
+            const int saved = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(output, sessionLogin->c_str(), sessionLogin->size() + 1);
+            errno = saved;
+            return copied ? 0 : 14;
         }
     }
+    char buffer[512]{};
     const int saved = errno;
-    const int result = ReadLogin(output, size);
+    const int result = ReadLogin(buffer, static_cast<int>(sizeof(buffer)));
+    if (result != 0) {
+        errno = saved;
+        return result;
+    }
+    const std::size_t length = std::strlen(buffer) + 1;
+    if (length > static_cast<std::size_t>(size)) {
+        errno = saved;
+        return 34;
+    }
+    const bool copied = GuestCopyOut_nid_no_patch(output, buffer, length);
     errno = saved;
-    return result;
+    return copied ? 0 : 14;
 }
