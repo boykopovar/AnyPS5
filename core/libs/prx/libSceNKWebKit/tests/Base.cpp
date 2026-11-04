@@ -50,7 +50,7 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
-    Require(WKSerializedScriptValueGetTypeID() == 33);
+    Require(WKSerializedScriptValueGetTypeID() == 20);
 }
 
 static void CheckOriginString(const void* string, const char* expected) {
@@ -399,7 +399,7 @@ static void TestError() {
 }
 
 static void TestSerializedScriptValue() {
-    Require(WKSerializedScriptValueGetTypeID() == 33);
+    Require(WKSerializedScriptValueGetTypeID() == 20);
     Require(WKSerializedScriptValueCreate(nullptr, nullptr, nullptr) == nullptr);
     Require(WKSerializedScriptValueDeserialize(nullptr, nullptr, nullptr) == nullptr);
 
