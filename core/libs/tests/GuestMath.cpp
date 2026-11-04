@@ -1790,11 +1790,12 @@ static void CheckAsin() {
     asin_nid_postfix(2.0);
 
     Require(std::fetestexcept(FE_INVALID));
-    Require(errno == 0);
+    Require(errno == EDOM);
     std::feclearexcept(FE_ALL_EXCEPT);
+    errno = 0;
     asin_nid_postfix(nan);
 
-    Require(!std::fetestexcept(FE_INVALID));
+    Require(std::fetestexcept(FE_INVALID) && errno == EDOM);
 }
 
 static void CheckTrigfConsoleBits() {
