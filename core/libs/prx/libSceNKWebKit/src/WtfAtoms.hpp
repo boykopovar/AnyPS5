@@ -29,8 +29,7 @@ void RemoveAtom_nid_no_patch(StringImpl* impl);
 StringImpl* FindAtom_nid_no_patch(StringView view, unsigned hash);
 String AddAtomBuffer_nid_no_patch(StringView view);
 String AddStaticAtom_nid_no_patch(StringView view);
-void RequireAtomStorage_nid_no_patch(const StringImpl* impl, const char* function);
-String AddAtom_nid_no_patch(StringImpl* impl, const char* function);
+String AddAtom_nid_no_patch(StringImpl* impl);
 
 String CreateSharedSubstring_nid_no_patch(StringImpl* original, unsigned start, unsigned length);
 String CreateSymbol_nid_no_patch(StringImpl& impl, unsigned flags);

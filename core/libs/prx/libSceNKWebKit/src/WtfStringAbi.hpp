@@ -26,6 +26,19 @@ static_assert(offsetof(SymbolImpl, owner) == 24);
 static_assert(offsetof(SymbolImpl, hashForSymbol) == 32);
 static_assert(offsetof(SymbolImpl, flags) == 36);
 
+struct ExternalStringFreeFunction {
+    void* callable;
+};
+
+struct ExternalStringImpl {
+    StringImpl string;
+    ExternalStringFreeFunction free;
+};
+
+static_assert(sizeof(ExternalStringFreeFunction) == 8);
+static_assert(sizeof(ExternalStringImpl) == 32);
+static_assert(offsetof(ExternalStringImpl, free) == 24);
+
 struct StringView {
     const void* data;
     unsigned length;

@@ -201,19 +201,10 @@ String AddStaticAtom_nid_no_patch(StringView view) {
     });
 }
 
-void RequireAtomStorage_nid_no_patch(const StringImpl* impl, const char* function) {
-    const auto* owner = impl;
-    if ((impl->hashAndFlags & 3) == 2)
-        owner = *reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(impl) + 24);
-    if ((owner->hashAndFlags & 3) == 3)
-        throw std::runtime_error(std::string(function) + ": external string storage is not modelled");
-}
-
-String AddAtom_nid_no_patch(StringImpl* impl, const char* function) {
+String AddAtom_nid_no_patch(StringImpl* impl) {
     if (!impl) return String();
     if (!impl->length) return String(EmptyImpl_nid_no_patch());
     if (impl->refCount & 1) return AddStaticAtom_nid_no_patch(View_nid_no_patch(impl));
-    RequireAtomStorage_nid_no_patch(impl, function);
     if (impl->hashAndFlags & 16) return String(Retain_nid_no_patch(impl));
     return Intern(View_nid_no_patch(impl), [&] {
         return impl->hashAndFlags & 32 ? CreateSharedSubstring_nid_no_patch(impl, 0, impl->length) : String(Retain_nid_no_patch(impl));
@@ -256,8 +247,7 @@ String APS5_VABI _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj(StringImpl* imp
     if (!impl) return String();
     if (!length || start >= impl->length) return String(EmptyImpl_nid_no_patch());
     length = std::min(length, impl->length - start);
-    if (!start && length == impl->length) return AddAtom_nid_no_patch(impl, __func__);
-    RequireAtomStorage_nid_no_patch(impl, __func__);
+    if (!start && length == impl->length) return AddAtom_nid_no_patch(impl);
     auto view = View_nid_no_patch(impl);
     view.data = static_cast<const unsigned char*>(view.data) + std::size_t(start) * (view.is8Bit ? 1 : 2);
     view.length = length;
@@ -273,7 +263,7 @@ String APS5_VABI _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_(const char* start,
     if (reinterpret_cast<std::uintptr_t>(end) <= reinterpret_cast<std::uintptr_t>(start))
         throw std::invalid_argument("empty WTF atom UTF-8 range");
     auto string = FromUTF8_nid_no_patch(reinterpret_cast<const unsigned char*>(start), static_cast<std::size_t>(end - start));
-    return AddAtom_nid_no_patch(string.impl, __func__);
+    return AddAtom_nid_no_patch(string.impl);
 }
 
 }
