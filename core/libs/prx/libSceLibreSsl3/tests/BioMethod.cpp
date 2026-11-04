@@ -91,4 +91,12 @@ int main() {
         zeroedCallsBeforeFailure = 0;
         Require(BIO_meth_new_nid_postfix(1, Name) == nullptr && liveBlocks == 0);
     }
+    {
+        auto* method = BIO_meth_new_nid_postfix(2, nullptr);
+        Require(method && liveBlocks == 1);
+        BIO_meth_free_nid_postfix(method);
+        Require(liveBlocks == 0);
+        BIO_meth_free_nid_postfix(nullptr);
+        Require(liveBlocks == 0);
+    }
 }
