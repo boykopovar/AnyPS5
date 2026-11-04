@@ -120,4 +120,21 @@ void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix) {
 
 }
 
+extern GuestSignalSet _sigintr_nid_postfix;
+
+int APS5_VABI siginterrupt_nid_postfix(int guest, int flag) {
+    constexpr int SaRestart = 0x2;
+    GuestSigaction action{};
+    if (_sigaction_nid_postfix(guest, nullptr, &action) != 0) return -1;
+    const auto index = static_cast<std::uint32_t>(guest - 1);
+    if (flag) {
+        _sigintr_nid_postfix.bits[index >> 5] |= 1u << (index & 31);
+        action.flags &= ~SaRestart;
+    } else {
+        _sigintr_nid_postfix.bits[index >> 5] &= ~(1u << (index & 31));
+        action.flags |= SaRestart;
+    }
+    return _sigaction_nid_postfix(guest, &action, nullptr);
+}
+
 }
