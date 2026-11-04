@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libcairo/include/InventoryExports.hpp"
+#include "prx/libcairo/include/Surface.hpp"
 
 #include <atomic>
 #include <vector>
@@ -22,16 +23,29 @@ struct CairoPattern {
     CairoMatrix matrix{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
     double geometry[6]{};
     std::vector<CairoColorStop> stops;
+    CairoSurface* surface{};
+    CairoColorStop solid{0, 0, 0, 0, 1};
+
+    ~CairoPattern();
 };
 
 constexpr int CairoStatusSuccess = 0;
 constexpr int CairoStatusNoMemory = 1;
 constexpr int CairoStatusPatternTypeMismatch = 14;
+constexpr int CairoStatusNullPointer = 7;
 
+constexpr int CairoPatternTypeSolid = 0;
+constexpr int CairoPatternTypeSurface = 1;
 constexpr int CairoPatternTypeLinear = 2;
 constexpr int CairoPatternTypeRadial = 3;
 
 constexpr int CairoExtendPad = 3;
+constexpr int CairoExtendNone = 0;
 constexpr int CairoFilterGood = 1;
 
 constexpr int CairoReferenceInvalid = -1;
+
+CairoPattern* CairoCreateSolidPattern(double red, double green, double blue, double alpha);
+CairoPattern* CairoErrorPattern(int status);
+
+extern "C" CairoPattern* APS5_VABI cairo_pattern_create_for_surface(CairoSurface* surface);

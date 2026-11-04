@@ -48,7 +48,7 @@ CairoPattern* NilPattern() {
 }
 
 bool IsReferenceInvalid(const CairoPattern* pattern) {
-    return pattern->refCount.load(std::memory_order_relaxed) == CairoReferenceInvalid;
+    return pattern->refCount.load(std::memory_order_relaxed) <= 0;
 }
 
 void SetError(CairoPattern* pattern, int status) {
@@ -91,7 +91,47 @@ double Restrict(double value) {
 
 }
 
+CairoPattern::~CairoPattern() {
+    if (surface) cairo_surface_destroy(surface);
+}
+
+CairoPattern* CairoErrorPattern(int status) {
+    static CairoPattern nullPointer;
+    static const bool initialized = [] {
+        nullPointer.refCount.store(0);
+        nullPointer.status = CairoStatusNullPointer;
+        return true;
+    }();
+    (void)initialized;
+    if (status == CairoStatusNullPointer) return &nullPointer;
+    auto* pattern = new (std::nothrow) CairoPattern;
+    if (!pattern) return NilPattern();
+    pattern->status = status;
+    return pattern;
+}
+
+CairoPattern* CairoCreateSolidPattern(double red, double green, double blue, double alpha) {
+    const double geometry[6]{};
+    CairoPattern* pattern = Create(CairoPatternTypeSolid, geometry);
+    if (pattern->status == CairoStatusSuccess)
+        pattern->solid = {0, Restrict(red), Restrict(green), Restrict(blue), Restrict(alpha)};
+    return pattern;
+}
+
 extern "C" {
+
+CairoPattern* APS5_VABI cairo_pattern_create_for_surface(CairoSurface* surface) {
+    if (!surface) return CairoErrorPattern(CairoStatusNullPointer);
+    const int status = cairo_surface_status(surface);
+    if (status != CairoStatusSuccess) return CairoErrorPattern(status);
+    const double geometry[6]{};
+    CairoPattern* pattern = Create(CairoPatternTypeSurface, geometry);
+    if (pattern->status == CairoStatusSuccess) {
+        pattern->surface = cairo_surface_reference(surface);
+        pattern->extend = CairoExtendNone;
+    }
+    return pattern;
+}
 
 CairoPattern* APS5_VABI cairo_pattern_create_linear(double x0, double y0, double x1, double y1) {
     const double geometry[6] = {x0, y0, x1, y1, 0.0, 0.0};

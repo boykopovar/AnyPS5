@@ -3,8 +3,11 @@
 #include "SceTypes.hpp"
 #include "prx/libcairo/include/Matrix.hpp"
 #include "prx/libcairo/include/Surface.hpp"
+#include "prx/libcairo/include/Pattern.hpp"
 
 struct CairoContext;
+
+const CairoPattern* CairoContextCurrentSource(const CairoContext* context);
 
 extern "C" {
 CairoContext* APS5_VABI cairo_create(CairoSurface* target);
@@ -13,6 +16,10 @@ void APS5_VABI cairo_destroy(CairoContext* context);
 void APS5_VABI cairo_save(CairoContext* context);
 void APS5_VABI cairo_restore(CairoContext* context);
 CairoSurface* APS5_VABI cairo_get_target(CairoContext* context);
+void APS5_VABI cairo_set_source_rgb(CairoContext* context, double red, double green, double blue);
+void APS5_VABI cairo_set_source_rgba(CairoContext* context, double red, double green, double blue, double alpha);
+void APS5_VABI cairo_set_source(CairoContext* context, CairoPattern* source);
+void APS5_VABI cairo_set_source_surface(CairoContext* context, CairoSurface* surface, double x, double y);
 
 void APS5_VABI cairo_translate(CairoContext* context, double tx, double ty);
 void APS5_VABI cairo_scale(CairoContext* context, double sx, double sy);

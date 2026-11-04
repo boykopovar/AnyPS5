@@ -17,6 +17,7 @@ constexpr int kInvalidDash = 19;
 constexpr CairoMatrix kIdentity{1, 0, 0, 1, 0, 0};
 
 struct GraphicsStyle {
+    CairoPattern* source{};
     int antialias{};
     int fillRule{};
     int lineCap{};
@@ -79,9 +80,11 @@ ContextStorage* Valid(CairoContext* context) {
 
 void ReleaseStorage(ContextStorage* state) {
     delete[] state->style.dashes;
+    cairo_pattern_destroy(state->style.source);
     while (state->saved) {
         SavedState* previous = state->saved->previous;
         delete[] state->saved->style.dashes;
+        cairo_pattern_destroy(state->saved->style.source);
         delete state->saved;
         state->saved = previous;
     }
@@ -105,6 +108,10 @@ void ReplaceMatrix(ContextStorage* state, const CairoMatrix& candidate) {
 
 } // namespace
 
+const CairoPattern* CairoContextCurrentSource(const CairoContext* context) {
+    return context ? State(const_cast<CairoContext*>(context))->style.source : nullptr;
+}
+
 extern "C" {
 
 CairoContext* APS5_VABI cairo_create(CairoSurface* target) {
@@ -113,6 +120,10 @@ CairoContext* APS5_VABI cairo_create(CairoSurface* target) {
     auto* state = new (std::nothrow) ContextStorage(status);
     if (!state) return ErrorContext(kNoMemory);
     state->target = cairo_surface_reference(target);
+    if (status == kSuccess) {
+        state->style.source = CairoCreateSolidPattern(0, 0, 0, 1);
+        if (state->style.source->status != kSuccess) state->status = kNoMemory;
+    }
     return Handle(state);
 }
 
@@ -146,6 +157,7 @@ void APS5_VABI cairo_save(CairoContext* context) {
         }
         std::copy_n(state->style.dashes, snapshot->style.dashCount, snapshot->style.dashes);
     }
+    if (snapshot->style.source) cairo_pattern_reference(snapshot->style.source);
     state->saved = snapshot;
 }
 
@@ -159,6 +171,7 @@ void APS5_VABI cairo_restore(CairoContext* context) {
     SavedState* snapshot = state->saved;
     state->matrix = snapshot->matrix;
     delete[] state->style.dashes;
+    cairo_pattern_destroy(state->style.source);
     state->style = snapshot->style;
     state->saved = snapshot->previous;
     delete snapshot;
@@ -170,6 +183,46 @@ CairoSurface* APS5_VABI cairo_get_target(CairoContext* context) {
     if (state->status == kSuccess) return state->target;
     if (state->initialStatus != kSuccess && state->target) return state->target;
     return CairoSurfaceError(kNoMemory);
+}
+
+void APS5_VABI cairo_set_source(CairoContext* context, CairoPattern* source) {
+    auto* state = Valid(context);
+    if (!state) return;
+    if (!source) {
+        state->status = kNullPointer;
+        return;
+    }
+    if (source->status != kSuccess) {
+        state->status = source->status;
+        return;
+    }
+    cairo_pattern_reference(source);
+    cairo_pattern_destroy(state->style.source);
+    state->style.source = source;
+}
+
+void APS5_VABI cairo_set_source_rgba(CairoContext* context, double red, double green,
+                                    double blue, double alpha) {
+    if (!Valid(context)) return;
+    CairoPattern* source = CairoCreateSolidPattern(red, green, blue, alpha);
+    cairo_set_source(context, source);
+    cairo_pattern_destroy(source);
+}
+
+void APS5_VABI cairo_set_source_rgb(CairoContext* context, double red, double green, double blue) {
+    cairo_set_source_rgba(context, red, green, blue, 1);
+}
+
+void APS5_VABI cairo_set_source_surface(CairoContext* context, CairoSurface* surface,
+                                      double x, double y) {
+    if (!Valid(context)) return;
+    CairoPattern* source = cairo_pattern_create_for_surface(surface);
+    if (source->status == kSuccess) {
+        const CairoMatrix matrix{1, 0, 0, 1, -x, -y};
+        cairo_pattern_set_matrix(source, &matrix);
+    }
+    cairo_set_source(context, source);
+    cairo_pattern_destroy(source);
 }
 
 void APS5_VABI cairo_translate(CairoContext* context, double tx, double ty) {
