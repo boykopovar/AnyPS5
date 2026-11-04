@@ -40,6 +40,11 @@ def windows_runtime(build):
         if line.startswith("CMAKE_CXX_COMPILER:"):
             compiler = line.partition("=")[2]
             if compiler and not compiler.endswith("-NOTFOUND"):
+                if Path(compiler).parent == Path("."):
+                    found = shutil.which(compiler)
+                    if not found:
+                        raise RuntimeError(f"CMAKE_CXX_COMPILER {compiler} in {cache} is not on PATH")
+                    compiler = os.path.abspath(found)
                 return Path(compiler).parent
     raise RuntimeError(f"CMAKE_CXX_COMPILER is not configured in {cache}")
 
@@ -73,6 +78,9 @@ def package(platform, build, output, version):
     licenses = []
     if "libSceJemspace.prx" in expected:
         licenses.append((ROOT / "3rdparty/jemalloc/COPYING", "libs/licenses/jemalloc.txt"))
+    if "libwebrtc.prx" in expected:
+        licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
+        licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if "libSceVorbisDec.prx" in expected:
