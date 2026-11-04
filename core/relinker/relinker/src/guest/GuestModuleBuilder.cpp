@@ -326,11 +326,17 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto provider : executableProviders) require(provider);
     for (std::size_t index = 0; index < images.size(); ++index) {
         if (!isRuntime(index)) require(index);
-        if (windows) for (const auto dependency : dependencies[index]) require(dependency);
+        if (windows) for (const auto dependency : dependencies[index]) if (standardDirectory(dependency)) require(dependency);
     }
     const auto deferred = [&](const std::size_t index) {
         return !required[index] && isRuntime(index);
     };
+    std::vector<std::string> deferredSweep;
+    if (windows) {
+        std::set<std::size_t> dependedOn;
+        for (std::size_t index = 0; index < images.size(); ++index) for (const auto dependency : dependencies[index]) if (dependency != index && deferred(dependency)) dependedOn.insert(dependency);
+        for (const auto dependency : dependedOn) deferredSweep.push_back(images[dependency].OutputName);
+    }
     const auto appDirectory = [&](const GuestImage& image) {
         const auto directory = image.SourcePath.parent_path().lexically_relative(root).generic_string();
         return directory == "." ? std::string("app0") : "app0/" + directory;
@@ -485,6 +491,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         runtime.Path = relativeDirectory + "/" + image.OutputName;
         runtime.Names = {Io::Utf8Path(image.SourcePath.filename()), image.Soname};
         runtime.DeferInitialization = deferred(index);
+        if (runtime.DeferInitialization) runtime.DeferredSweep = deferredSweep;
+        if (runtime.DeferInitialization) for (const auto dependency : dependencies[index]) if (deferred(dependency)) runtime.DeferredDependencies.push_back(images[dependency].OutputName);
         std::vector<std::uint8_t> output;
         const auto message = [&](std::string_view text) { progress.Message(text); };
         if (windows) output = Elfpatcher::GuestModuleWriter().WriteWindows(image, runtime, message);
