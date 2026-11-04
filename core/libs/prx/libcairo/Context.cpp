@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <new>
+#include <numbers>
 #include <vector>
 
 namespace {
@@ -241,6 +242,102 @@ void AppendLine(ContextStorage* state, double x, double y) {
         state->currentX = x;
         state->currentY = y;
     }
+}
+
+double ArcMaximumAngle(double tolerance) {
+    constexpr double errors[]{0.0185185185185185036127, 0.000272567143730179811158,
+                              2.38647043651461047433e-05, 4.2455377443222443279e-06,
+                              1.11281001494389081528e-06, 3.72662000942734705475e-07,
+                              1.47783685574284411325e-07, 6.63240432022601149057e-08,
+                              3.2715520137536980553e-08, 1.73863223499021216974e-08,
+                              9.81410988043554039085e-09};
+    constexpr double pi = std::numbers::pi;
+    for (int i = 0; i < 11; ++i)
+        if (errors[i] < tolerance) return pi / (i + 1);
+    int divisor = 12;
+    double angle, error;
+    do {
+        angle = pi / divisor++;
+        error = 2.0 / 27.0 * std::pow(std::sin(angle / 4), 6) /
+                std::pow(std::cos(angle / 4), 2);
+    } while (error > tolerance && divisor < 1000);
+    return angle;
+}
+
+int ArcSegments(double sweep, double radius, const CairoMatrix& matrix) {
+    const double determinant = matrix.xx * matrix.yy - matrix.yx * matrix.xy;
+    constexpr double epsilon = 1.0 / 256;
+    const bool unityScale = std::abs(determinant * determinant - 1.0) < epsilon &&
+                            ((std::abs(matrix.xy) < epsilon && std::abs(matrix.yx) < epsilon) ||
+                             (std::abs(matrix.xx) < epsilon && std::abs(matrix.yy) < epsilon));
+    const double i = matrix.xx * matrix.xx + matrix.yx * matrix.yx;
+    const double j = matrix.xy * matrix.xy + matrix.yy * matrix.yy;
+    const double f = 0.5 * (i + j);
+    const double g = 0.5 * (i - j);
+    const double h = matrix.xx * matrix.xy + matrix.yx * matrix.yy;
+    const double majorAxis = unityScale ? radius : radius * std::sqrt(f + std::hypot(g, h));
+    const double maximum = ArcMaximumAngle(0.1 / majorAxis);
+    if (!std::isfinite(maximum) || maximum <= 0) return 1;
+    return std::max(1, static_cast<int>(std::ceil(sweep / maximum)));
+}
+
+void ArcSegment(CairoContext* context, double xc, double yc, double radius,
+                double a, double b) {
+    auto* state = State(context);
+    if (state->path && state->path->size() >= 2) {
+        const auto& previous = state->path->back();
+        const auto& earlier = (*state->path)[state->path->size() - 2];
+        if (previous.type == 1 && earlier.type == 0 &&
+            previous.points[0] == earlier.points[0] &&
+            previous.points[1] == earlier.points[1])
+            state->path->pop_back();
+    }
+    const double sineA = radius * std::sin(a);
+    const double cosineA = radius * std::cos(a);
+    const double sineB = radius * std::sin(b);
+    const double cosineB = radius * std::cos(b);
+    const double h = 4.0 / 3.0 * std::tan((b - a) / 4.0);
+    cairo_curve_to(context, xc + cosineA - h * sineA, yc + sineA + h * cosineA,
+                   xc + cosineB + h * sineB, yc + sineB - h * cosineB,
+                   xc + cosineB, yc + sineB);
+}
+
+void ArcInDirection(CairoContext* context, double xc, double yc, double radius,
+                    double minimum, double maximum, bool reverse) {
+    if (!std::isfinite(minimum) || !std::isfinite(maximum)) return;
+    constexpr double pi = std::numbers::pi;
+    if (maximum - minimum > 2 * pi * 65536) {
+        maximum = std::fmod(maximum - minimum, 2 * pi);
+        minimum = std::fmod(minimum, 2 * pi);
+        maximum += minimum + 2 * pi * 65536;
+    }
+    if (maximum - minimum > pi) {
+        const double midpoint = minimum + (maximum - minimum) / 2;
+        if (!reverse) {
+            ArcInDirection(context, xc, yc, radius, minimum, midpoint, false);
+            ArcInDirection(context, xc, yc, radius, midpoint, maximum, false);
+        } else {
+            ArcInDirection(context, xc, yc, radius, midpoint, maximum, true);
+            ArcInDirection(context, xc, yc, radius, minimum, midpoint, true);
+        }
+        return;
+    }
+    if (minimum == maximum) {
+        cairo_line_to(context, xc + radius * std::cos(minimum),
+                      yc + radius * std::sin(minimum));
+        return;
+    }
+    const int segments = ArcSegments(maximum - minimum, radius, State(context)->matrix);
+    double step = (maximum - minimum) / segments;
+    if (reverse) {
+        std::swap(minimum, maximum);
+        step = -step;
+    }
+    cairo_line_to(context, xc + radius * std::cos(minimum),
+                  yc + radius * std::sin(minimum));
+    for (int i = 1; i < segments; ++i, minimum += step)
+        ArcSegment(context, xc, yc, radius, minimum, minimum + step);
+    ArcSegment(context, xc, yc, radius, minimum, maximum);
 }
 
 } // namespace
@@ -615,6 +712,42 @@ void APS5_VABI cairo_curve_to(CairoContext* context, double x1, double y1,
         state->currentX = x3;
         state->currentY = y3;
     }
+}
+
+void APS5_VABI cairo_arc(CairoContext* context, double xc, double yc,
+                        double radius, double angle1, double angle2) {
+    if (!Valid(context)) return;
+    if (radius <= 0) {
+        cairo_line_to(context, xc, yc);
+        cairo_line_to(context, xc, yc);
+        return;
+    }
+    if (angle2 < angle1) {
+        angle2 = std::fmod(angle2 - angle1, 2 * std::numbers::pi);
+        if (angle2 < 0) angle2 += 2 * std::numbers::pi;
+        angle2 += angle1;
+    }
+    cairo_line_to(context, xc + radius * std::cos(angle1),
+                  yc + radius * std::sin(angle1));
+    ArcInDirection(context, xc, yc, radius, angle1, angle2, false);
+}
+
+void APS5_VABI cairo_arc_negative(CairoContext* context, double xc, double yc,
+                                 double radius, double angle1, double angle2) {
+    if (!Valid(context)) return;
+    if (radius <= 0) {
+        cairo_line_to(context, xc, yc);
+        cairo_line_to(context, xc, yc);
+        return;
+    }
+    if (angle2 > angle1) {
+        angle2 = std::fmod(angle2 - angle1, 2 * std::numbers::pi);
+        if (angle2 > 0) angle2 -= 2 * std::numbers::pi;
+        angle2 += angle1;
+    }
+    cairo_line_to(context, xc + radius * std::cos(angle1),
+                  yc + radius * std::sin(angle1));
+    ArcInDirection(context, xc, yc, radius, angle2, angle1, true);
 }
 
 void APS5_VABI cairo_close_path(CairoContext* context) {
