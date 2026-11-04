@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSFORMATTING_HPP
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -87,9 +88,13 @@ private:
                 args.overflow_arg_area = static_cast<char*>(args.overflow_arg_area) + 8;
             }
         }
-        T value;
-        std::memcpy(&value, address, sizeof(value));
-        return value;
+        if constexpr (std::is_same_v<T, long double>) {
+            return GuestLongDoubleLoad(address);
+        } else {
+            T value;
+            std::memcpy(&value, address, sizeof(value));
+            return value;
+        }
     }
 
 };
@@ -172,6 +177,14 @@ struct FloatSpec {
     std::size_t width = 0;
     int precision = -1;
 };
+
+inline std::string ApplicableLength(const std::string& length, char conversion) {
+    if (std::strchr("diouxXn", conversion)) return length == "L" ? std::string() : length;
+    if (std::strchr("aAeEfFgG", conversion)) return length == "L" ? length : std::string();
+    if (conversion == 'c' || conversion == 's') return length == "l" ? length : std::string();
+    if (conversion == 'p') return std::string();
+    return length;
+}
 
 inline FloatSpec ParseFloatSpec(const std::string& spec) {
     FloatSpec result;
@@ -532,7 +545,7 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
             next = position;
             numbered = true;
         }
-        while (*format && std::strchr("-+ #0'123456789.*", *format)) {
+        while (*format && std::strchr("-+ #0123456789.*", *format)) {
             if (*format++ != '*') continue;
             const size_t position = ArgumentPosition(format);
             if (position) numbered = true;
@@ -572,24 +585,15 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         }
         if (const size_t position = ArgumentPosition(format)) args.Seek(position);
         std::string spec = "%";
-        bool unmeasuredUnknownFlag = false;
-        bool zeroFlag = false;
-        for (; *format && std::strchr("-+ #0'", *format); ++format) {
-            if (*format != '\'') spec += *format;
-            if (std::strchr("+ '", *format)) unmeasuredUnknownFlag = true;
-            if (*format == '0') zeroFlag = true;
-        }
-        bool widthGiven = false;
+        for (; *format && std::strchr("-+ #0", *format); ++format) spec += *format;
         if (*format == '*') {
             ++format;
             const int width = star();
             if (width < 0) spec += '-';
             spec += std::to_string(width < 0 ? -static_cast<long long>(width) : width);
-            widthGiven = true;
         } else {
-            for (; *format >= '0' && *format <= '9'; widthGiven = true) spec += *format++;
+            while (*format >= '0' && *format <= '9') spec += *format++;
         }
-        if (zeroFlag && widthGiven) unmeasuredUnknownFlag = true;
         size_t precisionLimit = std::numeric_limits<size_t>::max();
         if (*format == '.') {
             ++format;
@@ -621,12 +625,11 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
         if (!std::strchr(KnownConversions, conversion)) {
-            if (secure || unmeasuredUnknownFlag)
-                throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
             const char text[] = {'%', conversion, '\0'};
             output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
             continue;
         }
+        if (!secure) length = ApplicableLength(length, conversion);
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {
@@ -655,8 +658,6 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
             if (length == "L") {
-                static_assert(sizeof(long double) == 16);
-                static_assert(std::numeric_limits<long double>::digits == 64);
                 const long double value = args.Next<long double>();
                 if (std::isnan(value)) {
                     output.Value(PaddedStringSpec(spec), NanText(spec, std::signbit(value), conversion < 'a').c_str());

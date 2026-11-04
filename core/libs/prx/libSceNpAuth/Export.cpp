@@ -121,6 +121,7 @@ int APS5_VABI sceNpAuthGetIdToken(int req_id, const void* param, void* id_token)
 }
 
 int APS5_VABI sceNpAuthPollAsync(int req_id, int* result) {
+ if (!result) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  std::lock_guard lock(g_requestMutex);
  auto it = g_requests.find(req_id);
  if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
@@ -129,7 +130,7 @@ int APS5_VABI sceNpAuthPollAsync(int req_id, int* result) {
   it->second.polled = true;
   return NP_POLL_ASYNC_RUNNING;
  }
- if (result) *result = it->second.result;
+ *result = it->second.result;
  return NP_POLL_ASYNC_FINISHED;
 }
 

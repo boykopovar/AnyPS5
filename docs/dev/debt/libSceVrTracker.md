@@ -11,3 +11,19 @@
 ### Functional
 
 - [tracker lifecycle and devices](../../../core/libs/prx/libSceVrTracker/Export.cpp) (libSceVrTracker) - `sceVrTrackerQueryMemory`, `sceVrTrackerInit`, `sceVrTrackerTerm`, the three `sceVrTrackerRegisterDevice*` calls, `sceVrTrackerUnregisterDevice`, `sceVrTrackerRecalibrate`, `sceVrTrackerSetDurationUntilStatusNotTracking` and `sceVrTrackerGpuWaitAndCpuProcess` follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/a808e76/src/core/libraries/vr_tracker/vr_tracker.cpp), a PS4 implementation: its struct layouts, memory sizes, argument checks, one handle per device type and `DEVICE_NOT_REGISTERED` for an HMD recalibration. Only the 128-byte init parameter is read; the 144-byte one throws. Unlike shadPS4, the init memory ranges are not looked up, a null init parameter and negative device types are refused. Terminating keeps the registered handles, as there. With no camera there is no GPU submission, so the GPU wait returns `NOT_EXECUTE_GPU_SUBMIT`. Not measured on a PS5
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceVrTracker/Export.cpp) - 9 entries present in both version-labelled images are import-resolution declarations only. All belong to module `libSceVrTracker`; four have logical library `libSceVrTracker` and five have logical library `libSceVrTrackerGpuTest`. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `5ucmy8hcSPk` |
+| `Unknown` | `9kB+RsZt84M` |
+| `Unknown` | `D6TJSfjTAk4` |
+| `Unknown` | `ERmwvjmfN+c` |
+| `Unknown` | `KFxq-AnEL34` |
+| `Unknown` | `SSi0OBa8RA0` |
+| `Unknown` | `hj7zLvyw+pw` |
+| `Unknown` | `mmzbIQNmT4o` |
+| `Unknown` | `tNJrfYsY3wY` |
