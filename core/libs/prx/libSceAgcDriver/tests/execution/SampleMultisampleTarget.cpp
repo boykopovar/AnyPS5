@@ -600,7 +600,7 @@ void CheckFirstSampleReads(AgcDriver::VulkanDevice& device, const std::array<std
     Require(!distinct || differs, "no pixel's sample 0 differs from its other samples " + what);
 }
 
-void CheckFirstSampleCopyLeavesHeapMode(AgcDriver::VulkanDevice& device, const Block& block) {
+void CheckFirstSampleCopyStaysInHeapMode(AgcDriver::VulkanDevice& device, const Block& block) {
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     if (!AgcDriver::Graphics::DescriptorHeapEnabled() || !context.descriptorHeap || !AgcDriver::Graphics::BindlessHeap::For(context).DescriptorHeapMode()) return;
     const auto words = TargetDescriptor(block, SampleShift);
@@ -614,8 +614,8 @@ void CheckFirstSampleCopyLeavesHeapMode(AgcDriver::VulkanDevice& device, const B
     const auto texture = AgcDriver::Graphics::MultisampleTargetFirstSample(context, resource, {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY});
     Require(texture != nullptr, "first-sample copy in heap mode: the drawn 4x target has no sample 0 texture");
     heap.BindDescriptorHeaps(recorder->Commands());
-    Require(AgcDriver::Graphics::DescriptorHeapBinds() == binds + 1u,
-            "a first-sample copy recorded after the descriptor heaps were bound left them marked bound, so a heap draw or dispatch after it would run without them");
+    Require(AgcDriver::Graphics::DescriptorHeapBinds() == binds,
+            "a first-sample copy in heap mode put its command buffer back in classic descriptor mode, so the heaps were bound again");
     recorder->Submit();
     recorder->Sync();
 }
@@ -1354,7 +1354,7 @@ int main(int argc, char** argv) {
         const auto drawn = LoadSamples(*device, block);
         CheckSamples(state, drawn, {});
         CheckFirstSampleReads(*device, TargetDescriptor(block, SampleShift), drawn, true, "from the drawn 4x target");
-        CheckFirstSampleCopyLeavesHeapMode(*device, block);
+        CheckFirstSampleCopyStaysInHeapMode(*device, block);
         CheckFirstSampleReads(*device, TargetDescriptor(block, SampleShift), drawn, true, "from the drawn 4x target", AdjustedPlaneCode, "image_sample_a");
         std::puts("a DIM 2D image_sample_a read of a 4x color target returns each pixel's sample 0");
         Draw(*device, state, 0, 2u, Unorm8PixelCode);

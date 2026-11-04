@@ -393,13 +393,13 @@ int main(int argc, char** argv) {
     const bool comesBack = !mode.empty() && !largeSpans;
     try {
         SetTestEnvironment("APS5_GPU_HEAP", "1");
+        SetTestEnvironment("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (!device->graphicsContext().descriptorHeap) {
             std::printf("skipped, the device has no VK_EXT_descriptor_heap\n");
             return VulkanTestSkipped;
         }
-        SetTestEnvironment("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
         if (largeSpans) {
             bool ran = false;
             {

@@ -2422,6 +2422,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
 struct StagedWrite {
     std::shared_ptr<StagedTemporary> temporary;
     VkImageView target = VK_NULL_HANDLE;
+    const HeapSlotOwner* targetOwner = nullptr;
     std::uint16_t mask = 0;
     std::uint32_t samples = 1;
     VkRect2D area{};
@@ -2870,7 +2871,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (!record.staged.empty()) {
         const auto merged = recorder->Commands();
         for (auto& write : record.staged) {
-            RecordStagedMerge(context, merged, *write.temporary, write.target, write.mask, write.samples, write.area);
+            RecordStagedMerge(context, merged, *write.temporary, write.target, write.mask, write.samples, write.area, write.targetOwner);
             recorder->Keep(write.temporary);
         }
     }
@@ -2958,6 +2959,8 @@ struct TargetBinding {
     std::shared_ptr<void> multisampleOwner;
     std::shared_ptr<StagedTemporary> stagedTemporary;
     VkImageView stagedTarget = VK_NULL_HANDLE;
+    const HeapSlotOwner* stagedTargetOwner = nullptr;
+    std::shared_ptr<void> stagedTargetKeep;
     std::unique_ptr<Buffer> dump;
 };
 
@@ -3209,7 +3212,10 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 const auto packed = StagedMergeTarget(color);
                 binding.stagedTemporary = AcquireStagedTemporary(context, color.extent, color.samples);
                 static_cast<void>(MultisampleTargetView(context, packed, binding.multisampleOwner, &binding.multisampleImage));
-                binding.stagedTarget = MultisampleTargetStorageView(context, TargetMergeSurface(packed)).view;
+                const auto storage = MultisampleTargetStorageView(context, TargetMergeSurface(packed));
+                binding.stagedTarget = storage.view;
+                binding.stagedTargetOwner = storage.owner;
+                binding.stagedTargetKeep = storage.keep;
                 Require(MultisampleTargetStorable(context, packed), "a partial write of a multisampled packed color target needs a multisample image of this form to allow storage");
                 targetViews.push_back(binding.stagedTemporary->View());
                 timer.phase(PhaseReadTarget);
@@ -3628,6 +3634,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
             if (binding.multisampled) {
                 record.multisampleImages.push_back(binding.multisampleImage);
                 record.multisampleTargets.push_back(binding.multisampleOwner);
+                if (binding.stagedTargetKeep != nullptr && binding.stagedTargetKeep != binding.multisampleOwner) record.multisampleTargets.push_back(binding.stagedTargetKeep);
             }
             if (binding.stagedTemporary != nullptr) {
                 record.multisampleImages.push_back(binding.stagedTemporary->Image());
@@ -3639,7 +3646,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
                 const auto right = std::min<std::int64_t>(static_cast<std::int64_t>(state.scissor.offset.x) + state.scissor.extent.width, color.extent.width);
                 const auto bottom = std::min<std::int64_t>(static_cast<std::int64_t>(state.scissor.offset.y) + state.scissor.extent.height, color.extent.height);
                 area.extent = {static_cast<std::uint32_t>(std::max<std::int64_t>(right - area.offset.x, 0)), static_cast<std::uint32_t>(std::max<std::int64_t>(bottom - area.offset.y, 0))};
-                record.staged.push_back({binding.stagedTemporary, binding.stagedTarget, color.stagedMask, color.samples, area});
+                record.staged.push_back({binding.stagedTemporary, binding.stagedTarget, binding.stagedTargetOwner, color.stagedMask, color.samples, area});
             }
         }
         record.indirect = args != nullptr ? &indirect : nullptr;

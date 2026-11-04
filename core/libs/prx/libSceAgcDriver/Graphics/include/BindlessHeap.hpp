@@ -280,6 +280,25 @@ void CmdBindDescriptorSets(const Context& context, VkCommandBuffer commands, VkP
 void CmdPushDescriptorSet(PFN_vkCmdPushDescriptorSetKHR push, VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout, std::uint32_t set,
                           std::uint32_t writeCount, const VkWriteDescriptorSet* writes, SetBindSite site);
 std::uint64_t DescriptorHeapBinds();
+inline constexpr std::uint32_t HeapPassSampledKind = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+inline constexpr std::uint32_t HeapPassStorageKind = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
+inline constexpr VkSpirvResourceTypeFlagsEXT HeapPassStorageImages = VK_SPIRV_RESOURCE_TYPE_READ_ONLY_IMAGE_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_IMAGE_BIT_EXT;
+class HeapPassSlots : public HeapSlotOwner {
+public:
+    explicit HeapPassSlots(const Context& context) : context(context) {}
+    ~HeapPassSlots() { ReleaseHeapSlots(context); }
+    void Release() noexcept { ReleaseHeapSlots(context); }
+
+private:
+    Context context;
+};
+bool HeapPassesActive(const Context& context);
+VkDescriptorSetAndBindingMappingEXT HeapPushAddressMapping(std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset);
+VkDescriptorSetAndBindingMappingEXT HeapPushIndexMapping(const BindlessHeap& heap, std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources,
+                                                         std::uint32_t pushOffset);
+VkPipeline CreateHeapComputePipeline(const Context& context, VkComputePipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings);
+VkPipeline CreateHeapGraphicsPipeline(const Context& context, VkGraphicsPipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings);
+void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values);
 
 }
 

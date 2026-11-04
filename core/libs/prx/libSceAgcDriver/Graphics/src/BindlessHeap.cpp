@@ -1088,6 +1088,80 @@ std::uint64_t DescriptorHeapBinds() {
     return heapBinds.load(std::memory_order_relaxed);
 }
 
+bool HeapPassesActive(const Context& context) {
+    return DescriptorHeapEnabled() && context.descriptorHeap && BindlessHeap::For(context).DescriptorHeapMode();
+}
+
+VkDescriptorSetAndBindingMappingEXT HeapPushAddressMapping(std::uint32_t set, std::uint32_t binding, std::uint32_t pushOffset) {
+    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
+    mapping.descriptorSet = set;
+    mapping.firstBinding = binding;
+    mapping.bindingCount = 1;
+    mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT;
+    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT;
+    mapping.sourceData.pushAddressOffset = pushOffset;
+    return mapping;
+}
+
+VkDescriptorSetAndBindingMappingEXT HeapPushIndexMapping(const BindlessHeap& heap, std::uint32_t set, std::uint32_t binding, VkSpirvResourceTypeFlagsEXT resources,
+                                                         std::uint32_t pushOffset) {
+    VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
+    mapping.descriptorSet = set;
+    mapping.firstBinding = binding;
+    mapping.bindingCount = 1;
+    mapping.resourceMask = resources;
+    mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
+    mapping.sourceData.pushIndex.pushOffset = pushOffset;
+    mapping.sourceData.pushIndex.heapIndexStride = static_cast<std::uint32_t>(heap.ImageHeapStride());
+    mapping.sourceData.pushIndex.heapArrayStride = static_cast<std::uint32_t>(heap.ImageHeapStride());
+    return mapping;
+}
+
+VkPipeline CreateHeapComputePipeline(const Context& context, VkComputePipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings) {
+    if (!HeapPassesActive(context)) return VK_NULL_HANDLE;
+    VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
+    mappingInfo.pNext = info.stage.pNext;
+    mappingInfo.mappingCount = static_cast<std::uint32_t>(mappings.size());
+    mappingInfo.pMappings = mappings.data();
+    info.stage.pNext = &mappingInfo;
+    auto heapFlags = DescriptorHeapFlags();
+    heapFlags.pNext = info.pNext;
+    info.pNext = &heapFlags;
+    info.layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    auto pipelineCacheLock = context.LockPipelineCacheForUse();
+    if (context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    return pipeline;
+}
+
+VkPipeline CreateHeapGraphicsPipeline(const Context& context, VkGraphicsPipelineCreateInfo info, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings) {
+    if (!HeapPassesActive(context)) return VK_NULL_HANDLE;
+    std::vector<VkPipelineShaderStageCreateInfo> stages(info.pStages, info.pStages + info.stageCount);
+    std::vector<VkShaderDescriptorSetAndBindingMappingInfoEXT> mappingInfos(stages.size(), {VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT});
+    for (std::size_t index = 0; index < stages.size(); ++index) {
+        mappingInfos[index].pNext = stages[index].pNext;
+        mappingInfos[index].mappingCount = static_cast<std::uint32_t>(mappings.size());
+        mappingInfos[index].pMappings = mappings.data();
+        stages[index].pNext = &mappingInfos[index];
+    }
+    info.pStages = stages.data();
+    auto heapFlags = DescriptorHeapFlags();
+    heapFlags.pNext = info.pNext;
+    info.pNext = &heapFlags;
+    info.layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    auto pipelineCacheLock = context.LockPipelineCacheForUse();
+    if (context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &info, nullptr, &pipeline) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    return pipeline;
+}
+
+void CmdPushData(const Context& context, VkCommandBuffer commands, std::uint32_t bytes, const void* values) {
+    const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {values, bytes}};
+    context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
+}
+
 void BindlessHeap::BindDescriptorHeaps(VkCommandBuffer commands) const {
     if (resourceHeap == nullptr) return;
     {

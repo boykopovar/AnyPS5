@@ -25,6 +25,7 @@ class HeapSlotOwner;
 struct MultisampleStorage {
     VkImageView view = VK_NULL_HANDLE;
     const HeapSlotOwner* owner = nullptr;
+    std::shared_ptr<void> keep;
 };
 
 class StorageTexture;

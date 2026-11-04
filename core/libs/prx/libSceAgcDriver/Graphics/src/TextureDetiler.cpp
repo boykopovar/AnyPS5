@@ -203,6 +203,7 @@ void TextureDetiler::release() noexcept {
     if (addressedModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, addressedModule, nullptr);
     if (addressedRepackLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, addressedRepackLayout, nullptr);
     if (addressedPipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, addressedPipelineLayout, nullptr);
+    if (heapRepackPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, heapRepackPipeline, nullptr);
     if (repackPipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, repackPipeline, nullptr);
     if (repackModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, repackModule, nullptr);
     if (imageWordModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, imageWordModule, nullptr);
@@ -266,13 +267,15 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
         values[2] = 2u;
         std::copy(equation->bits.begin(), equation->bits.end(), values.begin() + 4);
     }
+    const bool descriptorWords = elementBytes < 4u && (image ? retile && values[2] != 2u : !retile || values[2] != 2u);
+    addressed = addressed || (heap && !image && descriptorWords);
     if (addressed && addressedModule == VK_NULL_HANDLE) {
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         moduleInfo.codeSize = sizeof(TEXTURE_DETILE_ADDRESSED_SPV);
         moduleInfo.pCode = TEXTURE_DETILE_ADDRESSED_SPV;
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &addressedModule), "vkCreateShaderModule");
     }
-    const bool words = !addressed && elementBytes < 4u && (image ? retile && values[2] != 2u : !retile || values[2] != 2u);
+    const bool words = !addressed && descriptorWords;
     auto& shader = addressed ? addressedModule : image ? (words ? imageWordModule : imageModule) : (words ? wordModule : module);
     if (shader == VK_NULL_HANDLE) {
         if (!image) shader = CreateShaderModule(context, TEXTURE_DETILE_WORDS_SPV, sizeof(TEXTURE_DETILE_WORDS_SPV), "vkCreateShaderModule detile words");
@@ -298,11 +301,14 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
     auto heapFlags = DescriptorHeapFlags();
     if (heap) {
-        Require(image && !addressed, "only the image detiler runs on the descriptor heap");
-        const auto& bindless = BindlessHeap::For(context);
-        mappings[0] = PushAddressMapping(0, offsetof(HeapImagePush, tiled));
-        mappings[1] = PushIndexMapping(bindless, 1, offsetof(HeapImagePush, slot));
-        mappingInfo.mappingCount = static_cast<std::uint32_t>(mappings.size());
+        if (image) {
+            mappings[0] = PushAddressMapping(0, offsetof(HeapImagePush, tiled));
+            mappings[1] = PushIndexMapping(BindlessHeap::For(context), 1, offsetof(HeapImagePush, slot));
+        } else if (!addressed) {
+            mappings[0] = PushAddressMapping(0, offsetof(AddressedPush, input));
+            mappings[1] = PushAddressMapping(1, offsetof(AddressedPush, output));
+        }
+        mappingInfo.mappingCount = addressed ? 0u : static_cast<std::uint32_t>(mappings.size());
         mappingInfo.pMappings = mappings.data();
         createInfo.stage.pNext = &mappingInfo;
         createInfo.pNext = &heapFlags;
@@ -311,7 +317,9 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     VkPipeline result = VK_NULL_HANDLE;
     {
         auto pipelineCacheLock = context.LockPipelineCacheForUse();
-        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &result), "vkCreateComputePipelines");
+        const auto created = context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &result);
+        if (created != VK_SUCCESS && heap) result = VK_NULL_HANDLE;
+        else Check(created, "vkCreateComputePipelines");
     }
     pipelines.emplace_back(key, result);
     return result;
@@ -356,8 +364,13 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     Require(sourceRange <= context.limits.maxStorageBufferRange && destinationRange <= context.limits.maxStorageBufferRange, "texture detiling buffer range exceeds device limits");
     const auto sourceAddress = bufferAddress(source);
     const auto destinationAddress = sourceAddress != 0 ? bufferAddress(destination) : 0;
-    const bool addressed = sourceAddress != 0 && destinationAddress != 0;
-    if (addressed) {
+    const auto heapPipeline = sourceAddress != 0 && destinationAddress != 0 && HeapPassesActive(context) ? pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thickPipeline, false, false, true) : VK_NULL_HANDLE;
+    const bool heap = heapPipeline != VK_NULL_HANDLE;
+    const bool addressed = !heap && sourceAddress != 0 && destinationAddress != 0;
+    if (heap) {
+        BindlessHeap::For(context).BindDescriptorHeaps(commands);
+        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline);
+    } else if (addressed) {
         context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thickPipeline, false, true));
     } else {
         const auto set = allocateSet();
@@ -400,9 +413,10 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     push.rowBegin = window.rowBegin;
     push.pipeBankXor = window.pipeBankXor ^ layerBankXor(tileMode, elementBytes, layout, slice);
     push.splitStride = layout.gcnSplitStride;
-    if (addressed) {
+    if (heap || addressed) {
         const AddressedPush pushed{push, sourceAddress + sourceDescriptorOffset, destinationAddress + destinationDescriptorOffset};
-        CmdPushConstants(context, commands, addressedPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushed), &pushed);
+        if (heap) CmdPushData(context, commands, sizeof(pushed), &pushed);
+        else CmdPushConstants(context, commands, addressedPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushed), &pushed);
     } else {
         CmdPushConstants(context, commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
     }
@@ -423,8 +437,12 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
         VkComputePipelineCreateInfo createInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         createInfo.stage = stage;
         createInfo.layout = pipelineLayout;
-        auto pipelineCacheLock = context.LockPipelineCacheForUse();
-        Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &repackPipeline), "vkCreateComputePipelines repack");
+        {
+            auto pipelineCacheLock = context.LockPipelineCacheForUse();
+            Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &createInfo, nullptr, &repackPipeline), "vkCreateComputePipelines repack");
+        }
+        const std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{PushAddressMapping(0, offsetof(AddressedRepackPush, source)), PushAddressMapping(1, offsetof(AddressedRepackPush, destination))};
+        heapRepackPipeline = CreateHeapComputePipeline(context, createInfo, mappings);
     }
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;
@@ -439,6 +457,14 @@ void TextureDetiler::DispatchRepack(VkCommandBuffer commands, VkBuffer source, s
     const std::array<std::uint32_t, 4> repackPush{static_cast<std::uint32_t>(sourceOffset - sourceDescriptorOffset), static_cast<std::uint32_t>(destinationOffset - destinationDescriptorOffset), static_cast<std::uint32_t>(words), static_cast<std::uint32_t>(std::min(words, rowWords))};
     const auto sourceAddress = bufferAddress(source);
     const auto destinationAddress = sourceAddress != 0 ? bufferAddress(destination) : 0;
+    if (sourceAddress != 0 && destinationAddress != 0 && heapRepackPipeline != VK_NULL_HANDLE && HeapPassesActive(context)) {
+        const AddressedRepackPush pushed{repackPush, sourceAddress + sourceDescriptorOffset, destinationAddress + destinationDescriptorOffset};
+        BindlessHeap::For(context).BindDescriptorHeaps(commands);
+        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapRepackPipeline);
+        CmdPushData(context, commands, sizeof(pushed), &pushed);
+        context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, static_cast<std::uint32_t>((std::min(words, rowWords) + 63u) / 64u), static_cast<std::uint32_t>(rows), 1);
+        return;
+    }
     if (sourceAddress != 0 && destinationAddress != 0) {
         if (addressedRepackPipeline == VK_NULL_HANDLE) {
             VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -629,11 +655,12 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     push.splitStride = layout.gcnSplitStride;
     std::optional<std::uint32_t> slot;
     const auto tiledAddress = owner != nullptr && DescriptorHeapEnabled() ? bufferAddress(tiled) : 0;
-    if (tiledAddress != 0) slot = BindlessHeap::For(context).ViewSlot(DetileHeapKind, owner, view);
+    const auto heapPipeline = tiledAddress != 0 ? pipeline(MipTileMode(tileMode, layout), elementBytes, retile, false, true, false, true) : VK_NULL_HANDLE;
+    if (heapPipeline != VK_NULL_HANDLE) slot = BindlessHeap::For(context).ViewSlot(DetileHeapKind, owner, view);
     if (slot) {
         auto& bindless = BindlessHeap::For(context);
         bindless.BindDescriptorHeaps(commands);
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline(MipTileMode(tileMode, layout), elementBytes, retile, false, true, false, true));
+        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, heapPipeline);
         const HeapImagePush pushed{push, tiledAddress + descriptorOffset, *slot, 0u};
         const VkPushDataInfoEXT data{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {&pushed, sizeof(pushed)}};
         context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &data);
