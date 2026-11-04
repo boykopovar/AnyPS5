@@ -92,7 +92,6 @@ int APS5_VABI cairo_clip();
 int APS5_VABI cairo_pattern_create_for_surface();
 int APS5_VABI cairo_arc();
 int APS5_VABI cairo_stroke_preserve();
-int APS5_VABI cairo_path_extents();
 int APS5_VABI cairo_ft_scaled_font_unlock_face();
 int APS5_VABI cairo_mesh_pattern_move_to();
 int APS5_VABI cairo_paint_with_alpha();
