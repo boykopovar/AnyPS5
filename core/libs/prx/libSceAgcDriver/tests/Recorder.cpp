@@ -660,6 +660,7 @@ public:
     ~Device() { release(); }
     bool NullDescriptors() const { return nullDescriptors; }
     bool PushDescriptors() const { return pushDescriptors; }
+    void UsePushDescriptors() { context.pushDescriptors = pushDescriptors; }
     const Context& GetContext() const { return context; }
     bool Graphics() const { return graphics; }
     bool Timestamps() const {
@@ -1198,12 +1199,12 @@ void changedCopyTests(const Device& device, Recorder& recorder) {
     }
 }
 
-void boundChangedCopyTests(const Device& device) {
+bool boundChangedCopyTests(const Device& device) {
     auto context = device.GetContext();
     context.pushDescriptors = device.PushDescriptors();
     if (!context.pushDescriptors) {
         std::cout << "bound changed copy tests skipped: no push descriptors\n";
-        return;
+        return false;
     }
     Recorder recorder(context);
     constexpr std::uint32_t words = 70001;
@@ -1266,6 +1267,7 @@ void boundChangedCopyTests(const Device& device) {
     std::memcpy(&counted, counter->Bytes().data(), sizeof(counted));
     Require(counted == contested, "the bound changed copy counted " + std::to_string(counted) + " words with bytes both sides changed, expected " + std::to_string(contested));
     std::cout << "Bound changed copies store the shader's changed bytes over the target's own at unaligned offsets\n";
+    return true;
 }
 
 void readTrackingTests(const Device& device, Recorder& recorder) {
@@ -14942,6 +14944,14 @@ int main(int argc, char** argv) {
         }
 #endif
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
+        const bool boundStaging = argc == 2 && std::string_view(argv[1]) == "--bda-staging-bound-only";
+        if (boundStaging) {
+            if (!device.PushDescriptors()) {
+                std::cout << "skipped, no push descriptors\n";
+                return 77;
+            }
+            device.UsePushDescriptors();
+        }
         Recorder recorder(device.GetContext());
         recorder.Activate();
         if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
@@ -15074,6 +15084,11 @@ int main(int argc, char** argv) {
             std::cout << "Completion label storage and ordering tests passed\n";
             return 0;
         }
+        if (boundStaging) {
+            if (!bdaStagingTests(device, recorder)) return 77;
+            std::cout << "address-based staging tests passed with push descriptors\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--bda-staging-only") {
             if (!bdaStagingTests(device, recorder)) return 77;
             std::cout << "address-based staging tests passed\n";
@@ -15123,8 +15138,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--bound-changed-copy-only") {
             gpu.unlock();
-            boundChangedCopyTests(device);
-            return 0;
+            return boundChangedCopyTests(device) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--window-import-unmap-only") {
             gpu.unlock();
