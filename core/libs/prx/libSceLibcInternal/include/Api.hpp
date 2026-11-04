@@ -4,6 +4,7 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/LegacySignals.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
@@ -44,6 +45,15 @@ void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info);
 int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(ThreadDestructorFunction destructor, void* object, void* dsoSymbol);
 void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix();
 int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle);
+bool APS5_VABI sceLibcInternalCodecvtDoAlwaysNoconv_nid_no_patch(const GuestLocale::Facet* self);
+int APS5_VABI sceLibcInternalCodecvtDoIn_nid_no_patch(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first3, char* last3, char** next3);
+int APS5_VABI sceLibcInternalCodecvtDoOut_nid_no_patch(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first3, char* last3, char** next3);
+int APS5_VABI sceLibcInternalCodecvtDoUnshift_nid_no_patch(GuestLocale::Facet* self, std::uint64_t* state, char* first3, char* last3, char** next3);
+int APS5_VABI sceLibcInternalCodecvtDoLength_nid_no_patch(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, std::size_t count);
+int APS5_VABI sceLibcInternalCodecvtIn_nid_no_patch(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first3, char* last3, char** next3);
+int APS5_VABI sceLibcInternalCodecvtOut_nid_no_patch(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first3, char* last3, char** next3);
+int APS5_VABI sceLibcInternalCodecvtUnshift_nid_no_patch(GuestLocale::Facet* self, std::uint64_t* state, char* first3, char* last3, char** next3);
+int APS5_VABI sceLibcInternalCodecvtLength_nid_no_patch(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, std::size_t count);
 unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds);
 int APS5_VABI fstatvfs_nid_postfix(int descriptor, LibcStatvfs* output);
 int APS5_VABI utime_nid_postfix(const char* path, const LibcUtimbuf* times);

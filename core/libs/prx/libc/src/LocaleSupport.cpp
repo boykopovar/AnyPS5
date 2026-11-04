@@ -295,7 +295,7 @@ int APS5_VABI CodecvtNoConversion(GuestLocale::Facet*, std::uint64_t*, const cha
 
 int APS5_VABI CodecvtUnshift(GuestLocale::Facet*, std::uint64_t*, char* first3, char*, char** next3) {
     *next3 = first3;
-    return 0;
+    return 3;
 }
 
 std::size_t APS5_VABI CodecvtLength(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char* last1, std::size_t count) {
@@ -912,6 +912,10 @@ std::size_t APS5_VABI _ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPK
         *facet = object;
     }
     return 2;
+}
+
+const GuestLocale::CodecvtVtable* LibcCodecvtMethods_nid_no_patch() {
+    return &g_codecvtVtable;
 }
 
 std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {

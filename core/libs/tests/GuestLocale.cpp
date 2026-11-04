@@ -474,7 +474,7 @@ static void CheckFacetGetcat() {
     Require(nextFrom == "ab" && nextTo == target);
     Require(codecvtVtable->in(codecvt, nullptr, "ab", "ab" + 2, &nextFrom, target, target + 4, &nextTo) == 3);
     nextTo = reinterpret_cast<char*>(0x10);
-    Require(codecvtVtable->unshift(codecvt, nullptr, nullptr, nullptr, &nextTo) == 0 && nextTo == nullptr);
+    Require(codecvtVtable->unshift(codecvt, nullptr, nullptr, nullptr, &nextTo) == 3 && nextTo == nullptr);
     Require(codecvtVtable->length(codecvt, nullptr, "ab", "ab" + 2, 5) == 2);
     Require(codecvtVtable->length(codecvt, nullptr, "ab", "ab" + 2, 1) == 1);
     GuestLocale::Facet* punct = nullptr;
