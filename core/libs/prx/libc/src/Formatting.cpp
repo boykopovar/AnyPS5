@@ -37,7 +37,6 @@ int __isoc99_vfscanf(std::FILE*, const char*, std::va_list);
 
 namespace {
 
-constexpr std::size_t secureSizeMax = (std::size_t{1} << 61) - 1;
 constexpr int secureViolationResult = -23;
 constexpr int guestEinval = 22;
 constexpr int guestErange = 34;
@@ -274,7 +273,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         target = nextPointer();
         if (target == nullptr) return "scanf_s: bad %c, %s, or %[ argument";
         capacity = static_cast<std::size_t>(nextCapacity());
-        return capacity > secureSizeMax ? "scanf_s: bad %c, %s, or %[ size" : nullptr;
+        return capacity > SonyRsizeMax ? "scanf_s: bad %c, %s, or %[ size" : nullptr;
     };
     while (*cursor != '\0') {
         if (std::isspace(static_cast<unsigned char>(*cursor))) {
@@ -866,7 +865,7 @@ int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, 
 }
 
 static int FormatSecure(const char* badArgument, const char* badFormat, char* buffer, size_t size, const char* format, const void* args) {
-    if (buffer == nullptr || size == 0 || size > secureSizeMax) {
+    if (buffer == nullptr || size == 0 || size > SonyRsizeMax) {
         ReportConstraint(badArgument);
         return -1;
     }

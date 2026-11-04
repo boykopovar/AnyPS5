@@ -399,7 +399,12 @@ static void CheckSecureFormat() {
     Require(both(16, "a%S", noWide) == -23 && holds("\0~", 2) && Constraint("printf_s: bad %ls argument"));
     Require(both(16, "%2$s%1$S", noWide, "a") == -23 && holds("\0~", 2) && Constraint("printf_s: bad %ls argument"));
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
-    Require(FormatListS(buffer, sizeof(buffer), "[%y][%-4k]", 1) == 10 && std::strcmp(buffer, "[%y][%k  ]") == 0);
+    signed char tiny = -7;
+    Require(both(16, "ab%hhn", &tiny) < 0 && holds("\0", 1) && tiny == -7);
+    constraintCalls = 0;
+    constraintMessage.clear();
+    std::memset(buffer, '~', sizeof(buffer));
+    Require(FormatListS(buffer, sizeof(buffer), "[%y][%-4k]", 1) == 10 && std::strcmp(buffer, "[%y][%k  ]") == 0 && Constraint(nullptr));
     set_constraint_handler_s_nid_postfix(previous);
 }
 
