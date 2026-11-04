@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cstring>
 #include <limits>
@@ -19,6 +20,8 @@
 #include "WtfStringAbi.hpp"
 
 using NKWebKit::Atoms::RemoveAtom_nid_no_patch;
+using NKWebKit::Atoms::CreateSharedSubstring_nid_no_patch;
+using NKWebKit::Atoms::CreateSymbol_nid_no_patch;
 using NKWebKit::Atoms::FindAtom_nid_no_patch;
 using NKWebKit::Atoms::AddAtomBuffer_nid_no_patch;
 using NKWebKit::Atoms::AddStaticAtom_nid_no_patch;
@@ -179,6 +182,11 @@ void Deallocate(void* ptr);
 
 namespace NKWebKit::WtfAbi {
 
+static bool UnsupportedDestruction(const StringImpl* impl) {
+    return (impl->hashAndFlags & 3) == 3 ||
+        ((impl->hashAndFlags & 32) && (reinterpret_cast<const SymbolImpl*>(impl)->flags & 2));
+}
+
 static void Destroy(StringImpl* impl) {
     if ((impl->hashAndFlags & 16) && impl->length) RemoveAtom_nid_no_patch(impl);
     switch (impl->hashAndFlags & 3) {
@@ -198,7 +206,7 @@ void Release(StringImpl* impl) {
         impl->refCount -= 2;
         return;
     }
-    if (impl->hashAndFlags & 32 || (impl->hashAndFlags & 3) == 3) std::terminate();
+    if (UnsupportedDestruction(impl)) std::terminate();
     Destroy(impl);
 }
 
@@ -455,16 +463,7 @@ String SharedSubstring(const String* string, unsigned start, unsigned length) {
     start = std::min(start, size);
     length = std::min(length, size - start);
     if (!start && length == size) return String(Retain(value.impl));
-    if (!length) return String(EmptyImpl());
-    const auto& impl = Checked(value.impl);
-    bool is8Bit = impl.hashAndFlags & 4;
-    if (32 >= 20 + std::size_t(length) * (is8Bit ? 1 : 2)) return Substring(&impl, start, length);
-    auto* owner = value.impl;
-    if ((impl.hashAndFlags & 3) == 2) owner = *reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(&impl) + 24);
-    auto* memory = static_cast<unsigned char*>(NKWebKit::Allocate(32));
-    auto* result = new (memory) StringImpl{2, length, static_cast<const unsigned char*>(impl.data) + std::size_t(start) * (is8Bit ? 1 : 2), (is8Bit ? 4U : 0U) | 2U};
-    *reinterpret_cast<StringImpl**>(memory + 24) = Retain(owner);
-    return String(result);
+    return CreateSharedSubstring_nid_no_patch(value.impl, start, length);
 }
 
 template<typename T> String IntegerString(T value) {
@@ -543,9 +542,26 @@ String APS5_VABI _ZNK3WTF10AtomString23convertToASCIIUppercaseEv(const String* s
 
 void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(StringImpl* impl) {
     if (!impl || (impl->refCount & 1)) throw std::invalid_argument("invalid WTF string destruction");
-    if (impl->hashAndFlags & 32 || (impl->hashAndFlags & 3) == 3)
-        throw std::runtime_error("StringImpl::destroy: symbol and external strings are not modelled");
+    if (NKWebKit::WtfAbi::UnsupportedDestruction(impl))
+        throw std::runtime_error("StringImpl::destroy: registered symbols and external strings are not modelled");
     NKWebKit::WtfAbi::Destroy(impl);
+}
+
+unsigned APS5_VABI _ZN3WTF10SymbolImpl17nextHashForSymbolEv() {
+    static std::atomic<unsigned> next{1};
+    unsigned hash;
+    do {
+        hash = next.fetch_add(1, std::memory_order_relaxed) << 8;
+    } while (!hash);
+    return hash;
+}
+
+String APS5_VABI _ZN3WTF10SymbolImpl6createERNS_10StringImplE(StringImpl& impl) {
+    return CreateSymbol_nid_no_patch(impl, 0);
+}
+
+String APS5_VABI _ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE(StringImpl& impl) {
+    return CreateSymbol_nid_no_patch(impl, 4);
 }
 
 String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length) {

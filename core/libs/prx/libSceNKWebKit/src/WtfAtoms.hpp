@@ -32,4 +32,7 @@ String AddStaticAtom_nid_no_patch(StringView view);
 void RequireAtomStorage_nid_no_patch(const StringImpl* impl, const char* function);
 String AddAtom_nid_no_patch(StringImpl* impl, const char* function);
 
+String CreateSharedSubstring_nid_no_patch(StringImpl* original, unsigned start, unsigned length);
+String CreateSymbol_nid_no_patch(StringImpl& impl, unsigned flags);
+
 }  // namespace NKWebKit::Atoms

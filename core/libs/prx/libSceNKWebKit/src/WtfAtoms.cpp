@@ -1,3 +1,78 @@
+// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/text/SymbolImpl.cpp
+/*
+ * Copyright (C) 2016 Yusuke Suzuki <utatane.tea@gmail.com>.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/text/SymbolImpl.h
+/*
+ * Copyright (C) 2015-2016 Yusuke Suzuki <utatane.tea@gmail.com>.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/text/StringImpl.h
+/*
+ * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
+ * Copyright (C) 2005-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2009 Google Inc. All rights reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ *
+ */
+
 // Derived from Sony PS5 WebKit 11.x revision 80f77e94c6, Source/WTF/wtf/text/AtomStringImpl.cpp
 /*
  * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
@@ -130,8 +205,8 @@ void RequireAtomStorage_nid_no_patch(const StringImpl* impl, const char* functio
     const auto* owner = impl;
     if ((impl->hashAndFlags & 3) == 2)
         owner = *reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(impl) + 24);
-    if (((impl->hashAndFlags | owner->hashAndFlags) & 32) || (owner->hashAndFlags & 3) == 3)
-        throw std::runtime_error(std::string(function) + ": symbol and external string storage is not modelled");
+    if ((owner->hashAndFlags & 3) == 3)
+        throw std::runtime_error(std::string(function) + ": external string storage is not modelled");
 }
 
 String AddAtom_nid_no_patch(StringImpl* impl, const char* function) {
@@ -140,9 +215,36 @@ String AddAtom_nid_no_patch(StringImpl* impl, const char* function) {
     if (impl->refCount & 1) return AddStaticAtom_nid_no_patch(View_nid_no_patch(impl));
     RequireAtomStorage_nid_no_patch(impl, function);
     if (impl->hashAndFlags & 16) return String(Retain_nid_no_patch(impl));
-    return Intern(View_nid_no_patch(impl), [&] { return String(Retain_nid_no_patch(impl)); });
+    return Intern(View_nid_no_patch(impl), [&] {
+        return impl->hashAndFlags & 32 ? CreateSharedSubstring_nid_no_patch(impl, 0, impl->length) : String(Retain_nid_no_patch(impl));
+    });
 }
 
+
+String CreateSharedSubstring_nid_no_patch(StringImpl* original, unsigned start, unsigned length) {
+    if (!length) return String(EmptyImpl_nid_no_patch());
+    if (!original) throw std::invalid_argument("null WTF object");
+    const auto& impl = *original;
+    bool is8Bit = impl.hashAndFlags & 4;
+    const auto* data = static_cast<const unsigned char*>(impl.data) + std::size_t(start) * (is8Bit ? 1 : 2);
+    if (32 >= 20 + std::size_t(length) * (is8Bit ? 1 : 2)) return String(CopyImpl_nid_no_patch({data, length, is8Bit}, false));
+    auto* owner = original;
+    if ((impl.hashAndFlags & 3) == 2) owner = *reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(&impl) + 24);
+    auto* memory = static_cast<unsigned char*>(NKWebKit::Allocate(32));
+    auto* result = new (memory) StringImpl{2, length, data, (is8Bit ? 4U : 0U) | 2U};
+    *reinterpret_cast<StringImpl**>(memory + 24) = Retain_nid_no_patch(owner);
+    return String(result);
+}
+
+String CreateSymbol_nid_no_patch(StringImpl& impl, unsigned flags) {
+    auto* owner = &impl;
+    if ((impl.hashAndFlags & 3) == 2)
+        owner = *reinterpret_cast<StringImpl**>(reinterpret_cast<unsigned char*>(&impl) + 24);
+    auto* result = new (NKWebKit::Allocate(sizeof(NKWebKit::WtfAbi::SymbolImpl))) NKWebKit::WtfAbi::SymbolImpl{
+        {2, impl.length, impl.data, (impl.hashAndFlags & 4) | 32 | 2}, Retain_nid_no_patch(owner),
+        _ZN3WTF10SymbolImpl17nextHashForSymbolEv(), flags};
+    return String(&result->string);
+}
 
 }  // namespace NKWebKit::Atoms
 
@@ -172,6 +274,18 @@ String APS5_VABI _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_(const char* start,
         throw std::invalid_argument("empty WTF atom UTF-8 range");
     auto string = FromUTF8_nid_no_patch(reinterpret_cast<const unsigned char*>(start), static_cast<std::size_t>(end - start));
     return AddAtom_nid_no_patch(string.impl, __func__);
+}
+
+}
+
+extern "C" {
+
+String APS5_VABI _ZN3WTF10SymbolImpl16createNullSymbolEv() {
+    auto* empty = EmptyImpl_nid_no_patch();
+    empty->refCount -= 2;
+    auto* result = new (NKWebKit::Allocate(sizeof(NKWebKit::WtfAbi::SymbolImpl))) NKWebKit::WtfAbi::SymbolImpl{
+        {2, 0, empty->data, 4 | 32 | 2}, empty, _ZN3WTF10SymbolImpl17nextHashForSymbolEv(), 1};
+    return String(&result->string);
 }
 
 }
