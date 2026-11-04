@@ -12,6 +12,9 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#ifdef __linux__
+#include <sys/socket.h>
+#endif
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -29,9 +32,6 @@
 #include <io.h>
 #else
 #include <unistd.h>
-#ifdef __linux__
-#include <sys/socket.h>
-#endif
 #endif
 
 static void Require(bool condition, const char* message = "File stream check failed") {
@@ -962,9 +962,9 @@ int main(int argc, char** argv) {
     Require(argc == 2);
     CheckExclusiveCppOpen(argv[1]);
     CheckShortCharacterScans();
+    CheckReadErrnoAndStatus(argv[1]);
     CheckOrdinaryCharacterScans();
     CheckZeroSizedTransfers(argv[1]);
-    CheckReadErrnoAndStatus(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
     Require(_Stdout_nid_postfix.GetHandle() == stdout);
