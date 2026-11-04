@@ -1108,6 +1108,7 @@ char* APS5_VABI strtok_r_nid_postfix(char* text, const char* delimiters, char** 
 char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters);
 int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address);
 std::uint32_t APS5_VABI __inet_addr_nid_postfix(const char* text);
+int APS5_VABI getsubopt_nid_postfix(char** optionp, char* const* tokens, char** valuep);
 void* APS5_VABI memset_nid_postfix(void* s, int c, size_t n);
 void* APS5_VABI memset_explicit_nid_postfix(void* destination, int value, size_t count);
 void APS5_VABI bzero_nid_postfix(void* destination, size_t count);
@@ -1270,6 +1271,18 @@ int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread);
 int APS5_VABI _ZNSt8__sce_v210_Thrd_joinEP7pthreadPi_nid_postfix(void* thread, int* code);
 void APS5_VABI _ZNSt8__sce_v211_Thrd_yieldEv_nid_postfix();
 void* APS5_VABI _ZNSt8__sce_v28_Thrd_idEv_nid_postfix();
+int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(const Xtime* target);
+int APS5_VABI _Smtx_init_nid_postfix(void** smtx);
+int APS5_VABI _Smtx_init_with_name_nid_postfix(void** smtx, const char* name);
+int APS5_VABI _Smtx_destroy_nid_postfix(void** smtx);
+int APS5_VABI _Smtx_lock_exclusive_nid_postfix(void** smtx);
+int APS5_VABI _Smtx_lock_shared_nid_postfix(void** smtx);
+int APS5_VABI _Smtx_try_lock_exclusive_nid_postfix(void** smtx);
+int APS5_VABI _Smtx_try_lock_shared_nid_postfix(void** smtx);
+int APS5_VABI _Smtx_timedlock_exclusive_nid_postfix(void** smtx, const Xtime* target);
+int APS5_VABI _Smtx_timedlock_shared_nid_postfix(void** smtx, const Xtime* target);
+int APS5_VABI _Smtx_unlock_exclusive_nid_postfix(void** smtx);
+int APS5_VABI _Smtx_unlock_shared_nid_postfix(void** smtx);
 void APS5_VABI tzset_nid_postfix(void);
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer);
 int64_t APS5_VABI time_nid_postfix(int64_t* timer);
@@ -1286,6 +1299,7 @@ int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr);
 int64_t APS5_VABI timelocal_nid_postfix(GuestTm* timeptr);
 size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr);
 char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr);
+char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer);
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer);
 size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr);
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr);
@@ -1577,6 +1591,8 @@ int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::si
 
 [[gnu::returns_twice]] int APS5_VABI setjmp_nid_postfix(std::uint64_t* buffer);
 [[noreturn]] void APS5_VABI longjmp_nid_postfix(std::uint64_t* buffer, int value);
+[[gnu::returns_twice]] int APS5_VABI _setjmp_nid_postfix(std::uint64_t* buffer);
+[[noreturn]] void APS5_VABI _longjmp_nid_postfix(std::uint64_t* buffer, int value);
 
 std::uint8_t APS5_VABI __atomic_load_1_nid_postfix(const volatile std::uint8_t* target, int);
 std::uint16_t APS5_VABI __atomic_load_2_nid_postfix(const volatile std::uint16_t* target, int);
