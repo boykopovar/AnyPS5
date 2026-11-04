@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/AsyncCompute.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
@@ -97,6 +98,7 @@ void RecordDispatch(AgcDriver::VulkanDevice& device, std::uint64_t record) {
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    if (Recorder::ThreadLane() == 1) Require(AgcDriver::Graphics::AsyncDispatchEligible(result), "copied writer fixture is outside async dispatch admission");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
 }
 
@@ -236,20 +238,68 @@ void StreamOrderPass(AgcDriver::VulkanDevice& device, const GuestBlock& copied, 
 
 }
 
-int main() {
+int AsyncLanePass(AgcDriver::VulkanDevice& device, const GuestBlock& records, const GuestBlock& labels) {
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, "async lane: no active recorder");
+    if (!recorder->AsyncLaneActive()) {
+        std::puts("skipped: the device has no eligible compute-only queue for the async lane");
+        return VulkanTestSkipped;
+    }
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        device.WaitIdle();
+    }
+    volatile std::uint32_t* stored = records.Word(CopiedRecordOffset + StoredOffset);
+    volatile std::uint32_t* label = labels.Word(0x4000);
+    *stored = CpuValue;
+    *label = 0;
+    {
+        const Recorder::LaneScope async(1);
+        RecordDispatch(device, records.Address() + CopiedRecordOffset);
+    }
+    if (Recorder::PendingWriteBackCompletions() == 0) {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        device.WaitIdle();
+        return VulkanTestSkipped;
+    }
+    const auto bytes = LabelBytes(LabelValue);
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const int reason = device.WriteLabelOnGpu(labels.Address() + 0x4000, bytes, 10, 0, false);
+        Require(reason == 5, "async lane: a queue 0 label behind a copied writer recorded only in the async lane was handled with reason " + std::to_string(reason) + ", expected 5");
+        Require(Recorder::PendingCompletionStores() == 1, "async lane: the label is not a pending completion store");
+        Require(*label == 0, "async lane: the label landed before the copied writer's batch was reaped");
+        device.WaitIdle();
+    }
+    Require(Recorder::PendingCompletionStores() == 0 && Recorder::PendingWriteBackCompletions() == 0, "async lane: completions outlived the reap of the async lane's batch");
+    Require(*stored == GpuValue, "async lane: the copied writer's record holds " + Hex(*stored) + " after the reap, expected " + Hex(GpuValue));
+    Require(*label == LabelValue, "async lane: the label holds " + Hex(*label) + " after the reap, expected " + Hex(LabelValue));
+    std::puts("copied writer label order: a queue 0 label behind an async-lane copied writer, with the main lane empty, went behind that lane's batch");
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    const bool asyncLane = argc > 1 && std::string(argv[1]) == "--async-lane";
     try {
 #ifdef _WIN32
         _putenv_s("APS5_CPU_COPIES", "1");
         _putenv_s("APS5_NO_OPPORTUNISTIC_REAP", "1");
+        if (asyncLane) _putenv_s("APS5_ASYNC_LANE", "51");
 #else
         setenv("APS5_CPU_COPIES", "1", 1);
         setenv("APS5_NO_OPPORTUNISTIC_REAP", "1", 1);
+        if (asyncLane) setenv("APS5_ASYNC_LANE", "51", 1);
 #endif
         const GuestBlock copied;
         const GuestBlock direct;
         const GuestBlock labels;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (asyncLane) {
+            const int pass = AsyncLanePass(*device, copied, labels);
+            if (pass == 0) std::puts("copied writer label order tests passed");
+            return pass;
+        }
         const int copiedPass = LabelPass(*device, copied, CopiedRecordOffset, labels, 0x2000, 1, 1, Drains() ? 2 : 5, "copied writer");
         if (copiedPass == VulkanTestSkipped) {
             std::printf("skipped, the device reports a minStorageBufferOffsetAlignment of %llu, so the dispatch binds its record at +0x%zx in place and nothing is written back; the test needs an alignment above 4\n",

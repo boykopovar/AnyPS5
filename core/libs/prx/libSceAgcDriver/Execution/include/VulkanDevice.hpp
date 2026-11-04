@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace AgcDriver {
 
@@ -49,9 +50,23 @@ struct DeviceQueuePlan {
     std::uint32_t sparseIndex = 0;
     bool present = false;
     std::uint32_t presentIndex = 0;
+    bool async = false;
+    std::uint32_t asyncFamily = VK_QUEUE_FAMILY_IGNORED;
+    std::uint32_t asyncIndex = 0;
+    std::uint32_t asyncTimestampValidBits = 0;
 };
 
-DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents);
+DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents, bool asyncCompute = false, bool deferredDestruction = false);
+
+struct DeviceQueueCreateInfos {
+    std::array<VkDeviceQueueCreateInfo, 4> infos{};
+    std::array<std::vector<float>, 4> priorities;
+    std::uint32_t count = 0;
+
+    DeviceQueueCreateInfos(const DeviceQueuePlan& plan, std::uint32_t family);
+    DeviceQueueCreateInfos(const DeviceQueueCreateInfos&) = delete;
+    DeviceQueueCreateInfos& operator=(const DeviceQueueCreateInfos&) = delete;
+};
 
 class VulkanUnavailable final : public std::runtime_error {
 public:
