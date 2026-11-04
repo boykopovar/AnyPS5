@@ -1413,6 +1413,8 @@ LibcException::ErrorCode APS5_VABI _ZNKSt14error_category23default_error_conditi
 bool APS5_VABI _ZNKSt14error_category10equivalentEiRKSt15error_condition_nid_postfix(const LibcException::CategoryObject* self, int value, const LibcException::ErrorCode* condition);
 bool APS5_VABI _ZNKSt14error_category10equivalentERKSt10error_codei_nid_postfix(const LibcException::CategoryObject* self, const LibcException::ErrorCode* code, int value);
 void APS5_VABI _ZNSt14error_categoryD2Ev_nid_postfix(LibcException::CategoryObject* self);
+void APS5_VABI _ZNSt14error_categoryD1Ev_nid_postfix(LibcException::CategoryObject* self);
+[[noreturn]] void APS5_VABI _ZNSt14error_categoryD0Ev_nid_postfix(LibcException::CategoryObject* self);
 void APS5_VABI _ZNSt9exceptionD1Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt9exceptionD2Ev_nid_postfix(LibcException::ExceptionObject* self);
 void APS5_VABI _ZNSt9exceptionD0Ev_nid_postfix(LibcException::ExceptionObject* self);

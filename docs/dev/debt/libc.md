@@ -116,6 +116,7 @@
 
 - [snprintf and vsnprintf](../../../core/libs/prx/libc/src/Formatting.cpp) (libc) accept any size up to `SIZE_MAX`, as a payload process on a PS5 (firmware 13.60) does. A null buffer with a nonzero size throws here, where the console writes through it, and a result longer than `INT_MAX` throws, which was not measured
 
+- [std::error_category deleting destructor](../../../core/libs/prx/libc/src/exception/StandardExceptions.cpp) (libc, NID `6CcKkO-b8-0`) - the `libc.prx` bundled with PPSA03671 v01.001.005 (J03848509) traps with `ud2`; this throws `std::runtime_error` instead. The complete-object destructor (`ft5HxbN0c1o`) does nothing there, like the base-object one, and here too
 - [fpurge](../../../core/libs/prx/libc/src/StreamPurge.cpp) follows FreeBSD 11.4 [fpurge.c](https://github.com/freebsd/freebsd-src/blob/releng/11.4/lib/libc/stdio/fpurge.c): discard buffered input, pushback and output without writing or seeking, preserving EOF and error status, and report `EBADF` for a closed stream. Console behavior is unverified. The Windows path resets the existing host UCRT buffer representation; Linux and macOS use their native purge operations. Null streams throw as existing stream wrappers do.
 
 - [strtoq](../../../core/libs/prx/libc/src/Strings.cpp) (libc, NID `yUUOxgk8Dmc`) is the BSD "quad" alias of `strtoll` and forwards to it, as FreeBSD 11.4 [strtoq.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/strtoq.c) does. The console export is not verified; the sibling `strtouq` is already here.

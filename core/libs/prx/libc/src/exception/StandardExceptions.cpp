@@ -694,6 +694,10 @@ bool APS5_VABI _ZNKSt14error_category10equivalentERKSt10error_codei_nid_postfix(
     return LibcException::CategoryEquivalentCode_nid_no_patch(self, code, value);
 }
 void APS5_VABI _ZNSt14error_categoryD2Ev_nid_postfix(LibcException::CategoryObject*) {}
+void APS5_VABI _ZNSt14error_categoryD1Ev_nid_postfix(LibcException::CategoryObject*) {}
+[[noreturn]] void APS5_VABI _ZNSt14error_categoryD0Ev_nid_postfix(LibcException::CategoryObject*) {
+    throw std::runtime_error("std::error_category deleting destructor: the console implementation traps (ud2)");
+}
 LibcException::TypeRecord _ZTISt12future_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St12future_error", &_ZTISt11logic_error_nid_postfix};
 static void DestroyFutureErrorString(GuestLocale::String* message) {
     if (message->capacity > 15) _ZdlPv_nid_postfix(message->pointer);
