@@ -103,6 +103,44 @@ static void InvalidClockIdFailsGettime() {
     }
 }
 
+static void SetEnvironment(const char* name, const char* value) {
+#ifdef _WIN32
+    Require(_putenv_s(name, value) == 0);
+#else
+    Require(value[0] == 0 ? unsetenv(name) == 0 : setenv(name, value, 1) == 0);
+#endif
+}
+
+static bool Throws(int clockId) {
+    KernelTimespec time{-1, -1};
+    try {
+        clock_gettime_nid_postfix(clockId, &time);
+    } catch (const std::runtime_error&) {
+        return time.tv_sec == -1 && time.tv_nsec == -1;
+    }
+    return false;
+}
+
+static void UnknownClocksFailOnlyWhenRequested() {
+    for (const int clockId : {16, 20, 31}) Require(Throws(clockId));
+    SetEnvironment("APS5_FAIL_UNKNOWN_CLOCKS", "1");
+    for (const int clockId : {16, 20, 31}) {
+        KernelTimespec time{-1, -1};
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 22);
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+        Require(sceKernelClockGettime(clockId, &time) == static_cast<int>(0x80020016u));
+        *__error_nid_postfix() = 0;
+        Require(clock_getres_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 22);
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+    }
+    Require(Throws(3));
+    KernelTimespec time{-1, -1};
+    Require(clock_gettime_nid_postfix(GUEST_CLOCK_REALTIME, &time) == SCE_OK && time.tv_sec > 0);
+    SetEnvironment("APS5_FAIL_UNKNOWN_CLOCKS", "");
+    Require(Throws(20));
+}
+
 static KernelTimespec Read(int clockId) {
     KernelTimespec time{-1, -1};
     Require(clock_gettime_nid_postfix(clockId, &time) == SCE_OK);
@@ -355,6 +393,7 @@ int main() {
     UnsupportedResolutionStillThrows();
     OmittedTimeIsFaultAfterClockValidation();
     InvalidClockIdFailsGettime();
+    UnknownClocksFailOnlyWhenRequested();
     SettimeValidatesLikeFreebsd();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
