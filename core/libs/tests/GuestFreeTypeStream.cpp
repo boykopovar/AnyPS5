@@ -203,6 +203,13 @@ void TestMemoryReads() {
     stream.pos = 1;
     Require(Throws([&] { api.ExtractFrame(&stream, 3, nullptr); }), "null memory frame pointer is unsupported");
     Require(stream.pos == 1 && !stream.cursor && !stream.limit, "null memory frame pointer enters no frame");
+    stream = MemoryStream(nullptr, 8);
+    Require(api.EnterFrame(&stream, 4) == 0 && !stream.cursor && stream.limit == At(4) && stream.pos == 4, "null base frame at position 0");
+    Require(Throws([&] { api.GetUShort(&stream); }), "null base frame read is unsupported");
+    api.ExitFrame(&stream);
+    Require(Throws([&] { api.EnterFrame(&stream, 2); }), "null base frame past position 0 is unsupported");
+    Require(stream.pos == 4 && !stream.cursor && !stream.limit, "null base frame past position 0 enters no frame");
+    Require(Throws([&] { api.ExtractFrame(&stream, 0, &frame); }) && frame == nullptr, "null base extraction past position 0 is unsupported");
 }
 
 void TestFrameGetters() {

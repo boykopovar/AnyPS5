@@ -123,6 +123,7 @@ int EnterFrame(GuestStreamRec* stream, std::uint64_t count, const char* function
         record.pos += readBytes;
     } else {
         if (record.pos >= record.size || record.size - record.pos < count) return InvalidStreamOperation;
+        if (!record.base && record.pos != 0) Unsupported(function, "null memory stream base");
         record.cursor = Offset(record.base, record.pos);
         record.limit = Offset(record.cursor, count);
         record.pos += count;
