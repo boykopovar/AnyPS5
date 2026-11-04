@@ -418,12 +418,10 @@ static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
         failed(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), stream) == nullptr, "fgets on a write-only stream");
         int value = 0;
         Require(fscanf_nid_postfix(stream, "%d", &value) == EOF, "fscanf on a write-only stream");
-#ifdef _WIN32
         Require(errno == EBADF && ferror_nid_postfix(stream) != 0, "fscanf on a write-only stream left errno or the error indicator unset");
         clearerr_nid_postfix(stream);
         errno = 0;
         Require(ungetc_nid_postfix('q', stream) == EOF && errno == 0 && ferror_nid_postfix(stream) == 0, "ungetc on a write-only stream");
-#endif
         Require(fclose_nid_postfix(stream) == 0, "fclose after reads on a write-only stream");
         Require(ReadWhole(path) == "abc", "Reads on a write-only stream changed the file");
         Require(std::remove(path.c_str()) == 0);
