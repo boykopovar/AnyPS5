@@ -22,7 +22,7 @@ int APS5_VABI GetImageDecodeIID_nid_postfix();
 int APS5_VABI GetImageEncodeIID_nid_postfix();
 int APS5_VABI GetPixelFormatFromHash_nid_postfix();
 int APS5_VABI GetPosWS_File_nid_postfix();
-int APS5_VABI GetPosWS_List_nid_postfix();
+std::int64_t APS5_VABI GetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_t* position);
 int APS5_VABI GetPosWS_Memory_nid_postfix();
 int APS5_VABI IDPEmpty_nid_postfix();
 int APS5_VABI InitZigzagScan_nid_postfix();
