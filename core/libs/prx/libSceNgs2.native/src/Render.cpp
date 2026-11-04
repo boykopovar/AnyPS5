@@ -345,6 +345,7 @@ static void MixInputs(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices, s
                 throw std::runtime_error("NGS2: patch changes during source rendering are not implemented");
             }
             if (!source->hasSamples || source->KilledForRender()) continue;
+            if (destInput != 0 && voice.rack->rackId == SCE_NGS2_RACK_ID_SUBMIXER) continue;
             const auto sourceBuffer = source->rack->customPortBuffers.empty() ? 0u : source->rack->customPortBuffers[p];
             MixPort(voice, *source, port, sourceBuffer, grain);
             voice.hasSamples = true;
