@@ -112,6 +112,8 @@ The runtime evaluates scheduled events at each controller read, including their 
 
 Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller.
 
+The identification pulse that tells players' controllers apart is set with `ANYPS5_PAD_IDENTIFY`, described in [Controller identification pulse](USAGE.md#controller-identification-pulse).
+
 ## Analog keyboard input
 
 `StickModifier` has no built-in binding. While a key or mouse button bound to it is held, the keyboard stick bindings tilt the stick by `StickModifierScale` of its range instead of fully, for walking or fine aim. Controller sticks and the mouse stick are not affected, and opposite keys still cancel each other.
