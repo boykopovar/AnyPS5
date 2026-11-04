@@ -364,6 +364,7 @@ struct SpirvTarget {
     bool shaderImageMinLod = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool float16HostNans = false;
 };
 
 struct BindingLayout {
