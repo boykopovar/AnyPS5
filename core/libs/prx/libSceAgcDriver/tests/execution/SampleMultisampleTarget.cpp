@@ -2047,10 +2047,11 @@ int main(int argc, char** argv) {
         CheckFirstSampleReads(*device, TargetDescriptor(zeroed, SampleShift), std::vector<std::array<float, 4>>(Side * Side * Samples), false, "from zeroed color memory no draw rendered to");
         Block aliased(4u * BlockBytes);
         Draw(*device, TargetState(DecodeSwappedTarget(aliased)), 0, 2u, Unorm8PixelCode);
+        AgcDriver::Graphics::NoteColorMetadataFill(aliased.Address(), static_cast<std::size_t>(AgcDriver::Graphics::MultisampledColorBytes(DecodeTarget(aliased))), 0u);
         Draw(*device, TargetState(DecodeTarget(aliased)));
         const auto aliasedSamples = LoadSamples(*device, aliased);
         CheckSamples(state, aliasedSamples, {});
-        CheckFirstSampleReads(*device, TargetDescriptor(aliased, SampleShift), aliasedSamples, true, "from a 4x RGBA16F target drawn after a BGRA8 target at the same address");
+        CheckFirstSampleReads(*device, TargetDescriptor(aliased, SampleShift), aliasedSamples, true, "from a 4x RGBA16F target drawn after a BGRA8 target and a full color fill at the same address");
         std::puts("DIM 2D image_load, image_sample_lz and image_sample_l reads of a 4x color target return each pixel's sample 0");
         Block swapped(4u * BlockBytes);
         Draw(*device, TargetState(DecodeSwappedTarget(swapped)), 0, 2u, Unorm8PixelCode);
