@@ -60,6 +60,12 @@ static bool FailResolverLookup(const char* hostname, int family, std::vector<std
     return false;
 }
 
+static bool LoopbackResolverLookup(const char* hostname, int family, std::vector<std::array<std::uint8_t, 16>>& addresses) {
+    if (hostname == nullptr || std::strcmp(hostname, "guest-sce-net.resolver-epoll") != 0 || family != AF_INET) return false;
+    addresses.push_back({127, 0, 0, 1});
+    return true;
+}
+
 class ScopedResolverLookupOverride {
 public:
     explicit ScopedResolverLookupOverride(GuestSceNetTest::ResolverLookup lookup) {
@@ -773,6 +779,62 @@ static void CheckEmptyEpoll() {
         waiter.get();
         if (abort) Require(sceNetEpollDestroy(waiting_epoll) == 0);
     }
+}
+
+static void CheckResolverEpoll() {
+    constexpr std::uint32_t in = 0x1, descid = 0x10000;
+    constexpr int async = 0x1;
+    ScopedResolverLookupOverride lookupOverride(LoopbackResolverLookup);
+    const int resolver = sceNetResolverCreate("epoll-resolver", 0, 0);
+    const int epoll = sceNetEpollCreate("resolver-epoll", 0);
+    Require(resolver >= 0 && epoll >= 0);
+    NetEpollEvent registration{};
+    registration.events = in;
+    registration.data.u64 = 0x1234;
+    Require(sceNetEpollControl(epoll, 1, resolver, &registration) == 0);
+    Require(Failed(sceNetEpollControl(epoll, 1, resolver, &registration), 48));
+    NetEpollEvent ready{};
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
+
+    std::uint32_t address = 0;
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, 0) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
+    address = 0;
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
+    Require(address == 0x0100007fu);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1);
+    Require(ready.events == (in | descid) && ready.ident == static_cast<std::uint64_t>(resolver) && ready.data.u64 == 0x1234 && ready.reserved == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
+
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.unknown", &address, 0, 0, async) == 0);
+    int status = 0;
+    Require(sceNetResolverGetError(resolver, &status) == 0 && status == static_cast<int>(0x804101E1u));
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == (in | descid));
+
+    auto waiter = std::async(std::launch::async, [epoll] {
+        NetEpollEvent woken{};
+        return std::make_pair(sceNetEpollWait(epoll, &woken, 1, -1), woken.events);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(waiter.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout);
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
+    Require(waiter.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+    Require(waiter.get() == std::make_pair(1, in | descid));
+
+    const int writer = sceNetEpollCreate("resolver-writer", 0);
+    registration.events = 0x2;
+    Require(sceNetEpollControl(writer, 1, resolver, &registration) == 0);
+    Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
+    Require(sceNetEpollWait(writer, &ready, 1, 0) == 0);
+    Require(sceNetEpollControl(writer, 3, resolver, nullptr) == 0);
+    Require(Failed(sceNetEpollControl(writer, 3, resolver, nullptr), 2));
+    Require(sceNetEpollDestroy(writer) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1);
+
+    Require(sceNetResolverDestroy(resolver) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
+    Require(Failed(sceNetEpollControl(epoll, 1, resolver, &registration), 9));
+    Require(sceNetEpollDestroy(epoll) == 0);
 }
 
 static void CheckRejectedArguments() {
@@ -2393,6 +2455,7 @@ int main() {
     CheckNetMemory();
     CheckNetstat();
     CheckEmptyEpoll();
+    CheckResolverEpoll();
     CheckIfFlags();
     CheckRejectedArguments();
     CheckDontWait();
