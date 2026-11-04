@@ -220,6 +220,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap.py)
         add_test(NAME pr_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_labels.py)
+        add_test(NAME progress_history_date_window COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryDateWindowTests)
+        set_tests_properties(progress_history_date_window PROPERTIES TIMEOUT 20)
         add_test(NAME pr_ready COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
@@ -273,17 +276,24 @@ if(BUILD_TESTING)
         add_test(NAME performance_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
         set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
-        add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py WrappedDeclarationTests)
-        set_tests_properties(conventions_wrapped_declarations PROPERTIES TIMEOUT 30)
         set(conventions_wrapped_declarations_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${conventions_wrapped_declarations_source}")
-        file(STRINGS "${conventions_wrapped_declarations_source}" conventions_wrapped_declarations_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
-        foreach(test_class IN LISTS conventions_wrapped_declarations_classes)
-            string(REGEX REPLACE "^class ([A-Za-z0-9_]+).*" "\\1" test_class "${test_class}")
-            if(NOT test_class STREQUAL "WrappedDeclarationTests")
-                add_test(NAME conventions_wrapped_declarations_${test_class} COMMAND ${Python3_EXECUTABLE} "${conventions_wrapped_declarations_source}" ${test_class})
-                set_tests_properties(conventions_wrapped_declarations_${test_class} PROPERTIES TIMEOUT 30)
+        file(STRINGS "${conventions_wrapped_declarations_source}" conventions_wrapped_declarations_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
+        set(conventions_wrapped_declarations_class "")
+        set(conventions_wrapped_declarations_first TRUE)
+        foreach(test_case IN LISTS conventions_wrapped_declarations_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(conventions_wrapped_declarations_class "${CMAKE_MATCH_1}")
+            elseif(test_case MATCHES "^    def (test_[A-Za-z0-9_]+)")
+                if(conventions_wrapped_declarations_first)
+                    set(conventions_wrapped_declarations_name conventions_wrapped_declarations)
+                    set(conventions_wrapped_declarations_first FALSE)
+                else()
+                    set(conventions_wrapped_declarations_name conventions_wrapped_declarations_${conventions_wrapped_declarations_class}_${CMAKE_MATCH_1})
+                endif()
+                add_test(NAME ${conventions_wrapped_declarations_name} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py "${conventions_wrapped_declarations_class}.${CMAKE_MATCH_1}")
+                set_tests_properties(${conventions_wrapped_declarations_name} PROPERTIES TIMEOUT 20)
             endif()
         endforeach()
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
@@ -567,6 +577,9 @@ if(BUILD_TESTING)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
+        add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
+        set_tests_properties(title_run PROPERTIES TIMEOUT 60)
     endif()
 endif()
 
