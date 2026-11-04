@@ -9237,6 +9237,12 @@ void framebufferOwnerTests() {
         auto first = pipeline.AcquireFramebuffer(views, owners, {4, 4});
         auto repeated = pipeline.AcquireFramebuffer(views, owners, {4, 4});
         Require(first == repeated, "a live framebuffer owner did not reuse its framebuffer");
+        auto aliasOwner = std::shared_ptr<void>(std::make_shared<int>(3), owners[0].get());
+        owners[0].swap(aliasOwner);
+        auto aliased = pipeline.AcquireFramebuffer(views, owners, {4, 4});
+        Require(aliased != first, "the same pointer with a different owner reused a framebuffer");
+        owners[0].swap(aliasOwner);
+        aliasOwner.reset();
         auto retainedOwner = owners[0];
         owners[0] = std::make_shared<int>(2);
         auto distinct = pipeline.AcquireFramebuffer(views, owners, {4, 4});

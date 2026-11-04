@@ -862,7 +862,7 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
             // View handles are recycled once a StorageTexture is destroyed, so the owners must be the
             // very objects the views were made for.
             bool same = true;
-            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owned[i] == (owners[i] != nullptr) && it->owners[i].lock().get() == owners[i].get();
+            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owned[i] == (owners[i] != nullptr) && it->ownerPointers[i] == owners[i].get() && !it->owners[i].owner_before(owners[i]) && !owners[i].owner_before(it->owners[i]);
             if (!same) continue;
             std::rotate(it, std::next(it), framebuffers.end());
             return framebuffers.back().framebuffer;
@@ -884,7 +884,10 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     CachedFramebuffer entry;
     entry.views.assign(targets.begin(), targets.end());
     entry.owners.assign(owners.begin(), owners.end());
-    for (const auto& owner : owners) entry.owned.push_back(owner != nullptr);
+    for (const auto& owner : owners) {
+        entry.owned.push_back(owner != nullptr);
+        entry.ownerPointers.push_back(owner.get());
+    }
     entry.extent = extent;
     entry.layers = layers;
     entry.depthReleases = depthReleases;
