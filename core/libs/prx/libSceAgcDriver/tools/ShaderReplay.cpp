@@ -9,6 +9,8 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
+#include <spirv/unified1/spirv.hpp>
+
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "spirv-tools/libspirv.hpp"
 #endif
@@ -53,6 +55,7 @@ bool g_robust2 = false;
 bool g_waveLdsMemoryBarriers = false;
 bool g_deviceScopeLdsMemoryBarriers = false;
 bool g_ldsLockFences = false;
+bool g_shaderFma = false;
 bool g_gpuHeap = false;
 bool g_noGpuHeap = false;
 bool g_hasHeapDataUniformDwords = false;
@@ -131,6 +134,12 @@ bool Replay(const char* path) {
     force(g_waveLdsMemoryBarriers, target.waveLdsMemoryBarriers, "wave-lds-memory-barriers");
     force(g_deviceScopeLdsMemoryBarriers, target.deviceScopeLdsMemoryBarriers, "device-scope-lds-memory-barriers");
     force(g_ldsLockFences, target.ldsLockFences, "lds-lock-fences");
+    if (g_shaderFma) {
+        request.supportedCapabilities.push_back(spv::CapabilityFMAKHR);
+        request.supportedExtensions.push_back("SPV_KHR_fma");
+        request.request.target.supportedCapabilities = request.supportedCapabilities;
+        request.request.target.supportedExtensions = request.supportedExtensions;
+    }
     const auto heapProfile = SelectHeapProfile(request.request.target);
     std::printf("%s: %zu code words, %zu user data, %zu memory regions, wave%u\n", path, request.request.shader.code.size(), request.request.context.userData.size(), request.request.context.memory.size(), request.request.context.waveSize);
     std::printf("  heap profile (%s): %s, gpuResolvedImages %d, descriptorMemory %d, data uniform dwords %u\n", heapProfile.source, heapProfile.heap ? "heap" : "no heap", request.request.target.gpuResolvedImages, request.request.target.descriptorMemory, request.request.target.heapDataUniformDwords);
@@ -263,7 +272,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--gpu-heap] [--no-gpu-heap] [--heap-data-uniform-dwords N] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n  a request replays with the heap profile it was captured with; --gpu-heap forces the heap profile (gpuResolvedImages, descriptorMemory, and 16384 data uniform dwords unless --heap-data-uniform-dwords is given, replacing a captured limit), --no-gpu-heap forces it off, --heap-data-uniform-dwords N forces the limit (0 selects ring-address reads); --gpu-heap with --no-gpu-heap, and --no-gpu-heap with a nonzero limit, exit 2\n  --maintenance8, --robust2, --wave-lds-memory-barriers, --device-scope-lds-memory-barriers and --lds-lock-fences force their target flag on over the captured value and are listed on a 'target flags forced on' line\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] [--robust2] [--wave-lds-memory-barriers] [--device-scope-lds-memory-barriers] [--lds-lock-fences] [--shader-fma] [--gpu-heap] [--no-gpu-heap] [--heap-data-uniform-dwords N] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n  a request replays with the heap profile it was captured with; --gpu-heap forces the heap profile (gpuResolvedImages, descriptorMemory, and 16384 data uniform dwords unless --heap-data-uniform-dwords is given, replacing a captured limit), --no-gpu-heap forces it off, --heap-data-uniform-dwords N forces the limit (0 selects ring-address reads); --gpu-heap with --no-gpu-heap, and --no-gpu-heap with a nonzero limit, exit 2\n  --maintenance8, --robust2, --wave-lds-memory-barriers, --device-scope-lds-memory-barriers and --lds-lock-fences force their target flag on over the captured value and are listed on a 'target flags forced on' line\n");
         return 2;
     }
     if (HeapFlagsConflict(argc, argv)) return 2;
@@ -320,6 +329,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--lds-lock-fences") {
             g_ldsLockFences = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--shader-fma") {
+            g_shaderFma = true;
             continue;
         }
         if (std::string(argv[i]) == "--mem") {
