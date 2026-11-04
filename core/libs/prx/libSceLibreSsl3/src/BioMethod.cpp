@@ -29,4 +29,10 @@ int APS5_VABI BIO_meth_set_read_nid_postfix(LibreSsl::BioMethod* method, decltyp
     return 1;
 }
 
+int APS5_VABI BIO_meth_set_ctrl_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::control) ctrl) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_ctrl requires a method");
+    method->control = ctrl;
+    return 1;
+}
+
 }

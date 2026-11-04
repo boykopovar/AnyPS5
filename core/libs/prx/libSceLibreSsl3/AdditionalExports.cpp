@@ -328,10 +328,6 @@ int APS5_VABI ERR_lib_error_string_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_meth_set_ctrl_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI Unknown_GjO5Ap3E_minus_t4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
