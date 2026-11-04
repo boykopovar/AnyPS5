@@ -1390,6 +1390,18 @@ void sysvHashSymbolBounds() {
     requireFailureMessage([&] {
         Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badBucket, input.Text, input.TextVaddr);
     }, "Strict filter: invalid SysV hash bucket index", "SysV hash with out of bounds bucket was accepted");
+
+    auto badChain = bytes;
+    write<std::uint32_t>(badChain, 0x370, 2);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badChain, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid SysV hash chain index", "SysV hash with out of bounds chain was accepted");
+
+    auto badGeometry = bytes;
+    write<std::uint32_t>(badGeometry, 0x360, 0x40000000);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badGeometry, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid SysV hash geometry", "SysV hash with overflowing geometry was accepted");
 }
 
 void gnuHashSymbolBounds() {
@@ -1456,6 +1468,12 @@ void gnuHashSymbolBounds() {
     requireFailureMessage([&] {
         Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badBucket, input.Text, input.TextVaddr);
     }, "Strict filter: invalid GNU hash bucket", "GNU hash with bucket index below firstSymbol was accepted");
+
+    auto badGeometry = bytes;
+    write<std::uint32_t>(badGeometry, 0x368, 0x20000000);
+    requireFailureMessage([&] {
+        Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, badGeometry, input.Text, input.TextVaddr);
+    }, "Strict filter: invalid GNU hash geometry", "GNU hash with overflowing bloom geometry was accepted");
 }
 
 void importedSlotOverflow() {

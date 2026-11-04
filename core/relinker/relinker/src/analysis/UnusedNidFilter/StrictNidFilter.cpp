@@ -132,8 +132,8 @@ public:
                 const auto nchain = read<std::uint32_t>(hashOffset + 4);
                 if (nbucket == 0 || nchain == 0)
                     throw RelinkerException("Strict filter: invalid SysV hash header", hash->second);
-                if (static_cast<std::uint64_t>(nbucket) > (std::numeric_limits<std::uint64_t>::max() - 8) / 4 ||
-                    static_cast<std::uint64_t>(nchain) > (std::numeric_limits<std::uint64_t>::max() - 8 - static_cast<std::uint64_t>(nbucket) * 4) / 4)
+                if (static_cast<std::uint64_t>(nbucket) > (std::numeric_limits<std::uint32_t>::max() - 8) / 4 ||
+                    static_cast<std::uint64_t>(nchain) > (std::numeric_limits<std::uint32_t>::max() - 8 - static_cast<std::uint64_t>(nbucket) * 4) / 4)
                     throw RelinkerException("Strict filter: invalid SysV hash geometry", hash->second);
                 const std::uint64_t hashSize = 8 + static_cast<std::uint64_t>(nbucket) * 4 + static_cast<std::uint64_t>(nchain) * 4;
                 const auto start = fileOffset(hash->second, hashSize);
@@ -141,6 +141,11 @@ public:
                     const auto bucket = read<std::uint32_t>(start + 8 + index * 4);
                     if (bucket >= nchain)
                         throw RelinkerException("Strict filter: invalid SysV hash bucket index", hash->second);
+                }
+                for (std::uint64_t index = 0; index < nchain; ++index) {
+                    const auto chain = read<std::uint32_t>(start + 8 + static_cast<std::uint64_t>(nbucket) * 4 + index * 4);
+                    if (chain >= nchain)
+                        throw RelinkerException("Strict filter: invalid SysV hash chain index", hash->second);
                 }
                 count = nchain;
             } else if (const auto gnuHash = tags.find(0x6ffffef5); gnuHash != tags.end()) {
@@ -151,8 +156,8 @@ public:
                 const auto bloomCount = read<std::uint32_t>(header + 8);
                 if (bucketCount == 0 || bloomCount == 0 || firstSymbol == 0)
                     throw RelinkerException("Strict filter: invalid GNU hash header", gnuAddress);
-                if (static_cast<std::uint64_t>(bloomCount) > (std::numeric_limits<std::uint64_t>::max() - 16) / 8 ||
-                    static_cast<std::uint64_t>(bucketCount) > (std::numeric_limits<std::uint64_t>::max() - 16 - static_cast<std::uint64_t>(bloomCount) * 8) / 4)
+                if (static_cast<std::uint64_t>(bloomCount) > (std::numeric_limits<std::uint32_t>::max() - 16) / 8 ||
+                    static_cast<std::uint64_t>(bucketCount) > (std::numeric_limits<std::uint32_t>::max() - 16 - static_cast<std::uint64_t>(bloomCount) * 8) / 4)
                     throw RelinkerException("Strict filter: invalid GNU hash geometry", gnuAddress);
                 const std::uint64_t bucketOffset = 16 + static_cast<std::uint64_t>(bloomCount) * 8;
                 const auto chainOffset = bucketOffset + static_cast<std::uint64_t>(bucketCount) * 4;
@@ -177,7 +182,7 @@ public:
                             throw RelinkerException("Strict filter: invalid GNU hash chain", gnuAddress);
                         const auto chain = read<std::uint32_t>(fileOffset(gnuAddress + offset, 4));
                         ++count;
-                        if (count > std::numeric_limits<std::uint32_t>::max())
+                        if (count > std::numeric_limits<std::uint32_t>::max() || count > bytes.size() / 24)
                             throw RelinkerException("Strict filter: invalid GNU hash chain", gnuAddress);
                         if (chain & 1) break;
                     }
