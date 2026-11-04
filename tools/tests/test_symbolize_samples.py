@@ -42,6 +42,7 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False, tim
     struct.pack_into("<H", image, optional, 0x20B)
     struct.pack_into("<Q", image, optional + 24, 0x140000000)
     struct.pack_into("<I", image, optional + 56, SIZE_OF_IMAGE)
+    struct.pack_into("<I", image, optional + 108, 16)
     if with_exports:
         struct.pack_into("<II", image, optional + 112, 0x2000, 0x100)
     sections = optional + 240
@@ -318,6 +319,48 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertEqual(module.name(0x1030), "~first_func")
         self.assertEqual(module.name(0x1070), "~second_func")
 
+    def test_undeclared_export_directory_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "module.dll"
+            build_pe(path, with_symbols=False, with_exports=True)
+            image = bytearray(path.read_bytes())
+            struct.pack_into("<I", image, 0x58 + 108, 0)
+            path.write_bytes(image)
+            module = symbolize_samples.PeModule(path)
+            self.assertEqual(module.names, [])
+            self.assertIsNone(module.name(0x1020))
+
+    def test_short_optional_headers_with_complete_directories(self):
+        for count in (0, 1):
+            with self.subTest(count=count), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "module.dll"
+                build_pe(path, with_symbols=False, with_exports=count == 1)
+                image = bytearray(path.read_bytes())
+                size = 112 + count * 8
+                image[0x58 + size:0x58 + size + 80] = image[0x58 + 240:0x58 + 320]
+                struct.pack_into("<H", image, 0x54, size)
+                struct.pack_into("<I", image, 0x58 + 108, count)
+                path.write_bytes(image)
+                module = symbolize_samples.PeModule(path)
+                self.assertEqual(module.name(0x1020), "~first_func" if count else None)
+
+    def test_optional_header_bounds_are_enforced(self):
+        for size, count in ((0, 0), (111, 0), (112, 1), (119, 1), (240, 17), (0xFFFF, 0)):
+            with self.subTest(size=size, count=count), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "module.dll"
+                build_pe(path, with_symbols=False, with_exports=True)
+                image = bytearray(path.read_bytes())
+                struct.pack_into("<H", image, 0x54, size)
+                struct.pack_into("<I", image, 0x58 + 108, count)
+                path.write_bytes(image)
+                with self.assertRaisesRegex(ValueError, "optional header|director"):
+                    symbolize_samples.PeModule(path)
+                warnings = []
+                symbolizer = symbolize_samples.Symbolizer([path.parent], {"module.dll": (SIZE_OF_IMAGE, TIMESTAMP)},
+                                                          warn=warnings.append)
+                self.assertEqual(symbolizer.frame("module.dll+0x1020"), "module.dll+0x1020")
+                self.assertRegex("\n".join(warnings), "optional header|director")
+
     def test_export_ordinals_stay_inside_the_declared_address_table(self):
         path = self.libs / "libwinpthread-1.dll"
         data = bytearray(path.read_bytes())
@@ -423,6 +466,26 @@ class SymbolizeSamplesTests(unittest.TestCase):
                            "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
         lines, errors = self.run_main(samples, "--libs", self.libs)
         self.assertIn("libSceAgcDriver.prx!short", "\n".join(lines))
+        self.assertEqual(errors, "")
+
+    def test_module_names_with_spaces_keep_their_samples_and_records(self):
+        build_pe(self.libs / "My Game.exe")
+        record = f"# module My Game.exe {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        samples = self.root / "worker.txt"
+        samples.write_text("# 5 samples\nMy Game.exe 0x1011 3 3\nntdll.dll 0x10 2 2\n" + record, encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs)
+        self.assertEqual(lines[0], "5 samples")
+        self.assertIn("3  60.0%  My Game.exe!short", lines[2])
+        self.assertIn("2  40.0%  ntdll.dll+0x10", lines[3])
+        self.assertEqual(errors, "")
+        samples.write_text("thread 7 samples 4\n  My Game.exe 0x1011 4 4\n" + record, encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs, "--thread", "7")
+        self.assertEqual(lines[0], "4 samples")
+        self.assertIn("4 100.0%  My Game.exe!short", lines[2])
+        self.assertEqual(errors, "")
+        samples.write_text(record + "My Game.exe+0x1011 4\n", encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs)
+        self.assertIn("My Game.exe!short", "\n".join(lines))
         self.assertEqual(errors, "")
 
     def test_thread_files_keep_each_heading_and_can_select_one_thread(self):
@@ -666,6 +729,187 @@ class ThreadFilterInputTests(unittest.TestCase):
             self.assertNotIn("Traceback", result.stderr)
             self.assertEqual(output.read_bytes(), b"existing output\n")
 
+
+class MappedExportTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.path = Path(self.temporary.name) / "mapped.dll"
+        build_pe(self.path, with_symbols=False, with_exports=True)
+        self.data = bytearray(self.path.read_bytes())
+        struct.pack_into("<II", self.data, 0x58 + 32, 0x1000, 0x200)
+        struct.pack_into("<I", self.data, 0x58 + 60, 0x400)
+        struct.pack_into("<I", self.data, 0x58 + 108, 16)
+        struct.pack_into("<I", self.data, 0x148 + 16, 0x200)
+
+    def module(self):
+        self.path.write_bytes(self.data)
+        return symbolize_samples.PeModule(self.path)
+
+    def adjacent_sections(self):
+        self.data.extend(bytes(0x2200 - len(self.data)))
+        struct.pack_into("<H", self.data, 0x46, 3)
+        struct.pack_into("<I", self.data, 0x58 + 56, 0x4000)
+        struct.pack_into("<II", self.data, 0x148 + 40 + 8, 0x1000, 0x2000)
+        struct.pack_into("<I", self.data, 0x148 + 40 + 16, 0x1000)
+        entry = 0x148 + 80
+        struct.pack_into("<8sIIII", self.data, entry, b".extra", 0x200, 0x3000, 0x200, 0x2000)
+        struct.pack_into("<I", self.data, entry + 36, 0x40000040)
+
+    def test_normal_named_exports(self):
+        module = self.module()
+        self.assertEqual(module.name(0x1021), "~first_func")
+        self.assertEqual(module.name(0x1061), "~second_func")
+
+    def test_virtual_tail_name_matches_backed_empty_control(self):
+        self.data[0x660] = 0
+        expected = self.module().name(0x1021)
+        struct.pack_into("<I", self.data, 0x148 + 40 + 8, 0x400)
+        struct.pack_into("<I", self.data, 0x648, 0x2280)
+        self.data[0x880:0x891] = b"overlay_function\0"
+        self.assertEqual(self.module().name(0x1021), expected)
+
+    def test_virtual_zeros_terminate_a_backed_name(self):
+        struct.pack_into("<I", self.data, 0x148 + 40 + 8, 0x400)
+        struct.pack_into("<I", self.data, 0x648, 0x21FC)
+        self.data[0x7FC:0x800] = b"good"
+        self.data[0x800:0x812] = b"misleading_suffix\0"
+        self.assertEqual(self.module().name(0x1021), "~good")
+
+    def test_virtual_zeros_complete_an_ordinal(self):
+        struct.pack_into("<I", self.data, 0x148 + 40 + 8, 0x400)
+        struct.pack_into("<I", self.data, 0x600 + 24, 1)
+        struct.pack_into("<I", self.data, 0x600 + 36, 0x21FF)
+        self.data[0x7FF] = 0
+        self.data[0x800] = 1
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_zero_filled_function_entry_does_not_name_code(self):
+        struct.pack_into("<I", self.data, 0x148 + 40 + 8, 0x400)
+        struct.pack_into("<I", self.data, 0x600 + 24, 1)
+        struct.pack_into("<I", self.data, 0x600 + 28, 0x21FC)
+        struct.pack_into("<I", self.data, 0x7FC, 0x1020)
+        struct.pack_into("<I", self.data, 0x800, 0x1020)
+        struct.pack_into("<H", self.data, 0x650, 1)
+        self.assertIsNone(self.module().name(0x1021))
+
+    def test_zero_filled_directory_does_not_read_overlay_records(self):
+        struct.pack_into("<I", self.data, 0x148 + 40 + 8, 0x400)
+        struct.pack_into("<I", self.data, 0x58 + 112, 0x2280)
+        self.data[0x880:0x8A8] = self.data[0x600:0x628]
+        self.assertIsNone(self.module().name(0x1021))
+
+    def test_zero_filled_function_and_ordinal_tables_do_not_name_code(self):
+        struct.pack_into("<I", self.data, 0x148 + 40 + 8, 0x400)
+        struct.pack_into("<II", self.data, 0x600 + 20, 1, 1)
+        struct.pack_into("<I", self.data, 0x600 + 28, 0x2280)
+        struct.pack_into("<I", self.data, 0x600 + 36, 0x2284)
+        struct.pack_into("<IH", self.data, 0x880, 0x1020, 0)
+        self.assertIsNone(self.module().name(0x1021))
+
+    def test_name_reads_follow_virtual_adjacency(self):
+        self.adjacent_sections()
+        struct.pack_into("<I", self.data, 0x648, 0x2FFC)
+        self.data[0x15FC:0x1600] = b"good"
+        self.data[0x1600:0x1607] = b"_wrong\0"
+        self.data[0x2000:0x2008] = b"_mapped\0"
+        self.assertEqual(self.module().name(0x1021), "~good_mapped")
+
+    def test_name_table_reads_follow_virtual_adjacency(self):
+        self.adjacent_sections()
+        struct.pack_into("<I", self.data, 0x600 + 32, 0x2FFC)
+        struct.pack_into("<I", self.data, 0x15FC, 0x2060)
+        struct.pack_into("<I", self.data, 0x1600, 0x2060)
+        struct.pack_into("<I", self.data, 0x2000, 0x2070)
+        self.assertEqual(self.module().name(0x1061), "~second_func")
+
+    def test_function_table_reads_follow_virtual_adjacency(self):
+        self.adjacent_sections()
+        struct.pack_into("<I", self.data, 0x600 + 28, 0x2FFC)
+        struct.pack_into("<I", self.data, 0x15FC, 0x1020)
+        struct.pack_into("<I", self.data, 0x1600, 0x1020)
+        struct.pack_into("<I", self.data, 0x2000, 0x1060)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_ordinal_table_reads_follow_virtual_adjacency(self):
+        self.adjacent_sections()
+        struct.pack_into("<I", self.data, 0x600 + 36, 0x2FFE)
+        struct.pack_into("<H", self.data, 0x15FE, 0)
+        struct.pack_into("<H", self.data, 0x1600, 0)
+        struct.pack_into("<H", self.data, 0x2000, 1)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_export_directory_reads_follow_virtual_adjacency(self):
+        self.adjacent_sections()
+        directory = bytes(self.data[0x600:0x628])
+        self.data[0x15E8:0x1600] = directory[:24]
+        self.data[0x2000:0x2010] = directory[24:]
+        struct.pack_into("<I", self.data, 0x58 + 112, 0x2FE8)
+        self.assertEqual(self.module().name(0x1021), "~first_func")
+
+    def test_unmapped_name_and_truncated_raw_data_are_rejected(self):
+        struct.pack_into("<I", self.data, 0x648, 0x2280)
+        with self.assertRaises(ValueError):
+            self.module()
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.path.parent], {}, unverified=True, warn=warnings.append)
+        frame = "mapped.dll+0x1021"
+        self.assertEqual(symbolizer.frame(frame), frame)
+        self.assertTrue(any("in no section" in warning for warning in warnings))
+        struct.pack_into("<I", self.data, 0x648, 0x21FC)
+        del self.data[0x680:]
+        with self.assertRaises((ValueError, struct.error)):
+            self.module()
+
+    def test_declared_table_cannot_wrap_the_rva_space(self):
+        struct.pack_into("<I", self.data, 0x600 + 20, 0xFFFFFFFF)
+        with self.assertRaises(ValueError):
+            self.module()
+
+    def test_directory_start_must_be_mapped_even_if_its_tail_is_mapped(self):
+        struct.pack_into("<I", self.data, 0x58 + 112, 0x1FEC)
+        struct.pack_into("<IIIII", self.data, 0x600, 2, 2, 0x2040, 0x2048, 0x2050)
+        with self.assertRaises(ValueError):
+            self.module()
+
+    def test_valid_long_export_name_is_not_arbitrarily_capped(self):
+        self.data.extend(bytes(0x3600 - len(self.data)))
+        struct.pack_into("<I", self.data, 0x58 + 56, 0x5000)
+        struct.pack_into("<I", self.data, 0x58 + 116, 0x3000)
+        struct.pack_into("<I", self.data, 0x148 + 40 + 8, 0x3000)
+        struct.pack_into("<I", self.data, 0x148 + 40 + 16, 0x3000)
+        struct.pack_into("<I", self.data, 0x600 + 24, 1)
+        name = b"a" * 5000
+        self.data[0x660:0x660 + len(name) + 1] = name + b"\0"
+        self.assertEqual(self.module().name(0x1021), "~" + name.decode())
+
+    def test_raw_extent_beyond_virtual_size_keeps_existing_support(self):
+        struct.pack_into("<I", self.data, 0x148 + 40 + 8, 0x80)
+        struct.pack_into("<I", self.data, 0x600 + 24, 1)
+        struct.pack_into("<I", self.data, 0x648, 0x20F0)
+        name = b"raw_padding_name\0"
+        self.data[0x6F0:0x6F0 + len(name)] = name
+        self.assertEqual(self.module().name(0x1021), "~raw_padding_name")
+
+    def test_name_decoding_preserves_utf8_across_sections(self):
+        self.adjacent_sections()
+        struct.pack_into("<I", self.data, 0x648, 0x2FFC)
+        self.data[0x15FC:0x1600] = b"caf\xc3"
+        self.data[0x1600:0x1607] = b"_wrong\0"
+        self.data[0x2000:0x2005] = b"\xa9_fn\0"
+        self.assertEqual(self.module().name(0x1021), "~caf\u00e9_fn")
+
+    def test_name_scan_stays_inside_the_32_bit_rva_space(self):
+        struct.pack_into("<H", self.data, 0x46, 3)
+        entry = 0x148 + 80
+        struct.pack_into("<8sIIII", self.data, entry, b".edge", 0x200, 0xFFFFFF00, 0x200, 0xA00)
+        struct.pack_into("<I", self.data, entry + 36, 0x40000040)
+        struct.pack_into("<I", self.data, 0x648, 0xFFFFFFFE)
+        self.data[0xAFE:0xB00] = b"a\0"
+        self.assertEqual(self.module().name(0x1021), "~a")
+        self.data[0xAFE:0xB08] = b"ab_beyond\0"
+        with self.assertRaisesRegex(ValueError, "address space"):
+            self.module()
 
 
 if __name__ == "__main__":
