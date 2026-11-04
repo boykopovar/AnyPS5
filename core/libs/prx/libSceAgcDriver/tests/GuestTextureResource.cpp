@@ -223,7 +223,7 @@ void RunGuestTextureResourceTests() {
     auto missingFmaskMetadata = fmask;
     missingFmaskMetadata.metaCompress = true;
     rejectFields(missingFmaskMetadata, "FMASK CMASK compression is not implemented");
-    for (const auto& [format, surface] : std::array<std::pair<std::uint32_t, std::uint32_t>, 2>{{{162u, 11u}, {164u, 20u}}}) {
+    for (const auto& [format, surface] : std::array<std::pair<std::uint32_t, std::uint32_t>, 4>{{{162u, 11u}, {164u, 20u}, {167u, 62u}, {168u, 62u}}}) {
         auto wide = fmask;
         wide.format = format;
         Require(DecodeTextureResource(pack(wide)).format == surface, "a 16-sample FMASK format did not use an integer Z surface of its storage width");
@@ -232,11 +232,6 @@ void RunGuestTextureResourceTests() {
         wide.dstSelZ = 6u;
         wide.dstSelW = 7u;
         Require(DecodeTextureResource(pack(wide)).format == surface, "a 16-sample FMASK view with identity selectors was refused");
-    }
-    for (const auto format : {167u, 168u}) {
-        auto unsupported = fmask;
-        unsupported.format = format;
-        rejectFields(unsupported, "FMASK format is not implemented");
     }
     Require(result.dstSelX == 4 && result.dstSelY == 5 && result.dstSelZ == 6 && result.dstSelW == 7, "decoded destination selectors changed");
 

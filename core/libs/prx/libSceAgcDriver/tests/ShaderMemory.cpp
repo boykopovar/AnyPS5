@@ -11557,7 +11557,7 @@ void verifyFmaskImageMode() {
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
     require(modes[selected].numericClass == IrTextureNumericClass::Uint && modes[selected].packedFormat == IrBufferFormat::Invalid && !modes[selected].constantSwizzle, "FMASK did not select a bound integer image mode");
-    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 162u, 163u, 164u, 165u}) {
+    for (const auto format : {156u, 157u, 158u, 159u, 160u, 161u, 162u, 163u, 164u, 165u, 167u, 168u}) {
         descriptor.dwords[1] = format << 20u;
         const auto expanded = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
         require(expanded != selected && modes[expanded].numericClass == IrTextureNumericClass::Uint && modes[expanded].conversionFormat == FmaskExpansion && modes[expanded].dimension == RdnaImageDimension::Dim2D, "an FMASK format did not select the FMASK expansion mode");
@@ -11567,21 +11567,16 @@ void verifyFmaskImageMode() {
     descriptor.dwords[6] = (1u << 21u) | (1u << 24u);
     require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].numericClass == IrTextureNumericClass::Uint, "a two-fragment CMASK FMASK did not select a bound integer image mode");
     descriptor.dwords[6] = 0u;
-    for (const auto format : {161u, 162u, 164u, 166u}) {
+    for (const auto format : {161u, 162u, 164u, 166u, 167u, 168u}) {
         descriptor.dwords[1] = format << 20u;
         descriptor.dwords[3] = 0x91800005u;
         expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK destination channel selector is not implemented", "an FMASK load selecting Y was accepted");
     }
     descriptor.dwords[3] = (descriptor.dwords[3] & ~0xfffu) | 0xfacu;
-    for (const auto format : {162u, 164u}) {
+    for (const auto format : {162u, 164u, 167u, 168u}) {
         descriptor.dwords[1] = format << 20u;
         const auto wide = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
         require(modes[wide].conversionFormat == FmaskExpansion && modes[wide].dimension == RdnaImageDimension::Dim2D, "a 16-sample FMASK identity view did not select the FMASK expansion mode");
-    }
-    descriptor.dwords[3] = 0x91800004u;
-    for (const auto format : {167u, 168u}) {
-        descriptor.dwords[1] = format << 20u;
-        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK format is not implemented", "an unsupported FMASK format was accepted");
     }
     descriptor.dwords[1] = 166u << 20u;
     descriptor.dwords[6] = 1u << 21u;

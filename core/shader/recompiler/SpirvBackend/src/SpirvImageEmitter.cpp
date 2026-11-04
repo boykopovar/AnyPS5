@@ -635,13 +635,20 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
     const auto sampleBits = Binary(state, spv::OpBitwiseAnd, u32, layout, ConstantU32(state, 0xffu));
     const auto samples = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 8u)), ConstantU32(state, 0xffu));
     const auto fragments = Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 16u));
-    const auto packed = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, u32, packed, texel, 0u);
+    const auto packedLow = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, u32, packedLow, texel, 0u);
+    const auto packedHigh = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, u32, packedHigh, texel, 1u);
     auto expandedLow = ConstantU32(state, 0u);
     auto expandedHigh = ConstantU32(state, 0u);
     for (std::uint32_t sample = 0; sample < 16u; ++sample) {
-        const auto field = state.module.AllocateId();
-        state.module.AddFunction(spv::OpBitFieldUExtract, u32, field, packed, Binary(state, spv::OpIMul, u32, sampleBits, ConstantU32(state, sample)), sampleBits);
+        const auto offset = Binary(state, spv::OpIMul, u32, sampleBits, ConstantU32(state, sample));
+        const auto shift = Binary(state, spv::OpBitwiseAnd, u32, offset, ConstantU32(state, 31u));
+        const auto lowField = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBitFieldUExtract, u32, lowField, packedLow, shift, sampleBits);
+        const auto highField = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBitFieldUExtract, u32, highField, packedHigh, shift, sampleBits);
+        const auto field = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), offset, ConstantU32(state, 32u)), highField, lowField);
         const auto fragment = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), field, fragments), ConstantU32(state, 8u), field);
         const auto nibble = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, sample), samples), fragment, ConstantU32(state, 0u));
         auto& expanded = sample < 8u ? expandedLow : expandedHigh;
