@@ -12,6 +12,10 @@
 
 - [sce::Np::CppWebApi::Activities::V1](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - `ParameterToGetUserActivities::initialize` ignores the account-id vector, `setlimit` and `setnpServiceLabel` store their value in a host block that nothing reads, and `getUserActivities` returns `SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN`; the response accessors throw because an offline request never produces a response object. The 0x10-byte handle and the lifecycle codes come from the module bundled with PPSA21564/PPSA23732 (builds `J03093737`/`J03341606`, addresses `0x3e7a10`, `0x3e7a70`, `0x3e7cb0`, `0x3e7e50`, `0x3e7ec0`, `0x3e7f20`); the module's setters write no return value, so they stay `void`. Nothing here is measured on a console. PPSA22408 (Hot Wheels Infinite Rush) imports the 15 NIDs
 
+### Functional
+
+- [SessionManager::V1 model accessors](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - `LeaderWithOnlineId::getAccountId` reads the 64-bit word at +0x10 in both measured bundled SDK modules. Other model fields remain unsupported: `PlayerSessionForRead::customData1IsSet` is at +0x1a0 and +0x1e0 in those builds, so one fixed offset does not cover both layouts. Model creation and online response production are not supplied by this accessor.
+
 ### Unknown function info
 
 - [sce::Np::CppWebApi](../../../core/libs/prx/libSceNpCppWebApi/Export.cpp) (libSceNpCppWebApi) - every request entry point (API calls, transaction `start`/`getResponse`/`readData`, the `*Factory::create`s) returns `SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN` offline. The constant's name and value follow the reference tables in shadPS4 `np_error.h` and fpPS4 `np_error.pas`, where `0x80552907` is `ORBIS_NP_WEBAPI_ERROR_NOT_SIGNED_IN` and `0x80552901` is `OUT_OF_MEMORY` (no `UNAVAILABLE` exists in the `0x80552901`-`0x8055291F` range); it is the code a signed-out console returns from these entry points. The earlier `0x80552901` value came from the module the previous implementation shipped, which used the same incorrect constant

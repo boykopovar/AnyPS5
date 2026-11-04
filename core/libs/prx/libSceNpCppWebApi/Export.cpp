@@ -3058,9 +3058,10 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37Parame
     return TerminateParameter(self);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId12getAccountIdEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId12getAccountIdEv(const void* self) {
+    std::uint64_t value;
+    std::memcpy(&value, static_cast<const std::uint8_t*>(self) + 0x10, sizeof(value));
+    return value;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V139PatchPlayerSessionsSessionIdRequestBody20setInvitableUserTypeERKNS3_23CustomInvitableUserTypeE() {
