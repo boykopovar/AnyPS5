@@ -40,6 +40,7 @@
 
 ### Functional
 
+- [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - reopening a closed port waits for all submitted GPU work (`AgcDriverWaitIdle`) before it replaces the port's configuration, because a label store into the old configuration's `bufferLabels` may still be in flight. A queue stalled on something the title does only after `sceVideoOutOpen` returns stalls the reopen with it. Closes when: the wait covers only the work that stores into the previous configuration.
 - [ANYPS5_PAD_IDENTIFY and haptics reports](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - the pulse uses the SDL motor rumble path only; it is not checked against the Bluetooth DualSense haptics-report path of open PR #9154, and the two have not been run together.
 - [ANYPS5_PAD_IDENTIFY on request](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - no key or overlay entry sends the pattern on demand; `always` repeats it every 30 seconds instead.
 - [ANYPS5_PAD_IDENTIFY pulse pattern](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - the 150 ms full-strength pulses 400 ms apart and the 500 ms quiet window are AnyPS5 choices: no measurement shows how a real controller's motors feel them or whether players can count the pulses.
@@ -251,3 +252,21 @@
 - [sceVideoOutSetConfigurationMode](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): the name hashes to NID `N1+j0RymMUQ`, a function export in both older and later version-labelled images. Its signature and behavior are unverified; this import-resolution declaration throws.
 
 - [Older callable NIDs](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary library qualifier and one uses the nosubmission qualifier; qualified guest import resolution is unverified.
+
+- [Later callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 13 function exports of the primary logical library observed only in the 13.60-labelled image; no matching NIDs were found in the older inventory. Each name hashes to its NID and matches the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. `sceVideoOutSysGetMonitorInfo` is a separate export from `sceVideoOutSysGetMonitorInfo_`. `sceVideoOutDebugLatencyMeasureGetLatestLatency` is also exported under the `libSceVideoOut_nosubmission` and `libSceVideoOutLatency_nosubmission` qualifiers; qualified guest import resolution is unverified.
+
+| Name | NID |
+| --- | --- |
+| `sceVideoOutDebugLatencyMeasureGetLatestLatency` | `BTawastvk7s` |
+| `sceVideoOutGetHandleByBus` | `zPVZiUbvzkg` |
+| `sceVideoOutPostProcessorAddCallback` | `-NhjL1kuqhk` |
+| `sceVideoOutPostProcessorRemoveCallback` | `8hTZgKGL-58` |
+| `sceVideoOutSetContentDynamicRange` | `WK-TrW+vuqM` |
+| `sceVideoOutSysCursorSetSize` | `I7ms8YxoZio` |
+| `sceVideoOutSysGetCursorInfo` | `3mh7IA9NrAI` |
+| `sceVideoOutSysGetMonitorInfo` | `WAsgAw34e1Y` |
+| `sceVideoOutSysGetOutputStatusEx` | `Z699gIW4sok` |
+| `sceVideoOutSysOpenPostProcessor` | `yvH3H30ozqU` |
+| `sceVideoOutSysSetDrrPeg` | `cFy4rRDKZjQ` |
+| `sceVideoOutSysSetDrrPegRefreshRate` | `mVJZobHnyiQ` |
+| `sceVideoOutSysSetVrrSetting` | `FL6WhOnaR4Y` |

@@ -220,6 +220,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap.py)
         add_test(NAME pr_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_labels.py)
+        add_test(NAME progress_history_date_window COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryDateWindowTests)
+        set_tests_properties(progress_history_date_window PROPERTIES TIMEOUT 20)
         add_test(NAME pr_ready COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
@@ -258,6 +261,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
+        add_test(NAME ffmpeg_cache_keys COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ffmpeg_cache_keys.py)
         foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
@@ -305,6 +310,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_length.py)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
+        add_test(NAME unbuilt_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unbuilt_exports.py)
         add_test(NAME test_script_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_test_registration.py --scripts)
         add_test(NAME tools_sanitizer_json COMMAND ${Python3_EXECUTABLE}
@@ -515,6 +522,26 @@ if(BUILD_TESTING)
                     add_test(NAME trace_digest_${trace_digest_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
                         "${trace_digest_test_source}" "${trace_digest_class}.${test_case}")
                     set_tests_properties(trace_digest_${trace_digest_class}_${test_case} PROPERTIES TIMEOUT 20)
+                endif()
+            endif()
+        endforeach()
+        set(unwrap_self_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${unwrap_self_test_source}")
+        file(STRINGS "${unwrap_self_test_source}" unwrap_self_cases REGEX "^class |^    def test_")
+        set(unwrap_self_first TRUE)
+        foreach(test_case IN LISTS unwrap_self_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(unwrap_self_class "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+                if(unwrap_self_first)
+                    set_tests_properties(unwrap_self PROPERTIES
+                        ENVIRONMENT "UNWRAP_SELF_TEST=${unwrap_self_class}.${test_case}" TIMEOUT 30)
+                    set(unwrap_self_first FALSE)
+                else()
+                    add_test(NAME unwrap_self_${unwrap_self_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                        "${unwrap_self_test_source}" "${unwrap_self_class}.${test_case}")
+                    set_tests_properties(unwrap_self_${unwrap_self_class}_${test_case} PROPERTIES TIMEOUT 30)
                 endif()
             endif()
         endforeach()
