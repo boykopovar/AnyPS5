@@ -213,14 +213,6 @@ int APS5_VABI _ZN3JSC11ProxyObjectC1ERNS_2VMEPNS_9StructureE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector22InspectorDebuggerAgentnwEmPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBasenwEmPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC17DebuggerCallFrame20positionForCallFrameERNS_2VMEPNS_9CallFrameE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -614,10 +606,6 @@ int APS5_VABI _ZN9Inspector28DOMDebuggerBackendDispatcherD0Ev() {
 }
 
 int APS5_VABI _ZN3WTF4Lock16unlockFairlySlowEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector14ConsoleMessagenwEm10NotNullTagPv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
