@@ -248,6 +248,13 @@ void NamedValuesAreRedacted() {
     Check(AgcDriver::RedactHostText("alicia palice", names) == "alicia palice", "a name inside another word was replaced");
     Check(AgcDriver::RedactHostText("alice-pc", names) == "<redacted>-pc", "a name before a dash was kept");
     Check(AgcDriver::RedactHostText("no names here", {}) == "no names here", "text without names changed");
+#ifdef _WIN32
+    Check(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user <redacted> on <redacted>", "a Windows name in another case was kept");
+    Check(AgcDriver::RedactHostText("Users/ALICE/cache", names) == "Users/<redacted>/cache", "a Windows name in a forward-slash path was kept");
+    Check(AgcDriver::RedactHostText("ALICIA PALICE", names) == "ALICIA PALICE", "a name inside another word was replaced in another case");
+#else
+    Check(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user AlIcE on WORKSTATION-7", "a POSIX name in another case was replaced");
+#endif
     auto facts = SampleFacts();
     facts.redactions = {"alice", "workstation-7"};
     facts.os = "Linux workstation-7 6.1";
@@ -257,6 +264,14 @@ void NamedValuesAreRedacted() {
     Check(text.find("alice") == std::string::npos && text.find("workstation-7") == std::string::npos, "a listed name reached the report");
     Check(text.find("os: Linux <redacted> 6.1\n") != std::string::npos, "the host name was not replaced in the OS line");
     Check(text.find("device: GPU of <redacted>\n") != std::string::npos, "the user name was not replaced in the GPU name");
+#ifdef _WIN32
+    auto mixed = SampleFacts();
+    mixed.redactions = {"alice", "workstation-7"};
+    mixed.environment.push_back({"APS5_NOTE", "user ALICE on Workstation-7 at Users/ALICE/cache"});
+    const auto mixedText = AgcDriver::FormatHostReport(mixed);
+    Check(mixedText.find("ALICE") == std::string::npos && mixedText.find("Workstation-7") == std::string::npos, "a mixed-case name reached the Windows report");
+    Check(mixedText.find("APS5_NOTE: user <redacted> on <redacted> at Users/<redacted>/cache\n") != std::string::npos, "a mixed-case name was not replaced in the Windows report");
+#endif
 }
 
 void FormattedReportHasNoSensitiveText() {

@@ -14,13 +14,27 @@ bool nameCharacter(unsigned char value) {
     return std::isalnum(value) != 0 || value == '_';
 }
 
+std::size_t findName(const std::string& text, const std::string& name, const std::size_t cursor) {
+#ifdef _WIN32
+    const auto fold = [](const unsigned char value) { return static_cast<unsigned char>(std::tolower(value)); };
+    for (std::size_t at = cursor; at + name.size() <= text.size(); ++at) {
+        std::size_t index = 0;
+        while (index < name.size() && fold(static_cast<unsigned char>(text[at + index])) == fold(static_cast<unsigned char>(name[index]))) ++index;
+        if (index == name.size()) return at;
+    }
+    return std::string::npos;
+#else
+    return text.find(name, cursor);
+#endif
+}
+
 std::string replaceNames(std::string text, const std::vector<std::string>& names) {
     for (const auto& name : names) {
         if (name.empty()) continue;
         std::string result;
         std::size_t cursor = 0;
         for (;;) {
-            const auto found = text.find(name, cursor);
+            const auto found = findName(text, name, cursor);
             if (found == std::string::npos) break;
             const auto end = found + name.size();
             const bool before = found == 0 || !nameCharacter(static_cast<unsigned char>(text[found - 1]));
