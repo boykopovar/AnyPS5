@@ -1221,15 +1221,21 @@ int main() {
     TestWideCustomSubmixer();
     TestRackOptions();
     TestCustomRackChecks();
+#ifndef APS5_NGS2_PS4_LIBRARY
     TestCustomFilterResetIndex();
+#endif
     TestCustomSampler();
+#ifndef APS5_NGS2_PS4_LIBRARY
     TestCustomFilter();
+#endif
     for (const auto moduleIndex : {0u, 1u, 23u}) TestCustomLegacyUserFx(moduleIndex);
     TestCustomSamplerGain();
     TestCustomGain();
     TestCustomUserFxBuffers();
     TestCustomModuleInfo();
+#ifndef APS5_NGS2_PS4_LIBRARY
     TestCustomFilterCodes();
+#endif
     TestCustomMastering();
     return 0;
 }
