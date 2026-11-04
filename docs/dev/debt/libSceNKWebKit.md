@@ -33,7 +33,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7429 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7403 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -2295,11 +2295,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore11MediaPlayerD2Ev` | `B2+7Qkl8Hbo` |
 | `_ZN7WebCore11MediaPlayerdaEPv` | `BOaUT257JQE` |
 | `_ZN7WebCore11MediaPlayerdlEPv` | `eSvhG4rsH6M` |
-| `_ZN7WebCore11MediaPlayernaEmPv` | `u2ws57jhxSc` |
 | `_ZN7WebCore11MediaPlayernaEm` | `V5NNlbE52Zc` |
-| `_ZN7WebCore11MediaPlayernwEm10NotNullTagPv` | `j2-q2HpgmFg` |
 | `_ZN7WebCore11MediaPlayernwEm` | `FTCfSvqy0HE` |
-| `_ZN7WebCore11MediaPlayernwEmPv` | `lR0xukIgXJs` |
 | `_ZN7WebCore11MemoryCache11setDisabledEb` | `qbOCEUdzp4g` |
 | `_ZN7WebCore11MemoryCache13getStatisticsEv` | `ytsTenQqDuY` |
 | `_ZN7WebCore11MemoryCache13setCapacitiesEjjj` | `WzYkM53NpFM` |
@@ -2562,10 +2559,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore13MIMETypeCacheaSERKS0_` | `EbS+N1MbOBw` |
 | `_ZN7WebCore13MIMETypeCachedaEPv` | `-qvSeihxW6k` |
 | `_ZN7WebCore13MIMETypeCachedlEPv` | `M8+wbBy-2n0` |
-| `_ZN7WebCore13MIMETypeCachenaEmPv` | `ah7gMVFXK8I` |
 | `_ZN7WebCore13MIMETypeCachenaEm` | `dxwLuIoVZ6E` |
 | `_ZN7WebCore13MIMETypeCachenwEm` | `PIa6V635TSQ` |
-| `_ZN7WebCore13MIMETypeCachenwEmPv` | `BwDiCf2Irzg` |
 | `_ZN7WebCore13MediaStrategyC1ERKS0_` | `UoyxMN47fmw` |
 | `_ZN7WebCore13MediaStrategyC1Ev` | `FKp2wB9uPwY` |
 | `_ZN7WebCore13MediaStrategyC2ERKS0_` | `w3lhMQ7YIM8` |
@@ -2745,7 +2740,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore14StaticNodeListdlEPv` | `QTlT1P84RL8` |
 | `_ZN7WebCore14StaticNodeListnaEm` | `2U6LEZ5b8z8` |
 | `_ZN7WebCore14StaticNodeListnwEm` | `419zeSm4NX0` |
-| `_ZN7WebCore14StaticNodeListnwEmPv` | `2NHlTAhVJQM` |
 | `_ZN7WebCore14StyleSheetList4itemEj` | `NdU-LyVKPZ4` |
 | `_ZN7WebCore14StyleSheetListD1Ev` | `8nV64L7-0bI` |
 | `_ZN7WebCore14StyleSheetListD2Ev` | `cJnd8bs-Pws` |
@@ -2777,10 +2771,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore15AsyncFileStreamD2Ev` | `cU-HOGpi5TQ` |
 | `_ZN7WebCore15AsyncFileStreamdaEPv` | `5O+fi8P4g+M` |
 | `_ZN7WebCore15AsyncFileStreamdlEPv` | `l5FnLbE1-sM` |
-| `_ZN7WebCore15AsyncFileStreamnaEmPv` | `o+nLzPY-ObY` |
 | `_ZN7WebCore15AsyncFileStreamnaEm` | `ztvVfnQawjQ` |
 | `_ZN7WebCore15AsyncFileStreamnwEm` | `Edi1I6slWTU` |
-| `_ZN7WebCore15AsyncFileStreamnwEmPv` | `pU54jHctkAs` |
 | `_ZN7WebCore15CSSFontFaceRule5styleEv` | `v7Pd1fwDpIs` |
 | `_ZN7WebCore15CSSGroupingRule10deleteRuleEj` | `mOQZbw5ZIPs` |
 | `_ZN7WebCore15CSSGroupingRule10insertRuleERKN3WTF6StringEj` | `tdkeGhuxqZM` |
@@ -2954,10 +2946,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore16BlobRegistryImpldaEPv` | `rBoGFnN+Hrw` |
 | `_ZN7WebCore16BlobRegistryImpldlEPv` | `cJH9bcWJgME` |
 | `_ZN7WebCore16BlobRegistryImplnaEm` | `AxD0nee82Qk` |
-| `_ZN7WebCore16BlobRegistryImplnaEmPv` | `J7qYAZ8QNkE` |
-| `_ZN7WebCore16BlobRegistryImplnwEm10NotNullTagPv` | `cnWEojGLoFg` |
 | `_ZN7WebCore16BlobRegistryImplnwEm` | `Dhs9LkoqV8Y` |
-| `_ZN7WebCore16BlobRegistryImplnwEmPv` | `iV0oqHXZhvs` |
 | `_ZN7WebCore16CSSParserContextC1ERKNS_8DocumentERKN3WTF3URLERKNS4_6StringE` | `TT4K6hxGZSY` |
 | `_ZN7WebCore16CSSParserContextC2ERKNS_8DocumentERKN3WTF3URLERKNS4_6StringE` | `fr-jP7r1PQk` |
 | `_ZN7WebCore16DOMGuardedObject16contextDestroyedEv` | `0tT-egOV1R0` |
@@ -3142,10 +3131,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore16TrackPrivateBaseD2Ev` | `Bf-1cIE-brw` |
 | `_ZN7WebCore16TrackPrivateBasedaEPv` | `TJPfcVnZnUk` |
 | `_ZN7WebCore16TrackPrivateBasedlEPv` | `su3S99ot9hg` |
-| `_ZN7WebCore16TrackPrivateBasenaEmPv` | `vZaJVJV+K7M` |
 | `_ZN7WebCore16TrackPrivateBasenaEm` | `mdwtkp-FqnI` |
-| `_ZN7WebCore16TrackPrivateBasenwEm10NotNullTagPv` | `jm8YSQFNhDk` |
-| `_ZN7WebCore16TrackPrivateBasenwEmPv` | `oxVasBZxFVE` |
 | `_ZN7WebCore16TrackPrivateBasenwEm` | `f0X68Ail+co` |
 | `_ZN7WebCore16UserGestureToken60setMaximumIntervalForUserGestureForwardingForFetchForTestingEN3WTF7SecondsE` | `8hZJK-1l7VY` |
 | `_ZN7WebCore16UserGestureTokenD1Ev` | `X62s7-3mQYs` |
@@ -3266,9 +3252,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore17NowPlayingManagerD2Ev` | `kiEcKeRXOsI` |
 | `_ZN7WebCore17NowPlayingManagerdaEPv` | `FmCpUwzsqqo` |
 | `_ZN7WebCore17NowPlayingManagerdlEPv` | `Kd0LYm4o0I0` |
-| `_ZN7WebCore17NowPlayingManagernaEmPv` | `4KcC+IEgQ48` |
 | `_ZN7WebCore17NowPlayingManagernwEm` | `E5bewLdZ0JA` |
-| `_ZN7WebCore17NowPlayingManagernwEmPv` | `vZctofy+yiU` |
 | `_ZN7WebCore17PageConfigurationD1Ev` | `qKZxQYEA7lk` |
 | `_ZN7WebCore17PageConsoleClient10addMessageEN3JSC13MessageSourceENS1_12MessageLevelERKN3WTF6StringEmPNS_8DocumentE` | `ClKv7yGVu6s` |
 | `_ZN7WebCore17PageConsoleClient10countResetEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `lvw1tvNIyoU` |
@@ -3289,10 +3273,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore17PageConsoleClientD2Ev` | `qMavPJYZ3cE` |
 | `_ZN7WebCore17PageConsoleClientdaEPv` | `YCqM6M4hxG4` |
 | `_ZN7WebCore17PageConsoleClientdlEPv` | `dmCVOjcaQq0` |
-| `_ZN7WebCore17PageConsoleClientnaEmPv` | `Q1xklO-HjOQ` |
 | `_ZN7WebCore17PageConsoleClientnaEm` | `Q0Wxk8nDIew` |
-| `_ZN7WebCore17PageConsoleClientnwEm10NotNullTagPv` | `hmLXa6ptcdU` |
-| `_ZN7WebCore17PageConsoleClientnwEmPv` | `FriXzburZN8` |
 | `_ZN7WebCore17PageConsoleClientnwEm` | `Vj9yHRW-BTE` |
 | `_ZN7WebCore17ResourceErrorBase7setTypeENS0_4TypeE` | `O9YsW44maCs` |
 | `_ZN7WebCore17SQLiteTransaction5beginEv` | `KfpqmLwti6U` |
@@ -3426,7 +3407,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore18PrewarmInformationdaEPv` | `vDt7lFXpdvc` |
 | `_ZN7WebCore18PrewarmInformationdlEPv` | `TLJjJYmivbA` |
 | `_ZN7WebCore18PrewarmInformationnaEm` | `jAQVKoDldcU` |
-| `_ZN7WebCore18PrewarmInformationnwEmPv` | `2VD2Ej+58XY` |
 | `_ZN7WebCore18PrewarmInformationnwEm` | `VZRzMxjltTE` |
 | `_ZN7WebCore18RenderLayerBacking25setUsesDisplayListDrawingEb` | `J7WxT-sXnz0` |
 | `_ZN7WebCore18RenderLayerBacking30setIsTrackingDisplayListReplayEb` | `EhRJ-yl2m9E` |
@@ -3481,8 +3461,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore18TextureMapperLayerdlEPv` | `Ya2sPNPiw+o` |
 | `_ZN7WebCore18TextureMapperLayernaEmPv` | `49W0007WCSc` |
 | `_ZN7WebCore18TextureMapperLayernaEm` | `T0AEgFJcnzc` |
-| `_ZN7WebCore18TextureMapperLayernwEm10NotNullTagPv` | `RRTxkkZOR88` |
-| `_ZN7WebCore18TextureMapperLayernwEmPv` | `TtJ8lOeiQyU` |
 | `_ZN7WebCore18TextureMapperLayernwEm` | `fzYRZqywpBk` |
 | `_ZN7WebCore18composedTreeAsTextERNS_13ContainerNodeENS_22ComposedTreeAsTextModeE` | `jHaDBgiK3qo` |
 | `_ZN7WebCore18documentTypeStringERKNS_8DocumentE` | `oXgkWQRuOzU` |
@@ -3876,8 +3854,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore21MediaRecorderProviderdaEPv` | `HCOb-FMNF18` |
 | `_ZN7WebCore21MediaRecorderProviderdlEPv` | `TfbkNorL4C4` |
 | `_ZN7WebCore21MediaRecorderProvidernaEm` | `ONIhJ+wHKWI` |
-| `_ZN7WebCore21MediaRecorderProvidernaEmPv` | `glOjchjSBHQ` |
-| `_ZN7WebCore21MediaRecorderProvidernwEmPv` | `cO+5GDZdVq8` |
 | `_ZN7WebCore21MediaRecorderProvidernwEm` | `yU4Dlx9Wgtk` |
 | `_ZN7WebCore21NetworkStorageSession10getCookiesERKN3WTF3URLE` | `L2dkX9ZmiqM` |
 | `_ZN7WebCore21NetworkStorageSession10setCookiesERKN3WTF6VectorINS_6CookieELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEERKNS1_3URLESB_` | `3mCQTzEUTMQ` |
@@ -4309,9 +4285,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsaSERKS1_` | `8S2712b7L7o` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsdaEPv` | `5TlM-h+ipBU` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsdlEPv` | `JFRj1nTrGl4` |
-| `_ZN7WebCore28InspectorFrontendClientLocal8SettingsnaEmPv` | `wWhSR9TfAr4` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsnaEm` | `ivkMzBxwCsY` |
-| `_ZN7WebCore28InspectorFrontendClientLocal8SettingsnwEmPv` | `F+EdH4XRvTw` |
 | `_ZN7WebCore28InspectorFrontendClientLocal8SettingsnwEm` | `s46e1bVNWNg` |
 | `_ZN7WebCore28InspectorFrontendClientLocalD0Ev` | `2ZnBc9ZCIqw` |
 | `_ZN7WebCore28InspectorFrontendClientLocalD1Ev` | `QmGv7hQbpfo` |
