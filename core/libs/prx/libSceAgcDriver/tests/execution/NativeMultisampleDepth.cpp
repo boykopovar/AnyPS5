@@ -3273,6 +3273,79 @@ void CheckUniformPlanePublication(Context context, std::uint32_t samples, Unifor
     std::printf("Native D32S8 without HTILE publication samples=%u mode=%u checked\n", samples, static_cast<std::uint32_t>(mode));
 }
 
+void CheckSmallerExtent(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{200u, 130u}, smaller{193u, 129u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    Require(depthBytes == MultisampledDepthBytes_nid_no_patch(smaller, 4u, samples) && stencilBytes == MultisampledDepthBytes_nid_no_patch(smaller, 1u, samples), "the smaller-extent fixture must keep the plane footprints");
+    TargetMemory memory(depthBytes, true), stencil(stencilBytes, true);
+    const auto one = std::bit_cast<std::uint32_t>(1.0f);
+    for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &one, 4u);
+    std::memset(stencil.Data(), 0x5a, stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = samples == 2u ? 0u : 0x8c00u;
+    auto inner = target;
+    inner.extent = smaller;
+    Recorder recorder(context);
+    recorder.Activate();
+    std::unique_ptr<DepthRaster> outer, within;
+    std::shared_ptr<Texture> texture;
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    Require(view != VK_NULL_HANDLE && DepthSurfaceAt(target.address), "the smaller-extent owner was not imported");
+    outer = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x20u}, false, true);
+    NoteDepthSurfaceWrite(context, target);
+    outer->Run(recorder.Commands(), 0.25f);
+    for (const auto& [width, height, reason] : std::array{std::tuple{120u, 130u, "a narrower pitch"}, std::tuple{210u, 130u, "a wider extent"}, std::tuple{200u, 131u, "a taller extent"}}) {
+        auto other = target;
+        other.extent = {width, height};
+        TargetRefuses([&] { DepthSurfaceView(context, other); }, "host-written owner of another identity");
+        std::printf("Native depth smaller extent samples=%u: %s refused\n", samples, reason);
+    }
+    auto moved = inner;
+    moved.pipeBankXor ^= 0x0100u;
+    TargetRefuses([&] { DepthSurfaceView(context, moved); }, "host-written owner of another identity");
+    Require(DepthSurfaceView(context, inner) == view, "a smaller extent with the same Z_X layout was not attached to its owner");
+    within = std::make_unique<DepthRaster>(context, inner, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x40u}, false, true);
+    NoteDepthSurfaceWrite(context, inner);
+    within->Run(recorder.Commands(), 0.5f);
+    recorder.Sync();
+    auto words = DepthSampleWords(target);
+    words[6] &= ~((1u << 19u) | (1u << 21u));
+    texture = DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{});
+    Require(texture != nullptr && texture->View() != VK_NULL_HANDLE, "the owner of a smaller extent was not sampled natively");
+    const auto count = extent.width * extent.height * samples;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+    {
+        const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+    }
+    output.Invalidate();
+    for (std::uint32_t index = 0u; index < count; ++index) {
+        const auto sample = index % samples;
+        const auto x = index / samples % extent.width;
+        const auto y = index / samples / extent.width;
+        const float base = x < smaller.width && y < smaller.height ? 0.5f : 0.25f;
+        float sampled = 0.0f;
+        std::memcpy(&sampled, output.Bytes().data() + (index + 1u) * 16u, 4u);
+        Require(sampled == base + static_cast<float>(sample + 1u) / 16.0f, "a draw at the smaller extent did not land in, or did not stay within, its owner's samples at " + std::to_string(x) + "," + std::to_string(y) + " sample " + std::to_string(sample));
+    }
+    texture.reset();
+    auto innerWords = DepthSampleWords(inner);
+    innerWords[6] &= ~((1u << 19u) | (1u << 21u));
+    TargetRefuses([&] { DepthSurfaceTexture(context, innerWords, DecodeTextureResource(innerWords), VkComponentMapping{}); }, "sampled identity or format mismatch");
+    std::printf("Native depth smaller extent samples=%u: attached to its owner, drawn within it, other extents refused\n", samples);
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef __linux__
@@ -3362,6 +3435,18 @@ int main(int argc, char** argv) {
             }
             for (const auto mode : {UniformPublication::Pages, UniformPublication::StencilRace, UniformPublication::PlaneStore}) CheckUniformPlanePublication(publishing, 4u, mode);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--smaller-extent") {
+            TextureDetiler detiler(context);
+            auto publishing = context;
+            publishing.detiler = &detiler;
+            std::uint32_t checked = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (context.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
+                CheckSmallerExtent(publishing, samples);
+                ++checked;
+            }
+            return checked != 0u ? 0 : VulkanTestSkipped;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--uniform-planes") {
             std::uint32_t checked = 0u, unavailable = 0u;
