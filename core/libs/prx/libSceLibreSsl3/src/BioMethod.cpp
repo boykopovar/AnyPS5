@@ -13,4 +13,8 @@ LibreSsl::BioMethod* APS5_VABI BIO_meth_new_nid_postfix(int type, const char* na
     return method;
 }
 
+void APS5_VABI BIO_meth_free_nid_postfix(LibreSsl::BioMethod* method) {
+    free_nid_postfix(method);
+}
+
 }
