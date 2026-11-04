@@ -635,6 +635,7 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
     const auto sampleBits = Binary(state, spv::OpBitwiseAnd, u32, layout, ConstantU32(state, 0xffu));
     const auto samples = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 8u)), ConstantU32(state, 0xffu));
     const auto fragments = Binary(state, spv::OpShiftRightLogical, u32, layout, ConstantU32(state, 16u));
+    const auto unknownBase = Binary(state, spv::OpISub, u32, ConstantU32(state, 8u), fragments);
     const auto packedLow = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, u32, packedLow, texel, 0u);
     const auto packedHigh = state.module.AllocateId();
@@ -649,12 +650,14 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
         const auto highField = state.module.AllocateId();
         state.module.AddFunction(spv::OpBitFieldUExtract, u32, highField, packedHigh, shift, sampleBits);
         const auto field = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), offset, ConstantU32(state, 32u)), highField, lowField);
-        const auto fragment = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), field, fragments), ConstantU32(state, 8u), field);
+        const auto fragment = Select(state, u32, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), field, fragments), Binary(state, spv::OpIAdd, u32, field, unknownBase), field);
         const auto nibble = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), ConstantU32(state, sample), samples), fragment, ConstantU32(state, 0u));
+        const auto masked = Binary(state, spv::OpBitwiseAnd, u32, nibble, ConstantU32(state, 0xfu));
         auto& expanded = sample < 8u ? expandedLow : expandedHigh;
-        expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, nibble, ConstantU32(state, (sample & 7u) * 4u)));
+        expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, masked, ConstantU32(state, (sample & 7u) * 4u)));
     }
-    const std::array<std::uint32_t, 4> components{expandedLow, expandedHigh, ConstantU32(state, 0u), ConstantU32(state, 0u)};
+    const auto wide = Binary(state, spv::OpUGreaterThan, TypeBool(state), samples, ConstantU32(state, 8u));
+    const std::array<std::uint32_t, 4> components{expandedLow, expandedHigh, Select(state, u32, wide, expandedLow, ConstantU32(state, 0u)), Select(state, u32, wide, expandedHigh, ConstantU32(state, 0u))};
     std::uint32_t selected[4] = {};
     for (std::uint32_t component = 0; component < 4u; component++) selected[component] = RuntimeSwizzledComponent(state, RuntimeImageSwizzle(state, resource, component), components);
     const auto result = state.module.AllocateId();

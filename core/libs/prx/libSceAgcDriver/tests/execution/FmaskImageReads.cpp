@@ -190,7 +190,8 @@ std::uint64_t Expanded(const NarrowFmask& fmask, FmaskWord stored) {
         const auto offset = sample * fmask.sampleBits;
         const auto word = offset < 32u ? stored.low : stored.high;
         const auto fragment = (word >> (offset & 31u)) & ((1u << fmask.sampleBits) - 1u);
-        expanded |= static_cast<std::uint64_t>(fragment >= fmask.fragments ? 8u : fragment) << (sample * 4u);
+        const auto nibble = (fragment < fmask.fragments ? fragment : 8u + fragment - fmask.fragments) & 0xfu;
+        expanded |= static_cast<std::uint64_t>(nibble) << (sample * 4u);
     }
     return expanded;
 }
@@ -214,7 +215,10 @@ void RunNarrow(AgcDriver::VulkanDevice& device, const NarrowFmask& fmask, bool l
         for (std::uint32_t lane = 0; lane < Threads; ++lane) {
             const auto stored = Stored(fmask, Input[lane * 4u], Input[lane * 4u + 1u], layered ? Input[lane * 4u + 2u] + 1u : 0u, round);
             const auto expanded = Expanded(fmask, stored);
-            const std::array<std::uint32_t, 4> expected{static_cast<std::uint32_t>(expanded), static_cast<std::uint32_t>(expanded >> 32u), 0u, 0u};
+            const auto low = static_cast<std::uint32_t>(expanded);
+            const auto high = static_cast<std::uint32_t>(expanded >> 32u);
+            const bool wide = fmask.samples > 8u;
+            const std::array<std::uint32_t, 4> expected{low, high, wide ? low : 0u, wide ? high : 0u};
             for (std::uint32_t component = 0; component < 4u; ++component) Require(Output[lane * 4u + component] == expected[component], "FMASK " + std::to_string(fmask.format) + " load did not expand its mapping: round " + std::to_string(round) + ", lane " + std::to_string(lane) + ", component " + std::to_string(component) + ", read " + std::to_string(Output[lane * 4u + component]) + ", expected " + std::to_string(expected[component]));
         }
         Require(std::all_of(Output.begin() + Threads * 4u, Output.end(), [](auto value) { return value == Sentinel; }), "FMASK load wrote outside its output");
