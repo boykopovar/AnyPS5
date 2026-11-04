@@ -387,8 +387,26 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py AttributionTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
-        add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py)
+        set(debt_split_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${debt_split_source}")
+        file(STRINGS "${debt_split_source}" debt_split_cases REGEX "^class [A-Za-z0-9_]*Tests\\(|^    def test_")
+        set(debt_split_class "")
+        set(debt_split_first TRUE)
+        foreach(test_case IN LISTS debt_split_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(debt_split_class "${CMAKE_MATCH_1}")
+            elseif(test_case MATCHES "^    def (test_[A-Za-z0-9_]+)")
+                if(debt_split_first)
+                    set(debt_split_name debt_split)
+                    set(debt_split_first FALSE)
+                else()
+                    set(debt_split_name debt_split_${debt_split_class}_${CMAKE_MATCH_1})
+                endif()
+                add_test(NAME ${debt_split_name} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py "${debt_split_class}.${CMAKE_MATCH_1}")
+                set_tests_properties(${debt_split_name} PROPERTIES TIMEOUT 20)
+            endif()
+        endforeach()
         add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
