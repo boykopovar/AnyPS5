@@ -210,6 +210,8 @@ struct CtypeVtable {
     const void* caseMethods[4];
     char (APS5_VABI *widen)(const Facet* self, char character);
     const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, char* destination);
+    char (APS5_VABI *narrow)(const Facet* self, char character, char fallback);
+    const char* (APS5_VABI *narrowRange)(const Facet* self, const char* first, const char* last, char fallback, char* destination);
 };
 
 static_assert(offsetof(StreambufVtable, overflow) == 0x20);
@@ -219,7 +221,10 @@ static_assert(sizeof(OutputIterator) == 0x10);
 static_assert(offsetof(TimePutVtable, put) == 0x20);
 static_assert(offsetof(NumPutVtable, putBool) == 0x20);
 static_assert(offsetof(NumPutVtable, putPointer) == 0x58);
+static_assert(offsetof(CtypeVtable, widen) == 0x40);
 static_assert(offsetof(CtypeVtable, widenRange) == 0x48);
+static_assert(offsetof(CtypeVtable, narrow) == 0x50);
+static_assert(offsetof(CtypeVtable, narrowRange) == 0x58);
 static_assert(sizeof(Facet) == 0x10);
 static_assert(offsetof(Implementation, facets) == 0x10);
 static_assert(offsetof(Implementation, facetCount) == 0x18);
@@ -263,6 +268,8 @@ static_assert(offsetof(SceV2Locinfo, name) == 8);
 static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 
 }
+
+extern "C" GuestLocale::OutputIterator LibcTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, const char* first, const char* last);
 
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
