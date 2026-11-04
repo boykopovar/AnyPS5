@@ -811,6 +811,22 @@ static void TestAuditedModelAccessors() {
     Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24getXPsnAtomicOperationIdEv(headers) == reinterpret_cast<const char*>(operationId));
     Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24hasXPsnAtomicOperationIdEv(headers));
 
+    alignas(8) unsigned char status[0xb8];
+    std::memset(status, 0, sizeof(status));
+    const std::uint64_t dataSize = 0x4000;
+    const std::uint64_t updated = 0x6600000000abcdefULL;
+    const std::uint32_t slotId = 12;
+    std::memcpy(status + 0x10, &dataSize, sizeof(dataSize));
+    std::memcpy(status + 0x40, &updated, sizeof(updated));
+    for (std::size_t index = 0; index < 0x18; ++index) status[0x20 + index] = static_cast<unsigned char>(0x30 + index);
+    std::memcpy(status + 0x70, "obj-9", 6);
+    std::memcpy(status + 0xb4, &slotId, sizeof(slotId));
+    Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus11getDataSizeEv(status) == dataSize);
+    Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus22getLastUpdatedDateTimeEv(status) == updated);
+    Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus7getInfoEv(status) == status + 0x20);
+    Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus11getObjectIdEv(status) == reinterpret_cast<const char*>(status + 0x70));
+    Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus9getSlotIdEv(status) == slotId);
+
     alignas(8) unsigned char body[0x50];
     std::memset(body, 0, sizeof(body));
     const std::uint64_t magic = 0x434e507056656342ULL;

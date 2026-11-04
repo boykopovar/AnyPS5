@@ -12,8 +12,8 @@ static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
 // Offline PSN: request entry points (API calls, transaction start/readData, factories) fail with
 // SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN, the constant shadPS4/fpPS4 document for this code; parameter
-// bookkeeping succeeds; response accessors stay unimplemented because a failed request never
-// produces a response.
+// bookkeeping succeeds; the audited accessors read the measured offsets and the rest stay
+// unimplemented because a failed request never produces a response.
 extern "C" {
 
 static void ConstructParameter(void* self);
@@ -2691,6 +2691,7 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6
         return TransactionNotStarted;
     }
     (void)response;
+    NotImplemented_nid_no_patch(__func__);
     return TransactionNotStarted;
 }
 
