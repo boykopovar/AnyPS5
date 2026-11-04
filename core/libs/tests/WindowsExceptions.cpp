@@ -1,4 +1,5 @@
 #include <stdexcept>
+#include <string>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -55,9 +56,20 @@ static void TestTypeInfoVtables() {
     if (!upcastType(&multiple, &base, &object) || object != storage.data() + 16) throw std::runtime_error("multiple RTTI upcast failed");
     object = storage.data();
     if (catchType(&other, &single, &object, 0)) throw std::runtime_error("unrelated RTTI catch succeeded");
+    TypeRecord shared {classTable + 2 * sizeof(void*), "6Shared"};
+    SingleRecord publicPath {{singleTable + 2 * sizeof(void*), "10PublicPath"}, &shared};
+    SingleRecord privatePath {{singleTable + 2 * sizeof(void*), "11PrivatePath"}, &shared};
+    MultipleRecord mixed {{multipleTable + 2 * sizeof(void*), "5Mixed"}, 1, 2, {{&publicPath.type, 2}, {&privatePath.type, 16 << 8}}};
+    MultipleRecord hidden {{multipleTable + 2 * sizeof(void*), "6Hidden"}, 0, 1, {{&privatePath.type, 0}, {}}};
+    object = storage.data();
+    if (catchType(&shared, &mixed, &object, 0) || object != storage.data()) throw std::runtime_error("RTTI catch of a base repeated through a private path succeeded");
+    if (upcastType(&mixed, &shared, &object) || object != storage.data()) throw std::runtime_error("RTTI upcast to a base repeated through a private path succeeded");
+    if (!catchType(&publicPath, &mixed, &object, 0) || object != storage.data()) throw std::runtime_error("RTTI catch of the public path failed");
+    object = storage.data();
+    if (catchType(&shared, &hidden, &object, 0)) throw std::runtime_error("RTTI catch of a privately inherited base succeeded");
 }
 
-extern "C" void NotImplemented_nid_no_patch(const char*);
+extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char*);
 
 static void RequireHandle(bool value) {
     if (!value) throw std::runtime_error("child process setup failed");
@@ -74,7 +86,7 @@ static int RunThrowChild() {
     return 100;
 }
 
-static void testUnhandledThrowSite() {
+static std::string RunChild(const wchar_t* argument, DWORD& exitCode) {
     SECURITY_ATTRIBUTES attributes{};
     attributes.nLength = sizeof(attributes);
     attributes.bInheritHandle = TRUE;
@@ -84,7 +96,6 @@ static void testUnhandledThrowSite() {
     RequireHandle(SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0) != 0);
     std::array<wchar_t, 32768> image{};
     RequireHandle(GetModuleFileNameW(nullptr, image.data(), static_cast<DWORD>(image.size())) != 0);
-    const wchar_t* argument = L"\" throw-uncaught";
     std::array<wchar_t, 32768> command{};
     const std::size_t imageLength = std::wcslen(image.data());
     const std::size_t argumentLength = std::wcslen(argument);
@@ -110,20 +121,65 @@ static void testUnhandledThrowSite() {
     }
     CloseHandle(readPipe);
     RequireHandle(WaitForSingleObject(child.hProcess, 20000) == WAIT_OBJECT_0);
-    DWORD exitCode = 0;
     RequireHandle(GetExitCodeProcess(child.hProcess, &exitCode) != 0);
     CloseHandle(child.hProcess);
     output[outputLength < output.size() ? outputLength : output.size() - 1] = 0;
+    return std::string(output.data());
+}
+
+static void testUnhandledThrowSite() {
+    DWORD exitCode = 0;
+    const std::string output = RunChild(L"\" throw-uncaught", exitCode);
     RequireHandle(exitCode == 0xC0000409);
-    const char* probeMarker = std::strstr(output.data(), "probe ");
+    const char* probeMarker = std::strstr(output.c_str(), "probe ");
     RequireHandle(probeMarker != nullptr);
     const auto probe = static_cast<std::uintptr_t>(std::strtoull(probeMarker + 6, nullptr, 16));
     RequireHandle(probe != 0);
-    const char* marker = std::strstr(output.data(), "thrown from ");
+    const char* marker = std::strstr(output.c_str(), "thrown from ");
     RequireHandle(marker != nullptr);
     const auto logged = static_cast<std::uintptr_t>(std::strtoull(marker + 13, nullptr, 16));
     RequireHandle(logged != 0);
     if (logged <= probe || logged - probe >= 0x1000) throw std::runtime_error("unhandled exception named the wrapper instead of the throw site");
+}
+
+[[gnu::noinline, noreturn]] static void GuestAbortProbe() {
+    __asm__ volatile("int $0x45");
+    __builtin_unreachable();
+}
+
+static int RunAbortChild() {
+    std::fprintf(stderr, "abort probe\n");
+    std::fflush(stderr);
+    GuestAbortProbe();
+}
+
+static void testGuestAbortReport() {
+    DWORD exitCode = 0;
+    const std::string output = RunChild(L"\" guest-abort", exitCode);
+    char code[16];
+    std::snprintf(code, sizeof(code), "0x%08lx", static_cast<unsigned long>(exitCode));
+    if (exitCode != 0xC0000005 || output.find("guest abort() (int 0x45)") == std::string::npos)
+        throw std::runtime_error(std::string("guest abort child exited with ") + code + " and printed:\n" + output);
+}
+
+[[gnu::noinline, noreturn]] static void GuestAssertProbe() {
+    __asm__ volatile("int $0x41");
+    __builtin_unreachable();
+}
+
+static int RunAssertChild() {
+    std::fprintf(stderr, "assert probe\n");
+    std::fflush(stderr);
+    GuestAssertProbe();
+}
+
+static void testGuestAssertReport() {
+    DWORD exitCode = 0;
+    const std::string output = RunChild(L"\" guest-assert", exitCode);
+    char code[16];
+    std::snprintf(code, sizeof(code), "0x%08lx", static_cast<unsigned long>(exitCode));
+    if (exitCode != 0xC0000005 || output.find("guest assert/break (int 0x41)") == std::string::npos)
+        throw std::runtime_error(std::string("guest assert child exited with ") + code + " and printed:\n" + output);
 }
 
 static int destroyed;
@@ -273,10 +329,14 @@ static void testUnwindThroughRuntimeModules() {
 int main(int argc, char** argv) {
     if (argc > 1) {
         if (std::strcmp(argv[1], "throw-uncaught") == 0) return RunThrowChild();
+        if (std::strcmp(argv[1], "guest-abort") == 0) return RunAbortChild();
+        if (std::strcmp(argv[1], "guest-assert") == 0) return RunAssertChild();
         return 100;
     }
     TestTypeInfoVtables();
     testUnhandledThrowSite();
+    testGuestAbortReport();
+    testGuestAssertReport();
     testExceptionPointer();
     testFutureException();
     testMadeExceptionPointer();

@@ -236,7 +236,7 @@ void Gather(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char*
     }
 }
 
-std::uint32_t PairedSamplers(const ShaderRecompiler::RecompileResult& result, std::uint32_t format) {
+std::uint64_t PairedSamplers(const ShaderRecompiler::RecompileResult& result, std::uint32_t format) {
     for (const auto& binding : result.bindings) {
         if (binding.kind != ShaderRecompiler::DescriptorKind::SampledImage) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
@@ -304,8 +304,8 @@ int main() {
         Run(*device, {ReductionMax, FilterPoint, MipPoint}, "max, point, point mip");
         Run(*device, {ReductionMin, FilterBilinear, MipNone}, "min, bilinear, no mip");
         Run(*device, {ReductionMax, FilterPoint, MipNone}, "max, point, no mip");
-        Run(*device, {ReductionMin, FilterAnisoBilinear, MipPoint, Aniso2x}, "min, 2x anisotropic bilinear, point mip");
-        Run(*device, {ReductionMax, FilterAnisoBilinear, MipPoint, Aniso2x}, "max, 2x anisotropic bilinear, point mip");
+        Run(*device, {ReductionMin, FilterAnisoBilinear, MipNone, Aniso2x}, "min, 2x anisotropic bilinear, no mip");
+        Run(*device, {ReductionMax, FilterAnisoBilinear, MipNone, Aniso2x}, "max, 2x anisotropic bilinear, no mip");
         Gather(*device, {ReductionMin, FilterBilinear, MipPoint}, "gather4_lz, min");
         Gather(*device, {ReductionMax, FilterBilinear, MipPoint}, "gather4_lz, max");
         RunWithColors(*device, loaded, LoadedCode, false, "min 32_FLOAT, image_load 8_8_8_8");

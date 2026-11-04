@@ -99,6 +99,46 @@ void Run(AgcDriver::VulkanDevice& device, VkPrimitiveTopology topology, std::spa
     }
 }
 
+void RunRectangle(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& pixel) {
+    const auto rectangle = ShaderRecompiler::BuildRectListShaders(vertex, pixel, device.Target());
+    Pixels.fill(Sentinel);
+    AgcDriver::Graphics::State state{};
+    state.stages.path = AgcDriver::Graphics::ShaderPath::Vertex;
+    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
+    state.colors = {state.color};
+    state.hasColorTarget = true;
+    state.renderExtent = {Width, Height};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+    state.rectList = true;
+    state.cullMode = VK_CULL_MODE_NONE;
+    state.scissor = {{0, 0}, {Width, Height}};
+    state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    state.blend.colorWriteMask = 15;
+    state.blends = {state.blend};
+    const AgcDriver::Pm4::DrawParameters draw{0, 3, 0, 1, 0, false};
+    for (std::uint32_t panel = 0; panel < 3; ++panel) {
+        const bool last = panel == 1;
+        state.viewport = {static_cast<float>(panel * Panel), static_cast<float>(Height), static_cast<float>(Panel), -static_cast<float>(Height), 0, 1};
+        state.provokingVertexMode = last ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
+        const std::array<AgcDriver::Graphics::CompiledShader, 4> shaders{{
+            {ShaderRecompiler::ShaderStage::Vertex, &vertex, 0},
+            {ShaderRecompiler::ShaderStage::TessellationControl, last ? &rectangle.lastVertexControl : &rectangle.control, 0},
+            {ShaderRecompiler::ShaderStage::TessellationEvaluation, &rectangle.evaluation, 0},
+            {ShaderRecompiler::ShaderStage::Fragment, &pixel, PixelPushOffset(0u, device.Target())}
+        }};
+        device.Draw(state, draw, shaders);
+    }
+    device.WaitIdle();
+    for (std::uint32_t panel = 0; panel < 3; ++panel) {
+        const auto& expected = panel == 1 ? Blue : Red;
+        const auto name = std::string("guest P0 rect list, ") + (panel == 1 ? "last" : "first") + " provoking vertex";
+        for (const auto x : {16u, 48u}) {
+            for (const auto y : {16u, 48u}) CheckPixel(panel * Panel + x, y, expected, name);
+        }
+        CheckPixel(panel * Panel, 0, {64, 64, 64, 64}, name + " background");
+    }
+}
+
 }
 
 int main() {
@@ -133,7 +173,10 @@ int main() {
             {ShaderRecompiler::ShaderStage::Fragment, &guestPixel, PixelPushOffset(0u, device->Target())}
         }};
         for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP}) Run(*device, topology, guestShaders, true, "guest P0");
-        std::puts("provoking vertex rendering tests passed: GLSL and guest P0, triangle list and strip, first/last/first");
+        auto exporting = vertex;
+        exporting.parameterExports = {0};
+        RunRectangle(*device, exporting, guestPixel);
+        std::puts("provoking vertex rendering tests passed: GLSL and guest P0, triangle list and strip, guest P0 rect list, first/last/first");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

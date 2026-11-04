@@ -90,13 +90,17 @@ void ConcurrentWriters() {
 }
 
 void WriterFailure() {
-    AgcDriver::ProfileOutput output([](std::string_view) { throw std::runtime_error("test writer failure"); });
+    AgcDriver::ProfileOutput output([](std::string_view) { throw std::runtime_error("test writer failure"); }, 8192);
     output.Write("test");
-    for (int operation = 0; operation < 2; ++operation) {
+    for (int operation = 0; operation < 6; ++operation) {
         bool failed = false;
         try {
             if (operation == 0) output.Flush();
-            else output.Write("next");
+            else if (operation == 1) output.Write("next");
+            else if (operation == 2) { output.Stop(); output.Write("after failed stop"); }
+            else if (operation == 3) output.Print("late failure");
+            else if (operation == 4) output.Print("%s", std::string(6000, 'x').c_str());
+            else output.Print("%s", std::string(10000, 'x').c_str());
         } catch (const std::runtime_error& error) {
             failed = std::string(error.what()) == "test writer failure";
         }
@@ -106,16 +110,44 @@ void WriterFailure() {
 
 void ExplicitStop() {
     std::string written;
-    AgcDriver::ProfileOutput output([&](std::string_view text) { written += text; });
+    AgcDriver::ProfileOutput output([&](std::string_view text) { written += text; }, 8192);
     output.Write("pending output");
     output.Stop();
     output.Stop();
     output.Flush();
     Check(written == "pending output", "explicit stop did not drain pending output");
-    bool failed = false;
-    try { output.Write("after stop"); }
-    catch (const std::runtime_error& error) { failed = std::string(error.what()) == "profile output is stopping"; }
-    Check(failed, "write after stop was accepted");
+    Check(!output.Write("after stop"), "write after stop was accepted");
+    Check(!output.Write(""), "empty write after stop was accepted");
+    output.Print("late small diagnostic %d", 1);
+    output.Print("%s", std::string(6000, 'x').c_str());
+    output.Print("%s", std::string(10000, 'x').c_str());
+    output.Flush();
+    Check(written == "pending output", "late output reached the stopped writer");
+}
+
+void StopWithProducers() {
+    std::string written;
+    AgcDriver::ProfileOutput output([&](std::string_view text) { written += text; });
+    std::atomic<unsigned> accepted{0};
+    std::atomic<bool> start{false};
+    std::vector<std::thread> producers;
+    for (int thread = 0; thread < 8; ++thread) {
+        producers.emplace_back([&] {
+            start.wait(false);
+            for (int item = 0; item < 1000; ++item) {
+                if (output.Write("x")) ++accepted;
+            }
+        });
+    }
+    Check(output.Write("x"), "initial write was rejected");
+    ++accepted;
+    start.store(true);
+    start.notify_all();
+    output.Stop();
+    for (auto& producer : producers) producer.join();
+    output.Flush();
+    Check(written == std::string(accepted.load(), 'x'), "stop did not drain exactly the accepted output");
+    Check(!output.Write("late"), "concurrent stop left the writer open");
 }
 
 }
@@ -127,6 +159,7 @@ int main() {
         ConcurrentWriters();
         WriterFailure();
         ExplicitStop();
+        StopWithProducers();
         std::cout << "profile output tests passed\n";
         return 0;
     } catch (const std::exception& error) {

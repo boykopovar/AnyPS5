@@ -1,0 +1,16 @@
+add_library(libSceHttpCache SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceHttpCache PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceHttpCache)
+target_link_libraries(libSceHttpCache PRIVATE libSceUserService libSceRtc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_http_cache_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttpCache.cpp)
+    target_include_directories(guest_http_cache_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_http_cache_tests PRIVATE libSceHttpCache libSceUserService libSceRtc libc)
+    configure_windows_unwind(guest_http_cache_tests)
+    add_test(NAME guest_http_cache COMMAND guest_http_cache_tests)
+    if(WIN32)
+        set_tests_properties(guest_http_cache PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRtc>")
+    endif()
+endif()

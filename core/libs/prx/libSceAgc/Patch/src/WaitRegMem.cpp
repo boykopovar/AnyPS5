@@ -45,34 +45,29 @@ extern "C" {
 int APS5_VABI sceAgcWaitRegMemPatchAddress(std::uint32_t* cmd, const volatile void* address) {
     auto* wait = Agc::Command::ValidateWait(cmd, __func__);
     const auto guestAddress = reinterpret_cast<std::uintptr_t>(address);
-    const auto alignment = ((wait[0] >> 8u) & 0xffu) == 0x3cu ? 4u : 8u;
-    Agc::Command::CheckAddress(guestAddress, alignment, __func__);
-    Agc::Command::CheckBits(guestAddress, 0xffffffffffffull, __func__);
-    cmd[2] = (cmd[2] & 0xffff0000u) | static_cast<std::uint32_t>(guestAddress >> 32u);
+    const auto lowMask = ((wait[0] >> 8u) & 0xffu) == 0x3cu ? 3u : 7u;
+    cmd[2] = (cmd[2] & 0xffff0000u) | (static_cast<std::uint32_t>(guestAddress >> 32u) & 0xffffu);
     cmd[3] = static_cast<std::uint32_t>(guestAddress);
-    wait[2] = static_cast<std::uint32_t>(guestAddress);
-    wait[3] = static_cast<std::uint32_t>(guestAddress >> 32u);
+    wait[2] = (static_cast<std::uint32_t>(guestAddress) & ~lowMask) | (wait[2] & lowMask);
+    wait[3] = (static_cast<std::uint32_t>(guestAddress >> 32u) & 0x3ffffu) | (wait[3] & 0xfffc0000u);
     return 0;
 }
 
-int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint64_t reference) {
+int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint32_t reference) {
     auto* wait = Agc::Command::ValidateWait(cmd, __func__);
-    Agc::Command::CheckBits(reference, 0xffffffffu, __func__);
     wait[4] = static_cast<std::uint32_t>(reference);
     return 0;
 }
 
-int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint64_t mask) {
+int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint32_t mask) {
     auto* wait = Agc::Command::ValidateWait(cmd, __func__);
-    Agc::Command::CheckBits(mask, 0xffffffffu, __func__);
     wait[((wait[0] >> 8u) & 0xffu) == 0x3cu ? 5 : 6] = static_cast<std::uint32_t>(mask);
     return 0;
 }
 
 int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint8_t compareFunction) {
     auto* wait = Agc::Command::ValidateWait(cmd, __func__);
-    Agc::Command::Require(compareFunction <= 6, __func__, "invalid wait comparison");
-    wait[1] = (wait[1] & ~7u) | compareFunction;
+    wait[1] = (wait[1] & ~7u) | (compareFunction & 7u);
     return 0;
 }
 

@@ -684,6 +684,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const std
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false};
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();

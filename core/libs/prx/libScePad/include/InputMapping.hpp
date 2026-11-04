@@ -26,6 +26,10 @@ struct InputSettings {
     double mouseMaxSpeed = 1.0;
     double mouseSmoothingMs = 10.0;
     double mouseDecayMs = 30.0;
+    double stickModifierScale = 0.5;
+    double keyboardRampMs = 0.0;
+    double triggerRampMs = 0.0;
+    bool mouseControlsRightStick = true;
 };
 
 struct InputConfiguration {
@@ -35,6 +39,12 @@ struct InputConfiguration {
 
 inline constexpr std::array InputMapping{
     InputBinding{SDL_SCANCODE_F11, MouseButton::None, InputControl::ToggleFullscreen},
+    InputBinding{SDL_SCANCODE_F10, MouseButton::None, InputControl::TogglePerformanceOverlay},
+    InputBinding{SDL_SCANCODE_F12, MouseButton::None, InputControl::Screenshot},
+    InputBinding{SDL_SCANCODE_F9, MouseButton::None, InputControl::ShowPadStatus},
+    InputBinding{SDL_SCANCODE_F5, MouseButton::None, InputControl::VolumeDown},
+    InputBinding{SDL_SCANCODE_F6, MouseButton::None, InputControl::VolumeUp},
+    InputBinding{SDL_SCANCODE_F8, MouseButton::None, InputControl::ToggleMute},
     InputBinding{SDL_SCANCODE_RETURN, MouseButton::None, InputControl::Button, PadButton::Cross},
     InputBinding{SDL_SCANCODE_SPACE, MouseButton::None, InputControl::Button, PadButton::Cross},
     InputBinding{SDL_SCANCODE_ESCAPE, MouseButton::None, InputControl::Button, PadButton::Options},
@@ -42,6 +52,7 @@ inline constexpr std::array InputMapping{
     InputBinding{SDL_SCANCODE_C, MouseButton::None, InputControl::Button, PadButton::Circle},
     InputBinding{SDL_SCANCODE_Q, MouseButton::None, InputControl::Button, PadButton::L1},
     InputBinding{SDL_SCANCODE_E, MouseButton::None, InputControl::Button, PadButton::R1},
+    InputBinding{SDL_SCANCODE_R, MouseButton::None, InputControl::Button, PadButton::L2},
     InputBinding{SDL_SCANCODE_LALT, MouseButton::None, InputControl::Button, PadButton::R1},
     InputBinding{SDL_SCANCODE_RALT, MouseButton::None, InputControl::Button, PadButton::R1},
     InputBinding{SDL_SCANCODE_LSHIFT, MouseButton::None, InputControl::Button, PadButton::L3},
@@ -62,9 +73,12 @@ inline constexpr std::array InputMapping{
     InputBinding{SDL_SCANCODE_G, MouseButton::None, InputControl::RightStickDown},
     InputBinding{SDL_SCANCODE_BACKSPACE, MouseButton::None, InputControl::TouchLeft},
     InputBinding{SDL_SCANCODE_TAB, MouseButton::None, InputControl::TouchRight},
+    InputBinding{SDL_SCANCODE_F7, MouseButton::None, InputControl::ToggleMouse},
+    InputBinding{SDL_SCANCODE_X, MouseButton::None, InputControl::Shake},
     InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::Middle, InputControl::ToggleMouse},
     InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::Left, InputControl::Button, PadButton::Square},
     InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::Right, InputControl::Button, PadButton::R2},
+    InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::X1, InputControl::Button, PadButton::L2},
     InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::None, InputControl::Button, PadButton::Up, 1},
     InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::None, InputControl::Button, PadButton::Down, -1}
 };

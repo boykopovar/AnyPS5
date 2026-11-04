@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <chrono>
@@ -10,40 +12,6 @@ struct Timeval {
     std::int64_t seconds;
     std::int64_t microseconds;
 };
-
-struct Iovec {
-    void* base;
-    std::uint64_t length;
-};
-
-struct Msghdr {
-    void* name;
-    std::uint32_t nameLength;
-    Iovec* iov;
-    int iovLength;
-    void* control;
-    std::uint32_t controlLength;
-    int flags;
-};
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int APS5_VABI getsockopt_nid_postfix(int, int, int, void*, std::uint32_t*);
-int APS5_VABI close_nid_postfix(int);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
-std::int64_t APS5_VABI recvmsg_nid_postfix(int, Msghdr*, int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -115,17 +83,15 @@ int main() {
     Require(Fails(recv_nid_postfix(datagram, &byte, sizeof(byte), 0), WouldBlock));
     Require(Clock::now() - started >= std::chrono::milliseconds(59));
     Require(Fails(recvfrom_nid_postfix(datagram, &byte, sizeof(byte), 0, nullptr, nullptr), WouldBlock));
-    Iovec part{&byte, sizeof(byte)};
-    Msghdr message{nullptr, 0, &part, 1, nullptr, 0, 0};
+    KernelIovec part{&byte, sizeof(byte)};
+    GuestMsghdr message{nullptr, 0, &part, 1, nullptr, 0, 0};
     Require(Fails(recvmsg_nid_postfix(datagram, &message, 0), WouldBlock));
     Require(Fails(read_nid_postfix(datagram, &byte, sizeof(byte)), WouldBlock));
-#ifndef _WIN32
     Require(Set(datagram, ReceiveTimeout, 60, 0) == 0);
     Require(Fails(recv_nid_postfix(datagram, &byte, sizeof(byte), DontWait), WouldBlock));
     Require(Fails(recvfrom_nid_postfix(datagram, &byte, sizeof(byte), DontWait, nullptr, nullptr), WouldBlock));
     Require(Fails(recvmsg_nid_postfix(datagram, &message, DontWait), WouldBlock));
     Require(Set(datagram, ReceiveTimeout, 0, 60000) == 0);
-#endif
     Require(sendto_nid_postfix(datagram, "d", 1, 0, own.data(), own.size()) == 1);
     Require(recv_nid_postfix(datagram, &byte, sizeof(byte), 0) == 1 && byte == 'd');
 

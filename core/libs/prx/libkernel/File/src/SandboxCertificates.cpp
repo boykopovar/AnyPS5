@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <array>
@@ -8,6 +9,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 #ifdef _WIN32
@@ -20,10 +22,36 @@
 #include <unistd.h>
 #endif
 
-extern "C" const char* APS5_VABI sceKernelGetFsSandboxRandomWord();
-
 namespace {
 constexpr char CertificateBegin[] = "-----BEGIN CERTIFICATE-----";
+constexpr char CertificateEnd[] = "-----END CERTIFICATE-----";
+
+std::string CertificateBlocksOnly(const std::string& bundle) {
+    const std::string_view begin(CertificateBegin);
+    const std::string_view end(CertificateEnd);
+    std::string certificates;
+    std::size_t certificateStart = 0;
+    bool inCertificate = false;
+    for (std::size_t lineStart = 0; lineStart < bundle.size();) {
+        const auto newline = bundle.find('\n', lineStart);
+        const auto lineEnd = newline == std::string::npos ? bundle.size() : newline;
+        auto line = std::string_view(bundle).substr(lineStart, lineEnd - lineStart);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+
+        if (line == begin) {
+            certificateStart = lineStart;
+            inCertificate = true;
+        } else if (line == end && inCertificate) {
+            const auto blockEnd = newline == std::string::npos ? lineEnd : newline + 1;
+            certificates.append(bundle, certificateStart, blockEnd - certificateStart);
+            inCertificate = false;
+        }
+
+        if (newline == std::string::npos) break;
+        lineStart = newline + 1;
+    }
+    return certificates;
+}
 
 std::optional<std::string> ReadFile(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
@@ -55,8 +83,8 @@ unsigned long ProcessId() { return static_cast<unsigned long>(getpid()); }
 #endif
 
 std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
-    const auto bundle = HostCertificates();
-    if (bundle.find(CertificateBegin) == std::string::npos) return {};
+    const auto bundle = CertificateBlocksOnly(HostCertificates());
+    if (bundle.empty()) return {};
     const auto directory = root / "cert_cache";
     std::filesystem::create_directories(directory);
     const auto target = directory / "CA_LIST.cer";
@@ -83,6 +111,8 @@ std::filesystem::path CertificateList(const std::filesystem::path& root) {
 
 const bool g_certificateListProvided = [] {
     AddPathProvider_nid_no_patch((std::string("/") + sceKernelGetFsSandboxRandomWord() + "/common/cert/CA_LIST.cer").c_str(), &CertificateList);
+    AddPathProvider_nid_no_patch("/system/common/cert/CA_LIST.cer", &CertificateList);
+    AddPathProvider_nid_no_patch("/common/cert/CA_LIST.cer", &CertificateList);
     return true;
 }();
 }

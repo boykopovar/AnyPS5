@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -32,6 +33,18 @@ class OwnBranchTests(unittest.TestCase):
                 self.assertEqual(set(pr_overlap.own(prs, b)), {9})
             finally:
                 os.chdir(old)
+
+    def test_scans_all_pull_requests_with_a_bounded_worker_pool(self):
+        prs = {number: {"sha": str(number)} for number in range(1, 9)}
+        scanned = []
+
+        def scan(pr):
+            scanned.append(pr["sha"])
+
+        with patch.object(pr_overlap, "scan", side_effect=scan):
+            pr_overlap.scan_all(prs, 3)
+
+        self.assertCountEqual(scanned, [str(number) for number in prs])
 
 
 if __name__ == "__main__":

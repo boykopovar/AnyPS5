@@ -1,5 +1,5 @@
 # libScePngEnc technical debt
 
-### Unknown function info
+### Functional
 
-- [scePngEncEncode](../../../core/libs/prx/libScePngEnc/Export.cpp) (libScePngEnc) - whether rows may stay unfiltered when `filter_type` names a subset of the filters is unknown; as in shadPS4, they may only for 0 and for the all-filters mask
+- [scePngEncEncode](../../../core/libs/prx/libScePngEnc/Export.cpp): native filter setup always includes the unfiltered candidate, including for partial masks. The host now permits it too; exact filter-selection ties, compressed bytes and partial-output behavior are not matched to the native encoder. Creation validation, work-memory size, 16-byte handle alignment and the context prefix now match the supplied module. Input-buffer alignment, pitch, dimensions, buffer capacity and selected-filter count now follow the native checks. Host scratch storage remains separately allocated.

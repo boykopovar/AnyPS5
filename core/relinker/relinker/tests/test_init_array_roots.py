@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import struct
 import subprocess
 import sys
@@ -6,6 +7,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_jmprel_table_bounds import fixture, DT_RELA, DT_RELASZ
+from test_guest_symbol_names import DYNAMIC as STRICT_DYNAMIC, importing_executable
 
 
 DT_INIT_ARRAY = 25
@@ -40,7 +42,7 @@ def image(array_tag=None, array_size_tag=None, array_va=0, slots=(), relative=()
     elf[0x200] = 0xC3
     elf[FUNCTION:FUNCTION + 8] = b"\x48\x8b\x05" + struct.pack("<i", GOT_SLOT - (FUNCTION + 7)) + b"\xc3"
     if array_tag is not None:
-        tags = [(array_tag, array_va), (array_size_tag, 8 * len(slots)), (0, 0)]
+        tags = [(array_tag, array_va)] + ([(array_size_tag, 8 * len(slots))] if array_size_tag is not None else []) + [(0, 0)]
         for index, tag in enumerate(tags):
             struct.pack_into("<qQ", elf, DYNAMIC + 13 * 16 + index * 16, *tag)
         struct.pack_into("<Q", elf, 120 + 32, 16 * 16)
@@ -72,6 +74,52 @@ def filtered(relinker, work, name, elf):
     return lines[0]
 
 
+def strict_array_metadata(relinker, work):
+    families = ((25, 27), (26, 28), (32, 33), (0x60000019, 0x6000001B),
+                (0x6000001A, 0x6000001C), (0x60000020, 0x60000021))
+    slot = 0x4E00
+    outside = 0xFFFFFFFFFFFFFFF0
+    for address_tag, size_tag in families:
+        cases = (
+            ("missing-size", [(address_tag, outside)], None),
+            ("zero-size", [(address_tag, outside), (size_tag, 0)], None),
+            ("nonempty", [(address_tag, slot), (size_tag, 8)], None),
+            ("size-only-zero", [(size_tag, 0)], "incomplete constructor array metadata"),
+            ("size-only-nonzero", [(size_tag, 8)], "incomplete constructor array metadata"),
+            ("partial-entry", [(address_tag, slot), (size_tag, 7)], "invalid constructor array size"),
+            ("unmapped", [(address_tag, outside), (size_tag, 8)], "virtual range is not file-backed"),
+        )
+        for name, extra, error in cases:
+            elf = importing_executable([])
+            dynamic_size, = struct.unpack_from("<Q", elf, 152)
+            tags = [(0x6100003F, 24), *extra, (0, 0)]
+            for index, tag in enumerate(tags):
+                struct.pack_into("<qQ", elf, STRICT_DYNAMIC + dynamic_size - 16 + index * 16, *tag)
+            struct.pack_into("<QQ", elf, 152, dynamic_size + (len(tags) - 1) * 16,
+                             dynamic_size + (len(tags) - 1) * 16)
+            elf[0x4020:0x4026] = b"\xb8\x11\x00\x00\x00\xc3"
+            struct.pack_into("<Q", elf, slot, 0x4020)
+            source = work / f"strict-{address_tag:x}-{name}.elf"
+            source.write_bytes(elf)
+            for windows in (False, True):
+                output = source.with_suffix(".exe" if windows else ".out")
+                result = subprocess.run([str(relinker), "--skip-sce-module", "unused-filter=2",
+                                         *(["--windows"] if windows else []), str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                assert source.read_bytes() == elf, (name, "input changed")
+                if error is not None:
+                    assert result.returncode == 2 and error in result.stderr and not output.exists(), (
+                        address_tag, name, windows, result.stdout, result.stderr)
+                else:
+                    assert result.returncode == 0 and output.exists(), (
+                        address_tag, name, windows, result.stdout, result.stderr)
+                    assert "Strict filtering total: 0 -> 0; filtered=0" in result.stdout, result.stdout
+                    live_regions = 2 if name == "nonempty" else 1
+                    assert f"Function graph: {live_regions}/" in result.stdout, result.stdout
+                    if windows and os.name == "nt":
+                        assert subprocess.run([str(output)], capture_output=True, timeout=20).returncode == 42
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-init-array-") as directory:
@@ -82,6 +130,8 @@ def main():
             ("init-after-dynamic", image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, AFTER_DYNAMIC, [FUNCTION]), KEPT),
             ("init-os-tags", image(DT_OS_INIT_ARRAY, DT_OS_INIT_ARRAYSZ, BEFORE_DYNAMIC, [FUNCTION]), KEPT),
             ("init-second-slot", image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, BEFORE_DYNAMIC, [0, FUNCTION]), KEPT),
+            ("init-without-size", image(DT_INIT_ARRAY, None, BEFORE_DYNAMIC, [FUNCTION]), DROPPED),
+            ("init-without-size-unread", image(DT_INIT_ARRAY, None, BEFORE_DYNAMIC, [0x7FFF0000]), DROPPED),
             ("init-terminators", image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, BEFORE_DYNAMIC, [(1 << 64) - 1, 0]), DROPPED),
             ("init-relative-addend", image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, BEFORE_DYNAMIC, [0],
                                            [(BEFORE_DYNAMIC, FUNCTION)]), KEPT),
@@ -103,6 +153,7 @@ def main():
                              image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, LOAD_END + 0x100, [FUNCTION], load_size=LOAD_END))
         assert result.returncode == 2 and "array is not file-backed" in result.stderr and not output.exists(), (
             result.returncode, result.stdout, result.stderr)
+        strict_array_metadata(relinker, work)
     print("Init array root tests passed")
 
 

@@ -1,0 +1,104 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+union NetCtlInfoV6;
+struct NetCtlConnectionConfiguration;
+struct NetCtlScanOptions;
+struct NetCtlScanBssidList;
+struct NetCtlScanInfo;
+struct NetCtlNatInfoInternal;
+struct NetCtlBandwidthInfo;
+struct NetCtlNetEvConfiguration;
+struct NetBweInfo;
+struct NetCtlWifiInfo;
+
+extern "C" {
+
+int APS5_VABI sceNetCtlCheckCallback(void);
+int APS5_VABI sceNetCtlGetIfStat(NetCtlIfStat* stat);
+int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info);
+int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info);
+int APS5_VABI sceNetCtlGetResult(int event, int* result);
+int APS5_VABI sceNetCtlGetState(int* state);
+int APS5_VABI sceNetCtlGetStateV6(int* state);
+int APS5_VABI sceNetCtlInit(void);
+int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback func, void* arg, int* cid);
+int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback func, void* arg, int* cid);
+int APS5_VABI sceNetCtlGetInfoV6(std::uint32_t code, NetCtlInfoV6* info);
+void APS5_VABI sceNetCtlTerm(void);
+int APS5_VABI sceNetCtlUnregisterCallback(int cid);
+int APS5_VABI sceNetCtlUnregisterCallbackV6(int cid);
+int APS5_VABI sceNetCtlRegisterCallbackForNpToolkit(NetCtlCallback callback, void* argument, int* callbackId);
+int APS5_VABI sceNetCtlRegisterCallbackIpcInt(NetCtlCallback callback, void* argument, int* callbackId);
+int APS5_VABI sceNetCtlRegisterCallbackForLibIpcInt(NetCtlCallback callback, void* argument, int* callbackId);
+int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int callbackId);
+int APS5_VABI sceNetCtlUnregisterCallbackIpcInt(int callbackId);
+int APS5_VABI sceNetCtlUnregisterCallbackForLibIpcInt(int callbackId);
+int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void);
+int APS5_VABI sceNetCtlCheckCallbackForLibIpcInt(void);
+int APS5_VABI sceNetCtlClearEventIpcInt(int event);
+int APS5_VABI sceNetCtlClearEventForNpToolkit(int event);
+int APS5_VABI sceNetCtlClearEventForLibIpcInt(int event);
+int APS5_VABI sceNetCtlGetResultIpcInt(int event, int* result);
+int APS5_VABI sceNetCtlGetStateIpcInt(int* state);
+int APS5_VABI sceNetCtlGetState2IpcInt(int* state);
+int APS5_VABI sceNetCtlGetInfoIpcInt(std::uint32_t code, NetCtlInfo* info);
+int APS5_VABI sceNetCtlGetEtherLinkMode(int* mode);
+int APS5_VABI sceNetCtlGetWifiType(int* type);
+int APS5_VABI sceNetCtlConnectIpcInt(void);
+int APS5_VABI sceNetCtlConnectWithRetryIpcInt(void);
+int APS5_VABI sceNetCtlConnectConfIpcInt(const NetCtlConnectionConfiguration* configuration);
+int APS5_VABI sceNetCtlDisconnectIpcInt(void);
+int APS5_VABI sceNetCtlScanIpcInt(const char* const* ssids, std::uint32_t count, const NetCtlScanOptions* options);
+int APS5_VABI sceNetCtlGetScanInfoBssidIpcInt(NetCtlScanBssidList* bssids, std::uint32_t capacity);
+int APS5_VABI sceNetCtlGetScanInfoByBssidIpcInt(const std::uint8_t* bssid, NetCtlScanInfo* info, void* buffer, std::size_t* size);
+int APS5_VABI sceNetCtlGetScanInfoForSsidScanIpcInt(NetCtlScanInfo* info, void* buffer, std::size_t* size);
+int APS5_VABI sceNetCtlGetScanInfoBssidForSsidListScanIpcInt(NetCtlScanBssidList* bssids, std::uint32_t capacity);
+int APS5_VABI sceNetCtlGetScanInfoForSsidListScanIpcInt(const std::uint8_t* bssid, NetCtlScanInfo* info, void* buffer, std::size_t* size);
+int APS5_VABI sceNetCtlSetErrorNotificationEnabledIpcInt(int enabled);
+int APS5_VABI sceNetCtlRegisterCallbackV6IpcInt(NetCtlCallback callback, void* argument, int* callbackId);
+int APS5_VABI sceNetCtlUnregisterCallbackV6IpcInt(int callbackId);
+int APS5_VABI sceNetCtlGetResultV6(int eventType, int* errorCode);
+int APS5_VABI sceNetCtlGetResultV6IpcInt(int event, int* result);
+int APS5_VABI sceNetCtlGetStateV6IpcInt(int* state);
+int APS5_VABI sceNetCtlGetInfoV6IpcInt(std::uint32_t code, NetCtlInfoV6* info);
+int APS5_VABI sceNetCtlGetNatInfoIpcInt(NetCtlNatInfoInternal* info);
+int APS5_VABI sceNetCtlSetStunWithPaddingFlagIpcInt(void);
+int APS5_VABI sceNetCtlUnsetStunWithPaddingFlagIpcInt(void);
+int APS5_VABI sceNetCtlIsBandwidthManagementEnabledIpcInt(void);
+int APS5_VABI sceNetCtlDisableBandwidthManagementIpcInt(void);
+int APS5_VABI sceNetCtlEnableBandwidthManagementIpcInt(void);
+int APS5_VABI sceNetCtlGetBandwidthInfoIpcInt(NetCtlBandwidthInfo* info);
+int APS5_VABI sceNetCtlGetNetEvConfigInfoIpcInt(NetCtlNetEvConfiguration* configuration);
+int APS5_VABI sceNetCtlGetConnectionElapsedTimeIpcInt(std::uint64_t* elapsedTime);
+int APS5_VABI sceNetCtlApRpCheckCallback(void);
+int APS5_VABI sceNetCtlApRpClearEvent(void);
+int APS5_VABI sceNetCtlApRpRegisterCallback(void);
+int APS5_VABI sceNetCtlApRpUnregisterCallback(void);
+int APS5_VABI sceNetCtlApRpGetResult(void);
+int APS5_VABI sceNetCtlApRpGetState(void);
+int APS5_VABI sceNetCtlApRpGetInfo(void);
+int APS5_VABI sceNetCtlApRpStart(void);
+int APS5_VABI sceNetCtlApCpStart(void);
+int APS5_VABI sceNetCtlApAppStartWithRetryPid(std::int32_t processId, const char* passcode);
+int APS5_VABI sceNetCtlApAppStartWithRetry(const char* passcode);
+int APS5_VABI sceNetCtlApRpStartWithRetry(void);
+int APS5_VABI sceNetCtlApRpStartConf(void);
+int APS5_VABI sceNetCtlApRpStop(void);
+int APS5_VABI sceNetCtlApCpStop(void);
+int APS5_VABI sceNetCtlApAppInitWpaKey(void);
+int APS5_VABI sceNetCtlApAppInitWpaKeyForQa(std::uint8_t mode);
+int APS5_VABI sceNetCtlApRestart(void);
+int APS5_VABI sceNetBweCheckCallbackIpcInt(void);
+int APS5_VABI sceNetBweClearEventIpcInt(int event);
+int APS5_VABI sceNetBweRegisterCallbackIpcInt(NetCtlCallback callback, void* argument, int* callbackId);
+int APS5_VABI sceNetBweUnregisterCallbackIpcInt(int callbackId);
+int APS5_VABI sceNetBweGetInfoIpcInt(NetBweInfo* info);
+int APS5_VABI sceNetBweStartInternetConnectionTestIpcInt(void);
+int APS5_VABI sceNetBweFinishInternetConnectionTestIpcInt(void);
+int APS5_VABI sceNetBweStartInternetConnectionTestBandwidthTestIpcInt(void);
+int APS5_VABI sceNetBweSetInternetConnectionTestResultIpcInt(std::int32_t firstResult, std::int32_t secondResult);
+int APS5_VABI sceNetCtlGetWifiInfoIpcInt(NetCtlWifiInfo* info);
+
+}

@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SHADERS_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "Recompiler.hpp"
 #include <array>
 #include <cstddef>
@@ -37,6 +38,7 @@ struct CompiledShader {
     ShaderRecompiler::ShaderStage stage;
     const ShaderRecompiler::RecompileResult* program;
     std::uint32_t pushConstantOffset;
+    const std::vector<ShaderRecompiler::RegisteredImageView>* registeredImageViews = nullptr;
 };
 
 inline VkShaderStageFlagBits VulkanStage(ShaderRecompiler::ShaderStage stage) {
@@ -73,7 +75,7 @@ inline VkShaderStageFlags PushConstantStages(std::span<const CompiledShader> sha
     VkShaderStageFlags result = 0;
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
-        if (!shader.program->pushConstants.empty() || shader.stage == ShaderRecompiler::ShaderStage::Mesh || shader.stage == ShaderRecompiler::ShaderStage::TessellationControl) result |= VulkanStage(shader.stage);
+        if (!shader.program->pushConstants.empty() || shader.program->readsDepthRemapPush || shader.stage == ShaderRecompiler::ShaderStage::Mesh || shader.stage == ShaderRecompiler::ShaderStage::TessellationControl) result |= VulkanStage(shader.stage);
     }
     return result;
 }

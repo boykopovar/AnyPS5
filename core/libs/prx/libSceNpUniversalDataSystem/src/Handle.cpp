@@ -1,3 +1,4 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include "NpUniversalDataSystem.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"

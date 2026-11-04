@@ -7,9 +7,24 @@ namespace AgcDriver::DriverDetail {
 void Driver::classifyDiffering(std::uint64_t program, std::uint64_t key, const DispatchVariant& old, const DispatchVariant& fresh, const ShaderRecompiler::ResourceCapture* capture, EntryCounters& counters) {
     ++counters.differingClassified;
     ++counters.differingByProgram[program];
+    const auto valueSet = [](const DispatchVariant& variant) {
+        std::uint64_t hash = 0xcbf29ce484222325ull;
+        const auto mix = [&](std::uint64_t value) {
+            hash ^= value;
+            hash *= 0x100000001b3ull;
+        };
+        mix(variant.runs.size());
+        for (const auto& [begin, end] : variant.runs) {
+            mix(begin);
+            mix(end);
+        }
+        mix(variant.words.size());
+        for (const auto word : variant.words) mix(word);
+        return hash;
+    };
     auto& ring = priorValueSets[key];
-    if (std::any_of(ring.begin(), ring.end(), [&](const ValueSet& set) { return set.first == fresh.runs && set.second == fresh.words; })) ++counters.differingMatchedPrior;
-    ring.emplace_front(old.runs, old.words);
+    if (std::find(ring.begin(), ring.end(), valueSet(fresh)) != ring.end()) ++counters.differingMatchedPrior;
+    ring.push_front(valueSet(old));
     while (ring.size() > 3) ring.pop_back();
     if (priorValueSets.size() > dispatchCacheEntries()) priorValueSets.clear();
     if (old.runs != fresh.runs || old.words.size() != fresh.words.size()) {

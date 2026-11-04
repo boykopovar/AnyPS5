@@ -1,4 +1,5 @@
 #include "Pm4Analysis.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -14,15 +15,15 @@ int usage() {
     return 2;
 }
 
-}
-
-int main(int argc, char** argv) {
+template <typename TChar>
+int run(int argc, TChar** argv) {
+    constexpr std::string_view Full = "--full";
     std::filesystem::path directory;
     bool full = false;
     for (int index = 1; index < argc; ++index) {
-        const std::string_view argument = argv[index];
-        if (argument == "--full") full = true;
-        else if (!argument.starts_with("-") && directory.empty()) directory = argument;
+        const std::basic_string_view<TChar> argument = argv[index];
+        if (std::ranges::equal(argument, Full)) full = true;
+        else if (!argument.starts_with(TChar('-')) && directory.empty()) directory = argument;
         else return usage();
     }
     if (directory.empty()) return usage();
@@ -33,3 +34,15 @@ int main(int argc, char** argv) {
         return 2;
     }
 }
+
+}
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+    return run(argc, argv);
+}
+#else
+int main(int argc, char** argv) {
+    return run(argc, argv);
+}
+#endif

@@ -1,3 +1,4 @@
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
 #include <cerrno>
@@ -7,8 +8,6 @@
 #include <cstring>
 #include <source_location>
 #include <thread>
-
-extern "C" GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char*, const char*);
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {

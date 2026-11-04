@@ -18,6 +18,7 @@ using ShaderRecompiler::ShaderStage;
 constexpr std::uint32_t Width = 192;
 constexpr std::uint32_t Height = 128;
 constexpr std::uint32_t DistanceVector = 0x00400000u;
+constexpr std::uint32_t CullDistanceEnables = 0x0000ff00u;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 10> VertexCode{
@@ -129,9 +130,10 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const Row& ro
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
+    const std::vector<std::uint32_t> pixelUserData(4, 0u);
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
-        {waveSize, 0, std::vector<std::uint32_t>(4, 0u), std::nullopt, pixel, std::nullopt, pixelMemory},
+        {waveSize, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         device.Target(),
         PixelPushLayout(vertexPush, device.Target())
     };
@@ -184,14 +186,19 @@ int main() {
             std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
             return VulkanTestSkipped;
         }
+        const bool cullDistance = TargetHasCapability(device->Target(), spv::CapabilityCullDistance);
+        if (!cullDistance) std::puts("cull distance cases skipped, the device has no shaderCullDistance");
+        const auto runs = [&](const Row& row) { return cullDistance || (row.control & CullDistanceEnables) == 0u; };
         for (const auto waveSize : {64u, 32u}) {
             for (const auto& row : Rows) {
+                if (!runs(row)) continue;
                 Draw(*device, waveSize, row, false);
                 Check(row, waveSize, false);
             }
         }
         if (device->Target().mesh.has_value()) {
             for (const auto& row : Rows) {
+                if (!runs(row)) continue;
                 Draw(*device, 64u, row, true);
                 Check(row, 64u, true);
             }

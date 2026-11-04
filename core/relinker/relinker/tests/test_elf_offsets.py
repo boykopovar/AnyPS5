@@ -36,6 +36,21 @@ def main():
                                         capture_output=True, text=True, timeout=20)
                 error = "Invalid ELF program header entry size: expected 56 bytes (offset 0x36)"
                 assert result.returncode == 2 and error in result.stderr and not output.exists(), (size, mode, result)
+        for offset in (0xff8, 0xff9, 0x1000, 0x1001, 0xfffffffffffffffc, 0xffffffffffffffff):
+            source = Path(directory) / f"tls-file-offset-{offset:x}.elf"
+            data = fixture()
+            struct.pack_into("<H", data, 0x38, 3)
+            struct.pack_into("<IIQQQQQQ", data, 176, 7, 4, offset, 0xff8, 0xff8, 8, 16, 1)
+            source.write_bytes(data)
+            for target, mode in (("linux", []), ("windows", ["--windows"]), ("macos", ["--macos"])):
+                output = source.with_suffix(f".{target}")
+                result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                if offset == 0xff8:
+                    assert result.returncode == 0 and output.is_file(), (offset, mode, result)
+                else:
+                    error = f"PT_TLS initialization image is outside the file (offset 0x{offset:x})"
+                    assert result.returncode == 2 and error in result.stderr and not output.exists(), (offset, mode, result)
     print("ELF offset tests passed")
 
 

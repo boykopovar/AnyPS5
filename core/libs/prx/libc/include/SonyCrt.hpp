@@ -15,20 +15,22 @@
 #include <stdexcept>
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-extern "C" GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
+extern "C" {
+GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
+extern FileStream* __stderrp_nid_postfix;
+}
 
-namespace {
+using SonyConstraintHandler = void (APS5_VABI *)(const char* message, void* pointer, int error);
 
-using SonyConstraintHandler = void (*)(const char* message, void* pointer, int error);
-
-inline void SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
-    (void)message;
+inline void APS5_VABI SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
     (void)pointer;
     (void)error;
-    std::abort();
+    fputs_nid_postfix(message, __stderrp_nid_postfix);
+    fputc_nid_postfix('\n', __stderrp_nid_postfix);
 }
 
 inline std::mutex& SonyConstraintMutex() {
@@ -39,6 +41,22 @@ inline std::mutex& SonyConstraintMutex() {
 inline SonyConstraintHandler& SonyConstraintHandlerSlot() {
     static SonyConstraintHandler handler = SonyDefaultConstraintHandler;
     return handler;
+}
+
+namespace {
+
+template<typename TInteger>
+inline TInteger ParseInteger(const char* text, char** end, int base, TInteger (*parse)(const char*, char**, int)) {
+#ifdef __APPLE__
+    const int saved = errno;
+    char* parsedEnd = nullptr;
+    const TInteger value = parse(text, &parsedEnd, base);
+    if (parsedEnd == text && errno == EINVAL && (base == 0 || (base >= 2 && base <= 36))) errno = saved;
+    if (end != nullptr) *end = parsedEnd;
+    return value;
+#else
+    return parse(text, end, base);
+#endif
 }
 
 inline void SonyInvokeConstraintHandler(const char* message, void* pointer, int error) {
@@ -74,21 +92,39 @@ inline int SonyFormatAsctime(char* buffer, std::size_t size, const GuestTm& time
     static const char* const days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     static const char* const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     if (!buffer || size < 26) return EINVAL;
-    if (time.tm_wday < 0 || time.tm_wday > 6 || time.tm_mon < 0 || time.tm_mon > 11) return EINVAL;
+    const std::int64_t year = std::int64_t{time.tm_year} + 1900;
+    if (time.tm_wday < 0 || time.tm_wday > 6 || time.tm_mon < 0 || time.tm_mon > 11 ||
+        time.tm_mday < 1 || time.tm_mday > 31 || time.tm_hour < 0 || time.tm_hour > 23 ||
+        time.tm_min < 0 || time.tm_min > 59 || time.tm_sec < 0 || time.tm_sec > 60 ||
+        year < 0 || year > 9999) {
+        buffer[0] = '\0';
+        return EINVAL;
+    }
     std::snprintf(buffer, size, "%.3s %.3s %2d %.2d:%.2d:%.2d %4d\n", days[time.tm_wday], months[time.tm_mon],
-        time.tm_mday, time.tm_hour, time.tm_min, time.tm_sec, 1900 + time.tm_year);
+        time.tm_mday, time.tm_hour, time.tm_min, time.tm_sec, static_cast<int>(year));
     return 0;
 }
 
 inline int SonyCtimeS(char* buffer, std::size_t size, const std::int64_t* time) {
-    if (!buffer || size < 26 || !time) return EINVAL;
+    if (!buffer || size < 26) return EINVAL;
+    if (!time) {
+        buffer[0] = '\0';
+        return EINVAL;
+    }
     GuestTm parts{};
-    if (!localtime_s_nid_postfix(time, &parts)) return EINVAL;
+    if (!localtime_s_nid_postfix(time, &parts)) {
+        buffer[0] = '\0';
+        return EINVAL;
+    }
     return SonyFormatAsctime(buffer, size, parts);
 }
 
 inline int SonyAsctimeS(char* buffer, std::size_t size, const GuestTm* time) {
-    if (!buffer || size < 26 || !time) return EINVAL;
+    if (!buffer || size < 26) return EINVAL;
+    if (!time) {
+        buffer[0] = '\0';
+        return EINVAL;
+    }
     return SonyFormatAsctime(buffer, size, *time);
 }
 
@@ -105,22 +141,91 @@ inline void* SonySetConstraintHandlerS(void* handler) {
     return previous;
 }
 
-inline int SonyWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
-    if (!dest || !src || size == 0) {
-        SonyInvokeConstraintHandler("wcscpy_s", dest, EINVAL);
-        return EINVAL;
+constexpr std::size_t SonyRsizeMax = (std::size_t{1} << 61) - 1;
+
+inline int SonySafeViolation(const char* function, const char* reason, int error) {
+    char message[64];
+    std::snprintf(message, sizeof(message), "%s: %s", function, reason);
+    SonyInvokeConstraintHandler(message, nullptr, error);
+    return error;
+}
+
+template<typename TChar>
+bool SonySafeOverlaps(const TChar* first, std::size_t firstCount, const TChar* second, std::size_t secondCount) {
+    const auto left = reinterpret_cast<std::uintptr_t>(first);
+    const auto right = reinterpret_cast<std::uintptr_t>(second);
+    return left < right + secondCount * sizeof(TChar) && right < left + firstCount * sizeof(TChar);
+}
+
+template<typename TChar>
+int SonyCopyStringS(const char* function, TChar* dest, std::size_t destsz, const TChar* src, std::size_t count, bool counted) {
+    if (!dest || destsz == 0 || destsz > SonyRsizeMax) return SonySafeViolation(function, "bad destination argument", 22);
+    if (!src || (counted && count > SonyRsizeMax)) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "bad argument", 22);
     }
-    std::size_t i = 0;
-    while (i + 1 < size && src[i] != 0) {
-        dest[i] = src[i];
-        ++i;
+    std::size_t length = 0;
+    while (length < count && src[length] != 0) ++length;
+    if (length >= destsz) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "buffer too small", 34);
     }
-    dest[i] = 0;
-    if (src[i] != 0) {
-        SonyInvokeConstraintHandler("wcscpy_s", dest, ERANGE);
-        return ERANGE;
+    if (SonySafeOverlaps(dest, length + 1, src, length < count ? length + 1 : length)) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "buffer overlap", 22);
     }
+    std::memcpy(dest, src, length * sizeof(TChar));
+    dest[length] = 0;
     return 0;
+}
+
+template<typename TChar>
+int SonyAppendStringS(const char* function, TChar* dest, std::size_t destsz, const TChar* src, std::size_t count, bool counted, bool terminators) {
+    if (!dest || destsz == 0 || destsz > SonyRsizeMax) return SonySafeViolation(function, "bad destination argument", 22);
+    std::size_t used = 0;
+    while (used < destsz && dest[used] != 0) ++used;
+    if ((!counted && used == destsz) || !src || (counted && count > SonyRsizeMax)) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "bad argument", 22);
+    }
+    std::size_t length = 0;
+    while (length < count && src[length] != 0) ++length;
+    if (length >= destsz - used) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "buffer too small", 34);
+    }
+    const std::size_t written = terminators ? length + 1 : length;
+    const std::size_t read = terminators && length < count ? length + 1 : length;
+    if (SonySafeOverlaps(dest + used, written, src, read)) {
+        dest[0] = 0;
+        return SonySafeViolation(function, "buffer overlap", 22);
+    }
+    std::memcpy(dest + used, src, length * sizeof(TChar));
+    dest[used + length] = 0;
+    return 0;
+}
+
+template<typename TChar>
+int SonyCopyMemoryS(const char* function, TChar* dest, std::size_t destsz, const TChar* src, std::size_t count, bool overlapping) {
+    if (!dest || destsz > SonyRsizeMax) return SonySafeViolation(function, "bad destination argument", 22);
+    if (!src || count > SonyRsizeMax) {
+        std::memset(dest, 0, destsz * sizeof(TChar));
+        return SonySafeViolation(function, "bad argument", 22);
+    }
+    if (count > destsz) {
+        std::memset(dest, 0, destsz * sizeof(TChar));
+        return SonySafeViolation(function, "buffer too small", 34);
+    }
+    if (!overlapping && SonySafeOverlaps(dest, count, src, count)) {
+        std::memset(dest, 0, destsz * sizeof(TChar));
+        return SonySafeViolation(function, "buffer overlap", 22);
+    }
+    std::memmove(dest, src, count * sizeof(TChar));
+    return 0;
+}
+
+inline int SonyWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
+    return SonyCopyStringS("wcscpy_s", dest, size, src, SIZE_MAX, false);
 }
 
 inline std::size_t SonyMbstowcs(std::uint16_t* dest, const char* src, std::size_t size) {
@@ -224,6 +329,20 @@ inline __int128 SonyDivti3(__int128 dividend, __int128 divisor) {
         : (unsigned __int128)divisor;
     const unsigned __int128 magnitude = SonyUdivti3(magnitudeDividend, magnitudeDivisor);
     return (__int128)(negative ? (unsigned __int128)0 - magnitude : magnitude);
+}
+
+inline __int128 SonyModti3(__int128 dividend, __int128 divisor) {
+    if (divisor == 0) throw std::runtime_error("__modti3: integer divide by zero");
+    const bool negative = dividend < 0;
+    const unsigned __int128 magnitudeDividend = negative
+        ? (unsigned __int128)0 - (unsigned __int128)dividend
+        : (unsigned __int128)dividend;
+    const unsigned __int128 magnitudeDivisor = divisor < 0
+        ? (unsigned __int128)0 - (unsigned __int128)divisor
+        : (unsigned __int128)divisor;
+    unsigned __int128 remainder = 0;
+    SonyUdivmod128(magnitudeDividend, magnitudeDivisor, &remainder);
+    return (__int128)(negative ? (unsigned __int128)0 - remainder : remainder);
 }
 
 }
