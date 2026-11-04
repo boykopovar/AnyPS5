@@ -552,7 +552,7 @@ static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterPara
 }
 
 static Ngs2SamplerVoiceFilterParam SamplerFilterParam(const Ngs2VoiceParamHeader& param) {
-    if (!PS4_LIBRARY) {
+    if (!PS4_LIBRARY || param.size == sizeof(Ngs2SamplerVoiceFilterParam)) {
         if (param.size < sizeof(Ngs2SamplerVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
         return reinterpret_cast<const Ngs2SamplerVoiceFilterParam&>(param);
     }
