@@ -5,6 +5,7 @@
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/LegacySignals.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 
@@ -38,6 +39,10 @@ void APS5_VABI warn_nid_postfix(const char* format, ...);
 void APS5_VABI _warn_nid_postfix(const char* format, ...);
 void APS5_VABI warnx_nid_postfix(const char* format, ...);
 const char* APS5_VABI getprogname_nid_postfix();
+std::int32_t APS5_VABI _ZNKSt8messagesIwE4openERKSsRKSt6locale_nid_postfix(const GuestLocale::Facet* self, const GuestLocale::String* name, const GuestLocaleFacade* locale);
+GuestLocale::String* APS5_VABI _ZNKSt8messagesIwE3getEiiiRKSbIwSt11char_traitsIwESaIwEE_nid_postfix(GuestLocale::String* result, const GuestLocale::Facet* self, std::int32_t catalog, std::int32_t set, std::int32_t message, const GuestLocale::String* dfault);
+void APS5_VABI _ZNKSt8messagesIwE5closeEi_nid_postfix(const GuestLocale::Facet* self, std::int32_t catalog);
+GuestLocale::String* APS5_VABI _ZNKSt8messagesIwE6do_getEiiiRKSbIwSt11char_traitsIwESaIwEE_nid_postfix(GuestLocale::String* result, const GuestLocale::Facet* self, std::int32_t catalog, std::int32_t set, std::int32_t message, const GuestLocale::String* dfault);
 const char* APS5_VABI _getprogname_nid_postfix();
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle);
 void APS5_VABI sceLibcHeapGetTraceInfo_nid_postfix(Info* info);

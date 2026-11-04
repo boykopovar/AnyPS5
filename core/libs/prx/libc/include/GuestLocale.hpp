@@ -6,6 +6,7 @@
 #include "general/VabiMacros.hpp"
 
 struct GuestTm;
+struct GuestLocaleFacade;
 
 namespace GuestLocale {
 
@@ -104,6 +105,13 @@ struct CodecvtVtable {
     std::size_t (APS5_VABI *length)(Facet* self, std::uint64_t* state, const char* first1, const char* last1, std::size_t count);
 };
 
+struct MessagesVtable {
+    FacetVtable facet;
+    std::int32_t (APS5_VABI *open)(const Facet* self, const String* name, const GuestLocaleFacade* locale);
+    String* (APS5_VABI *get)(String* result, const Facet* self, std::int32_t catalog, std::int32_t set, std::int32_t message, const String* dfault);
+    void (APS5_VABI *close)(const Facet* self, std::int32_t catalog);
+};
+
 struct NumpunctFacet {
     Facet base;
     const char* grouping;
@@ -121,6 +129,9 @@ struct NumpunctVtable {
     String* (APS5_VABI *falsename)(String* result, const NumpunctFacet* self);
     String* (APS5_VABI *truename)(String* result, const NumpunctFacet* self);
 };
+
+const std::uint16_t* WideStringData(const String& string);
+String* AssignWideString(String* result, const std::uint16_t* characters, std::size_t length);
 
 struct WideNumpunctFacet {
     Facet base;
@@ -242,6 +253,10 @@ static_assert(offsetof(CollateVtable, hash) == 0x30);
 static_assert(offsetof(CodecvtVtable, alwaysNoconv) == 0x20);
 static_assert(offsetof(CodecvtVtable, in) == 0x38);
 static_assert(offsetof(CodecvtVtable, length) == 0x50);
+static_assert(offsetof(MessagesVtable, open) == 0x20);
+static_assert(offsetof(MessagesVtable, get) == 0x28);
+static_assert(offsetof(MessagesVtable, close) == 0x30);
+static_assert(sizeof(MessagesVtable) == 0x38);
 static_assert(sizeof(NumpunctFacet) == 0x30);
 static_assert(offsetof(NumpunctFacet, grouping) == 0x10);
 static_assert(offsetof(NumpunctFacet, decimalPoint) == 0x18);

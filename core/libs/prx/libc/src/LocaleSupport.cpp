@@ -189,20 +189,7 @@ GuestLocale::String* APS5_VABI WideCollateTransform(GuestLocale::String* result,
     ValidateWideCharacterRange(characters, end, "collate::do_transform");
     const auto length = static_cast<std::size_t>(end - characters);
     if (length != 0 && std::find(characters, end, static_cast<std::uint16_t>(0)) != end) throw std::runtime_error("collate::do_transform: embedded null characters are not supported");
-    const auto bytes = length * GuestWideCharacterSize;
-    char* data = result->buffer;
-    std::size_t capacity = GuestWideInlineCapacity;
-    if (length > GuestWideInlineCapacity) {
-        capacity = length | GuestWideInlineCapacity;
-        data = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
-    }
-    if (length != 0) std::memcpy(data, characters, bytes);
-    data[bytes] = 0;
-    data[bytes + 1] = 0;
-    if (data != result->buffer) result->pointer = data;
-    result->size = length;
-    result->capacity = capacity;
-    return result;
+    return GuestLocale::AssignWideString(result, characters, length);
 }
 
 std::int64_t APS5_VABI WideCollateHash(const GuestLocale::CollateFacet*, const char* first, const char* last) {
@@ -241,20 +228,7 @@ GuestLocale::String* APS5_VABI AssignWideCString(GuestLocale::String* result, co
     if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
     std::size_t length = 0;
     while (source[length] != 0) ++length;
-    const auto bytes = length * GuestWideCharacterSize;
-    char* data = result->buffer;
-    std::size_t capacity = GuestWideInlineCapacity;
-    if (length > GuestWideInlineCapacity) {
-        capacity = length | GuestWideInlineCapacity;
-        data = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
-    }
-    if (bytes != 0) std::memcpy(data, source, bytes);
-    data[bytes] = 0;
-    data[bytes + 1] = 0;
-    if (data != result->buffer) result->pointer = data;
-    result->size = length;
-    result->capacity = capacity;
-    return result;
+    return GuestLocale::AssignWideString(result, source, length);
 }
 
 std::uint16_t APS5_VABI WideNumpunctDecimalPoint(const GuestLocale::WideNumpunctFacet* self) {
@@ -624,6 +598,30 @@ void GuestLocale::ReleaseStringStorage(String& string) {
     }
     string = {};
     string.capacity = GuestStringInlineCapacity;
+}
+
+GuestLocale::String* GuestLocale::AssignWideString(String* result, const std::uint16_t* characters, std::size_t length) {
+    if (result == nullptr || (characters == nullptr && length != 0)) throw std::invalid_argument("wide string: null argument");
+    if (length > std::numeric_limits<std::size_t>::max() / GuestWideCharacterSize - GuestWideInlineCapacity - 1) throw std::length_error("wide string: too long");
+    const auto bytes = length * GuestWideCharacterSize;
+    char* data = result->buffer;
+    std::size_t capacity = GuestWideInlineCapacity;
+    if (length > GuestWideInlineCapacity) {
+        capacity = length | GuestWideInlineCapacity;
+        data = static_cast<char*>(AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
+    }
+    if (bytes != 0) std::memcpy(data, characters, bytes);
+    data[bytes] = 0;
+    data[bytes + 1] = 0;
+    if (data != result->buffer) result->pointer = data;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+const std::uint16_t* GuestLocale::WideStringData(const String& string) {
+    if (string.size > string.capacity) throw std::invalid_argument("wide string: size exceeds capacity");
+    return reinterpret_cast<const std::uint16_t*>(string.capacity > GuestWideInlineCapacity ? string.pointer : string.buffer);
 }
 
 extern "C" {
