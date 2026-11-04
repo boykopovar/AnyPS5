@@ -514,7 +514,7 @@ int APS5_VABI sceRtcGetTime_t(const RtcDateTime* time, int64_t* seconds) {
     const std::uint64_t tick = toTick(localTime);
     if (tick < UNIX_EPOCH_TICK) {
         const int64_t zero = 0;
-        GuestCopyOut_nid_no_patch(seconds, &zero, sizeof(zero));
+        if (!GuestCopyOut_nid_no_patch(seconds, &zero, sizeof(zero))) return SCE_RTC_ERROR_INVALID_POINTER;
         return SCE_RTC_ERROR_INVALID_YEAR;
     }
     const int64_t value = static_cast<int64_t>((tick - UNIX_EPOCH_TICK) / TICKS_PER_SECOND);
@@ -552,7 +552,7 @@ int APS5_VABI sceRtcGetWin32FileTime(const RtcDateTime* time, uint64_t* win32_ti
     const std::uint64_t tick = toTick(localTime);
     if (tick < WIN32_EPOCH_TICK) {
         const uint64_t zero = 0;
-        GuestCopyOut_nid_no_patch(win32_time, &zero, sizeof(zero));
+        if (!GuestCopyOut_nid_no_patch(win32_time, &zero, sizeof(zero))) return SCE_RTC_ERROR_INVALID_POINTER;
         return SCE_RTC_ERROR_INVALID_YEAR;
     }
     const uint64_t value = (tick - WIN32_EPOCH_TICK) * 10;
@@ -574,7 +574,7 @@ int APS5_VABI sceRtcGetDosTime(const RtcDateTime* time, uint32_t* dos_time) {
     if (const int result = validate(&localTime); result != 0) return result;
     if (localTime.year < 1980 || localTime.year > 2107) {
         const uint32_t out = localTime.year < 1980 ? 0 : 0xff9fbf7du;
-        GuestCopyOut_nid_no_patch(dos_time, &out, sizeof(out));
+        if (!GuestCopyOut_nid_no_patch(dos_time, &out, sizeof(out))) return SCE_RTC_ERROR_INVALID_POINTER;
         return SCE_RTC_ERROR_INVALID_YEAR;
     }
     const uint32_t value = static_cast<uint32_t>(localTime.year - 1980) << 25 | static_cast<uint32_t>(localTime.month) << 21
