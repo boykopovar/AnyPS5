@@ -249,6 +249,7 @@ function(add_shader_recompiler target runtimeTarget)
             BuildTessellationCaptureGeometryShader
             CaptureResources
             DebugProbeActive
+            DecodeRdnaInstruction
             DepthBitsTextureWidth
             HashBytes
             LayoutBarycentricEmulation
