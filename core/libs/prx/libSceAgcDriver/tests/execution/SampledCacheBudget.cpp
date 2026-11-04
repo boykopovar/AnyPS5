@@ -618,6 +618,7 @@ void heapHeldReleaseTests(const Context& context) {
     }
     Require(TextureCacheUsage().sampledEntries == 2u, "the two sampled textures were not cached");
     Require(!held[0].expired() && !held[1].expired(), "the cache and the heap slots did not keep the sampled textures");
+    if (auto* recorder = Recorder::Active()) recorder->Sync();
     const auto released = ReleaseTextureCaches(SurfaceBytes, true);
     Require(held[0].expired() != held[1].expired(), "a memory recovery for one texture's bytes did not free exactly one of two textures that only the cache and the GPU heap held");
     Require(released >= SurfaceBytes && TextureCacheUsage().sampledEntries == 1u, "a memory recovery did not count the texture it freed from the cache and the GPU heap, or went past its target");
