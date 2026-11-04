@@ -222,8 +222,11 @@ class BuildWebCliTests(unittest.TestCase):
     def test_symlink_loop_build_reports_error_without_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
             first, second = Path(directory) / "first", Path(directory) / "second"
-            first.symlink_to(second)
-            second.symlink_to(first)
+            try:
+                first.symlink_to(second)
+                second.symlink_to(first)
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"symbolic links are unavailable: {error}")
             result = subprocess.run([sys.executable, str(Path(build_web.__file__)), "--build", str(first)],
                                     capture_output=True, text=True,
                                     env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
