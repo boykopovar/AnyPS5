@@ -384,6 +384,8 @@
 
 - [Draw](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) partitions layered mesh color draws into attachment windows within the host `maxMeshOutputLayers` limit, remaps output layers and reconstructs the guest layer for fragment ancillary input. Replay requires shaders without guest memory writes, clocks, GDS access or unproven side effects; those draws still throw until mesh output can be captured once and rasterized separately. Layered depth rendering remains unsupported. Vulkan layer-limit semantics follow [Layer](https://docs.vulkan.org/refpages/latest/refpages/source/Layer.html); PS5 behavior outside Vulkan’s defined layer range is unmeasured. Layered 2D array views remain unsupported by the existing color-view decoder.
 
+- [Zero color export formats](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver) - a target that `CB_TARGET_MASK` and `CB_SHADER_MASK` enable but whose `SPI_SHADER_COL_FORMAT` entry is `SPI_SHADER_ZERO` is left unwritten. Mesa derives `CB_SHADER_MASK` from the formats (`ac_get_cb_shader_mask`), so the console's behaviour for the combination is unmeasured here; the driver keeps later export indices and blend slots where the shader mask puts them, as it does for a `COLOR_INVALID` target.
+
 ### Opt-in draw paths
 
 - [Draw finisher](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp) (`APS5_DRAW_PIPELINE`) - opt-in. The Linux main-image page table it adds matches what Windows already does by default.
