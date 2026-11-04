@@ -9,6 +9,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <span>
 #include <string>
@@ -142,7 +143,11 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto maxLayers = device->Target().maxImageArrayLayers;
-        Require(maxLayers >= 8u && maxLayers < 8192u, "the device reports an unusable maxImageArrayLayers");
+        if (maxLayers >= 8192u) {
+            std::printf("skipped, the device reports maxImageArrayLayers %u, which leaves no oversized layer index below 8192\n", maxLayers);
+            return VulkanTestSkipped;
+        }
+        Require(maxLayers >= 8u, "the device reports an unusable maxImageArrayLayers");
         const auto oversized = maxLayers + 1u;
         FillTexels(oversized, LinearTile);
         FillInput(oversized, true);
