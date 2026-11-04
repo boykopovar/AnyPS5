@@ -8,6 +8,7 @@ if(NOT APPLE)
     target_link_options(libSceJxr PRIVATE LINKER:--exclude-libs,ALL)
 endif()
 target_include_directories(libSceJxr PRIVATE ${LIBS_INCLUDE_DIR})
+target_sources(libSceJxr PRIVATE src/ListStream.cpp)
 configure_windows_unwind(libSceJxr)
 
 if(BUILD_TESTING)
