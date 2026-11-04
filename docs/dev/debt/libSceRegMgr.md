@@ -80,7 +80,4 @@
 - [sceRegMgrLogPull](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrCntlStopHdd](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
 - [sceRegMgrPrintInfo](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature
-
-### Additional PS5 3.20 imports (xdCloudy #9485)
-
-- [sceRegMgrUnknown_*_nid_no_patch](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - 1 PS5 3.20 import declarations (`sceRegMgrLogStart`). Their prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. This records the export names without claiming an ABI or behavior. Source: [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
+- [sceRegMgrLogStart](../../../core/libs/prx/libSceRegMgr/Export.cpp) (libSceRegMgr) - unknown signature; the name is the PS5 3.20 import whose NID the export carries ([PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs))

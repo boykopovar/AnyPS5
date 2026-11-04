@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <stdexcept>
 #include <string>
 
 static void Require(bool condition) {
@@ -74,18 +75,18 @@ static void CheckStandardStrings() {
     const unsigned char same[6] = {1, 2, 3, 4, 5, 6};
     Require(bcmp_nid_postfix(bytes, same, 6) == 0 && bcmp_nid_postfix(bytes, "zz", 0) == 0);
     bytes[5] = 9;
-    Require(bcmp_nid_postfix(bytes, same, 6) != 0 && bcmp_nid_postfix(bytes, same, 5) == 0);
+    Require(bcmp_nid_postfix(bytes, same, 6) == 1 && bcmp_nid_postfix(same, bytes, 6) == 1 && bcmp_nid_postfix(bytes, same, 5) == 0);
     bzero_nid_postfix(bytes + 1, 4);
     Require(bytes[0] == 1 && bytes[1] == 0 && bytes[4] == 0 && bytes[5] == 9);
 }
 
 static void CheckSecureCopySizeLimits() {
     using Copy = int (APS5_VABI*)(void*, std::size_t, const void*, std::size_t);
-    constexpr std::size_t RsizeMax = SIZE_MAX >> 1;
+    constexpr std::size_t RsizeMax = (std::size_t{1} << 61) - 1;
     const std::array<unsigned char, 8> original = {1, 2, 3, 4, 5, 6, 7, 8};
     const unsigned char source[] = {9, 10, 11, 12};
     for (Copy copy : {memcpy_s_nid_postfix, memmove_s_nid_postfix}) {
-        for (const auto size : {RsizeMax + 1, SIZE_MAX}) {
+        for (const auto size : {RsizeMax + 1, SIZE_MAX >> 1, SIZE_MAX}) {
             for (const auto count : {std::size_t{1}, std::size_t{0}, RsizeMax + 1, SIZE_MAX}) {
                 for (const void* input : {static_cast<const void*>(source), static_cast<const void*>(nullptr)}) {
                     auto bytes = original;
@@ -131,10 +132,10 @@ static void CheckBoundsCheckedFunctions() {
     char strOverlap[16] = "abcdef";
     Require(strncpy_s_nid_postfix(strOverlap + 1, 10, strOverlap, 3) == 22 && strOverlap[1] == '\0');
     char catOverlap[16] = "abcdef";
-    Require(strncat_s_nid_postfix(catOverlap + 3, 10, catOverlap, 3) == 22 && catOverlap[3] == '\0');
+    Require(strncat_s_nid_postfix(catOverlap + 3, 10, catOverlap, 3) == 0 && std::strcmp(catOverlap + 3, "defabc") == 0);
     char nonOverlap[16] = {};
     std::strcpy(nonOverlap + 8, "cd");
-    Require(strcpy_s_nid_postfix(nonOverlap, SIZE_MAX >> 1, nonOverlap + 8) == 0 && std::strcmp(nonOverlap, "cd") == 0);
+    Require(strcpy_s_nid_postfix(nonOverlap, (std::size_t{1} << 61) - 1, nonOverlap + 8) == 0 && std::strcmp(nonOverlap, "cd") == 0);
     Require(memset_s_nid_postfix(bytes, sizeof(bytes), 9, 8) == 22 && bytes[0] == 9 && bytes[3] == 9);
     char sentinel[4] = {1, 2, 3, 4};
     Require(memset_s_nid_postfix(sentinel, sizeof(sentinel), 7, 2) == 0 && sentinel[1] == 7 && sentinel[2] == 3);
@@ -150,19 +151,19 @@ static void CheckBoundsCheckedFunctions() {
 }
 
 static void CheckSecureStringSizeLimits() {
-    constexpr std::size_t RsizeMax = SIZE_MAX >> 1;
+    constexpr std::size_t RsizeMax = (std::size_t{1} << 61) - 1;
     const std::array<char, 8> original = {'!', 'a', 'b', '\0', 'x', 'y', 'z', '!'};
-    for (const auto size : {RsizeMax + 1, SIZE_MAX}) {
+    for (const auto size : {RsizeMax + 1, SIZE_MAX >> 1, SIZE_MAX}) {
         for (const char* source : {"cd", "", static_cast<const char*>(nullptr)}) {
             for (const auto copy : {strcpy_s_nid_postfix, strcat_s_nid_postfix}) {
                 auto bytes = original;
-                Require(copy(bytes.data() + 1, size, source) != 0);
+                Require(copy(bytes.data() + 1, size, source) == 22);
                 Require(bytes == original);
             }
             for (const auto copy : {strncpy_s_nid_postfix, strncat_s_nid_postfix}) {
                 for (const auto count : {std::size_t{0}, std::size_t{1}, std::size_t{3}}) {
                     auto bytes = original;
-                    Require(copy(bytes.data() + 1, size, source, count) != 0);
+                    Require(copy(bytes.data() + 1, size, source, count) == 22);
                     Require(bytes == original);
                 }
             }
@@ -174,6 +175,59 @@ static void CheckSecureStringSizeLimits() {
     bytes = original;
     Require(strcat_s_nid_postfix(bytes.data() + 1, RsizeMax, "cd") == 0);
     Require(bytes[0] == '!' && std::strcmp(bytes.data() + 1, "abcd") == 0 && bytes[6] == 'z');
+    char counted[4] = "zz";
+    Require(strncpy_s_nid_postfix(counted, sizeof(counted), "abc", RsizeMax + 1) == 22 && counted[0] == '\0');
+    char unterminated[4] = {'x', 'x', 'x', 'x'};
+    Require(strcat_s_nid_postfix(unterminated, sizeof(unterminated), "c") == 22 && unterminated[0] == '\0');
+    std::array<char, 4> memory = {'z', 'z', 'z', 'z'};
+    Require(memcpy_s_nid_postfix(memory.data(), RsizeMax + 1, "ab", 2) == 22 && memory[0] == 'z');
+    Require(memcpy_s_nid_postfix(memory.data(), memory.size(), "ab", RsizeMax + 1) == 22 && memory[0] == 0 && memory[3] == 0);
+}
+
+static int handlerCalls = 0;
+static int handlerError = 0;
+static void* handlerPointer = nullptr;
+static std::string handlerMessage;
+
+static void APS5_VABI CountViolation(const char* message, void* pointer, int error) {
+    ++handlerCalls;
+    handlerError = error;
+    handlerPointer = pointer;
+    handlerMessage = message;
+}
+
+static void CheckConstraintHandlerCalls() {
+    void* previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountViolation));
+    char small[4] = "zz";
+    handlerCalls = 0;
+    Require(strcpy_s_nid_postfix(small, sizeof(small), "abcd") == 34 && handlerCalls == 1 && handlerError == 34);
+    Require(handlerMessage == "strcpy_s: buffer too small" && handlerPointer == nullptr);
+    Require(strcpy_s_nid_postfix(small, 0, "a") == 22 && handlerCalls == 2 && handlerError == 22);
+    Require(handlerMessage == "strcpy_s: bad destination argument" && handlerPointer == nullptr);
+    Require(strcpy_s_nid_postfix(small, sizeof(small), "abc") == 0 && handlerCalls == 2);
+    char bytes[4] = {};
+    Require(memcpy_s_nid_postfix(bytes, 2, "abcd", 4) == 34 && handlerCalls == 3 && handlerError == 34);
+    Require(memmove_s_nid_postfix(bytes, 2, nullptr, 1) == 22 && handlerCalls == 4 && handlerError == 22);
+    Require(handlerMessage == "memmove_s: bad argument");
+    Require(strncat_s_nid_postfix(nullptr, 4, "a", 1) == 22 && handlerCalls == 5);
+    char overlap[8] = "abcdef";
+    Require(strcpy_s_nid_postfix(overlap, sizeof(overlap), overlap + 1) == 22 && overlap[0] == '\0' && overlap[1] == 'b');
+    Require(handlerMessage == "strcpy_s: buffer overlap" && handlerPointer == nullptr);
+    char appended[8] = "ab";
+    Require(strncat_s_nid_postfix(appended, sizeof(appended), appended, 2) == 0 && std::strcmp(appended, "abab") == 0);
+    std::strcpy(appended, "ab");
+    Require(strcat_s_nid_postfix(appended, sizeof(appended), appended + 1) == 22 && appended[0] == '\0');
+    Require(handlerMessage == "strcat_s: buffer overlap");
+    char split[8] = {'a', 'b', 0, 'c', 0};
+    Require(strncat_s_nid_postfix(split, sizeof(split), split + 3, 2) == 0 && std::strcmp(split, "abc") == 0);
+    char unterminated[1] = {'x'};
+    handlerCalls = 0;
+    Require(strncat_s_nid_postfix(unterminated, sizeof(unterminated), "a", 1) == 34 && unterminated[0] == '\0');
+    Require(handlerCalls == 1 && handlerError == 34 && handlerMessage == "strncat_s: buffer too small");
+    unterminated[0] = 'x';
+    Require(strcat_s_nid_postfix(unterminated, sizeof(unterminated), "a") == 22 && unterminated[0] == '\0');
+    Require(handlerCalls == 2 && handlerError == 22 && handlerMessage == "strcat_s: bad argument");
+    set_constraint_handler_s_nid_postfix(previous);
 }
 
 static void CheckCaseInsensitiveComparison() {
@@ -440,6 +494,31 @@ int main() {
     end = stpcpy_nid_postfix(end, "cd");
     Require(end == chained + 4 && std::strcmp(chained, "abcd") == 0);
     Require(stpcpy_nid_postfix(end, "") == end && chained[5] == 'z');
+    char shortBuffer[8];
+    std::memset(shortBuffer, 'z', sizeof(shortBuffer));
+    char* shortEnd = stpncpy_nid_postfix(shortBuffer, "ab", 5);
+    Require(shortEnd == shortBuffer + 2);
+    Require(shortBuffer[0] == 'a' && shortBuffer[1] == 'b');
+    Require(shortBuffer[2] == '\0' && shortBuffer[3] == '\0' && shortBuffer[4] == '\0');
+    Require(shortBuffer[5] == 'z' && shortBuffer[6] == 'z' && shortBuffer[7] == 'z');
+    char equalBuffer[8];
+    std::memset(equalBuffer, 'z', sizeof(equalBuffer));
+    char* equalEnd = stpncpy_nid_postfix(equalBuffer, "abcde", 5);
+    Require(equalEnd == equalBuffer + 5);
+    Require(std::memcmp(equalBuffer, "abcde", 5) == 0);
+    Require(equalBuffer[5] == 'z' && equalBuffer[6] == 'z' && equalBuffer[7] == 'z');
+    char longerBuffer[8];
+    std::memset(longerBuffer, 'z', sizeof(longerBuffer));
+    char* longerEnd = stpncpy_nid_postfix(longerBuffer, "abcdefgh", 3);
+    Require(longerEnd == longerBuffer + 3);
+    Require(std::memcmp(longerBuffer, "abc", 3) == 0);
+    Require(longerBuffer[3] == 'z' && longerBuffer[4] == 'z' && longerBuffer[5] == 'z' && longerBuffer[6] == 'z' && longerBuffer[7] == 'z');
+    char zeroBuffer[8];
+    std::memset(zeroBuffer, 'z', sizeof(zeroBuffer));
+    const char originalZero[8] = {'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z'};
+    char* zeroEnd = stpncpy_nid_postfix(zeroBuffer, "test", 0);
+    Require(zeroEnd == zeroBuffer);
+    Require(std::memcmp(zeroBuffer, originalZero, sizeof(zeroBuffer)) == 0);
     Require(strncat_nid_postfix(buffer, "xyz", 2) == buffer);
     Require(std::strcmp(buffer, "xy") == 0);
     char transformed[8] = "zzzzzzz";
@@ -475,6 +554,21 @@ int main() {
     Require(inetAton("1.2.3.4 trailing", "1.2.3.4"));
     Require(inetAton("1.2.3.4\n", "1.2.3.4"));
     Require(__inet_aton_nid_postfix("1.2.3.4", nullptr) == 1);
+    bool atonNullThrew = false;
+    try {
+        unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
+        __inet_aton_nid_postfix(nullptr, address);
+    } catch (const std::invalid_argument&) {
+        atonNullThrew = true;
+    }
+    Require(atonNullThrew);
+    bool addrNullThrew = false;
+    try {
+        __inet_addr_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        addrNullThrew = true;
+    }
+    Require(addrNullThrew);
     for (const char* invalid : {"", " 1.2.3.4", "1.2.3.4.5", "256.1.1.1", "1.2.3.256", "1.2.65536", "08", "1..2", "a.b.c.d",
              "1.2.3.4x", "0x", "1.2.3.", "-1"}) {
         unsigned char address[4] = {0xA5, 0xA5, 0xA5, 0xA5};
@@ -579,7 +673,58 @@ int main() {
     const unsigned char highB[] = {0x00, 0x7f};
     Require(timingsafe_memcmp_nid_postfix(highA, highB, 2) > 0);
     Require(timingsafe_memcmp_nid_postfix(highB, highA, 2) < 0);
+    const char safeD[] = "xbcdef";
+    const char safeMid[] = "abxdef";
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeC, 6) == 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeB, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeB, safeA, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeD, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeD, safeA, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeMid, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeMid, safeA, 6) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeB, 5) == 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeB, 0) == 0);
+    Require(timingsafe_bcmp_nid_postfix(highA, highB, 2) != 0);
+    Require(timingsafe_bcmp_nid_postfix(highB, highA, 2) != 0);
+    Require(timingsafe_bcmp_nid_postfix(safeA, safeB, 6) == 1);
+    Require(timingsafe_bcmp_nid_postfix(highA, highB, 2) == 1);
+    char* const tokens[] = {const_cast<char*>("ro"), const_cast<char*>("rw"), const_cast<char*>("size"), const_cast<char*>("name"), nullptr};
+    char options[] = "ro,size=1024,name=test,rw";
+    cursor = options;
+    char* value = nullptr;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && cursor == options + 3);
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 2 && std::strcmp(value, "1024") == 0);
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 3 && std::strcmp(value, "test") == 0);
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 1 && value == nullptr && *cursor == '\0');
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr && *cursor == '\0');
+    char emptyValue[] = "size=";
+    cursor = emptyValue;
+    value = nullptr;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 2 && value != nullptr && *value == '\0' && *cursor == '\0');
+    char unmatched[] = "unknown=val,ro";
+    cursor = unmatched;
+    value = nullptr;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && std::strcmp(value, "val") == 0 && std::strcmp(cursor, "ro") == 0);
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && *cursor == '\0');
+    char leadingEqual[] = "=val,ro";
+    cursor = leadingEqual;
+    value = nullptr;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr && std::strcmp(leadingEqual, "=val") == 0 && std::strcmp(cursor, "ro") == 0);
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr && *cursor == '\0');
+    char delimiters[] = " \t,,ro, \trw,, ";
+    cursor = delimiters;
+    value = nullptr;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 0 && value == nullptr);
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == 1 && value == nullptr && *cursor == '\0');
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && value == nullptr);
+    Require(getsubopt_nid_postfix(nullptr, tokens, &value) == -1);
+    char* nullCursor = nullptr;
+    Require(getsubopt_nid_postfix(&nullCursor, tokens, &value) == -1);
+    char emptyStr[] = "";
+    cursor = emptyStr;
+    Require(getsubopt_nid_postfix(&cursor, tokens, &value) == -1 && cursor == emptyStr);
     CheckSecureCopySizeLimits();
     CheckSecureStringSizeLimits();
+    CheckConstraintHandlerCalls();
     return CheckMemcpyOverlap() ? 0 : 1;
 }

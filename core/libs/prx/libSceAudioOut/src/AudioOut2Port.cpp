@@ -116,7 +116,7 @@ AudioOut2Grain AudioOut2CaptureGrain(const AudioOut2Context& context, bool snaps
             queued = std::move(port.queuedData.front());
             port.queuedData.pop_front();
             data = queued.data;
-            setPcm = queued.reused ? &queued.pcm : nullptr;
+            setPcm = queued.reused || snapshot ? &queued.pcm : nullptr;
         }
         if (data != nullptr) {
             AudioOut2CapturedPort captured{index, port.generation, data};

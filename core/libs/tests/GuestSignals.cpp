@@ -318,7 +318,7 @@ int main() {
     Require(GuestAlarm_nid_no_patch(1) == 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     Require(GuestAlarm_nid_no_patch(0) == 0);
-    for (int unmapped : {1, 13, 30, 31, 32, 128}) {
+    for (int unmapped : {1, 12, 30, 31, 32, 128}) {
         *__error_nid_postfix() = 0;
         Require(signal_nid_postfix(unmapped, ignore) == nullptr);
         Require(sigaction_nid_postfix(unmapped, nullptr, &current) == 0 && current.handler == 1 && current.flags == 0x2);

@@ -236,7 +236,7 @@ void Gather(AgcDriver::VulkanDevice& device, const Sampler& sampler, const char*
     }
 }
 
-std::uint32_t PairedSamplers(const ShaderRecompiler::RecompileResult& result, std::uint32_t format) {
+std::uint64_t PairedSamplers(const ShaderRecompiler::RecompileResult& result, std::uint32_t format) {
     for (const auto& binding : result.bindings) {
         if (binding.kind != ShaderRecompiler::DescriptorKind::SampledImage) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
