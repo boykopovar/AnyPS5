@@ -43,11 +43,13 @@ class ConfigureSeedStdoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache = root / "CMakeCache.txt"
-            cache.write_text('//Test KEEP\nKEEP:INTERNAL=semi;quote"dollar$\\path\n//Test DROP\nDROP:INTERNAL=1\n', encoding="utf-8")
+            cache.write_text('//Test KEEP\nKEEP:INTERNAL=semi;quote"dollar$\\path\n'
+                             '//Test KDROP\nKDROP:INTERNAL=1\n//Test DROP\nDROP:INTERNAL=1\n', encoding="utf-8")
             original = cache.read_bytes()
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                self.assertEqual(configure_seed.main([str(cache), "--stdout", "--include", "K*", "--exclude", "DROP"]), 0)
+                self.assertEqual(configure_seed.main([str(cache), "--stdout", "--include", "K*", "--exclude", "KDROP"]), 0)
+            self.assertEqual(output.getvalue(), 'set("KEEP" "semi;quote\\"dollar\\$\\\\path" CACHE INTERNAL "Test KEEP")\n')
             self.assertEqual(cache.read_bytes(), original)
             self.assertEqual(list(root.iterdir()), [cache])
             seed = root / "seed.cmake"
@@ -59,6 +61,33 @@ class ConfigureSeedStdoutTests(unittest.TestCase):
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                     configure_seed.main(args)
                 self.assertEqual(error.exception.code, 2)
+
+    def test_stdout_include_and_exclude_are_applied_independently(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "CMakeCache.txt"
+            cache.write_text('//Test KEEP\nKEEP:INTERNAL=1\n//Test KDROP\nKDROP:INTERNAL=0\n'
+                             '//Test OTHER\nOTHER:INTERNAL=2\n', encoding="utf-8")
+            original = cache.read_bytes()
+            keep = 'set("KEEP" "1" CACHE INTERNAL "Test KEEP")\n'
+            drop = 'set("KDROP" "0" CACHE INTERNAL "Test KDROP")\n'
+            other = 'set("OTHER" "2" CACHE INTERNAL "Test OTHER")\n'
+            cases = (
+                (("--include", "K*"), drop + keep),
+                (("--exclude", "KDROP"), keep + other),
+                (("--include", "K*", "--exclude", "KDROP"), keep),
+                (("--include", "K*", "--exclude", "K*"), ""),
+            )
+            for options, expected in cases:
+                with self.subTest(options=options):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(configure_seed.main([str(cache), "--stdout", *options]), 0)
+                    self.assertEqual(output.getvalue(), expected)
+                    self.assertEqual(cache.read_bytes(), original)
+                    self.assertEqual(list(root.iterdir()), [cache])
 
 
 class ConfigureSeedPathTests(unittest.TestCase):
