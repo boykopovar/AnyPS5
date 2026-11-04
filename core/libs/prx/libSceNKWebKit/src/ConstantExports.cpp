@@ -98,6 +98,22 @@ int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutofilled() {
     return 0;
 }
 
+int APS5_VABI WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit() {
+    return 0;
+}
+
+int APS5_VABI WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit() {
+    return 0;
+}
+
 int APS5_VABI WKBundlePageCopyContextMenuAtPointInWindow() {
     return 0;
 }

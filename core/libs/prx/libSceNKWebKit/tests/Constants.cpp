@@ -38,6 +38,10 @@ int main() {
     Require(WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled() == 0);
     Require(WKBundleNodeHandleGetHTMLInputElementAutoFilled() == 0);
     Require(WKBundleNodeHandleGetHTMLInputElementAutofilled() == 0);
+    Require(WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType() == 0);
+    Require(WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType() == 0);
+    Require(WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit() == 0);
+    Require(WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit() == 0);
     Require(WKBundlePageCopyContextMenuAtPointInWindow() == 0);
     Require(WKBundlePageCopyContextMenuItems() == 0);
     Require(WKBundlePageGetBackForwardList() == 0);
