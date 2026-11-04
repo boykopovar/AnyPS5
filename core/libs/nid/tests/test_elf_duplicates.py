@@ -4,7 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from test_symbol_versions import build_image, patch, read_dynsym, IMPORTS, NID_NAME, SHN_UNDEF, STT_FUNC
+from test_symbol_versions import build_image, patch, read_dynsym, IMPORTS, NID_NAME, SHN_UNDEF, STT_FUNC, PATCHER
 
 
 def nid(name):
@@ -21,6 +21,7 @@ def image(names, addresses=None):
     return bytes(build_image(entries, False))
 
 
+@unittest.skipUnless(PATCHER is not None and PATCHER.is_file(), "nid_patcher executable required")
 class ElfDuplicateTests(unittest.TestCase):
     def test_exports_patched_to_one_name_are_rejected(self):
         cases = (
@@ -65,5 +66,4 @@ class ElfDuplicateTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    PATCHER = Path(sys.argv.pop(1)).resolve()
     unittest.main()

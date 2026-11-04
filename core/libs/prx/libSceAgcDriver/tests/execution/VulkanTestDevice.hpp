@@ -20,7 +20,7 @@ inline bool TargetHasCapability(const ShaderRecompiler::SpirvTarget& target, spv
 inline std::unique_ptr<AgcDriver::VulkanDevice> OpenVulkanTestDevice() {
     try {
         return std::make_unique<AgcDriver::VulkanDevice>();
-    } catch (const std::exception& error) {
+    } catch (const AgcDriver::VulkanUnavailable& error) {
         if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
         std::printf("skipped, no usable Vulkan device: %s\n", error.what());
         return nullptr;

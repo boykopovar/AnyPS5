@@ -1,3 +1,5 @@
+#include "prx/libSceAppContent/include/InventoryExports.hpp"
+#include "prx/libSceAppContent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -9,6 +11,7 @@
 #include <atomic>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -25,11 +28,6 @@ static constexpr int32_t SKU_FLAG_FULL = 3;
 static constexpr char TEMPORARY_MOUNT_POINT[] = "/temp0";
 static constexpr char DOWNLOAD_MOUNT_POINT[] = "/download0";
 static constexpr uint32_t TEMPORARY_DATA_OPTION_FORMAT = 1;
-
-struct AppContentAddcontInfo {
-    NpUnifiedEntitlementLabel entitlement_label;
-    uint32_t status;
-};
 
 namespace {
 
@@ -64,6 +62,16 @@ bool IsTemporaryMountPoint(const AppContentMountPoint* mountPoint) {
     return std::strncmp(mountPoint->data, TEMPORARY_MOUNT_POINT, sizeof(mountPoint->data)) == 0;
 }
 
+std::atomic<std::uint64_t> download2QuotaBytes{0};
+
+bool IsDownloadMountPoint(const AppContentMountPoint* mountPoint) {
+    if (!mountPoint) return false;
+    for (const char* prefix : {"/download0", "/download1", "/download2"}) {
+        if (std::strncmp(mountPoint->data, prefix, sizeof(mountPoint->data)) == 0) return true;
+    }
+    return false;
+}
+
 }
 
 static void ClearDirectory(const std::filesystem::path& directory) {
@@ -72,6 +80,34 @@ static void ClearDirectory(const std::filesystem::path& directory) {
 }
 
 extern "C" {
+
+int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
+}
+
+int APS5_VABI sceAppContentDownloadDataGetBlockSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppContentGetGameTrialsFlag(uint32_t* gameTrialsFlag) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!gameTrialsFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    *gameTrialsFlag = 0;
+    return 0;
+}
+
+int APS5_VABI sceAppContentGetPlayableStatus(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, uint32_t* playableStatus) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel || !playableStatus) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
+}
+
 
 int APS5_VABI sceAppContentAddcontMount(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, AppContentMountPoint* mount_point) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
@@ -121,8 +157,8 @@ int APS5_VABI sceAppContentAppParamGetInt(uint32_t param_id, int32_t* value) {
 int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint* mount_point) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!mount_point) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (std::strncmp(mount_point->data, DOWNLOAD_MOUNT_POINT, sizeof(mount_point->data)) != 0) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const auto directory = ResolvePath_nid_no_patch(DOWNLOAD_MOUNT_POINT);
+    if (!IsDownloadMountPoint(mount_point)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    const auto directory = ResolvePath_nid_no_patch(mount_point->data);
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
     ClearDirectory(directory);
     return 0;
@@ -131,13 +167,22 @@ int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint* mount_
 int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMountPoint* mountPoint, size_t* availableSpaceKb) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!mountPoint || !availableSpaceKb) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (std::strncmp(mountPoint->data, DOWNLOAD_MOUNT_POINT, sizeof(mountPoint->data)) != 0) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    const std::uint64_t quotaKb = GetAppDownloadDataSizeMiB_nid_postfix() * 1024u;
+    if (!IsDownloadMountPoint(mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
+    std::uint64_t quotaKb = 0;
+    if (std::strncmp(mountPoint->data, DOWNLOAD_MOUNT_POINT, sizeof(mountPoint->data)) == 0) {
+        const std::uint64_t quotaMiB = GetAppDownloadDataSizeMiB_nid_postfix();
+        if (quotaMiB > std::numeric_limits<std::uint64_t>::max() / 1024u) throw std::overflow_error("AppContent download quota exceeds KiB range");
+        quotaKb = quotaMiB * 1024u;
+    } else if (std::strncmp(mountPoint->data, "/download2", sizeof(mountPoint->data)) == 0) {
+        quotaKb = download2QuotaBytes.load() / 1024u;
+    } else {
+        NotImplemented_nid_no_patch(__func__);
+    }
     if (quotaKb == 0) {
         *availableSpaceKb = 0;
         return 0;
     }
-    const auto directory = ResolvePath_nid_no_patch(DOWNLOAD_MOUNT_POINT);
+    const auto directory = ResolvePath_nid_no_patch(mountPoint->data);
     if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
     std::uint64_t usedKb = 0;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(directory)) {
@@ -209,7 +254,6 @@ int APS5_VABI sceAppContentTemporaryDataUnmount(const AppContentMountPoint* moun
     return 0;
 }
 
-
 int APS5_VABI sceAppContentAddcontEnqueueDownload(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)service_label;
@@ -233,24 +277,34 @@ int APS5_VABI sceAppContentGetAddcontDownloadProgress(uint32_t service_label, co
     if (!validEntitlementLabel(*entitlement_label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
-int APS5_VABI sceAppContentAddcontEnqueueDownloadByEntitlemetId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontEnqueueDownloadByEntitlemetId(const char* entitlementId) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!entitlementId) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentAddcontEnqueueDownloadSp(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontEnqueueDownloadSp(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0)) throw std::runtime_error("sceAppContentAddcontEnqueueDownloadSp: padded entitlement label before SDK 0x03500000");
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentAddcontMountByEntitlemetId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontMountByEntitlemetId(const char* entitlementId, AppContentMountPoint* mountPoint) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!entitlementId || !mountPoint) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentAddcontShrink(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontShrink(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0)) throw std::runtime_error("sceAppContentAddcontShrink: padded entitlement label before SDK 0x03500000");
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
 int APS5_VABI sceAppContentAppParamGetString(void) {
@@ -278,13 +332,38 @@ int APS5_VABI sceAppContentDownload1Shrink(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(void) {
+int APS5_VABI sceAppContentDownload2Expand(size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (size == 0) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    const auto directory = ResolvePath_nid_no_patch("/download2");
+    if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
+    size_t current = download2QuotaBytes.load();
+    while (size > current && !download2QuotaBytes.compare_exchange_weak(current, size)) {}
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Shrink(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(void) {
+APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void) {
     NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlementId, AppContentAddcontInfo* info) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!entitlementId || !info) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
+}
+
+int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppContentAddcontInfo* list, uint32_t listNum, uint32_t* hitNum) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)iroTag;
+    if ((!list || listNum == 0) && !hitNum) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (hitNum) *hitNum = 0;
     return 0;
 }
 
@@ -293,13 +372,18 @@ int APS5_VABI sceAppContentGetDownloadedStoreCountry(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentGetEntitlementKey(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel || !key) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
 }
 
-int APS5_VABI sceAppContentGetPftFlag(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!pftFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    *pftFlag = 0;
     return 0;
 }
 
@@ -313,9 +397,8 @@ int APS5_VABI sceAppContentRequestPatchInstall(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentTemporaryDataMount(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentTemporaryDataMount(AppContentMountPoint* mountPoint) {
+    return sceAppContentTemporaryDataMount2(TEMPORARY_DATA_OPTION_FORMAT, mountPoint);
 }
 
 }

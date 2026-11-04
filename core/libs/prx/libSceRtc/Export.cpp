@@ -1,3 +1,4 @@
+#include "prx/libSceRtc/include/Rtc.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -6,8 +7,12 @@
 #include <ctime>
 #include <limits>
 #include <mutex>
+#include <stdexcept>
+#include <string_view>
 #include "SceTypes.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 
 namespace {
 
@@ -31,6 +36,7 @@ constexpr std::int64_t WIN32_EPOCH_DAYS = 584388;
 constexpr std::uint64_t UNIX_EPOCH_TICK = UNIX_EPOCH_DAYS * TICKS_PER_DAY;
 constexpr std::uint64_t WIN32_EPOCH_TICK = WIN32_EPOCH_DAYS * TICKS_PER_DAY;
 constexpr std::uint64_t MAX_TICK = 3652059ull * TICKS_PER_DAY - 1;
+constexpr std::uint32_t RANGE_CHECKED_SDK_VERSION = 0x03000000;
 
 struct ClockState {
     std::uint64_t tick = 0;
@@ -100,6 +106,26 @@ RtcDateTime fromTick(std::uint64_t tick) {
         static_cast<std::uint16_t>(timeOfDay % TICKS_PER_MINUTE / TICKS_PER_SECOND), static_cast<std::uint32_t>(timeOfDay % TICKS_PER_SECOND)};
 }
 
+bool ps4Title() {
+    try {
+        const auto titleId = GetAppTitleId_nid_postfix();
+        return std::string_view(titleId.value, strnlen(titleId.value, sizeof(titleId.value))).substr(0, 4) == "CUSA";
+    } catch (const std::runtime_error&) {
+        return false;
+    } catch (const std::length_error&) {
+        return false;
+    }
+}
+
+bool rangeChecked() {
+    static const bool ps4 = ps4Title();
+    if (!ps4) return true;
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t version;
+    std::memcpy(&version, process + 16, sizeof(version));
+    return version >= RANGE_CHECKED_SDK_VERSION;
+}
+
 std::uint64_t currentTick(std::size_t clock = 0) {
     ClockState state;
     {
@@ -119,21 +145,36 @@ std::uint64_t currentTick(std::size_t clock = 0) {
 
 int setCurrentTick(std::size_t clock, const RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (tick->tick < UNIX_EPOCH_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
+    RtcTick source{};
+    if (!GuestCopyIn_nid_no_patch(&source, tick, sizeof(source))) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (source.tick < UNIX_EPOCH_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     std::lock_guard lock(clockMutex);
-    clocks[clock] = ClockState{tick->tick, std::chrono::steady_clock::now(), true};
+    clocks[clock] = ClockState{source.tick, std::chrono::steady_clock::now(), true};
     return 0;
 }
 
-std::int64_t localOffsetSeconds(std::uint64_t utcTick) {
-    const auto elapsed = std::chrono::microseconds{static_cast<std::int64_t>(utcTick) - static_cast<std::int64_t>(UNIX_EPOCH_TICK)};
-    const auto seconds = static_cast<std::time_t>(std::chrono::floor<std::chrono::seconds>(elapsed).count());
-    std::tm local{};
+bool hostLocalTime(std::time_t seconds, std::tm& local) {
 #ifdef _WIN32
-    if (localtime_s(&local, &seconds) != 0) return 0;
+    return localtime_s(&local, &seconds) == 0;
 #else
-    if (!localtime_r(&seconds, &local)) return 0;
+    return localtime_r(&seconds, &local) != nullptr;
 #endif
+}
+
+std::int64_t localOffsetSeconds(std::uint64_t utcTick) {
+    constexpr std::int64_t GREGORIAN_CYCLE_SECONDS = 146097LL * 86400;
+    const auto elapsed = std::chrono::microseconds{static_cast<std::int64_t>(utcTick) - static_cast<std::int64_t>(UNIX_EPOCH_TICK)};
+    auto seconds = static_cast<std::time_t>(std::chrono::floor<std::chrono::seconds>(elapsed).count());
+    std::tm local{};
+    if (!hostLocalTime(seconds, local)) {
+        const std::time_t step = seconds < 0 ? GREGORIAN_CYCLE_SECONDS : -GREGORIAN_CYCLE_SECONDS;
+        bool converted = false;
+        for (int cycle = 0; cycle < 40 && !converted; ++cycle) {
+            seconds += step;
+            converted = hostLocalTime(seconds, local);
+        }
+        if (!converted) throw std::runtime_error("sceRtc: the host cannot convert this tick to local time");
+    }
     const std::int64_t localSeconds = (daysFromCivil(local.tm_year + 1900, static_cast<unsigned>(local.tm_mon + 1), static_cast<unsigned>(local.tm_mday)) - UNIX_EPOCH_DAYS) * 86400
         + local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec;
     return localSeconds - static_cast<std::int64_t>(seconds);
@@ -370,8 +411,13 @@ int APS5_VABI sceRtcGetDaysInMonth(int year, int month) {
 }
 
 int APS5_VABI sceRtcGetDayOfWeek(int year, int month, int day) {
-    if (year < 1 || year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
-    if (month < 1 || month > 12) return SCE_RTC_ERROR_INVALID_MONTH;
+    if (rangeChecked()) {
+        if (month < 1 || month > 12) return SCE_RTC_ERROR_INVALID_MONTH;
+        if (year < 1 || year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
+    } else {
+        if (year < 1) return SCE_RTC_ERROR_INVALID_YEAR;
+        if (month < 1 || month > 12) return SCE_RTC_ERROR_INVALID_MONTH;
+    }
     if (day < 1 || day > daysInMonth(year, month)) return SCE_RTC_ERROR_INVALID_DAY;
     return static_cast<int>((daysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day)) + 1) % 7);
 }
@@ -389,20 +435,29 @@ int APS5_VABI sceRtcGetTick(const RtcDateTime* time, RtcTick* tick) {
 
 int APS5_VABI sceRtcSetTick(RtcDateTime* time, const RtcTick* tick) {
     if (!time || !tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (tick->tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     *time = fromTick(tick->tick);
     return 0;
 }
 
+int APS5_VABI sceRtcConvertDateTimeToTick(const RtcDateTime* time, RtcTick* tick) {
+    return sceRtcGetTick(time, tick);
+}
+
+int APS5_VABI sceRtcConvertTickToDateTime(const RtcTick* tick, RtcDateTime* time) {
+    return sceRtcSetTick(time, tick);
+}
+
 int APS5_VABI sceRtcGetCurrentTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick();
+    const RtcTick value{currentTick()};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcGetCurrentNetworkTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick(1);
+    const RtcTick value{currentTick(1)};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
@@ -410,7 +465,8 @@ int APS5_VABI sceRtcGetCurrentClock(RtcDateTime* time, int time_zone_minutes) {
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick tick{currentTick()};
     if (const int result = addTicks(&tick, &tick, time_zone_minutes, TICKS_PER_MINUTE); result != 0) return result;
-    *time = fromTick(tick.tick);
+    const RtcDateTime converted = fromTick(tick.tick);
+    if (!GuestCopyOut_nid_no_patch(time, &converted, sizeof(converted))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
@@ -418,9 +474,15 @@ int APS5_VABI sceRtcGetCurrentClockLocalTime(RtcDateTime* time) {
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick local{};
     const RtcTick utc{currentTick()};
+    if (utc.tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     if (const int result = addTicks(&local, &utc, localOffsetSeconds(utc.tick), TICKS_PER_SECOND); result != 0) return result;
-    *time = fromTick(local.tick);
+    const RtcDateTime converted = fromTick(local.tick);
+    if (!GuestCopyOut_nid_no_patch(time, &converted, sizeof(converted))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
+}
+
+int APS5_VABI sceRtcGetCurrentClockUtc(RtcDateTime* time) {
+    return sceRtcGetCurrentClock(time, 0);
 }
 
 int APS5_VABI sceRtcConvertUtcToLocalTime(const RtcTick* utc, RtcTick* local_time) {
@@ -442,30 +504,48 @@ int APS5_VABI sceRtcGetTime_t(const RtcDateTime* time, int64_t* seconds) {
     if (!seconds) return SCE_RTC_ERROR_INVALID_POINTER;
     if (const int result = validate(time); result != 0) return result;
     const std::uint64_t tick = toTick(*time);
-    if (tick < UNIX_EPOCH_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
+    if (tick < UNIX_EPOCH_TICK) {
+        *seconds = 0;
+        return SCE_RTC_ERROR_INVALID_YEAR;
+    }
     *seconds = static_cast<int64_t>((tick - UNIX_EPOCH_TICK) / TICKS_PER_SECOND);
     return 0;
 }
 
 int APS5_VABI sceRtcSetTime_t(RtcDateTime* time, int64_t seconds) {
+    if (rangeChecked()) {
+        if (seconds < 0) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+        *time = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(seconds) * TICKS_PER_SECOND);
+        return 0;
+    }
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (seconds < 0 || static_cast<std::uint64_t>(seconds) > (MAX_TICK - UNIX_EPOCH_TICK) / TICKS_PER_SECOND) return SCE_RTC_ERROR_INVALID_VALUE;
-    *time = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(seconds) * TICKS_PER_SECOND);
+    *time = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(static_cast<std::uint32_t>(seconds)) * TICKS_PER_SECOND);
     return 0;
+}
+
+int APS5_VABI sceRtcConvertDateTimeToTime_t(const RtcDateTime* time, int64_t* seconds) {
+    return sceRtcGetTime_t(time, seconds);
+}
+
+int APS5_VABI sceRtcConvertTime_tToDateTime(int64_t seconds, RtcDateTime* time) {
+    return sceRtcSetTime_t(time, seconds);
 }
 
 int APS5_VABI sceRtcGetWin32FileTime(const RtcDateTime* time, uint64_t* win32_time) {
     if (!win32_time) return SCE_RTC_ERROR_INVALID_POINTER;
     if (const int result = validate(time); result != 0) return result;
     const std::uint64_t tick = toTick(*time);
-    if (tick < WIN32_EPOCH_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
+    if (tick < WIN32_EPOCH_TICK) {
+        *win32_time = 0;
+        return SCE_RTC_ERROR_INVALID_YEAR;
+    }
     *win32_time = (tick - WIN32_EPOCH_TICK) * 10;
     return 0;
 }
 
 int APS5_VABI sceRtcSetWin32FileTime(RtcDateTime* time, uint64_t win32_time) {
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (win32_time / 10 > MAX_TICK - WIN32_EPOCH_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     *time = fromTick(WIN32_EPOCH_TICK + win32_time / 10);
     return 0;
 }
@@ -495,90 +575,6 @@ int APS5_VABI sceRtcSetDosTime(RtcDateTime* time, uint32_t dos_time) {
     return 0;
 }
 
-int APS5_VABI sceRtcGetYear(const RtcDateTime* time) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    return static_cast<int>(time->year);
-}
-
-int APS5_VABI sceRtcSetYear(RtcDateTime* time, int year) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (year < 1 || year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
-    time->year = static_cast<std::uint16_t>(year);
-    return 0;
-}
-
-int APS5_VABI sceRtcGetMonth(const RtcDateTime* time) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    return static_cast<int>(time->month);
-}
-
-int APS5_VABI sceRtcSetMonth(RtcDateTime* time, int month) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (month < 1 || month > 12) return SCE_RTC_ERROR_INVALID_MONTH;
-    time->month = static_cast<std::uint16_t>(month);
-    return 0;
-}
-
-int APS5_VABI sceRtcGetDay(const RtcDateTime* time) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    return static_cast<int>(time->day);
-}
-
-int APS5_VABI sceRtcSetDay(RtcDateTime* time, int day) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (day < 1 || day > 31) return SCE_RTC_ERROR_INVALID_DAY;
-    time->day = static_cast<std::uint16_t>(day);
-    return 0;
-}
-
-int APS5_VABI sceRtcGetHour(const RtcDateTime* time) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    return static_cast<int>(time->hour);
-}
-
-int APS5_VABI sceRtcSetHour(RtcDateTime* time, int hour) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (hour < 0 || hour > 23) return SCE_RTC_ERROR_INVALID_HOUR;
-    time->hour = static_cast<std::uint16_t>(hour);
-    return 0;
-}
-
-int APS5_VABI sceRtcGetMinute(const RtcDateTime* time) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    return static_cast<int>(time->minute);
-}
-
-int APS5_VABI sceRtcSetMinute(RtcDateTime* time, int minute) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (minute < 0 || minute > 59) return SCE_RTC_ERROR_INVALID_MINUTE;
-    time->minute = static_cast<std::uint16_t>(minute);
-    return 0;
-}
-
-int APS5_VABI sceRtcGetSecond(const RtcDateTime* time) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    return static_cast<int>(time->second);
-}
-
-int APS5_VABI sceRtcSetSecond(RtcDateTime* time, int second) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (second < 0 || second > 59) return SCE_RTC_ERROR_INVALID_SECOND;
-    time->second = static_cast<std::uint16_t>(second);
-    return 0;
-}
-
-int APS5_VABI sceRtcGetMicrosecond(const RtcDateTime* time) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    return static_cast<int>(time->microsecond);
-}
-
-int APS5_VABI sceRtcSetMicrosecond(RtcDateTime* time, int microsecond) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (microsecond < 0 || static_cast<std::int64_t>(microsecond) >= TICKS_PER_SECOND) return SCE_RTC_ERROR_INVALID_MICROSECOND;
-    time->microsecond = static_cast<std::uint32_t>(microsecond);
-    return 0;
-}
-
 int APS5_VABI sceRtcFormatRFC3339(char* dateTime, const RtcTick* utc, int timeZoneMinutes) {
     if (!dateTime) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick now{};
@@ -587,9 +583,11 @@ int APS5_VABI sceRtcFormatRFC3339(char* dateTime, const RtcTick* utc, int timeZo
         utc = &now;
     }
     if (timeZoneMinutes < -1439 || timeZoneMinutes > 1439) return SCE_RTC_ERROR_INVALID_VALUE;
-    RtcTick local{};
-    if (const int result = addTicks(&local, utc, timeZoneMinutes, TICKS_PER_MINUTE); result != 0) return result;
+    const auto shift = static_cast<std::int64_t>(timeZoneMinutes) * TICKS_PER_MINUTE;
+    if (rangeChecked() && (shift < 0 ? utc->tick < static_cast<std::uint64_t>(-shift) : utc->tick > std::numeric_limits<std::uint64_t>::max() - static_cast<std::uint64_t>(shift))) return SCE_RTC_ERROR_INVALID_VALUE;
+    const RtcTick local{utc->tick + static_cast<std::uint64_t>(shift)};
     const RtcDateTime time = fromTick(local.tick);
+    if (time.year < 1 || time.year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
     int written = std::snprintf(dateTime, 23, "%04u-%02u-%02uT%02u:%02u:%02u.%02u", time.year, time.month, time.day, time.hour, time.minute, time.second, time.microsecond / 10000);
     if (timeZoneMinutes == 0) {
         std::snprintf(dateTime + written, 2, "Z");
@@ -619,11 +617,12 @@ int APS5_VABI sceRtcFormatRFC2822(char* dateTime, const RtcTick* utc, int timeZo
         utc = &now;
     }
     if (timeZoneMinutes < -1439 || timeZoneMinutes > 1439) return SCE_RTC_ERROR_INVALID_VALUE;
-    RtcTick local{};
-    if (const int result = addTicks(&local, utc, timeZoneMinutes, TICKS_PER_MINUTE); result != 0) return result;
+    const RtcTick local{utc->tick + static_cast<std::uint64_t>(static_cast<std::int64_t>(timeZoneMinutes) * TICKS_PER_MINUTE)};
     const RtcDateTime time = fromTick(local.tick);
+    if (static_cast<std::int64_t>(local.tick) >= 0 && (time.year < 1 || time.year > 9999)) return SCE_RTC_ERROR_INVALID_YEAR;
+    if (static_cast<std::int64_t>(utc->tick) < 0 || static_cast<std::int64_t>(local.tick) < 0) return SCE_RTC_ERROR_INVALID_VALUE;
     const int offset = timeZoneMinutes < 0 ? -timeZoneMinutes : timeZoneMinutes;
-    std::snprintf(dateTime, 32, "%s, %02u %s %04u %02u:%02u:%02u %c%02d%02d", WEEKDAY_NAMES[(local.tick / TICKS_PER_DAY + 1) % 7], time.day,
+    std::snprintf(dateTime, 32, "%s, %02u %s %04u %02u:%02u:%02u %c%02d%02d", WEEKDAY_NAMES[(daysFromCivil(time.year, time.month, time.day) + 1) % 7], time.day,
         MONTH_NAMES[time.month - 1], time.year, time.hour, time.minute, time.second, timeZoneMinutes < 0 ? '-' : '+', offset / 60, offset % 60);
     return 0;
 }
@@ -710,19 +709,22 @@ int APS5_VABI sceRtcCompareTick(const RtcTick* first, const RtcTick* second) {
 
 int APS5_VABI sceRtcGetCurrentRawNetworkTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick(4);
+    const RtcTick value{currentTick(4)};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcGetCurrentAdNetworkTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick(2);
+    const RtcTick value{currentTick(2)};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcGetCurrentDebugNetworkTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick(3);
+    const RtcTick value{currentTick(3)};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
@@ -759,9 +761,17 @@ int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, in
         utc = &now;
     }
     if (time_zone_minutes < -1439 || time_zone_minutes > 1439 || precision < 0 || precision > 6) return SCE_RTC_ERROR_INVALID_VALUE;
-    RtcTick local{};
-    if (const int result = addTicks(&local, utc, time_zone_minutes, TICKS_PER_MINUTE); result != 0) return result;
-    const RtcDateTime time = fromTick(local.tick);
+    const std::uint64_t shift = static_cast<std::uint64_t>(time_zone_minutes < 0 ? -time_zone_minutes : time_zone_minutes) * TICKS_PER_MINUTE;
+    std::uint64_t localTick = 0;
+    if (time_zone_minutes < 0) {
+        if (utc->tick < shift) return SCE_RTC_ERROR_INVALID_VALUE;
+        localTick = utc->tick - shift;
+    } else {
+        if (utc->tick > std::numeric_limits<std::uint64_t>::max() - shift) return SCE_RTC_ERROR_INVALID_VALUE;
+        localTick = utc->tick + shift;
+    }
+    const RtcDateTime time = fromTick(localTick);
+    if (time.year < 1 || time.year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
     int written = std::snprintf(date_time, 20, "%04u-%02u-%02uT%02u:%02u:%02u", time.year, time.month, time.day, time.hour, time.minute, time.second);
     if (precision != 0) {
         std::uint32_t divisor = 1;
@@ -785,7 +795,7 @@ int APS5_VABI sceRtcFormatRFC3339PreciseLocalTime(char* date_time, const RtcTick
         utc = &now;
     }
     if (precision < 0 || precision > 6) return SCE_RTC_ERROR_INVALID_VALUE;
-    if (utc->tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
+    if (utc->tick > MAX_TICK && utc->tick - MAX_TICK > static_cast<std::uint64_t>(1439 * TICKS_PER_MINUTE)) return SCE_RTC_ERROR_INVALID_YEAR;
     return sceRtcFormatRFC3339Precise(date_time, utc, localOffsetMinutes(*utc), precision);
 }
 

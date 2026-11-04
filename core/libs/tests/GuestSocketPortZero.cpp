@@ -1,20 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI getpeername_nid_postfix(int, void*, std::uint32_t*);
-std::int64_t APS5_VABI sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -45,7 +36,28 @@ static void CheckDatagram(int family) {
     Require(connect_nid_postfix(probe, address.data(), size) == -1 && *__error_nid_postfix() == 49,
         "connect to port 0 on an unconnected datagram socket must fail with EADDRNOTAVAIL (49)");
     Require(getpeername_nid_postfix(probe, name.data(), &length) == -1 && *__error_nid_postfix() == 57, "still unconnected");
-    Require(close_nid_postfix(probe) == 0, "close");
+    const int peer = socket_nid_postfix(family, 2, 0);
+    Require(peer >= 0, "peer");
+    const int bound = bind_nid_postfix(peer, address.data(), size);
+    if (bound < 0 && family == 28 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(peer) == 0 && close_nid_postfix(probe) == 0, "close");
+        return;
+    }
+    Require(bound == 0, "bind peer");
+    Address target{};
+    length = target.size();
+    Require(getsockname_nid_postfix(peer, target.data(), &length) == 0, "peer name");
+    Require(connect_nid_postfix(probe, target.data(), size) == 0, "connect to the peer");
+    length = name.size();
+    Require(getpeername_nid_postfix(probe, name.data(), &length) == 0, "connected");
+    Require(connect_nid_postfix(probe, address.data(), size) == -1 && *__error_nid_postfix() == 49,
+        "connect to port 0 on a connected datagram socket must fail with EADDRNOTAVAIL (49)");
+    length = name.size();
+    Require(getpeername_nid_postfix(probe, name.data(), &length) == -1 && *__error_nid_postfix() == 57,
+        "connect to port 0 must disconnect a connected datagram socket");
+    Require(send_nid_postfix(probe, "x", 1, 0) == -1 && *__error_nid_postfix() == 39,
+        "send without an address after the disconnect must fail with EDESTADDRREQ (39)");
+    Require(close_nid_postfix(peer) == 0 && close_nid_postfix(probe) == 0, "close");
 }
 
 static void CheckStream(int family) {
@@ -76,10 +88,57 @@ static void CheckStream(int family) {
     Require(close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close");
 }
 
+static void CheckUnspecified(int type) {
+    const int server = socket_nid_postfix(28, type, 0);
+    if (server < 0 && *__error_nid_postfix() == 47) return;
+    Require(server >= 0, "server");
+    auto address = Loopback(28, 28);
+    const int bound = bind_nid_postfix(server, address.data(), 28);
+    if (bound < 0 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(server) == 0, "close");
+        return;
+    }
+    Require(bound == 0, "bind server");
+    if (type == 1) Require(listen_nid_postfix(server, 1) == 0, "listen");
+    std::uint32_t length = address.size();
+    Require(getsockname_nid_postfix(server, address.data(), &length) == 0, "server name");
+    auto unspecified = address;
+    std::memset(unspecified.data() + 8, 0, 16);
+    const int client = socket_nid_postfix(28, type, 0);
+    Require(client >= 0, "client");
+    Address any{};
+    any[0] = 28;
+    any[1] = 28;
+    Require(connect_nid_postfix(client, any.data(), 28) == -1 && *__error_nid_postfix() == 49,
+        "connect to port 0 of the unspecified AF_INET6 address must fail with EADDRNOTAVAIL (49)");
+    Require(connect_nid_postfix(client, unspecified.data(), 28) == 0,
+        "connect to the unspecified AF_INET6 address must reach ::1 on the same port");
+    Address peer{};
+    length = peer.size();
+    Require(getpeername_nid_postfix(client, peer.data(), &length) == 0 && length == 28 && peer[1] == 28
+            && std::memcmp(peer.data() + 2, address.data() + 2, 2) == 0 && std::memcmp(peer.data() + 8, address.data() + 8, 16) == 0,
+        "the peer of a connect to the unspecified AF_INET6 address must be ::1 on the same port");
+    if (type == 1) {
+        const int accepted = accept_nid_postfix(server, nullptr, nullptr);
+        Require(accepted >= 0, "accept");
+        Require(send_nid_postfix(client, "x", 1, 0) == 1, "send");
+        char byte = 0;
+        Require(recv_nid_postfix(accepted, &byte, 1, 0) == 1 && byte == 'x', "receive on the accepted socket");
+        Require(close_nid_postfix(accepted) == 0, "close");
+    } else {
+        Require(send_nid_postfix(client, "y", 1, 0) == 1, "send");
+        char byte = 0;
+        Require(recv_nid_postfix(server, &byte, 1, 0) == 1 && byte == 'y', "receive on ::1");
+    }
+    Require(close_nid_postfix(client) == 0 && close_nid_postfix(server) == 0, "close");
+}
+
 int main() {
     CheckDatagram(2);
     CheckDatagram(28);
     CheckStream(2);
     CheckStream(28);
+    CheckUnspecified(1);
+    CheckUnspecified(2);
     return 0;
 }

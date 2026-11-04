@@ -9,7 +9,8 @@
 
 namespace AgcDriver::DriverDetail {
 
-inline constexpr std::uint32_t SubmissionQueueEnd = 0x58;
+inline constexpr std::uint32_t SubmissionQueueEnd = 0x59;
+inline constexpr std::uint32_t UnmeasuredSubmissionQueueEnd = 0x58;
 
 std::size_t SubmissionRingCapacity();
 

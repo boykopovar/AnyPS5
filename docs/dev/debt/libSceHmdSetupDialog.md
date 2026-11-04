@@ -1,5 +1,5 @@
 # libSceHmdSetupDialog technical debt
 
-### Unknown function info
+### Silent stubs
 
-- [sceHmdSetupDialogClose, sceHmdSetupDialogGetResult, sceHmdSetupDialogGetStatus, sceHmdSetupDialogInitialize, sceHmdSetupDialogOpen, sceHmdSetupDialogTerminate and sceHmdSetupDialogUpdateStatus](../../../core/libs/prx/libSceHmdSetupDialog/Export.cpp) (libSceHmdSetupDialog) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHmdSetupDialog.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [libSceHmdSetupDialog](../../../core/libs/prx/libSceHmdSetupDialog/Export.cpp) - the HMD setup dialog runs the common-dialog state machine but shows nothing and reports the user as having cancelled, as no headset is supported (see libSceHmd2). The signatures are from [Orbital's type database](https://github.com/AlexAltea/orbital/blob/b321fcdbd700cc02da1cb1ad25412781d5ec73c6/tools/ida/db_types.json); the result layout beyond the leading `int32_t` result code is not known, so nothing else is written.

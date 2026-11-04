@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Shader/include/GsOversubscription.hpp"
 #include "SceShaders.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -10,8 +11,6 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
-
-extern "C" int APS5_VABI sceAgcGetGsOversubscription(ShaderRegister* regs, const Shader* gs, std::uint32_t budget, float factor);
 
 namespace {
 

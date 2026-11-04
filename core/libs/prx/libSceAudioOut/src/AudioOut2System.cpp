@@ -1,4 +1,6 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -6,12 +8,15 @@
 
 static constexpr std::uint32_t MAX_SUPPORTED_3D_OUTPUT = 2;
 static constexpr int SCE_AUDIO_OUT2_ERROR_INVALID_PARAM = static_cast<int>(0x80268001);
+static constexpr int SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED = static_cast<int>(0x80268006);
 
 static std::atomic<bool> g_chatEnabled{false};
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2Initialize(void) {
+int APS5_VABI sceAudioOut2InitializeEx(std::uint32_t param) {
+    (void)param;
+    AudioOut2MarkInitialized_nid_no_patch();
     return 0;
 }
 
@@ -28,17 +33,28 @@ int APS5_VABI sceAudioOut2GetSystemState(AudioOut2SystemState* state) {
 }
 
 int APS5_VABI sceAudioOut2SetSystemDebugState(const AudioOut2SystemDebugStateParam* param) {
-    if (param == nullptr) return static_cast<int>(0x80260502);
+    constexpr int ErrorInvalidPointer = static_cast<int>(0x8026800C);
+    constexpr std::uint32_t DebugStateIdLoudness = 1;
+    constexpr std::uint32_t DebugStateIdUnmodelled = 0x20;
+    constexpr std::size_t LoudnessParamSize = 8;
+    constexpr std::size_t UnmodelledParamSize = 4;
+    if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
+    if (param == nullptr) return ErrorInvalidPointer;
+    if (param->debug_state_id == DebugStateIdUnmodelled && param->param_size == UnmodelledParamSize) NotImplemented_nid_no_patch(__func__);
+    if (param->debug_state_id != DebugStateIdLoudness || param->param_size != LoudnessParamSize) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
+    if (param->param == nullptr) NotImplemented_nid_no_patch(__func__);
     AUDIOOUT2_TRACE("t=%.3f SetSystemDebugState: debug state %u recorded; the host has no system mix to apply it to\n", AudioOut2TraceSeconds(), param->debug_state_id);
     return 0;
 }
 
 int APS5_VABI sceAudioOut2EnableChat(void) {
+    if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
     if (!g_chatEnabled.exchange(true)) AUDIOOUT2_TRACE("t=%.3f EnableChat: chat audio is allowed alongside the title's; the host mixes no chat audio\n", AudioOut2TraceSeconds());
     return 0;
 }
 
 int APS5_VABI sceAudioOut2DisableChat(void) {
+    if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
     if (g_chatEnabled.exchange(false)) AUDIOOUT2_TRACE("t=%.3f DisableChat: chat audio is no longer allowed alongside the title's\n", AudioOut2TraceSeconds());
     return 0;
 }

@@ -24,6 +24,41 @@ struct Cache {
     std::uint16_t counts[Classes];
 };
 
+constexpr std::uint16_t KeptLists = 8;
+
+struct Depot {
+    SRWLOCK lock = SRWLOCK_INIT;
+    void* lists = nullptr;
+    std::uint16_t count = 0;
+};
+
+Depot depots[Classes];
+
+bool KeepList(std::size_t sizeClass, void* list) noexcept {
+    auto& depot = depots[sizeClass];
+    AcquireSRWLockExclusive(&depot.lock);
+    const bool kept = depot.count < KeptLists;
+    if (kept) {
+        static_cast<void**>(list)[1] = depot.lists;
+        depot.lists = list;
+        ++depot.count;
+    }
+    ReleaseSRWLockExclusive(&depot.lock);
+    return kept;
+}
+
+void* TakeList(std::size_t sizeClass) noexcept {
+    auto& depot = depots[sizeClass];
+    AcquireSRWLockExclusive(&depot.lock);
+    void* list = depot.lists;
+    if (list != nullptr) {
+        depot.lists = static_cast<void**>(list)[1];
+        --depot.count;
+    }
+    ReleaseSRWLockExclusive(&depot.lock);
+    return list;
+}
+
 Cache* const Closed = reinterpret_cast<Cache*>(std::uintptr_t{1});
 
 constexpr unsigned long TlsSlotsOffset = 0x1480;
@@ -114,6 +149,12 @@ void* TryAllocate(std::size_t bytes) noexcept {
     if (bytes <= LargestCached) {
         const auto sizeClass = (bytes - 1) / Granule;
         if (auto* cache = CurrentCache()) {
+            if (cache->heads[sizeClass] == nullptr) {
+                if (void* list = TakeList(sizeClass)) {
+                    cache->heads[sizeClass] = list;
+                    cache->counts[sizeClass] = Depth(sizeClass);
+                }
+            }
             if (void* block = cache->heads[sizeClass]) {
                 cache->heads[sizeClass] = *static_cast<void**>(block);
                 --cache->counts[sizeClass];
@@ -140,6 +181,10 @@ void Release(void* block, std::size_t bytes = 0) noexcept {
         const auto usable = bytes != 0 && bytes % Granule == 0 ? bytes : _msize(block);
         if (usable >= Granule && usable < LargestCached + Granule) {
             const auto sizeClass = usable / Granule - 1;
+            if (cache->counts[sizeClass] == Depth(sizeClass) && KeepList(sizeClass, cache->heads[sizeClass])) {
+                cache->heads[sizeClass] = nullptr;
+                cache->counts[sizeClass] = 0;
+            }
             if (cache->counts[sizeClass] < Depth(sizeClass)) {
                 *static_cast<void**>(block) = cache->heads[sizeClass];
                 cache->heads[sizeClass] = block;

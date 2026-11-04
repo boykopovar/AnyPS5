@@ -16,6 +16,7 @@ from test_linux_load_alignment import loads
 from test_macos_output import MachO
 
 
+DEFAULT_BASE = 0x400000
 SCE_TAGS = {2: 0x6100002D, 3: 0x61000027, 5: 0x61000035, 6: 0x61000039,
             7: 0x6100002F, 8: 0x61000031, 9: 0x61000033, 10: 0x61000037,
             11: 0x6100003B, 20: 0x6100002B, 23: 0x61000029}
@@ -73,6 +74,7 @@ def fixture(layout, sce, guest, misaligned=False, conflicting=False):
 
 def check_output(data, target, guest, local, plt):
     if target == "linux":
+        base = 0 if guest else DEFAULT_BASE
         assert data.startswith(b"\x7fELF")
         assert all(load[2] % 0x1000 == load[3] % 0x1000 for load in loads(data))
         tags = dynamic_tags(data)
@@ -83,7 +85,8 @@ def check_output(data, target, guest, local, plt):
                 actual = [struct.unpack_from("<QQq", data, offset)
                           for offset in range(start, start + tags[size], 24)]
             assert [(offset, info & 0xFFFFFFFF, addend) for offset, info, addend in actual] == [
-                (offset, info & 0xFFFFFFFF, addend) for offset, info, addend in expected], (actual, expected)
+                (offset + base, info & 0xFFFFFFFF, addend + base if info & 0xFFFFFFFF == 8 else addend)
+                for offset, info, addend in expected], (actual, expected)
             if address == 23:
                 assert all(info >> 32 for _, info, _ in actual)
         return

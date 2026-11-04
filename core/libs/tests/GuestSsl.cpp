@@ -1,3 +1,4 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
@@ -7,37 +8,6 @@
 #include <cstdlib>
 #include <exception>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceSslInit_nid_postfix(std::size_t);
-int APS5_VABI sceSslTerm_nid_postfix(int);
-int APS5_VABI sceSslGetCaCerts(int, void*);
-int APS5_VABI sceSslFreeCaCerts(int, void*);
-int APS5_VABI sceSslGetCaList(int, void*);
-int APS5_VABI sceSslFreeCaList(int, void*);
-int APS5_VABI sceSslUnloadCert(int);
-int APS5_VABI sceSslCreateConnection(int, int, const char*);
-int APS5_VABI sceSslDeleteConnection(int);
-int APS5_VABI sceSslSetVerifyCallback(int, int (APS5_VABI *)(int, unsigned int, void**, int, void*), void*);
-int APS5_VABI sceSslConnect(int);
-int APS5_VABI sceSslRead(int, void*, std::size_t, int);
-int APS5_VABI sceSslWrite(int, void*, std::size_t, int);
-int APS5_VABI sceSslClose(int);
-int APS5_VABI sceSslEnableVerifyOption(int, std::uint32_t);
-int APS5_VABI sceSslDisableVerifyOption(int, std::uint32_t);
-int APS5_VABI sceSslSetMinSslVersion(int, int);
-int APS5_VABI sceSslSetAlpn(int, const char*);
-const char* APS5_VABI sceSslGetAlpnSelected(int);
-}
-
-struct SslMemoryPoolStats {
-    std::size_t pool_size;
-    std::size_t max_inuse_size;
-    std::size_t current_inuse_size;
-    std::int32_t reserved;
-};
-
-extern "C" int APS5_VABI sceSslGetMemoryPoolStats(int, SslMemoryPoolStats*);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -53,17 +23,6 @@ static bool Throws(TCall call) {
 
 static int APS5_VABI VerifyCallback(int, unsigned int, void**, int, void*) { return 0; }
 
-struct SslCaCerts {
-    void* certs;
-    std::size_t num;
-    void* pool;
-};
-
-struct SslCaList {
-    void** certs;
-    int num;
-};
-
 int main() {
     static std::array<std::byte, 64> parameters{};
     const std::uint64_t processSize = parameters.size();
@@ -77,17 +36,18 @@ int main() {
     int marker = 0;
     const int context = sceSslInit_nid_postfix(0x10000);
     Require(context > 0);
-    SslMemoryPoolStats stats{1, 1, 1, 1};
+    SceSsl::MemoryPoolStats stats{1, 1, 1, 1};
     Require(sceSslGetMemoryPoolStats(context, &stats) == 0);
-    Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
+    Require(stats.poolSize == 0x10000 && stats.maxInuseSize == 0 && stats.currentInuseSize == 0 && stats.reserved == 0);
     Require(sceSslGetCaCerts(context, nullptr) == invalidValue);
     Require(sceSslFreeCaCerts(context, nullptr) == invalidArg);
 
-    SslCaCerts certs{&marker, 3, &marker};
+    SceSsl::Data certificateMarker{};
+    SceSsl::CaCerts certs{&certificateMarker, 3, &marker};
     Require(sceSslGetCaCerts(context, &certs) == notFound);
     Require(certs.certs == nullptr && certs.num == 0 && certs.pool == nullptr);
 
-    certs = {&marker, 3, &marker};
+    certs = {&certificateMarker, 3, &marker};
     Require(sceSslFreeCaCerts(context, &certs) == 0);
     Require(certs.certs == nullptr && certs.num == 0 && certs.pool == nullptr);
 
@@ -95,13 +55,13 @@ int main() {
     Require(sceSslFreeCaList(context, nullptr) == invalidArg);
 
     void* handle = &marker;
-    SslCaList list{&handle, 3};
+    SceSsl::CaList list{&handle, 3};
     Require(sceSslGetCaList(context, &list) == notFound);
     Require(list.certs == nullptr && list.num == 0);
     Require(sceSslFreeCaList(context, &list) == 0);
     Require(list.certs == nullptr && list.num == 0);
 
-    SslCaList foreign{&handle, 1};
+    SceSsl::CaList foreign{&handle, 1};
     Require(Throws([&] { sceSslFreeCaList(context, &foreign); }));
     foreign = {nullptr, 1};
     Require(Throws([&] { sceSslFreeCaList(context, &foreign); }));
@@ -187,9 +147,9 @@ int main() {
     Require(sceSslGetCaList(context, &list) == invalidId);
     Require(list.certs == &handle && list.num == 3);
     Require(sceSslGetCaCerts(context, nullptr) == invalidId);
-    certs = {&marker, 3, &marker};
+    certs = {&certificateMarker, 3, &marker};
     Require(sceSslGetCaCerts(context, &certs) == invalidId);
-    Require(certs.certs == &marker && certs.num == 3 && certs.pool == &marker);
+    Require(certs.certs == &certificateMarker && certs.num == 3 && certs.pool == &marker);
     Require(Throws([&] { sceSslFreeCaList(context, &list); }));
     for (const std::uint32_t sdkVersion : {0u, 0x074fffffu, 0x07500000u, 0x09000000u}) {
         std::memcpy(parameters.data() + 16, &sdkVersion, sizeof(sdkVersion));

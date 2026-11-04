@@ -70,6 +70,8 @@ DccKeys TextureClearKeys(const GuestTextureResource& resource, std::uint64_t gue
 struct DccKeyProof {
     DccKeys keys = DccKeys::Uncompressed;
     std::uint64_t generation = 0;
+    std::uint64_t pendingNote = 0;
+    std::uint64_t pendingRecorder = 0;
 };
 // TextureClearKeys with the scan skipped while the key range is unchanged since `proof` was taken
 // (CollectWrites over the keys, then UnchangedSince its generation), so a surface's keys are scanned
@@ -80,7 +82,19 @@ struct DccKeyProof {
 // their record), which makes the proof exactly as sound as UnchangedSince over the texels.
 // APS5_NO_KEY_FAST_PATH=1 scans on every call and stores nothing.
 DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof);
+DccKeyProof PendingKeyProof(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeys keys);
+bool PendingKeyProofHolds(const GuestTextureResource& resource, std::uint64_t guestBytes, const DccKeyProof& proof);
 bool KeyFastPath();
+bool SingleKeysReadable(const GuestTextureResource& resource);
+bool ReadSingleElement(const GuestTextureResource& resource, std::span<std::byte> element);
+struct DccSingleProof {
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t generation = 0;
+    std::uint32_t format = 0;
+    bool uniform = false;
+};
+bool ProvedSingleUniform(const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint64_t collected, DccSingleProof& proof);
 // Cumulative outcomes of ProvedClearKeys: calls answered by a proof, scans made, and scans not kept.
 struct DccKeyProofCounts {
     std::uint64_t proved;

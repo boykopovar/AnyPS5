@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -41,7 +42,9 @@ void MoveImportFirst(std::vector<unsigned char>& bytes, const std::string& dll) 
     const auto optionalSize = read16(bytes, pe + 20);
     const auto optional = pe + 24;
     if (read16(bytes, optional) != 0x20bu) throw std::runtime_error("not a PE32+ image");
-    const auto importRva = read32(bytes, optional + 112 + 8);
+    constexpr std::size_t ImportDirectory = 112 + 8;
+    if (optionalSize < ImportDirectory + 8 || read32(bytes, optional + 108) < 2) throw std::runtime_error("the image has no imports");
+    const auto importRva = read32(bytes, optional + ImportDirectory);
     if (importRva == 0) throw std::runtime_error("the image has no imports");
     const auto sectionTable = optional + optionalSize;
     const auto fileOffset = [&](std::uint32_t rva) -> std::size_t {
@@ -61,33 +64,39 @@ void MoveImportFirst(std::vector<unsigned char>& bytes, const std::string& dll) 
     const auto directory = fileOffset(importRva);
     constexpr std::size_t DescriptorBytes = 20;
     std::vector<std::array<unsigned char, DescriptorBytes>> descriptors;
-    std::size_t found = SIZE_MAX;
     for (std::size_t offset = directory;; offset += DescriptorBytes) {
         if (offset + DescriptorBytes > bytes.size()) throw std::runtime_error("truncated import directory");
         std::array<unsigned char, DescriptorBytes> descriptor{};
         std::memcpy(descriptor.data(), bytes.data() + offset, DescriptorBytes);
         if (std::all_of(descriptor.begin(), descriptor.end(), [](unsigned char value) { return value == 0; })) break;
-        const auto nameOffset = fileOffset(read32(bytes, offset + 12));
-        std::string name;
-        for (auto at = nameOffset; at < bytes.size() && bytes[at] != 0; ++at) name.push_back(static_cast<char>(bytes[at]));
-        if (lower(name) == lower(dll)) found = descriptors.size();
         descriptors.push_back(descriptor);
+    }
+    std::size_t found = SIZE_MAX;
+    for (std::size_t index = 0; index < descriptors.size(); ++index) {
+        std::uint32_t nameRva = 0;
+        std::memcpy(&nameRva, descriptors[index].data() + 12, sizeof(nameRva));
+        const auto nameOffset = fileOffset(nameRva);
+        if (nameOffset >= bytes.size()) throw std::runtime_error("RVA outside the file data");
+        const auto terminator = std::find(bytes.begin() + static_cast<std::ptrdiff_t>(nameOffset), bytes.end(), 0);
+        if (terminator == bytes.end()) throw std::runtime_error("unterminated import name");
+        const std::string name(bytes.begin() + static_cast<std::ptrdiff_t>(nameOffset), terminator);
+        if (lower(name) == lower(dll)) found = index;
     }
     if (found == SIZE_MAX) throw std::runtime_error("the image does not import " + dll);
     std::rotate(descriptors.begin(), descriptors.begin() + static_cast<std::ptrdiff_t>(found), descriptors.begin() + static_cast<std::ptrdiff_t>(found) + 1);
     for (std::size_t index = 0; index < descriptors.size(); ++index) std::memcpy(bytes.data() + directory + index * DescriptorBytes, descriptors[index].data(), DescriptorBytes);
 }
 
-void MoveImportFirstInFile(const std::string& path, const std::string& dll) {
+void MoveImportFirstInFile(const std::filesystem::path& path, const std::string& dll) {
     std::vector<unsigned char> bytes;
     {
         std::ifstream input(path, std::ios::binary);
-        if (!input) throw std::runtime_error("cannot open " + path);
+        if (!input) throw std::runtime_error("cannot open " + path.string());
         bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
     }
     MoveImportFirst(bytes, dll);
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output || !output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) throw std::runtime_error("cannot write " + path);
+    if (!output || !output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) throw std::runtime_error("cannot write " + path.string());
 }
 
 }

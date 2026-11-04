@@ -1,23 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <thread>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock);
-int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
-int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
-int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr);
-int APS5_VABI pthread_mutex_lock_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_timedlock_nid_postfix(PthreadMutex* mutex, const KernelTimespec* abstime);
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr int GUEST_EDEADLK = 11;

@@ -5,16 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_macho_nids import build_dylib, exports_of, nid
+from test_macho_nids import build_dylib, exports_of, nid, PATCHER
 
 try:
     import resource
 except ImportError:
     resource = None
 
-PATCHER = Path(sys.argv.pop(1)).resolve()
-
-
+@unittest.skipUnless(PATCHER is not None and PATCHER.is_file(), "nid_patcher executable required")
 class NativePathTests(unittest.TestCase):
     def invoke(self, *arguments):
         return subprocess.run([str(PATCHER), "libtest", *map(str, arguments)],
