@@ -52,6 +52,7 @@ struct MockDevice {
     std::map<VkBuffer, VkDeviceSize> bufferSizes;
     std::map<VkDeviceMemory, std::vector<std::byte>> memories;
     std::map<VkImage, VkDeviceMemory> imageMemories;
+    VkDeviceSize imageRequirementBytes = 65536u;
     bool failExtraMipAllocation = false;
     std::uint32_t imageAllocationFailures = 0;
     std::vector<bool> imageReclaims;
@@ -75,7 +76,11 @@ VKAPI_ATTR VkResult VKAPI_CALL createImage(VkDevice, const VkImageCreateInfo* in
 }
 
 VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements(VkDevice, VkImage, VkMemoryRequirements* requirements) {
-    *requirements = {65536, 1024, 0x3};
+    *requirements = {mock.imageRequirementBytes, 1024, 0x3};
+}
+
+VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* info, VkMemoryRequirements2* requirements) {
+    imageMemoryRequirements(device, info->image, &requirements->memoryRequirements);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL bindImageMemory(VkDevice, VkImage image, VkDeviceMemory memory, VkDeviceSize) {
@@ -232,6 +237,7 @@ PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(createImage)},
         {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements)},
+        {"vkGetImageMemoryRequirements2", reinterpret_cast<PFN_vkVoidFunction>(imageMemoryRequirements2)},
         {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(bindImageMemory)},
         {"vkDestroyImage", reinterpret_cast<PFN_vkVoidFunction>(destroyImage)},
         {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(createImageView)},
@@ -573,27 +579,37 @@ void TestExtraMipAllocationRecovery() {
     clearRecords();
     mock.imageAllocationFailures = 0u;
     mock.imageReclaims.clear();
+    constexpr VkDeviceSize imageBytes = 2u * 1024u * 1024u;
+    mock.imageRequirementBytes = imageBytes;
     mock.failExtraMipAllocation = true;
     {
         const auto texture = StorageTexture::Create(context, detiler, descriptor, 0u);
         mock.failExtraMipAllocation = false;
         Require(mock.imageAllocationFailures == 1u && mock.imageReclaims.size() == 1u, "extra-mip allocation recovery did not exercise its allocation failure");
-        Require(texture->AllocationBytes() == 6u * 65536u, "extra-mip allocation bytes do not include every physical image");
+        Require(texture->AllocationBytes() == 6u * imageBytes, "extra-mip allocation bytes do not include every physical image");
     }
     const auto retained = pool->RetainedImages();
     std::size_t matched = 0;
     std::vector<std::unique_ptr<OwnedImage>> reused;
     for (std::uint32_t index = 0; index < 6u; ++index) {
         auto image = std::make_unique<OwnedImage>(context, VK_NULL_HANDLE, VK_NULL_HANDLE);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = 65536u;
-        allocation.memoryTypeIndex = 0u;
-        image->Allocate(context, allocation, 1u, "extra-mip allocation reuse", true);
-        matched += std::ranges::any_of(mock.imageMemories, [&](const auto& entry) { return entry.second == image->memory; });
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = VK_FORMAT_R32_UINT;
+        info.extent = {1u, 1u, 1u};
+        info.mipLevels = 1u;
+        info.arrayLayers = 1u;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+        Check(createImage(context.device, &info, nullptr, &image->image), "extra-mip reuse image");
+        image->Allocate(context, info, "extra-mip allocation reuse", true, true);
+        matched += std::ranges::any_of(mock.imageMemories, [&](const auto& entry) { return entry.second == image->allocation.Memory(); });
         reused.push_back(std::move(image));
     }
     Require(mock.imageReclaims.front() && retained == 6u && matched == 6u,
         "extra-mip allocation recovery omitted new-image eligibility or allocation identity: new-image=" + std::to_string(mock.imageReclaims.front()) + ", retained=" + std::to_string(retained) + "/6, reused=" + std::to_string(matched) + "/6");
+    mock.imageRequirementBytes = 65536u;
 }
 
 void TestStorageLevelsPastTheFullChain(const Context& context, TextureDetiler& detiler) {
