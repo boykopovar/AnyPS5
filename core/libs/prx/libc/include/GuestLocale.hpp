@@ -205,6 +205,32 @@ struct NumPutVtable {
     OutputIterator (APS5_VABI *putPointer)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const void* value);
 };
 
+struct WideTimePutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier);
+};
+
+struct WideNumPutVtable {
+    FacetVtable facet;
+    OutputIterator (APS5_VABI *putBool)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, bool value);
+    OutputIterator (APS5_VABI *putLong)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, std::int64_t value);
+    OutputIterator (APS5_VABI *putUnsignedLong)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, std::uint64_t value);
+    OutputIterator (APS5_VABI *putLongLong)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, std::int64_t value);
+    OutputIterator (APS5_VABI *putUnsignedLongLong)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, std::uint64_t value);
+    OutputIterator (APS5_VABI *putDouble)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, double value);
+    OutputIterator (APS5_VABI *putLongDouble)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, long double value);
+    OutputIterator (APS5_VABI *putPointer)(const Facet* self, OutputIterator out, IosBase* stream, std::uint16_t fill, const void* value);
+};
+
+struct WideCtypeVtable {
+    FacetVtable facet;
+    const void* classifyAndCaseMethods[8];
+    std::uint16_t (APS5_VABI *widen)(const Facet* self, char character);
+    const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, std::uint16_t* destination);
+    char (APS5_VABI *narrow)(const Facet* self, std::uint16_t character, char fallback);
+    const std::uint16_t* (APS5_VABI *narrowRange)(const Facet* self, const std::uint16_t* first, const std::uint16_t* last, char fallback, char* destination);
+};
+
 struct CtypeVtable {
     FacetVtable facet;
     const void* caseMethods[4];
@@ -257,6 +283,13 @@ static_assert(offsetof(WideNumpunctFacet, falsename) == 0x20);
 static_assert(offsetof(WideNumpunctFacet, truename) == 0x28);
 static_assert(offsetof(WideNumpunctVtable, decimalPoint) == 0x20);
 static_assert(offsetof(WideNumpunctVtable, truename) == 0x40);
+static_assert(offsetof(WideTimePutVtable, put) == 0x20);
+static_assert(offsetof(WideNumPutVtable, putBool) == 0x20);
+static_assert(offsetof(WideNumPutVtable, putDouble) == 0x48);
+static_assert(offsetof(WideNumPutVtable, putPointer) == 0x58);
+static_assert(offsetof(WideCtypeVtable, widen) == 0x60);
+static_assert(offsetof(WideCtypeVtable, narrow) == 0x70);
+static_assert(offsetof(WideCtypeVtable, narrowRange) == 0x78);
 static_assert(alignof(LocinfoStorage) == 8);
 static_assert(sizeof(SceV2Locinfo) == 24);
 static_assert(offsetof(SceV2Locinfo, name) == 8);
@@ -267,5 +300,7 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+
+extern "C" GuestLocale::OutputIterator LibcWideTimePutPattern_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, const std::uint16_t* first, const std::uint16_t* last);
 
 #endif
