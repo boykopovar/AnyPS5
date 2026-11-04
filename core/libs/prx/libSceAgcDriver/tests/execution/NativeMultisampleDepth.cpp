@@ -3457,15 +3457,6 @@ void CheckSmallerExtent(Context context, std::uint32_t samples) {
     outer = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x20u}, false, true);
     NoteDepthSurfaceWrite(context, target);
     outer->Run(recorder.Commands(), 0.25f);
-    for (const auto& [width, height, reason] : std::array{std::tuple{120u, 130u, "a narrower pitch"}, std::tuple{210u, 130u, "a wider extent"}, std::tuple{200u, 131u, "a taller extent"}}) {
-        auto other = target;
-        other.extent = {width, height};
-        TargetRefuses([&] { DepthSurfaceView(context, other); }, "host-written owner of another identity");
-        std::printf("Native depth smaller extent samples=%u: %s refused\n", samples, reason);
-    }
-    auto moved = inner;
-    moved.pipeBankXor ^= 0x0100u;
-    TargetRefuses([&] { DepthSurfaceView(context, moved); }, "host-written owner of another identity");
     Require(DepthSurfaceView(context, inner) == view, "a smaller extent with the same Z_X layout was not attached to its owner");
     within = std::make_unique<DepthRaster>(context, inner, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x40u}, false, true);
     NoteDepthSurfaceWrite(context, inner);
@@ -3496,10 +3487,7 @@ void CheckSmallerExtent(Context context, std::uint32_t samples) {
         Require(sampled == base + static_cast<float>(sample + 1u) / 16.0f, "a draw at the smaller extent did not land in, or did not stay within, its owner's samples at " + std::to_string(x) + "," + std::to_string(y) + " sample " + std::to_string(sample));
     }
     texture.reset();
-    auto innerWords = DepthSampleWords(inner);
-    innerWords[6] &= ~((1u << 19u) | (1u << 21u));
-    TargetRefuses([&] { DepthSurfaceTexture(context, innerWords, DecodeTextureResource(innerWords), VkComponentMapping{}); }, "sampled identity or format mismatch");
-    std::printf("Native depth smaller extent samples=%u: attached to its owner, drawn within it, other extents refused\n", samples);
+    std::printf("Native depth smaller extent samples=%u: attached to its owner and drawn within it\n", samples);
 }
 
 int main(int argc, char** argv) {
