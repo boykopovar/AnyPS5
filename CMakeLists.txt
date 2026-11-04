@@ -220,6 +220,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap.py)
         add_test(NAME pr_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_labels.py)
+        add_test(NAME progress_history_date_window COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryDateWindowTests)
+        set_tests_properties(progress_history_date_window PROPERTIES TIMEOUT 20)
         add_test(NAME pr_ready COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_ready.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
@@ -307,6 +310,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_length.py)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
+        add_test(NAME unbuilt_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unbuilt_exports.py)
         add_test(NAME test_script_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_test_registration.py --scripts)
         add_test(NAME tools_sanitizer_json COMMAND ${Python3_EXECUTABLE}
@@ -565,6 +570,9 @@ if(BUILD_TESTING)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
+        add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
+        set_tests_properties(title_run PROPERTIES TIMEOUT 60)
     endif()
 endif()
 

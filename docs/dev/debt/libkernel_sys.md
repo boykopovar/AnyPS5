@@ -1,13 +1,16 @@
 # libkernel_sys technical debt
 
 - [sceKernelGetCpuUsage, sceKernelGetThreadName, sceKernelLwfsAllocateBlock, sceKernelLwfsLseek, sceKernelLwfsSetAttribute, sceKernelLwfsWrite, sceKernelSetCompressionAttribute and sceKernelSetFsstParam](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - throw through `NotImplemented_nid_no_patch`; behaviour and the PS5 prototypes are unmeasured. The parameter lists come from a single source, the PS4 OpenOrbis `libkernel.h`, with no second reference: `off_t` and `ssize_t` are taken as 64-bit, the `Lwfs*` and `Set*` parameters are unnamed there (the names here are guesses), and the `Proc_Stats` of `sceKernelGetCpuUsage` is declared as `void*` because its layout is unknown.
+- [sceKernelGetPhysPageSize](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) returns `PS5_PAGE_SIZE` (16 KiB), the guest page granularity used by libkernel's direct-memory and mapping implementation. The export has no arguments. Console behaviour is unverified
 ### Silent stubs
 - [fchmodat](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - `AT_SYMLINK_NOFOLLOW` on a symbolic link (on Windows and Linux)
 - [sceKernelCallIndirectBuffer2](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - always writes a zero result, as `sceAmprAmmSubmitCommandBuffer2` does here; in firmware 13.42 the library passes the result pointer to a kernel ioctl, and what the kernel writes there is not known
 
 ### Unknown function info
 
-- [libkernel_sys additional exports](../../../core/libs/prx/libkernel_sys/AdditionalExports.cpp) - 325 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded. Kernel variant imports already resolve through `libkernel`, then `libc`; existing providers remain unchanged. Six native data exports (`errno`, `__stack_chk_guard`, `_sigintr`, `__progname`, `environ`, and NID `AxgW94umKqU`) require separate storage, layout, TLS and ownership validation and are not added as callable aliases or fabricated globals.
+- [Nine unnamed additional exports](../../../core/libs/prx/libkernel_sys/AdditionalExports.cpp) (libkernel_sys, NIDs `pCbBddNl66Y`, `zAloppPJxy0`, `vq2+HyP5U5I`, `z+e0vV-tnH4`, `gJ5gpW45mU0`, `N94a0T4F4+U`, `C49jelxiaVE`, `1WXQlxMpnNA`, `FR0odl35yQY`) - return what firmware 13.42's `system/common/lib/libkernel_sys.sprx` returns, read from disassembly to the return, not measured on a console. The first five are `xor %eax,%eax; ret`, `N94a0T4F4+U` is `mov $0x8002004e,%eax; ret` and `C49jelxiaVE` is `mov $0x20018,%eax; ret`. `1WXQlxMpnNA` stores 1 to a zero-initialised module byte and returns 0, and `FR0odl35yQY` returns that byte zero-extended; no other code in the module touches the byte. None reads an argument, so the declarations are parameterless; the 32-bit loads clear the upper half of `rax`, so they return `std::uint64_t`. Names, intended parameters and callers are unknown.
+
+- [libkernel_sys additional exports](../../../core/libs/prx/libkernel_sys/AdditionalExports.cpp) - 316 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded. Kernel variant imports already resolve through `libkernel`, then `libc`; existing providers remain unchanged. Six native data exports (`errno`, `__stack_chk_guard`, `_sigintr`, `__progname`, `environ`, and NID `AxgW94umKqU`) require separate storage, layout, TLS and ownership validation and are not added as callable aliases or fabricated globals.
 
 | Name | NID |
 | --- | --- |
@@ -148,7 +151,6 @@
 | `sceKernelGetAppLibcData` | `-QipytgE4x0` |
 | `Unknown` | `-sYN8ucoAWw` |
 | `Unknown` | `0CV40L3tznI` |
-| `Unknown` | `1WXQlxMpnNA` |
 | `Unknown` | `1v23w7Rnkic` |
 | `Unknown` | `1v6DjTPunjs` |
 | `Unknown` | `2+KZ4mZKp6E` |
@@ -185,7 +187,6 @@
 | `Unknown` | `BjmZn9pYSuk` |
 | `Unknown` | `C3ToW2CA+hM` |
 | `Unknown` | `C3xgqN95IoE` |
-| `Unknown` | `C49jelxiaVE` |
 | `sceKernelSwitchToTrinityMode` | `Cz48pcLnLCY` |
 | `sceKernelIsGenuineCronosCex` | `DB0muDALi4Y` |
 | `Unknown` | `DWWduhQYA3I` |
@@ -195,7 +196,6 @@
 | `sceKernelTraceMarkerBookmark` | `EKMWpdzszVo` |
 | `Unknown` | `EaepepH-LmI` |
 | `Unknown` | `FIUPjhnoI+o` |
-| `Unknown` | `FR0odl35yQY` |
 | `sceKernelIccGetExtBDDriveStatus` | `GADbvgNm4tY` |
 | `Unknown` | `GTyjVeZcdRM` |
 | `Unknown` | `Gtncco+mxio` |
@@ -218,7 +218,6 @@
 | `Unknown` | `LwGBaXgvFaY` |
 | `Unknown` | `MJ-err8l-XY` |
 | `Unknown` | `MKlp-bW1bz8` |
-| `Unknown` | `N94a0T4F4+U` |
 | `Unknown` | `NhFlyw-77cY` |
 | `Unknown` | `OZBJnWxt7d4` |
 | `Unknown` | `PBq-OUg5A5s` |
@@ -275,7 +274,6 @@
 | `Unknown` | `ftHBlCfIEQo` |
 | `Unknown` | `g7MGwZ5UxBE` |
 | `Unknown` | `gBiaAGKEvHM` |
-| `Unknown` | `gJ5gpW45mU0` |
 | `Unknown` | `gSIiye3ERqo` |
 | `Unknown` | `gpgi-GwE2Is` |
 | `Unknown` | `guq+otVpgj0` |
@@ -302,7 +300,6 @@
 | `Unknown` | `o141x2VDeVc` |
 | `sceKernelGetMainSocSubId` | `oSQQA8I595Y` |
 | `sceKernelInternalUnmapMapperSharedMemory` | `pAI+17im1o0` |
-| `Unknown` | `pCbBddNl66Y` |
 | `Unknown` | `pOClGbxrx94` |
 | `sceKernelSetAppLibcData` | `pn68p6w2eK0` |
 | `Unknown` | `pp+G+UZhiqY` |
@@ -324,7 +321,6 @@
 | `Unknown` | `ulVjluL9TzM` |
 | `Unknown` | `v+qTlNjF6kE` |
 | `Unknown` | `vfYaxkxnJXQ` |
-| `Unknown` | `vq2+HyP5U5I` |
 | `sceKernelSetCanvasHandle` | `wXnNof3LrrU` |
 | `Unknown` | `wn0XzOue4EM` |
 | `Unknown` | `wwWv+0MzhGM` |
@@ -333,22 +329,23 @@
 | `Unknown` | `yWOJkfd-DhA` |
 | `Unknown` | `yn0b42DApAI` |
 | `Unknown` | `yzvrk3YrPlE` |
-| `Unknown` | `z+e0vV-tnH4` |
 | `Unknown` | `z0qKN5kkVj0` |
-| `Unknown` | `zAloppPJxy0` |
 
 - [sceKernelGetHwModelName](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - throws. On a CFI-2014 PS5 (firmware 13.60) a payload process got 0 from `sceKernelGetHwModelName(char*)`, which wrote "CFI-2014 A01X" and a terminator (14 bytes). The model string belongs to one console and the buffer size and null behaviour are not known, so it is not implemented
 - [sceKernelGetCompiledSdkVersion](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - which SDK version the console returns is unmeasured. The [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk/blob/a7685ce8e97ce1f8a4f38253a41d54241c9124f1/crt/kernel.c#L257-L275) declares the process parameters with a 32-bit PS4 SDK version at offset `0x10` and a 32-bit PS5 SDK version at `0x14`; this export returns the field at `0x10`, which [libSceHmd2](../../../core/libs/prx/libSceHmd2/Export.cpp) reads and [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/615bcba5e21b82dc59588575f7ecbce8da09ca2c/src/emulator.cpp#L110-L138) reads from the eboot. The `int (int32_t*)` signature and `EINVAL` (`0x80020016`) for null follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/615bcba5e21b82dc59588575f7ecbce8da09ca2c/src/core/libraries/kernel/process.cpp#L56-L62); `SCE_KERNEL_ERROR_EFAULT` for an unwritable output pointer is a host-safety fallback so the process does not crash, not a measured PS5 result, and the console's behaviour for such a pointer is unmeasured. Closes when: measured on a PS5
 - [scePthreadCondattrGetclock](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - a null clock pointer with a valid attribute throws `std::invalid_argument`, where a payload process measured on a device faults. A null or destroyed attribute with a null output returns `SCE_KERNEL_ERROR_EINVAL` (`0x80020016`) because [FreeBSD 11.4 libthr](https://github.com/freebsd/freebsd-src/blob/d106002967/lib/libthr/thread/thr_condattr.c#L82-L90) checks the attribute first; that pair was not measured. Inaccessible non-null pointers and stale handles are not validated
 
 ### Functional
+- [revoke](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - a character device throws, because device revocation is not modelled. Other paths follow FreeBSD 11 `sys_revoke`: path errors as `stat` reports them, and `EINVAL` for anything that is not a character device. Guest paths have no `/dev`, so `/dev/null` and the like fail with `ENOENT`, not as devices
 
 - [sceKernelGetUpdVersion](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - runs the same code as `sysKernelGetUpdVersion` on firmware 13.42 ([disassembly](https://github.com/boykopovar/AnyPS5/pull/10671#issuecomment-6398286973)), so it forwards there: a null output is refused with `SCE_KERNEL_ERROR_EINVAL`, and otherwise the 4 bytes come from `machdep.upd_version`, whose retail value is unmeasured (see libkernel's entry)
 - [get_vm_map_timestamp](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys), firmware 13.60 `libkernel_sys.sprx`, syscall 624, returns the low 32 bits of the guest-allocation generation. That value advances whenever a guest-allocation registry scope ends, including lookups (`malloc_usable_size`) and every guest heap allocation or free, and whenever a tracked range is invalidated. FreeBSD advances a map's timestamp only when the map is write-locked, so the value changes far more often than the console's would. Host mappings made outside the tracker can be missed. Not hardware-validated.
 - [kenv](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) follows FreeBSD 11.4's [`sys_kenv`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/kern_environment.c#L87-L204) for a caller in a jail with the default parameters: `KENV_SET` and `KENV_UNSET` fail with `EPERM` before the name is read, as [`prison_priv_check`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/kern_jail.c#L3060) denies `PRIV_KENV_SET` and `PRIV_KENV_UNSET` there. That a program runs jailed as uid 0 is the model agreed for the credential checks, not measured on a console. The environment therefore stays empty, since the console's boot environment is unmeasured: `KENV_GET` reads `ENOENT` and `KENV_DUMP` returns 0. A name is read with the guest path copy, which reads up to 1024 bytes, so an unterminated string followed by an unreadable page fails with `EFAULT` where FreeBSD's bounded `copyinstr` gives `ENAMETOOLONG`. Console behaviour is unverified
 - [sched_rr_get_interval](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) accepts pid 0 or the host-backed guest pid and reports the FreeBSD 11 ULE default time slice for the usual AMD64 clock rates (94 ms); other pids return `ESRCH`, and a null interval returns `EFAULT`. AnyPS5 does not run a guest ULE scheduler or track a per-process configured quantum, so this reports the modeled default and does not reflect runtime scheduling. Console-specific clock rates and quantum configuration are unverified
+- [pwrite](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) a one-byte write at `INT64_MAX` returns `EINVAL` here. The console table reports `EFBIG` for a maximum-offset row whose count, flags and payload are not stated, so the difference is unverified. It shares the POSIX provider and remaining limitations of [libkernel](libkernel.md); no error remapping is applied.
 - [is_in_sandbox and sceKernelIsInSandbox](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) return 1 as a title process runs in a sandbox container jail, matching shadPS4 (process.cpp:15-17)
 - [fchdir](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) changes the guest working directory to the descriptor's directory: on Windows through the path recorded when the descriptor was opened, on Linux through the `/proc/self/fd` link target. It returns `EBADF` for a descriptor that is not open, `EINVAL` for a pipe or socket, as FreeBSD `getvnode` does for a descriptor without a vnode, and `ENOTDIR` for any other descriptor that is not a directory. Outside Windows it checks search permission on the directory with `faccessat`, which fails with `EACCES` as FreeBSD `change_dir` does; on Windows that check is not modelled. A directory renamed after it was opened is still reached through the recorded path. Console behaviour is unverified
+- [__getcwd](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) implements the raw `int __getcwd(char *buf, size_t buflen)` syscall using the guest-root-aware cwd model shared with libc `getcwd`. It requires caller-provided storage (`EFAULT` for null), returns 0 on success and -1 with the guest errno on failure. The syscall signature follows FreeBSD `sys___getcwd`; console behaviour and errno details are unverified on hardware. Errno differences from FreeBSD `sys___getcwd` that were reviewed and are not implemented: a buffer size of 1 answers `ERANGE` (34) where FreeBSD answers `EINVAL` (22), a buffer too short for the path with a size of 2 or more answers `ERANGE` where FreeBSD answers `ENOMEM` (12), and a null buffer is checked first and answers `EFAULT` (14) even with a size of 0, where FreeBSD answers `EINVAL` (22).
 - [openat, _openat](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) pass `AT_FDCWD` (-100) and absolute paths to `open`. Any other relative path is joined to the descriptor's host directory, found the same way as for `fchdir`, so guest path aliases and case-insensitive name matching do not apply to it, and a `..` component is not kept inside the guest root. They return `EBADF` for a descriptor that is not open and `ENOTDIR` for one that is not a directory. As with `open`, `O_NONBLOCK` is ignored. PPSA99003 opens directory entries through `openat`. Console behaviour is unverified
 - [fchmodat](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) passes `AT_FDCWD` (-100) and absolute paths to `chmod`; any other relative path is joined to the descriptor's host directory the same way as for `openat`, so guest path aliases and case-insensitive name matching do not apply to it and a `..` component is not kept inside the guest root. A flag other than `0` or `AT_SYMLINK_NOFOLLOW` (0x200) returns `EINVAL`; the mode is masked to `07777`. With `AT_SYMLINK_NOFOLLOW` a symbolic link returns success silently on Windows and Linux, since the host cannot change a link's own mode, while a regular file is changed either way. The mode maps to the host file mode, which on Windows is only the CRT's read-only bit. PPSA99621 calls it through `std::filesystem::permissions`. Console behaviour is unverified
 - [lchmod](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) throws for a symbolic link on Windows and Linux, whose hosts cannot change a link's own mode; on macOS the link's mode is changed. Anything else goes to `fchmodat(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW)`, as FreeBSD 11.4's [`sys_lchmod`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/sys/kern/vfs_syscalls.c#L2490-L2496) does, so a file or directory is changed as by `chmod`, with `fchmodat`'s path lookup and Windows mode mapping. On Windows any reparse point counts as a link. Console behaviour is unverified

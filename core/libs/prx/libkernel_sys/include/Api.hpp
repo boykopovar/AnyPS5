@@ -163,9 +163,9 @@ int APS5_VABI pthread_suspend_user_context_np_nid_postfix(void);
 int APS5_VABI pthread_switch_add_np_nid_postfix(void);
 int APS5_VABI pthread_switch_delete_np_nid_postfix(void);
 int APS5_VABI ptrace_nid_postfix(void);
-int APS5_VABI pwrite_nid_postfix(void);
+std::int64_t APS5_VABI pwrite_nid_postfix(int d, const void* buf, std::size_t nbytes, std::int64_t offset);
 int APS5_VABI reboot_nid_postfix(void);
-int APS5_VABI revoke_nid_postfix(void);
+int APS5_VABI revoke_nid_postfix(const char* path);
 int APS5_VABI rfork_thread_nid_postfix(void);
 int APS5_VABI rtld_printf_nid_postfix(void);
 int APS5_VABI sceCoredumpDebugForceCoredumpOnAppClose(void);
@@ -544,7 +544,6 @@ int APS5_VABI symlinkat_nid_postfix(void);
 int APS5_VABI sysc_e00_nid_postfix(void);
 int APS5_VABI sysc_m00_nid_postfix(void);
 int APS5_VABI sysc_s00_nid_postfix(void);
-int APS5_VABI tcgetsid_nid_postfix(void);
 int APS5_VABI tcsetsid_nid_postfix(int fd, int pid);
 int APS5_VABI unmount_nid_postfix(void);
 int APS5_VABI utrace_nid_postfix(const void* address, std::size_t length);
@@ -554,5 +553,6 @@ int APS5_VABI wait3_nid_postfix(void);
 int APS5_VABI wait4_nid_postfix(void);
 
 int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...);
+int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size);
 
 }
