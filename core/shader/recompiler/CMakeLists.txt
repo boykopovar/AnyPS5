@@ -113,7 +113,6 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RequestMemoryView.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DescriptorBindingBuilder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ShaderInfoCollector.cpp
-            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SharedMemoryBarrierInserter.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DenormalFlushEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowStoreEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RedundantValueEliminator.cpp
@@ -250,6 +249,7 @@ function(add_shader_recompiler target runtimeTarget)
             BuildTessellationCaptureGeometryShader
             CaptureResources
             DebugProbeActive
+            DecodeRdnaInstruction
             DepthBitsTextureWidth
             HashBytes
             LayoutBarycentricEmulation
@@ -291,6 +291,7 @@ function(add_shader_recompiler target runtimeTarget)
             GcnImagePitch
             GcnImagePow2Pad
             RuntimeAbi::HeapCapacity
+            RuntimeAbi::UintStorageImageBinding
             SampledTextureNumericClass
             SetDebugProbeActive
             SrtEvaluatingBranch
