@@ -152,6 +152,8 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(cons
 
 std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_outputHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
     auto kept = _keptHeaders(originalHeaders);
+    if (std::count_if(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_RELRO; }) > 1)
+        throw Domain::RelinkerException("Multiple RELRO ranges are not supported on Linux output: the loader only protects one PT_GNU_RELRO segment");
     if (std::none_of(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; }))
         kept.push_back(Domain::ProgramHeader{PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0, 0, 16});
     if (kept.size() >= kExtendedProgramHeaderCount - kSyntheticProgramHeaderCount)
