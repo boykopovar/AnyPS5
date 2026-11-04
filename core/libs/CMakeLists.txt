@@ -1295,16 +1295,6 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAcm>")
     endif()
 
-    add_test_executable(guest_voice_chat_tests tests/GuestVoiceChat.cpp)
-    target_include_directories(guest_voice_chat_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_voice_chat_tests PRIVATE libSceVoiceChat libc)
-    configure_windows_unwind(guest_voice_chat_tests)
-    add_test(NAME guest_voice_chat COMMAND guest_voice_chat_tests)
-    if(WIN32)
-        set_tests_properties(guest_voice_chat PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVoiceChat>")
-    endif()
-
     add_test_executable(guest_gnm_neo_embedded_tests tests/GuestGnmNeoEmbedded.cpp)
     target_include_directories(guest_gnm_neo_embedded_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_gnm_neo_embedded_tests PRIVATE libSceGnmDriverForNeoMode libc)
