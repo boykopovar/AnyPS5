@@ -272,7 +272,6 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `__kernel_cos` | `-m7FIvSBbMM` |
 | `__kernel_cosdf` | `7ruwcMCJVGI` |
 | `__kernel_sindf` | `2Lvc7KWtErs` |
-| `__longjmp` | `9mKjVppFsL0` |
 | `_init_tls` | `6NCOqr3cD74` |
 | `_malloc_finalize_lv2` | `RnqlvEmvkdw` |
 | `_malloc_fini` | `21KFhEQDJ3s` |

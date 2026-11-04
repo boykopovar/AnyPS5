@@ -139,6 +139,7 @@ int APS5_VABI sceLibcPafMspaceCheckMemoryBounds();
 int APS5_VABI sceLibcHeapUnsetTraceMarker();
 int APS5_VABI sceLibcHeapGetAddressRanges();
 int APS5_VABI sceLibcHeapMutexFree();
+[[noreturn]] void APS5_VABI __longjmp_nid_postfix(std::uint64_t* buffer, int value);
 
 
 }
