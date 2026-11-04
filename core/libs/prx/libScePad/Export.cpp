@@ -428,8 +428,8 @@ int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
  }
  std::uint32_t mode[2] = {};
  for (int trigger = 0; trigger < 2; ++trigger) std::memcpy(&mode[trigger], bytes + 8 + 56 * trigger, 4);
- if (mode[0] > 6 || mode[1] > 6) {
-  return PAD_ERROR_INVALID_ARG;
+ for (int trigger = 0; trigger < 2; ++trigger) {
+  if ((mask & (1u << trigger)) != 0 && mode[trigger] > 6) return PAD_ERROR_INVALID_ARG;
  }
  const int port = PortOf(handle);
  for (int trigger = 0; trigger < 2; ++trigger) {

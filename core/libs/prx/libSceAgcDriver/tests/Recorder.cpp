@@ -4183,6 +4183,11 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         const auto reads = memory.InPlaceReads();
         Require(reads.size() == 1 && reads[0].first == element && reads[0].second == element + elementBytes, "an imported region is not an in-place read");
         Require(memory.Writes().empty(), "a readable element counts as written");
+        const std::array<std::pair<std::uint64_t, std::size_t>, 7> probes{{{element, 1}, {element + elementBytes - 1, 1}, {element + elementBytes, 64}, {element - 64, 64}, {element - 64, 65}, {address, bytes}, {element + 16, 16}}};
+        for (const auto& [probe, probeBytes] : probes) {
+            const bool listed = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return probe < range.second && range.first < probe + probeBytes; });
+            Require(memory.InPlaceReadsOverlap(probe, probeBytes) == listed, "the in-place read overlap walk disagrees with the listed reads");
+        }
     }
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
@@ -4476,6 +4481,9 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
         const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
         ShaderResources resources(context, compute, {}, false, dispatchThreads);
         const auto reads = resources.InPlaceReads();
+        for (const auto& [begin, end] : reads) {
+            Require(resources.ReadsOverlap(begin, 1) && resources.ReadsOverlap(end - 1, 1) && !resources.ReadsOverlap(end, 1), "a build's read overlap disagrees with its listed reads");
+        }
         const bool direct = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return range.first <= element && range.second >= element + elementBytes; });
         resources.MarkGpuWrites(recorder);
         recorder.Sync();
@@ -5513,6 +5521,45 @@ void drawSnapshotCapTests(const Device& device, Recorder& recorder) {
         Require(bindings->snapshots[0].address == firstAddress, "the earlier binding in the layout was not prioritised for the snapshot budget");
         snapshotRecorder.Sync();
     }
+    const auto movedProgram = [](const ShaderRecompiler::RecompileResult& built, std::uint64_t shift) {
+        auto moved = built;
+        for (auto& binding : moved.bindings) {
+            const auto base = (static_cast<std::uint64_t>(binding.guestDescriptor[1] & 0xffffu) << 32u | binding.guestDescriptor[0]) + shift;
+            binding.guestDescriptor[0] = static_cast<std::uint32_t>(base);
+            binding.guestDescriptor[1] = (binding.guestDescriptor[1] & ~0xffffu) | (static_cast<std::uint32_t>(base >> 32u) & 0xffffu);
+        }
+        return moved;
+    };
+    {
+        auto snapshotContext = context;
+        DescriptorCache cache(snapshotContext);
+        snapshotContext.descriptorCache = &cache;
+        Recorder snapshotRecorder(snapshotContext);
+        snapshotRecorder.Activate();
+        ShaderRecompiler::RecompileResult smallProgram;
+        smallProgram.bindings.push_back(smallBinding);
+        const CompiledShader smallCompute{ShaderRecompiler::ShaderStage::Compute, &smallProgram, 0};
+        ShaderResources smallResources(snapshotContext, smallCompute);
+        const auto smallMovedProgram = movedProgram(smallProgram, 8192);
+        const std::array smallMoved{CompiledShader{ShaderRecompiler::ShaderStage::Compute, &smallMovedProgram, 0}};
+        const auto smallMove = smallResources.MovedReadOnlyBuffers(smallMoved, snapshotRecorder, nullptr);
+        Require(smallMove.has_value() && smallMove->size() == 1 && smallMove->front().address == smallAddress + 8192, "a moved input below the draw snapshot cap was not moved");
+        const auto smallBindings = smallResources.PrepareDrawBindings(snapshotRecorder, *smallMove);
+        Require(smallBindings != nullptr && smallBindings->snapshots.size() == 1 && smallBindings->snapshots[0].address == smallAddress + 8192, "a moved input below the draw snapshot cap was not snapshotted at its new address");
+        ShaderRecompiler::RecompileResult largeProgram;
+        largeProgram.bindings.push_back(largeBinding);
+        largeProgram.bindings.back().binding = 0;
+        const CompiledShader largeCompute{ShaderRecompiler::ShaderStage::Compute, &largeProgram, 0};
+        ShaderResources largeResources(snapshotContext, largeCompute);
+        const auto largeMovedProgram = movedProgram(largeProgram, 0u - static_cast<std::uint64_t>(1024 * 1024 + 4096));
+        const std::array largeMoved{CompiledShader{ShaderRecompiler::ShaderStage::Compute, &largeMovedProgram, 0}};
+        Require(!largeResources.MovedReadOnlyBuffers(largeMoved, snapshotRecorder, nullptr).has_value(), "a moved input exceeding the draw snapshot cap was moved and would be snapshotted");
+        ShaderResources cumulativeResources(snapshotContext, cumulativeCompute);
+        const auto cumulativeMovedProgram = movedProgram(cumulativeProgram, 4096);
+        const std::array cumulativeMoved{CompiledShader{ShaderRecompiler::ShaderStage::Compute, &cumulativeMovedProgram, 0}};
+        Require(!cumulativeResources.MovedReadOnlyBuffers(cumulativeMoved, snapshotRecorder, nullptr).has_value(), "moved inputs exceeding the draw snapshot cap together were moved and would be snapshotted");
+        snapshotRecorder.Sync();
+    }
     recorder.Activate();
 }
 
@@ -6157,6 +6204,98 @@ void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     Require(words[5 * unit] == 0x55 && words[6 * unit - 1] == 0x55, "the label flush's publish did not land: the unit read as written after its retile, so the publish dropped it as stale");
     Require(pending, "a publish of a flush other than the idle one was waited");
     std::cout << "idle publish wait verified\n";
+}
+
+bool untrackedForgetTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: untracked comparison memo not tested\n";
+        return false;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t otherBytes = 65536;
+    const auto allocate = [](std::size_t bytes) -> void* {
+#ifdef _WIN32
+        return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        return std::aligned_alloc(65536, bytes);
+#endif
+    };
+    void* block = allocate(surfaceBytes);
+    void* other = allocate(otherBytes);
+    Require(block != nullptr && other != nullptr, "cannot allocate the untracked comparison blocks");
+    std::memset(block, 0x55, surfaceBytes);
+    std::memset(other, 0x11, otherBytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto otherAddress = reinterpret_cast<std::uint64_t>(other);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, surfaceBytes, true, true, true);
+        mutation.Add(other, otherBytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        void* other;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+                mutation.Remove(other);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), surfaceBytes);
+        }
+    } unregister{base, block, other};
+    if (HostImportFor(base, address, surfaceBytes) == nullptr) {
+        std::cout << "host import of the surface refused: untracked comparison memo not tested\n";
+        return false;
+    }
+    if (AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
+        std::cout << "the surface is write-watched: untracked comparison memo not tested\n";
+        return false;
+    }
+    const char* mode = std::getenv("APS5_WRITE_WATCH_IMPORTS");
+    std::cout << "write-watch mode covered: APS5_WRITE_WATCH_IMPORTS=" << (mode != nullptr ? mode : "unset (probed)") << ", the surface is not write-watched\n";
+    TextureDetiler detiler(base);
+    struct Drain {
+        Recorder& recorder;
+        ~Drain() { recorder.Sync(); }
+    } drain{recorder};
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the test surface has an unexpected size");
+    {
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        image->Refresh();
+        const auto compares = StorageTexture::UntrackedCompares();
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares, "a second refresh in the same collect epoch compared the surface again");
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(otherAddress, otherBytes);
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares, "forgetting memory the surface does not cover made its refresh compare again");
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 65536);
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares + 1, "forgetting the surface's own memory left its comparison memo standing");
+    }
+#ifdef _WIN32
+    VirtualFree(other, 0, MEM_RELEASE);
+#endif
+    std::cout << "untracked comparison memo: ok\n";
+    return true;
 }
 
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
@@ -9004,10 +9143,12 @@ class StorageUploadProbe {
 public:
     StorageUploadProbe(Context& context, bool failView) : context(context), resolver(context.deviceProc), failView(failView) {
         Require(active == nullptr, "nested storage upload probe");
+        context.bufferPool.reset();
         active = this;
         context.deviceProc = resolve;
     }
     ~StorageUploadProbe() {
+        context.bufferPool.reset();
         for (const auto view : destroyedViews) function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
         if (imageDestroyed) function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
         if (memoryFreed) function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
@@ -9019,6 +9160,7 @@ public:
     bool Released() const { return imageDestroyed && memoryFreed; }
     bool FailedView() const { return failedView; }
     std::uint32_t Clears() const { return clears; }
+    void ReleasePool() { context.bufferPool.reset(); }
 
 private:
     template<typename TFunction>
@@ -9132,6 +9274,7 @@ void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool f
         recorder.Sync();
     }
     previous.Activate();
+    probe.ReleasePool();
     Require(threw == failView && probe.FailedView() == failView, "storage view failure injection did not take the requested path");
     Require(std::all_of(readback.Bytes().begin(), readback.Bytes().end(), [](std::byte value) { return value == std::byte{0}; }), "recorded storage clear did not reach every texel");
     Require(lifetime.expired() && probe.Released(), "storage upload resources outlived recorder teardown");
@@ -15105,6 +15248,9 @@ int main(int argc, char** argv) {
             spaceWriteSyncTests(device, recorder);
             std::cout << "Address space pending write tests passed\n";
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
+            return untrackedForgetTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
             drawSnapshotCapTests(device, recorder);
