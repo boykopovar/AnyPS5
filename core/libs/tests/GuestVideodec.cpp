@@ -1,3 +1,5 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
+#include "prx/libSceVideodec/include/Api.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -6,122 +8,15 @@
 #include "prx/libc/include/General.hpp"
 #include "H264Fixture.hpp"
 
-struct ConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint64_t videodecFlags;
-};
-
-struct ResourceInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
-
-struct Ctrl {
-    std::uint64_t thisSize;
-    void* handle;
-    std::uint64_t version;
-};
-
-struct FrameBuffer {
-    std::uint64_t thisSize;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-};
-
-struct AvcInfo {
-    std::uint32_t numUnitsInTick;
-    std::uint32_t timeScale;
-    std::uint8_t fixedFrameRateFlag;
-    std::uint8_t aspectRatioIdc;
-    std::uint16_t sarWidth;
-    std::uint16_t sarHeight;
-    std::uint8_t colourPrimaries;
-    std::uint8_t transferCharacteristics;
-    std::uint8_t matrixCoefficients;
-    std::uint8_t videoFullRangeFlag;
-    std::uint32_t frameCropLeftOffset;
-    std::uint32_t frameCropRightOffset;
-    std::uint32_t frameCropTopOffset;
-    std::uint32_t frameCropBottomOffset;
-};
-
-union CodecInfo {
-    std::uint8_t reserved[64];
-    AvcInfo avc;
-};
-
-struct PictureInfo {
-    std::uint64_t thisSize;
-    std::uint32_t isValid;
-    std::uint32_t codecType;
-    std::uint32_t frameWidth;
-    std::uint32_t framePitch;
-    std::uint32_t frameHeight;
-    std::uint32_t isErrorPic;
-    std::uint64_t ptsData;
-    std::uint64_t attachedData;
-    CodecInfo codec;
-};
-
-struct InputData {
-    std::uint64_t thisSize;
-    const std::uint8_t* auData;
-    std::uint64_t auSize;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-};
-
-struct Decoder2ConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t resourceType;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint32_t decodePipelineDepth;
-};
-
-struct Decoder2MemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t gpuMemorySize;
-    void* gpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
+using namespace SceVideodec;
 
 static_assert(sizeof(PictureInfo) == 112 && sizeof(AvcInfo) == 36);
 static_assert(sizeof(ConfigInfo) == 40 && sizeof(ResourceInfo) == 56 && sizeof(Ctrl) == 24);
-static_assert(sizeof(Decoder2ConfigInfo) == 40 && sizeof(Decoder2MemoryInfo) == 72);
-
-extern "C" {
-int APS5_VABI sceVideodecCreateDecoder(const ConfigInfo*, const ResourceInfo*, Ctrl*);
-int APS5_VABI sceVideodecDecode(Ctrl*, const InputData*, FrameBuffer*, PictureInfo*);
-int APS5_VABI sceVideodecDeleteDecoder(Ctrl*);
-int APS5_VABI sceVideodecFlush(Ctrl*, FrameBuffer*, PictureInfo*);
-int APS5_VABI sceVideodecReset(Ctrl*);
-int APS5_VABI sceVideodecQueryResourceInfo(const ConfigInfo*, ResourceInfo*);
-int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const Decoder2ConfigInfo*, Decoder2MemoryInfo*);
-}
+static_assert(sizeof(SceVideodec2::DecoderConfigInfo) == 40 && sizeof(SceVideodec2::DecoderMemoryInfo) == 72);
 
 namespace {
+
+using namespace SceVideodec;
 
 using namespace H264Fixture;
 
@@ -166,6 +61,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
     check(units.size() == PictureHashes.size(), "unexpected access unit count");
     std::vector<std::uint64_t> hashes;
     std::vector<std::uint64_t> timestamps;
+    std::vector<std::uint64_t> attachments;
     const auto collect = [&](PictureInfo& picture) {
         if (!picture.isValid) return;
         check(picture.framePitch == Pitch && picture.frameHeight == PictureHeight, "unexpected picture geometry");
@@ -174,9 +70,10 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         check(picture.codec.avc.frameCropTopOffset == cropTop && picture.codec.avc.frameCropBottomOffset == cropBottom, "unexpected crop");
         hashes.push_back(hashNv12(session.buffer.data(), Pitch, PictureHeight));
         timestamps.push_back(picture.ptsData);
+        attachments.push_back(picture.attachedData);
     };
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
         auto target = session.MakeTarget();
         PictureInfo picture{sizeof(PictureInfo)};
         const auto status = sceVideodecDecode(&session.ctrl, &input, &target, &picture);
@@ -195,6 +92,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         check(hashes[index] == PictureHashes[index], "picture " + std::to_string(index) + " differs from the reference");
         const auto unit = DisplayOrderUnits[index];
         check(timestamps[index] == 1000 + unit, "pictures out of display order");
+        check(attachments[index] == 0xa0 + unit, "picture attachment out of display order");
     }
 }
 
@@ -217,39 +115,50 @@ void testErrors() {
     const ConfigInfo shortConfig{sizeof(ConfigInfo) - 8};
     check(sceVideodecCreateDecoder(&shortConfig, &resource, &ctrl) == ErrorStructSize, "a short configuration was accepted");
     check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
+    check(sceVideodecDeleteDecoder(nullptr) == ErrorArgumentPointer, "a null control block was accepted by delete");
+    Ctrl shortCtrl{sizeof(Ctrl) - 8};
+    check(sceVideodecDeleteDecoder(&shortCtrl) == ErrorStructSize, "a short control block was accepted by delete");
+    check(sceVideodecReset(nullptr) == ErrorArgumentPointer, "a null control block was accepted by reset");
+    check(sceVideodecReset(&shortCtrl) == ErrorStructSize, "a short control block was accepted by reset");
     Ctrl foreign{sizeof(Ctrl)};
     foreign.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
     check(sceVideodecDeleteDecoder(&foreign) == ErrorHandle, "an unknown decoder was deleted");
     check(sceVideodecReset(&foreign) == ErrorHandle, "an unknown decoder was reset");
-    const InputData empty{sizeof(InputData), nullptr, 0, 0, 0, 0};
+    const SceVideodec2::InputData empty{sizeof(SceVideodec2::InputData), nullptr, 0, 0, 0, 0};
     FrameBuffer frame{sizeof(FrameBuffer), nullptr, 0};
     PictureInfo picture{sizeof(PictureInfo)};
     check(sceVideodecDecode(nullptr, &empty, &frame, &picture) == ErrorArgumentPointer, "a null control block was accepted");
     check(sceVideodecDecode(&ctrl, &empty, &frame, &picture) == ErrorAuPointer, "a null access unit was accepted");
-    const InputData sized{sizeof(InputData), reinterpret_cast<const std::uint8_t*>(&config), 0, 0, 0, 0};
+    const SceVideodec2::InputData sized{sizeof(SceVideodec2::InputData), reinterpret_cast<const std::uint8_t*>(&config), 0, 0, 0, 0};
     check(sceVideodecDecode(&ctrl, &sized, &frame, &picture) == ErrorAuSize, "an empty access unit was accepted");
     FrameBuffer missing{sizeof(FrameBuffer), nullptr, FrameBytes};
     const auto units = accessUnits(false);
-    const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 0, 0, 0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 0, 0, 0};
     check(sceVideodecDecode(&ctrl, &input, &missing, &picture) == ErrorFrameBufferPointer, "a null frame buffer was accepted");
     std::vector<std::uint8_t> storage(static_cast<std::size_t>(FrameBytes));
     FrameBuffer shortBuffer{sizeof(FrameBuffer), storage.data(), FrameBytes - 1};
     int refusals = 0;
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        const InputData unit0{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        const SceVideodec2::InputData unit0{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
         const auto status = sceVideodecDecode(&ctrl, &unit0, &shortBuffer, &picture);
         check(status == 0 || status == ErrorFrameBufferSize, "a decode failed");
         if (status == ErrorFrameBufferSize) ++refusals;
     }
     check(refusals > 0, "no picture was refused for the short frame buffer");
+    FrameBuffer shortFrame{sizeof(FrameBuffer) - 8, storage.data(), FrameBytes};
+    check(sceVideodecDecode(&ctrl, &input, &shortFrame, &picture) == ErrorStructSize, "a short frame buffer structure was accepted");
+    PictureInfo shortPicture{sizeof(PictureInfo) - 8};
+    check(sceVideodecDecode(&ctrl, &input, &frame, &shortPicture) == ErrorStructSize, "a short picture information structure was accepted");
     check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
     check(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "the decoder was deleted twice");
+    check(sceVideodecReset(&ctrl) == ErrorHandle, "a deleted decoder was reset");
+    check(sceVideodecDecode(&ctrl, &input, &frame, &picture) == ErrorHandle, "a decode succeeded on a deleted decoder");
 }
 
 void testReset() {
     Session session;
     const auto units = accessUnits(false);
-    const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
     auto target = session.MakeTarget();
     PictureInfo picture{sizeof(PictureInfo)};
     check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode failed");
@@ -258,12 +167,66 @@ void testReset() {
     check(!picture.isValid, "a reset decoder produced a picture");
 }
 
+constexpr std::uint8_t High10Picture[] = {
+    0x00, 0x00, 0x00, 0x01, 0x67, 0x6e, 0x10, 0x0a, 0xa6, 0xcb, 0x88, 0xf6, 0x02, 0x20, 0x00, 0x00,
+    0x03, 0x00, 0x20, 0x00, 0x00, 0x03, 0x00, 0x40, 0x80, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x0f,
+    0xc8, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x3a, 0x26, 0x28, 0x0c, 0x9c, 0x9c, 0x9d, 0x75, 0xd7,
+    0x5d, 0x75, 0xd7, 0x5e
+};
+
+void testDeepPicture() {
+    Session session;
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), High10Picture, sizeof(High10Picture), 1000, 0, 0xa0};
+    bool refused = false;
+    std::size_t pictures = 0;
+    try {
+        auto target = session.MakeTarget();
+        PictureInfo picture{sizeof(PictureInfo)};
+        check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode of the 10-bit picture failed");
+        if (picture.isValid) ++pictures;
+        for (;;) {
+            check(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush of the 10-bit picture failed");
+            if (!picture.isValid) break;
+            ++pictures;
+        }
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()).find("deeper than 8 bits") == std::string::npos) throw;
+        refused = true;
+    }
+    check(refused, "10-bit pictures copied as 8-bit pictures: " + std::to_string(pictures));
+}
+
+constexpr std::uint8_t High10ReorderedPicture[] = {
+    0x00, 0x00, 0x00, 0x01, 0x67, 0x6e, 0x00, 0x0a, 0xa6, 0xce, 0x41, 0x1e, 0xc0, 0x44, 0x00, 0x00,
+    0x03, 0x00, 0x04, 0x00, 0x00, 0x03, 0x00, 0xc8, 0x3c, 0x48, 0x94, 0x48, 0x00, 0x00, 0x00, 0x01,
+    0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0, 0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00, 0x43, 0xff,
+    0xfe, 0xf7, 0x81, 0xbf, 0x32, 0x7d, 0xaa, 0xb2, 0x5c, 0x7e, 0x79, 0xdf, 0x14, 0x3f, 0x28, 0x74,
+    0xab, 0x06, 0xa2, 0xac, 0xeb, 0x0d
+};
+
+void testDeepReorderedPicture() {
+    Session session;
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), High10ReorderedPicture, sizeof(High10ReorderedPicture), 1000, 0, 0xa0};
+    auto target = session.MakeTarget();
+    PictureInfo picture{sizeof(PictureInfo)};
+    check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode of the reordered 10-bit picture failed");
+    check(!picture.isValid, "the reordered 10-bit picture was not held for the flush");
+    bool refused = false;
+    try {
+        sceVideodecFlush(&session.ctrl, &target, &picture);
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()).find("deeper than 8 bits") == std::string::npos) throw;
+        refused = true;
+    }
+    check(refused, "a flushed 10-bit picture was copied as an 8-bit picture");
+}
+
 void testQueryResourceInfo(std::int32_t width, std::int32_t height, std::uint32_t profile, std::uint32_t level) {
     const ConfigInfo config{sizeof(ConfigInfo), 1, profile, level, width, height, 4, 0};
     ResourceInfo resource{sizeof(ResourceInfo)};
     check(sceVideodecQueryResourceInfo(&config, &resource) == 0, "the resource query failed");
-    const Decoder2ConfigInfo mapped{sizeof(Decoder2ConfigInfo), 1, 1, profile, level, width, height, 4, 1};
-    Decoder2MemoryInfo memory{sizeof(Decoder2MemoryInfo)};
+    const SceVideodec2::DecoderConfigInfo mapped{sizeof(SceVideodec2::DecoderConfigInfo), 1, 1, profile, level, width, height, 4, 1};
+    SceVideodec2::DecoderMemoryInfo memory{sizeof(SceVideodec2::DecoderMemoryInfo)};
     check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&mapped, &memory) == 0, "the Videodec2 memory query failed");
     check(resource.thisSize == sizeof(ResourceInfo), "the resource information size was changed");
     check(resource.cpuMemorySize == memory.cpuMemorySize, "the CPU memory size differs from libSceVideodec2");
@@ -310,6 +273,8 @@ int main() {
         testDecodeCropped();
         testErrors();
         testReset();
+        testDeepPicture();
+        testDeepReorderedPicture();
         testQueryResourceInfo();
         std::puts("Videodec tests passed");
         return 0;

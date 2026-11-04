@@ -1,3 +1,4 @@
+#include "prx/libSceCompanionHttpd/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -15,16 +16,7 @@ constexpr int CompanionHttpdErrorAlreadyStarted = static_cast<int>(0x80E4000Au);
 constexpr int CompanionHttpdErrorNotStarted = static_cast<int>(0x80E4000Bu);
 constexpr int CompanionHttpdErrorAlreadyRegistered = static_cast<int>(0x80E4000Cu);
 
-struct CompanionHttpdOptParam {
-    std::uint64_t reserved;
-    void* workMemory;
-    std::uint64_t workMemorySize;
-    std::uint8_t settings[0x40];
-    const void* temporaryMountPoint;
-};
 static_assert(sizeof(CompanionHttpdOptParam) == 0x60);
-
-using CompanionHttpdRequestCallback = int (*)(int, int, const void*, void*, void*);
 
 struct CompanionHttpdState {
     std::mutex mutex;
@@ -117,17 +109,14 @@ int APS5_VABI sceCompanionHttpdGetEvent(void* event) {
 }
 
 int APS5_VABI sceCompanionHttpdAddHeader(const char* key, const char* value, void* response) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdSetStatus(int status, void* response) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCompanionHttpdSetBody(const char* body, std::uint64_t size, void* response) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

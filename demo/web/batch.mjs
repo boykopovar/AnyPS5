@@ -6,6 +6,7 @@ function safeSize(value) {
 }
 
 export function memoryEstimate(archiveBytes, selectedBytes, libraryBytes, entries) {
+  for (const value of [archiveBytes, selectedBytes, libraryBytes, entries]) safeSize(value);
   return safeSize(Math.ceil(archiveBytes * 1.02) + selectedBytes * 4 + libraryBytes + entries * 1024 + 8 * 1024 * 1024);
 }
 

@@ -22,11 +22,11 @@ uint32_t APS5_VABI sceAgcDcbCondExecGetSize(void) {
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbWaitRegMem(CommandBuffer* buf, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t operation, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles) {
-    return Agc::Command::WriteWait(buf, size, compareFunction, operation, cachePolicy, address, reference, mask, pollCycles, __func__);
+    return Agc::Command::WriteWait(buf, false, size, compareFunction, operation, cachePolicy, address, reference, mask, pollCycles, __func__);
 }
 
 uint32_t APS5_VABI sceAgcDcbWaitOnAddressGetSize(uint32_t size) {
-    return size == 0 ? 56 : 64;
+    return size == 0 ? 56 : size == 1 ? 64 : 0;
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address) {

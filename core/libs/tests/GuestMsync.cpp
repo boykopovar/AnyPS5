@@ -1,17 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <source_location>
-
-extern "C" {
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI msync_nid_postfix(void*, std::size_t, int);
-int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 constexpr std::size_t Page = 0x4000;
@@ -60,6 +54,8 @@ int main() {
     Require(Fails(mapped, Page, Async | Invalidate, Invalid));
     const auto top = std::numeric_limits<std::uintptr_t>::max() & ~(Page - 1);
     Require(Fails(reinterpret_cast<void*>(top), 2 * Page, Sync, Invalid));
+    Require(Fails(mapped, std::numeric_limits<std::size_t>::max() - (Page - 1) + 1, Sync, Invalid));
+    Require(Fails(mapped + 1, std::numeric_limits<std::size_t>::max() - (Page - 1), Sync, Invalid));
     Require(Fails(mapped, Page, Invalidate, Busy));
     Require(Fails(mapped, 3 * Page, Sync | Invalidate, Busy));
     Require(Fails(mapped + 1, 16, Invalidate, Busy));

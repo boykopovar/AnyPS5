@@ -1,3 +1,4 @@
+#include "prx/libSceSystemLogger2Delivery/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -23,6 +24,18 @@ int APS5_VABI sceSystemLogger2DeliverySetBatchDeliveryEvent() {
 int APS5_VABI sceSystemLogger2DeliveryTerminate() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceSystemLogger2DeliveryResume() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2DeliverySuspend() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2DeliveryInitialize() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

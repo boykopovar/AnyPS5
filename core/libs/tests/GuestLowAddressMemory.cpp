@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include <cstddef>
@@ -5,13 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-extern "C" {
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI mprotect_nid_postfix(void*, std::size_t, int) noexcept;
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
-}
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -45,7 +39,9 @@ int main() {
     Require(collision != failed && collision != buffer);
     Require(buffer[0] == 0x31 && buffer[bufferBytes - 1] == 0x32);
     Require(munmap_nid_postfix(collision, page) == 0);
-    Require(mmap_nid_postfix(buffer, page, 3, 0x5012, -1, 0) == failed && buffer[0] == 0x31);
+    Require(mmap_nid_postfix(buffer, page, 3, 0x5012, -1, 0) == buffer);
+    Require(buffer[0] == 0 && buffer[bufferBytes - 1] == 0x32);
+    buffer[0] = 0x31;
     Require(mmap_nid_postfix(buffer, page, 3, 0x1012, -1, 0) == buffer);
     Require(buffer[0] == 0 && buffer[bufferBytes - 1] == 0x32);
 

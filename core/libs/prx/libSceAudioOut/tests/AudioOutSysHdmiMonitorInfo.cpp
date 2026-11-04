@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
@@ -7,10 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceAudioOutSysGetHdmiMonitorInfo(int, void*, std::uint32_t);
-}
 
 static void Require(bool value, const char* message) {
     if (value) return;

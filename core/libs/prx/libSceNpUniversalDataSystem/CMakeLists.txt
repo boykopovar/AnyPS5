@@ -1,4 +1,5 @@
 add_library(libSceNpUniversalDataSystem SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/PendingExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/System.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Context.cpp
@@ -49,7 +50,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_np_trophy_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_np_trophy_data_tests PRIVATE libSceNpUniversalDataSystem libSceNpTrophy2 libc)
     configure_windows_unwind(guest_np_trophy_data_tests)
-    add_test(NAME guest_np_trophy_data COMMAND guest_np_trophy_data_tests)
+    add_test(NAME guest_np_trophy_data COMMAND guest_np_trophy_data_tests $<TARGET_FILE:libSceNpUniversalDataSystem>)
     if(WIN32)
         set_tests_properties(guest_np_trophy_data PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpUniversalDataSystem>")
@@ -62,6 +63,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_np_trophy_stats COMMAND guest_np_trophy_stats_tests)
     if(WIN32)
         set_tests_properties(guest_np_trophy_stats PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpUniversalDataSystem>")
+    endif()
+    add_test_executable(guest_np_uds_queries_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpUniversalDataSystemQueries.cpp)
+    target_include_directories(guest_np_uds_queries_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_uds_queries_tests PRIVATE libSceNpUniversalDataSystem libc)
+    configure_windows_unwind(guest_np_uds_queries_tests)
+    add_test(NAME guest_np_uds_queries COMMAND guest_np_uds_queries_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_uds_queries PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpUniversalDataSystem>")
     endif()
 endif()

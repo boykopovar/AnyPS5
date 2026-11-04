@@ -2,11 +2,15 @@
 #include "../tools/FrameReplay.cpp"
 #undef main
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include <string_view>
 #include <barrier>
 
 namespace {
 
 using AgcDriver::FrameCaptureWriter;
+
+constexpr std::uint32_t ReadWrite = 0x04;
 
 void check(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(reason);
@@ -20,6 +24,9 @@ std::byte* allocate(std::size_t size, bool gpu = true) {
     auto* bytes = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(size, 65536));
     check(bytes != nullptr, "guest allocation failed");
     GuestArena::GuestArenaCommit_nid_postfix(bytes, size, 0x04, size);
+#ifdef __linux__
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(bytes, size);
+#endif
     GuestAllocations::Mutation mutation;
     mutation.Add(bytes, size, true, true, gpu);
     return bytes;
@@ -61,7 +68,7 @@ void testMemoryOrder(const std::filesystem::path& directory) {
 }
 
 void testReusedMemory(const std::filesystem::path& directory) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     constexpr std::size_t Size = 2 * FrameCaptureWriter::BlockBytes;
     auto* bytes = allocate(Size);
     auto* cpu = allocate(FrameCaptureWriter::BlockBytes, false);
@@ -73,8 +80,8 @@ void testReusedMemory(const std::filesystem::path& directory) {
     std::size_t arenaSize = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
     FrameCaptureWriter writer(directory);
-    writer.WriteRange(address(bytes), Size, FrameRangeKind::Watched, PAGE_READWRITE, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
-    writer.WriteRange(address(cpu), FrameCaptureWriter::BlockBytes, FrameRangeKind::Unwatched, PAGE_READWRITE, FrameRangeAccess::Readable | FrameRangeAccess::Writable);
+    writer.WriteRange(address(bytes), Size, FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.WriteRange(address(cpu), FrameCaptureWriter::BlockBytes, FrameRangeKind::Unwatched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable);
     check(writer.WriteSnapshot(address(bytes), expected) == FrameCaptureWriter::BlockBytes, "zero snapshot block was not elided");
     writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
     const FrameCaptureReader reader(directory);
@@ -83,6 +90,67 @@ void testReusedMemory(const std::filesystem::path& directory) {
     check(skipped.bytes == FrameCaptureWriter::BlockBytes, "unexpected skipped memory");
     check(std::all_of(cpu, cpu + FrameCaptureWriter::BlockBytes, [](std::byte value) { return value == std::byte{0x55}; }), "reused CPU memory was overwritten");
 #endif
+}
+
+void testSharedPage(const std::filesystem::path& directory) {
+#ifdef __linux__
+    constexpr std::size_t Page = 65536;
+    auto* page = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Page, Page));
+    check(page != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaRelease_nid_postfix(page, Page);
+    const std::vector<std::byte> gpu(0x20, std::byte{0x3c});
+    const std::vector<std::byte> cpu(0x40, std::byte{0x5a});
+    std::uintptr_t base = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(address(page + 0x20), gpu.size(), FrameRangeKind::Watched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.WriteRange(address(page + 0x40), cpu.size(), FrameRangeKind::Unwatched, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable);
+    writer.WriteSnapshot(address(page + 0x20), gpu);
+    writer.WriteSnapshot(address(page + 0x40), cpu);
+    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == 0, "a range sharing a page with an earlier one was skipped");
+    check(std::equal(gpu.begin(), gpu.end(), page + 0x20) && std::equal(cpu.begin(), cpu.end(), page + 0x40), "ranges sharing a page were not restored");
+#else
+    static_cast<void>(directory);
+#endif
+}
+
+void testHostNeighbors(const std::filesystem::path& directory) {
+#ifdef __linux__
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapped = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    check(mapped != MAP_FAILED, "host allocation failed");
+    auto* occupied = static_cast<std::byte*>(mapped);
+    auto* available = occupied + page;
+    check(munmap(available, page) == 0, "host page release failed");
+    std::uintptr_t base = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(address(occupied), page, FrameRangeKind::Host, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable);
+    writer.WriteRange(address(available), page, FrameRangeKind::Host, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable | FrameRangeAccess::Gpu);
+    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    const FrameCaptureReader reader(directory);
+    const auto skipped = restoreMemory(reader);
+    check(skipped.bytes == page, "an occupied CPU host range was not the only range skipped");
+#else
+    static_cast<void>(directory);
+#endif
+}
+
+void testUnwatched() {
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    try {
+        recorder->FrameBoundary();
+    } catch (const std::runtime_error& error) {
+        check(std::string_view(error.what()).find("write watch is unavailable") != std::string_view::npos, "a capture without the write watch failed for another reason");
+        return;
+    }
+    check(false, "a capture started without the write watch");
 }
 
 void testEopTokens() {
@@ -165,17 +233,30 @@ void testBlockingSubmission(const std::filesystem::path& directory) {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
-void testShaderCode(const std::filesystem::path& directory, bool host) {
+void testShaderCode(const std::filesystem::path& directory, bool host, std::string_view mode = {}) {
+    const bool prologue = mode.starts_with("shader_prologue_");
+    const bool readOnly = mode.ends_with("readonly");
+    const bool hostHeader = readOnly || mode.ends_with("header");
+    std::byte* hostMemory = nullptr;
     auto* bytes = allocate(1u << 20);
     auto* shader = reinterpret_cast<Shader*>(bytes);
     auto* code = bytes + (1u << 19) + 256;
     constexpr std::size_t CodeBytes = 3 * FrameCaptureWriter::BlockBytes;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     if (host) {
+#ifdef _WIN32
         auto* memory = static_cast<std::byte*>(VirtualAlloc(nullptr, CodeBytes + 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+        void* mapped = mmap(nullptr, CodeBytes + 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        auto* memory = mapped != MAP_FAILED ? static_cast<std::byte*>(mapped) : nullptr;
+#endif
         check(memory != nullptr, "host shader allocation failed");
-        GuestAllocations::Mutation mutation;
-        mutation.Add(memory, CodeBytes + 4096, true, true, true);
+        if (!prologue) {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(memory, CodeBytes + 4096, true, true, true);
+        }
+        hostMemory = memory;
+        if (hostHeader) shader = reinterpret_cast<Shader*>(memory);
         code = memory + 256;
     }
 #endif
@@ -187,20 +268,36 @@ void testShaderCode(const std::filesystem::path& directory, bool host) {
     shader->code = code;
     auto* recorder = AgcDriver::FrameRecorder::Active();
     check(recorder != nullptr, "frame recorder is disabled");
-    recorder->FrameBoundary();
+    if (!prologue) recorder->FrameBoundary();
     std::vector<std::byte> expected(CodeBytes);
     for (std::size_t i = 0; i < expected.size(); ++i) expected[i] = static_cast<std::byte>(i * 31 + 17);
     std::memcpy(code, expected.data(), expected.size());
+    std::vector<std::byte> expectedHeader(sizeof(Shader));
+    std::memcpy(expectedHeader.data(), shader, expectedHeader.size());
+    if (readOnly) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        check(VirtualProtect(hostMemory, CodeBytes + 4096, PAGE_READONLY, &previous) != 0, "cannot protect host shader pages");
+#elif defined(__linux__)
+        check(mprotect(hostMemory, CodeBytes + 4096, PROT_READ) == 0, "cannot protect host shader pages");
+#endif
+    }
     recorder->RegisterShader(shader);
     recorder->FrameBoundary();
+    if (prologue) recorder->FrameBoundary();
     const FrameCaptureReader reader(directory);
     std::vector<std::byte> captured(CodeBytes);
-    const auto apply = [&](const FrameMemoryChunk& chunk) {
-        const auto begin = std::max(address(code), chunk.address);
-        const auto end = std::min(address(code) + CodeBytes, chunk.address + chunk.bytes);
+    std::vector<std::byte> capturedHeader(sizeof(Shader));
+    const auto applyBytes = [&](const FrameMemoryChunk& chunk, std::uint64_t target, std::span<std::byte> bytes) {
+        const auto begin = std::max(target, chunk.address);
+        const auto end = std::min(target + bytes.size(), chunk.address + chunk.bytes);
         if (begin >= end) return;
         const auto data = reader.Read(chunk);
-        std::memcpy(captured.data() + begin - address(code), data.data() + begin - chunk.address, end - begin);
+        std::memcpy(bytes.data() + begin - target, data.data() + begin - chunk.address, end - begin);
+    };
+    const auto apply = [&](const FrameMemoryChunk& chunk) {
+        applyBytes(chunk, address(code), captured);
+        if (hostHeader) applyBytes(chunk, address(shader), capturedHeader);
     };
     for (const auto& chunk : reader.Chunks()) if (chunk.kind == FrameMemoryKind::Snapshot) apply(chunk);
     bool registered = false;
@@ -214,6 +311,14 @@ void testShaderCode(const std::filesystem::path& directory, bool host) {
             if (chunk.kind == FrameMemoryKind::Delta && chunk.group == call.values.at(0)) apply(chunk);
         }
     }
+    if (hostHeader && captured == expected) check(capturedHeader == expectedHeader, "the host shader header was not captured before registration");
+    if (readOnly && captured == expected) {
+        const bool protectedHeader = std::ranges::any_of(reader.Chunks(), [&](const auto& chunk) {
+            return chunk.kind == FrameMemoryKind::Range && chunk.address <= address(shader) &&
+                address(shader) - chunk.address < chunk.bytes && (chunk.access & AgcDriver::FrameRangeAccess::Writable) == 0;
+        });
+        check(protectedHeader, "the read-only host shader was recorded with write access");
+    }
     check(registered && captured == expected, "the complete separate shader code was not captured before registration");
 }
 
@@ -226,6 +331,10 @@ int main(int argc, char** argv) {
         const std::filesystem::path directory = argv[2];
         if (mode == "order") testMemoryOrder(directory);
         else if (mode == "zero") testReusedMemory(directory);
+        else if (mode.starts_with("shader_prologue_")) testShaderCode(directory, true, mode);
+        else if (mode == "shared_page") testSharedPage(directory);
+        else if (mode == "host_neighbors") testHostNeighbors(directory);
+        else if (mode == "unwatched") testUnwatched();
         else if (mode == "tokens") testEopTokens();
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");

@@ -1,3 +1,4 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include <cinttypes>
 #include <cstddef>
 #include <cstdint>

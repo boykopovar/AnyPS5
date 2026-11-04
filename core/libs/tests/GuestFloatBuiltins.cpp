@@ -1,81 +1,19 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <source_location>
 #include <xmmintrin.h>
 
-using Int128 = __int128;
-using Uint128 = unsigned __int128;
-
-extern "C" {
-double APS5_VABI __adddf3_nid_postfix(double, double);
-float APS5_VABI __addsf3_nid_postfix(float, float);
-double APS5_VABI __subdf3_nid_postfix(double, double);
-float APS5_VABI __subsf3_nid_postfix(float, float);
-double APS5_VABI __muldf3_nid_postfix(double, double);
-float APS5_VABI __mulsf3_nid_postfix(float, float);
-double APS5_VABI __divdf3_nid_postfix(double, double);
-float APS5_VABI __divsf3_nid_postfix(float, float);
-double APS5_VABI __negdf2_nid_postfix(double);
-float APS5_VABI __negsf2_nid_postfix(float);
-int APS5_VABI __eqdf2_nid_postfix(double, double);
-int APS5_VABI __nedf2_nid_postfix(double, double);
-int APS5_VABI __ltdf2_nid_postfix(double, double);
-int APS5_VABI __ledf2_nid_postfix(double, double);
-int APS5_VABI __gtdf2_nid_postfix(double, double);
-int APS5_VABI __gedf2_nid_postfix(double, double);
-int APS5_VABI __unorddf2_nid_postfix(double, double);
-int APS5_VABI __eqsf2_nid_postfix(float, float);
-int APS5_VABI __ltsf2_nid_postfix(float, float);
-int APS5_VABI __gesf2_nid_postfix(float, float);
-int APS5_VABI __unordsf2_nid_postfix(float, float);
-double APS5_VABI __extendsfdf2_nid_postfix(float);
-float APS5_VABI __truncdfsf2_nid_postfix(double);
-std::int32_t APS5_VABI __fixsfsi_nid_postfix(float);
-std::int64_t APS5_VABI __fixsfdi_nid_postfix(float);
-Int128 APS5_VABI __fixsfti_nid_postfix(float);
-std::int32_t APS5_VABI __fixdfsi_nid_postfix(double);
-std::int64_t APS5_VABI __fixdfdi_nid_postfix(double);
-Int128 APS5_VABI __fixdfti_nid_postfix(double);
-std::uint32_t APS5_VABI __fixunssfsi_nid_postfix(float);
-std::uint64_t APS5_VABI __fixunssfdi_nid_postfix(float);
-Uint128 APS5_VABI __fixunssfti_nid_postfix(float);
-std::uint32_t APS5_VABI __fixunsdfsi_nid_postfix(double);
-std::uint64_t APS5_VABI __fixunsdfdi_nid_postfix(double);
-Uint128 APS5_VABI __fixunsdfti_nid_postfix(double);
-std::int64_t APS5_VABI __fixxfdi_nid_postfix(long double);
-Int128 APS5_VABI __fixxfti_nid_postfix(long double);
-std::uint32_t APS5_VABI __fixunsxfsi_nid_postfix(long double);
-std::uint64_t APS5_VABI __fixunsxfdi_nid_postfix(long double);
-Uint128 APS5_VABI __fixunsxfti_nid_postfix(long double);
-double APS5_VABI __floatsidf_nid_postfix(std::int32_t);
-double APS5_VABI __floatunsidf_nid_postfix(std::uint32_t);
-float APS5_VABI __floatsisf_nid_postfix(std::int32_t);
-float APS5_VABI __floatunsisf_nid_postfix(std::uint32_t);
-double APS5_VABI __floatdidf_nid_postfix(std::int64_t);
-float APS5_VABI __floatdisf_nid_postfix(std::int64_t);
-long double APS5_VABI __floatdixf_nid_postfix(std::int64_t);
-double APS5_VABI __floatundidf_nid_postfix(std::uint64_t);
-float APS5_VABI __floatundisf_nid_postfix(std::uint64_t);
-long double APS5_VABI __floatundixf_nid_postfix(std::uint64_t);
-double APS5_VABI __floattidf_nid_postfix(Int128);
-float APS5_VABI __floattisf_nid_postfix(Int128);
-long double APS5_VABI __floattixf_nid_postfix(Int128);
-double APS5_VABI __floatuntidf_nid_postfix(Uint128);
-float APS5_VABI __floatuntisf_nid_postfix(Uint128);
-long double APS5_VABI __floatuntixf_nid_postfix(Uint128);
-__complex__ float APS5_VABI __mulsc3_nid_postfix(float, float, float, float);
-__complex__ double APS5_VABI __muldc3_nid_postfix(double, double, double, double);
-__complex__ long double APS5_VABI __mulxc3_nid_postfix(long double, long double, long double, long double);
-__complex__ float APS5_VABI __divsc3_nid_postfix(float, float, float, float);
-__complex__ double APS5_VABI __divdc3_nid_postfix(double, double, double, double);
-__complex__ long double APS5_VABI __divxc3_nid_postfix(long double, long double, long double, long double);
-long double APS5_VABI __powixf2_nid_postfix(long double, int);
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
+    std::abort();
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::uint64_t Bits(double value) { return std::bit_cast<std::uint64_t>(value); }
 static std::uint32_t Bits(float value) { return std::bit_cast<std::uint32_t>(value); }
@@ -125,6 +63,18 @@ static void CheckComparisons() {
     Require(__eqsf2_nid_postfix(-0.f, 0.f) == 0 && __ltsf2_nid_postfix(-INFINITY, -1e30f) == -1);
     Require(__gesf2_nid_postfix(NAN, 0.f) == -1 && __unordsf2_nid_postfix(NAN, 0.f) == 1);
     Require(__ledf2_nid_postfix(Double(0x0000000000000001ull), 0.) == 1);
+}
+
+static void CheckSingleComparisonsAndAddition() {
+    Require(__lesf2_nid_postfix(1.f, 2.f) <= 0 && __lesf2_nid_postfix(2.f, 2.f) <= 0 && __lesf2_nid_postfix(2.f, 1.f) > 0);
+    Require(__lesf2_nid_postfix(NAN, 1.f) > 0 && __lesf2_nid_postfix(1.f, NAN) > 0);
+    Require(__gtsf2_nid_postfix(-1.f, -2.f) > 0 && __gtsf2_nid_postfix(-2.f, -1.f) <= 0 && __gtsf2_nid_postfix(2.f, 2.f) <= 0);
+    Require(__gtsf2_nid_postfix(1.f, NAN) <= 0 && __gtsf2_nid_postfix(NAN, NAN) <= 0);
+    Require(__nesf2_nid_postfix(1.f, -1.f) != 0 && __nesf2_nid_postfix(NAN, 0.f) != 0 && __nesf2_nid_postfix(0.f, -0.f) == 0);
+    Require(__addsf3_nid_postfix(1.f, 2.f) == 3.f && __addsf3_nid_postfix(-1.5f, .25f) == -1.25f);
+    Require(__addsf3_nid_postfix(0x1p-149f, 0x1p-149f) == 0x1p-148f);
+    Require(__addsf3_nid_postfix(0x1.fffffep127f, 0x1.fffffep127f) == INFINITY);
+    Require(Bits(__addsf3_nid_postfix(1.f, -1.f)) == 0u);
 }
 
 static void CheckFloatConversions() {
@@ -212,6 +162,7 @@ static void CheckComplex() {
 int main() {
     CheckArithmetic();
     CheckComparisons();
+    CheckSingleComparisonsAndAddition();
     CheckFloatConversions();
     CheckFloatToInteger();
     CheckIntegerToFloat();
