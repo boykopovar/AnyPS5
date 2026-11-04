@@ -3,10 +3,6 @@
 
 extern "C" {
 
-int APS5_VABI BIO_clear_flags_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI BN_clear_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

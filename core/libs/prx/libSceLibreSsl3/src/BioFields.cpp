@@ -34,4 +34,9 @@ void APS5_VABI BIO_set_flags_nid_postfix(LibreSsl::Bio* bio, int flags) {
     bio->flags |= flags;
 }
 
+void APS5_VABI BIO_clear_flags_nid_postfix(LibreSsl::Bio* bio, int flags) {
+    if (!bio) throw std::invalid_argument("BIO_clear_flags requires a BIO");
+    bio->flags &= ~flags;
+}
+
 }
