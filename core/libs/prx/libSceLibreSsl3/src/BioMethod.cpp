@@ -41,4 +41,10 @@ int APS5_VABI BIO_meth_set_create_nid_postfix(LibreSsl::BioMethod* method, declt
     return 1;
 }
 
+int APS5_VABI BIO_meth_set_destroy_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::destroy) destroy) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_destroy requires a method");
+    method->destroy = destroy;
+    return 1;
+}
+
 }
