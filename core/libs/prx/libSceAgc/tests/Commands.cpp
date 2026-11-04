@@ -30,6 +30,8 @@
 #include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/Command/include/Memory.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -408,6 +410,45 @@ void testWorkloadStreams() {
         "a workload call with a null command buffer for a registered stream returned a packet");
     check(sceAgcDriverUnregisterWorkloadStream(1) == 0, "workload stream unregistration failed");
     check(sceAgcAcbSetWorkloadComplete(&registered.buffer, 1, 3) == nullptr, "ACB workload complete packet after unregistration");
+}
+
+void testDrawPackets() {
+    Storage indirect;
+    const auto* draw = sceAgcDcbDrawIndirect(&indirect.buffer, 0x40, 0);
+    const std::array<std::uint32_t, 5> indirectExpected{0xc0032400u, 0x40, 0x280, 0x280, 2};
+    check(draw == indirect.words.data() && std::equal(indirectExpected.begin(), indirectExpected.end(), indirect.words.begin()), "DRAW_INDIRECT packet mismatch");
+    Storage flagged;
+    sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100);
+    sceAgcDcbDrawIndirect(&flagged.buffer, 0, 0x100000100ull);
+    check(flagged.words[4] == 0x22u && flagged.words[9] == 2, "DRAW_INDIRECT initiator flags mismatch");
+    Storage offset;
+    sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 0, 0);
+    sceAgcDcbDrawIndexOffset(&offset.buffer, 16, 9, 0);
+    const std::array<std::uint32_t, 10> offsetExpected{0xc0033500u, 1, 16, 0, 0, 0xc0033500u, 9, 16, 9, 0};
+    check(std::equal(offsetExpected.begin(), offsetExpected.end(), offset.words.begin()), "DRAW_INDEX_OFFSET_2 packet mismatch");
+    Storage instances;
+    sceAgcDcbSetNumInstances(&instances.buffer, 3);
+    check(instances.words[0] == 0xc0002f00u && instances.words[1] == 3, "NUM_INSTANCES packet mismatch");
+    Storage size;
+    sceAgcDcbSetIndexSize(&size.buffer, 1, 2);
+    sceAgcDcbSetIndexSize_0600(&size.buffer, 2, 3, 1);
+    const std::array<std::uint32_t, 6> sizeExpected{0xc0017a00u, 0x20000243u, 0x481u, 0xc0017a00u, 0x20000243u, 0x44c2u};
+    check(std::equal(sizeExpected.begin(), sizeExpected.end(), size.words.begin()), "index size packet mismatch");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 2, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbDrawIndirect(&rejected.buffer, 0, 0x200000000ull); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 3, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize(&rejected.buffer, 0, 4); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbSetIndexSize_0600(&rejected.buffer, 0, 0, 2); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbDrawIndirectGetSize() == 20 && sceAgcDcbDrawIndexOffsetGetSize() == 20 && sceAgcDcbSetNumInstancesGetSize() == 8 && sceAgcDcbSetIndexSizeGetSize() == 12, "draw packet sizes");
 }
 
 void testIndexBuffer() {
@@ -835,6 +876,45 @@ void testAtomicGds() {
     }
 }
 
+void testCopyDataAndComputeEvents() {
+    Storage graphics;
+    const auto* copy = sceAgcDcbCopyData(&graphics.buffer, 4, 1, 0x1122334450ull, 0xb, 2, 0x12345678u, 0, 1);
+    const std::array<std::uint32_t, 6> graphicsExpected{0xc0044000u, 0x42104205u, 0x12345678u, 0, 0x22334450u, 0x11u};
+    check(copy == graphics.words.data() && std::equal(graphicsExpected.begin(), graphicsExpected.end(), graphics.words.begin()), "graphics COPY_DATA packet mismatch");
+    Storage wide;
+    sceAgcDcbCopyData(&wide.buffer, 4, 0, 0x1000, 0xa, 0, 0x100000000ull, 1, 0);
+    check(wide.words[1] == 0x00010205u && wide.words[2] == 0 && wide.words[3] == 1, "a 64-bit immediate COPY_DATA lost its high word");
+    Storage compute;
+    sceAgcAcbCopyData(&compute.buffer, 2, 0, 0x4000, 5, 0, 7, 0, 0);
+    const std::array<std::uint32_t, 6> computeExpected{0xc0044000u, 0x205u, 7, 0, 0x4000u, 0};
+    check(std::equal(computeExpected.begin(), computeExpected.end(), compute.words.begin()), "compute COPY_DATA packet mismatch");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 4, 0x1000, 0xa, 0, 1, 0, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 0, 0x1000, 0xa, 4, 1, 0, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 2, 0); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 0, 2); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbCopyDataGetSize() == 24 && sceAgcAcbCopyDataGetSize() == 24, "COPY_DATA packet sizes");
+    Storage events;
+    sceAgcAcbEventWrite(&events.buffer, 7, nullptr);
+    sceAgcAcbEventWrite(&events.buffer, 0x16, nullptr);
+    const std::array<std::uint32_t, 4> eventsExpected{0xc0004600u, 0x407u, 0xc0004600u, 0x16u};
+    check(std::equal(eventsExpected.begin(), eventsExpected.end(), events.words.begin()), "compute EVENT_WRITE packet mismatch");
+    Storage refused;
+    refused.words.fill(0xa5a5a5a5u);
+    const auto refusedWords = refused.words;
+    const auto* refusedCursor = refused.buffer.cursor_up;
+    expectFailure([&] { sceAgcAcbEventWrite(&refused.buffer, 0x40, nullptr); });
+    check(refused.words == refusedWords && refused.buffer.cursor_up == refusedCursor, "a refused packet changed the command buffer");
+    check(sceAgcAcbEventWriteGetSize(7) == 8, "compute EVENT_WRITE packet size");
+}
+
 void testDebugRaiseException() {
     int result = -1;
     try {
@@ -1067,6 +1147,7 @@ int main(int argc, char** argv) {
         testEndOfPipeAddressPatch();
         testWorkloadStreams();
         testIndexBuffer();
+        testDrawPackets();
         testIndexIndirectArgs();
         testIndirectBase();
         testContextState();
@@ -1080,6 +1161,7 @@ int main(int argc, char** argv) {
         testEndOfPipePatches();
         testAtomicGds();
         testDebugRaiseException();
+        testCopyDataAndComputeEvents();
         testDefaults();
         testDefaultsTypes();
         LibcRunShutdown_nid_postfix();

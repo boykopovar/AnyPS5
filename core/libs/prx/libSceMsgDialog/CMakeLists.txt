@@ -1,0 +1,31 @@
+add_library(libSceMsgDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libSceMsgDialog PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceMsgDialog PRIVATE libSceIme)
+configure_windows_unwind(libSceMsgDialog)
+
+if(BUILD_TESTING)
+    add_test_executable(msg_dialog_param_tests ${LIBS_INCLUDE_DIR}/tests/MsgDialogParam.cpp)
+    target_include_directories(msg_dialog_param_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(msg_dialog_param_tests)
+    add_test(NAME msg_dialog_param COMMAND msg_dialog_param_tests)
+
+    add_test_executable(msg_dialog_text_tests ${LIBS_INCLUDE_DIR}/tests/MsgDialogText.cpp)
+    target_include_directories(msg_dialog_text_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(msg_dialog_text_tests)
+    add_test(NAME msg_dialog_text COMMAND msg_dialog_text_tests)
+
+    add_test_executable(msg_dialog_request_tests ${LIBS_INCLUDE_DIR}/tests/MsgDialogRequest.cpp)
+    target_include_directories(msg_dialog_request_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(msg_dialog_request_tests)
+    add_test(NAME msg_dialog_request COMMAND msg_dialog_request_tests)
+
+    add_test_executable(guest_msg_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestMsgDialog.cpp)
+    target_include_directories(guest_msg_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_msg_dialog_tests PRIVATE libSceMsgDialog libSceIme libc)
+    configure_windows_unwind(guest_msg_dialog_tests)
+    add_test(NAME guest_msg_dialog COMMAND guest_msg_dialog_tests)
+    if(WIN32)
+        set_tests_properties(guest_msg_dialog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMsgDialog>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+    endif()
+endif()

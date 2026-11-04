@@ -514,6 +514,21 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
         for (auto& pending : it->pendingEvents) {
             pending.udata = event.event.udata;
         }
+        if (it->pendingEvents.size() > kMaxPendingEvents) {
+            it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - kMaxPendingEvents));
+        }
+    } else if (event.pendingEvents.size() > kMaxPendingEvents) {
+        KernelEqueueEvent truncated;
+        truncated.triggered = event.triggered;
+        truncated.enabled = event.enabled;
+        truncated.deadlineNs = event.deadlineNs;
+        truncated.intervalNs = event.intervalNs;
+        truncated.lowWater = event.lowWater;
+        truncated.event = event.event;
+        truncated.filter = event.filter;
+        truncated.pendingEvents.assign(event.pendingEvents.end() - static_cast<std::deque<KernelEvent>::difference_type>(kMaxPendingEvents), event.pendingEvents.end());
+        m_events.push_back(std::move(truncated));
+        if (event.triggered) ++m_activations;
     } else {
         m_events.push_back(event);
         if (event.triggered) ++m_activations;
@@ -542,6 +557,9 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
             it->filter.triggerFunc(&*it, triggerData);
         } else {
             it->triggered = true;
+        }
+        if (it->pendingEvents.size() > KernelEqueuePrivate::kMaxPendingEvents) {
+            it->pendingEvents.erase(it->pendingEvents.begin(), it->pendingEvents.begin() + static_cast<std::deque<KernelEvent>::difference_type>(it->pendingEvents.size() - KernelEqueuePrivate::kMaxPendingEvents));
         }
         if (!was && it->triggered) ++m_activations;
     }
@@ -936,19 +954,28 @@ KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t
     return event;
 }
 
-static std::mutex g_closeObserverMutex;
-static std::vector<void (*)(int)> g_closeObservers;
+struct CloseObserverRegistry {
+    std::mutex mutex;
+    std::vector<void (*)(int)> observers;
+};
+
+static CloseObserverRegistry& GetCloseObserverRegistry() {
+    static auto* registry = new CloseObserverRegistry;
+    return *registry;
+}
 
 extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor)) {
-    std::lock_guard lock(g_closeObserverMutex);
-    g_closeObservers.push_back(observer);
+    auto& registry = GetCloseObserverRegistry();
+    std::lock_guard lock(registry.mutex);
+    registry.observers.push_back(observer);
 }
 
 static void NotifyDescriptorCloseObservers(int descriptor) {
+    auto& registry = GetCloseObserverRegistry();
     std::vector<void (*)(int)> observers;
     {
-        std::lock_guard lock(g_closeObserverMutex);
-        observers = g_closeObservers;
+        std::lock_guard lock(registry.mutex);
+        observers = registry.observers;
     }
     for (const auto observer : observers) observer(descriptor);
 }
