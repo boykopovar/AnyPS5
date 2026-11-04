@@ -6159,6 +6159,98 @@ void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     std::cout << "idle publish wait verified\n";
 }
 
+bool untrackedForgetTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: untracked comparison memo not tested\n";
+        return false;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t otherBytes = 65536;
+    const auto allocate = [](std::size_t bytes) -> void* {
+#ifdef _WIN32
+        return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        return std::aligned_alloc(65536, bytes);
+#endif
+    };
+    void* block = allocate(surfaceBytes);
+    void* other = allocate(otherBytes);
+    Require(block != nullptr && other != nullptr, "cannot allocate the untracked comparison blocks");
+    std::memset(block, 0x55, surfaceBytes);
+    std::memset(other, 0x11, otherBytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto otherAddress = reinterpret_cast<std::uint64_t>(other);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, surfaceBytes, true, true, true);
+        mutation.Add(other, otherBytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        void* other;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+                mutation.Remove(other);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), surfaceBytes);
+        }
+    } unregister{base, block, other};
+    if (HostImportFor(base, address, surfaceBytes) == nullptr) {
+        std::cout << "host import of the surface refused: untracked comparison memo not tested\n";
+        return false;
+    }
+    if (AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
+        std::cout << "the surface is write-watched: untracked comparison memo not tested\n";
+        return false;
+    }
+    const char* mode = std::getenv("APS5_WRITE_WATCH_IMPORTS");
+    std::cout << "write-watch mode covered: APS5_WRITE_WATCH_IMPORTS=" << (mode != nullptr ? mode : "unset (probed)") << ", the surface is not write-watched\n";
+    TextureDetiler detiler(base);
+    struct Drain {
+        Recorder& recorder;
+        ~Drain() { recorder.Sync(); }
+    } drain{recorder};
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the test surface has an unexpected size");
+    {
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        image->Refresh();
+        const auto compares = StorageTexture::UntrackedCompares();
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares, "a second refresh in the same collect epoch compared the surface again");
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(otherAddress, otherBytes);
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares, "forgetting memory the surface does not cover made its refresh compare again");
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 65536);
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares + 1, "forgetting the surface's own memory left its comparison memo standing");
+    }
+#ifdef _WIN32
+    VirtualFree(other, 0, MEM_RELEASE);
+#endif
+    std::cout << "untracked comparison memo: ok\n";
+    return true;
+}
+
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -9004,10 +9096,12 @@ class StorageUploadProbe {
 public:
     StorageUploadProbe(Context& context, bool failView) : context(context), resolver(context.deviceProc), failView(failView) {
         Require(active == nullptr, "nested storage upload probe");
+        context.bufferPool.reset();
         active = this;
         context.deviceProc = resolve;
     }
     ~StorageUploadProbe() {
+        context.bufferPool.reset();
         for (const auto view : destroyedViews) function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
         if (imageDestroyed) function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
         if (memoryFreed) function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
@@ -9019,6 +9113,7 @@ public:
     bool Released() const { return imageDestroyed && memoryFreed; }
     bool FailedView() const { return failedView; }
     std::uint32_t Clears() const { return clears; }
+    void ReleasePool() { context.bufferPool.reset(); }
 
 private:
     template<typename TFunction>
@@ -9132,6 +9227,7 @@ void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool f
         recorder.Sync();
     }
     previous.Activate();
+    probe.ReleasePool();
     Require(threw == failView && probe.FailedView() == failView, "storage view failure injection did not take the requested path");
     Require(std::all_of(readback.Bytes().begin(), readback.Bytes().end(), [](std::byte value) { return value == std::byte{0}; }), "recorded storage clear did not reach every texel");
     Require(lifetime.expired() && probe.Released(), "storage upload resources outlived recorder teardown");
@@ -13737,39 +13833,58 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     constexpr std::array<std::uint8_t, 8> green{0, 0, 0x00, 0x3c, 0, 0, 0x00, 0x3c};
     constexpr std::array<std::uint8_t, 8> cleared{};
     enum class Order { Superseded, ReadFirst, Rewritten, CpuStore };
+    enum class Path { Refresh, Creation, Detached };
     struct Outcome {
         std::vector<std::byte> bytes;
         std::vector<std::byte> imageB;
         std::uint64_t handOvers = 0;
         std::uint64_t superseded = 0;
     };
-    const auto run = [&](bool on, Order order) {
-        const std::string where = what + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote") + (on ? ", on" : ", off");
+    const auto pathName = [](Path path) { return std::string(path == Path::Refresh ? ", at B's refresh" : path == Path::Creation ? ", at B's creation" : ", at B's creation after A left the cache"); };
+    const auto run = [&](bool on, Order order, Path path) {
+        const std::string where = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote") + (on ? ", on" : ", off");
         StorageTexture::SetClearHandOver(on);
         recorder.Sync();
         std::memset(memory, 0x55, surfaceA);
         std::memset(memory + surfaceA, 0x00, keyCount);
         Outcome outcome{};
-        const auto handOvers = StorageTexture::ClearHandOvers();
+        const auto handOvers = StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers();
         const auto superseded = StorageTexture::HandedOverSuperseded();
         {
             auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
-            auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+            std::shared_ptr<StorageTexture> imageB;
+            if (path == Path::Refresh) imageB = StorageTexture::Create(context, detiler, resourceB, 0);
             draw(imageA, {{1.0f, 0.0f, 0.0f, 1.0f}});
-            imageB->Refresh();
-            if (on && watched) {
-                Require(StorageTexture::ClearHandOvers() == handOvers + 1, where + ": B's refresh under clear keys did not hand A's results over");
-                Require(StorageTexture::FindPending(address, surfaceA) == imageA, where + ": A's results did not stay pending");
-                Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": B's refresh stored A's results over B");
+            const std::weak_ptr<StorageTexture> weakA = imageA;
+            if (path == Path::Refresh) {
+                imageB->Refresh();
             } else {
-                Require(StorageTexture::ClearHandOvers() == handOvers, where + ": the hand-over ran while off");
+                std::shared_ptr<StorageTexture> detached;
+                if (path == Path::Detached) {
+                    imageA->Detach();
+                    detached = std::move(imageA);
+                }
+                bool flushed = false;
+                auto handOver = StorageTexture::PrepareCreation(context, resourceB, surfaceB, std::move(detached), flushed);
+                Require(flushed != (on && watched), where + (flushed ? ": B's creation stored A's results although they were handed over" : ": B's creation did not store A's results although they were not handed over"));
+                imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+                imageB->AdoptHandOver(std::move(handOver));
+            }
+            if (on && watched) {
+                Require(StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() == handOvers + 1, where + ": B under clear keys did not take A's results over");
+                Require(StorageTexture::FindPending(address, surfaceA) == weakA.lock() && !weakA.expired(), where + ": A's results did not stay pending");
+                Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": B stored A's results over B");
+            } else {
+                Require(StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() == handOvers, where + ": the hand-over ran while off");
             }
             outcome.imageB = readImage(imageB, 128, 128, 8);
             Require(filled(outcome.imageB, cleared), where + ": B does not hold its keys' clear");
             if (order == Order::ReadFirst) {
                 Require(filled(readMemory(address, 65536), red), where + ": a read of A's memory before B wrote it did not see A's results");
-                imageA->Refresh();
-                Require(filled(readImage(imageA, 256, 256, 4), red), where + ": A read again as A lost its results");
+                if (imageA != nullptr) {
+                    imageA->Refresh();
+                    Require(filled(readImage(imageA, 256, 256, 4), red), where + ": A read again as A lost its results");
+                }
             }
             if (order == Order::Rewritten) {
                 draw(imageA, {{0.0f, 0.0f, 1.0f, 1.0f}});
@@ -13788,15 +13903,17 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
             outcome.bytes = readMemory(address, surfaceA);
             Require(filled(readImage(imageB, 128, 128, 8), green), where + ": B lost its results");
         }
-        outcome.handOvers = StorageTexture::ClearHandOvers() - handOvers;
+        outcome.handOvers = StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() - handOvers;
         outcome.superseded = StorageTexture::HandedOverSuperseded() - superseded;
         recorder.Sync();
         return outcome;
     };
+    for (const auto path : {Path::Refresh, Path::Creation, Path::Detached})
     for (const auto order : {Order::Superseded, Order::ReadFirst, Order::Rewritten, Order::CpuStore}) {
-        const std::string name = what + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote");
-        const auto off = run(false, order);
-        const auto on = run(true, order);
+        if (path == Path::Detached && order == Order::Rewritten) continue;
+        const std::string name = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote");
+        const auto off = run(false, order, path);
+        const auto on = run(true, order, path);
         const auto& lastA = order == Order::Rewritten ? blue : red;
         if (order != Order::CpuStore) Require(filled(std::span(off.bytes).first(2 * 65536), green), name + ": B's results did not reach guest memory with the hand-over off");
         Require(filled(std::span(off.bytes).subspan(2 * 65536), lastA), name + ": A's results did not reach guest memory with the hand-over off");
@@ -13810,6 +13927,54 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
         if (order == Order::Superseded) Require(on.superseded == 2, name + ": B's results did not drop A's two units under B (dropped " + std::to_string(on.superseded) + ")");
         if (order == Order::ReadFirst) Require(on.superseded <= 1, name + ": a unit stored by the read was dropped again");
     }
+    static_assert(2 * keyCount <= bytes - surfaceA, "B's and C's DCC keys both follow A inside the block");
+    const auto resourceC = surface(128, 128, 71, address + surfaceA + keyCount);
+    const auto chained = [&](bool on) {
+        const std::string where = what + ", A handed to B and then to C as each left the cache" + (on ? ", on" : ", off");
+        StorageTexture::SetClearHandOver(on);
+        recorder.Sync();
+        std::memset(memory, 0x55, surfaceA);
+        std::memset(memory + surfaceA, 0x00, 2 * keyCount);
+        const auto handOvers = StorageTexture::CreationHandOvers();
+        std::shared_ptr<StorageTexture> imageC;
+        std::weak_ptr<StorageTexture> weakA;
+        {
+            auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
+            draw(imageA, {{1.0f, 0.0f, 0.0f, 1.0f}});
+            weakA = imageA;
+            bool flushed = false;
+            imageA->Detach();
+            auto toB = StorageTexture::PrepareCreation(context, resourceB, surfaceB, std::move(imageA), flushed);
+            auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+            imageB->AdoptHandOver(std::move(toB));
+            imageB->Detach();
+            auto toC = StorageTexture::PrepareCreation(context, resourceC, surfaceB, std::move(imageB), flushed);
+            imageC = StorageTexture::Create(context, detiler, resourceC, 0);
+            imageC->AdoptHandOver(std::move(toC));
+        }
+        if (on && watched) Require(StorageTexture::CreationHandOvers() == handOvers + 2, where + ": A's results were not handed over at both creations");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        if (on && watched) Require(!weakA.expired(), where + ": A was released with its results pending once the recorder dropped its keeps");
+        imageC->Refresh();
+        if (on && watched) Require(!weakA.expired(), where + ": C's refresh released A with its results pending");
+        draw(imageC, {{0.0f, 1.0f, 0.0f, 1.0f}});
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        if (on && watched) Require(!weakA.expired(), where + ": C's results released A with its units outside C still pending");
+        auto stored = readMemory(address, surfaceA);
+        Require(filled(std::span(stored).first(2 * 65536), green), where + ": C's results did not reach a CPU read");
+        Require(filled(std::span(stored).subspan(2 * 65536), red), where + ": A's results outside C did not reach a CPU read");
+        imageC.reset();
+        recorder.Sync();
+        return stored;
+    };
+    const auto chainedOff = chained(false);
+    Require(chained(true) == chainedOff, what + ", A handed to B and then to C: the hand-over left other guest bytes than the old order");
     std::cout << what << ": ok\n";
     return true;
 }
@@ -15036,6 +15201,9 @@ int main(int argc, char** argv) {
             spaceWriteSyncTests(device, recorder);
             std::cout << "Address space pending write tests passed\n";
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
+            return untrackedForgetTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
             drawSnapshotCapTests(device, recorder);

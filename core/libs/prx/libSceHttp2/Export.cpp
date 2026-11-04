@@ -115,8 +115,7 @@ static std::shared_ptr<Http2::Request> Transport(int id, bool create) {
     auto* handle = FindHandle(id, Http2Kind::Request);
     if (!handle) return nullptr;
     if (create && !handle->transport) {
-        if (handle->version != 3) NotImplemented_nid_no_patch("sceHttp2SendRequest: HTTP/1.x transport is not implemented");
-        handle->transport = Http2::CreateRequest_nid_no_patch(id, handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
+        handle->transport = Http2::CreateRequest_nid_no_patch(id, handle->version, handle->sslContext, handle->capacity, handle->settings, handle->method, handle->url);
     }
     if (!handle->transport) NotImplemented_nid_no_patch("sceHttp2: request has not been sent");
     return handle->transport;
@@ -184,9 +183,8 @@ int APS5_VABI sceHttp2DeleteTemplate(int tmpl_id) {
 }
 
 int APS5_VABI sceHttp2GetAllResponseHeaders(int req_id, char** header, size_t* header_size) {
-    if (!Transport(req_id, false)) return ERROR_INVALID_ID;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const auto request = Transport(req_id, false);
+    return request ? request->Headers(header, header_size) : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2GetResponseContentLength(int req_id, int* result, uint64_t* content_length) {
