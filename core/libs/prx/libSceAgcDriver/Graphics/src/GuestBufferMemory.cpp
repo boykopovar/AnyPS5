@@ -2438,6 +2438,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
 #endif
         return failedImport();
     }
+    if (requester == ImportRequester::ColorTarget && !GuestMemory::Watched(base, static_cast<std::size_t>(bytes))) return failedImport();
     static std::uint64_t importedBytes = 0;
     importedBytes += bytes;
     static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;

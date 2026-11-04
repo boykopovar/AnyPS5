@@ -511,6 +511,38 @@ bool DmaBufSparseFailure(AgcDriver::VulkanDevice& device) {
     return true;
 }
 
+bool DmaBufWatchLoss(AgcDriver::VulkanDevice& device, int walk) {
+    using namespace AgcDriver::Graphics;
+    auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!DmaBufImportSelected(context)) {
+        std::puts("skipped, the device does not select watched dma-buf imports");
+        return false;
+    }
+    SetHostImportRangeWindow(0);
+    constexpr std::array<float, 4> seed{1300.0f, 1400.0f, 1500.0f, 1600.0f};
+    Block block(ResidentBytes, 0, true);
+    Seed(block, seed);
+    Require(block.Watched(), "dma-buf watch loss: direct memory starts outside the write watch");
+    struct Reset {
+        ~Reset() { AgcDriver::GuestMemory::SetImportWalkFailureForTest(0); }
+    } reset;
+    AgcDriver::GuestMemory::SetImportWalkFailureForTest(walk, block.Address());
+    const HostImport* imported = nullptr;
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        imported = HostImportFor(context, block.Address(), block.bytes, ImportRequester::ColorTarget);
+    }
+    AgcDriver::GuestMemory::SetImportWalkFailureForTest(0);
+    Require(!block.Watched(), "dma-buf watch loss: the injected page walk failure did not remove write tracking");
+    Require(imported == nullptr, "dma-buf watch loss: a color target accepted an import after losing write tracking");
+    Require(ExistingHostImportFor(context, block.Address(), block.bytes) == nullptr, "dma-buf watch loss: the rejected import was cached");
+    Draw(device, block);
+    device.WaitIdle();
+    Check(block, seed, "dma-buf watch loss, copied draw");
+    std::puts("color target falls back to a copied draw after import loses write tracking");
+    return true;
+}
+
 bool DmaBufColorTarget(AgcDriver::VulkanDevice& device, bool refused) {
     using namespace AgcDriver::Graphics;
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -574,6 +606,7 @@ int main(int argc, char** argv) {
         }
         const std::string_view only = argc > 1 ? argv[1] : "";
 #ifdef __linux__
+        if (only == "--dma-buf-watch-loss-before" || only == "--dma-buf-watch-loss-after") return DmaBufWatchLoss(*device, only == "--dma-buf-watch-loss-before" ? 1 : 2) ? 0 : VulkanTestSkipped;
         if (only == "--dma-buf-sparse-failure") return DmaBufSparseFailure(*device) ? 0 : VulkanTestSkipped;
         if (only == "--dma-buf-created" || only == "--dma-buf-refused") return DmaBufColorTarget(*device, only == "--dma-buf-refused") ? 0 : VulkanTestSkipped;
 #endif
