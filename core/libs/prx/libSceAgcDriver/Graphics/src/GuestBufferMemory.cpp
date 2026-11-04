@@ -207,6 +207,24 @@ AddressSpaceCache& Spaces() {
     return cache;
 }
 
+std::atomic<RetainedAddressSpace*> retainedSpaces{nullptr};
+
+void pushRetained(RetainedAddressSpace* node) noexcept {
+    node->next = retainedSpaces.load(std::memory_order_acquire);
+    while (!retainedSpaces.compare_exchange_weak(node->next, node, std::memory_order_acq_rel, std::memory_order_acquire)) {}
+}
+
+template <typename Done>
+void pruneRetained(Done done) {
+    auto* node = retainedSpaces.exchange(nullptr, std::memory_order_acq_rel);
+    while (node != nullptr) {
+        auto* const next = node->next;
+        if (done(*node)) delete node;
+        else pushRetained(node);
+        node = next;
+    }
+}
+
 bool addressSpaceCacheEnabled() {
     static const bool disabled = std::getenv("APS5_NO_ADDRESS_SPACE_CACHE") != nullptr;
     return !disabled;
@@ -2306,11 +2324,21 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             std::snprintf(text, sizeof(text), "AGC graphics: host import of 0x%llx+0x%llx: memory at 0x%llx (type 0x%lx, protection 0x%lx) is neither read-write, read-only nor a shared mapping", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), reinterpret_cast<unsigned long long>(pages.refused.BaseAddress), pages.refused.Type, pages.refused.Protect);
             throw std::runtime_error(text);
         }
+        if (stepDown && !pages.shared) {
+            state.failedBlocks.insert_or_assign(std::pair{base, bytes}, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
+            return importAllocation(context, state, address, lease, requester, end, evict);
+        }
         std::erase_if(state.gateRefusals, [&](const auto& refusal) { return refusal.first.first < base + bytes && base < refusal.first.first + refusal.first.second; });
+        bool boundsRefused = false;
         try {
-            entry.alias = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
+            entry.alias = entry.ranges.size() == 1
+                ? GuestArena::GuestArenaMapAliasForImport_nid_no_patch(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes), &boundsRefused)
+                : GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
         } catch (const std::runtime_error&) {
-            if (entry.ranges.size() == 1) throw;
+            if (entry.ranges.size() == 1) {
+                if (!boundsRefused) throw;
+                return failedImport();
+            }
             return joined ? failedImport() : failedBlockImport();
         }
         if (entry.alias == nullptr) return nullptr;
@@ -3708,6 +3736,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
             drained = true;
         }
         if (recorder != nullptr) recorder->FlushDeferredReleases();
+        if (recorder != nullptr) GuestBufferMemory::ReleaseRetainedSpaces(recorder->Id(), recorder->CompletedThrough());
         const auto end = static_cast<std::uint64_t>(address) + bytes;
         auto& imports = Imports();
         if (releaseParkedImports(imports, address, end)) retiredImport = true;
@@ -3755,6 +3784,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
             std::this_thread::yield();
         }
         if (recorder != nullptr) recorder->FlushDeferredReleases();
+        if (recorder != nullptr) GuestBufferMemory::ReleaseRetainedSpaces(recorder->Id(), recorder->CompletedThrough());
 
         const auto end = static_cast<std::uint64_t>(address) + bytes;
         auto& imports = Imports();
@@ -4818,6 +4848,7 @@ void GuestBufferMemory::AcquireRegistered() {
         }
         if (hit) {
             spaces.hits.fetch_add(1, std::memory_order_relaxed);
+            ensureRetention();
             space = std::move(current);
             lap(timing.leaseUs, at);
             for (const auto& range : space->copied) addCopiedRange(range);
@@ -5055,6 +5086,7 @@ void GuestBufferMemory::AcquireRegistered() {
                     }
                     if (Recorder::ValidReadList(*reads)) built->directReads = std::move(reads);
                 }
+                ensureRetention();
                 space = std::move(built);
                 spaces.droppedByWaiter.store(false, std::memory_order_relaxed);
                 if (evictedRanges.empty()) spaces.current.store(space);
@@ -5317,13 +5349,63 @@ bool GuestBufferMemory::SpaceOnly() const {
     return space != nullptr && lease.empty() && regions.empty() && space->sparseMirrors.empty() && space->copied.empty();
 }
 
+bool GuestBufferMemory::SpaceHeld() const {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::SpaceHeld");
+    return space != nullptr;
+}
+
+void GuestBufferMemory::HoldSpaceThrough(std::uint64_t recorder, std::uint64_t serial) {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::HoldSpaceThrough");
+    if (space == nullptr) return;
+    spaceHeldBy = recorder;
+    spaceHeldThrough = serial;
+}
+
+bool GuestBufferMemory::ReleaseCompletedSpace(std::uint64_t recorder, std::uint64_t completedThrough) {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseCompletedSpace");
+    if (space == nullptr || spaceHeldThrough == 0) return false;
+    if (spaceHeldBy == recorder ? spaceHeldThrough > completedThrough : Recorder::Alive(spaceHeldBy)) return false;
+    static_cast<void>(ReleaseSpace());
+    return true;
+}
+
 std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseSpace");
     if (space == nullptr) return {};
+    spaceHeldThrough = 0;
+    spaceHeldBy = 0;
     releasedSpace = space;
     return std::move(space);
 }
 
+void GuestBufferMemory::ensureRetention() {
+    if (retention == nullptr) retention = std::make_unique<RetainedAddressSpace>();
+}
+
+void GuestBufferMemory::ReleaseRetainedSpaces(std::uint64_t recorder, std::uint64_t completedThrough) {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseRetainedSpaces");
+    if (retainedSpaces.load(std::memory_order_acquire) == nullptr) return;
+    pruneRetained([&](const RetainedAddressSpace& node) { return node.recorder == recorder ? node.serial <= completedThrough : !Recorder::Alive(node.recorder); });
+}
+
+void ClearRetainedSpaces(VkDevice device) {
+    pruneRetained([device](const RetainedAddressSpace& node) { return node.device == device; });
+}
+
+std::size_t RetainedSpaceCount() {
+    std::size_t count = 0;
+    pruneRetained([&count](const RetainedAddressSpace&) {
+        ++count;
+        return false;
+    });
+    return count;
+}
+
 namespace {
+
+bool epochMirrors() {
+    return DrawPipelineEnabled();
+}
 
 void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space) {
     static std::atomic<std::uint64_t> reuses{0}, refreshes{0}, compared{0}, differing{0};
@@ -5356,7 +5438,9 @@ void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space)
 }
 
 bool GuestBufferMemory::RetakeSpace() {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::RetakeSpace");
     if (space != nullptr) return true;
+    ensureRetention();
     auto kept = releasedSpace.lock();
     if (kept == nullptr) return false;
     auto& spaces = Spaces();
@@ -5378,12 +5462,12 @@ bool GuestBufferMemory::RetakeSpace() {
     std::vector<RefreshBlock> blocks;
     const auto epoch = GuestMemory::CollectEpoch();
     const auto proof = GuestMemory::ProofSerial();
-    const bool reuse = DrawPipelineEnabled() && epoch != 0 && space->refreshedEpoch.load(std::memory_order_relaxed) == epoch && space->refreshedProof.load(std::memory_order_relaxed) == proof;
+    const bool reuse = epochMirrors() && epoch != 0 && space->refreshedEpoch.load(std::memory_order_relaxed) == epoch && space->refreshedProof.load(std::memory_order_relaxed) == proof;
     if (reuse) {
         noteEpochMirrors(true, *space);
     } else {
         refreshWritableMirrors(*space, blocks);
-        if (DrawPipelineEnabled()) noteEpochMirrors(false, *space);
+        if (epochMirrors()) noteEpochMirrors(false, *space);
     }
     const auto checked = refreshHeapRuns(*space, blocks);
     compareBlocks(blocks);
@@ -5404,16 +5488,18 @@ bool GuestBufferMemory::RetakeSpace() {
     return true;
 }
 
-bool GuestBufferMemory::SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const {
-    if (space == nullptr) return false;
+SnapshotService GuestBufferMemory::SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const {
+    if (space == nullptr) return SnapshotService::Outside;
     for (const auto& snapshot : snapshots) {
         const Region* owner = nullptr;
-        if (baseOverlap(snapshot.address, snapshot.address + snapshot.bytes.size(), &owner) != BaseOverlap::Inside || owner == nullptr) return false;
-        if (!(owner->writable || owner->hostBacked || owner->mirror != nullptr)) return false;
-        if (AnyShadowedOverlaps(snapshot.address, snapshot.bytes.size())) return false;
-        if (std::memcmp(reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.data(), snapshot.bytes.size()) != 0) return false;
+        const auto overlap = baseOverlap(snapshot.address, snapshot.address + snapshot.bytes.size(), &owner);
+        if (overlap == BaseOverlap::Partial) return SnapshotService::Partial;
+        if (overlap != BaseOverlap::Inside || owner == nullptr) return SnapshotService::Outside;
+        if (!(owner->writable || owner->hostBacked || owner->mirror != nullptr)) return SnapshotService::Outside;
+        if (AnyShadowedOverlaps(snapshot.address, snapshot.bytes.size())) return SnapshotService::Changed;
+        if (std::memcmp(reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.data(), snapshot.bytes.size()) != 0) return SnapshotService::Changed;
     }
-    return true;
+    return SnapshotService::Served;
 }
 
 void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
@@ -5745,6 +5831,13 @@ void ShutdownGuestBufferWorkers() {
 }
 
 GuestBufferMemory::~GuestBufferMemory() {
+    if (space != nullptr && spaceHeldThrough != 0 && retention != nullptr) {
+        retention->device = space->device;
+        retention->recorder = spaceHeldBy;
+        retention->serial = spaceHeldThrough;
+        retention->space = std::move(space);
+        pushRetained(retention.release());
+    }
     releaseHeapReferences();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;

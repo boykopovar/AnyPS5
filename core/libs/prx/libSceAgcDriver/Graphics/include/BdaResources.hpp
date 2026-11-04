@@ -25,9 +25,11 @@ public:
     BdaResources(const BdaResources&) = delete;
     BdaResources& operator=(const BdaResources&) = delete;
     VkDescriptorBufferInfo Table() const;
+    std::span<const std::byte> TableBytes() const;
     bool TableGuardCurrent(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
+    void CheckUse(const BdaResources* record) const;
     void NoteUse(std::uint64_t serial);
     bool TakeFaultSlot(const Context& context);
     bool HoldsFaultSlot() const { return faultChunk != nullptr; }
@@ -76,8 +78,9 @@ private:
     // The page table is read-only to the shader, so consecutive builds mapping the same ranges to the
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
-    void markWrittenPages() const;
-    void checkSrtGuard() const;
+    void checkFault(const BdaResources& record) const;
+    void markWrittenPages(const BdaResources& record) const;
+    void checkSrtGuard(const BdaResources& faults) const;
     std::span<std::byte> faultBytes() const;
     std::shared_ptr<Buffer> table;
     VkDevice faultDevice = VK_NULL_HANDLE;
