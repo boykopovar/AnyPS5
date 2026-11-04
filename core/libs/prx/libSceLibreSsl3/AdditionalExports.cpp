@@ -266,10 +266,6 @@ int APS5_VABI Unknown_4pEl_minus_5DmrrM_nid_no_patch() {
 }
 APS5_EXPORT("4pEl-5DmrrM", Unknown_4pEl_minus_5DmrrM_nid_no_patch);
 
-int APS5_VABI BIO_meth_set_create_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI X509_CRL_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
