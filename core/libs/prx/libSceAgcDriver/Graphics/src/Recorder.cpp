@@ -252,6 +252,10 @@ thread_local std::uint64_t hookRealWaits = 0;
 
 }
 
+bool Recorder::Alive(std::uint64_t id) {
+    return RecorderAlive(id);
+}
+
 bool Recorder::InCompletion() {
     return completionDepth != 0;
 }
