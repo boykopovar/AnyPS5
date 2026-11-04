@@ -295,8 +295,40 @@ void CheckDraw(AgcDriver::VulkanDevice& device, bool recorded, std::uint32_t lay
     std::printf("extra-mip actual draw passed: recorded=%u first-array-slice=%u mip=%u physical=%u\n", recorded ? 1u : 0u, layer, mip, geometry.imageLevels);
 }
 
+struct ReadbackCopy {
+    VkImage image;
+    VkBufferImageCopy region;
+};
+
+PFN_vkGetDeviceProcAddr readbackDeviceProc = nullptr;
+PFN_vkCmdCopyImageToBuffer readbackCopyImageToBuffer = nullptr;
+std::array<VkImage, 3> readbackImages{};
+std::vector<ReadbackCopy> readbackCopies;
+bool captureReadback = false;
+
+VKAPI_ATTR void VKAPI_CALL CaptureReadbackCopy(VkCommandBuffer commands, VkImage image, VkImageLayout layout, VkBuffer buffer, std::uint32_t count, const VkBufferImageCopy* regions) {
+    if (captureReadback) {
+        const auto found = std::find(readbackImages.begin(), readbackImages.end(), image);
+        Require(found != readbackImages.end(), "extra-mip diagnostic readback copied an unexpected image");
+        const auto levels = found == readbackImages.begin() ? 3u : 1u;
+        for (std::uint32_t index = 0; index < count; ++index) {
+            Require(regions[index].imageSubresource.mipLevel < levels, "extra-mip diagnostic copy exceeds the physical mip chain");
+            readbackCopies.push_back({image, regions[index]});
+        }
+    }
+    readbackCopyImageToBuffer(commands, image, layout, buffer, count, regions);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL ReadbackDeviceProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkCmdCopyImageToBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&CaptureReadbackCopy);
+    return readbackDeviceProc(device, name);
+}
+
 void CheckReadback(AgcDriver::VulkanDevice& device) {
     auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    readbackDeviceProc = context.deviceProc;
+    readbackCopyImageToBuffer = context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer");
+    context.deviceProc = &ReadbackDeviceProc;
     GuestTextureResource descriptor{};
     descriptor.width = 4;
     descriptor.height = 2;
@@ -318,7 +350,23 @@ void CheckReadback(AgcDriver::VulkanDevice& device) {
     StorageTexture::FlushDumpSelected("closed extra-mip fixture gate");
     Require(!std::filesystem::exists(name), "extra-mip readback ignored its closed gate");
     { std::ofstream gate("extra-mip-readback.ready"); Require(gate.good(), "cannot create extra-mip readback fixture gate"); }
+    Require(geometry.imageLevels == 3u && geometry.layers == 2u, "extra-mip diagnostic fixture does not have a three-level chain and two layers");
+    readbackImages = {texture->Image(), texture->Image(3), texture->Image(4)};
+    Require(readbackImages[0] != readbackImages[1] && readbackImages[0] != readbackImages[2] && readbackImages[1] != readbackImages[2], "extra-mip diagnostic fixture does not have distinct tail images");
+    readbackCopies.clear();
+    captureReadback = true;
     StorageTexture::FlushDumpSelected("extra-mip fixture readback");
+    captureReadback = false;
+    for (std::uint32_t mip = 0; mip < descriptor.mipCount; ++mip) {
+        const auto image = readbackImages[mip < 3u ? 0u : mip - 2u];
+        const auto physicalMip = mip < 3u ? mip : 0u;
+        for (std::uint32_t layer = 0; layer < geometry.layers; ++layer) {
+            Require(std::any_of(readbackCopies.begin(), readbackCopies.end(), [&](const ReadbackCopy& copy) {
+                const auto& subresource = copy.region.imageSubresource;
+                return copy.image == image && subresource.mipLevel == physicalMip && subresource.baseArrayLayer <= layer && layer - subresource.baseArrayLayer < subresource.layerCount;
+            }), "extra-mip diagnostic readback omitted a mip or array layer");
+        }
+    }
     std::filesystem::remove("extra-mip-readback.ready");
     std::ifstream file(name, std::ios::binary);
     std::array<std::uint32_t, 3> header{};
