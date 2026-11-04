@@ -58,6 +58,109 @@ static void TestTypeIDs() {
     WKRenderObjectGetTypeID();
 }
 
+static void CheckOriginString(const void* string, const char* expected) {
+    Require(WKStringIsEqualToUTF8CString(string, expected));
+    WKRelease(string);
+}
+
+static void TestSecurityOrigin() {
+    struct Case {
+        const char* protocol;
+        const char* host;
+        int port;
+        unsigned expectedPort;
+        const char* text;
+        const char* dbId;
+    };
+    for (const Case& value : {
+        Case{"http", "example.com", 8080, 8080, "http://example.com:8080", "http_example.com_8080"},
+        Case{"http", "host_name", 0, 0, "http://host_name", "http_host_name_0"},
+        Case{"http", "example.com", 80, 80, "http://example.com:80", "http_example.com_80"},
+        Case{"https", "EXAMPLE", 65536, 0, "https://EXAMPLE", "https_EXAMPLE_0"},
+        Case{"custom", "host", -1, 65535, "custom://host:65535", "custom_host_65535"},
+        Case{"custom", "host", -65536, 0, "custom://host:0", "custom_host_0"},
+        Case{"file", "host", 42, 42, "file://", "file__0"},
+        Case{"FILE", "host", 0, 0, "FILE://host", "FILE_host_0"},
+        Case{"", "", 0, 0, "", "__0"},
+        Case{"http", "a b%_c", 0, 0, "http://a b%_c", "http_a b%_c_0"}
+    }) {
+        const auto* protocol = WKStringCreateWithUTF8CString(value.protocol);
+        const auto* host = WKStringCreateWithUTF8CString(value.host);
+        const auto* origin = WKSecurityOriginCreate(protocol, host, value.port);
+        WKRelease(protocol);
+        WKRelease(host);
+        Require(WKGetTypeID(origin) == WKSecurityOriginGetTypeID());
+        Require(WKSecurityOriginGetPort(origin) == value.expectedPort);
+        CheckOriginString(WKSecurityOriginCopyProtocol(origin), value.protocol);
+        CheckOriginString(WKSecurityOriginCopyHost(origin), value.host);
+        CheckOriginString(WKSecurityOriginCopyToString(origin), value.text);
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(origin), value.dbId);
+        WKRelease(origin);
+    }
+    auto nullString = NKWebKit::Make<NKWebKit::String>();
+    const auto* origin = WKSecurityOriginCreate(nullString.Get(), nullString.Get(), 0);
+    for (const auto* copy : {WKSecurityOriginCopyProtocol(origin), WKSecurityOriginCopyHost(origin), WKSecurityOriginCopyToString(origin)}) {
+        Require(NKWebKit::Cast<NKWebKit::String>(copy, __func__)->null);
+        WKRelease(copy);
+    }
+    WKRelease(origin);
+
+    for (const char* dbId : {"http_example.com_8080", "http_example.com_0", "file__0", "https_foo.org_443"}) {
+        const auto* idStr = WKStringCreateWithUTF8CString(dbId);
+        const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
+        WKRelease(idStr);
+        Require(fromDb != nullptr);
+        Require(WKGetTypeID(fromDb) == WKSecurityOriginGetTypeID());
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromDb), dbId);
+        WKRelease(fromDb);
+    }
+
+    for (const char* invalidDbId : {"", "invalid", "http_onlyone", "http_host_abc", "http_host_99999"}) {
+        const auto* idStr = WKStringCreateWithUTF8CString(invalidDbId);
+        const auto* fromDb = WKSecurityOriginCreateFromDatabaseIdentifier(idStr);
+        WKRelease(idStr);
+        Require(fromDb == nullptr);
+    }
+    const auto* nullDb = WKSecurityOriginCreateFromDatabaseIdentifier(nullString.Get());
+    Require(nullDb == nullptr);
+
+    struct StringCase {
+        const char* input;
+        const char* expectedProtocol;
+        const char* expectedHost;
+        unsigned expectedPort;
+        const char* expectedString;
+        const char* expectedDbId;
+    };
+    for (const StringCase& sc : {
+        StringCase{"http://example.com:8080/path", "http", "example.com", 8080, "http://example.com:8080", "http_example.com_8080"},
+        StringCase{"https://example.com/", "https", "example.com", 0, "https://example.com", "https_example.com_0"},
+        StringCase{"http://user:pass@example.com:9000", "http", "example.com", 9000, "http://example.com:9000", "http_example.com_9000"},
+        StringCase{"file:///home/user/test.html", "file", "", 0, "file://", "file__0"},
+        StringCase{"custom://host", "custom", "host", 0, "custom://host", "custom_host_0"},
+        StringCase{"invalid-string", "", "", 0, "", "__0"},
+        StringCase{"", "", "", 0, "", "__0"}
+    }) {
+        const auto* inStr = WKStringCreateWithUTF8CString(sc.input);
+        const auto* fromStr = WKSecurityOriginCreateFromString(inStr);
+        WKRelease(inStr);
+        Require(fromStr != nullptr);
+        Require(WKGetTypeID(fromStr) == WKSecurityOriginGetTypeID());
+        Require(WKSecurityOriginGetPort(fromStr) == sc.expectedPort);
+        CheckOriginString(WKSecurityOriginCopyProtocol(fromStr), sc.expectedProtocol);
+        CheckOriginString(WKSecurityOriginCopyHost(fromStr), sc.expectedHost);
+        CheckOriginString(WKSecurityOriginCopyToString(fromStr), sc.expectedString);
+        CheckOriginString(WKSecurityOriginCopyDatabaseIdentifier(fromStr), sc.expectedDbId);
+        WKRelease(fromStr);
+    }
+    const auto* fromNull = WKSecurityOriginCreateFromString(nullString.Get());
+    Require(fromNull != nullptr);
+    Require(WKSecurityOriginGetPort(fromNull) == 0);
+    CheckOriginString(WKSecurityOriginCopyProtocol(fromNull), "");
+    CheckOriginString(WKSecurityOriginCopyHost(fromNull), "");
+    WKRelease(fromNull);
+}
+
 static void TestRetainRelease() {
     auto* s = WKStringCreateWithUTF8CString("hello");
     Require(WKGetTypeID(s) == WKStringGetTypeID());
@@ -1526,6 +1629,7 @@ static void TestEmptyFrameLoaderClient() {
 
 int main() {
     TestTypeIDs();
+    TestSecurityOrigin();
     TestRetainRelease();
     TestStrings();
     TestURL();

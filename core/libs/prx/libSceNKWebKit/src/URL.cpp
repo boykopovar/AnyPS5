@@ -311,12 +311,14 @@ class SecurityOrigin final : public NKWebKit::ObjectOf<NKWebKit::ObjectType::Sec
 public:
     SecurityOrigin(const NKWebKit::String& protocol, const NKWebKit::String& host, std::optional<std::uint16_t> port)
         : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
+    SecurityOrigin(std::u16string protocol, std::u16string host, std::optional<std::uint16_t> port)
+        : protocol(std::move(protocol)), host(std::move(host)), port(port) {}
 
     std::u16string protocol;
     std::u16string host;
     std::optional<std::uint16_t> port;
-    bool protocolNull;
-    bool hostNull;
+    bool protocolNull = false;
+    bool hostNull = false;
 };
 
 const void* CopyOriginString(std::u16string text) {
@@ -328,6 +330,12 @@ std::u16string PortString(std::uint16_t port) {
     return {text.begin(), text.end()};
 }
 
+void ConvertToASCIILowercase(std::u16string& text) {
+    for (auto& c : text) {
+        if (c >= u'A' && c <= u'Z') c = static_cast<char16_t>(c - u'A' + u'a');
+    }
+}
+
 }  // namespace
 
 extern "C" {
@@ -337,6 +345,102 @@ const void* APS5_VABI WKSecurityOriginCreate(const void* protocol, const void* h
     if (port && port <= 65535) validPort = static_cast<std::uint16_t>(port);
     return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(
         *NKWebKit::Cast<NKWebKit::String>(protocol, __func__), *NKWebKit::Cast<NKWebKit::String>(host, __func__), validPort));
+}
+
+const void* APS5_VABI WKSecurityOriginCreateFromString(const void* string) {
+    const auto* str = NKWebKit::Cast<NKWebKit::String>(string, __func__);
+    if (str->null || str->characters.empty()) {
+        return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt));
+    }
+    const auto& text = str->characters;
+    const auto schemeEnd = text.find(u"://");
+    if (schemeEnd == std::u16string::npos) {
+        return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::u16string(), std::u16string(), std::nullopt));
+    }
+    auto protocol = text.substr(0, schemeEnd);
+    ConvertToASCIILowercase(protocol);
+    if (protocol == u"file") {
+        return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::u16string(), std::nullopt));
+    }
+    const auto hostStart = schemeEnd + 3;
+    const auto pathStart = text.find_first_of(u"/?#", hostStart);
+    auto authority = (pathStart != std::u16string::npos) ? text.substr(hostStart, pathStart - hostStart) : text.substr(hostStart);
+    const auto atPos = authority.rfind(u'@');
+    if (atPos != std::u16string::npos) {
+        authority = authority.substr(atPos + 1);
+    }
+    std::u16string host;
+    std::optional<std::uint16_t> port;
+    if (authority.starts_with(u"[")) {
+        const auto bracketEnd = authority.find(u']');
+        if (bracketEnd != std::u16string::npos) {
+            host = authority.substr(0, bracketEnd + 1);
+            if (bracketEnd + 1 < authority.size() && authority[bracketEnd + 1] == u':') {
+                auto portStr = authority.substr(bracketEnd + 2);
+                unsigned long long parsed = 0;
+                bool valid = !portStr.empty();
+                for (char16_t c : portStr) {
+                    if (c < u'0' || c > u'9') { valid = false; break; }
+                    parsed = parsed * 10 + (c - u'0');
+                    if (parsed > 65535) { valid = false; break; }
+                }
+                if (valid && parsed != 0) port = static_cast<std::uint16_t>(parsed);
+            }
+        } else {
+            host = authority;
+        }
+    } else {
+        const auto colon = authority.rfind(u':');
+        if (colon != std::u16string::npos) {
+            host = authority.substr(0, colon);
+            auto portStr = authority.substr(colon + 1);
+            unsigned long long parsed = 0;
+            bool valid = !portStr.empty();
+            for (char16_t c : portStr) {
+                if (c < u'0' || c > u'9') { valid = false; break; }
+                parsed = parsed * 10 + (c - u'0');
+                if (parsed > 65535) { valid = false; break; }
+            }
+            if (valid && parsed != 0) port = static_cast<std::uint16_t>(parsed);
+        } else {
+            host = authority;
+        }
+    }
+    ConvertToASCIILowercase(host);
+    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::move(host), port));
+}
+
+const void* APS5_VABI WKSecurityOriginCreateFromDatabaseIdentifier(const void* identifier) {
+    const auto* string = NKWebKit::Cast<NKWebKit::String>(identifier, __func__);
+    if (string->null) return nullptr;
+    const auto& text = string->characters;
+    const auto separator1 = text.find(u'_');
+    if (separator1 == std::u16string::npos) return nullptr;
+    const auto separator2 = text.rfind(u'_');
+    if (separator2 == std::u16string::npos || separator1 == separator2) return nullptr;
+
+    const auto portLength = text.size() - separator2 - 1;
+    std::optional<std::uint16_t> port;
+    if (portLength > 0) {
+        unsigned long long parsed = 0;
+        for (std::size_t i = separator2 + 1; i < text.size(); ++i) {
+            char16_t c = text[i];
+            if (c < u'0' || c > u'9') return nullptr;
+            parsed = parsed * 10 + (c - u'0');
+            if (parsed > 65535) return nullptr;
+        }
+        if (parsed != 0) port = static_cast<std::uint16_t>(parsed);
+    }
+    auto protocol = text.substr(0, separator1);
+    auto host = text.substr(separator1 + 1, separator2 - separator1 - 1);
+    return NKWebKit::ToRef(NKWebKit::Make<SecurityOrigin>(std::move(protocol), std::move(host), port));
+}
+
+const void* APS5_VABI WKSecurityOriginCopyDatabaseIdentifier(const void* origin) {
+    const auto* value = NKWebKit::Cast<SecurityOrigin>(origin, __func__);
+    if (value->protocol == u"file") return CopyOriginString(u"file__0");
+    auto text = value->protocol + u"_" + value->host + u"_" + PortString(value->port.value_or(0));
+    return CopyOriginString(std::move(text));
 }
 
 const void* APS5_VABI WKSecurityOriginCopyProtocol(const void* origin) {
