@@ -2,12 +2,15 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -595,6 +598,26 @@ void CheckFirstSampleReads(AgcDriver::VulkanDevice& device, const std::array<std
         }
     }
     Require(!distinct || differs, "no pixel's sample 0 differs from its other samples " + what);
+}
+
+void CheckFirstSampleCopyLeavesHeapMode(AgcDriver::VulkanDevice& device, const Block& block) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    if (!AgcDriver::Graphics::DescriptorHeapEnabled() || !context.descriptorHeap || !AgcDriver::Graphics::BindlessHeap::For(context).DescriptorHeapMode()) return;
+    const auto words = TargetDescriptor(block, SampleShift);
+    const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+    auto& heap = AgcDriver::Graphics::BindlessHeap::For(context);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = AgcDriver::Graphics::Recorder::Active();
+    Require(recorder != nullptr, "first-sample copy in heap mode: no active recorder");
+    heap.BindDescriptorHeaps(recorder->Commands());
+    const auto binds = AgcDriver::Graphics::DescriptorHeapBinds();
+    const auto texture = AgcDriver::Graphics::MultisampleTargetFirstSample(context, resource, {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY});
+    Require(texture != nullptr, "first-sample copy in heap mode: the drawn 4x target has no sample 0 texture");
+    heap.BindDescriptorHeaps(recorder->Commands());
+    Require(AgcDriver::Graphics::DescriptorHeapBinds() == binds + 1u,
+            "a first-sample copy recorded after the descriptor heaps were bound left them marked bound, so a heap draw or dispatch after it would run without them");
+    recorder->Submit();
+    recorder->Sync();
 }
 
 std::array<std::uint32_t, 8> CompressedDescriptor(const Block& block, std::uint32_t tileMode, std::uint64_t htile) {
@@ -1331,6 +1354,7 @@ int main(int argc, char** argv) {
         const auto drawn = LoadSamples(*device, block);
         CheckSamples(state, drawn, {});
         CheckFirstSampleReads(*device, TargetDescriptor(block, SampleShift), drawn, true, "from the drawn 4x target");
+        CheckFirstSampleCopyLeavesHeapMode(*device, block);
         CheckFirstSampleReads(*device, TargetDescriptor(block, SampleShift), drawn, true, "from the drawn 4x target", AdjustedPlaneCode, "image_sample_a");
         std::puts("a DIM 2D image_sample_a read of a 4x color target returns each pixel's sample 0");
         Draw(*device, state, 0, 2u, Unorm8PixelCode);

@@ -925,7 +925,7 @@ constexpr std::array<const char*, static_cast<std::size_t>(HeapStageReason::Coun
                                                                                                          "unresolved image source",
                                                                                                          "known ineligible"};
 constexpr std::array<const char*, static_cast<std::size_t>(SetBindSite::Count)> SetBindSiteNames{"draw", "dispatch", "detiler",
-                                                                                                 "color transfer", "presentation", "depth transfer", "staged merge"};
+                                                                                                 "color transfer", "presentation", "depth transfer", "staged merge", "first-sample copy"};
 constexpr std::array<const char*, static_cast<std::size_t>(HeapFallback::Count)> HeapFallbackNames{
     "draw unmapped", "draw mixed retry", "draw refused pair", "draw mixed reused", "dispatch unmapped"};
 
