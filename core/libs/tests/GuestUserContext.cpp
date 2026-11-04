@@ -418,6 +418,44 @@ extern "C" void APS5_VABI JobEntry() {
 
 namespace {
 
+Stack g_fiberStack;
+UserUcontext g_fiberCaller = {};
+alignas(64) unsigned char g_fiberContext[2048] = {};
+int g_fiberRuns = 0;
+
+void StoreWord(std::size_t offset, std::uint64_t value) {
+    std::memcpy(g_fiberContext + offset, &value, sizeof(value));
+}
+
+}
+
+extern "C" void APS5_VABI ConsoleFiberEntry() {
+    for (;;) {
+        ++g_fiberRuns;
+        swapcontext_nid_postfix(reinterpret_cast<UserUcontext*>(g_fiberContext), &g_fiberCaller);
+    }
+}
+
+namespace {
+
+void CheckConsoleOffsets() {
+    auto* fiber = reinterpret_cast<UserUcontext*>(g_fiberContext);
+    Require(getcontext_nid_postfix(fiber) == 0, "capture the fiber template");
+    std::uint64_t length = 0;
+    std::memcpy(&length, g_fiberContext + 0x108, sizeof(length));
+    Require(length == 1152, "getcontext reports mc_len 1152 at offset 0x108");
+    for (std::size_t offset = 0x4c0; offset < sizeof(g_fiberContext); ++offset) Require(g_fiberContext[offset] == 0, "getcontext writes only the 1216 bytes before uc_link");
+    const auto top = ((reinterpret_cast<std::uintptr_t>(g_fiberStack.bytes) + StackBytes) & ~std::uintptr_t{15}) - sizeof(std::uint64_t);
+    std::memset(reinterpret_cast<void*>(top), 0, sizeof(std::uint64_t));
+    StoreWord(0xf8, top);
+    StoreWord(0x88, 0);
+    StoreWord(0xe0, reinterpret_cast<std::uint64_t>(&ConsoleFiberEntry));
+    for (int round = 1; round <= 3; ++round) {
+        Require(swapcontext_nid_postfix(&g_fiberCaller, fiber) == 0, "swapcontext into a fiber set up at mc_rsp 0xf8, mc_rbp 0x88 and mc_rip 0xe0");
+        Require(g_fiberRuns == round, "the fiber runs from mc_rip on mc_rsp and switches back once per round");
+    }
+}
+
 void CheckMakecontext() {
 #ifdef _WIN32
     ULONG_PTR threadLow = 0;
@@ -525,6 +563,7 @@ int main(int argc, char** argv) {
     CheckRestore();
     CheckSignalMask();
     std::thread([] {
+        CheckConsoleOffsets();
         CheckMakecontext();
         CheckJumpBuffers(false);
         CheckJumpBuffers(true);
