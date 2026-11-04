@@ -309,6 +309,18 @@ if(BUILD_TESTING)
             set_tests_properties(guest_filesystem_error PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
+        add_test_executable(guest_bad_any_cast_node_access_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestBadAnyCastNodeAccess.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exceptions.S)
+        target_include_directories(guest_bad_any_cast_node_access_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_bad_any_cast_node_access_tests PRIVATE libc)
+        configure_windows_unwind(guest_bad_any_cast_node_access_tests)
+        add_test(NAME guest_bad_any_cast_node_access COMMAND guest_bad_any_cast_node_access_tests)
+        set_tests_properties(guest_bad_any_cast_node_access PROPERTIES TIMEOUT 10)
+        if(WIN32)
+            set_tests_properties(guest_bad_any_cast_node_access PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
     endif()
 
     add_test_executable(guest_sce_v2_filesystem_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Filesystem.cpp)

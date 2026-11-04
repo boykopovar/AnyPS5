@@ -1587,6 +1587,8 @@ int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::si
 [[noreturn]] void APS5_VABI _ZSt19_Throw_bad_weak_ptrv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt26__throw_bad_variant_accessv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt26_Throw_bad_optional_accessv_nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt19_Throw_bad_any_castPKc_nid_postfix(const char* message);
+[[noreturn]] void APS5_VABI _ZSt22_Throw_bad_node_accessPKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt13_Xregex_errorNSt15regex_constants10error_typeE_nid_postfix(std::regex_constants::error_type code);
 
 [[gnu::returns_twice]] int APS5_VABI setjmp_nid_postfix(std::uint64_t* buffer);

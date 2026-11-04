@@ -562,6 +562,12 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
 [[noreturn]] void APS5_VABI _ZSt19_Throw_bad_weak_ptrv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt12bad_weak_ptr_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt26__throw_bad_variant_accessv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt18bad_variant_access_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt26_Throw_bad_optional_accessv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt19bad_optional_access_nid_postfix); }
+static const LibcException::TypeRecord BadAnyCastType {LibcException::SingleTypeVtable + 2, "St12bad_any_cast", &_ZTISt8bad_cast_nid_postfix};
+static const LibcException::ExceptionVtable BadAnyCastTable {0, &BadAnyCastType, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
+static const LibcException::TypeRecord BadNodeAccessType {LibcException::SingleTypeVtable + 2, "St16_Bad_node_access", &_ZTISt11logic_error_nid_postfix};
+static const LibcException::ExceptionVtable BadNodeAccessTable {0, &BadNodeAccessType, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
+[[noreturn]] void APS5_VABI _ZSt19_Throw_bad_any_castPKc_nid_postfix(const char* message) { LibcException::ThrowMessage(BadAnyCastTable, message); }
+[[noreturn]] void APS5_VABI _ZSt22_Throw_bad_node_accessPKc_nid_postfix(const char* message) { LibcException::ThrowMessage(BadNodeAccessTable, message); }
 [[noreturn]] void APS5_VABI _ZSt13_Xregex_errorNSt15regex_constants10error_typeE_nid_postfix(std::regex_constants::error_type code) {
     struct RegexObject { LibcException::ExceptionObject base; std::regex_constants::error_type code; };
     auto* object = static_cast<RegexObject*>(__cxa_allocate_exception_nid_postfix(sizeof(RegexObject)));
