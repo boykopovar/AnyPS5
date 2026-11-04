@@ -188,6 +188,26 @@ struct OutputIterator {
     Streambuf* buffer;
 };
 
+struct WideStreambuf;
+
+struct WideStreambufVtable {
+    const void* reserved[4];
+    int (APS5_VABI *overflow)(WideStreambuf* self, int character);
+};
+
+struct WideStreambuf {
+    const WideStreambufVtable* vtable;
+    const void* reserved[7];
+    char16_t** putNext;
+    const void* reservedCounts[3];
+    char16_t** putEnd;
+};
+
+struct WideOutputIterator {
+    bool failed;
+    WideStreambuf* buffer;
+};
+
 struct TimePutVtable {
     FacetVtable facet;
     OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
@@ -216,6 +236,10 @@ static_assert(offsetof(StreambufVtable, overflow) == 0x20);
 static_assert(offsetof(Streambuf, putNext) == 0x40);
 static_assert(offsetof(Streambuf, putEnd) == 0x60);
 static_assert(sizeof(OutputIterator) == 0x10);
+static_assert(offsetof(WideStreambufVtable, overflow) == 0x20);
+static_assert(offsetof(WideStreambuf, putNext) == 0x40);
+static_assert(offsetof(WideStreambuf, putEnd) == 0x60);
+static_assert(sizeof(WideOutputIterator) == 0x10);
 static_assert(offsetof(TimePutVtable, put) == 0x20);
 static_assert(offsetof(NumPutVtable, putBool) == 0x20);
 static_assert(offsetof(NumPutVtable, putPointer) == 0x58);
@@ -267,5 +291,9 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+extern "C" GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutDouble_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, char16_t fill, double value);
+extern "C" GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutLongDouble_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, char16_t fill, long double value);
+extern "C" GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutPointer_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, char16_t fill, const void* value);
+extern "C" GuestLocale::WideOutputIterator APS5_VABI LibcWideTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, char16_t fill, const GuestTm* time, char format, char modifier);
 
 #endif
