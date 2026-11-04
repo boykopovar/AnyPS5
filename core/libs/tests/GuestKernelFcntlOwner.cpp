@@ -1,4 +1,5 @@
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -7,17 +8,6 @@
 #include <fstream>
 #include <source_location>
 #include <string>
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI getpid_nid_postfix(void);
-int APS5_VABI pipe_nid_postfix(int* descriptors);
-int APS5_VABI dup_nid_postfix(int descriptor);
-int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
-int APS5_VABI close_nid_postfix(int descriptor);
-int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
-int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument);
-}
 
 namespace {
 
