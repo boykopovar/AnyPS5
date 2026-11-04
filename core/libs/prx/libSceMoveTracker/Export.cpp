@@ -46,7 +46,9 @@ int APS5_VABI sceMoveTrackerGetVersion() {
 }
 
 int APS5_VABI sceMoveTrackerGetWorkingMemorySize(std::uint32_t* totalSize, std::uint32_t* processingSize) {
-    NotImplemented_nid_no_patch(__func__);
+    if (totalSize == nullptr || processingSize == nullptr) return static_cast<int>(0x80ef0003);
+    *totalSize = 0xa00000;
+    *processingSize = 0x800000;
     return 0;
 }
 

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include <cerrno>
 #include <cstdarg>
 #include <cstddef>
@@ -365,7 +366,6 @@ private:
     }
 
     Outcome Float(const Directive& directive) {
-        static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64);
         if (!directive.length.empty() && directive.length != "l" && directive.length != "L")
             Fail("invalid floating length modifier " + directive.length);
         void* target = nullptr;
@@ -377,8 +377,7 @@ private:
         if (target != nullptr) {
             const int savedError = errno;
             if (directive.length == "L") {
-                const long double value = std::strtold(field.c_str(), nullptr);
-                std::memcpy(target, &value, sizeof(value));
+                LibcDetail::GuestLongDoubleStore(target, std::strtold(field.c_str(), nullptr));
             } else if (directive.length == "l") {
                 const double value = std::strtod(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));
@@ -425,12 +424,15 @@ private:
         if (input.Peek() < 0) return Outcome::Input;
         std::u16string item;
         if (directive.conversion == u'c') {
-            const std::size_t count = directive.width == 0 ? 1 : directive.width;
+            std::size_t count = directive.width == 0 ? 1 : directive.width;
+            if (sized && target != nullptr && directive.length == "l" && capacity != 0 && capacity < count) count = capacity;
             while (item.size() < count && input.Peek() >= 0) {
                 item.push_back(static_cast<char16_t>(input.Peek()));
                 input.Advance();
             }
-            if (item.size() < count) return Outcome::Matching;
+            if (sized && target != nullptr && directive.length == "l" && capacity == 0) return Outcome::Matching;
+            if (item.size() < count && sized && target != nullptr && capacity < count)
+                Fail("short character field with capacity below width");
         } else {
             const std::size_t limit = directive.width == 0 ? std::numeric_limits<std::size_t>::max() : directive.width;
             while (item.size() < limit && input.Peek() >= 0) {
@@ -522,12 +524,14 @@ extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfwscanf_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) return EOF;
+    stream->Orientation(1);
     const LockedStream lock(stream);
     return WideScanner("vfwscanf", false, WideInput(stream), format, args).Run();
 }
 
 int APS5_VABI vfwscanf_s_nid_postfix(FileStream* stream, const char16_t* format, VaList* args) {
     if (stream == nullptr || format == nullptr) return EOF;
+    stream->Orientation(1);
     const LockedStream lock(stream);
     return WideScanner("vfwscanf_s", true, WideInput(stream), format, args).Run();
 }
