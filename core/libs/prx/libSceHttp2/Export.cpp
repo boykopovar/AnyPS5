@@ -289,8 +289,11 @@ int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec) {
     });
 }
 
-int APS5_VABI sceHttp2SetSslCallback(int id, void* cb_func, void* user_arg) {
-    return Update(id, __func__, [&](auto&) { if (cb_func || user_arg) NotImplemented_nid_no_patch("sceHttp2SetSslCallback"); });
+int APS5_VABI sceHttp2SetSslCallback(int id, HttpsCallback cb_func, void* user_arg) {
+    return Update(id, __func__, [&](auto& settings) {
+        settings.sslCallback = cb_func;
+        settings.sslArgument = user_arg;
+    });
 }
 
 int APS5_VABI sceHttp2SetTimeOut(int id, uint32_t usec) {
