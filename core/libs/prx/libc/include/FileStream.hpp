@@ -336,6 +336,8 @@ public:
         constexpr long UcrtUpdate = 0x0004;
         std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(GetHandle())->flags);
         return (state.load() & (UcrtReading | UcrtUpdate)) != 0;
+#elif defined(__GLIBC__)
+        return ::__freadable(GetHandle()) != 0;
 #else
         return true;
 #endif
@@ -361,7 +363,13 @@ public:
         return switched;
 #elif defined(__GLIBC__)
         auto* native = GetHandle();
-        if (!::__freadable(native) || !::__fwriting(native)) return true;
+        if (!::__freadable(native)) {
+            errno = 9;
+            guestError = true;
+            SyncUnlockedStatus();
+            return false;
+        }
+        if (!::__fwriting(native)) return true;
         const bool switched = ::_IO_switch_to_get_mode(native) == 0;
         SyncUnlockedStatus();
         return switched;
