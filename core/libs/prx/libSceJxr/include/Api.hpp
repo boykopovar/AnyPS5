@@ -134,8 +134,8 @@ std::int64_t APS5_VABI SetPosWS_Memory_nid_postfix(Jxr::Stream* stream, std::siz
 std::int64_t APS5_VABI WMPAlloc_nid_postfix(void** memory, std::size_t size);
 std::int64_t APS5_VABI WMPFree_nid_postfix(void** memory);
 int APS5_VABI WriteWS_File_nid_postfix();
-int APS5_VABI WriteWS_List_nid_postfix();
 std::int64_t APS5_VABI WriteWS_Memory_nid_postfix(Jxr::Stream* stream, const void* buffer, std::size_t size);
+std::int64_t APS5_VABI WriteWS_List_nid_postfix(Jxr::Stream* stream, const void* data, std::size_t size);
 int APS5_VABI advanceMRPtr_nid_postfix();
 int APS5_VABI advanceOneMBRow_nid_postfix();
 int APS5_VABI allocateBitIOInfo_nid_postfix();
