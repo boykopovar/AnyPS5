@@ -57,6 +57,10 @@ inline VkDeviceSize HostImportOffset(const HostImport& import, std::uint64_t add
     return address - import.base + import.lead;
 }
 
+inline bool HostImportDeviceLocal(const Context& context, const HostImport& import) {
+    return import.memoryType < context.memory.memoryTypeCount && (context.memory.memoryHeaps[context.memory.memoryTypes[import.memoryType].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+}
+
 struct HostImportStart {
     std::uint64_t guest;
     VkDeviceAddress device;
@@ -348,8 +352,8 @@ public:
     void AddReadable(std::uint64_t address, std::size_t bytes);
     // Device-local staging of written and atomic elements inside host imports (see
     // GuestBufferMemory.cpp): allowed only for a build whose every use records its work and then
-    // calls RecordCopyBacks (a dispatch), since a staged region's results reach guest memory by
-    // that copy alone. Call before Upload.
+    // calls RecordCopyBacks (a dispatch or a recorded draw), since a staged region's results reach
+    // guest memory by that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
@@ -415,6 +419,10 @@ public:
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HasHostGpuCopies() const {
         for (const auto& region : regions) if (region.gpuCopy && !region.deviceLocal) return true;
+        return false;
+    }
+    bool HasStagedCopies() const {
+        for (const auto& region : regions) if (region.gpuCopy && region.deviceLocal) return true;
         return false;
     }
     void MarkStagedWrites() const;
