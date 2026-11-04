@@ -550,6 +550,9 @@ void verifyEntryRoundTrip() {
     auto upstreamVersion = file;
     upstreamVersion[4] = std::byte{33};
     require(ShaderDiskCache::DecodeEntry(upstreamVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil artifact with the upstream resource plan format loads");
+    auto upstreamStencilVersion = file;
+    upstreamStencilVersion[4] = std::byte{68};
+    require(ShaderDiskCache::DecodeEntry(upstreamStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil attachment artifact with upstream format 68 loads");
     auto incompatible = variant;
     incompatible.artifact.runtimeAbiVersion = RuntimeAbi::Version + 1u;
     const auto incompatibleFile = ShaderDiskCache::EncodeEntry(key, incompatible);
