@@ -160,27 +160,7 @@ int APS5_VABI ECDSA_sign_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI ECDSA_size_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ECDSA_verify_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_GROUP_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_GROUP_get_degree_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_GROUP_new_by_curve_name_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -190,17 +170,7 @@ int APS5_VABI EC_KEY_check_key_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EC_KEY_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EC_KEY_generate_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_KEY_get0_group_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -211,21 +181,6 @@ int APS5_VABI EC_KEY_get0_private_key_nid_postfix(void) {
 }
 
 int APS5_VABI EC_KEY_get0_public_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_KEY_new_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_KEY_new_by_curve_name_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_KEY_set_group_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -964,8 +919,7 @@ int APS5_VABI SSL_get_wbio_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_library_init_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 1;
 }
 
 void APS5_VABI SSL_load_error_strings_nid_postfix(void) {}
