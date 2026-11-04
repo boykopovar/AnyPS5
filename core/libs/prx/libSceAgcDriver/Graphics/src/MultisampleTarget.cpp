@@ -1244,9 +1244,11 @@ std::mutex& targetsMutex() {
 thread_local bool targetsMutexHeld = false;
 
 struct TargetsLock {
-    std::lock_guard<std::mutex> lock{targetsMutex()};
+    std::unique_lock<std::mutex> lock{targetsMutex()};
     TargetsLock() { targetsMutexHeld = true; }
     ~TargetsLock() { targetsMutexHeld = false; }
+    void Unlock() { targetsMutexHeld = false; lock.unlock(); }
+    void Lock() { lock.lock(); targetsMutexHeld = true; }
 };
 
 std::vector<std::shared_ptr<MultisampleTarget>>& targets() {
@@ -1269,7 +1271,7 @@ bool holdHostOnly(const MultisampleTarget& target) {
     return true;
 }
 
-MultisampleTarget& acquire(const Context& context, const ColorTarget& requested) {
+MultisampleTarget& acquire(const Context& context, const ColorTarget& requested, TargetsLock& lock) {
     discardRetiredTargets();
     for (const auto& target : targets()) {
         if (!target->active->load(std::memory_order_acquire)) continue;
@@ -1315,6 +1317,11 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
     const auto& use = requested;
     const auto bytes = MultisampledColorBytes(use);
     Require(bytes <= std::numeric_limits<std::size_t>::max(), "initial multisample color exceeds host address space");
+    if (use.dccAddress == 0 && !use.cmaskFastClear) {
+        lock.Unlock();
+        SynchronizeMultisampleTargetRead_nid_no_patch(use.address, static_cast<std::size_t>(bytes));
+        lock.Lock();
+    }
     ClaimMultisampleTargetMemory(use.address, bytes);
     RequireNoMultisampleTarget(use.address, static_cast<std::size_t>(bytes), "initializing a multisampled color target");
     if (use.dccAddress != 0) RequireNoMultisampleTarget(use.dccAddress, MultisampledDccBytes(use), "initializing multisampled DCC metadata");
@@ -1649,16 +1656,18 @@ bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colo
 }
 
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
     TargetsLock lock;
-    auto& found = acquire(context, target);
+    auto& found = acquire(context, target, lock);
     found.drawn = true;
     ++found.contents;
     return {found.image, found.OrderView(), found.orderFormat, target.extent, target.samples, SampleOrderMethod::Storage, found.shared_from_this()};
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
     TargetsLock lock;
-    auto& acquired = acquire(context, target);
+    auto& acquired = acquire(context, target, lock);
     acquired.drawn = true;
     ++acquired.contents;
     if (image != nullptr) *image = acquired.image;
@@ -1666,8 +1675,9 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
     TargetsLock lock;
-    auto& acquired = acquire(context, target);
+    auto& acquired = acquire(context, target, lock);
     acquired.drawn = true;
     ++acquired.contents;
     owner = acquired.shared_from_this();
@@ -1756,8 +1766,9 @@ std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, co
 }
 
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
     TargetsLock lock;
-    acquire(context, target);
+    acquire(context, target, lock);
 }
 
 std::vector<std::byte> ReadMultisampleTargetSamples_nid_no_patch(const Context& context, const ColorTarget& target) {
@@ -1877,8 +1888,9 @@ bool MultisampleTargetStorable(const Context& context, const ColorTarget& target
 }
 
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView) {
+    std::lock_guard gpu(GuestMemory::GpuMutex());
     TargetsLock lock;
-    auto& target = acquire(context, source);
+    auto& target = acquire(context, source, lock);
     target.Keep();
     const std::array<VkImageView, 2> views{target.View(source.format), destinationView};
     auto framebuffer = std::make_shared<Framebuffer>(context, target.ResolvePass(source.format), views, source.extent);
