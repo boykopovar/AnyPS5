@@ -1072,15 +1072,15 @@ int InitialReuse(AgcDriver::VulkanDevice& device) {
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
     if (!InitialCountSupported(context, VK_FORMAT_R16G16B16A16_SFLOAT, Samples)) return VulkanTestSkipped;
     Block reused(2u * BlockBytes);
-    const auto expected = StoreInitial(reused, Samples, 0u, false);
-    const std::vector<std::uint8_t> before(reused.data, reused.data + reused.bytes);
+    static_cast<void>(StoreInitial(reused, Samples, 0u, false));
     const auto wide = TargetState(DecodeTarget(reused.Address(), SampleShift, {4u * Side, 4u * Side}));
     const auto narrow = TargetState(DecodeTarget(reused));
     Require(MultisampledColorBytes(wide.color) == 2u * BlockBytes && MultisampledColorBytes(narrow.color) == BlockBytes, "the reused initial color footprints differ from two blocks and one block");
     Draw(device, wide);
     device.WaitIdle();
     Require(Refused(reused.Address(), 0x1000u, "a read before initial color memory reuse"), "the live wide target is not guarded before reuse");
-    std::copy(before.begin(), before.end(), reused.data);
+    const auto expected = StoreInitial(reused, Samples, 0u, true);
+    const std::vector<std::uint8_t> before(reused.data, reused.data + reused.bytes);
     Draw(device, narrow);
     CheckSamples(narrow, LoadSamples(device, reused), {}, expected);
     Require(std::equal(before.begin(), before.end(), reused.data), "initialization of a reused target changed guest color bytes or padding");
