@@ -284,3 +284,11 @@ int APS5_VABI libSceRemoteplayUnknown_HV7jZe1frbM_nid_no_patch() {
 APS5_EXPORT("HV7jZe1frbM", libSceRemoteplayUnknown_HV7jZe1frbM_nid_no_patch);
 
 }
+
+extern "C" {
+
+int APS5_VABI sceRemoteplayGetClientInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
