@@ -38,4 +38,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sysmodule-invalid-ids PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysmodule>")
     endif()
+    add_test_executable(guest_sysmodule_predicates_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Predicates.cpp)
+    target_include_directories(guest_sysmodule_predicates_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sysmodule_predicates_tests PRIVATE libSceSysmodule libkernel libc)
+    configure_windows_unwind(guest_sysmodule_predicates_tests)
+    add_test(NAME guest_sysmodule-predicates COMMAND guest_sysmodule_predicates_tests)
+    if(WIN32)
+        set_tests_properties(guest_sysmodule-predicates PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysmodule>")
+    endif()
 endif()
