@@ -857,7 +857,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         return native;
     }
     CaptureTrace::Log("sampled-lookup address=%llx width=%u height=%u dcc=%llx", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, static_cast<unsigned long long>(resource.dccAddress));
-    RequireNoMultisampleTarget(resource.baseAddress, guestBytes != 0 ? static_cast<std::size_t>(guestBytes) : 1u, "a texture read", DepthReadCause::Reuse);
+    RequireNoMultisampleTarget(resource.baseAddress, guestBytes != 0 ? static_cast<std::size_t>(guestBytes) : 1u, "a texture read");
     if (auto* recorder = Recorder::Active(); recorder != nullptr) recorder->BoundKeptBytes();
     Require(!layerRows || !DepthSurfaceAt(resource.baseAddress), "sampling a native depth surface as a 1D array past maxImageArrayLayers is not implemented");
     if (auto depth = layerRows ? nullptr : DepthSurfaceTexture(context, words, resource, components)) {
@@ -6305,7 +6305,7 @@ void ShaderResources::requireGuestBuffers(std::span<const MovedBuffer> moved) co
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
         const auto address = override != moved.end() ? override->address : item.address;
         const auto bytes = override != moved.end() ? override->size : item.size;
-        RequireNoResidentDepthRead_nid_no_patch(address, bytes, htileClear, true, DepthReadCause::Reuse);
+        RequireNoResidentDepthRead_nid_no_patch(address, bytes, htileClear);
         RequireNoMultisampleColorTarget(address, bytes, "a shader buffer access");
     }
 }
