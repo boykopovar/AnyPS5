@@ -87,4 +87,20 @@ std::int64_t APS5_VABI ReadWS_List_nid_postfix(Jxr::Stream* stream, void* data, 
     return Success;
 }
 
+std::int64_t APS5_VABI SetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_t position) {
+    auto& state = State(stream, __func__);
+    auto* link = reinterpret_cast<std::uint8_t*>(stream + 1);
+    state[Position] = 0;
+    state[Packets] = 0;
+    while (position >= PacketLength && link) {
+        link = Next(link);
+        position -= PacketLength;
+        ++state[Packets];
+    }
+    if (!link) return Success;
+    state[Position] = position;
+    state[Buffer] = reinterpret_cast<std::uintptr_t>(link + sizeof(void*));
+    return Success;
+}
+
 }

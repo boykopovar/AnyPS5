@@ -83,7 +83,7 @@ std::int64_t APS5_VABI ReadWS_List_nid_postfix(Jxr::Stream* stream, void* data, 
 int APS5_VABI ReadWS_Memory_nid_postfix();
 int APS5_VABI ResetCodingContext_nid_postfix();
 int APS5_VABI SetPosWS_File_nid_postfix();
-int APS5_VABI SetPosWS_List_nid_postfix();
+std::int64_t APS5_VABI SetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_t position);
 int APS5_VABI SetPosWS_Memory_nid_postfix();
 int APS5_VABI WMPAlloc_nid_postfix();
 int APS5_VABI WMPFree_nid_postfix();
