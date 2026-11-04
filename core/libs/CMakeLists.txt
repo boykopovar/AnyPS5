@@ -226,6 +226,7 @@ target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/libfvad ${CMAKE_CURRENT_BINARY_DIR}/webrtc-fvad EXCLUDE_FROM_ALL)
 set_target_properties(fvad PROPERTIES C_VISIBILITY_PRESET hidden)
+target_compile_options(fvad PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fno-sanitize=shift>)
 
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/Vad.cpp)
 target_include_directories(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/libfvad/src)
