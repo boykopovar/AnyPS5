@@ -317,6 +317,16 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         self.assertIn("flags.rsp", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_syntax_arguments_does_not_call_path_resolve_on_the_source(self):
+        loop = self.root / "loop.cpp"
+        other = self.root / "other.cpp"
+        try:
+            loop.symlink_to(other)
+            other.symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        check_compile.syntax_arguments([sys.executable, "loop.cpp"], self.build, loop)
+
     def test_a_new_untracked_translation_unit_is_checked(self):
         self.source("base.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "base.cpp"], check=True)
@@ -483,6 +493,30 @@ class CheckCompileDatabaseTests(CheckCompileFixture):
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("compile_commands.json: expected an array of command objects", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_excessively_nested_compilation_databases_are_rejected_without_a_traceback(self):
+        depth = sys.getrecursionlimit() + 64
+        while True:
+            text = "[" * depth + "]" * depth
+            try:
+                json.loads(text)
+            except RecursionError:
+                break
+            depth *= 2
+            if depth > 10_000_000:
+                self.fail("the JSON decoder accepts every probed nesting depth")
+        (self.build / "compile_commands.json").write_text(text, encoding="utf-8")
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertNotIn("expected an array of command objects", result.stderr)
+
+    def test_a_recursion_error_outside_the_database_parser_is_not_a_usage_error(self):
+        source = self.source("unit.cpp")
+        with patch.object(check_compile, "repository", return_value=self.root):
+            with patch.object(check_compile, "check", side_effect=RecursionError("unrelated")):
+                with self.assertRaises(RecursionError):
+                    check_compile.main(["--build", str(self.build), str(source)])
 
     def test_non_object_entries_are_rejected_before_any_compiler_runs(self):
         self.check_invalid_entries(lambda valid: [(value, "expected a command object")
