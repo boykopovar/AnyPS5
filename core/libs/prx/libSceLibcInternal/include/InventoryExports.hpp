@@ -5,7 +5,6 @@
 extern "C" {
 
 int APS5_VABI libSceLibcInternalInventory_000_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_001_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_002_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_003_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_004_nid_no_patch();

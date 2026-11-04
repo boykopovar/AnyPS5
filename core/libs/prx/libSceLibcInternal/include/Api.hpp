@@ -113,6 +113,12 @@ void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std
 void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+const char* APS5_VABI sceLibcInternalSystemErrorCategoryName_nid_no_patch(const void* self) noexcept;
+const char* APS5_VABI sceLibcInternalGenericErrorCategoryName_nid_no_patch(const void* self) noexcept;
+const char* APS5_VABI sceLibcInternalIostreamErrorCategoryName_nid_no_patch(const void* self) noexcept;
+const char* APS5_VABI sceLibcInternalFutureErrorCategoryName_nid_no_patch(const void* self) noexcept;
+int APS5_VABI sceLibcInternalCodecvtBaseMaxLength_nid_no_patch(const void* self) noexcept;
+int APS5_VABI sceLibcInternalCodecvtBaseEncoding_nid_no_patch(const void* self) noexcept;
 
 int APS5_VABI sceLibcMspaceSetMallocCallback();
 int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();
