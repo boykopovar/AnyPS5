@@ -7,6 +7,10 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PadStatusOverlay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
+#include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
@@ -18,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <initializer_list>
 #include <string>
 #include <limits>
@@ -98,9 +103,33 @@ void testLifetime(bool reopen) {
     check(expectFailure([&] { sceVideoOutUnregisterBuffers(handle, 0); }).find("pending flip") != std::string::npos, "pending buffer was unregistered");
     check(sceVideoOutWaitVblank(handle) == 0 && sceVideoOutWaitVblank(handle) == 0, "vblank stalled behind the GPU queue");
     std::shared_ptr<VideoOutConfig> replacement;
+    if (reopen) {
+        const auto label = reinterpret_cast<std::uintptr_t>(&cfg->bufferLabels[1]);
+        std::array<uint32_t, 5> store{0xc0033700u, 0x00100200u, static_cast<uint32_t>(label), static_cast<uint32_t>(static_cast<std::uint64_t>(label) >> 32u), 1u};
+        Packet storePacket{store.data(), static_cast<uint32_t>(store.size()), 0, {}};
+        sceAgcDriverSubmitDcb(&storePacket);
+    }
     sceVideoOutClose(handle);
     if (reopen) {
-        check(sceVideoOutOpen(255, 0, 0, nullptr) == handle, "reopen changed handle");
+        std::atomic<bool> returned{false};
+        int reopened = -1;
+        std::exception_ptr openFailure;
+        std::thread opener([&] {
+            try {
+                reopened = sceVideoOutOpen(255, 0, 0, nullptr);
+            } catch (...) {
+                openFailure = std::current_exception();
+            }
+            returned.store(true, std::memory_order_release);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        const bool early = returned.load(std::memory_order_acquire);
+        gate->Release();
+        opener.join();
+        if (openFailure) std::rethrow_exception(openFailure);
+        check(!early, "reopen replaced the port's configuration while a flip and a label store of the previous one were in flight");
+        check(reopened == handle, "reopen changed handle");
+        check(std::atomic_ref(cfg->bufferLabels[1]).load(std::memory_order_acquire) == 1, "reopen returned before the label store into the previous configuration landed");
         replacement = VideoOutDriver::Get().GetConfig(handle);
         check(replacement != cfg && replacement->generation > cfg->generation, "reopen reused old port state");
     }
@@ -117,7 +146,6 @@ void testLifetime(bool reopen) {
     } else {
         check(expectFailure([&] { sceVideoOutWaitVblank(handle); }).find("closed") != std::string::npos, "closed port accepted a vblank wait");
     }
-    AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
     if (reopen) sceVideoOutClose(handle);
     LibcRunShutdown_nid_postfix();
 }
@@ -194,13 +222,12 @@ void testPs4Buffers() {
 void testDeferredBuffer() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
-    auto gate = std::make_shared<Gate>();
-    AgcDriverRegisterVideoOutput_nid_postfix(7, gate);
-    std::array<uint32_t, 6> held{0xc004105c, 7, 0xfffffffeu, 1, 0, 0};
-    Packet heldPacket{held.data(), 6, 0, {}};
-    check(sceAgcDriverSubmitDcb(&heldPacket) == 0, "the gated flip was not accepted");
-    std::array<uint32_t, 6> flip{0xc004105c, static_cast<uint32_t>(handle), 0, 1, 3, 0};
-    Packet flipPacket{flip.data(), 6, 0, {}};
+    alignas(8) static std::uint32_t reached = 0;
+    reached = 0;
+    const auto label = reinterpret_cast<std::uintptr_t>(&reached);
+    std::array<uint32_t, 13> flip{0xc0053c00u, 0x13u, static_cast<uint32_t>(label), static_cast<uint32_t>(label >> 32u), 1u, 0xffffffffu, 0u,
+                                  0xc004105c, static_cast<uint32_t>(handle), 0, 1, 3, 0};
+    Packet flipPacket{flip.data(), 13, 0, {}};
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "a GPU flip of a buffer registered before the GPU reaches it was rejected at submit");
     std::vector<std::byte> allocation(65536 + 65535);
     const auto storage = alignedBuffer(allocation);
@@ -208,7 +235,7 @@ void testDeferredBuffer() {
     VideoOutBufferAttribute2 attribute{};
     sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 64, 64, 0, 0, 0);
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
-    gate->Release();
+    std::atomic_ref<std::uint32_t>(reached).store(1u, std::memory_order_release);
     {
         std::unique_lock lock(cfg->mutex);
         const bool done = cfg->vblankCond.wait_for(lock, std::chrono::seconds(30), [&] { return cfg->failure || cfg->flipStatus.count == 1; });
@@ -219,12 +246,11 @@ void testDeferredBuffer() {
     AgcDriverWaitIdle_nid_postfix();
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
-    AgcDriverUnregisterVideoOutput_nid_postfix(7, gate);
     LibcRunShutdown_nid_postfix();
 }
 
 void testCpuFlipOrder() {
-    const bool inOrder = std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
+    const bool inOrder = APS5_ENABLE_TIMING_LOG || std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::vector<std::byte> allocation(65536 + 65535);
@@ -251,7 +277,7 @@ void testCpuFlipOrder() {
     std::thread flipThread([&] { check(sceVideoOutSubmitFlip(handle, 0, 1, 5) == 0, "the flip thread's flip was not accepted"); });
     flipThread.join();
     const bool ahead = flipsWithin(1, std::chrono::milliseconds(inOrder ? 1000 : 8000));
-    if (inOrder) check(!ahead, "with APS5_CPU_FLIP_IN_ORDER a flip completed while a queue-0 submission ahead of it was held");
+    if (inOrder) check(!ahead, "with CPU flips in order a flip completed while a queue-0 submission ahead of it was held");
     else check(ahead, "a flip from a thread that never submitted queue-0 work waited for a held queue-0 submission");
     first->Release();
     check(flipsWithin(1, std::chrono::seconds(30)), "the flip thread's flip did not complete");
@@ -482,7 +508,7 @@ void testControls() {
     }
     check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "duplicate output mode unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
-    expectFailure([&] { sceVideoOutDeleteOutputModeEvent(queue, -1); });
+    check(sceVideoOutDeleteOutputModeEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode unsubscription on an invalid handle was accepted");
     check(sceVideoOutAddVblankEvent(queue, handle, nullptr) == 0 && sceVideoOutAddVblankEvent(queue, handle, &settings) == 0, "vblank subscription failed");
     {
         std::lock_guard lock(cfg->mutex);
@@ -519,6 +545,13 @@ void testControls() {
         check(!cfg->groups[3].occupied && !cfg->buffers[15].Occupied(), "a refused registration past the last buffer registered something");
     }
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffers with set reserved pointers were rejected");
+    constexpr int slotOccupied = static_cast<int>(0x80290010u);
+    VideoOutBuffers again{storage.data(), nullptr, {nullptr, nullptr}};
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &again, 1, &attribute, 0, nullptr) == slotOccupied, "a registration over a registered set and its buffers did not fail with SLOT_OCCUPIED");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->buffers[0].groupIndex == 0 && cfg->groups[0].occupied, "a refused registration released the registered set");
+    }
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "VRR status event triggered without a VRR change");
     KernelEvent vrrStatus{};
@@ -534,7 +567,7 @@ void testControls() {
     }
     check(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == 0, "duplicate VRR status unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(0, handle); });
-    expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(queue, -1); });
+    check(sceVideoOutDeleteVrrActiveStatusEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR status unsubscription on an invalid handle was accepted");
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 1, 0); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 1); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0x100000000ull, 0); });
@@ -583,6 +616,62 @@ void testPresentation() {
     }
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
+void testPadStatus() {
+    const int mainHandle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto mainCfg = VideoOutDriver::Get().GetConfig(mainHandle);
+    std::vector<std::byte> mainAllocation(6 * 65536 + 65535);
+    const auto mainStorage = alignedBuffer(mainAllocation);
+    fillBuffer(mainStorage, 259, 137);
+    VideoOutBuffers mainBuffer{mainStorage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    check(sceVideoOutRegisterBuffers2(mainHandle, 0, 0, &mainBuffer, 1, &attribute, 0, nullptr) == 0, "main buffer registration failed");
+    std::int64_t argument = 0;
+    std::uint64_t presented = AgcDriver::VulkanDevice::PresentCounts().presents;
+    const auto flipAndPresent = [&](const char* what) {
+        ++argument;
+        std::uint64_t target;
+        {
+            std::lock_guard lock(mainCfg->mutex);
+            target = mainCfg->flipStatus.count + 1;
+        }
+        check(sceVideoOutSubmitFlip(mainHandle, 0, 1, argument) == 0, "the flip was not accepted");
+        std::unique_lock lock(mainCfg->mutex);
+        check(mainCfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (mainCfg->failure && mainCfg->flipStatus.flipPendingNum == 0) || mainCfg->flipStatus.count == target; }), "the flip did not complete");
+        if (mainCfg->failure) std::rethrow_exception(mainCfg->failure);
+        lock.unlock();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (AgcDriver::VulkanDevice::PresentCounts().presents == presented && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        const std::string reason = std::string("a flip was not presented ") + what;
+        check(AgcDriver::VulkanDevice::PresentCounts().presents > presented, reason.c_str());
+        presented = AgcDriver::VulkanDevice::PresentCounts().presents;
+    };
+    flipAndPresent("without the panel");
+    check(!AgcDriver::PadStatusOverlayLines().has_value(), "the panel is shown before anything asked for it");
+    AgcDriverPadStatusShow_nid_postfix();
+    check(AgcDriver::PadStatusOverlayLines().has_value(), "a request does not show the panel");
+    flipAndPresent("with the panel");
+    AgcDriver::PerformanceOverlay::Toggle();
+    flipAndPresent("with the panel and the performance overlay");
+    AgcDriver::PerformanceOverlay::Toggle();
+    flipAndPresent("with the panel and the detailed performance overlay");
+    AgcDriver::PerformanceOverlay::Toggle();
+    ImeKeyboardView keyboard;
+    keyboard.rows = 1;
+    keyboard.columns = 1;
+    ImeKeyCell key;
+    key.label = u"A";
+    keyboard.keys.push_back(key);
+    AgcDriverSetSystemOverlay_nid_postfix(&keyboard);
+    AgcDriverPadStatusShow_nid_postfix();
+    flipAndPresent("with the system keyboard over the panel");
+    AgcDriverSetSystemOverlay_nid_postfix(nullptr);
+    flipAndPresent("after the system keyboard closed");
+    sceVideoOutUnregisterBuffers(mainHandle, 0);
+    sceVideoOutClose(mainHandle);
     LibcRunShutdown_nid_postfix();
 }
 
@@ -713,6 +802,36 @@ void testBackToBack() {
     check(cfg->flipStatus.flipPendingNum == 0 && cfg->bufferPending[0] == 0 && cfg->bufferPending[1] == 0, "back-to-back flips left pending counts");
     check(cfg->flipStatus.flipArg == argument && cfg->flipStatus.currentBuffer == 1, "back-to-back flip status is wrong");
     lock.unlock();
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
+void testFrameLimit() {
+    const char* limit = std::getenv("ANYPS5_FPS_LIMIT");
+    check(limit != nullptr && std::string(limit) == "20", "the frame limit test runs with ANYPS5_FPS_LIMIT=20");
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::array<std::vector<std::byte>, 2> allocations{std::vector<std::byte>(6 * 65536 + 65535), std::vector<std::byte>(6 * 65536 + 65535)};
+    std::array<VideoOutBuffers, 2> buffers{};
+    for (std::size_t i = 0; i < buffers.size(); ++i) {
+        const auto storage = alignedBuffer(allocations[i]);
+        fillBuffer(storage, 259, 137);
+        buffers[i] = {storage.data(), nullptr, {nullptr, nullptr}};
+    }
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, buffers.data(), 2, &attribute, 0, nullptr);
+    constexpr int flips = 6;
+    int64_t argument = 1000;
+    const auto begin = std::chrono::steady_clock::now();
+    for (int index = 0; index < flips; ++index) sceVideoOutSubmitFlip(handle, index % 2, 1, ++argument);
+    std::unique_lock lock(cfg->mutex);
+    check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == flips; }), "the limited presentations did not complete");
+    if (cfg->failure) std::rethrow_exception(cfg->failure);
+    const auto elapsed = std::chrono::steady_clock::now() - begin;
+    lock.unlock();
+    check(elapsed >= std::chrono::milliseconds(245), "six flips under ANYPS5_FPS_LIMIT=20 completed in under five periods of 50 ms");
     sceVideoOutUnregisterBuffers(handle, 0);
     sceVideoOutClose(handle);
     LibcRunShutdown_nid_postfix();
@@ -930,6 +1049,8 @@ void testUnopenedEventRegistration() {
     check(sceKernelCreateEqueue(&eq, "unopened") == 0, "the event queue was not created");
     check(sceVideoOutAddFlipEvent(eq, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on an unopened port was accepted");
     check(sceVideoOutAddVblankEvent(eq, 1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event on an unopened port was accepted");
+    check(sceVideoOutDeleteFlipEvent(eq, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on an unopened port was accepted");
+    check(sceVideoOutDeleteVblankEvent(eq, 1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on an unopened port was accepted");
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == 0, "flip event on an open port was refused");
     check(sceVideoOutAddVblankEvent(eq, handle, nullptr) == 0, "vblank event on an open port was refused");
@@ -937,6 +1058,8 @@ void testUnopenedEventRegistration() {
     check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "registered vblank event was not deleted");
     sceVideoOutClose(handle);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on a closed port was accepted");
+    check(sceVideoOutDeleteFlipEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on a closed port was accepted");
+    check(sceVideoOutDeleteVblankEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on a closed port was accepted");
     check(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
     LibcRunShutdown_nid_postfix();
 }
@@ -1205,6 +1328,7 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "controls") testControls();
         else if (argc == 2 && std::string(argv[1]) == "present") testPresentation();
         else if (argc == 2 && std::string(argv[1]) == "backtoback") testBackToBack();
+        else if (argc == 2 && std::string(argv[1]) == "fps_limit") testFrameLimit();
         else if (argc == 2 && std::string(argv[1]) == "dcc") testCompressedPresentation();
         else if (argc == 2 && std::string(argv[1]) == "pacing") testReleaseVblank();
         else if (argc == 2 && std::string(argv[1]) == "aftergpu") testFlipAfterGpuWork();
@@ -1217,6 +1341,7 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "eop") testEop(true);
         else if (argc == 2 && std::string(argv[1]) == "eop_main") testEop(false);
         else if (argc == 2 && std::string(argv[1]) == "overlay") testOverlay();
+        else if (argc == 2 && std::string(argv[1]) == "padstatus") testPadStatus();
         else if (argc == 2 && std::string(argv[1]) == "deferred") testDeferredBuffer();
         else if (argc == 2 && std::string(argv[1]) == "unregistered") testUnregisteredBuffer();
         else if (argc == 2 && std::string(argv[1]) == "ps4") testPs4Buffers();
