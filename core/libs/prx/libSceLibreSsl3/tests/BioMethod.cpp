@@ -111,4 +111,9 @@ int main() {
         BIO_meth_free_nid_postfix(method);
         Require(liveBlocks == 0);
     }
+    {
+        auto* method = BIO_meth_new_nid_postfix(4, Name);
+        Require(BIO_meth_set_read_nid_postfix(method, &Read) == 1 && method->read == &Read && !method->write);
+        BIO_meth_free_nid_postfix(method);
+    }
 }
