@@ -23,4 +23,10 @@ int APS5_VABI BIO_meth_set_write_nid_postfix(LibreSsl::BioMethod* method, declty
     return 1;
 }
 
+int APS5_VABI BIO_meth_set_read_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::read) read) {
+    if (!method) throw std::invalid_argument("BIO_meth_set_read requires a method");
+    method->read = read;
+    return 1;
+}
+
 }
