@@ -66,6 +66,10 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_libressl3_asn1_object_tests)
     add_test(NAME guest_libressl3_asn1_object COMMAND guest_libressl3_asn1_object_tests)
     set_tests_properties(guest_libressl3_asn1_object PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_asn1_object PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     add_test_executable(guest_crypto_memcmp_tests ${LIBS_INCLUDE_DIR}/tests/GuestCryptoMemcmp.cpp)
     target_include_directories(guest_crypto_memcmp_tests PRIVATE ${LIBS_INCLUDE_DIR})
