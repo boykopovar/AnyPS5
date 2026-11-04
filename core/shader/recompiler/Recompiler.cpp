@@ -625,7 +625,7 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
 CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program) {
     const auto inputInfo = RequestInputInfo(request);
     constexpr BindingAllocator bindingAllocator;
-    bool registration = request.target.registrationModules && (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Fragment);
+    bool registration = request.target.registrationModules && request.shader.stage == ShaderStage::Fragment;
     program.Metadata().bindingLayoutComplete = false;
     const auto stencilMode = SelectStencilExportMode(program, std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) != request.target.supportedCapabilities.end(), inputInfo.pixel != nullptr && inputInfo.pixel->psStencilOperationValueExport, inputInfo.pixel != nullptr && inputInfo.pixel->psEarlyZ, inputInfo.pixel != nullptr && inputInfo.pixel->psOrderedPixelShader);
     const bool stencilReplay = stencilMode == StencilExportMode::Replay;
