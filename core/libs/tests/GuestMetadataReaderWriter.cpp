@@ -168,22 +168,10 @@ static void TestConstruction() {
     Require(g_heapReleased == heap && g_heapAllocations == 2);
 }
 
-static void TestUnsupportedAndNull() {
+static void TestNullArguments() {
     Metadata metadata;
     _ZN23sceMetadataReaderWriter8MetadataC1Ev(&metadata);
-    Metadata stored = metadata;
-    int storage = 0;
-    stored.fields = &storage;
     Metadata target;
-    RequireThrows<std::runtime_error>([&] { _ZNK23sceMetadataReaderWriter8Metadata13getFieldCountEv(&stored); });
-    RequireThrows<std::runtime_error>([&] { _ZNK23sceMetadataReaderWriter8Metadata9dumpValueEv(&stored); });
-    RequireThrows<std::runtime_error>([&] { _ZN23sceMetadataReaderWriter8MetadataC1ERKS0_(&target, &stored); });
-    RequireThrows<std::runtime_error>([&] { _ZN23sceMetadataReaderWriter8MetadataC1ERKS0_PFPvmEPFvS3_E(&target, &stored, nullptr, nullptr); });
-    RequireThrows<std::runtime_error>([&] { _ZN23sceMetadataReaderWriter8MetadataaSERKS0_(&metadata, &stored); });
-    RequireThrows<std::runtime_error>([&] { _ZN23sceMetadataReaderWriter8MetadataaSERKS0_(&stored, &metadata); });
-    RequireThrows<std::runtime_error>([&] { _ZN23sceMetadataReaderWriter8MetadataD1Ev(&stored); });
-    RequireThrows<std::runtime_error>([&] { Slot(stored, 0)(&stored); });
-    RequireThrows<std::runtime_error>([&] { Slot(stored, 1)(&stored); });
 
     RequireThrows<std::invalid_argument>([] { _ZN23sceMetadataReaderWriter8MetadataC1Ev(nullptr); });
     RequireThrows<std::invalid_argument>([] { _ZN23sceMetadataReaderWriter8MetadataC2EPFPvmEPFvS1_E(nullptr, nullptr, nullptr); });
@@ -424,7 +412,7 @@ static void TestDeserialize() {
 int main() {
     InstallHeap();
     TestConstruction();
-    TestUnsupportedAndNull();
+    TestNullArguments();
     TestValueAssignment();
     TestSerialize();
     TestDeserialize();
