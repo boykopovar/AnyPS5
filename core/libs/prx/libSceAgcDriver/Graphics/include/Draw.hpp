@@ -7,6 +7,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Recipe.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -38,6 +40,7 @@ void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPi
 void CheckPixelFunctionLds(const Context& context);
 void ReleasePixelFunctionLds(VkDevice device);
 bool UsesMeshWindow(std::span<const CompiledShader> shaders);
+bool ValidationKey(const Context& context, std::span<const CompiledShader> shaders, const State& state, std::vector<std::uint64_t>& key);
 VkDescriptorSetLayout MeshWindowSetLayout(const Context& context);
 void PrepareMeshWindow(const Context& context);
 void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
@@ -82,6 +85,13 @@ struct MeshArgumentRules {
     std::uint32_t maxTotal;
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+struct MeshGrid {
+    std::uint32_t groups;
+    std::uint32_t instances;
+    std::uint32_t layers;
+    std::uint32_t layerStride;
+};
+std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances);
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules);
 
 // Why DrawWithRecipe did not record from the recipe (the caller then runs Draw): the draw is not
@@ -157,6 +167,14 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
 std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
 bool DrawPipelineEnabled();
 bool CommitTrims();
+enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpaceOnly, SnapshotOutside, PartialOverlap, SnapshotChanged, MovedBuffer, PatchedData, SpaceChanged, InUse, Revalidation, Count };
+using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t>(AddressDrawReuse::Count)>;
+AddressDrawReuseCounts AddressDrawReuseCounters();
+const char* AddressDrawReuseName(AddressDrawReuse outcome);
+std::uint64_t AddressDrawReuseVerifications();
+enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
+void SetSpaceKeepFailuresForTest(std::uint32_t count);
+void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
 
 }
 

@@ -24,15 +24,23 @@ cxxabi.h dispatch/dispatch.h io.h link.h semaphore.h stdio_ext.h sys/uio.h unist
 """.split())
 
 
+def resolved_path(path):
+    path = Path(path)
+    resolved = Path(os.path.realpath(path))
+    if resolved.is_symlink():
+        raise RuntimeError(f"Symbolic link loop: {path}")
+    return resolved
+
+
 def public_headers(root):
-    libs = (root / "core/libs").resolve()
+    libs = resolved_path(root / "core/libs")
     directories = sorted(path for path in (libs / "prx").iterdir() if path.is_dir() and not path.name.startswith("."))
     if not directories:
         raise RuntimeError("No public library headers found")
     pending = [path / (path.name + ".hpp") for path in directories]
     visited = set()
     while pending:
-        header = pending.pop().resolve()
+        header = resolved_path(pending.pop())
         if not header.is_relative_to(libs):
             raise RuntimeError(f"Public header is outside core/libs: {header}")
         if header in visited:
@@ -42,7 +50,9 @@ def public_headers(root):
         visited.add(header)
         text = header.read_text(encoding="utf-8").replace("\\\n", "").replace("\\\r\n", "")
         text = CPP_TOKEN.sub(lambda match: re.sub(r"[^\n]", " ", match.group()) if match.group("comment") or match.group("raw") else match.group(), text)
-        for line in re.findall(r"^[ \t]*#[ \t]*include\b([^\n]*)", text, re.M):
+        for keyword, line in re.findall(r"^[ \t]*#[ \t]*(include(?:_next)?)\b([^\n]*)", text, re.M):
+            if keyword == "include_next":
+                raise RuntimeError(f"Unsupported include_next in {header}: {line.strip()}")
             match = re.fullmatch(r'\s*(?:"([^"\n]+)"|<([^>\n]+)>)\s*', line)
             if not match:
                 raise RuntimeError(f"Non-literal public include in {header}: {line.strip()}")
@@ -50,7 +60,13 @@ def public_headers(root):
             name = quoted or angled
             if "\\" in name or ":" in name or PurePosixPath(name).is_absolute() or "3rdparty" in PurePosixPath(name).parts:
                 raise RuntimeError(f"Forbidden public include in {header}: {name}")
-            candidates = {path.resolve() for path in ((header.parent / name, libs / name) if quoted else (libs / name,)) if path.is_file()}
+            search = (header.parent / name, libs / name) if quoted else (libs / name,)
+            candidates = set()
+            for path in search:
+                if path.is_symlink():
+                    candidates.add(resolved_path(path))
+                elif path.is_file():
+                    candidates.add(resolved_path(path))
             if len(candidates) > 1:
                 raise RuntimeError(f"Ambiguous public include in {header}: {name}")
             if candidates:
@@ -63,7 +79,7 @@ def public_headers(root):
 def package(root, output, version):
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", version) or version.endswith("."):
         raise ValueError(f"Invalid release tag for asset filenames: {version}")
-    libs = (root / "core/libs").resolve()
+    libs = resolved_path(root / "core/libs")
     headers = public_headers(root)
     license_file = root / "LICENSE"
     if not license_file.is_file() or license_file.stat().st_size == 0:

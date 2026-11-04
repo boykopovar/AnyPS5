@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -119,6 +120,7 @@ def main(argv=None):
                         help="known failures, one per line: test name, comma-separated sanitizers and the reason")
     parser.add_argument("--sanitizer", action="append", choices=SANITIZERS, default=[],
                         help="sanitizer the build used; repeat for several. Selects the --known entries that apply")
+    parser.add_argument("--json", action="store_true", help="write structured triage to stdout; --summary still appends Markdown")
     args = parser.parse_args(argv)
     if args.known and not args.sanitizer:
         parser.error("--known needs at least one --sanitizer")
@@ -129,14 +131,22 @@ def main(argv=None):
                                            (source.exists() and args.summary.exists() and source.samefile(args.summary))):
                     raise ValueError(f"summary output must differ from input: {source}")
         known = load_known(args.known, args.sanitizer) if args.known else {}
-        text, failing = summarize(args.title, results(args.junit), known, reports(args.junit))
+        found, details = results(args.junit), reports(args.junit)
+        text, failing = summarize(args.title, found, known, details)
+        output = text
+        if args.json:
+            output = json.dumps({"title": args.title, "unexpected_failure": failing,
+                                 "tests": [{"name": name, "outcome": found[name], "known_reason": known.get(name),
+                                            "report": details.get(name), "unexpected": found[name] == "failed" and name not in known}
+                                           for name in sorted(found)],
+                                 "known_not_run": sorted(set(known) - set(found))}, ensure_ascii=False, indent=2) + "\n"
         if args.summary:
             with args.summary.open("a", encoding="utf-8") as summary:
                 summary.write(text)
     except (OSError, ET.ParseError, ValueError, RuntimeError) as error:
         print(f"sanitizer_report: {error}", file=sys.stderr)
         return 2
-    sys.stdout.write(text)
+    sys.stdout.write(output)
     return 1 if failing else 0
 
 
