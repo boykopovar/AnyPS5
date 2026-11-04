@@ -1,5 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
-#include "prx/libc/include/General.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,6 +8,9 @@
 
 namespace {
 
+constexpr int EvpLibrary = 6;
+constexpr int AnyFunction = 0xfff;
+constexpr int MessageDigestIsNull = 159;
 constexpr int MaxDigestSize = 64;
 
 class HmacKey {
@@ -39,9 +42,10 @@ private:
 extern "C" int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix(const char* password, int passwordLength, const unsigned char* salt,
                                                        int saltLength, int iterations, const EvpMd* digest, int keyLength,
                                                        unsigned char* output) {
-    if (!digest) NotImplemented_nid_no_patch("PKCS5_PBKDF2_HMAC with a null digest, which queues EVP_R_MESSAGE_DIGEST_IS_NULL");
-    if (saltLength < 0 || (saltLength > 0 && !salt)) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: invalid salt");
-    if (keyLength < 0 || (keyLength > 0 && !output)) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: invalid output");
+    if (!digest) {
+        LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, MessageDigestIsNull);
+        return 0;
+    }
     const int digestLength = EVP_MD_size_nid_postfix(digest);
     if (digestLength <= 0 || digestLength > MaxDigestSize) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: invalid digest size");
     if (!password) {
@@ -51,6 +55,9 @@ extern "C" int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix(const char* password, int
     }
     HmacKey key;
     if (!key.Init(password, passwordLength, digest)) return 0;
+    if (keyLength == 0) return 1;
+    if (keyLength < 0 || !output) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: invalid output");
+    if (saltLength < 0 || (saltLength > 0 && !salt)) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: invalid salt");
     const auto size = static_cast<std::size_t>(digestLength);
     std::array<unsigned char, MaxDigestSize> block{};
     std::uint32_t index = 1;
