@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [scePlayerInvitationDialogTerminate and scePlayerInvitationDialogUpdateStatus](../../../core/libs/prx/libScePlayerInvitationDialog/Export.cpp) (libScePlayerInvitationDialog) - dialog termination and status update return 0 without displaying UI, matching the simulated dialog completion model so titles proceed without blocking on user interaction.
+- [scePlayerInvitationDialogTerminate and scePlayerInvitationDialogUpdateStatus](../../../core/libs/prx/libScePlayerInvitationDialog/libScePlayerInvitationDialog.cpp) (libScePlayerInvitationDialog) - dialog termination and status update return 0 without displaying UI, matching the simulated dialog completion model so titles proceed without blocking on user interaction.
 
 ### Functional
 
