@@ -20,6 +20,20 @@
 
 namespace AgcDriver::DriverDetail {
 
+namespace {
+
+std::uint64_t AwaitedAddress(std::span<const std::uint32_t> packet) {
+    const auto bytes = Pm4::WaitAwaitedBytes(packet);
+    return (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
+}
+
+bool LandsWaits(std::uint32_t queue) {
+    static const bool allQueues = std::getenv("APS5_LAND_WAITS_ALL_QUEUES") != nullptr;
+    return allQueues || queue != 0;
+}
+
+}
+
 void PollSleep() {
 #ifdef _WIN32
     thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
@@ -67,15 +81,14 @@ std::vector<Driver::PendingWait>& Driver::pendingWaits() {
     return HostThreadLocal<std::vector<PendingWait>, WaitsTag>();
 }
 
-void Driver::notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received) {
+void Driver::notePendingWait(std::span<const std::uint32_t> packet, std::uint64_t received) {
     if (packet.size() > std::tuple_size_v<decltype(PendingWait::words)>) return;
-    static const bool allQueues = std::getenv("APS5_LAND_WAITS_ALL_QUEUES") != nullptr;
-    if (!allQueues && queue == 0) return;
     if (Pm4::WaitSatisfiedUnchecked(packet)) return;
     auto& waits = pendingWaits();
     for (const auto& wait : waits) {
-        if (wait.count == packet.size() && std::equal(packet.begin(), packet.end(), wait.words.begin())) return;
+        if (!wait.landed && wait.count == packet.size() && std::equal(packet.begin(), packet.end(), wait.words.begin())) return;
     }
+    dropPendingWaits(AwaitedAddress(packet));
     PendingWait wait{};
     std::copy(packet.begin(), packet.end(), wait.words.begin());
     wait.count = packet.size();
@@ -83,31 +96,46 @@ void Driver::notePendingWait(std::span<const std::uint32_t> packet, std::uint32_
     waits.push_back(wait);
 }
 
+void Driver::dropPendingWaits(std::uint64_t awaited) {
+    auto& waits = pendingWaits();
+    if (waits.empty()) return;
+    std::erase_if(waits, [awaited](const PendingWait& wait) { return AwaitedAddress(std::span<const std::uint32_t>(wait.words).first(wait.count)) == awaited; });
+}
+
+void Driver::NotePendingWaitForTest(std::span<const std::uint32_t> packet) {
+    notePendingWait(packet, 0);
+}
+
 void Driver::landPendingWaits(std::uint32_t queue) {
     auto& waits = pendingWaits();
     if (waits.empty()) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     struct LandStats {
-        std::uint64_t lands = 0, waited = 0;
+        std::uint64_t lands = 0, waited = 0, dropped = 0;
         double waitedMs = 0, maxMs = 0;
         std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
     };
     static thread_local LandStats stats;
-    const PacketHistory none{};
-    for (const auto& wait : waits) {
-        const auto packet = std::span<const std::uint32_t>(wait.words).first(wait.count);
-        ++stats.lands;
-        if (Pm4::WaitSatisfiedUnchecked(packet)) continue;
-        const auto started = std::chrono::steady_clock::now();
-        waitMemory(packet, queue, none, wait.received, false, true);
-        const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-        ++stats.waited;
-        stats.waitedMs += ms;
-        stats.maxMs = std::max(stats.maxMs, ms);
+    if (LandsWaits(queue)) {
+        const PacketHistory none{};
+        for (std::size_t index = 0; index < waits.size(); ++index) {
+            auto& wait = waits[index];
+            if (wait.landed) continue;
+            wait.landed = true;
+            const auto packet = std::span<const std::uint32_t>(wait.words).first(wait.count);
+            ++stats.lands;
+            if (Pm4::WaitSatisfiedUnchecked(packet)) continue;
+            const auto started = std::chrono::steady_clock::now();
+            waitMemory(packet, queue, none, wait.received, false, true);
+            const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+            ++stats.waited;
+            stats.waitedMs += ms;
+            stats.maxMs = std::max(stats.maxMs, ms);
+        }
     }
-    waits.clear();
+    stats.dropped += std::erase_if(waits, [](const PendingWait& wait) { return Pm4::WaitSatisfiedUnchecked(std::span<const std::uint32_t>(wait.words).first(wait.count)); });
     if (profile && std::chrono::steady_clock::now() - stats.reported > std::chrono::seconds(10)) {
-        AgcDriver::ProfilePrint_nid_no_patch("[landwait] queue 0x%x (10 s): %llu waits landed before a guest read, %llu had to wait for the GPU: %.1f ms in total, max %.2f ms\n", queue, static_cast<unsigned long long>(stats.lands), static_cast<unsigned long long>(stats.waited), stats.waitedMs, stats.maxMs);
+        AgcDriver::ProfilePrint_nid_no_patch("[landwait] queue 0x%x (10 s): %llu waits landed before a guest read, %llu had to wait for the GPU: %.1f ms in total, max %.2f ms; %llu dropped once memory satisfied them, %zu still pending\n", queue, static_cast<unsigned long long>(stats.lands), static_cast<unsigned long long>(stats.waited), stats.waitedMs, stats.maxMs, static_cast<unsigned long long>(stats.dropped), waits.size());
         stats = LandStats{};
     }
 }
@@ -150,6 +178,9 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         ownStoreUnlanded = true;
         return false;
     };
+    const auto passedByMemory = [&] {
+        if (queue == 0 && !requireMemory) dropPendingWaits(awaited);
+    };
     const auto storedByOwnLabel = [&] {
         std::uint32_t writer = queue;
         return !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer) && writer == queue;
@@ -158,11 +189,15 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     if (memorySatisfied()) {
         ++outcomes.atEntry;
         if (storedByOwnLabel()) epochPoint.bump = false;
+        passedByMemory();
         return;
     }
-    if (heldAtSubmit) return;
+    if (heldAtSubmit) {
+        passedByMemory();
+        return;
+    }
     if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
-        if (writer != queue) notePendingWait(packet, queue, received);
+        if (writer != queue) notePendingWait(packet, received);
         else epochPoint.bump = false;
         return;
     }
@@ -206,7 +241,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             ++outcomes.fromRecorderSameQueue;
             if (!hit->late) epochPoint.bump = false;
         } else {
-            notePendingWait(packet, queue, received);
+            notePendingWait(packet, received);
         }
         return true;
     };
@@ -358,7 +393,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     StallWatch stall(queue);
     while (!memorySatisfied()) {
         if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
-            if (writer != queue) notePendingWait(packet, queue, received);
+            if (writer != queue) notePendingWait(packet, received);
             else epochPoint.bump = false;
             return;
         }
@@ -427,6 +462,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     }
     ++outcomes.polled;
     if (storedByOwnLabel()) epochPoint.bump = false;
+    passedByMemory();
 }
 
 }
