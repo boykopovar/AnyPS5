@@ -261,6 +261,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
+    translateOptions.nativeFloat16Fma = translateOptions.nativeFloat16 && supports(spv::CapabilityFMAKHR);
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
     translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
@@ -637,6 +638,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.supportedCapabilities = request.target.supportedCapabilities;
     targetOptions.supportedExtensions = request.target.supportedExtensions;
     targetOptions.nonConstantImageOffsets = request.target.nonConstantImageOffsets;
+    targetOptions.shaderImageMinLod = request.target.shaderImageMinLod;
     targetOptions.narrowSubgroupClock = request.target.narrowSubgroupClock;
     targetOptions.float64DenormPreserve = request.target.float64DenormPreserve;
     targetOptions.depthRangeRemap = request.target.depthRangeRemap;
@@ -729,6 +731,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.fullSubgroups = emitted.fullSubgroups;
     result.functionLdsBuffer = emitted.functionLdsBuffer;
     result.meshWindowBuffer = emitted.meshWindowBuffer;
+    result.scratchPoolSlotDwords = emitted.scratchPoolSlotDwords;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
     result.vertexOffsetShared = program.Info().vertexOffsetShared;
@@ -1010,7 +1013,7 @@ bool bufferSubstitutesEnabled() {
     return enabled;
 }
 
-std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes) {
+std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod) {
     struct BindingPlanKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, BindingPlanKeyStorage>();
     key.clear();
@@ -1021,7 +1024,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
         const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
         key.push_back(fields.word1);
         key.push_back(fields.word3);
-        key.push_back(fields.known ? 4u | fields.misalignment : 0u);
+        key.push_back(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
@@ -1051,7 +1054,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     }
     std::call_once(plan->ready, [&] {
         try {
-            plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet, substitutes);
+            plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet, substitutes, shaderImageMinLod);
         } catch (...) {
             plan->failure = std::current_exception();
         }
@@ -1166,6 +1169,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .fullSubgroups = artifact.fullSubgroups,
         .functionLdsBuffer = artifact.functionLdsBuffer,
         .meshWindowBuffer = artifact.meshWindowBuffer,
+        .scratchPoolSlotDwords = artifact.scratchPoolSlotDwords,
         .parameterExports = artifact.parameterExports,
         .fragmentParameters = artifact.fragmentParameters,
         .barycentricEmulation = artifact.barycentricEmulation,
@@ -1181,7 +1185,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         const auto index = reg - request.context.userDataBaseRegister;
         result.userDataRegisterReads |= reg >= request.context.userDataBaseRegister && index < 64u ? std::uint64_t{1} << index : ~std::uint64_t{0};
     }
-    const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules, substitutes);
+    const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules, substitutes, request.target.shaderImageMinLod);
     const DescriptorBindingPlan* bindingPlan = &plan->bindings;
     std::shared_ptr<PreparedModuleEntry> entry;
     struct LocalModuleKeyStorage {};
@@ -1772,7 +1776,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             mix(value.dwordCount);
             mix(value.availableDwordMask);
             const auto fields = BufferSpecializationFields(value, substitutes, index);
-            mix(fields.known ? 4u | fields.misalignment : 0u);
+            mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
             mix(fields.word1);
             if (value.dwordCount > 3u) mix(fields.word3);
             for (std::uint32_t i = 4; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
@@ -1783,7 +1787,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             const auto fields = BufferSpecializationFields(snapshot.buffers[index], substitutes, index);
             mix(fields.word1);
             mix(fields.word3);
-            mix(fields.known ? 4u | fields.misalignment : 0u);
+            mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
         }
     }
     mixDescriptors(snapshot.images);
@@ -1819,18 +1823,23 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     mix(snapshot.uniformFill.value);
     const auto& tables = snapshot.tables;
     mix(tables.shader);
-    mix(tables.tables.size());
-    for (const auto& table : tables.tables) {
+    const auto mixTable = [&](const ImageTableColumnSnapshot& table) {
         mix(table.base);
         mix(table.size);
         mix(table.records);
         mix(table.keys);
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
+        mix(table.nested ? 1u : 0u);
+        mix(table.pointers.Hash());
         mix(table.codes.Hash());
         mix(table.words.Hash());
         mix(table.readRanges.Hash());
-    }
+    };
+    mix(tables.tables.size());
+    for (const auto& table : tables.tables) mixTable(table);
+    mix(tables.nested.size());
+    for (const auto& table : tables.nested) mixTable(table);
     mix(tables.ranges.size());
     for (const auto& [base, size] : tables.ranges) {
         mix(base);

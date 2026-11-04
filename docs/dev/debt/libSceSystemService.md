@@ -56,6 +56,7 @@
 
 ### Unknown function info
 
+- [sceSystemServiceUnknown_M_KwxF0amiw](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - imported by PPSA24263 (discussion #11591). Its signature and behaviour on hardware are unverified; all calls throw through `NotImplemented_nid_no_patch`.
 - [sceShellCoreUtilAcquireRemotePlayCpuBudget, sceShellCoreUtilReleaseRemotePlayCpuBudget, sceShellCoreUtilIsRemotePlayCpuBudgetAcquired, sceShellCoreUtilAcquireSharePlayCpuBudget, sceShellCoreUtilReleaseSharePlayCpuBudget, sceShellCoreUtilIsSharePlayCpuBudgetAcquired](../../../core/libs/prx/libSceSystemService/PendingExports.cpp) (libSceSystemService) - the contract is unresolved: AnyPS5 has no Remote Play or Share Play CPU budget service, and the console's acquire and release results, a repeated acquire and a release without an acquire are unmeasured. Every call throws `NotImplemented_nid_no_patch`.
 
 - [sceSystemServiceAddLocalProcessForPsmKit, sceSystemServiceKillLocalProcessForPsmKit](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - AnyPS5 runs one process and starts or stops no other, so both throw without reading their arguments. The parameters follow Forever Launcher's own firmware 5.50 probes (`ps5/probes/localproc` in [bizkut/ps5-forever](https://github.com/bizkut/ps5-forever)): a path, a null-terminated argv and a 0x90-byte parameter block in, a handle out; the kill takes that handle. Their results on the console are unknown. Forever Launcher (PPSA99030) imports both and stops at load without them.

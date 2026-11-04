@@ -7,8 +7,10 @@
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -50,12 +52,16 @@ public:
     void Discard();
     std::optional<std::uint32_t> Pending() const { return filled; }
     const std::string& Refusal() const { return refusal; }
+    std::uint64_t Noted() const { return noted; }
+    std::uint64_t SameRun() const { return sameRun; }
 
 private:
     std::uint64_t address = 0;
     std::uint64_t bytes = 0;
     std::optional<std::uint32_t> filled;
     std::string refusal;
+    std::uint64_t noted = 0;
+    std::uint64_t sameRun = 0;
 };
 
 enum class MultisampleColorContent { Unknown, Fill, FastClear, Clear, Drawn };
@@ -68,9 +74,16 @@ struct MultisampleColorAlias {
     MultisampleColorContent newest = MultisampleColorContent::Unknown;
     std::optional<VkClearColorValue> value;
     std::optional<std::uint8_t> byte;
+    std::shared_ptr<std::atomic<bool>> active;
+    std::uint64_t contents = 0;
+    std::uint64_t filledBytes = 0;
+    std::uint64_t fills = 0;
+    std::uint64_t sameRun = 0;
 };
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes);
+std::vector<MultisampleColorAlias> MultisampleColorTargetsOver(std::uint64_t address, std::size_t bytes);
+void WithMultisampleTargetsLockForTest(const std::function<void()>& inside);
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target);
 std::size_t MultisampledDccBytes(const ColorTarget& target);
@@ -105,6 +118,7 @@ void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
 void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes);
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
+bool HoldsMultisampleTargetsLock();
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
 std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
