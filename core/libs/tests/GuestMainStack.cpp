@@ -17,6 +17,7 @@ static constexpr std::uintptr_t ConsoleMainStackTop = 0x00000007EEFFC000ull + Gu
 static constexpr std::uintptr_t SmallestStack = 0x100000;
 static int marker = 0;
 static bool expectRefusal = false;
+static Pthread initialThread = nullptr;
 
 #define Require(value) do { if (!(value)) { std::fprintf(stderr, "GuestMainStack failed at line %d\n", __LINE__); std::_Exit(1); } } while (false)
 
@@ -70,6 +71,20 @@ static void APS5_VABI Entry(void* arguments) {
     Require(Permissions(low) == 'w' && Permissions(high - 1) == 'w');
     Require(Permissions(low - 1) == '-');
 
+    const auto self = scePthreadSelf();
+    Require(!initialThread || self == initialThread);
+    PthreadAttr attributes = nullptr;
+    Require(scePthreadAttrInit(&attributes) == 0);
+    Require(scePthreadAttrGet(self, &attributes) == 0);
+    void* reportedStart = nullptr;
+    std::size_t reportedSize = 0;
+    Require(scePthreadAttrGetstack(&attributes, &reportedStart, &reportedSize) == 0);
+    Require(reinterpret_cast<std::uintptr_t>(reportedStart) == low && reportedSize == high - low);
+    Require(pthread_attr_get_np_nid_postfix(self, &attributes) == 0);
+    Require(pthread_attr_getstack_nid_postfix(&attributes, &reportedStart, &reportedSize) == 0);
+    Require(reinterpret_cast<std::uintptr_t>(reportedStart) == low && reportedSize == high - low);
+    Require(scePthreadAttrDestroy(&attributes) == 0);
+
     WorkerContext context;
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, Worker, &context, nullptr) == 0);
@@ -101,7 +116,9 @@ static void RefusesAnOverlap() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(sentinel), Bytes) == 0);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "adopted"));
+    if (argc == 2) initialThread = scePthreadSelf();
     RefusesAnOverlap();
     EnterGuestMainStack_nid_no_patch(&marker, Entry);
 }
