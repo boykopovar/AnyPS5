@@ -1616,9 +1616,6 @@ int APS5_VABI _ZN3WTF40registerDefaultPortForProtocolForTestingEtRKNS_6StringE()
 int APS5_VABI _ZN3WTF4Lock10unlockSlowEv();
 int APS5_VABI _ZN3WTF4Lock13safepointSlowEv();
 int APS5_VABI _ZN3WTF4Lock8lockSlowEv();
-int APS5_VABI _ZN3WTF4SHA116computeHexDigestEv();
-int APS5_VABI _ZN3WTF4SHA1C1Ev();
-int APS5_VABI _ZN3WTF4SHA1C2Ev();
 int APS5_VABI _ZN3WTF5Mutex4lockEv();
 int APS5_VABI _ZN3WTF5Mutex6unlockEv();
 int APS5_VABI _ZN3WTF5Mutex7tryLockEv();
