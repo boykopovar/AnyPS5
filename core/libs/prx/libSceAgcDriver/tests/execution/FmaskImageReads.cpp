@@ -190,7 +190,9 @@ std::uint64_t Expanded(const NarrowFmask& fmask, FmaskWord stored) {
         const auto offset = sample * fmask.sampleBits;
         const auto word = offset < 32u ? stored.low : stored.high;
         const auto fragment = (word >> (offset & 31u)) & ((1u << fmask.sampleBits) - 1u);
-        const auto nibble = (fragment < fmask.fragments ? fragment : 8u + fragment - fmask.fragments) & 0xfu;
+        const auto index = fragment & (fmask.fragments - 1u);
+        const auto unknown = (fragment & fmask.fragments) != 0u;
+        const auto nibble = index | (unknown ? 8u : 0u);
         expanded |= static_cast<std::uint64_t>(nibble) << (sample * 4u);
     }
     return expanded;
