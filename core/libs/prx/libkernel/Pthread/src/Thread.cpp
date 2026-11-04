@@ -254,6 +254,12 @@ extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* ar
     if (DoMprotect(mapping, GUEST_STACK_GUARD, 0) != 0) throw std::runtime_error("EnterGuestMainStack: cannot protect the guest main stack guard");
     guestMainStackHigh.store(top, std::memory_order_release);
     guestMainStackLow.store(reinterpret_cast<std::uintptr_t>(mapping) + GUEST_STACK_GUARD, std::memory_order_release);
+    if (auto* self = CurrentGuestState().current) {
+        const auto live = LockLiveGuestThread(self);
+        if (!live) throw std::runtime_error("EnterGuestMainStack: the current guest thread is not live");
+        self->stackAddress = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(mapping) + GUEST_STACK_GUARD);
+        self->stackSize = bytes - GUEST_STACK_GUARD;
+    }
     __asm__ volatile(
         "mov %0, %%rsp\n\t"
         "pushq $0\n\t"

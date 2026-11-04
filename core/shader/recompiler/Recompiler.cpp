@@ -1028,7 +1028,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
         const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
         key.push_back(fields.word1);
         key.push_back(fields.word3);
-        key.push_back(fields.known ? 4u | fields.misalignment : 0u);
+        key.push_back(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
@@ -1780,7 +1780,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             mix(value.dwordCount);
             mix(value.availableDwordMask);
             const auto fields = BufferSpecializationFields(value, substitutes, index);
-            mix(fields.known ? 4u | fields.misalignment : 0u);
+            mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
             mix(fields.word1);
             if (value.dwordCount > 3u) mix(fields.word3);
             for (std::uint32_t i = 4; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
@@ -1791,7 +1791,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             const auto fields = BufferSpecializationFields(snapshot.buffers[index], substitutes, index);
             mix(fields.word1);
             mix(fields.word3);
-            mix(fields.known ? 4u | fields.misalignment : 0u);
+            mix(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
         }
     }
     mixDescriptors(snapshot.images);
@@ -1827,18 +1827,23 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     mix(snapshot.uniformFill.value);
     const auto& tables = snapshot.tables;
     mix(tables.shader);
-    mix(tables.tables.size());
-    for (const auto& table : tables.tables) {
+    const auto mixTable = [&](const ImageTableColumnSnapshot& table) {
         mix(table.base);
         mix(table.size);
         mix(table.records);
         mix(table.keys);
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
+        mix(table.nested ? 1u : 0u);
+        mix(table.pointers.Hash());
         mix(table.codes.Hash());
         mix(table.words.Hash());
         mix(table.readRanges.Hash());
-    }
+    };
+    mix(tables.tables.size());
+    for (const auto& table : tables.tables) mixTable(table);
+    mix(tables.nested.size());
+    for (const auto& table : tables.nested) mixTable(table);
     mix(tables.ranges.size());
     for (const auto& [base, size] : tables.ranges) {
         mix(base);
