@@ -9,4 +9,9 @@ void* APS5_VABI BIO_get_data_nid_postfix(LibreSsl::Bio* bio) {
     return bio->data;
 }
 
+void APS5_VABI BIO_set_data_nid_postfix(LibreSsl::Bio* bio, void* data) {
+    if (!bio) throw std::invalid_argument("BIO_set_data requires a BIO");
+    bio->data = data;
+}
+
 }

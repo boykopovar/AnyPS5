@@ -535,10 +535,6 @@ int APS5_VABI RSA_get0_crt_params_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI BIO_set_data_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_CTX_set_keylog_callback_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
