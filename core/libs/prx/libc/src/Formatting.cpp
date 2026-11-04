@@ -41,7 +41,7 @@ bool RequiresGuestFormatting(const char* format) {
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
         if (*format == '%') { ++format; continue; }
-        while (*format && std::strchr("-+ #0'0123456789.*$", *format)) ++format;
+        while (*format && std::strchr("-+ #00123456789.*$", *format)) ++format;
         if (*format == 'S' || *format == 'C' || *format == 'p' ||
             (*format == 'l' && (format[1] == 's' || format[1] == 'c' || format[1] == 'p'))) return true;
         const char* lengthStart = format;
@@ -101,6 +101,7 @@ std::string HostLength(const std::string& length, char conversion) {
     if (std::strchr("sc[", conversion) && length != "l") return {};
 #ifdef _WIN32
     if (length == "l" && std::strchr("diouxXn", conversion) != nullptr) return "ll";
+    if (length != "l" && std::strchr("sc[", conversion) != nullptr) return std::string();
 #else
     (void)conversion;
 #endif
@@ -274,7 +275,10 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         unsigned long width = 0;
         while (std::isdigit(static_cast<unsigned char>(*cursor))) width = width * 10 + static_cast<unsigned long>(*cursor++ - '0');
         const char* lengthStart = cursor;
-        while (std::strchr("hljztL", *cursor) != nullptr && *cursor != '\0') ++cursor;
+        if (*cursor != '\0' && std::strchr("hljztL", *cursor)) {
+            const char first = *cursor++;
+            if ((first == 'h' || first == 'l') && *cursor == first) ++cursor;
+        }
         const std::string length(lengthStart, cursor);
         const char conversion = *cursor;
         if (conversion == '\0') return finish(assigned);
@@ -285,7 +289,12 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             if (*cursor == ']') ++cursor;
             while (*cursor != '\0' && *cursor != ']') ++cursor;
             if (*cursor != ']') return finish(assigned);
+#ifdef _WIN32
+            const bool negated = setStart[1] == '^';
+            specifier = LibcDetail::TitleScanset(setStart + 1 + negated, cursor, negated);
+#else
             specifier.assign(setStart, cursor + 1);
+#endif
         }
         ++cursor;
         if (conversion == 'n') {
@@ -369,6 +378,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             converted = true;
             continue;
         }
+        if (!std::strchr("diouxXaAeEfFgGcspn[SC", conversion)) return finish(assigned);
         if (conversion != 'c' && conversion != '[') {
             while (std::isspace(source.Peek())) source.Skip();
             if (source.Peek() == EOF) return finish(converted ? assigned : EOF);

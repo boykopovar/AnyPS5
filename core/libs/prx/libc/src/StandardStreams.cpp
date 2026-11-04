@@ -144,6 +144,7 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
         return -1;
     }
     auto* native = GetNativeStream(stream);
+    if (!stream->OpenForReading()) return -1;
     if (!stream->SwitchToReading()) return -1;
     const int result = std::ungetc(value, native);
     stream->SyncStatus();
@@ -223,6 +224,7 @@ int APS5_VABI putchar_nid_postfix(int value) { return fputc_nid_postfix(value, _
 int APS5_VABI putchar_unlocked_nid_postfix(int value) { return putc_unlocked_nid_postfix(value, __stdoutp_nid_postfix); }
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    if (value != EOF && stream && !stream->OpenForReading()) return -1;
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (value != EOF && !stream->SwitchToReading()) return -1;

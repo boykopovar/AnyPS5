@@ -656,6 +656,7 @@ int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14] {};
+std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18] {};
 std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIcE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
@@ -760,6 +761,118 @@ GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_post
 
 namespace {
 
+constexpr std::int64_t SceV2StandardStreamSlots = 8;
+std::mutex g_sceV2StandardStreamMutex;
+GuestLocale::SceV2IosBase* g_sceV2StandardStreams[SceV2StandardStreamSlots + 1] = {};
+unsigned char g_sceV2StandardStreamOpens[SceV2StandardStreamSlots + 1] = {};
+
+struct SceV2StreamNode {
+    SceV2StreamNode* next;
+    unsigned char reserved[24];
+};
+
+struct SceV2CallbackNode {
+    SceV2CallbackNode* next;
+    std::int32_t id;
+    std::uint32_t reserved;
+    void (APS5_VABI *callback)(int, void*, std::int32_t);
+};
+
+static_assert(sizeof(SceV2StreamNode) == 0x20);
+static_assert(sizeof(SceV2CallbackNode) == 0x18);
+
+std::vector<GuestLocale::Facet*> g_sceV2RegisteredFacets;
+
+}
+
+std::uint64_t _ZNSt8__sce_v25ctypeIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v25ctypeIwE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v28numpunctIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27num_putIcNS_19ostreambuf_iteratorIcNS_11char_traitsIcEEEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8__sce_v27codecvtIwc9_MbstatetE2idE_nid_postfix = 0;
+std::int32_t _ZNSt8__sce_v26locale2id7_Id_cntE_nid_postfix = 0;
+GuestLocale::Implementation* _ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix = &g_classicLocale;
+alignas(16) unsigned char _ZNSt8__sce_v24coutE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v24cerrE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v25wcoutE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v25wcerrE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v23cinE_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZNSt8__sce_v24wcinE_nid_postfix[0x400] {};
+
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale5_InitEb_nid_postfix(bool doIncref) {
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    if (doIncref) RetainLocale(&g_classicLocale.base);
+    return &g_classicLocale;
+}
+
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale16_GetgloballocaleEv_nid_postfix() {
+    return _ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix;
+}
+
+void APS5_VABI _ZNSt8__sce_v28ios_base7_AddstdEPS0__nid_postfix(GuestLocale::SceV2IosBase* self) {
+    if (self == nullptr) throw std::invalid_argument("ios_base _Addstd: null stream");
+    std::lock_guard lock(g_sceV2StandardStreamMutex);
+    for (self->standardStream = 1; self->standardStream < SceV2StandardStreamSlots; ++self->standardStream) {
+        if (g_sceV2StandardStreams[self->standardStream] == nullptr || g_sceV2StandardStreams[self->standardStream] == self) break;
+    }
+    g_sceV2StandardStreams[self->standardStream] = self;
+    ++g_sceV2StandardStreamOpens[self->standardStream];
+}
+
+void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLocale::SceV2IosBase* self) {
+    if (self == nullptr) throw std::invalid_argument("ios_base destructor: null object");
+    {
+        std::lock_guard lock(g_sceV2StandardStreamMutex);
+        if (self->standardStream > 0) {
+            if (self->standardStream > SceV2StandardStreamSlots) throw std::runtime_error("ios_base destructor: unknown standard stream slot");
+            if (0 < --g_sceV2StandardStreamOpens[self->standardStream]) return;
+        }
+    }
+    for (auto* node = static_cast<SceV2CallbackNode*>(self->callbackNodes); node != nullptr; node = node->next) {
+        node->callback(0, self, node->id);
+    }
+    for (auto* node = static_cast<SceV2StreamNode*>(self->streamNodes); node != nullptr;) {
+        auto* next = node->next;
+        _ZdlPv_nid_postfix(node);
+        node = next;
+    }
+    self->streamNodes = nullptr;
+    for (auto* node = static_cast<SceV2CallbackNode*>(self->callbackNodes); node != nullptr;) {
+        auto* next = node->next;
+        _ZdlPv_nid_postfix(node);
+        node = next;
+    }
+    self->callbackNodes = nullptr;
+    auto** locale = self->locale;
+    if (locale != nullptr && locale != &_ZNSt8__sce_v221_sceLibcClassicLocaleE_nid_postfix) {
+        GuestLocale::Implementation* implementation = *locale;
+        if (implementation != nullptr) {
+            const GuestLocale::FacetVtable* vtable = implementation->base.vtable;
+            GuestLocale::Facet* released = vtable != nullptr ? vtable->release(&implementation->base) : nullptr;
+            if (released != nullptr && released->vtable != nullptr) released->vtable->deleteObject(released);
+        }
+    }
+    self->locale = nullptr;
+}
+
+void APS5_VABI _ZNSt8__sce_v215_Facet_RegisterEPNS_11_Facet_baseE_nid_postfix(GuestLocale::Facet* facet) {
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    g_sceV2RegisteredFacets.push_back(facet);
+}
+
+GuestLocale::Implementation* APS5_VABI _ZNSt8__sce_v26locale7_Locimp11_New_LocimpERKS1__nid_postfix(const GuestLocale::Implementation* source) {
+    if (source == nullptr) throw std::invalid_argument("_Locimp constructor: null source");
+    auto* self = static_cast<GuestLocale::Implementation*>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation)));
+    _ZNSt6locale7_LocimpC1ERKS0__nid_postfix(self, source);
+    return self;
+}
+
+void APS5_VABI _ZNSt8__sce_v26locale7_Locimp14_Locimp_AddfacEPS1_PNS0_5facetEm_nid_postfix(GuestLocale::Implementation* self, GuestLocale::Facet* facet, std::size_t id) {
+    _ZNSt6locale7_Locimp7_AddfacEPNS_5facetEm_nid_postfix(self, facet, id);
+}
+
+namespace {
+
 GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
 }
 
@@ -775,6 +888,11 @@ std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_pos
         *facet = &collate->base;
     }
     return 1;
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt7collateIcE9transformEPKcS2__nid_postfix(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last) {
+    if (self == nullptr || self->base.vtable == nullptr) throw std::invalid_argument("collate::transform: null facet");
+    return reinterpret_cast<const GuestLocale::CollateVtable*>(self->base.vtable)->transform(result, self, first, last);
 }
 
 std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {

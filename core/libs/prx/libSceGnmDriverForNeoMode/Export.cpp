@@ -352,8 +352,8 @@ int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(std::uint32_t* 
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (CompiledSdkVersion() < ContextState400SdkVersion) return 0x20;
+    return 0x100;
 }
 
 int APS5_VABI sceGnmDrawOpaqueAuto(void) {
