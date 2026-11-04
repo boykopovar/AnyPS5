@@ -192,7 +192,7 @@ int APS5_VABI EVP_chacha20_nid_postfix();
 int APS5_VABI ASN1_INTEGER_set_nid_postfix();
 int APS5_VABI RSA_set0_factors_nid_postfix();
 int APS5_VABI X509_set_pubkey_nid_postfix();
-int APS5_VABI BIO_get_shutdown_nid_postfix();
+int APS5_VABI BIO_get_shutdown_nid_postfix(LibreSsl::Bio* bio);
 int APS5_VABI tls_accept_socket_nid_postfix();
 int APS5_VABI Unknown_4pEl_minus_5DmrrM_nid_no_patch();
 int APS5_VABI BIO_meth_set_write_nid_postfix();
