@@ -172,6 +172,21 @@ void CheckDashValidationAndStress() {
     const double visibleGap[] = {2, 0.002};
     cairo_set_dash(normalized, visibleGap, 2, 1.5);
     assert(cairo_get_dash_count(normalized) == 2);
+    const std::array<double, 2> shortPeriod{0.00001, 0.002};
+    cairo_set_dash(normalized, shortPeriod.data(), 2, 8);
+    assert(cairo_get_dash_count(normalized) == 2);
+    std::array<double, 2> preservedShortPeriod{};
+    double preservedOffset = 0;
+    cairo_get_dash(normalized, preservedShortPeriod.data(), &preservedOffset);
+    assert(preservedShortPeriod == shortPeriod);
+    Near(preservedOffset, std::fmod(8, 0.00201));
+    const std::array<double, 4> shortMultisegmentPeriod{0, 0.002, 0.00001, 0.00001};
+    cairo_set_dash(normalized, shortMultisegmentPeriod.data(), 4, 8);
+    assert(cairo_get_dash_count(normalized) == 4);
+    std::array<double, 4> preservedSegments{};
+    cairo_get_dash(normalized, preservedSegments.data(), &preservedOffset);
+    assert(preservedSegments == shortMultisegmentPeriod);
+    Near(preservedOffset, std::fmod(8, 0.00202));
     cairo_destroy(normalized);
 }
 
