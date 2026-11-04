@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
@@ -88,5 +89,12 @@ int main() {
     const auto* salt = reinterpret_cast<const unsigned char*>("salt");
     Require(PKCS5_PBKDF2_HMAC_nid_postfix(nullptr, 8, salt, 4, 1, sha256, 4, untouched) == 0);
     Require(PKCS5_PBKDF2_HMAC_nid_postfix("password", -2, salt, 4, 1, sha256, 4, untouched) == 0);
+    Require(PKCS5_PBKDF2_HMAC_nid_postfix("password", -5, salt, 4, 1, sha256, -1, nullptr) == 0);
     Require(untouched[0] == 1 && untouched[1] == 2 && untouched[2] == 3 && untouched[3] == 4);
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, salt, 4, 1, nullptr, 4, untouched) == 0);
+    Require(ERR_get_error_nid_postfix() == std::uint64_t{0x06fff09f});
+    Require(ERR_get_error_nid_postfix() == 0);
+    Require(untouched[0] == 1 && untouched[1] == 2 && untouched[2] == 3 && untouched[3] == 4);
+    Require(PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, nullptr, -3, 1, sha256, 0, nullptr) == 1);
 }
