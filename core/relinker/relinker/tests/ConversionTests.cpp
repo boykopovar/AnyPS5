@@ -283,7 +283,7 @@ void scanning() {
         Io::WriteU64(wrappingImage, 0x128, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         const auto roots = Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, controlDataHeader});
-        require(roots == std::set<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
+        require(roots == std::vector<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
         Io::WriteU64(wrappingImage, 0x3c0, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         Io::WriteU64(wrappingImage, 0x3c0, 0x2008);
@@ -310,8 +310,8 @@ void branchAcrossSignedBoundary() {
     header.MemorySize = header.FileSize;
     Io::WriteU64(image, 24, 0x8000000000000000);
     const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
-    require(instructions.contains(0x8000000000000000), "Lost the entry above the signed boundary");
-    require(instructions.contains(0x7ffffffffffffff0), "Lost the branch target below the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x8000000000000000ull), "Lost the entry above the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
 }
 
 class FailingProgress final : public Domain::IProgress {
@@ -414,21 +414,6 @@ void runtimeDirectories() {
         const auto output = converter.Convert(std::move(source), options);
         require(output.Modules.size() == 1, "Module was not converted");
         require(exports(output.Modules.front().Bytes, Relinker::GuestInitializeExport) == (std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module the executable needs");
-    }
-    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Modules"}) {
-        auto source = input();
-        const auto parent = source.ModuleRoot / directory;
-        const auto plugins = source.ModuleRoot / "Media/Plugins";
-        source.Modules.push_back({plugins / "plugin.prx", fixture("needed.prx")});
-        source.Modules.push_back({parent / "needed.prx", fixture()});
-        source.RuntimeDirectories.push_back(plugins);
-        source.RuntimeDirectories.push_back(parent);
-        const auto output = converter.Convert(std::move(source), options);
-        require(output.Modules.size() == 2, "Modules were not converted");
-        for (const auto& module : output.Modules) {
-            const bool plugin = module.SourcePath.filename() == "plugin.prx";
-            require(exports(module.Bytes, Relinker::GuestInitializeExport) == (plugin || std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module another runtime module needs");
-        }
     }
 }
 

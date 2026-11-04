@@ -1,6 +1,7 @@
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <array>
@@ -46,30 +47,56 @@ static constexpr int GUEST_ERANGE = 34;
 extern "C" {
 
 int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, void* mask) {
-    constexpr int LevelWhich = 3, WhichThread = 1, WhichProcess = 2;
+    constexpr int LevelRoot = 1, LevelCpuset = 2, LevelWhich = 3;
+    constexpr int WhichThread = 1, WhichProcess = 2, WhichCpuset = 3, WhichIrq = 4, WhichJail = 5, WhichDomain = 6;
     constexpr int GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22, GuestErange = 34;
     constexpr std::size_t MaximumSize = 256 / 8;
+    constexpr KernelCpumask RootCpumask = 0xffff;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (size < sizeof(KernelCpumask) || size > MaximumSize) return fail(GuestErange);
+    if (size < sizeof(KernelCpumask) || size >= 24) return fail(GuestErange);
+    if (size > 16) NotImplemented_nid_no_patch("cpuset_getaffinity with a size of 17 to 23 bytes");
     if (!mask) return fail(GuestEfault);
     auto* self = scePthreadSelf();
     KernelCpumask affinity = 0;
-    if (which == WhichThread) {
+    switch (which) {
+    case WhichThread: {
         const auto tid = id == -1 ? self->tid : id;
         if (!GetLiveGuestThreadAffinity_nid_no_patch(tid, affinity)) return fail(GuestEsrch);
-    } else if (which == WhichProcess) {
+        break;
+    }
+    case WhichProcess:
         if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
-    } else if (which >= 3 && which <= 6) {
-        NotImplemented_nid_no_patch("cpuset_getaffinity other than the calling thread or process");
-    } else {
+        break;
+    case WhichCpuset:
+        if (id != -1) NotImplemented_nid_no_patch("cpuset_getaffinity of a numbered cpuset");
+        break;
+    case WhichJail:
+        NotImplemented_nid_no_patch("cpuset_getaffinity of a jail's cpuset");
+        break;
+    case WhichIrq:
+    case WhichDomain:
+        break;
+    default:
         return fail(GuestEinval);
     }
-    if (level < 1 || level > 3) return fail(GuestEinval);
-    if (level != LevelWhich) NotImplemented_nid_no_patch("cpuset_getaffinity other than the calling thread or process");
-    if (which == WhichProcess) affinity = LiveGuestThreadsAffinity();
+    switch (level) {
+    case LevelRoot:
+    case LevelCpuset:
+        if (which == WhichIrq || which == WhichDomain) return fail(GuestEinval);
+        affinity = level == LevelRoot ? RootCpumask : sceKernelGetAvailableCpumask();
+        break;
+    case LevelWhich:
+        if (which == WhichIrq) NotImplemented_nid_no_patch("cpuset_getaffinity of an interrupt");
+        if (which == WhichDomain) NotImplemented_nid_no_patch("cpuset_getaffinity of a memory domain");
+        if (which == WhichProcess) affinity = LiveGuestThreadsAffinity();
+        else if (which == WhichCpuset) affinity = sceKernelGetAvailableCpumask();
+        break;
+    default:
+        return fail(GuestEinval);
+    }
     std::array<std::uint8_t, MaximumSize> buffer{};
     std::memcpy(buffer.data(), &affinity, sizeof(affinity));
     if (!GuestCopyOut_nid_no_patch(mask, buffer.data(), size)) return fail(GuestEfault);
@@ -77,14 +104,17 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
 }
 
 int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, const void* mask) {
-    constexpr int LevelWhich = 3, WhichThread = 1, WhichProcess = 2;
+    constexpr int LevelRoot = 1, LevelCpuset = 2, LevelWhich = 3;
+    constexpr int WhichThread = 1, WhichProcess = 2, WhichCpuset = 3, WhichIrq = 4, WhichJail = 5, WhichDomain = 6;
+    constexpr int WhichInterruptHandler = 7, WhichInterruptThread = 8;
     constexpr int GuestEsrch = 3, GuestEdeadlk = 11, GuestEfault = 14, GuestEinval = 22, GuestErange = 34;
     constexpr std::size_t MaximumSize = 256 / 8;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (size < sizeof(KernelCpumask) || size > MaximumSize) return fail(GuestErange);
+    if (size < sizeof(KernelCpumask) || size >= 24) return fail(GuestErange);
+    if (size > 16) NotImplemented_nid_no_patch("cpuset_setaffinity with a size of 17 to 23 bytes");
     if (!mask) return fail(GuestEfault);
     std::array<std::uint8_t, MaximumSize> buffer{};
     if (!GuestCopyIn_nid_no_patch(buffer.data(), mask, size)) return fail(GuestEfault);
@@ -92,17 +122,56 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
         if (buffer[index] != 0) return fail(GuestEinval);
     }
     auto* self = scePthreadSelf();
-    if (which == WhichThread) {
-        if (id != -1 && id != self->tid && !LiveGuestThreadExists(id)) return fail(GuestEsrch);
-    } else if (which == WhichProcess) {
-        if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
-    } else if (which >= 3 && which <= 6) {
-        NotImplemented_nid_no_patch("cpuset_setaffinity other than the calling thread or process");
-    } else {
+    const auto threadExists = [&] { return id == -1 || id == self->tid || LiveGuestThreadExists(id); };
+    switch (level) {
+    case LevelRoot:
+    case LevelCpuset:
+        switch (which) {
+        case WhichThread:
+            if (!threadExists()) return fail(GuestEsrch);
+            break;
+        case WhichProcess:
+            if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
+            break;
+        case WhichCpuset:
+            if (id != -1) NotImplemented_nid_no_patch("cpuset_setaffinity of a numbered cpuset");
+            break;
+        case WhichJail:
+            NotImplemented_nid_no_patch("cpuset_setaffinity of a jail's cpuset");
+            break;
+        case WhichIrq:
+        case WhichDomain:
+        default:
+            return fail(GuestEinval);
+        }
+        NotImplemented_nid_no_patch(level == LevelRoot ? "cpuset_setaffinity at CPU_LEVEL_ROOT" : "cpuset_setaffinity at CPU_LEVEL_CPUSET");
+        return fail(GuestEinval);
+    case LevelWhich:
+        break;
+    default:
         return fail(GuestEinval);
     }
-    if (level < 1 || level > 3) return fail(GuestEinval);
-    if (level != LevelWhich) NotImplemented_nid_no_patch("cpuset_setaffinity other than the calling thread or process");
+    switch (which) {
+    case WhichThread:
+        if (!threadExists()) return fail(GuestEsrch);
+        break;
+    case WhichProcess:
+        if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
+        break;
+    case WhichCpuset:
+        NotImplemented_nid_no_patch(id == -1 ? "cpuset_setaffinity of the calling thread's base cpuset" : "cpuset_setaffinity of a numbered cpuset");
+        break;
+    case WhichJail:
+        NotImplemented_nid_no_patch("cpuset_setaffinity of a jail's cpuset");
+        break;
+    case WhichIrq:
+    case WhichInterruptHandler:
+    case WhichInterruptThread:
+        NotImplemented_nid_no_patch("cpuset_setaffinity of an interrupt");
+        break;
+    default:
+        return fail(GuestEinval);
+    }
     KernelCpumask requested = 0;
     std::memcpy(&requested, buffer.data(), sizeof(requested));
     const KernelCpumask affinity = requested & sceKernelGetAvailableCpumask();
@@ -341,6 +410,15 @@ struct RegisterPthreadOnLoad {
             reinterpret_cast<decltype(sync.condWait)>(scePthreadCondWait),
             reinterpret_cast<decltype(sync.condSignal)>(scePthreadCondSignal),
             reinterpret_cast<decltype(sync.condBroadcast)>(scePthreadCondBroadcast),
+            reinterpret_cast<decltype(sync.rwlockInit)>(scePthreadRwlockInit),
+            reinterpret_cast<decltype(sync.rwlockDestroy)>(scePthreadRwlockDestroy),
+            reinterpret_cast<decltype(sync.rwlockRdlock)>(scePthreadRwlockRdlock),
+            reinterpret_cast<decltype(sync.rwlockWrlock)>(scePthreadRwlockWrlock),
+            reinterpret_cast<decltype(sync.rwlockTryrdlock)>(scePthreadRwlockTryrdlock),
+            reinterpret_cast<decltype(sync.rwlockTrywrlock)>(scePthreadRwlockTrywrlock),
+            reinterpret_cast<decltype(sync.rwlockTimedrdlock)>(scePthreadRwlockTimedrdlock),
+            reinterpret_cast<decltype(sync.rwlockTimedwrlock)>(scePthreadRwlockTimedwrlock),
+            reinterpret_cast<decltype(sync.rwlockUnlock)>(scePthreadRwlockUnlock),
             reinterpret_cast<decltype(sync.detach)>(scePthreadDetach),
             reinterpret_cast<decltype(sync.join)>(scePthreadJoin),
             scePthreadYield,

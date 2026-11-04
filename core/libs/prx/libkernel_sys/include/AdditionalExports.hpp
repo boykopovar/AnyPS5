@@ -2,6 +2,8 @@
 
 #include "SceTypes.hpp"
 
+#include <cstdint>
+
 extern "C" {
 
 int APS5_VABI __cfi_slowpath_diag_nid_postfix();
@@ -56,7 +58,7 @@ int APS5_VABI _execvpe_nid_postfix();
 int APS5_VABI _wait4_nid_postfix();
 int APS5_VABI adjtime_nid_postfix();
 int APS5_VABI libkernel_sysUnknown_0CV40L3tznI_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_1v23w7Rnkic_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_1v6DjTPunjs_nid_no_patch();
 int APS5_VABI sceKernelInternalCreateMapperSharedMemory();
@@ -93,7 +95,7 @@ int APS5_VABI libkernel_sysUnknown_BJvWKKfmj4w_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_BjmZn9pYSuk_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_C3ToW2CA_plus_hM_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_C3xgqN95IoE_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_C49jelxiaVE_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_C49jelxiaVE_nid_no_patch();
 int APS5_VABI sceKernelSwitchToTrinityMode();
 int APS5_VABI sceKernelIsGenuineCronosCex();
 int APS5_VABI libkernel_sysUnknown_DWWduhQYA3I_nid_no_patch();
@@ -103,7 +105,7 @@ int APS5_VABI libkernel_sysUnknown_EIz_plus_fSlYCn8_nid_no_patch();
 int APS5_VABI sceKernelTraceMarkerBookmark();
 int APS5_VABI libkernel_sysUnknown_EaepepH_minus_LmI_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_FIUPjhnoI_plus_o_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_FR0odl35yQY_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_FR0odl35yQY_nid_no_patch();
 int APS5_VABI sceKernelIccGetExtBDDriveStatus();
 int APS5_VABI libkernel_sysUnknown_GTyjVeZcdRM_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_Gtncco_plus_mxio_nid_no_patch();
@@ -126,7 +128,7 @@ int APS5_VABI libkernel_sysUnknown_LVRydXoXt7U_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_LwGBaXgvFaY_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_MJ_minus_err8l_minus_XY_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_MKlp_minus_bW1bz8_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_N94a0T4F4_plus_U_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_N94a0T4F4_plus_U_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_NhFlyw_minus_77cY_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_OZBJnWxt7d4_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_PBq_minus_OUg5A5s_nid_no_patch();
@@ -189,7 +191,7 @@ int APS5_VABI sceKernelTraceMarkerPlot();
 int APS5_VABI libkernel_sysUnknown_ftHBlCfIEQo_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_g7MGwZ5UxBE_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_gBiaAGKEvHM_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_gJ5gpW45mU0_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_gJ5gpW45mU0_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_gSIiye3ERqo_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_gpgi_minus_GwE2Is_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_guq_plus_otVpgj0_nid_no_patch();
@@ -216,7 +218,7 @@ int APS5_VABI libkernel_sysUnknown_nsq826qQ2EI_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_o141x2VDeVc_nid_no_patch();
 int APS5_VABI sceKernelGetMainSocSubId();
 int APS5_VABI sceKernelInternalUnmapMapperSharedMemory();
-int APS5_VABI libkernel_sysUnknown_pCbBddNl66Y_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_pCbBddNl66Y_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_pOClGbxrx94_nid_no_patch();
 int APS5_VABI sceKernelSetAppLibcData();
 int APS5_VABI libkernel_sysUnknown_pp_plus_G_plus_UZhiqY_nid_no_patch();
@@ -238,7 +240,7 @@ int APS5_VABI libkernel_sysUnknown_uV_plus_YilcHqAs_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_ulVjluL9TzM_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_v_plus_qTlNjF6kE_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_vfYaxkxnJXQ_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_vq2_plus_HyP5U5I_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_vq2_plus_HyP5U5I_nid_no_patch();
 int APS5_VABI sceKernelSetCanvasHandle();
 int APS5_VABI libkernel_sysUnknown_wn0XzOue4EM_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_wwWv_plus_0MzhGM_nid_no_patch();
@@ -248,8 +250,8 @@ int APS5_VABI libkernel_sysUnknown_yWOJkfd_minus_DhA_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_yn0b42DApAI_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_yzvrk3YrPlE_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_z0qKN5kkVj0_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_zAloppPJxy0_nid_no_patch();
-int APS5_VABI libkernel_sysUnknown_z_plus_e0vV_minus_tnH4_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_zAloppPJxy0_nid_no_patch();
+std::uint64_t APS5_VABI libkernel_sysUnknown_z_plus_e0vV_minus_tnH4_nid_no_patch();
 int APS5_VABI mmap2_nid_postfix();
 int APS5_VABI pthread_setschedother_np_nid_postfix();
 int APS5_VABI sceKernelAddDynlibEvent();
