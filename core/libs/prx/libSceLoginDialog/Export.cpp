@@ -38,10 +38,11 @@ int APS5_VABI sceLoginDialogOpen(const LoginDialogParam* param) {
  for (const auto userId : param->userIds) {
   if (userId != -1 && (static_cast<std::uint32_t>(userId) < 0x10000000u || static_cast<std::uint32_t>(userId) >= 0x40000000u)) return LOGIN_DIALOG_ERROR_INVALID_USER;
  }
- const int status = g_status.load();
- if (status == COMMON_DIALOG_STATUS_NONE) return LOGIN_DIALOG_ERROR_NOT_INITIALIZED;
- if (status == COMMON_DIALOG_STATUS_RUNNING) return LOGIN_DIALOG_ERROR_BUSY;
- g_status = COMMON_DIALOG_STATUS_FINISHED;
+ int status = g_status.load();
+ do {
+  if (status == COMMON_DIALOG_STATUS_NONE) return LOGIN_DIALOG_ERROR_NOT_INITIALIZED;
+  if (status == COMMON_DIALOG_STATUS_RUNNING) return LOGIN_DIALOG_ERROR_BUSY;
+ } while (!g_status.compare_exchange_weak(status, COMMON_DIALOG_STATUS_FINISHED));
  return 0;
 }
 
@@ -64,8 +65,10 @@ int APS5_VABI sceLoginDialogGetResult(LoginDialogResult* result) {
 }
 
 int APS5_VABI sceLoginDialogClose(void) {
- if (g_status.load() == COMMON_DIALOG_STATUS_NONE) return LOGIN_DIALOG_ERROR_NOT_INITIALIZED;
- g_status = COMMON_DIALOG_STATUS_FINISHED;
+ int status = g_status.load();
+ do {
+  if (status == COMMON_DIALOG_STATUS_NONE) return LOGIN_DIALOG_ERROR_NOT_INITIALIZED;
+ } while (!g_status.compare_exchange_weak(status, COMMON_DIALOG_STATUS_FINISHED));
  return 0;
 }
 
