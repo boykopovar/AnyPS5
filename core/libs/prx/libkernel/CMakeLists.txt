@@ -2062,7 +2062,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_mmap_fixed_anonymous COMMAND guest_memory_tests fixed-anonymous)
     if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME guest_mmap_executable COMMAND guest_memory_tests executable-mappings)
-        set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20)
+        set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
     endif()
     if(WIN32)
         set_tests_properties(guest_memory guest_mmap_fixed_anonymous guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
