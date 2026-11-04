@@ -5,6 +5,7 @@
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/LegacySignals.hpp"
+#include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 
@@ -121,6 +122,11 @@ void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std
 void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+GuestLocale::WideOutputIterator APS5_VABI sceLibcInternalWideNumPutDoPutBool_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, bool value);
+GuestLocale::WideOutputIterator APS5_VABI sceLibcInternalWideNumPutDoPutLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value);
+GuestLocale::WideOutputIterator APS5_VABI sceLibcInternalWideNumPutDoPutUnsignedLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value);
+GuestLocale::WideOutputIterator APS5_VABI sceLibcInternalWideNumPutDoPutLongLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value);
+GuestLocale::WideOutputIterator APS5_VABI sceLibcInternalWideNumPutDoPutUnsignedLongLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value);
 
 int APS5_VABI sceLibcMspaceSetMallocCallback();
 int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();

@@ -188,6 +188,26 @@ struct OutputIterator {
     Streambuf* buffer;
 };
 
+struct WideStreambuf;
+
+struct WideStreambufVtable {
+    const void* reserved[4];
+    int (APS5_VABI *overflow)(WideStreambuf* self, int character);
+};
+
+struct WideStreambuf {
+    const WideStreambufVtable* vtable;
+    const void* reserved[7];
+    std::uint16_t** putNext;
+    const void* reservedCounts[3];
+    std::uint16_t** putEnd;
+};
+
+struct WideOutputIterator {
+    bool failed;
+    WideStreambuf* buffer;
+};
+
 struct TimePutVtable {
     FacetVtable facet;
     OutputIterator (APS5_VABI *put)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const GuestTm* time, char format, char modifier);
@@ -205,6 +225,18 @@ struct NumPutVtable {
     OutputIterator (APS5_VABI *putPointer)(const Facet* self, OutputIterator out, IosBase* stream, char fill, const void* value);
 };
 
+struct WideNumPutVtable {
+    FacetVtable facet;
+    WideOutputIterator (APS5_VABI *putBool)(const Facet* self, WideOutputIterator out, IosBase* stream, std::uint16_t fill, bool value);
+    WideOutputIterator (APS5_VABI *putLong)(const Facet* self, WideOutputIterator out, IosBase* stream, std::uint16_t fill, std::int64_t value);
+    WideOutputIterator (APS5_VABI *putUnsignedLong)(const Facet* self, WideOutputIterator out, IosBase* stream, std::uint16_t fill, std::uint64_t value);
+    WideOutputIterator (APS5_VABI *putLongLong)(const Facet* self, WideOutputIterator out, IosBase* stream, std::uint16_t fill, std::int64_t value);
+    WideOutputIterator (APS5_VABI *putUnsignedLongLong)(const Facet* self, WideOutputIterator out, IosBase* stream, std::uint16_t fill, std::uint64_t value);
+    WideOutputIterator (APS5_VABI *putDouble)(const Facet* self, WideOutputIterator out, IosBase* stream, std::uint16_t fill, double value);
+    WideOutputIterator (APS5_VABI *putLongDouble)(const Facet* self, WideOutputIterator out, IosBase* stream, std::uint16_t fill, long double value);
+    WideOutputIterator (APS5_VABI *putPointer)(const Facet* self, WideOutputIterator out, IosBase* stream, std::uint16_t fill, const void* value);
+};
+
 struct CtypeVtable {
     FacetVtable facet;
     const void* caseMethods[4];
@@ -212,7 +244,23 @@ struct CtypeVtable {
     const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, char* destination);
 };
 
+struct WideCtypeVtable {
+    FacetVtable facet;
+    const void* classificationAndCaseMethods[8];
+    std::uint16_t (APS5_VABI *widen)(const Facet* self, char character);
+    const char* (APS5_VABI *widenRange)(const Facet* self, const char* first, const char* last, std::uint16_t* destination);
+};
+
 static_assert(offsetof(StreambufVtable, overflow) == 0x20);
+static_assert(offsetof(WideStreambufVtable, overflow) == 0x20);
+static_assert(offsetof(WideStreambuf, putNext) == 0x40);
+static_assert(offsetof(WideStreambuf, putEnd) == 0x60);
+static_assert(sizeof(WideOutputIterator) == 0x10);
+static_assert(offsetof(WideNumPutVtable, putBool) == 0x20);
+static_assert(offsetof(WideNumPutVtable, putLong) == 0x28);
+static_assert(offsetof(WideNumPutVtable, putPointer) == 0x58);
+static_assert(offsetof(WideCtypeVtable, widen) == 0x60);
+static_assert(offsetof(WideCtypeVtable, widenRange) == 0x68);
 static_assert(offsetof(Streambuf, putNext) == 0x40);
 static_assert(offsetof(Streambuf, putEnd) == 0x60);
 static_assert(sizeof(OutputIterator) == 0x10);
@@ -267,5 +315,13 @@ static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 inline constexpr std::size_t kNumPutCharVtableSlots = 14;
 static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
 extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+
+extern "C" {
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutBool_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, bool value);
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value);
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutUnsignedLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value);
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutLongLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value);
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutUnsignedLongLong_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value);
+}
 
 #endif

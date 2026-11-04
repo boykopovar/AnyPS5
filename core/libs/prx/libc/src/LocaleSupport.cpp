@@ -29,7 +29,9 @@
 
 extern "C" {
 extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 }
 
@@ -341,6 +343,21 @@ void PutCharacter(GuestLocale::OutputIterator& out, char character) {
     if (buffer->vtable->overflow(buffer, static_cast<unsigned char>(character)) == -1) out.failed = true;
 }
 
+void PutCharacter(GuestLocale::WideOutputIterator& out, char16_t character) {
+    GuestLocale::WideStreambuf* buffer = out.buffer;
+    if (buffer == nullptr) {
+        out.failed = true;
+        return;
+    }
+    std::uint16_t* next = *buffer->putNext;
+    if (next != nullptr && static_cast<std::int32_t>(static_cast<std::uint32_t>(*buffer->putEnd - next)) > 0) {
+        *buffer->putNext = next + 1;
+        *next = character;
+        return;
+    }
+    if (buffer->vtable->overflow(buffer, character) == -1) out.failed = true;
+}
+
 GuestLocale::OutputIterator APS5_VABI TimePutDoPut(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase*, char, const GuestTm* time, char format, char modifier) {
     const char pattern[] = {'!', '%', modifier != 0 ? modifier : format, modifier != 0 ? format : '\0', '\0'};
     std::string text;
@@ -401,18 +418,57 @@ const GuestLocale::NumpunctFacet* AsNumpunct(const GuestLocale::Facet* facet) {
     return reinterpret_cast<const GuestLocale::NumpunctFacet*>(facet);
 }
 
-std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
+const GuestLocale::Facet* StreamWideNumpunct(const GuestLocale::IosBase* stream) {
+    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIwE2idE_nid_postfix)) return facet;
+    static GuestLocale::Facet* const fallback = [] {
+        GuestLocale::Facet* created = nullptr;
+        _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&created, nullptr);
+        return created;
+    }();
+    return fallback;
+}
+
+const GuestLocale::WideNumpunctVtable& WidePunctuation(const GuestLocale::Facet* facet) {
+    return *reinterpret_cast<const GuestLocale::WideNumpunctVtable*>(facet->vtable);
+}
+
+const GuestLocale::WideNumpunctFacet* AsWideNumpunct(const GuestLocale::Facet* facet) {
+    return reinterpret_cast<const GuestLocale::WideNumpunctFacet*>(facet);
+}
+
+void ReleaseTakenString(const GuestLocale::String& value, std::size_t bytes) {
+    _ZdlPv_nid_postfix(bytes < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+}
+
+std::u16string TakeWideString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::WideNumpunctFacet*), const GuestLocale::Facet* facet) {
     GuestLocale::String value{};
-    method(&value, AsNumpunct(facet));
+    method(&value, AsWideNumpunct(facet));
+    const bool onHeap = value.capacity > GuestWideInlineCapacity;
+    std::u16string text(value.size, u'\0');
+    if (value.size != 0) std::memcpy(text.data(), onHeap ? value.pointer : value.buffer, value.size * GuestWideCharacterSize);
+    if (onHeap) ReleaseTakenString(value, (value.capacity + 1) * GuestWideCharacterSize);
+    return text;
+}
+
+template<typename Punct> std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const Punct*), const GuestLocale::Facet* facet) {
+    GuestLocale::String value{};
+    method(&value, reinterpret_cast<const Punct*>(facet));
     const bool onHeap = value.capacity > GuestStringInlineCapacity;
     std::string text(onHeap ? value.pointer : value.buffer, value.size);
-    if (onHeap) _ZdlPv_nid_postfix(value.capacity + 1 < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+    if (onHeap) ReleaseTakenString(value, value.capacity + 1);
     return text;
 }
 
 std::string Widen(const GuestLocale::IosBase* stream, const char* text, std::size_t count) {
     std::string result(text, count);
     if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, result.data());
+    return result;
+}
+
+std::u16string WideWiden(const GuestLocale::IosBase* stream, const char* text, std::size_t count) {
+    std::u16string result(count, u'\0');
+    for (std::size_t index = 0; index < count; ++index) result[index] = static_cast<unsigned char>(text[index]);
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIwE2idE_nid_postfix)) reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, reinterpret_cast<std::uint16_t*>(result.data()));
     return result;
 }
 
@@ -424,7 +480,7 @@ std::size_t SignPrefix(const char* text, std::size_t count) {
     return count > 0 && (text[0] == '+' || text[0] == '-') ? 1 : 0;
 }
 
-void InsertSeparators(std::string& text, const std::string& grouping, char separator, std::size_t offset, std::size_t prefix) {
+template<typename Text> void InsertSeparators(Text& text, const std::string& grouping, typename Text::value_type separator, std::size_t offset, std::size_t prefix) {
     const char* group = grouping.c_str();
     while (static_cast<signed char>(*group) != CHAR_MAX && static_cast<signed char>(*group) > 0 && static_cast<std::size_t>(*group) < offset - prefix) {
         offset -= static_cast<std::size_t>(*group);
@@ -433,7 +489,7 @@ void InsertSeparators(std::string& text, const std::string& grouping, char separ
     }
 }
 
-GuestLocale::OutputIterator PutField(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const std::string& text, std::size_t prefix) {
+template<typename Iterator, typename Text> Iterator PutField(Iterator out, GuestLocale::IosBase* stream, typename Text::value_type fill, const Text& text, std::size_t prefix) {
     const std::int32_t width = stream->width;
     std::size_t fillCount = width <= 0 || static_cast<std::size_t>(width) <= text.size() ? 0 : static_cast<std::size_t>(width) - text.size();
     const std::int32_t adjust = stream->flags & IosAdjustField;
@@ -450,13 +506,31 @@ GuestLocale::OutputIterator PutField(GuestLocale::OutputIterator out, GuestLocal
     return out;
 }
 
-GuestLocale::OutputIterator PutInteger(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+bool Grouped(const std::string& grouping) {
+    return static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0;
+}
+
+std::size_t IntegerPrefix(const GuestLocale::IosBase* stream, const char* digits, std::size_t count) {
     std::size_t prefix = SignPrefix(digits, count);
     if ((stream->flags & IosBaseField) == IosHex && HexPrefix(digits, prefix, count)) prefix += 2;
+    return prefix;
+}
+
+GuestLocale::OutputIterator PutInteger(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+    const std::size_t prefix = IntegerPrefix(stream, digits, count);
     std::string text = Widen(stream, digits, count);
     const GuestLocale::Facet* punct = StreamNumpunct(stream);
     const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
-    if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, Punctuation(punct).thousandsSep(AsNumpunct(punct)), count, prefix);
+    if (Grouped(grouping)) InsertSeparators(text, grouping, Punctuation(punct).thousandsSep(AsNumpunct(punct)), count, prefix);
+    return PutField(out, stream, fill, text, prefix);
+}
+
+GuestLocale::WideOutputIterator PutInteger(GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, char16_t fill, const char* digits, std::size_t count) {
+    const std::size_t prefix = IntegerPrefix(stream, digits, count);
+    std::u16string text = WideWiden(stream, digits, count);
+    const GuestLocale::Facet* punct = StreamWideNumpunct(stream);
+    const std::string grouping = TakeString(WidePunctuation(punct).grouping, punct);
+    if (Grouped(grouping)) InsertSeparators(text, grouping, static_cast<char16_t>(WidePunctuation(punct).thousandsSep(AsWideNumpunct(punct))), count, prefix);
     return PutField(out, stream, fill, text, prefix);
 }
 
@@ -481,7 +555,7 @@ GuestLocale::OutputIterator PutFloating(GuestLocale::OutputIterator out, GuestLo
     return PutField(out, stream, fill, text, prefix);
 }
 
-template<typename Value> GuestLocale::OutputIterator PutFormattedInteger(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* qualifier, char decimal, Value value) {
+template<typename Iterator, typename Character, typename Value> Iterator PutFormattedInteger(Iterator out, GuestLocale::IosBase* stream, Character fill, const char* qualifier, char decimal, Value value) {
     const std::int32_t flags = stream->flags;
     const std::int32_t base = flags & IosBaseField;
     const char conversion = base == IosOct ? 'o' : base != IosHex ? decimal : (flags & IosUppercase) != 0 ? 'X' : 'x';
@@ -540,6 +614,12 @@ GuestLocale::OutputIterator APS5_VABI NumPutDouble(const GuestLocale::Facet*, Gu
 
 GuestLocale::OutputIterator APS5_VABI NumPutLongDouble(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, long double value) {
     return PutFormattedFloating(out, stream, fill, "L", value);
+}
+
+GuestLocale::WideOutputIterator APS5_VABI WideNumPutBool(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, bool value) {
+    if ((stream->flags & IosBoolAlpha) == 0) return reinterpret_cast<const GuestLocale::WideNumPutVtable*>(self->vtable)->putLong(self, out, stream, fill, value ? 1 : 0);
+    const GuestLocale::Facet* punct = StreamWideNumpunct(stream);
+    return PutField(out, stream, static_cast<char16_t>(fill), TakeWideString(value ? WidePunctuation(punct).truename : WidePunctuation(punct).falsename, punct), 0);
 }
 
 GuestLocale::OutputIterator APS5_VABI NumPutPointer(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const void* value) {
@@ -652,6 +732,26 @@ int APS5_VABI isnumber_nid_postfix(int c) { return isdigit_nid_postfix(c); }
 int APS5_VABI ishexnumber_nid_postfix(int c) { return isxdigit_nid_postfix(c); }
 int APS5_VABI toupper_nid_postfix(int c) { return ConvertCharacter(c, true); }
 int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
+
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutBool_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, bool value) {
+    return WideNumPutBool(self, out, stream, fill, value);
+}
+
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value) {
+    return PutFormattedInteger(out, stream, static_cast<char16_t>(fill), "l", 'd', value);
+}
+
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutUnsignedLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value) {
+    return PutFormattedInteger(out, stream, static_cast<char16_t>(fill), "l", 'u', value);
+}
+
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutLongLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::int64_t value) {
+    return PutFormattedInteger(out, stream, static_cast<char16_t>(fill), "ll", 'd', value);
+}
+
+GuestLocale::WideOutputIterator APS5_VABI LibcWideNumPutUnsignedLongLong_nid_no_patch(const GuestLocale::Facet*, GuestLocale::WideOutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, std::uint64_t value) {
+    return PutFormattedInteger(out, stream, static_cast<char16_t>(fill), "ll", 'u', value);
+}
 
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
