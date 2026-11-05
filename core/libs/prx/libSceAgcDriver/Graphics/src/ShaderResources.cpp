@@ -6174,14 +6174,17 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
     const auto uploadLimit = DrawUploadLimit();
     std::size_t totalSnapshotBytes = 0;
-    auto result = std::make_shared<DrawBindings>();
+    std::shared_ptr<DrawBindings> result;
     thread_local std::vector<std::size_t>* selectedSlot = nullptr;
     auto& selected = ShaderRecompiler::ThreadOwned(selectedSlot);
     selected.clear();
     std::array<std::uint64_t, 3> stamp{};
     bool stamped = false;
     const auto keep = [&](DrawBindings::Snapshot snapshot) {
-        if (result->snapshots.empty()) result->snapshots.reserve(allocations.size());
+        if (result == nullptr) {
+            result = std::make_shared<DrawBindings>();
+            result->snapshots.reserve(allocations.size());
+        }
         result->snapshots.push_back(std::move(snapshot));
     };
     for (std::size_t index = 0; index < allocations.size(); ++index) {
