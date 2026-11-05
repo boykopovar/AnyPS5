@@ -658,8 +658,12 @@ std::uint32_t ExpandFmaskTexel(SpirvEmitterState& state, const ImageEmitAccess& 
         auto& expanded = sample < 8u ? expandedLow : expandedHigh;
         expanded = Binary(state, spv::OpBitwiseOr, u32, expanded, Binary(state, spv::OpShiftLeftLogical, u32, masked, ConstantU32(state, (sample & 7u) * 4u)));
     }
+    const auto firstShift = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpIMul, u32, samples, ConstantU32(state, 4u)), ConstantU32(state, 31u));
+    const auto secondShift = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpIMul, u32, samples, ConstantU32(state, 8u)), ConstantU32(state, 31u));
+    auto replicatedLow = Binary(state, spv::OpBitwiseOr, u32, expandedLow, Binary(state, spv::OpShiftLeftLogical, u32, expandedLow, firstShift));
+    replicatedLow = Binary(state, spv::OpBitwiseOr, u32, replicatedLow, Binary(state, spv::OpShiftLeftLogical, u32, replicatedLow, secondShift));
     const auto wide = Binary(state, spv::OpUGreaterThan, TypeBool(state), samples, ConstantU32(state, 8u));
-    const std::array<std::uint32_t, 4> components{expandedLow, expandedHigh, Select(state, u32, wide, expandedLow, ConstantU32(state, 0u)), Select(state, u32, wide, expandedHigh, ConstantU32(state, 0u))};
+    const std::array<std::uint32_t, 4> components{replicatedLow, expandedHigh, Select(state, u32, wide, replicatedLow, ConstantU32(state, 0u)), Select(state, u32, wide, expandedHigh, ConstantU32(state, 0u))};
     std::uint32_t selected[4] = {};
     for (std::uint32_t component = 0; component < 4u; component++) selected[component] = RuntimeSwizzledComponent(state, RuntimeImageSwizzle(state, resource, component), components);
     const auto result = state.module.AllocateId();

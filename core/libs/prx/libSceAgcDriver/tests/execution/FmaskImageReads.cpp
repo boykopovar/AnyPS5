@@ -163,12 +163,12 @@ struct FmaskWord {
 };
 
 constexpr std::array<NarrowFmask, 12> NarrowFormats{{
-    {156u, 5u, 1u, 2u, 1u, 1u, 0x02u, 0x80u},
-    {157u, 5u, 1u, 4u, 1u, 1u, 0x0eu, 0x8880u},
+    {156u, 5u, 1u, 2u, 1u, 1u, 0x02u, 0x80808080u},
+    {157u, 5u, 1u, 4u, 1u, 1u, 0x0eu, 0x88808880u},
     {158u, 5u, 1u, 8u, 1u, 1u, 0xfeu, 0x88888880u},
-    {159u, 5u, 1u, 2u, 2u, 1u, 0x02u, 0x10u},
-    {160u, 5u, 1u, 4u, 2u, 2u, 0xa4u, 0x8810u},
-    {161u, 5u, 1u, 4u, 4u, 2u, 0xe4u, 0x3210u},
+    {159u, 5u, 1u, 2u, 2u, 1u, 0x02u, 0x10101010u},
+    {160u, 5u, 1u, 4u, 2u, 2u, 0xa4u, 0x88108810u},
+    {161u, 5u, 1u, 4u, 4u, 2u, 0xe4u, 0x32103210u},
     {163u, 11u, 2u, 8u, 2u, 2u, 0xaaa4u, 0x88888810u},
     {165u, 20u, 4u, 8u, 4u, 4u, 0x44443210u, 0x88883210u},
     {162u, 11u, 2u, 16u, 1u, 1u, 0xfffeull, 0x8888888888888880ull},
@@ -195,7 +195,13 @@ std::uint64_t Expanded(const NarrowFmask& fmask, FmaskWord stored) {
         const auto nibble = index | (unknown ? 8u : 0u);
         expanded |= static_cast<std::uint64_t>(nibble) << (sample * 4u);
     }
-    return expanded;
+    auto low = static_cast<std::uint32_t>(expanded);
+    const auto high = static_cast<std::uint32_t>(expanded >> 32u);
+    if (fmask.samples < 8u) {
+        low |= low << ((fmask.samples * 4u) & 31u);
+        low |= low << ((fmask.samples * 8u) & 31u);
+    }
+    return static_cast<std::uint64_t>(low) | (static_cast<std::uint64_t>(high) << 32u);
 }
 
 void RunNarrow(AgcDriver::VulkanDevice& device, const NarrowFmask& fmask, bool layered, bool registration) {
