@@ -241,6 +241,10 @@ void TestQueries() {
     *__error_nid_postfix() = 0;
     Require(sceKernelAprSubmitCommandBufferAndGetId(&oversized, 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past the command buffer capacity");
     Require(sceKernelAprSubmitCommandBuffer(&oversized, 0) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past the command buffer capacity without an id");
+    const Apr::CommandBufferObject zero{Apr::BufferType::Generic, 0, 1, 1, 0, memory.data()};
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprSubmitCommandBufferAndGetId(&zero, 0, &first) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past a command buffer without capacity");
+    Require(sceKernelAprSubmitCommandBuffer(&zero, 0) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted a cursor past a command buffer without capacity without an id");
     Require(first == 0 && result == 0xFFFFFFFFu, "a rejected APR submission wrote its result or id");
     Require(sceKernelAprSubmitCommandBufferAndGetResult(&buffer, 0, &result, &first) == 0 && result == 0 && first != 0, "APR did not return a result and an id");
     Require(sceKernelAprWaitCommandBuffer(first) == 0, "APR did not wait for the submission");

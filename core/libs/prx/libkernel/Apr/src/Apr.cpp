@@ -211,7 +211,9 @@ std::uint64_t _loadGuestAddress(std::uint64_t address) {
 void _writeAddress(const Apr::WriteAddressCommand& command) {
     if (command.flags != 0) throw std::runtime_error("APR: WriteAddress flags " + std::to_string(command.flags) + " not implemented");
     _storeGuestAddress(command.address, command.value);
-}std::array<std::atomic<std::uint32_t>, 256> g_counters{};
+}
+
+std::array<std::atomic<std::uint32_t>, 256> g_counters{};
 
 std::mutex& g_counterWrites = *new std::mutex();
 
@@ -921,7 +923,7 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
 }
 
 std::optional<std::vector<std::uint8_t>> _guestCommands(const Apr::CommandBufferObject& object) {
-    if (object.size != 0 && object.offset > object.size) return std::nullopt;
+    if (object.offset > object.size) return std::nullopt;
     std::vector<std::uint8_t> commands;
     try {
         commands.resize(object.offset);
