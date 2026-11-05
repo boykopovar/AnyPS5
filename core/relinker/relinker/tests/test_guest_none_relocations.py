@@ -200,6 +200,7 @@ def main():
         assert ctypes.CFUNCTYPE(ctypes.c_int)(pointer)() == 42
         return
     relinker = Path(sys.argv[1]).resolve()
+    modes = {"plain": (False,), "sce": (True,), "all": (False, True)}[sys.argv[2] if len(sys.argv) > 2 else "all"]
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-none-") as directory:
         work = Path(directory)
 
@@ -223,7 +224,7 @@ def main():
             result, artifacts, output = convert_modules(name, system, {"module": image})
             return result, artifacts / "module.prx.guest.prx", output
 
-        for sce in (False, True):
+        for sce in modes:
             cases = list(valid_cases(sce))
             assert len({name for name, *_ in cases}) == len(cases)
             for system in ("linux", "windows", "macos"):
