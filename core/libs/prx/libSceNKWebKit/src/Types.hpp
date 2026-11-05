@@ -101,7 +101,6 @@ public:
     bool valid = false;
 };
 
-
 class URLRequest final : public ObjectOf<ObjectType::URLRequest> {
 public:
     URLRequest() = default;
@@ -111,6 +110,19 @@ public:
     Retained<URL> firstPartyForCookies;
     std::string httpMethod = "GET";
     Retained<Data> httpBody;
+};
+
+class HitTestResult final : public ObjectOf<ObjectType::HitTestResult> {
+public:
+    std::string absoluteImageURL;
+    std::string absoluteLinkURL;
+    std::string absoluteMediaURL;
+    std::string absolutePDFURL;
+    std::u16string linkLabel;
+    std::u16string linkTitle;
+    std::u16string lookupText;
+    RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
+    bool isContentEditable = false;
 };
 
 }  // namespace NKWebKit
