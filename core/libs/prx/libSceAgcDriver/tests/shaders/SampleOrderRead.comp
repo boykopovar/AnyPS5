@@ -1,0 +1,39 @@
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#ifdef COLOR
+layout(binding = 0) uniform texture2DMS colors;
+#else
+layout(binding = 0) uniform texture2DMS depths;
+#ifdef STENCIL
+layout(binding = 1) uniform utexture2DMS stencils;
+#endif
+#endif
+
+layout(std430, binding = 2) buffer Values {
+    uvec4 values[];
+};
+
+layout(push_constant) uniform Read {
+    uvec2 extent;
+    uint count;
+} read;
+
+void main() {
+    const uvec2 at = gl_GlobalInvocationID.xy;
+    if (at.x >= read.extent.x || at.y >= read.extent.y) return;
+    for (uint index = 0u; index < read.count; ++index) {
+        const uint slot = (at.y * read.extent.x + at.x) * read.count + index;
+#ifdef COLOR
+        values[slot] = floatBitsToUint(texelFetch(colors, ivec2(at), int(index)));
+#else
+        uvec4 value = uvec4(floatBitsToUint(texelFetch(depths, ivec2(at), int(index)).r), 0u, 0u, 0u);
+#ifdef STENCIL
+        value.y = texelFetch(stencils, ivec2(at), int(index)).r;
+#endif
+        values[slot] = value;
+#endif
+    }
+}

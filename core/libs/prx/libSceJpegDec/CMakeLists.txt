@@ -1,0 +1,31 @@
+if(NOT TARGET decoder_jpeg)
+    add_jpeg_decoder(decoder_jpeg libc)
+endif()
+
+add_library(libSceJpegDec SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libSceJpegDec PRIVATE ${LIBS_INCLUDE_DIR})
+set_target_properties(libSceJpegDec PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(libSceJpegDec)
+target_link_libraries(libSceJpegDec PRIVATE decoder_jpeg)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_jpeg_dec_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegDec.cpp)
+    target_include_directories(guest_jpeg_dec_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jpeg_dec_tests PRIVATE libSceJpegDec decoder_jpeg libc)
+    configure_windows_unwind(guest_jpeg_dec_tests)
+    add_test(NAME guest_jpeg_dec COMMAND guest_jpeg_dec_tests)
+    if(WIN32)
+        set_tests_properties(guest_jpeg_dec PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegDec>")
+    endif()
+
+    add_test_executable(guest_jpeg_dec_input_control_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegDecInputControl.cpp)
+    target_include_directories(guest_jpeg_dec_input_control_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jpeg_dec_input_control_tests PRIVATE libSceJpegDec decoder_jpeg libc)
+    configure_windows_unwind(guest_jpeg_dec_input_control_tests)
+    add_test(NAME guest_jpeg_dec_input_control COMMAND guest_jpeg_dec_input_control_tests)
+    if(WIN32)
+        set_tests_properties(guest_jpeg_dec_input_control PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegDec>")
+    endif()
+endif()

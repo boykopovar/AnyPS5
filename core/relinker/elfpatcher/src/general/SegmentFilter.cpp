@@ -1,0 +1,24 @@
+#include <elfpatcher/general/SegmentFilter.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
+
+namespace Elfpatcher {
+
+bool SegmentFilter::_isSceSpecificSegment(const std::uint32_t type) const {
+    return type == PT_SCE_DYNLIBDATA
+        || type == PT_OS_PROCPARAM
+        || type == PT_OS_RELRO
+        || (type >= PT_LOOS && type <= PT_HIOS);
+}
+
+bool SegmentFilter::ShouldSkip(const Domain::ProgramHeader& ph) const {
+    if (ph.Type == PT_OS_PROCPARAM) return false;
+    if (ph.Type == PT_GNU_EH_FRAME) return false;
+    if (ph.Type == PT_GNU_RELRO && _lazyBinding) return true;
+    if (ph.Type == PT_GNU_STACK || ph.Type == PT_GNU_RELRO) return false;
+    if (_isSceSpecificSegment(ph.Type)) return true;
+    if (ph.Type == PT_DYNAMIC || ph.Type == PT_PHDR || ph.Type == PT_INTERP) return true;
+    if (ph.Type == PT_NOTE && ph.MappedAddress == 0 && ph.FileSize > 0) return true;
+    return false;
+}
+
+}

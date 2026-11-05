@@ -1,0 +1,15 @@
+add_library(libScePlayerInvitationDialog SHARED EXCLUDE_FROM_ALL libScePlayerInvitationDialog.cpp)
+target_include_directories(libScePlayerInvitationDialog PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libScePlayerInvitationDialog)
+
+if(BUILD_TESTING)
+    add_test_executable(player_invitation_dialog_tests ${LIBS_INCLUDE_DIR}/tests/PlayerInvitationDialog.cpp)
+    target_include_directories(player_invitation_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(player_invitation_dialog_tests PRIVATE libScePlayerInvitationDialog libc)
+    configure_windows_unwind(player_invitation_dialog_tests)
+    add_test(NAME player_invitation_dialog COMMAND player_invitation_dialog_tests)
+    if(WIN32)
+        set_tests_properties(player_invitation_dialog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

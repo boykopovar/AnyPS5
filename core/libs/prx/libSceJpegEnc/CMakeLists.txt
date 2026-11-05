@@ -1,0 +1,21 @@
+if(NOT TARGET decoder_jpeg)
+    add_jpeg_decoder(decoder_jpeg libc)
+endif()
+
+add_library(libSceJpegEnc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libSceJpegEnc PRIVATE ${LIBS_INCLUDE_DIR})
+set_target_properties(libSceJpegEnc PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(libSceJpegEnc)
+target_link_libraries(libSceJpegEnc PRIVATE decoder_jpeg)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_jpeg_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegEnc.cpp)
+    target_include_directories(guest_jpeg_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jpeg_enc_tests PRIVATE libSceJpegEnc decoder_jpeg libc)
+    configure_windows_unwind(guest_jpeg_enc_tests)
+    add_test(NAME guest_jpeg_enc COMMAND guest_jpeg_enc_tests)
+    if(WIN32)
+        set_tests_properties(guest_jpeg_enc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegEnc>")
+    endif()
+endif()

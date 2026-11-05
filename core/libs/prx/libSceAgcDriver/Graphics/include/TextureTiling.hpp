@@ -1,0 +1,104 @@
+#ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURETILING_HPP
+#define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURETILING_HPP
+
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <utility>
+#include <vector>
+
+namespace AgcDriver::Graphics {
+
+struct TileMipLayout {
+    std::uint64_t tiledOffset;
+    std::uint64_t tiledSize;
+    std::uint64_t linearOffset;
+    std::uint64_t linearSize;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t blocksPerRow;
+    std::uint32_t pitchBytes;
+    bool tail;
+    std::uint32_t tailX;
+    std::uint32_t tailY;
+    bool gcnMicroTiled = false;
+    std::uint32_t gcnSplitStride = 0;
+};
+
+std::vector<TileMipLayout> ComputeMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount, std::uint32_t linearPitch = 0u);
+std::uint64_t ComputeSurfaceSize(const std::vector<TileMipLayout>& mips, std::uint32_t arrayLayers);
+// Mip chain of an uncompressed surface given its element size (color targets have no texture format).
+std::vector<TileMipLayout> ComputeElementMipLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount);
+
+// Thick (3D) SW_4KB_S / SW_64KB_S blocks span several depth slices: {width, height, depth} in elements.
+std::array<std::uint32_t, 3> ThickBlockExtent(TextureTileMode tileMode, std::uint32_t bytesPerElement);
+// Thin (2D) tiled blocks: {block bytes, width, height} in elements for the tile mode and element size
+// (the detiler's blockExtent). A mip's tiled bytes are its blocks in row-major order, blocksPerRow per
+// row (TileMipLayout), except the tail mips, which share one block. Throws for linear tiling.
+std::array<std::uint32_t, 3> ThinBlockLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement);
+// The bytes of a thin mip (mip-relative [begin, end), ascending and merged) that hold one of its
+// elements each: its whole tile blocks (every element of the block inside the mip), or its rows
+// without the pitch padding when linear. A tail mip has none (its block also holds the other tail
+// levels and their padding). A retile of the mip writes every byte of these and no other.
+std::vector<std::pair<std::uint64_t, std::uint64_t>> CoveredMipBytes(TextureTileMode tileMode, std::uint32_t bytesPerElement, const TileMipLayout& mip);
+
+// 3D surface. Each slab holds the whole mip chain: the mip tail block, if any, then the other levels from the
+// smallest to level 0. Depth slice z of a level is detiled from slab z / blockDepth (slabBytes apart) with the
+// swizzle's slice input set to z, into linear slices sliceLinearBytes apart.
+struct ThickLayout {
+    std::vector<TileMipLayout> mips;
+    std::uint32_t depth;
+    std::uint32_t blockDepth;
+    std::uint64_t slabBytes;
+    std::uint64_t sliceLinearBytes;
+    std::uint64_t guestBytes;
+};
+ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t depth, std::uint32_t mipCount);
+
+// Guest surface as the texture upload/write-back loops walk it: array layers of thin surfaces, or the
+// depth slices of a volume (which Vulkan holds as one layer with extent depth).
+struct SurfaceGeometry {
+    std::vector<TileMipLayout> mips;
+    std::uint32_t layers = 1;
+    std::uint32_t imageLayers = 1;
+    std::uint32_t imageDepth = 1;
+    std::uint64_t guestBytes = 0;
+    std::uint64_t sliceLinearBytes = 0;
+    bool thick = false;
+    std::uint32_t blockDepth = 1;
+    std::uint64_t layerBytes = 0;
+
+    bool levelMajor = false;
+    std::uint64_t GuestOffset(std::uint32_t layer, const TileMipLayout& mip) const {
+        return levelMajor ? mip.tiledOffset + static_cast<std::uint64_t>(thick && !mip.gcnMicroTiled ? layer / blockDepth : layer) * mip.tiledSize : GuestLayerOffset(layer) + mip.tiledOffset;
+    }
+    std::uint64_t GuestLayerOffset(std::uint32_t layer) const { return thick ? static_cast<std::uint64_t>(layer / blockDepth) * layerBytes : static_cast<std::uint64_t>(layer) * layerBytes; }
+    std::uint64_t LinearLayerOffset(std::uint32_t layer) const { return static_cast<std::uint64_t>(layer) * sliceLinearBytes; }
+    std::uint32_t CopyLayer(std::uint32_t layer) const { return imageDepth > 1 ? 0u : layer; }
+    std::int32_t CopyDepth(std::uint32_t layer) const { return imageDepth > 1 ? static_cast<std::int32_t>(layer) : 0; }
+    bool HasLayer(std::uint32_t level, std::uint32_t layer) const { return imageDepth <= 1 || layer < std::max(imageDepth >> level, 1u); }
+};
+SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor);
+std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral = false, std::uint32_t layers = 1, bool volume = false);
+struct GcnTileGeometry {
+    std::uint32_t blockBytes;
+    std::uint32_t blockWidth;
+    std::uint32_t blockHeight;
+    std::array<std::uint32_t, 16> equation;
+    std::uint32_t splitSlices = 1;
+    std::array<std::uint32_t, 4> splitMasks{};
+    std::uint32_t layerBankStep = 0;
+    std::uint32_t bankMask = 0;
+    std::uint32_t bankShift = 0;
+};
+GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElement);
+inline std::uint32_t GcnLayerBankXor(const GcnTileGeometry& geometry, std::uint32_t layer) { return ((geometry.layerBankStep * layer) & geometry.bankMask) << geometry.bankShift; }
+inline TextureTileMode MipTileMode(TextureTileMode tileMode, const TileMipLayout& mip) { return mip.gcnMicroTiled ? (IsGcnThick(tileMode) ? TextureTileMode::kGcnThin1D : GcnMicroTileMode(tileMode)) : tileMode; }
+bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels);
+GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed, bool keysReadAsStored);
+GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::uint32_t maxArrayLayers);
+
+}
+
+#endif

@@ -1,0 +1,15 @@
+add_library(libSceGameUpdate SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceGameUpdate PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceGameUpdate)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_gameupdate_tests ${LIBS_INCLUDE_DIR}/tests/GuestGameUpdate.cpp)
+    target_include_directories(guest_gameupdate_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_gameupdate_tests PRIVATE libSceGameUpdate libc)
+    configure_windows_unwind(guest_gameupdate_tests)
+    add_test(NAME guest_gameupdate COMMAND guest_gameupdate_tests)
+    if(WIN32)
+        set_tests_properties(guest_gameupdate PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGameUpdate>")
+    endif()
+endif()

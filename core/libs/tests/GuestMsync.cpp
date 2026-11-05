@@ -1,0 +1,76 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <source_location>
+
+namespace {
+constexpr std::size_t Page = 0x4000;
+constexpr int ReadWrite = 3;
+constexpr int PrivateAnonymous = 0x1002;
+constexpr int Sync = 0x0;
+constexpr int Async = 0x1;
+constexpr int Invalidate = 0x2;
+constexpr int Invalid = 22;
+constexpr int NoMemory = 12;
+constexpr int Busy = 16;
+
+void Require(bool condition, std::source_location location = std::source_location::current()) {
+    if (condition) return;
+    std::fprintf(stderr, "msync check failed at line %u\n", static_cast<unsigned>(location.line()));
+    std::abort();
+}
+
+bool Succeeds(void* address, std::size_t length, int flags) {
+    *__error_nid_postfix() = 77;
+    return msync_nid_postfix(address, length, flags) == 0 && *__error_nid_postfix() == 77;
+}
+
+bool Fails(void* address, std::size_t length, int flags, int error) {
+    *__error_nid_postfix() = 0;
+    return msync_nid_postfix(address, length, flags) == -1 && *__error_nid_postfix() == error;
+}
+
+char* Map(std::size_t pages) {
+    void* mapped = mmap_nid_postfix(nullptr, pages * Page, ReadWrite, PrivateAnonymous, -1, 0);
+    Require(mapped != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    return static_cast<char*>(mapped);
+}
+}
+
+int main() {
+    char* mapped = Map(3);
+    mapped[0] = 1;
+    Require(Succeeds(mapped, 3 * Page, Sync));
+    Require(Succeeds(mapped, 3 * Page, Async));
+    Require(Succeeds(mapped + 100, 10, Sync));
+    Require(Succeeds(mapped + Page - 1, 2, Sync));
+    Require(Succeeds(mapped + Page, 0, Sync));
+    Require(Succeeds(mapped, Page, 0x4));
+
+    Require(Fails(mapped, Page, Async | Invalidate, Invalid));
+    const auto top = std::numeric_limits<std::uintptr_t>::max() & ~(Page - 1);
+    Require(Fails(reinterpret_cast<void*>(top), 2 * Page, Sync, Invalid));
+    Require(Fails(mapped, std::numeric_limits<std::size_t>::max() - (Page - 1) + 1, Sync, Invalid));
+    Require(Fails(mapped + 1, std::numeric_limits<std::size_t>::max() - (Page - 1), Sync, Invalid));
+    Require(Fails(mapped, Page, Invalidate, Busy));
+    Require(Fails(mapped, 3 * Page, Sync | Invalidate, Busy));
+    Require(Fails(mapped + 1, 16, Invalidate, Busy));
+    Require(Fails(mapped, 0, Invalidate, Busy));
+    Require(Succeeds(mapped, Page, 0x8));
+
+    Require(munmap_nid_postfix(mapped, 3 * Page) == 0);
+    Require(Fails(mapped, Page, Sync, NoMemory));
+    Require(Fails(mapped + Page, 3 * Page, Async, NoMemory));
+    Require(Fails(mapped + Page, 0, Sync, NoMemory));
+    Require(Fails(mapped, Page, Invalidate, NoMemory));
+
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, 2 * Page, 0, 0) == 0);
+    Require(Succeeds(reserved, 2 * Page, Sync));
+    Require(Succeeds(reserved, 0, Async));
+    return 0;
+}

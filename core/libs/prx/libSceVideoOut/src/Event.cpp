@@ -1,0 +1,202 @@
+#include "prx/libSceVideoOut/include/Event.hpp"
+#include <algorithm>
+#include <chrono>
+#include <mutex>
+#include <stdexcept>
+
+#include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+
+static std::vector<EventRegistration>* getEventList(VideoOutConfig& cfg, int16_t eventKind) {
+    if (eventKind == VIDEO_OUT_EVENT_FLIP) return &cfg.flipEvents;
+    if (eventKind == VIDEO_OUT_EVENT_VBLANK) return &cfg.vblankEvents;
+    if (eventKind == VIDEO_OUT_EVENT_PRE_VBLANK_START) return &cfg.preVblankEvents;
+    if (eventKind == VIDEO_OUT_EVENT_SET_MODE) return &cfg.outputModeEvents;
+    if (eventKind == VIDEO_OUT_EVENT_VRR_STATUS) return &cfg.vrrStatusEvents;
+    throw std::runtime_error("getEventList: unknown event kind");
+}
+
+static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind, void* udata) {
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    if (cfg == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
+    }
+    if (eq == 0) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
+    }
+    if (!EqueuePin_nid_postfix(eq)) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
+    }
+    std::unique_lock lock(cfg->mutex);
+    cfg->Check();
+    auto* registrations = getEventList(*cfg, eventKind);
+    const auto existing = std::find_if(registrations->begin(), registrations->end(), [eq](const auto& item) { return item.eq == eq; });
+    const bool replace = existing != registrations->end();
+    if (!replace) registrations->reserve(registrations->size() + 1);
+    KernelEqueueEvent event{};
+    event.event.ident = static_cast<uintptr_t>(eventKind);
+    event.event.filter = EVFILT_VIDEO_OUT;
+    event.event.flags = EV_ADD;
+    event.event.udata = udata;
+    if (eventKind == VIDEO_OUT_EVENT_SET_MODE) {
+        event.triggered = true;
+        event.event.fflags = 1;
+        event.event.data = static_cast<intptr_t>((cfg->outputMode << 16u) | (1u << 12u));
+    }
+    event.filter.triggerFunc = [](KernelEqueueEvent* e, void* data) {
+        const uint64_t old = static_cast<uint64_t>(e->event.data);
+        uint64_t counter = (old >> 12u) & 0xfu;
+        if (counter != 0xfu) {
+            counter++;
+        }
+        const uint64_t tsc = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()
+            ).count()
+        ) & 0xfffu;
+        const uint64_t payload = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(data));
+        const uint64_t newData = tsc | (counter << 12u) | ((payload & 0x0000ffffffffffffULL) << 16u);
+        KernelEvent triggered = e->event;
+        triggered.fflags = triggered.fflags < 0xfu ? triggered.fflags + 1u : triggered.fflags;
+        triggered.data = static_cast<intptr_t>(newData);
+        if (e->triggered) {
+            e->pendingEvents.push_back(triggered);
+        } else {
+            e->event = triggered;
+            e->triggered = true;
+        }
+    };
+    event.filter.resetFunc = [](KernelEqueueEvent* e) {
+        e->triggered = false;
+        e->event.fflags = 0;
+        e->event.data = 0;
+    };
+    const int result = EqueueAddEvent_nid_postfix(eq, event);
+    if (result == SCE_KERNEL_ERROR_EBADF) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
+    }
+    if (result != EQUEUE_OK) throw std::runtime_error("VideoOut: event registration failed");
+    EventRegistration reg;
+    reg.eq = eq;
+    reg.generation = cfg->generation;
+    if (replace) *existing = reg;
+    else registrations->push_back(reg);
+    return result;
+}
+
+static int deleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind) {
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
+    }
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    if (cfg != nullptr) {
+        std::unique_lock lock(cfg->mutex);
+        cfg->Check();
+        auto* events = getEventList(*cfg, eventKind);
+        events->erase(std::remove_if(events->begin(), events->end(), [eq](const EventRegistration& r) { return r.eq == eq; }), events->end());
+    }
+    const int result = EqueueDeleteEvent_nid_postfix(eq, static_cast<uintptr_t>(eventKind), EVFILT_VIDEO_OUT);
+    if (result == SCE_KERNEL_ERROR_EBADF) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
+    }
+    return (result == SCE_KERNEL_ERROR_ENOENT) ? 0 : result;
+}
+
+extern "C" {
+
+int APS5_VABI sceVideoOutAddFlipEvent(KernelEqueue eq, int handle, void* udata) try {
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_FLIP, udata);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutAddVblankEvent(KernelEqueue eq, int handle, void* udata) try {
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK, udata);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutAddPreVblankStartEvent(KernelEqueue eq, int handle, void* udata) try {
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START, udata);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* udata) try {
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutAddVrrActiveStatusEvent(KernelEqueue eq, int handle, void* udata) try {
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VRR_STATUS, udata);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutDeleteFlipEvent(KernelEqueue eq, int handle) try {
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_FLIP);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutDeleteOutputModeEvent(KernelEqueue eq, int handle) try {
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutDeleteVblankEvent(KernelEqueue eq, int handle) try {
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VBLANK);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutDeletePreVblankStartEvent(KernelEqueue eq, int handle) try {
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutDeleteVrrActiveStatusEvent(KernelEqueue eq, int handle) try {
+    return deleteVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VRR_STATUS);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {
+    if (ev == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    const uintptr_t ident = ev->ident;
+    if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START && ident != VIDEO_OUT_EVENT_SET_MODE && ident != VIDEO_OUT_EVENT_VRR_STATUS) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    return static_cast<int>(ident);
+}
+
+int APS5_VABI sceVideoOutGetEventData(const KernelEvent* ev, int64_t* data) {
+    if (ev == nullptr || data == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    uint64_t eventData = static_cast<uint64_t>(ev->data) >> 16u;
+    if (ev->ident == static_cast<uintptr_t>(VIDEO_OUT_EVENT_FLIP) && (static_cast<uint64_t>(ev->data) & 0x8000000000000000ULL) != 0) {
+        eventData |= 0xffff000000000000ULL;
+    }
+    *data = static_cast<int64_t>(eventData);
+    return 0;
+}
+
+int APS5_VABI sceVideoOutGetEventCount(const KernelEvent* ev) {
+    if (ev == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    if (ev->filter != EVFILT_VIDEO_OUT) return VIDEO_OUT_ERROR_INVALID_EVENT;
+    return static_cast<int>((static_cast<uint64_t>(ev->data) >> 12u) & 0xfu);
+}
+
+}

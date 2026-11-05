@@ -1,0 +1,753 @@
+#include "BdaAbi.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
+#include <spirv/unified1/spirv.hpp>
+#include <algorithm>
+#include <cstdio>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <vector>
+
+namespace AgcDriver::Graphics {
+namespace {
+
+struct Decoration {
+    std::optional<std::uint32_t> location;
+    std::optional<std::uint32_t> builtin;
+    std::optional<std::uint32_t> set;
+    std::optional<std::uint32_t> binding;
+    std::optional<std::uint32_t> stride;
+    std::optional<std::uint32_t> index;
+    bool block = false;
+    bool aliased = false;
+    bool patch = false;
+    bool perPrimitive = false;
+    bool perVertex = false;
+};
+
+struct Variable {
+    std::uint32_t pointer;
+    std::uint32_t storage;
+};
+
+struct Module {
+    std::map<std::uint32_t, std::vector<std::uint32_t>> types;
+    std::map<std::uint32_t, Decoration> decorations;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> builtins;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> offsets;
+    std::set<std::pair<std::uint32_t, std::uint32_t>> perPrimitiveMembers;
+    std::map<std::uint32_t, Variable> variables;
+    std::map<std::uint32_t, std::uint32_t> constants;
+    std::set<std::uint32_t> interface;
+    std::map<std::uint32_t, std::string> inputs;
+    std::map<std::uint32_t, std::string> outputs;
+    std::optional<std::string> secondSource;
+    bool position = false;
+    std::uint32_t clipDistances = 0;
+    std::uint32_t cullDistances = 0;
+    std::uint32_t primitiveIndices = 0;
+    bool fragmentBarycentric = false;
+    bool layerOutput = false;
+    bool meshCapability = false;
+    std::uint32_t primitiveInputs = 0;
+    bool pointSizeOutput = false;
+    bool pointSize = false;
+    std::map<std::uint32_t, std::vector<std::uint32_t>> modes;
+
+    const std::vector<std::uint32_t>& Type(std::uint32_t id) const {
+        const auto it = types.find(id);
+        Require(it != types.end(), "SPIR-V refers to an unknown type");
+        return it->second;
+    }
+
+    std::string Signature(std::uint32_t id, std::uint32_t depth = 0) const {
+        Require(depth < 8, "SPIR-V interface type nesting exceeds supported depth");
+        const auto& type = Type(id);
+        const auto op = static_cast<spv::Op>(type[0] & 0xffffu);
+        if (op == spv::OpTypeFloat && type.size() == 3 && type[2] == 32) return "f32";
+        if (op == spv::OpTypeInt && type.size() == 4 && type[2] == 32 && type[3] <= 1) return type[3] != 0 ? "i32" : "u32";
+        if (op == spv::OpTypeBool && type.size() == 2) return "bool";
+        if (op == spv::OpTypeVector && type.size() == 4 && type[3] >= 2 && type[3] <= 4) return Signature(type[2], depth + 1) + "x" + std::to_string(type[3]);
+        if (op == spv::OpTypeArray && type.size() == 4) {
+            const auto length = constants.find(type[3]);
+            Require(length != constants.end(), "SPIR-V interface array length is not a constant");
+            return Signature(type[2], depth + 1) + "[" + std::to_string(length->second) + "]";
+        }
+        throw std::runtime_error("AGC graphics: unsupported SPIR-V interface type");
+    }
+
+    std::uint32_t AddLocations(std::map<std::uint32_t, std::string>& locations, std::uint32_t location, std::uint32_t typeId, bool patch, bool primitive = false, std::uint32_t depth = 0) const {
+        Require(depth < 8 && location < 256, "graphics interface exceeds supported locations");
+        const auto& type = Type(typeId);
+        if ((type[0] & 0xffffu) == spv::OpTypeArray) {
+            Require(type.size() == 4, "malformed interface array");
+            const auto count = constants.find(type[3]);
+            Require(count != constants.end() && count->second != 0 && count->second <= 256, "invalid interface array length");
+            for (std::uint32_t i = 0; i < count->second; ++i) location = AddLocations(locations, location, type[2], patch, primitive, depth + 1);
+            return location;
+        }
+        Require(locations.emplace(location | (patch ? 0x10000u : 0u), std::string(patch ? "patch:" : primitive ? "primitive:" : "vertex:") + Signature(typeId)).second, "duplicate shader interface location");
+        return location + 1;
+    }
+
+    void Builtin(std::uint32_t value, std::uint32_t type, std::uint32_t storage, ShaderRecompiler::ShaderStage stage, const VkPhysicalDeviceSubgroupProperties& subgroup) {
+        using Stage = ShaderRecompiler::ShaderStage;
+        const bool vertex = stage == Stage::Vertex || stage == Stage::Local;
+        const bool input = storage == spv::StorageClassInput;
+        const auto& raw = Type(type);
+        if (value == spv::BuiltInBaryCoordKHR || value == spv::BuiltInBaryCoordNoPerspKHR) {
+            Require(fragmentBarycentric && stage == Stage::Fragment && input && Signature(type) == "f32x3", "invalid barycentric built-in: expected fragment Float32 vec3 input with FragmentBarycentricKHR");
+            return;
+        }
+        if (value == spv::BuiltInSubgroupLocalInvocationId) {
+            Require(input && Signature(type) == "u32", "invalid subgroup local invocation ID input");
+            Require((subgroup.supportedStages & VulkanStage(stage)) != 0 && (subgroup.supportedOperations & VK_SUBGROUP_FEATURE_BASIC_BIT) != 0, "subgroup local invocation ID is unsupported for this shader stage");
+            return;
+        }
+        if ((value == spv::BuiltInTessLevelOuter || value == spv::BuiltInTessLevelInner) && (stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation)) {
+            Require(raw.size() == 4 && (raw[0] & 0xffffu) == spv::OpTypeArray && Signature(raw[2]) == "f32", "invalid tessellation level type");
+            const auto count = constants.find(raw[3]);
+            Require(count != constants.end() && count->second == (value == spv::BuiltInTessLevelOuter ? 4u : 2u), "invalid tessellation level count");
+            Require(input == (stage == Stage::TessellationEvaluation), "invalid tessellation level direction");
+            return;
+        }
+        if (stage == Stage::Geometry) {
+            Require(value == spv::BuiltInPosition && Signature(type) == "f32x4" && (input || !position), "unsupported geometry built-in");
+            if (!input) position = true;
+            return;
+        }
+        // One gl_ClipDistance array holds the guest clip distances and the recompiler's all-zero position distance.
+        if (!input && ((value == spv::BuiltInClipDistance && (vertex || stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)) || (value == spv::BuiltInCullDistance && (vertex || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)))) {
+            const auto signature = Signature(type);
+            auto& count = value == spv::BuiltInClipDistance ? clipDistances : cullDistances;
+            Require(count == 0 && signature.size() == 6 && signature.starts_with("f32[") && signature[4] >= '1' && signature[4] <= '8' && signature[5] == ']', "invalid or duplicate clip or cull distance output");
+            count = static_cast<std::uint32_t>(signature[4] - '0');
+            Require(clipDistances + cullDistances <= 8, "more than eight clip and cull distances in one shader");
+            return;
+        }
+        if (stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation || stage == Stage::Mesh) {
+            const auto signature = Signature(type);
+            if (!input && value == spv::BuiltInPosition) {
+                Require(signature == "f32x4" && !position, "invalid or duplicate position output");
+                position = true;
+                return;
+            }
+            if (stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation) {
+                const bool clipInput = value == spv::BuiltInClipDistance && signature.size() == 6 && signature.starts_with("f32[") && signature[4] >= '1' && signature[4] <= '8' && signature[5] == ']';
+                Require(input && (clipInput || (value == spv::BuiltInPosition && signature == "f32x4") || (value == spv::BuiltInTessCoord && stage == Stage::TessellationEvaluation && signature == "f32x3") || ((value == spv::BuiltInInvocationId || value == spv::BuiltInPrimitiveId || value == spv::BuiltInPatchVertices) && (signature == "i32" || signature == "u32"))), "unsupported tessellation built-in");
+                return;
+            }
+            if (!input && value == spv::BuiltInPointSize && pointSizeOutput && signature == "f32" && !pointSize) {
+                pointSize = true;
+                return;
+            }
+            if (!input && value == spv::BuiltInPrimitivePointIndicesEXT) primitiveIndices = 1u;
+            if (!input && value == spv::BuiltInPrimitiveLineIndicesEXT) primitiveIndices = 2u;
+            if (!input && value == spv::BuiltInPrimitiveTriangleIndicesEXT) primitiveIndices = 3u;
+            Require((input && ((value == spv::BuiltInWorkgroupId || value == spv::BuiltInLocalInvocationId || value == spv::BuiltInGlobalInvocationId || value == spv::BuiltInNumWorkgroups) && signature == "u32x3")) || (input && value == spv::BuiltInLocalInvocationIndex && signature == "u32") || (!input && value == spv::BuiltInPrimitivePointIndicesEXT && signature == "u32") || (!input && value == spv::BuiltInPrimitiveLineIndicesEXT && signature == "u32x2") || (!input && value == spv::BuiltInPrimitiveTriangleIndicesEXT && signature == "u32x3") || (!input && value == spv::BuiltInCullPrimitiveEXT && signature == "bool") || (!input && value == spv::BuiltInLayer && signature == "u32"), "unsupported mesh built-in");
+            return;
+        }
+        const auto signature = Signature(type);
+        if (vertex && storage == spv::StorageClassInput) {
+            Require((value == spv::BuiltInVertexIndex || value == spv::BuiltInInstanceIndex || value == spv::BuiltInBaseInstance) && signature == "i32", "unsupported vertex built-in input");
+        } else if (vertex && storage == spv::StorageClassOutput) {
+            if (value == spv::BuiltInLayer && layerOutput && (signature == "u32" || signature == "i32")) return;
+            if (value == spv::BuiltInPointSize && pointSizeOutput && signature == "f32" && !pointSize) {
+                pointSize = true;
+                return;
+            }
+            Require(value == spv::BuiltInPosition && signature == "f32x4" && !position, "unsupported or duplicate vertex built-in output");
+            position = true;
+        } else {
+            Require((storage == spv::StorageClassInput && ((value == spv::BuiltInFragCoord && signature == "f32x4") || ((value == spv::BuiltInFrontFacing || value == spv::BuiltInHelperInvocation) && signature == "bool") || ((value == spv::BuiltInSampleId || value == spv::BuiltInLayer) && signature == "i32") || (value == spv::BuiltInSampleMask && signature == "i32[1]"))) || (storage == spv::StorageClassOutput && ((value == spv::BuiltInFragDepth && signature == "f32") || (value == spv::BuiltInFragStencilRefEXT && signature == "i32") || (value == spv::BuiltInSampleMask && (signature == "i32[1]" || signature == "u32[1]")))), "unsupported fragment built-in");
+        }
+    }
+};
+
+Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool shaderResourceMinLod, bool fmaFloat16, std::span<const std::uint32_t> primitiveLocations = {}) {
+    using Stage = ShaderRecompiler::ShaderStage;
+    Require(compiled.program != nullptr, "missing compiled shader");
+    const auto& shader = *compiled.program;
+    PipelineSpecialization::Validate(shader);
+    const auto stage = compiled.stage;
+    const bool vertex = stage == Stage::Vertex || stage == Stage::Local;
+    const bool fragment = stage == Stage::Fragment;
+    const bool mesh = stage == Stage::Mesh;
+    const bool control = stage == Stage::TessellationControl;
+    const bool evaluation = stage == Stage::TessellationEvaluation;
+    const bool geometry = stage == Stage::Geometry;
+    const bool rectListControl = state.rectList && control;
+    if (rectListControl) {
+        Require(shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version, "incompatible rect-list fault ABI version");
+        Require(shader.bindings.size() == 1, "rect-list control shader must declare exactly one fault buffer");
+        const auto& binding = shader.bindings.front();
+        Require(binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer && binding.kind == ShaderRecompiler::DescriptorKind::StorageBuffer && binding.descriptorSet == 0 && binding.count == 1 && binding.guestDescriptor.empty() && !binding.readOnly, "invalid rect-list fault buffer contract");
+    }
+    const auto model = mesh ? spv::ExecutionModelMeshEXT : control ? spv::ExecutionModelTessellationControl : evaluation ? spv::ExecutionModelTessellationEvaluation : geometry ? spv::ExecutionModelGeometry : vertex ? spv::ExecutionModelVertex : spv::ExecutionModelFragment;
+    const auto& words = shader.spirv;
+
+    Require(words.size() >= 5, "SPIR-V header is truncated: " + std::to_string(words.size()) + " words");
+    Require(words[0] == spv::MagicNumber, "invalid SPIR-V magic number: " + std::to_string(words[0]));
+    Require(words[1] >= 0x10000u && words[1] <= 0x10400u, "unsupported SPIR-V version: " + std::to_string(words[1]));
+    Require(words[3] != 0, "invalid SPIR-V bound: 0");
+    Require(words[4] == 0, "unsupported SPIR-V schema: " + std::to_string(words[4]));
+
+    Module module;
+    module.pointSizeOutput = (state.vertexPoints && stage == Stage::Vertex) || (mesh && state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 1u);
+    std::uint32_t entries = 0;
+    std::uint32_t memoryModels = 0;
+    std::uint32_t entryPoint = 0;
+    std::set<std::uint32_t> executionModeTargets;
+    bool upperLeft = false;
+    bool terminateExtension = false;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0 && count <= words.size() - cursor, "truncated SPIR-V instruction");
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        const auto instruction = std::span(words).subspan(cursor, count);
+        switch (op) {
+            case spv::OpCapability: {
+                Require(count == 2, "invalid OpCapability instruction");
+
+                const auto capability = static_cast<spv::Capability>(instruction[1]);
+                const bool isBarycentricCapability = capability == spv::CapabilityFragmentBarycentricKHR;
+                if (isBarycentricCapability) {
+                    Require(fragment, "FragmentBarycentricKHR requires a fragment shader");
+                    Require(fragmentShaderBarycentric, "device does not support enabled VK_KHR_fragment_shader_barycentric with fragmentShaderBarycentric");
+                    module.fragmentBarycentric = true;
+                }
+                const bool isLayerCapability = capability == spv::CapabilityShaderViewportIndexLayerEXT;
+                if (isLayerCapability) {
+                    Require(viewportIndexLayer, "device does not support enabled VK_EXT_shader_viewport_index_layer");
+                    module.layerOutput = true;
+                }
+                VkSubgroupFeatureFlags subgroupOperations = 0;
+                switch (capability) {
+                    case spv::CapabilityGroupNonUniform: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT; break;
+                    case spv::CapabilityGroupNonUniformBallot: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT; break;
+                    case spv::CapabilityGroupNonUniformShuffle: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT; break;
+                    case spv::CapabilityGroupNonUniformArithmetic: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT; break;
+                    default: break;
+                }
+                const bool isSubgroupCapability = subgroupOperations != 0;
+                if (isSubgroupCapability) {
+                    Require((subgroup.supportedStages & VulkanStage(stage)) != 0, "subgroup capability " + std::to_string(instruction[1]) + " is unsupported for shader stage " + std::to_string(VulkanStage(stage)));
+                    Require((subgroup.supportedOperations & subgroupOperations) == subgroupOperations, "device lacks operations for subgroup capability " + std::to_string(instruction[1]));
+                }
+
+                const bool isBaseCapability =
+                    capability == spv::CapabilityShader ||
+                    capability == spv::CapabilitySignedZeroInfNanPreserve;
+
+                const bool isBdaCapability =
+                    shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version &&
+                    (capability == spv::CapabilityInt64 ||
+                     capability == spv::CapabilityPhysicalStorageBufferAddresses ||
+                     capability == spv::CapabilityStorageBuffer8BitAccess);
+
+                const bool isTessellationCapability =
+                    (control || evaluation) &&
+                    capability == spv::CapabilityTessellation;
+
+                if (fragment && capability == spv::CapabilityMeshShadingEXT) module.meshCapability = true;
+                const bool isMeshCapability =
+                    (mesh || (fragment && !primitiveLocations.empty())) &&
+                    capability == spv::CapabilityMeshShadingEXT;
+
+                const bool isGeometryCapability =
+                    geometry &&
+                    capability == spv::CapabilityGeometry;
+
+                const bool isInterlockCapability =
+                    fragment &&
+                    capability == spv::CapabilityFragmentShaderPixelInterlockEXT;
+
+                const bool isStencilExportCapability =
+                    fragment &&
+                    capability == spv::CapabilityStencilExportEXT;
+
+                if ((vertex || control || evaluation || mesh) && (capability == spv::CapabilityClipDistance || capability == spv::CapabilityCullDistance)) {
+                    char word[16];
+                    std::snprintf(word, sizeof(word), "0x%08x", state.paClVsOutCntl);
+                    Require(capability == spv::CapabilityClipDistance ? shaderClipDistance : (vertex || evaluation || mesh) && shaderCullDistance, std::string("vertex clip or cull distance needs shaderClipDistance or shaderCullDistance, which the device lacks (PA_CL_VS_OUT_CNTL=") + word + ")");
+                }
+
+                // Enabled unconditionally or by the device setup in VulkanDevice.
+                const bool isFeatureCapability =
+                    capability == spv::CapabilitySampled1D ||
+                    capability == spv::CapabilityImage1D ||
+                    capability == spv::CapabilityImageGatherExtended ||
+                    capability == spv::CapabilityImageQuery ||
+                    (shaderResourceMinLod && capability == spv::CapabilityMinLod) ||
+                    ((vertex || control || evaluation || mesh) && shaderClipDistance && capability == spv::CapabilityClipDistance) ||
+                    (vertex && capability == spv::CapabilityDrawParameters) ||
+                    (fragment && geometryShader && capability == spv::CapabilityGeometry) ||
+                    (fragment && sampleRateShading && capability == spv::CapabilitySampleRateShading) ||
+                    (fragment && sampleRateShading && capability == spv::CapabilityInterpolationFunction) ||
+                    capability == spv::CapabilityImageMSArray ||
+                    capability == spv::CapabilityStorageImageMultisample ||
+                    ((vertex || evaluation || mesh) && shaderCullDistance && capability == spv::CapabilityCullDistance) ||
+                    capability == spv::CapabilityStorageImageWriteWithoutFormat ||
+                    capability == spv::CapabilityStorageImageReadWithoutFormat ||
+                    capability == spv::CapabilityInt64 ||
+                    capability == spv::CapabilityInt16 ||
+                    capability == spv::CapabilityFloat16 ||
+                    capability == spv::CapabilityRoundingModeRTE ||
+                    capability == spv::CapabilityDenormPreserve ||
+                    capability == spv::CapabilityDenormFlushToZero ||
+                    (fmaFloat16 && capability == spv::CapabilityFMAKHR) ||
+                    capability == spv::CapabilityFloat64 ||
+                    capability == spv::CapabilityStorageBuffer8BitAccess ||
+                    capability == spv::CapabilityPhysicalStorageBufferAddresses ||
+                    capability == spv::CapabilitySampledImageArrayDynamicIndexing ||
+                    capability == spv::CapabilityStorageImageArrayDynamicIndexing ||
+                    (fragment && demoteToHelperInvocation && capability == spv::CapabilityDemoteToHelperInvocation);
+
+                // Bindless image tables index their slots non-uniformly in graphics stages
+                // (VK_EXT_descriptor_indexing, enabled by the device setup when available).
+                const bool isDescriptorIndexingCapability =
+                    (descriptorIndexing &&
+                    (capability == spv::CapabilityShaderNonUniform ||
+                     capability == spv::CapabilitySampledImageArrayNonUniformIndexing ||
+                     capability == spv::CapabilityStorageImageArrayNonUniformIndexing)) ||
+                    (runtimeDescriptorArray && capability == spv::CapabilityRuntimeDescriptorArray);
+
+                Require(
+                    isBaseCapability ||
+                    isBarycentricCapability ||
+                    isSubgroupCapability ||
+                    isBdaCapability ||
+                    isTessellationCapability ||
+                    isMeshCapability ||
+                    isGeometryCapability ||
+                    isInterlockCapability ||
+                    isStencilExportCapability ||
+                    isFeatureCapability ||
+                    isDescriptorIndexingCapability ||
+                    ((imageInt64Atomics || bufferInt64Atomics) && capability == spv::CapabilityInt64Atomics) ||
+                    (imageInt64Atomics && capability == spv::CapabilityInt64ImageEXT) ||
+                    isLayerCapability,
+                    std::string("SPIR-V requires unsupported device capability ") +
+                        std::to_string(static_cast<std::uint32_t>(capability)));
+
+                break;
+            }
+
+            case spv::OpExtension: {
+                const auto bytes = std::as_bytes(instruction.subspan(1));
+                const auto* text = reinterpret_cast<const char*>(bytes.data());
+                const auto end = std::find(text, text + bytes.size(), '\0');
+                Require(end != text + bytes.size(), "unterminated SPIR-V extension");
+                const std::string_view extension(text, static_cast<std::size_t>(end - text));
+                if (extension == "SPV_EXT_fragment_shader_interlock") {
+                    Require(fragment, "SPV_EXT_fragment_shader_interlock requires a fragment shader");
+                    break;
+                }
+                if (extension == "SPV_EXT_shader_stencil_export") {
+                    Require(fragment, "SPV_EXT_shader_stencil_export requires a fragment shader");
+                    break;
+                }
+                if (extension == "SPV_KHR_fragment_shader_barycentric") {
+                    Require(fragment && fragmentShaderBarycentric, "SPV_KHR_fragment_shader_barycentric requires enabled fragmentShaderBarycentric in a fragment shader");
+                    break;
+                }
+                if (extension == "SPV_KHR_terminate_invocation") {
+                    Require(fragment && shaderTerminateInvocation, "SPV_KHR_terminate_invocation requires enabled shaderTerminateInvocation in a fragment shader");
+                    terminateExtension = true;
+                    break;
+                }
+                Require(extension == "SPV_KHR_float_controls" || (fmaFloat16 && extension == "SPV_KHR_fma") || (imageInt64Atomics && extension == "SPV_EXT_shader_image_int64") || (viewportIndexLayer && extension == "SPV_EXT_shader_viewport_index_layer") || (fragment && demoteToHelperInvocation && extension == "SPV_EXT_demote_to_helper_invocation") || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || (fragment && !primitiveLocations.empty() && extension == "SPV_EXT_mesh_shader") || (geometry && state.tessellationCapture && extension == "SPV_KHR_physical_storage_buffer") || ((descriptorIndexing || runtimeDescriptorArray) && extension == "SPV_EXT_descriptor_indexing") || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (extension == "SPV_KHR_physical_storage_buffer" || extension == "SPV_KHR_8bit_storage")), "unsupported SPIR-V extension");
+                break;
+            }
+            case spv::OpTerminateInvocation:
+                Require(count == 1, "invalid OpTerminateInvocation instruction");
+                Require(fragment && shaderTerminateInvocation, "OpTerminateInvocation requires enabled shaderTerminateInvocation in a fragment shader");
+                Require(terminateExtension, "OpTerminateInvocation requires SPV_KHR_terminate_invocation");
+                break;
+            case spv::OpDecorateId:
+            case spv::OpDecorationGroup:
+            case spv::OpGroupDecorate:
+            case spv::OpGroupMemberDecorate:
+            case spv::OpSpecConstantTrue:
+            case spv::OpSpecConstantFalse:
+            case spv::OpSpecConstantComposite:
+            case spv::OpSpecConstantOp:
+                throw std::runtime_error("AGC graphics: unsupported SPIR-V extension, grouped decoration or specialization constant");
+            case spv::OpMemoryModel: {
+                // Address-based shaders use PhysicalStorageBuffer64; everything else (including the
+                // generated rect-list stages) is Logical.
+                Require(count == 3, "invalid SPIR-V OpMemoryModel word count: " + std::to_string(count));
+                Require(instruction[1] == spv::AddressingModelPhysicalStorageBuffer64 || instruction[1] == spv::AddressingModelLogical, "unsupported SPIR-V addressing model: " + std::to_string(instruction[1]));
+                Require(instruction[2] == spv::MemoryModelGLSL450, "unsupported SPIR-V memory model: " + std::to_string(instruction[2]));
+                ++memoryModels;
+                break;
+            }
+            case spv::OpEntryPoint:
+                Require(count >= 5 && instruction[1] == model && instruction[3] == 0x6e69616du && instruction[4] == 0, "expected a main entry point for the assigned graphics stage");
+                entryPoint = instruction[2];
+                ++entries;
+                for (std::size_t i = 5; i < count; ++i) Require(module.interface.insert(instruction[i]).second, "duplicate SPIR-V interface ID");
+                break;
+            case spv::OpExecutionMode:
+                if (count == 4 && (instruction[2] == spv::ExecutionModeSignedZeroInfNanPreserve || instruction[2] == spv::ExecutionModeRoundingModeRTE || instruction[2] == spv::ExecutionModeDenormPreserve || instruction[2] == spv::ExecutionModeDenormFlushToZero)) {
+                    Require(instruction[3] == 16u || instruction[3] == 32u || instruction[3] == 64u, "float controls execution modes require Float16, Float32 or Float64");
+                    executionModeTargets.insert(instruction[1]);
+                    break;
+                }
+                Require(count >= 3 && module.modes.emplace(instruction[2], std::vector<std::uint32_t>(instruction.begin() + 3, instruction.end())).second, "duplicate or malformed execution mode");
+                executionModeTargets.insert(instruction[1]);
+                if (instruction[2] == spv::ExecutionModeOriginUpperLeft) upperLeft = true;
+                break;
+            case spv::OpExecutionModeId:
+                throw std::runtime_error("AGC graphics: execution mode IDs require unsupported specialization");
+            case spv::OpDecorate: {
+                Require(count >= 3, "malformed SPIR-V decoration");
+                auto& decoration = module.decorations[instruction[1]];
+                const auto kind = static_cast<spv::Decoration>(instruction[2]);
+                if (kind == spv::DecorationLocation || kind == spv::DecorationBuiltIn || kind == spv::DecorationDescriptorSet || kind == spv::DecorationBinding || kind == spv::DecorationArrayStride || kind == spv::DecorationIndex) {
+                    Require(count == 4, "malformed SPIR-V literal decoration");
+                    auto* field = kind == spv::DecorationLocation ? &decoration.location : kind == spv::DecorationBuiltIn ? &decoration.builtin : kind == spv::DecorationDescriptorSet ? &decoration.set : kind == spv::DecorationBinding ? &decoration.binding : kind == spv::DecorationIndex ? &decoration.index : &decoration.stride;
+                    Require(!field->has_value(), "duplicate SPIR-V decoration");
+                    *field = instruction[3];
+                }
+                Require(kind != spv::DecorationComponent && kind != spv::DecorationStream && kind != spv::DecorationXfbBuffer && kind != spv::DecorationXfbStride, "unsupported shader interface packing or transform feedback");
+                if (kind == spv::DecorationPatch) decoration.patch = true;
+                if (kind == spv::DecorationPerPrimitiveEXT) decoration.perPrimitive = true;
+                if (kind == spv::DecorationPerVertexKHR) {
+                    Require(count == 3, "malformed PerVertexKHR decoration");
+                    decoration.perVertex = true;
+                }
+                if (kind == spv::DecorationBlock) decoration.block = true;
+                if (kind == spv::DecorationAliased) decoration.aliased = true;
+                break;
+            }
+            case spv::OpMemberDecorate:
+                Require(count >= 4, "malformed SPIR-V member decoration");
+                if (instruction[3] == spv::DecorationBuiltIn || instruction[3] == spv::DecorationOffset) {
+                    Require(count == 5, "malformed SPIR-V member literal decoration");
+                    auto& fields = instruction[3] == spv::DecorationBuiltIn ? module.builtins : module.offsets;
+                    Require(fields.emplace(std::make_pair(instruction[1], instruction[2]), instruction[4]).second, "duplicate SPIR-V member decoration");
+                }
+                if (instruction[3] == spv::DecorationPerPrimitiveEXT) module.perPrimitiveMembers.emplace(instruction[1], instruction[2]);
+                break;
+            case spv::OpTypeBool:
+            case spv::OpTypeInt:
+            case spv::OpTypeFloat:
+            case spv::OpTypeVector:
+            case spv::OpTypeMatrix:
+            case spv::OpTypeArray:
+            case spv::OpTypeRuntimeArray:
+            case spv::OpTypeStruct:
+            case spv::OpTypePointer:
+                Require(count >= 2 && module.types.emplace(instruction[1], std::vector<std::uint32_t>(instruction.begin(), instruction.end())).second, "invalid or duplicate SPIR-V type");
+                break;
+            case spv::OpVariable:
+                Require(count >= 4 && module.variables.emplace(instruction[2], Variable{instruction[1], instruction[3]}).second, "invalid or duplicate SPIR-V variable");
+                break;
+            case spv::OpConstant:
+                if (count == 4) module.constants.emplace(instruction[2], instruction[3]);
+                break;
+            case spv::OpSpecConstant:
+                break;
+            default: break;
+        }
+        cursor += count;
+    }
+    Require(entries == 1 && memoryModels == 1, "SPIR-V must contain one entry point and memory model");
+    Require(entryPoint != 0 && std::all_of(executionModeTargets.begin(), executionModeTargets.end(), [&](auto target) { return target == entryPoint; }), "execution mode refers to a different entry point");
+    Require(!fragment || upperLeft, "fragment coordinates must use an upper-left origin");
+    const auto mode = [&](std::uint32_t name, std::vector<std::uint32_t> operands) {
+        const auto it = module.modes.find(name);
+        Require(it != module.modes.end() && it->second == operands, "missing or incompatible shader execution mode");
+    };
+    const bool barycentricPatches = (control || evaluation) && !state.rectList && !state.stages.tessellation && state.stages.path == ShaderPath::Vertex;
+    if (mesh) {
+        Require(state.stages.mesh.has_value(), "mesh configuration is missing");
+        const auto& config = *state.stages.mesh;
+        const auto local = module.modes.find(spv::ExecutionModeLocalSize);
+        const bool paired = state.stages.vertexWaveSize == 64u && subgroup.subgroupSize == 32u && local != module.modes.end() && local->second == std::vector<std::uint32_t>{config.threadsPerGroup / 2u, 1, 1};
+        mode(spv::ExecutionModeLocalSize, {paired ? config.threadsPerGroup / 2u : config.threadsPerGroup, 1, 1});
+        mode(spv::ExecutionModeOutputVertices, {config.maxVertices});
+        mode(spv::ExecutionModeOutputPrimitivesEXT, {config.maxPrimitives});
+        mode(config.outputPrimitiveSize == 1u ? spv::ExecutionModeOutputPoints : config.outputPrimitiveSize == 2u ? spv::ExecutionModeOutputLinesEXT : spv::ExecutionModeOutputTrianglesEXT, {});
+        Require(module.modes.size() == 4, "unsupported mesh execution mode");
+    } else if (barycentricPatches) {
+        if (control) mode(spv::ExecutionModeOutputVertices, {3u});
+        mode(spv::ExecutionModeTriangles, {});
+        mode(spv::ExecutionModeSpacingEqual, {});
+        mode(spv::ExecutionModeVertexOrderCw, {});
+        Require(module.modes.size() == (control ? 4u : 3u), "unsupported generated tessellation execution mode");
+    } else if (control) {
+        Require(state.rectList || state.stages.tessellation.has_value(), "tessellation configuration is missing");
+        mode(spv::ExecutionModeOutputVertices, {state.rectList ? 4u : state.stages.tessellation->outputControlPoints});
+        Require(module.modes.size() == 1, "unsupported tessellation-control execution mode");
+    } else if (evaluation) {
+        Require(state.rectList || state.stages.tessellation.has_value(), "tessellation configuration is missing");
+        const bool quads = state.rectList || state.stages.tessellation->domain == 2u;
+        const bool counterClockwise = !state.rectList && state.stages.tessellation->outputTopology == 3u;
+        mode(quads ? spv::ExecutionModeQuads : spv::ExecutionModeTriangles, {});
+        mode(state.rectList || state.stages.tessellation->partitioning == 0u ? spv::ExecutionModeSpacingEqual : state.stages.tessellation->partitioning == 3u ? spv::ExecutionModeSpacingFractionalEven : spv::ExecutionModeSpacingFractionalOdd, {});
+        mode(counterClockwise ? spv::ExecutionModeVertexOrderCcw : spv::ExecutionModeVertexOrderCw, {});
+        Require(module.modes.size() == 3, "unsupported tessellation-evaluation execution mode");
+    } else if (geometry) {
+        mode(spv::ExecutionModeTriangles, {});
+        mode(spv::ExecutionModeInvocations, {1u});
+        mode(state.tessellationCapture ? spv::ExecutionModeOutputPoints : spv::ExecutionModeOutputTriangleStrip, {});
+        mode(spv::ExecutionModeOutputVertices, {state.tessellationCapture ? 1u : 3u});
+        Require(module.modes.size() == 4, "unsupported geometry execution mode");
+    } else if (fragment) {
+        for (const auto& [name, operands] : module.modes) Require(operands.empty() && (name == spv::ExecutionModeOriginUpperLeft || name == spv::ExecutionModeEarlyFragmentTests || name == spv::ExecutionModeDepthReplacing || name == spv::ExecutionModeDepthLess || name == spv::ExecutionModeDepthGreater || name == spv::ExecutionModePixelInterlockOrderedEXT || name == spv::ExecutionModeStencilRefReplacingEXT), "unsupported fragment execution mode");
+    } else Require(module.modes.empty(), "unsupported vertex execution mode");
+    std::set<std::pair<std::uint32_t, std::uint32_t>> descriptors;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, bool> bufferViews;
+    bool push = false;
+    for (const auto& [id, variable] : module.variables) {
+        if (variable.storage == spv::StorageClassFunction || variable.storage == spv::StorageClassPrivate) continue;
+        const auto& pointer = module.Type(variable.pointer);
+        Require(pointer.size() == 4 && (pointer[0] & 0xffffu) == spv::OpTypePointer && pointer[2] == variable.storage, "invalid SPIR-V variable pointer");
+        auto typeId = pointer[3];
+        const auto& decoration = module.decorations[id];
+        const bool input = variable.storage == spv::StorageClassInput;
+        const bool output = variable.storage == spv::StorageClassOutput;
+        const bool tessellationLevels = decoration.builtin && (*decoration.builtin == spv::BuiltInTessLevelOuter || *decoration.builtin == spv::BuiltInTessLevelInner);
+        const bool vertexArray = !tessellationLevels && ((control && (input || output)) || (evaluation && input) || (geometry && input) || (mesh && output)) && !decoration.patch;
+        const auto& outer = module.Type(typeId);
+        if (decoration.perVertex) {
+            Require(fragment && input && module.fragmentBarycentric && !decoration.patch && !decoration.perPrimitive && !decoration.builtin && decoration.location.has_value(), "PerVertexKHR requires a fragment location input with FragmentBarycentricKHR");
+            Require(outer.size() == 4 && (outer[0] & 0xffffu) == spv::OpTypeArray, "PerVertexKHR input must be an array");
+            const auto length = module.constants.find(outer[3]);
+            Require(length != module.constants.end() && length->second == 3, "PerVertexKHR input must contain three vertices");
+            typeId = outer[2];
+        }
+        if (vertexArray && (outer[0] & 0xffffu) == spv::OpTypeArray) {
+            Require(outer.size() == 4, "malformed per-vertex interface array");
+            const auto length = module.constants.find(outer[3]);
+            Require(length != module.constants.end() && length->second != 0, "invalid per-vertex interface array length");
+            if (mesh) {
+                const bool primitive = decoration.perPrimitive || module.perPrimitiveMembers.contains({outer[2], 0u}) || (decoration.builtin && (*decoration.builtin == spv::BuiltInPrimitivePointIndicesEXT || *decoration.builtin == spv::BuiltInPrimitiveLineIndicesEXT || *decoration.builtin == spv::BuiltInPrimitiveTriangleIndicesEXT || *decoration.builtin == spv::BuiltInCullPrimitiveEXT));
+                Require(length->second == (primitive ? state.stages.mesh->maxPrimitives : state.stages.mesh->maxVertices), "mesh interface array disagrees with output limits");
+            } else if (geometry) {
+                Require(length->second == 3u, "geometry interface array must hold the three vertices of a triangle");
+            } else {
+                const auto expected = barycentricPatches ? 3u : state.rectList ? (control && input ? 3u : 4u) : control && input ? state.stages.tessellation->inputControlPoints : state.stages.tessellation->outputControlPoints;
+                Require(length->second == expected, "tessellation interface array disagrees with control-point count");
+            }
+            typeId = outer[2];
+        }
+        const auto& type = module.Type(typeId);
+        Require(!decoration.index || (fragment && output && (state.dualSourceBlend || state.reversedBlend != 0) && decoration.location == 0u && *decoration.index == 1u), "only the second dual-source blend color may use the Index decoration, at location 0 index 1");
+        if (variable.storage == spv::StorageClassInput || variable.storage == spv::StorageClassOutput) {
+            Require(module.interface.contains(id), "SPIR-V input or output is absent from the entry point interface");
+            if (decoration.index) {
+                Require(!module.secondSource, "duplicate second dual-source blend color");
+                module.secondSource = module.Signature(typeId);
+            } else if (decoration.location) {
+                Require(!vertexArray || (outer[0] & 0xffffu) == spv::OpTypeArray, "per-vertex interface lacks a control-point or mesh-output dimension");
+                Require(!decoration.perPrimitive || ((mesh && output) || (fragment && input)), "per-primitive user interface is unsupported for this stage");
+                Require(!decoration.perPrimitive || !decoration.patch, "a per-primitive interface cannot be a patch");
+                Require(!decoration.perPrimitive || std::ranges::find(primitiveLocations, *decoration.location) != primitiveLocations.end(), "per-primitive user interface at a location the barycentric emulation does not reserve");
+                Require(!decoration.builtin, "shader input cannot have both location and built-in decorations");
+                auto& locations = variable.storage == spv::StorageClassInput ? module.inputs : module.outputs;
+                module.AddLocations(locations, *decoration.location, typeId, decoration.patch, decoration.perPrimitive);
+                if (decoration.perPrimitive && fragment) module.primitiveInputs++;
+            } else if (decoration.builtin) {
+                module.Builtin(*decoration.builtin, typeId, variable.storage, stage, subgroup);
+            } else {
+                Require((type[0] & 0xffffu) == spv::OpTypeStruct, "shader interface lacks a location or built-in");
+                for (std::size_t i = 2; i < type.size(); ++i) {
+                    const auto builtin = module.builtins.find({typeId, static_cast<std::uint32_t>(i - 2)});
+                    Require(builtin != module.builtins.end(), "interface blocks with non-built-in members are unsupported");
+                    module.Builtin(builtin->second, type[i], variable.storage, stage, subgroup);
+                }
+            }
+        } else if (variable.storage == spv::StorageClassPushConstant) {
+            Require(!push && (!shader.pushConstants.empty() || shader.readsDepthRemapPush || mesh || (control && !rectListControl) || (geometry && state.tessellationCapture)) && (type[0] & 0xffffu) == spv::OpTypeStruct, "invalid push constant interface");
+            push = true;
+            Require(type.size() == 3 && module.decorations[typeId].block, "push constant variable must be a Block struct with exactly one member");
+            const auto offset = module.offsets.find({typeId, 0});
+            Require(offset != module.offsets.end() && offset->second % PipelinePushSlotBytes == 0 && offset->second < PipelinePushConstantBytes, "push constant member must start at a stage slot");
+            const auto& array = module.Type(type[2]);
+            Require(array.size() == 4 && (array[0] & 0xffffu) == spv::OpTypeArray && module.Signature(array[2]) == "u32", "push constant member must be an array of u32");
+            const auto length = module.constants.find(array[3]);
+            Require(length != module.constants.end() && length->second == PipelinePushSlotBytes / 4, "push constant array must contain 32 elements");
+            const auto stride = module.decorations[type[2]].stride;
+            Require(stride.has_value() && *stride == 4, "push constant array must have an ArrayStride of 4");
+        } else if (variable.storage == spv::StorageClassWorkgroup) {
+            Require(mesh, "workgroup memory outside a mesh shader");
+        } else if (variable.storage == spv::StorageClassUniformConstant) {
+            Require(decoration.set && decoration.binding, "unbound shader resource");
+            const auto key = std::make_pair(*decoration.set, *decoration.binding);
+            const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
+            Require(descriptors.insert(key).second || (binding != shader.bindings.end() && (binding->role == ShaderRecompiler::DescriptorRole::ImageTable || binding->role == ShaderRecompiler::DescriptorRole::ImageStorageTable)), "duplicate SPIR-V resource binding");
+            Require(binding != shader.bindings.end(), "SPIR-V resource is absent from recompiler binding metadata");
+            Require(binding->kind == ShaderRecompiler::DescriptorKind::Sampler || binding->kind == ShaderRecompiler::DescriptorKind::SampledImage || binding->kind == ShaderRecompiler::DescriptorKind::StorageImage, "SPIR-V descriptor type disagrees with recompiler binding metadata");
+            if (binding->role == ShaderRecompiler::DescriptorRole::ImageTable || binding->role == ShaderRecompiler::DescriptorRole::ImageStorageTable || binding->role == ShaderRecompiler::DescriptorRole::SamplerTable) {
+                Require(type.size() == 3 && (type[0] & 0xffffu) == spv::OpTypeRuntimeArray, "image table must be declared as a runtime descriptor array");
+                continue;
+            }
+            Require(type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray, "typed heap must be declared as a descriptor array");
+            const auto heap = static_cast<ShaderRecompiler::RuntimeAbi::Binding>(binding->binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count));
+            const auto capacity = ShaderRecompiler::RuntimeAbi::HeapCapacity(heap);
+            const auto count = module.constants.find(type[3]);
+            Require(binding->count != 0u && binding->count <= capacity && count != module.constants.end() && count->second == binding->count, "typed heap array length disagrees with compact binding");
+        } else {
+            Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
+            const auto key = std::make_pair(*decoration.set, *decoration.binding);
+            if (*decoration.set == ShaderRecompiler::MeshWindowDescriptorSet) {
+                Require(mesh && *decoration.binding == 0u, "mesh window buffer binding is wrong");
+                continue;
+            }
+            if (*decoration.set == ShaderRecompiler::PixelFunctionLdsDescriptorSet) {
+                Require(fragment && *decoration.binding == 0u, "pixel function LDS buffer binding is wrong");
+                continue;
+            }
+            const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
+            const bool array = binding != shader.bindings.end() && binding->role == ShaderRecompiler::DescriptorRole::GuestBuffers;
+            const auto [view, first] = bufferViews.emplace(key, decoration.aliased);
+            Require(descriptors.insert(key).second || (!first && view->second && decoration.aliased && array), "duplicate SPIR-V resource binding");
+            Require(binding != shader.bindings.end(), "SPIR-V resource is absent from recompiler binding metadata");
+            Require(binding->kind == ShaderRecompiler::DescriptorKind::StorageBuffer, "SPIR-V descriptor type disagrees with recompiler binding metadata");
+            Require(!binding->readOnly, "read-only descriptor metadata is unsupported because the recompiler emits no NonWritable decoration");
+            Require(array || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (binding->role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding->role == ShaderRecompiler::DescriptorRole::FaultBuffer)) || binding->role == ShaderRecompiler::DescriptorRole::ShaderData || binding->role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding->role == ShaderRecompiler::DescriptorRole::ImageTableMap || binding->role == ShaderRecompiler::DescriptorRole::Gds, "SPIR-V descriptor role is unsupported");
+            auto blockId = typeId;
+            if (array) {
+                Require(type.size() == 4 && (type[0] & 0xffffu) == spv::OpTypeArray, "guest buffer descriptors must be declared as a descriptor array");
+                const auto count = module.constants.find(type[3]);
+                Require(count != module.constants.end() && count->second == binding->count, "descriptor array length disagrees with recompiler binding count");
+                blockId = type[2];
+            } else {
+                Require(binding->count == 1, "non-array descriptor must have a binding count of one");
+            }
+            const auto& block = module.Type(blockId);
+            Require(block.size() == 3 && (block[0] & 0xffffu) == spv::OpTypeStruct && module.decorations[blockId].block, "descriptor must be a Block struct with exactly one member");
+            const auto& words = module.Type(block[2]);
+            Require(words.size() == 3 && (words[0] & 0xffffu) == spv::OpTypeRuntimeArray, "descriptor block member must be a runtime array");
+            const auto& element = module.Type(words[2]);
+            const bool unsignedInteger = element.size() == 4 && (element[0] & 0xffffu) == spv::OpTypeInt && element[3] == 0u;
+            Require(unsignedInteger && (element[2] == 32u || (array && decoration.aliased && element[2] == 64u)), "descriptor block member must be a runtime array of u32, or of u64 in an aliased guest buffer view");
+            const auto member = module.offsets.find({blockId, 0});
+            Require(member != module.offsets.end() && member->second == 0, "descriptor block member must have offset zero");
+        }
+    }
+    if (vertex) {
+        std::set<std::uint32_t> locations;
+        for (const auto& attribute : shader.vertexAttributes) {
+            Require(locations.insert(attribute.location).second, "duplicate vertex attribute metadata");
+            const auto input = module.inputs.find(attribute.location);
+            Require(input != module.inputs.end() && input->second == "vertex:" + VertexAttributeSignature(attribute), "vertex attribute metadata disagrees with shader input");
+        }
+        Require(locations.size() == module.inputs.size(), "vertex input is missing attribute metadata");
+    } else {
+        Require(shader.vertexAttributes.empty(), "vertex attribute metadata is invalid for this stage");
+    }
+    Require(descriptors.size() == shader.bindings.size(), "recompiler binding metadata contains undeclared resources");
+    Require(push == (!shader.pushConstants.empty() || shader.readsDepthRemapPush || mesh || (control && !rectListControl && !barycentricPatches) || (geometry && state.tessellationCapture)), "recompiler push constant metadata disagrees with SPIR-V");
+    for (const auto id : module.interface) Require(module.variables.contains(id), "entry point interface contains an unknown variable");
+    if (mesh) Require(module.primitiveIndices == state.stages.mesh->outputPrimitiveSize, "mesh shader does not export primitive indices");
+    if (fragment) Require(module.primitiveInputs == 0 || !primitiveLocations.empty(), "per-primitive pixel inputs need the barycentric emulation layout");
+    if (fragment) Require(!module.meshCapability || module.primitiveInputs != 0, "a pixel shader declares mesh shading without a per-primitive input");
+    if (stage == Stage::Vertex || mesh || ((evaluation || geometry) && !state.rasterizerDiscard)) Require(module.position, "vertex shader does not export position");
+    return module;
+}
+
+}
+
+bool DeclaresEarlyFragmentTests(const ShaderRecompiler::RecompileResult& program) {
+    const auto words = program.spirv.Words();
+    Require(words.size() >= 5 && words[0] == spv::MagicNumber, "the fragment shader is not a SPIR-V module");
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0 && count <= words.size() - cursor, "truncated SPIR-V instruction");
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        if (op == spv::OpFunction) return false;
+        if (op == spv::OpExecutionMode && count >= 3 && words[cursor + 2] == spv::ExecutionModeEarlyFragmentTests) return true;
+        cursor += count;
+    }
+    return false;
+}
+
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool meshShader, bool shaderResourceMinLod, bool fmaFloat16) {
+    using Stage = ShaderRecompiler::ShaderStage;
+    const bool tessellation = state.stages.path == ShaderPath::Tessellation;
+    const bool mesh = state.stages.path == ShaderPath::Geometry;
+    Require(state.stages.path == ShaderPath::Vertex || tessellation || mesh, "unsupported graphics shader path");
+    Require(state.stages.mesh.has_value() == mesh && state.stages.tessellation.has_value() == tessellation, "graphics stage configuration disagrees with its path");
+    Require(!mesh || meshShader, "device does not support mesh shaders");
+    Require(!state.rectList || (state.stages.path == ShaderPath::Vertex && state.topology == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST && state.cullMode == VK_CULL_MODE_NONE), "invalid rect-list pipeline state");
+    const bool geometry = state.stages.path == ShaderPath::Vertex && !state.rectList && shaders.size() == 3u;
+    const bool patches = BarycentricPatches(state, shaders) && shaders.back().program != nullptr && shaders.back().program->barycentricEmulation.active;
+    const bool captured = tessellation && state.tessellationCapture != nullptr;
+    Require(!captured || state.rasterizerDiscard, "a captured tessellation pass must discard its primitives");
+    Require(geometry || shaders.size() == (tessellation || state.rectList || patches ? 4u : 2u), "incorrect graphics stage count");
+    if (patches) Require(state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, "emulated barycentrics through tessellation require a triangle list or strip");
+    if (geometry) {
+        Require(shaders.back().program != nullptr && shaders.back().program->barycentricEmulation.active, "a geometry stage is generated only for emulated barycentrics");
+        Require(state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "emulated barycentrics require triangle primitives");
+    }
+    const std::array<Stage, 4> tessStages{Stage::Local, Stage::TessellationControl, Stage::TessellationEvaluation, captured ? Stage::Geometry : Stage::Fragment};
+    static_cast<void>(AssemblePushConstants(shaders));
+    std::vector<std::uint32_t> primitiveLocations;
+    if (mesh && !shaders.empty() && shaders.back().program != nullptr && shaders.back().program->barycentricEmulation.active) {
+        const auto& last = *shaders.back().program;
+        const auto layout = ShaderRecompiler::LayoutBarycentricEmulation(last.fragmentParameters, last.barycentricEmulation, true);
+        if (layout.positionsLocation != ShaderRecompiler::BarycentricEmulationLayout::NoLocation) {
+            for (std::uint32_t corner = 0; corner < 3u; ++corner) primitiveLocations.push_back(layout.positionsLocation + corner);
+            for (const auto& [guest, relocated] : layout.perVertexLocations) {
+                static_cast<void>(guest);
+                for (std::uint32_t corner = 0; corner < 3u; ++corner) primitiveLocations.push_back(relocated + corner);
+            }
+        }
+    }
+    Module previous;
+    for (std::size_t i = 0; i < shaders.size(); ++i) {
+        const auto expected = state.rectList || patches ? (i == 0 ? Stage::Vertex : tessStages[i]) : tessellation ? tessStages[i] : geometry && i == 1 ? Stage::Geometry : i == shaders.size() - 1 ? Stage::Fragment : state.stages.path == ShaderPath::Geometry ? Stage::Mesh : Stage::Vertex;
+        Require(shaders[i].program != nullptr, "missing compiled shader");
+        Require(shaders[i].stage == expected, "graphics stage order disagrees");
+        for (const auto& binding : shaders[i].program->bindings) Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || (shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "graphics resource uses a descriptor set other than its stage's");
+        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading, bufferInt64Atomics, shaderClipDistance, shaderCullDistance, viewportIndexLayer, runtimeDescriptorArray, demoteToHelperInvocation, shaderTerminateInvocation, shaderResourceMinLod, fmaFloat16, primitiveLocations);
+        if (i != 0) {
+            for (const auto& [location, signature] : current.inputs) {
+                const auto output = previous.outputs.find(location);
+                if (output == previous.outputs.end() || output->second != signature) {
+                    std::string exports;
+                    for (const auto value : shaders[i - 1].program->parameterExports) exports += " " + std::to_string(value);
+                    std::string parameters;
+                    for (const auto& parameter : shaders[i].program->fragmentParameters) parameters += " " + std::to_string(parameter.location) + "<-" + std::to_string(parameter.sourceLocation);
+                    std::string outputs;
+                    for (const auto& [index, kind] : previous.outputs) outputs += " " + std::to_string(index) + ":" + kind;
+                    Require(false, "graphics interfaces disagree at location " + std::to_string(location) +
+                        " (stage " + std::to_string(i - 1) + " output " +
+                        (output == previous.outputs.end() ? "missing" : output->second) +
+                        ", stage " + std::to_string(i) + " input " + signature + "; previous outputs:" + outputs + "; parameter exports:" + exports + "; fragment parameters:" + parameters + ")");
+                }
+            }
+        }
+        previous = current;
+    }
+    if (captured) return {};
+    const auto attachments = std::max<std::size_t>(state.blends.size(), 1u);
+    std::set<std::uint32_t> locations;
+    for (const auto& [location, signature] : previous.outputs) {
+        if (location >= attachments) continue;
+        const auto color = std::find_if(state.colors.begin(), state.colors.end(), [&](const ColorTarget& target) { return target.exportIndex == location; });
+        const bool uintExport = color != state.colors.end() && color->uintExport;
+        const bool packed = color != state.colors.end() && color->packing != ShaderRecompiler::ColorExportPacking::None;
+        Require(color == state.colors.end() || signature == (uintExport || packed ? "vertex:u32x4" : "vertex:f32x4"), packed ? "fragment shader must export uint4 words to its packed color attachments" : uintExport ? "fragment shader must export uint4 colors to its unsigned integer attachments" : "fragment shader must export float4 colors to its attachments");
+        locations.insert(location);
+    }
+    Require((!state.dualSourceBlend && state.reversedBlend == 0) || previous.secondSource == "f32x4", "dual-source blending needs a float4 second color at location 0 index 1");
+    return locations;
+}
+
+void ValidateShaderPair(const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment) {
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, static_cast<std::uint32_t>(vertex.pushConstants.size())}}};
+    State state{};
+    state.stages.path = ShaderPath::Vertex;
+    ValidateShaders(shaders, state, VkPhysicalDeviceSubgroupProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES}, false);
+}
+
+}

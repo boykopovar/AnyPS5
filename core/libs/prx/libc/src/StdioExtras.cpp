@@ -1,0 +1,199 @@
+#include "prx/libc/include/Api.hpp"
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <new>
+#include <stdexcept>
+
+#include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
+#include "SceTypes.hpp"
+
+#ifdef _WIN32
+#include "prx/libc/include/WindowsFormatting.hpp"
+#endif
+
+namespace {
+
+std::atomic<GuestNewHandler> g_newHandler{nullptr};
+
+void* Allocate(std::size_t size) {
+    for (;;) {
+        GuestNewHandler handler = nullptr;
+        try {
+            return ApplicationHeapAllocate_nid_no_patch(size == 0 ? 1 : size);
+        } catch (const std::bad_alloc&) {
+            handler = g_newHandler.load();
+            if (handler == nullptr) throw;
+        } catch (const std::length_error&) {
+            handler = g_newHandler.load();
+            if (handler == nullptr) throw std::bad_alloc();
+        }
+        handler();
+    }
+}
+
+void* AllocateAligned(std::size_t size, std::size_t alignment) {
+    for (;;) {
+        GuestNewHandler handler = nullptr;
+        try {
+            return ApplicationHeapAlign_nid_no_patch(alignment, size == 0 ? 1 : size);
+        } catch (const std::bad_alloc&) {
+            handler = g_newHandler.load();
+            if (handler == nullptr) throw;
+        } catch (const std::length_error&) {
+            handler = g_newHandler.load();
+            if (handler == nullptr) throw std::bad_alloc();
+        } catch (const std::invalid_argument&) {
+            throw std::bad_alloc();
+        }
+        handler();
+    }
+}
+
+}
+
+extern "C" {
+
+#ifdef _WIN32
+
+int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
+    return LibcDetail::FormatWindows(buffer, size, format, args);
+}
+
+int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    const int result = LibcDetail::FormatWindows(buffer, size, format, args);
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
+#endif
+
+[[noreturn]] void APS5_VABI _Assert_nid_postfix(const char* message, const char* location) {
+    std::fprintf(stderr, "[libc] guest assertion failed: %s (%s)\n", message ? message : "?", location ? location : "?");
+    std::fflush(stderr);
+    std::abort();
+}
+
+// Only the "C" locale exists.
+const char* APS5_VABI setlocale_nid_postfix(int, const char* locale) {
+    if (locale == nullptr || locale[0] == 0 || std::strcmp(locale, "C") == 0) return "C";
+    return nullptr;
+}
+
+GuestNewHandler APS5_VABI _ZSt15set_new_handlerPFvvE_nid_postfix(GuestNewHandler handler) {
+    return g_newHandler.exchange(handler);
+}
+
+GuestNewHandler APS5_VABI _ZSt15get_new_handlerv_nid_postfix() {
+    return g_newHandler.load();
+}
+
+unsigned char _ZSt7nothrow_nid_postfix = 0;
+
+void* APS5_VABI _Znwm_nid_postfix(std::size_t size) {
+    return Allocate(size);
+}
+
+void* APS5_VABI _Znam_nid_postfix(std::size_t size) {
+    return Allocate(size);
+}
+
+void* APS5_VABI _ZnwmSt11align_val_t_nid_postfix(std::size_t size, std::size_t alignment) {
+    return AllocateAligned(size, alignment);
+}
+
+void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
+    try {
+        return Allocate(size);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t size, const void*) noexcept {
+    try {
+        return Allocate(size);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+void APS5_VABI _ZdlPv_nid_postfix(void* pointer) {
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
+void APS5_VABI _ZdlPvRKSt9nothrow_t_nid_postfix(void* pointer, const void*) noexcept {
+    _ZdlPv_nid_postfix(pointer);
+
+}
+
+void APS5_VABI _ZdaPv_nid_postfix(void* pointer) {
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
+void APS5_VABI _ZdlPvm_nid_postfix(void* pointer, std::size_t) {
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
+void APS5_VABI _ZdaPvm_nid_postfix(void* pointer, std::size_t) {
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
+void APS5_VABI _ZdlPvSt11align_val_t_nid_postfix(void* pointer, std::size_t alignment) {
+    (void)alignment;
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
+void APS5_VABI _ZdlPvmSt11align_val_t_nid_postfix(void* pointer, std::size_t, std::size_t alignment) {
+    (void)alignment;
+    if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
+}
+
+void* APS5_VABI _ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(std::size_t size, std::size_t alignment, const void*) noexcept {
+    try {
+        return _ZnwmSt11align_val_t_nid_postfix(size, alignment);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+void* APS5_VABI _ZnamSt11align_val_t_nid_postfix(std::size_t size, std::size_t alignment) {
+    return _ZnwmSt11align_val_t_nid_postfix(size, alignment);
+}
+
+void* APS5_VABI _ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(std::size_t size, std::size_t alignment, const void*) noexcept {
+    try {
+        return _ZnamSt11align_val_t_nid_postfix(size, alignment);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+void APS5_VABI _ZdaPvRKSt9nothrow_t_nid_postfix(void* pointer, const void*) noexcept {
+    _ZdaPv_nid_postfix(pointer);
+}
+
+void APS5_VABI _ZdlPvSt11align_val_tRKSt9nothrow_t_nid_postfix(void* pointer, std::size_t alignment, const void*) noexcept {
+    _ZdlPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
+void APS5_VABI _ZdaPvSt11align_val_t_nid_postfix(void* pointer, std::size_t alignment) {
+    _ZdlPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
+void APS5_VABI _ZdaPvmSt11align_val_t_nid_postfix(void* pointer, std::size_t, std::size_t alignment) {
+    _ZdaPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
+void APS5_VABI _ZdaPvSt11align_val_tRKSt9nothrow_t_nid_postfix(void* pointer, std::size_t alignment, const void*) noexcept {
+    _ZdaPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
+}

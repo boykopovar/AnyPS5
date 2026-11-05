@@ -1,0 +1,2410 @@
+#ifndef CORE_LIBS_SCE_TYPES_HPP
+#define CORE_LIBS_SCE_TYPES_HPP
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include "prx/libc/include/general/VabiMacros.hpp"
+
+#if defined(__GNUC__) || defined(__clang__)
+typedef float __m128 __attribute__((__vector_size__(16), __aligned__(16)));
+#elif defined(_MSC_VER)
+#include <xmmintrin.h>
+#else
+struct alignas(16) __m128 { float v[4]; };
+#endif
+
+using Bool = std::uint8_t;
+
+struct SonyLconv {
+    char* monetary[7];
+    char chars[14];
+    char pad[2];
+    char* decimal_point;
+    char* grouping;
+    char* thousands_sep;
+    char* frac_grouping;
+    char* frac_sep;
+    char* false_text;
+    char* true_text;
+    char* no_text;
+    char* yes_text;
+};
+static_assert(offsetof(SonyLconv, decimal_point) == 0x48);
+static_assert(sizeof(SonyLconv) == 0x90);
+
+using KernelModule = std::int32_t;
+using KernelCpumask = std::uint64_t;
+using KernelUseconds = unsigned int;
+using KernelClockid = std::int32_t;
+using KernelEqueue = std::int64_t;
+using KernelKey = int;
+
+struct KernelTimespec {
+    std::int64_t tv_sec;
+    std::int64_t tv_nsec;
+};
+
+struct KernelTimeval {
+    std::int64_t tv_sec;
+    std::int64_t tv_usec;
+};
+
+struct KernelTimezone {
+    std::int32_t tz_minuteswest;
+    std::int32_t tz_dsttime;
+};
+
+struct KernelTimesec {
+    std::int64_t t;
+    std::uint32_t west_sec;
+    std::uint32_t dst_sec;
+};
+
+struct KernelEvent {
+    std::uintptr_t ident = 0;
+    std::int16_t filter = 0;
+    std::uint16_t flags = 0;
+    std::uint32_t fflags = 0;
+    std::intptr_t data = 0;
+    void* udata = nullptr;
+};
+
+struct KernelSchedParam {
+    int sched_priority;
+};
+
+struct KernelLoadModuleOpt {
+    std::size_t size;
+};
+
+struct KernelUnloadModuleOpt {
+    std::size_t size;
+};
+
+struct KernelAioResult {
+    std::int64_t return_value;
+    std::uint32_t state;
+};
+
+struct KernelAioRwRequest {
+    std::int64_t offset;
+    std::size_t nbyte;
+    void* buf;
+    KernelAioResult* result;
+    std::int32_t fd;
+};
+
+struct KernelAioSchedulingParam {
+    std::int32_t schedulingWindowSize;
+    std::int32_t delayedCountLimit;
+    std::uint32_t enableSplit;
+    std::uint32_t splitSize;
+    std::uint32_t splitChunkSize;
+};
+
+struct KernelBatchMapEntry {
+    void* start;
+    std::uint64_t offset;
+    std::uint64_t length;
+    char protection;
+    char type;
+    std::int16_t reserved;
+    std::int32_t operation;
+};
+
+struct KernelMemoryPoolBatchEntry {
+    std::uint32_t op;
+    std::uint32_t flags;
+    union {
+        struct {
+            void* addr;
+            std::uint64_t len;
+            std::uint8_t prot;
+            std::uint8_t type;
+        } commit;
+        struct {
+            void* addr;
+            std::uint64_t len;
+        } decommit;
+        struct {
+            void* addr;
+            std::uint64_t len;
+            std::uint8_t prot;
+        } protect;
+        struct {
+            void* addr;
+            std::uint64_t len;
+            std::uint8_t prot;
+            std::uint8_t type;
+        } type_protect;
+        struct {
+            void* dst;
+            void* src;
+            std::uint64_t len;
+        } move;
+        std::uintptr_t padding[3];
+    };
+};
+
+struct KernelMemoryPoolBlockStats {
+    std::int32_t available_flushed_blocks;
+    std::int32_t available_cached_blocks;
+    std::int32_t allocated_flushed_blocks;
+    std::int32_t allocated_cached_blocks;
+};
+
+struct VirtualQueryInfo {
+    std::uintptr_t start;
+    std::uintptr_t end;
+    std::uint64_t offset;
+    std::int32_t protection;
+    std::int32_t memory_type;
+    std::uint8_t is_flexible : 1;
+    std::uint8_t is_direct : 1;
+    std::uint8_t is_stack : 1;
+    std::uint8_t is_pooled : 1;
+    std::uint8_t is_committed : 1;
+    std::uint8_t is_gpu_prt : 1;
+    std::uint8_t amm_usage : 1;
+    std::uint8_t reserved : 1;
+    char name[32];
+    std::uint8_t gpu_mask_id;
+    std::uint8_t reserved2;
+};
+static_assert(sizeof(VirtualQueryInfo) == 72);
+static_assert(alignof(VirtualQueryInfo) == 8);
+static_assert(offsetof(VirtualQueryInfo, name) == 33);
+static_assert(offsetof(VirtualQueryInfo, gpu_mask_id) == 65);
+static_assert(offsetof(VirtualQueryInfo, reserved2) == 66);
+
+struct KernelSemaPrivate;
+struct KernelEventFlagPrivate;
+struct PthreadAttrPrivate;
+struct PthreadPrivate;
+struct PthreadMutexPrivate;
+struct PthreadMutexattrPrivate;
+struct PthreadRwlockPrivate;
+struct PthreadRwlockattrPrivate;
+struct PthreadCondattrPrivate;
+struct PthreadCondPrivate;
+struct PthreadSemPrivate;
+
+using KernelSema = KernelSemaPrivate*;
+using KernelEventFlag = KernelEventFlagPrivate*;
+using Pthread = PthreadPrivate*;
+using PthreadEntry = void* (APS5_VABI *)(void*);
+using PthreadAttr = PthreadAttrPrivate*;
+using PthreadMutex = PthreadMutexPrivate*;
+using PthreadMutexattr = PthreadMutexattrPrivate*;
+using PthreadRwlock = PthreadRwlockPrivate*;
+using PthreadRwlockattr = PthreadRwlockattrPrivate*;
+using PthreadCond = PthreadCondPrivate*;
+using PthreadCondattr = PthreadCondattrPrivate*;
+using PthreadSem = PthreadSemPrivate*;
+using PthreadKey = int;
+using pthread_entry_func_t = void* (*)(void*);
+using pthread_key_destructor_func_t = void (*)(void*);
+using thread_dtors_func_t = void (APS5_VABI *)();
+using get_thread_atexit_count_func_t = int (APS5_VABI *)(KernelModule);
+using thread_atexit_report_func_t = void (APS5_VABI *)(KernelModule);
+
+struct FileStat {
+    std::uint32_t st_dev;
+    std::uint32_t st_ino;
+    std::uint16_t st_mode;
+    std::uint16_t st_nlink;
+    std::uint32_t st_uid;
+    std::uint32_t st_gid;
+    std::uint32_t st_rdev;
+    KernelTimespec st_atim;
+    KernelTimespec st_mtim;
+    KernelTimespec st_ctim;
+    std::int64_t st_size;
+    std::int64_t st_blocks;
+    std::uint32_t st_blksize;
+    std::uint32_t st_flags;
+    std::uint32_t st_gen;
+    std::int32_t st_lspare;
+    KernelTimespec st_birthtim;
+};
+
+struct ModuleSegmentInfo {
+    std::uint64_t address;
+    std::uint32_t size;
+    std::int32_t prot;
+};
+
+struct ModuleInfo {
+    std::uint64_t st_size;
+    char name[256];
+    ModuleSegmentInfo segments[4];
+    std::uint32_t segment_count;
+    std::uint8_t fingerprint[20];
+};
+static_assert(offsetof(ModuleInfo, name) == 0x8);
+static_assert(offsetof(ModuleInfo, segments) == 0x108);
+static_assert(offsetof(ModuleInfo, segment_count) == 0x148);
+static_assert(offsetof(ModuleInfo, fingerprint) == 0x14C);
+static_assert(sizeof(ModuleInfo) == 0x160);
+
+struct ModuleInfoEx {
+    std::uint64_t st_size;
+    char name[256];
+    KernelModule id;
+    std::uint32_t tls_index;
+    std::uint64_t tls_init_addr;
+    std::uint32_t tls_init_size;
+    std::uint32_t tls_size;
+    std::uint32_t tls_offset;
+    std::uint32_t tls_align;
+    std::uint64_t init_proc_addr;
+    std::uint64_t fini_proc_addr;
+    std::uint64_t reserved1;
+    std::uint64_t reserved2;
+    std::uint64_t eh_frame_hdr_addr;
+    std::uint64_t eh_frame_addr;
+    std::uint32_t eh_frame_hdr_size;
+    std::uint32_t eh_frame_size;
+    ModuleSegmentInfo segments[4];
+    std::uint32_t segment_count;
+    std::uint32_t ref_count;
+};
+static_assert(offsetof(ModuleInfoEx, id) == 0x108);
+static_assert(offsetof(ModuleInfoEx, eh_frame_hdr_addr) == 0x148);
+static_assert(offsetof(ModuleInfoEx, segments) == 0x160);
+static_assert(sizeof(ModuleInfoEx) == 0x1A8);
+
+struct ModuleInfoForUnwind {
+    std::uint64_t st_size;
+    char name[256];
+    std::uint64_t eh_frame_hdr_addr;
+    std::uint64_t eh_frame_addr;
+    std::uint64_t eh_frame_size;
+    std::uint64_t seg0_addr;
+    std::uint64_t seg0_size;
+};
+
+struct InternalSegmentInfo {
+    std::uint64_t address;
+    std::uint64_t size;
+};
+static_assert(sizeof(InternalSegmentInfo) == 0x10);
+
+struct MallocReplace {
+    std::uint64_t size = sizeof(MallocReplace);
+    void* malloc_initialize = nullptr;
+    void* malloc_finalize = nullptr;
+    void* malloc = nullptr;
+    void* free = nullptr;
+    void* calloc = nullptr;
+    void* realloc = nullptr;
+    void* memalign = nullptr;
+    void* reallocalign = nullptr;
+    void* posix_memalign = nullptr;
+    void* malloc_stats = nullptr;
+    void* malloc_stats_fast = nullptr;
+    void* malloc_usable_size = nullptr;
+    void* aligned_alloc = nullptr;
+};
+
+struct NewReplace {
+    std::uint64_t size = sizeof(NewReplace);
+    void* new_p = nullptr;
+    void* new_nothrow = nullptr;
+    void* new_array = nullptr;
+    void* new_array_nothrow = nullptr;
+    void* delete_p = nullptr;
+    void* delete_nothrow = nullptr;
+    void* delete_array = nullptr;
+    void* delete_array_nothrow = nullptr;
+    void* delete_with_size = nullptr;
+    void* delete_with_size_nothrow = nullptr;
+    void* delete_array_with_size = nullptr;
+    void* delete_array_with_size_nothrow = nullptr;
+};
+
+#pragma pack(push, 1)
+struct VaList {
+    std::uint32_t gp_offset;
+    std::uint32_t fp_offset;
+    void* overflow_arg_area;
+    void* reg_save_area;
+};
+#pragma pack(pop)
+
+using FiberEntry = void (APS5_VABI*)(std::uint64_t argOnInitialize, std::uint64_t argOnRun);
+
+struct FiberOptParam {
+    std::uint32_t magic;
+};
+
+struct FiberCpuContext {
+    std::uint64_t rip;
+    std::uint64_t rsp;
+    std::uint64_t rbp;
+    std::uint64_t rbx;
+    std::uint64_t r12;
+    std::uint64_t r13;
+    std::uint64_t r14;
+    std::uint64_t r15;
+};
+
+constexpr std::uint32_t FIBER_MAX_NAME_LENGTH = 31;
+
+struct FiberObject {
+    std::uint32_t magic_start;
+    std::uint32_t state;
+    FiberEntry entry;
+    std::uint64_t arg_on_initialize;
+    void* addr_context;
+    std::uint64_t size_context;
+    char name[FIBER_MAX_NAME_LENGTH + 1];
+    void* context;
+    std::uint32_t flags;
+    std::uint32_t padding;
+    void* context_start;
+    void* context_end;
+    FiberCpuContext saved_context;
+    std::uint64_t arg_on_run;
+    std::uint64_t arg_on_return;
+    bool context_valid;
+    std::uint32_t magic_end;
+};
+
+struct FiberInfo {
+    std::uint64_t size;
+    FiberEntry entry;
+    std::uint64_t arg_on_initialize;
+    void* addr_context;
+    std::uint64_t size_context;
+    char name[FIBER_MAX_NAME_LENGTH + 1];
+    std::uint64_t size_context_margin;
+    std::uint8_t padding[48];
+};
+
+struct RtcDateTime {
+    std::uint16_t year;
+    std::uint16_t month;
+    std::uint16_t day;
+    std::uint16_t hour;
+    std::uint16_t minute;
+    std::uint16_t second;
+    std::uint32_t microsecond;
+};
+
+struct RtcTick {
+    std::uint64_t tick;
+};
+
+struct CommandBuffer {
+    using Callback = bool (APS5_VABI *)(CommandBuffer*, std::uint32_t, void*);
+    std::uint32_t* bottom;
+    std::uint32_t* top;
+    std::uint32_t* cursor_up;
+    std::uint32_t* cursor_down;
+    Callback callback;
+    void* user_data;
+    std::uint32_t reserved_dw;
+};
+
+struct Label {
+    volatile std::uint64_t value;
+};
+
+#include "SceShaders.hpp"
+
+struct ShareCurrentRecordingStatus {
+    std::uint32_t recording_2k_status;
+    std::uint32_t recording_4k_status;
+    std::uint8_t reserved[8];
+};
+
+union ShareCurrentStatus {
+    ShareCurrentRecordingStatus recording_status;
+    std::uint8_t reserved[16];
+};
+
+using AcmContextId = std::uint32_t;
+using AcmBatchId = std::uint32_t;
+
+struct AcmBatchError {
+    std::uint32_t reserved[8];
+};
+
+struct AcmReverbBuffer {
+    void* samples;
+    const void* blockMetadata;
+};
+
+struct AcmReverbInput {
+    std::uint32_t blockSize;
+    std::uint32_t blockCount;
+    std::uint32_t channelCount;
+    std::uint32_t sampleFormat;
+    std::uint32_t currentBlock;
+    std::uint32_t availableBlocks;
+    const AcmReverbBuffer* const* history;
+    const void* const* inputChannels;
+    std::uint32_t pendingBlocks;
+};
+
+struct AcmReverbFilter {
+    std::uint32_t blockSize;
+    std::uint32_t blockCount;
+    std::uint32_t channelCount;
+    std::uint32_t sampleFormat;
+    const void* blockMetadata;
+    const AcmReverbBuffer* const* channels;
+};
+
+struct AcmReverbOutput {
+    std::uint32_t blockSize;
+    std::uint32_t channelCount;
+    void* const* samples;
+    void* const* workspace;
+    float gain;
+    float previousGain;
+    void* const* previousSamples;
+};
+
+static_assert(sizeof(AcmReverbBuffer) == 16);
+static_assert(offsetof(AcmReverbInput, history) == 24);
+static_assert(offsetof(AcmReverbInput, pendingBlocks) == 40);
+static_assert(sizeof(AcmReverbFilter) == 32);
+static_assert(offsetof(AcmReverbOutput, previousSamples) == 32);
+
+struct AcmBatchInfo {
+    void* buffer;
+    std::size_t offset;
+    std::size_t buffer_size;
+};
+
+struct AjmBatchError {
+    std::int32_t error_code;
+    const void* job_addr;
+    std::uint32_t cmd_offset;
+    const void* job_ra;
+};
+
+struct AjmBatchInfo {
+    void* p_buffer;
+    std::uint64_t offset;
+    std::uint64_t size;
+};
+
+struct AjmBuffer {
+    void* ptr;
+    std::size_t size;
+};
+
+struct AjmDecAt9ConfigDataInfo {
+    std::uint32_t channels;
+    std::uint32_t sample_rate;
+    std::uint32_t frame_samples_per_channel;
+    std::uint32_t superframe_samples_per_channel;
+    std::uint32_t superframe_size;
+};
+
+struct AjmDecMp3ParseFrame {
+    std::uint64_t frame_size;
+    std::uint32_t num_channels;
+    std::uint32_t samples_per_channel;
+    std::uint32_t bitrate;
+    std::uint32_t sample_rate;
+    std::uint32_t encoder_delay;
+    std::uint32_t num_frames;
+    std::uint32_t total_samples;
+    std::uint32_t ofl_type;
+};
+
+using AudioOut2ContextHandle = std::uint64_t;
+using AudioOut2PortHandle = std::uint64_t;
+using AudioOut2UserHandle = std::uintptr_t;
+using AudioOut2SpeakerArrayHandle = void*;
+
+struct AudioOut2ContextParam {
+    std::uint32_t max_ports;
+    std::uint32_t max_object_ports;
+    std::uint32_t guarantee_object_ports;
+    std::uint32_t queue_depth;
+    std::uint32_t num_grains;
+    std::uint32_t flags;
+    std::uint32_t reserved[10];
+};
+
+struct AudioOut2PortParam {
+    std::uint16_t port_type;
+    std::uint16_t pad;
+    std::uint32_t data_format;
+    std::uint32_t sampling_freq;
+    std::uint32_t flags;
+    AudioOut2UserHandle user_handle;
+    std::uint32_t reserved[10];
+};
+
+struct AudioOut2Attribute {
+    std::uint32_t attribute_id;
+    std::int32_t reserved;
+    const void* value;
+    std::size_t value_size;
+};
+
+struct AudioOut2PortState {
+    std::uint16_t output;
+    std::uint8_t num_channels;
+    std::uint8_t pad1;
+    std::int16_t volume;
+    std::uint16_t reroute_counter;
+    std::uint32_t flags;
+    std::uint32_t pad2;
+    std::uint64_t reserved[6];
+};
+
+struct AudioOut2SystemState {
+    float loudness;
+    std::uint32_t pad;
+    std::uint64_t reserved[7];
+};
+
+struct AudioOut2Position { float x; float y; float z; };
+
+struct AudioOut2SpeakerAngle {
+    std::int16_t azimuth;
+    std::int16_t elevation;
+};
+
+struct AudioOut2SpeakerInfo {
+    std::uint8_t type;
+    std::uint8_t pad1;
+    std::int16_t pad2;
+    std::uint32_t available_bits;
+    std::uint32_t flags;
+    std::uint32_t pad3;
+    AudioOut2SpeakerAngle speaker_angle[16];
+};
+
+struct AudioOut2SystemDebugStateParam {
+    std::uint32_t debug_state_id;
+    std::int32_t reserved;
+    void* param;
+    std::size_t param_size;
+};
+
+struct AudioOut2MasteringParamsHeader {
+    std::uint32_t params_id;
+};
+
+struct AudioOut2MasteringStatesHeader {
+    std::uint32_t states_id;
+};
+
+struct AudioOut2MasteringStatesDescriptor {
+    std::uint32_t id;
+    std::uint32_t size;
+};
+
+struct AudioOut2MasteringCompressorStates {
+    AudioOut2MasteringStatesDescriptor descriptor;
+    std::uint32_t reserved[2];
+    float input_rms[3][8];
+    float compression_coeff[3][8];
+};
+
+struct AudioOut2MasteringCompressorStatesV2 {
+    AudioOut2MasteringStatesDescriptor descriptor;
+    std::uint32_t reserved[2];
+    float input_rms[4][8];
+    float compression_coeff[4][8];
+};
+
+struct AudioOut2MasteringLimiterStates {
+    AudioOut2MasteringStatesDescriptor descriptor;
+    std::uint32_t reserved[2];
+    float input_peak[8];
+    float output_peak[8];
+    float gain_peak[8];
+};
+
+struct AudioOut2MasteringStates {
+    AudioOut2MasteringStatesHeader states_header;
+    std::uint32_t reserved[3];
+    AudioOut2MasteringCompressorStates compressor_states;
+    AudioOut2MasteringLimiterStates limiter_states;
+};
+
+struct AudioOut2MasteringStatesV2 {
+    AudioOut2MasteringStatesHeader states_header;
+    std::uint32_t reserved[3];
+    AudioOut2MasteringCompressorStatesV2 compressor_states;
+    AudioOut2MasteringLimiterStates limiter_states;
+};
+
+struct AudioOutOutputParam {
+    int handle;
+    const void* ptr;
+};
+
+struct AudioOutPortState {
+    std::uint16_t output;
+    std::uint8_t channel;
+    std::uint8_t reserved[1];
+    std::int16_t volume;
+    std::uint16_t rerouteCounter;
+    std::uint64_t flag;
+    std::uint64_t activeState;
+};
+
+struct AudioOutSystemState {
+    float loudness;
+    std::uint8_t reserved8[4];
+    std::uint64_t reserved[3];
+};
+static_assert(sizeof(AudioOutSystemState) == 32);
+
+struct Audio3dOpenParameters {
+    std::uint64_t size_this;
+    std::uint32_t granularity;
+    std::uint32_t rate;
+    std::uint32_t max_objects;
+    std::uint32_t queue_depth;
+    std::uint32_t buffer_mode;
+    std::uint32_t pad;
+    std::uint32_t num_beds;
+};
+
+struct Audio3dAttribute {
+    std::uint32_t attribute_id;
+    std::uint32_t pad;
+    const void* value;
+    std::uint64_t value_size;
+};
+
+using AudioPropagationHandle = std::uint64_t;
+
+struct AudioPropagationStructDescriptor {
+    std::uint32_t id;
+    std::size_t size;
+};
+
+struct AudioPropagationSystemMemory {
+    AudioPropagationStructDescriptor desc;
+    void* p_cpu_mem;
+    std::size_t size_cpu_mem;
+    void* p_gpu_mem;
+    std::size_t size_gpu_mem;
+};
+
+struct AvPlayerAudio {
+    std::uint16_t channel_count;
+    std::uint8_t reserved1[2];
+    std::uint32_t sample_rate;
+    std::uint32_t size;
+    char language_code[4];
+};
+
+struct AvPlayerVideo {
+    std::uint32_t width;
+    std::uint32_t height;
+    float aspect_ratio;
+    char language_code[4];
+};
+
+struct AvPlayerTextPosition {
+    std::uint16_t top;
+    std::uint16_t left;
+    std::uint16_t bottom;
+    std::uint16_t right;
+};
+
+struct AvPlayerTimedText {
+    char language_code[4];
+    std::uint16_t text_size;
+    std::uint16_t font_size;
+    AvPlayerTextPosition position;
+};
+
+union AvPlayerStreamDetails {
+    std::uint8_t reserved[16];
+    AvPlayerAudio audio;
+    AvPlayerVideo video;
+    AvPlayerTimedText subs;
+};
+
+struct AvPlayerFrameInfo {
+    std::uint8_t* p_data;
+    std::uint8_t reserved[4];
+    std::uint64_t timestamp;
+    AvPlayerStreamDetails details;
+};
+static_assert(sizeof(AvPlayerFrameInfo) == 40 && offsetof(AvPlayerFrameInfo, timestamp) == 16);
+
+struct AvPlayerStreamInfo {
+    std::uint32_t type;
+    std::uint8_t reserved[4];
+    AvPlayerStreamDetails details;
+    std::uint64_t duration;
+};
+static_assert(sizeof(AvPlayerStreamInfo) == 32);
+
+struct AvPlayerAudioEx {
+    std::uint16_t channel_count;
+    std::uint8_t reserved[2];
+    std::uint32_t sample_rate;
+    std::uint32_t size;
+    std::uint8_t language_code[4];
+    std::uint8_t reserved1[64];
+};
+
+struct AvPlayerVideoEx {
+    std::uint32_t width;
+    std::uint32_t height;
+    float aspect_ratio;
+    std::uint8_t language_code[4];
+    std::uint32_t framerate;
+    std::uint32_t crop_left_offset;
+    std::uint32_t crop_right_offset;
+    std::uint32_t crop_top_offset;
+    std::uint32_t crop_bottom_offset;
+    std::uint32_t pitch;
+    std::uint8_t luma_bit_depth;
+    std::uint8_t chroma_bit_depth;
+    bool video_full_range_flag;
+    std::uint8_t reserved1[5];
+    double frame_rate;
+    std::uint8_t reserved2[24];
+};
+static_assert(sizeof(AvPlayerVideoEx) == 80);
+static_assert(offsetof(AvPlayerVideoEx, crop_left_offset) == 20 && offsetof(AvPlayerVideoEx, pitch) == 36);
+static_assert(offsetof(AvPlayerVideoEx, frame_rate) == 48);
+
+struct AvPlayerTimedTextEx {
+    std::uint8_t language_code[4];
+    std::uint8_t reserved[12];
+    std::uint8_t reserved1[64];
+};
+
+union AvPlayerStreamDetailsEx {
+    AvPlayerAudioEx audio;
+    AvPlayerVideoEx video;
+    AvPlayerTimedTextEx subs;
+    std::uint8_t reserved[80];
+};
+
+struct AvPlayerFrameInfoEx {
+    void* p_data;
+    std::uint8_t reserved[4];
+    std::uint64_t timestamp;
+    AvPlayerStreamDetailsEx details;
+};
+static_assert(sizeof(AvPlayerFrameInfoEx) == 104 && offsetof(AvPlayerFrameInfoEx, details) == 24);
+
+struct AvPlayerStreamInfoEx {
+    std::uint64_t this_size;
+    std::uint32_t type;
+    std::uint8_t reserved[4];
+    AvPlayerStreamDetailsEx details;
+    std::uint64_t duration;
+};
+static_assert(sizeof(AvPlayerStreamInfoEx) == 104);
+static_assert(offsetof(AvPlayerStreamInfoEx, details) == 16 && offsetof(AvPlayerStreamInfoEx, duration) == 96);
+
+using AvPlayerAllocate = void* (APS5_VABI*)(void*, std::uint32_t, std::uint32_t);
+using AvPlayerDeallocate = void (APS5_VABI*)(void*, void*);
+using AvPlayerAllocateTexture = void* (APS5_VABI*)(void*, std::uint32_t, std::uint32_t);
+using AvPlayerDeallocateTexture = void (APS5_VABI*)(void*, void*);
+
+struct AvPlayerMemAllocator {
+    void* object_ptr;
+    AvPlayerAllocate allocate;
+    AvPlayerDeallocate deallocate;
+    AvPlayerAllocateTexture allocate_texture;
+    AvPlayerDeallocateTexture deallocate_texture;
+};
+
+using AvPlayerOpenFile = std::int32_t (APS5_VABI*)(void*, const char*);
+using AvPlayerCloseFile = std::int32_t (APS5_VABI*)(void*);
+using AvPlayerReadOffsetFile = std::int32_t (APS5_VABI*)(void*, std::uint8_t*, std::uint64_t, std::uint32_t);
+using AvPlayerSizeFile = std::uint64_t (APS5_VABI*)(void*);
+
+struct AvPlayerFileReplacement {
+    void* object_ptr;
+    AvPlayerOpenFile open;
+    AvPlayerCloseFile close;
+    AvPlayerReadOffsetFile read_offset;
+    AvPlayerSizeFile size;
+};
+
+using AvPlayerEventCallback = void (APS5_VABI*)(void*, std::int32_t, std::int32_t, void*);
+
+struct AvPlayerEventReplacement {
+    void* object_ptr;
+    AvPlayerEventCallback event_callback;
+};
+
+struct AvPlayerInitData {
+    AvPlayerMemAllocator memory_replacement;
+    AvPlayerFileReplacement file_replacement;
+    AvPlayerEventReplacement event_replacement;
+    std::int32_t debug_level;
+    std::uint32_t base_priority;
+    std::int32_t num_output_video_framebuffers;
+    bool auto_start;
+    std::uint8_t reserved[3];
+    const char* default_language;
+};
+
+struct AvPlayerInitDataEx {
+    std::size_t this_size;
+    AvPlayerMemAllocator memory_replacement;
+    AvPlayerFileReplacement file_replacement;
+    AvPlayerEventReplacement event_replacement;
+    const char* default_language;
+    std::int32_t debug_level;
+    std::uint32_t audio_decoder_priority;
+    std::uint32_t audio_decoder_affinity;
+    std::uint32_t video_decoder_priority;
+    std::uint32_t video_decoder_affinity;
+    std::uint32_t demuxer_priority;
+    std::uint32_t demuxer_affinity;
+    std::uint32_t controller_priority;
+    std::uint32_t controller_affinity;
+    std::uint32_t http_streaming_priority;
+    std::uint32_t http_streaming_affinity;
+    std::uint32_t file_streaming_priority;
+    std::uint32_t file_streaming_affinity;
+    std::int32_t num_output_video_framebuffers;
+    bool auto_start;
+    std::uint8_t reserved[3];
+};
+
+struct AvPlayerUri {
+    const char* name;
+    std::uint32_t length;
+};
+
+struct AvPlayerSourceDetails {
+    AvPlayerUri uri;
+    std::uint8_t reserved1[64];
+    std::uint32_t source_type;
+    std::uint8_t reserved2[44];
+};
+
+struct AvPlayerDecoderInit {
+    std::uint8_t decoder_type[4];
+    std::uint8_t decoder_params[28];
+};
+
+struct AvPlayerHttpContext {
+    std::uint32_t http_context_id;
+    std::uint32_t ssl_context_id;
+};
+
+struct AvPlayerPostInitData {
+    std::uint32_t demux_video_buffer_size;
+    AvPlayerDecoderInit video_decoder_init;
+    AvPlayerDecoderInit audio_decoder_init;
+    AvPlayerHttpContext http_context;
+    std::uint8_t reserved[56];
+};
+
+struct AvPlayerInternal {};
+
+struct AudiodecAuInfo {
+    std::uint32_t ui_size;
+    void* p_au_addr;
+    std::uint32_t ui_au_size;
+};
+
+struct AudiodecPcmItem {
+    std::uint32_t ui_size;
+    void* p_pcm_addr;
+    std::uint32_t ui_pcm_size;
+};
+
+struct AudiodecCtrl {
+    void* pParam;
+    void* pBsiInfo;
+    AudiodecAuInfo* pAuInfo;
+    AudiodecPcmItem* pPcmItem;
+};
+
+struct AudiodecParamAt9 {
+    std::uint32_t ui_size;
+    std::int32_t i_bw_pcm;
+    std::uint8_t ui_config_data[4];
+};
+
+struct AudiodecAt9Info {
+    std::uint32_t ui_size;
+    std::uint32_t ui_channel;
+    std::uint32_t ui_bitrate;
+    std::uint32_t ui_sampling_rate;
+    std::uint32_t ui_super_frame_size;
+    std::uint32_t ui_frames_in_super_frame;
+    std::uint32_t ui_next_frame_size;
+    std::uint32_t ui_frame_samples;
+    std::int32_t i_result;
+};
+
+struct AudiodecParamMp3 {
+    std::uint32_t ui_size;
+    std::int32_t i_bw_pcm;
+};
+
+struct AudiodecMp3Info {
+    std::uint32_t ui_size;
+    std::uint32_t ui_header;
+    std::uint8_t uc_crc;
+    std::uint8_t uc_mode;
+    std::uint8_t uc_mode_extension;
+    std::uint8_t uc_copyright;
+    std::uint8_t uc_original;
+    std::uint8_t uc_emphasis;
+    std::uint8_t uc_reserved[2];
+    std::int32_t i_result;
+};
+
+struct AudiodecParamM4aac {
+    std::uint32_t ui_size;
+    std::int32_t i_bw_pcm;
+    std::uint32_t ui_config_number;
+    std::uint32_t ui_sampling_freq_index;
+    std::uint32_t ui_max_channels;
+    std::uint32_t ui_enable_heaac;
+};
+
+struct AudiodecM4aacInfo {
+    std::uint32_t ui_size;
+    std::uint32_t ui_sampling_freq;
+    std::uint32_t ui_number_of_channels;
+    std::uint32_t ui_heaac;
+    std::int32_t i_result;
+};
+
+struct VoiceEvent {
+    std::int32_t type;
+    std::uint32_t reserved;
+    void* userData;
+    union {
+        struct {
+            std::uint16_t count;
+            std::uint16_t ports[7];
+        } dataReady;
+        struct {
+            std::uint16_t port;
+            std::uint8_t state;
+            std::uint8_t reserved[13];
+        } deviceState;
+    };
+};
+
+using VoiceEventHandler = void (APS5_VABI*)(const VoiceEvent* event);
+
+struct VoiceThreadsParams {
+    std::uint32_t mode;
+    std::int32_t firstPriority;
+    std::uint64_t firstAffinity;
+    std::int32_t secondPriority;
+    std::uint32_t reserved20;
+    std::uint64_t secondAffinity;
+    std::int32_t thirdPriority;
+    std::uint32_t reserved36;
+    std::uint64_t thirdAffinity;
+};
+
+static_assert(sizeof(VoiceEvent) == 32);
+static_assert(offsetof(VoiceEvent, userData) == 8);
+static_assert(offsetof(VoiceEvent, dataReady) == 16);
+static_assert(offsetof(VoiceEvent, deviceState) == 16);
+static_assert(sizeof(VoiceThreadsParams) == 48);
+static_assert(offsetof(VoiceThreadsParams, firstAffinity) == 8);
+static_assert(offsetof(VoiceThreadsParams, secondPriority) == 16);
+static_assert(offsetof(VoiceThreadsParams, secondAffinity) == 24);
+static_assert(offsetof(VoiceThreadsParams, thirdPriority) == 32);
+static_assert(offsetof(VoiceThreadsParams, thirdAffinity) == 40);
+
+struct VoiceInitParam {
+    std::int32_t app_type;
+    VoiceEventHandler on_event;
+    void* user_data;
+    std::uint8_t reserved[16];
+};
+
+static_assert(sizeof(VoiceInitParam) == 40);
+static_assert(offsetof(VoiceInitParam, on_event) == 8);
+static_assert(offsetof(VoiceInitParam, user_data) == 16);
+static_assert(offsetof(VoiceInitParam, reserved) == 24);
+
+struct VoicePortParam {
+    std::int32_t port_type;
+    std::uint16_t threshold;
+    std::uint16_t mute;
+    float volume;
+    union {
+        struct { std::int32_t bitrate; } voice;
+        struct { std::uint32_t buffer_size; std::int32_t data_type; std::int32_t sample_rate; } pcmaudio;
+        struct { std::int32_t user_id; std::int32_t type; std::int32_t index; } device;
+    };
+};
+
+struct VoicePortInfo {
+    std::int32_t port_type;
+    std::int32_t state;
+    std::uint32_t* edge;
+    std::uint32_t byte_count;
+    std::uint32_t frame_size;
+    std::uint16_t edge_count;
+    std::uint16_t reserved;
+};
+
+struct NpAuthClientId;
+
+struct NpAuthAuthorizedAppCodeParameter {
+    std::uint64_t size;
+    std::int32_t userId;
+    const NpAuthClientId* clientId;
+    const char* scope;
+    std::uint32_t option;
+};
+
+static_assert(sizeof(NpAuthAuthorizedAppCodeParameter) == 40);
+static_assert(offsetof(NpAuthAuthorizedAppCodeParameter, clientId) == 16);
+static_assert(offsetof(NpAuthAuthorizedAppCodeParameter, scope) == 24);
+static_assert(offsetof(NpAuthAuthorizedAppCodeParameter, option) == 32);
+
+struct VoiceResourceInfo {
+    std::uint16_t maxVoiceInputPorts;
+    std::uint16_t maxVoiceOutputPorts;
+    std::uint16_t maxDeviceInputPorts;
+    std::uint16_t maxDeviceOutputPorts;
+};
+
+static_assert(sizeof(VoiceResourceInfo) == 8);
+
+struct VoiceStartParam {
+    void* container;
+    std::uint32_t mem_size;
+    std::uint8_t reserved[32 - sizeof(void*) - sizeof(std::uint32_t)];
+};
+
+struct PadTouchPadInformation {
+ float pixelDensity;
+ struct { std::uint16_t x; std::uint16_t y; } resolution;
+};
+
+struct PadStickInformation {
+ std::uint8_t deadZoneLeft;
+ std::uint8_t deadZoneRight;
+};
+
+struct PadControllerInformation {
+ PadTouchPadInformation touchPadInfo;
+ PadStickInformation stickInfo;
+ std::uint8_t connectionType;
+ std::uint8_t connectedCount;
+ bool connected;
+ std::uint8_t pad[3];
+ std::int32_t deviceClass;
+ std::uint8_t reserve[8];
+};
+
+struct PadVibrationParam { std::uint8_t large_motor; std::uint8_t small_motor; };
+struct PadLightBarParam { std::uint8_t r; std::uint8_t g; std::uint8_t b; };
+
+struct PadDeviceClassData {
+ std::int32_t deviceClass;
+ bool dataValid;
+ std::uint8_t pad[3];
+ union {
+  struct {
+   float angle;
+   std::uint16_t wheel;
+   std::uint16_t accelerator;
+   std::uint16_t brake;
+   std::uint16_t clutch;
+   std::uint16_t handBrake;
+   std::uint8_t gear;
+   std::uint8_t reserved[1];
+  } steeringWheel;
+  struct {
+   std::uint8_t toneNumber;
+   std::uint8_t whammyBar;
+   std::uint8_t tilt;
+   std::uint8_t fret;
+   std::uint8_t fretSolo;
+   std::uint8_t reserved[11];
+  } guitar;
+  struct {
+   std::uint8_t snare;
+   std::uint8_t tom1;
+   std::uint8_t tom2;
+   std::uint8_t floorTom;
+   std::uint8_t hihatCymbal;
+   std::uint8_t rideCymbal;
+   std::uint8_t crashCymbal;
+   std::uint8_t reserved[9];
+  } drum;
+  std::uint8_t data[16];
+ } classData;
+};
+
+struct PadDeviceClassExtendedInformation {
+ std::int32_t deviceClass;
+ std::uint8_t reserved[4];
+ union {
+  struct {
+   std::uint8_t capability;
+   std::uint8_t reserved1[1];
+   std::uint16_t maxPhysicalWheelAngle;
+   std::uint8_t reserved2[8];
+  } steeringWheel;
+  struct {
+   std::uint8_t capability;
+   std::uint8_t quantityOfSelectorSwitch;
+   std::uint8_t reserved[10];
+  } guitar;
+  struct {
+   std::uint8_t capability;
+   std::uint8_t reserved[11];
+  } drum;
+  std::uint8_t data[12];
+ } classData;
+};
+struct PadTriggerEffectStateInformation {
+    std::int32_t state[2];
+};
+
+struct PadData {
+    std::uint32_t buttons;
+    std::uint8_t left_stick_x;
+    std::uint8_t left_stick_y;
+    std::uint8_t right_stick_x;
+    std::uint8_t right_stick_y;
+    std::uint8_t analog_buttons_l2;
+    std::uint8_t analog_buttons_r2;
+    std::uint8_t padding[2];
+    float orientation_x;
+    float orientation_y;
+    float orientation_z;
+    float orientation_w;
+    float acceleration_x;
+    float acceleration_y;
+    float acceleration_z;
+    float angular_velocity_x;
+    float angular_velocity_y;
+    float angular_velocity_z;
+    std::uint8_t touch_data_touch_num;
+    std::uint8_t touch_data_reserve[3];
+    std::uint32_t touch_data_reserve1;
+    std::uint16_t touch_data_touch0_x;
+    std::uint16_t touch_data_touch0_y;
+    std::uint8_t touch_data_touch0_id;
+    std::uint8_t touch_data_touch0_reserve[3];
+    std::uint16_t touch_data_touch1_x;
+    std::uint16_t touch_data_touch1_y;
+    std::uint8_t touch_data_touch1_id;
+    std::uint8_t touch_data_touch1_reserve[3];
+    bool connected;
+    std::uint64_t timestamp;
+    std::uint32_t extension_unit_data_extension_unit_id;
+    std::uint8_t extension_unit_data_reserve[1];
+    std::uint8_t extension_unit_data_data_length;
+    std::uint8_t extension_unit_data_data[10];
+    std::uint8_t connected_count;
+    std::uint8_t reserve[2];
+    std::uint8_t device_unique_data_len;
+    std::uint8_t device_unique_data[12];
+};
+
+struct MouseData {
+    std::uint64_t timestamp;
+    bool connected;
+    std::uint8_t padding[3];
+    std::uint32_t buttons;
+    std::int32_t x_axis;
+    std::int32_t y_axis;
+    std::int32_t wheel;
+    std::int32_t tilt;
+    std::uint8_t reserved[8];
+};
+
+constexpr std::uint32_t KEYBOARD_MAX_KEYCODES = 16;
+
+struct KeyboardData {
+    std::uint64_t timestamp;
+    bool intercepted;
+    std::uint8_t reserve1[7];
+    bool connected;
+    std::int32_t length;
+    std::uint32_t led;
+    std::uint32_t modifier_key;
+    std::uint16_t key_code[KEYBOARD_MAX_KEYCODES];
+    std::uint8_t reserve2[32];
+};
+
+struct KeyboardCharData {
+    bool processed;
+    std::int32_t length;
+    std::uint16_t char_code;
+    std::uint8_t reserve[8];
+};
+
+struct ImeColor {
+    std::uint8_t r;
+    std::uint8_t g;
+    std::uint8_t b;
+    std::uint8_t a;
+};
+
+struct ImeKeycode {
+    std::uint16_t keycode;
+    char16_t character;
+    std::uint32_t status;
+    std::uint32_t type;
+    std::int32_t user_id;
+    std::uint32_t resource_id;
+    std::uint64_t timestamp;
+};
+
+using ImeTextFilter = std::int32_t (APS5_VABI*)(char16_t* outText, std::uint32_t* outTextLength, const char16_t* sourceText, std::uint32_t sourceTextLength);
+using ImeExtKeyboardFilter = int (APS5_VABI*)(const ImeKeycode* sourceKeycode, std::uint16_t* outKeycode, std::uint32_t* outStatus, void* reserved);
+
+struct ImeExtendedParam {
+    std::uint32_t option;
+    ImeColor color_base;
+    ImeColor color_line;
+    ImeColor color_text_field;
+    ImeColor color_preedit;
+    ImeColor color_button_default;
+    ImeColor color_button_function;
+    ImeColor color_button_symbol;
+    ImeColor color_text;
+    ImeColor color_special;
+    std::uint32_t priority;
+    const char* additional_dictionary_path;
+    ImeExtKeyboardFilter ext_keyboard_filter;
+    std::uint32_t disable_device;
+    std::uint32_t ext_keyboard_mode;
+    std::int8_t reserved[60];
+};
+
+using ExtendedParam = ImeExtendedParam;
+
+struct ImeCaret {
+    float x;
+    float y;
+    std::uint32_t height;
+    std::uint32_t index;
+};
+
+using Caret = ImeCaret;
+
+struct ImeTextGeometry {
+    float x;
+    float y;
+    std::uint32_t width;
+    std::uint32_t height;
+};
+
+using TextGeometry = ImeTextGeometry;
+
+struct ImeRect {
+    float x;
+    float y;
+    std::uint32_t width;
+    std::uint32_t height;
+};
+
+enum class TextAreaMode : std::uint32_t { Disable = 0, Edit = 1, Preedit = 2, Select = 3 };
+
+struct ImeTextAreaProperty {
+    TextAreaMode mode;
+    std::uint32_t index;
+    std::int32_t length;
+};
+
+struct ImeEditText {
+    char16_t* str;
+    std::uint32_t caret_index;
+    std::uint32_t area_num;
+    ImeTextAreaProperty text_area[4];
+};
+
+struct KeyboardResourceIdArray {
+    std::int32_t user_id;
+    std::uint32_t resource_id[5];
+};
+
+union ImeEventParam {
+    ImeRect rect;
+    ImeEditText text;
+    std::uint32_t caret_move;
+    ImeKeycode keycode;
+    KeyboardResourceIdArray resource_id_array;
+    std::uint64_t reserved[8];
+};
+
+struct ImeEvent {
+    std::uint32_t id;
+    ImeEventParam param;
+};
+
+using EventHandler = void (APS5_VABI *)(void* arg, const ImeEvent* event);
+
+struct Param {
+    std::int32_t user_id;
+    std::uint32_t type;
+    std::uint64_t supported_languages;
+    std::uint32_t enter_label;
+    std::uint32_t input_method;
+    ImeTextFilter filter;
+    std::uint32_t option;
+    std::uint32_t max_text_length;
+    char16_t* input_text_buffer;
+    float posx;
+    float posy;
+    std::uint32_t horizontal_alignment;
+    std::uint32_t vertical_alignment;
+    void* work;
+    void* arg;
+    EventHandler handler;
+    std::int8_t reserved[8];
+};
+
+struct KeyboardParam {
+    std::uint32_t option;
+    std::int8_t reserved1[4];
+    void* arg;
+    EventHandler handler;
+    std::int8_t reserved2[8];
+};
+
+struct KeyboardInfo {
+    std::int32_t user_id;
+    std::uint32_t device;
+    std::uint32_t type;
+    std::uint32_t repeat_delay;
+    std::uint32_t repeat_rate;
+    std::uint32_t status;
+    std::int8_t reserved[12];
+};
+
+struct ImeDialogResult {
+    std::uint32_t endstatus;
+    std::int8_t reserved[12];
+};
+
+using Result = ImeDialogResult;
+
+struct MsgDialogResult {
+    std::int32_t mode;
+    std::int32_t result;
+    std::int32_t button_id;
+    char reserved[32];
+};
+
+struct PositionAndForm {
+    std::uint32_t type;
+    float posx;
+    float posy;
+    std::uint32_t horizontal_alignment;
+    std::uint32_t vertical_alignment;
+    std::uint32_t width;
+    std::uint32_t height;
+};
+
+struct NetEtherAddr { std::uint8_t data[6]; };
+
+union NetEpollData {
+    void* ptr;
+    std::uint32_t u32;
+    int fd;
+    std::uint64_t u64;
+};
+
+struct NetEpollEvent {
+    std::uint32_t events;
+    std::uint32_t reserved;
+    std::uint64_t ident;
+    NetEpollData data;
+};
+
+struct NetCtlNatInfo {
+    std::uint32_t size;
+    std::int32_t stun_status;
+    std::int32_t nat_type;
+    std::uint32_t mapped_addr;
+};
+
+static_assert(sizeof(NetCtlNatInfo) == 16);
+
+union NetCtlInfo { std::uint8_t opaque[256]; };
+
+struct NetCtlIfStat {
+    std::uint32_t device;
+    std::uint64_t tx_bytes;
+    std::uint64_t rx_bytes;
+    std::uint32_t reserved[8];
+};
+
+using NetCtlCallback = void (APS5_VABI *)(int, void*);
+
+struct HttpEpoll;
+using HttpEpollHandle = HttpEpoll*;
+using HttpsCallback = int (APS5_VABI*)(int, unsigned int, void* const*, int, void*);
+using HttpRedirectCallback = int (APS5_VABI*)(int, std::int32_t, std::int32_t*, const char*, void*);
+using HttpCookieRecvCallback = int (APS5_VABI*)(int, const char*, const char*, std::uint64_t, void*);
+using HttpAuthInfoCallback = int (APS5_VABI*)(int, int, const char*, char*, char*, int, std::uint8_t**, std::uint64_t*, int*, void*);
+
+struct HttpNBEvent { std::uint8_t opaque[64]; };
+
+struct SceHttpUriElement {
+    int opaque = 0;
+    char* scheme = nullptr;
+    char* username = nullptr;
+    char* password = nullptr;
+    char* hostname = nullptr;
+    char* path = nullptr;
+    char* query = nullptr;
+    char* fragment = nullptr;
+    std::uint16_t port = 0;
+    std::uint8_t reserved[10]{};
+};
+
+struct Http2AsyncResult {
+    int event_type;
+    int req_id;
+    int result;
+    std::uint8_t padding[4];
+    void* reserved;
+};
+
+struct Http2AsyncOption {
+    KernelEqueue equeue;
+    int user_event_id;
+    std::uint8_t padding[4];
+    void* user_data;
+    void* reserved;
+};
+
+struct NpTitleId { char data[13]; char pad[3]; };
+struct NpTitleSecret { std::uint8_t data[128]; };
+struct NpContentRestriction { std::uint8_t opaque[128]; };
+struct NpOnlineId { char data[17]; char pad[3]; };
+
+struct SharePlayConnectionInfoA {
+    std::int32_t status;
+    std::int32_t mode;
+    NpOnlineId hostOnlineId;
+    NpOnlineId visitorOnlineId;
+    std::uint64_t hostAccountId;
+    std::uint64_t visitorAccountId;
+    std::int32_t hostUserId;
+    std::int32_t visitorUserId;
+};
+static_assert(sizeof(SharePlayConnectionInfoA) == 72 && offsetof(SharePlayConnectionInfoA, hostAccountId) == 48 && offsetof(SharePlayConnectionInfoA, hostUserId) == 64);
+struct SharePlayConnectionInfo {
+    std::int32_t status;
+    std::int32_t mode;
+    NpOnlineId hostOnlineId;
+    NpOnlineId visitorOnlineId;
+    std::int32_t hostUserId;
+    std::int32_t visitorUserId;
+};
+static_assert(sizeof(SharePlayConnectionInfo) == 56 && offsetof(SharePlayConnectionInfo, hostUserId) == 48);
+struct NpId { NpOnlineId online_id; std::uint8_t opaque[4]; };
+struct NpCreateAsyncRequestParameter { std::uint8_t opaque[64]; };
+struct NpCheckPremiumParameter { std::uint8_t opaque[64]; };
+struct NpCheckPremiumResult { std::uint8_t opaque[64]; };
+
+struct NpUnifiedEntitlementLabel {
+    char data[17];
+    char padding[3];
+};
+
+struct NpServiceEntitlementLabel {
+    char data[7];
+    std::uint8_t reserved[13];
+};
+
+struct NpEntitlementAccessTransactionId {
+    char data[65];
+    std::uint8_t reserved[7];
+};
+
+struct NpEntitlementAccessListParameter;
+struct NpEntitlementAccessUnifiedInfo;
+struct NpEntitlementAccessServiceInfo;
+
+static_assert(sizeof(NpUnifiedEntitlementLabel) == 20);
+static_assert(sizeof(NpServiceEntitlementLabel) == 20);
+static_assert(sizeof(NpEntitlementAccessTransactionId) == 72);
+
+struct NpEntitlementAccessInitParam { char reserved[32]; };
+struct NpEntitlementAccessBootParam { char reserved[32]; };
+
+struct NpEntitlementAccessAddcontEntitlementInfo {
+    NpUnifiedEntitlementLabel entitlement_label;
+    std::uint32_t package_type;
+    std::uint32_t download_status;
+};
+
+struct NpEntitlementAccessEntitlementKey {
+    std::uint8_t data[16];
+};
+
+
+
+struct NpUniversalDataSystemInitParam {
+    std::size_t size;
+    std::size_t pool_size;
+};
+
+struct NpUniversalDataSystemMemoryStat {
+    std::size_t pool_size;
+    std::size_t max_inuse_size;
+    std::size_t current_inuse_size;
+};
+
+struct NpUniversalDataSystemStorageStat {
+    std::size_t in_events;
+    std::size_t out_events;
+    std::size_t lost_events;
+    std::size_t max_inuse_size;
+    std::size_t current_events;
+    std::size_t current_inuse_size;
+    std::size_t current_free_size;
+};
+
+constexpr std::uint32_t NP_GAME_INTENT_DATA_MAX_SIZE = 1024;
+constexpr std::uint32_t NP_GAME_INTENT_TYPE_MAX_SIZE = 64;
+
+struct NpGameIntentData {
+    std::uint8_t data[NP_GAME_INTENT_DATA_MAX_SIZE];
+    std::uint8_t padding[7];
+};
+
+struct NpGameIntentInitParam {
+    std::size_t size;
+    std::uint8_t reserved[32];
+};
+
+struct NpGameIntentInfo {
+    std::size_t size;
+    std::int32_t user_id;
+    char intent_type[NP_GAME_INTENT_TYPE_MAX_SIZE];
+    std::uint8_t padding[7];
+    std::uint8_t reserved[256];
+    NpGameIntentData intent_data;
+};
+
+struct NpWebApi2ResponseInformationOption {
+    std::int32_t http_status;
+    char* error_object;
+    std::size_t error_object_size;
+    std::size_t response_data_size;
+};
+
+struct NpWebApi2IntInitializeArgs {
+    std::int32_t lib_http_ctx_id;
+    std::int32_t reserved;
+    std::uint64_t pool_size;
+    const char* name;
+    std::uint64_t struct_size;
+};
+static_assert(sizeof(NpWebApi2IntInitializeArgs) == 32);
+
+struct NpWebApi2IntInitialize2Args {
+    std::int32_t lib_http_ctx_id;
+    std::int32_t reserved;
+    std::uint64_t pool_size;
+    const char* name;
+    std::uint32_t push_config_group;
+    std::int32_t reserved2;
+    std::uint64_t struct_size;
+};
+static_assert(sizeof(NpWebApi2IntInitialize2Args) == 40);
+
+struct GameUpdateCheckParam {
+    std::size_t size;
+    std::uint32_t option;
+    std::uint32_t reserved[9];
+};
+
+struct GameUpdateCheckResult {
+    std::size_t size;
+    bool found;
+    bool addcont_found;
+    char padding[2];
+    char content_version[11];
+    char padding2[1];
+    std::uint32_t reserved[6];
+};
+
+struct GameUpdateAddcontVersionInfo {
+    std::size_t size;
+    bool found;
+    char content_version[11];
+    std::uint32_t reserved[6];
+};
+
+struct SaveDataMountPoint { char data[16]; };
+
+struct SaveDataParam {
+    char title[128];
+    char sub_title[128];
+    char detail[1024];
+    std::uint32_t user_param;
+    int pad;
+    std::int64_t mtime;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataIcon {
+    void* buf;
+    std::size_t buf_size;
+    std::size_t data_size;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataMountResult {
+    SaveDataMountPoint mount_point;
+    std::uint64_t required_blocks;
+    std::uint32_t unused;
+    std::uint32_t mount_status;
+    std::uint8_t reserved[28];
+    int pad;
+};
+
+struct SaveDataMountInfo {
+    std::uint64_t blocks;
+    std::uint64_t free_blocks;
+    std::uint8_t reserved[32];
+};
+
+struct SceSaveDataTitleId { char data[10]; char pad[2]; };
+struct SceSaveDataDirName { char data[32]; };
+struct SaveDataSearchInfo {
+    std::uint64_t blocks;
+    std::uint64_t free_blocks;
+    std::uint8_t reserved[32];
+};
+static_assert(sizeof(SaveDataSearchInfo) == 48);
+struct SaveDataMemoryData {
+    void* buf;
+    std::size_t buf_size;
+    std::size_t offset;
+    std::uint8_t reserved[40];
+};
+static_assert(sizeof(SaveDataMemoryData) == 64);
+
+struct SaveDataMount3 {
+    int user_id;
+    int pad;
+    const SceSaveDataDirName* dir_name;
+    std::uint64_t blocks;
+    std::uint64_t system_blocks;
+    std::uint32_t mount_mode;
+    int pad2;
+    std::int32_t resource;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataMount2 {
+    int user_id;
+    int pad;
+    const SceSaveDataDirName* dir_name;
+    std::uint64_t blocks;
+    std::uint32_t mount_mode;
+    std::uint8_t reserved[32];
+    int pad2;
+};
+
+struct SaveDataDirNameSearchCond {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    std::uint32_t key;
+    std::uint32_t order;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataDirNameSearchResult {
+    std::uint32_t hit_num;
+    std::int32_t pad;
+    SceSaveDataDirName* dir_names;
+    std::uint32_t dir_names_num;
+    std::uint32_t set_num;
+    SaveDataParam* params;
+    SaveDataSearchInfo* infos;
+    std::uint8_t reserved[12];
+    std::int32_t pad2;
+};
+
+struct SaveDataMemoryGet2 {
+    std::int32_t user_id;
+    std::uint8_t padding[4];
+    SaveDataMemoryData* data;
+    SaveDataParam* param;
+    SaveDataIcon* icon;
+    std::uint32_t slot_id;
+    std::uint8_t reserved[28];
+};
+
+struct SaveDataMemorySetup2 {
+    std::uint32_t option;
+    std::int32_t user_id;
+    std::size_t memory_size;
+    std::size_t icon_memory_size;
+    const SaveDataParam* init_param;
+    const SaveDataIcon* init_icon;
+    std::uint32_t slot_id;
+    std::uint8_t reserved[20];
+};
+
+struct SaveDataMemorySetupResult {
+    std::size_t existed_memory_size;
+    std::uint8_t reserved[16];
+};
+
+struct SaveDataMemorySet2 {
+    std::int32_t user_id;
+    std::uint8_t padding[4];
+    const SaveDataMemoryData* data;
+    const SaveDataParam* param;
+    const SaveDataIcon* icon;
+    std::uint32_t data_num;
+    std::uint32_t slot_id;
+    std::uint8_t reserved[24];
+};
+
+struct SaveDataTransferringMount {
+    std::int32_t user_id;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    const void* fingerprint;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataPrepareParam {
+    std::int32_t resource;
+    std::uint32_t prepare_mode;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataCommitParam {
+    std::int32_t resource;
+    std::uint32_t commit_mode;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataDelete {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    std::uint32_t unused;
+    std::uint8_t reserved[32];
+    std::int32_t pad2;
+};
+
+struct SaveDataEvent {
+    std::uint32_t type;
+    std::int32_t error_code;
+    std::int32_t user_id;
+    std::uint8_t padding[4];
+    SceSaveDataTitleId title_id;
+    SceSaveDataDirName dir_name;
+    std::uint8_t reserved[40];
+};
+
+using SaveDataEventCallback = void (APS5_VABI *)(const SaveDataEvent* event, void* userdata);
+
+struct SaveDataBackup {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    const void* fingerprint;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataCheckBackupData {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    SaveDataParam* param;
+    SaveDataIcon* icon;
+    std::uint8_t reserved[32];
+};
+
+struct SaveDataRestoreBackupData {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataTitleId* title_id;
+    const SceSaveDataDirName* dir_name;
+    const void* fingerprint;
+    std::uint32_t unused;
+    std::uint8_t reserved[32];
+    std::int32_t pad2;
+};
+static_assert(offsetof(SaveDataCheckBackupData, title_id) == 0x08);
+static_assert(offsetof(SaveDataCheckBackupData, dir_name) == 0x10);
+static_assert(offsetof(SaveDataCheckBackupData, param) == 0x18);
+static_assert(offsetof(SaveDataCheckBackupData, icon) == 0x20);
+static_assert(offsetof(SaveDataCheckBackupData, reserved) == 0x28);
+static_assert(sizeof(SaveDataCheckBackupData) == 0x48);
+static_assert(offsetof(SaveDataRestoreBackupData, title_id) == 0x08);
+static_assert(offsetof(SaveDataRestoreBackupData, dir_name) == 0x10);
+static_assert(offsetof(SaveDataRestoreBackupData, fingerprint) == 0x18);
+static_assert(offsetof(SaveDataRestoreBackupData, unused) == 0x20);
+static_assert(offsetof(SaveDataRestoreBackupData, reserved) == 0x24);
+static_assert(offsetof(SaveDataRestoreBackupData, pad2) == 0x44);
+static_assert(sizeof(SaveDataRestoreBackupData) == 0x48);
+
+struct SaveDataConvert {
+    std::int32_t user_id;
+    std::int32_t pad;
+    const SceSaveDataDirName* dir_name;
+    std::uint8_t unknown[48];
+};
+
+struct AppContentInitParam { char reserved[32]; };
+
+struct AppContentBootParam {
+    char reserved1[4];
+    std::uint32_t attr;
+    char reserved2[32];
+};
+
+struct AppContentMountPoint { char data[16]; };
+
+using ContentExportMallocCallback = void* (APS5_VABI *)(std::size_t size, void* userData);
+using ContentExportFreeCallback = void (APS5_VABI *)(void* memory, void* userData);
+using ContentExportDataCallback = std::int32_t (APS5_VABI *)(const void** data, std::size_t* size, void* userData);
+
+struct ContentExportInitParam {
+    ContentExportMallocCallback mallocFunc;
+    ContentExportFreeCallback freeFunc;
+    void* userData;
+};
+
+static_assert(sizeof(ContentExportInitParam) == 24);
+static_assert(offsetof(ContentExportInitParam, freeFunc) == 8);
+static_assert(offsetof(ContentExportInitParam, userData) == 16);
+
+struct ContentExportSfParam {
+    std::size_t size;
+    const char* metadata;
+    const std::int64_t* contentIds;
+    std::uint32_t contentCount;
+    std::uint32_t option;
+};
+
+static_assert(sizeof(ContentExportSfParam) == 32);
+static_assert(offsetof(ContentExportSfParam, metadata) == 8);
+static_assert(offsetof(ContentExportSfParam, contentIds) == 16);
+static_assert(offsetof(ContentExportSfParam, contentCount) == 24);
+static_assert(offsetof(ContentExportSfParam, option) == 28);
+
+struct ContentExportInitParam2 {
+    void* malloc_func;
+    void* free_func;
+    void* user_data;
+    std::size_t buffer_size;
+    std::int64_t reserved0;
+    std::int64_t reserved1;
+};
+
+struct ContentExportParam {
+    char title[257];
+    char comment[257];
+    char content_type[65];
+};
+static_assert(sizeof(ContentExportParam) == 579);
+
+struct ContentExportCallbackParam {
+    std::size_t content_length;
+    void* func;
+    void* user_data;
+};
+
+struct ContentSearchInitParam { std::size_t memory_size; };
+
+struct ContentSearchColumnValue {
+    std::uint32_t size;
+    std::int64_t value;
+};
+
+struct ContentSearchContentColumn {
+    std::int32_t column_type;
+    std::int32_t column_operator;
+    const ContentSearchColumnValue* value;
+    std::int32_t logical_connector;
+};
+
+struct ContentSearchContentColumnSet {
+    const ContentSearchContentColumn* columns;
+    std::int32_t columns_length;
+    std::int32_t logical_connector;
+};
+
+struct ContentSearchContentOrderByCondition {
+    std::int32_t column_type;
+    std::int32_t sort_type;
+};
+
+static_assert(sizeof(ContentSearchColumnValue) == 16);
+static_assert(sizeof(ContentSearchContentColumn) == 24);
+static_assert(offsetof(ContentSearchContentColumn, logical_connector) == 16);
+static_assert(sizeof(ContentSearchContentColumnSet) == 16);
+static_assert(sizeof(ContentSearchContentOrderByCondition) == 8);
+
+struct PngEncCreateParam {
+    std::uint32_t this_size;
+    std::uint32_t attribute;
+    std::uint32_t max_image_width;
+    std::uint32_t max_filter_number;
+};
+
+struct PngEncEncodeParam {
+    const std::uint8_t* image_mem_addr;
+    std::uint8_t* png_mem_addr;
+    std::uint32_t image_mem_size;
+    std::uint32_t png_mem_size;
+    std::uint32_t image_width;
+    std::uint32_t image_height;
+    std::uint32_t image_pitch;
+    std::uint16_t pixel_format;
+    std::uint16_t color_space;
+    std::uint16_t bit_depth;
+    std::uint16_t clut_number;
+    std::uint16_t filter_type;
+    std::uint16_t compression_level;
+};
+
+struct PngEncOutputInfo {
+    std::uint32_t data_size;
+    std::uint32_t processed_height;
+};
+
+struct ContentDeleteInitParam {
+    char reserved1[4];
+    std::size_t heap_size;
+    char reserved2[32];
+};
+
+struct PngDecCreateParam {
+    std::uint32_t this_size;
+    std::uint32_t attribute;
+    std::uint32_t max_image_width;
+};
+
+struct PngDecParseParam {
+    const void* png_mem_addr;
+    std::uint32_t png_mem_size;
+    std::uint32_t reserved0;
+};
+
+struct PngDecDecodeParam {
+    const void* png_mem_addr;
+    void* image_mem_addr;
+    std::uint32_t png_mem_size;
+    std::uint32_t image_mem_size;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint32_t image_pitch;
+};
+
+struct PngDecImageInfo {
+    std::uint32_t image_width;
+    std::uint32_t image_height;
+    std::uint16_t color_space;
+    std::uint16_t bit_depth;
+    std::uint32_t image_flag;
+};
+
+struct JpegEncCreateParam {
+    std::uint32_t size;
+    std::uint32_t attr;
+};
+
+struct JpegEncEncodeParam {
+    const void* image;
+    void* jpeg;
+    std::uint32_t image_size;
+    std::uint32_t jpeg_size;
+    std::uint32_t image_width;
+    std::uint32_t image_height;
+    std::uint32_t image_pitch;
+    std::uint16_t pixel_format;
+    std::uint16_t encode_mode;
+    std::uint16_t color_space;
+    std::uint8_t sampling_type;
+    std::uint8_t compression_ratio;
+    std::int32_t restart_interval;
+};
+
+struct JpegEncOutputInfo {
+    std::uint32_t size;
+    std::uint32_t height;
+};
+
+struct JpegDecCreateParam {
+    std::uint32_t this_size;
+    std::uint32_t attribute;
+    std::uint32_t max_image_width;
+};
+
+struct JpegDecParseParam {
+    const void* jpeg_mem_addr;
+    std::uint32_t jpeg_mem_size;
+    std::uint16_t decode_mode;
+    std::uint16_t down_scale;
+};
+
+struct JpegDecDecodeParam {
+    const void* jpeg_mem_addr;
+    void* image_mem_addr;
+    void* coefficient_mem_addr;
+    std::uint32_t jpeg_mem_size;
+    std::uint32_t image_mem_size;
+    std::uint32_t coefficient_mem_size;
+    std::uint16_t decode_mode;
+    std::uint16_t down_scale;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint32_t image_pitch;
+};
+
+struct JpegDecImageInfo {
+    std::uint32_t image_width;
+    std::uint32_t image_height;
+    std::uint16_t color_space;
+    std::uint16_t component_number;
+    std::uint8_t component_id[4];
+    std::uint8_t sampling_factor[4];
+    std::uint32_t coefficient_mem_size;
+    std::uint32_t suitable_csc_attribute;
+    std::uint32_t output_image_width;
+    std::uint32_t output_image_height;
+};
+
+struct JpegDecInputChunk {
+    const void* data;
+    std::uint32_t size;
+    std::uint32_t reserved;
+};
+
+using JpegDecInputCallback = std::int32_t (APS5_VABI *)(JpegDecInputChunk*, void*);
+
+struct JpegDecInputControlParam {
+    JpegDecInputCallback input;
+    void* input_argument;
+    void* image_mem_addr;
+    void* coefficient_mem_addr;
+    std::uint32_t image_mem_size;
+    std::uint32_t coefficient_mem_size;
+    std::uint16_t operation;
+    std::uint16_t down_scale;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint32_t image_pitch;
+    std::uint32_t reserved;
+};
+
+struct PlayGoInitParams {
+    const void* buf_addr;
+    std::uint32_t buf_size;
+    std::uint32_t reserved;
+};
+
+struct PlayGoToDo {
+    std::uint16_t chunk_id;
+    std::int8_t locus;
+    std::int8_t reserved;
+};
+
+struct PlayGoProgress {
+    std::uint64_t progress_size;
+    std::uint64_t total_size;
+};
+
+union PlayGoOptionalChunk {
+    std::uint64_t bitmask;
+    std::uint64_t languages;
+    std::uint64_t scenarios;
+};
+
+struct PlayGoDialogResult {
+    std::int32_t errorCode;
+    std::int32_t result;
+    std::uint8_t reserved[32];
+};
+
+struct RudpPollEvent {
+    std::int32_t contextId;
+    std::uint16_t events;
+    std::uint16_t returnedEvents;
+};
+
+static_assert(sizeof(RudpPollEvent) == 8);
+static_assert(offsetof(RudpPollEvent, events) == 4);
+static_assert(offsetof(RudpPollEvent, returnedEvents) == 6);
+
+using RudpEventHandler = void (APS5_VABI*)(int ctxId, int eventId, int errorCode, void* arg);
+
+struct SystemServiceStatus {
+    std::int32_t event_num = 0;
+    bool is_system_ui_overlaid = false;
+    bool is_in_background_execution = false;
+    bool is_vr_play_area_overlaid = false;
+    std::uint8_t reserved[127] = {};
+};
+
+struct SystemServiceEvent {
+    std::int32_t event_type;
+    std::uint8_t data[8192];
+};
+
+struct SystemServiceDisplaySafeAreaInfo {
+    float ratio;
+    std::uint8_t reserved[128];
+};
+
+struct SystemServicePlayerDialogParam {
+    std::uint64_t size;
+    std::int32_t mode;
+    std::int32_t user_id;
+    std::uint64_t target_account_id;
+    std::uint8_t reserved[40];
+};
+static_assert(sizeof(SystemServicePlayerDialogParam) == 0x40);
+
+struct SystemServiceHdrToneMapLuminance {
+    float max_full_frame_tone_map_luminance;
+    float max_tone_map_luminance;
+    float min_tone_map_luminance;
+};
+
+struct SystemGestureVector2 { float x; float y; };
+
+struct SystemGesturePrimitiveTouchEvent {
+    std::int32_t event_state;
+    std::uint16_t primitive_id;
+    std::uint8_t is_updated;
+    std::uint8_t reserved0;
+    SystemGestureVector2 pressed_position;
+    SystemGestureVector2 current_position;
+    SystemGestureVector2 delta_vector;
+    std::uint64_t delta_time;
+    std::uint64_t elapsed_time;
+    std::uint8_t reserve[32];
+};
+
+struct SystemGestureRectangle {
+    float x;
+    float y;
+    float width;
+    float height;
+    std::uint8_t reserve[8];
+};
+
+struct SystemGestureTouchRecognizer { std::uint64_t reserve[361]; };
+
+struct SystemGestureTouchRecognizerInformation {
+    std::int32_t gesture_type;
+    SystemGestureRectangle rectangle;
+    std::uint64_t updated_time;
+    std::uint8_t reserve[256];
+};
+
+struct SystemGestureTouchEvent { std::uint8_t reserve[168]; };
+
+struct SystemGestureTouchPadData {
+    std::int32_t pad_handle;
+    std::int32_t report_number;
+    const PadData* pad_data_buffer;
+    std::uint8_t reserve[8];
+};
+
+struct UserServiceLoginUserIdList { int user_id[4]; };
+
+struct UserServiceRegisteredUserIdList { int user_id[16]; };
+
+struct SceUserServiceEvent {
+    std::uint32_t event_type;
+    int user_id;
+};
+
+struct UserServiceGamePresets {
+    std::size_t this_size;
+    std::uint32_t difficulty;
+    std::uint32_t priority;
+    std::uint32_t invert_vertical_view_for_1st_person_view;
+    std::uint32_t invert_horizontal_view_for_1st_person_view;
+    std::uint32_t invert_vertical_view_for_3rd_person_view;
+    std::uint32_t invert_horizontal_view_for_3rd_person_view;
+    std::uint32_t display_sub_titles;
+    std::uint32_t audio_language;
+};
+
+struct alignas(8) UltMutexOptParam {
+    std::uint32_t header[3];
+    std::uint32_t buildVersion;
+    std::uint32_t attribute;
+    std::uint32_t reserved[27];
+};
+
+static_assert(sizeof(UltMutexOptParam) == 128);
+static_assert(offsetof(UltMutexOptParam, attribute) == 16);
+
+struct UltUlthreadRuntimeOptParam { std::uint8_t bytes[128]; };
+
+using UltUlthreadEntry = std::int32_t (APS5_VABI *)(std::uint64_t);
+
+struct VideoOutBufferAttribute2 {
+    std::uint32_t reserved0;
+    std::uint32_t tiling_mode;
+    std::uint32_t aspect_ratio;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t pitch_in_pixel;
+    std::uint64_t option;
+    std::uint64_t pixel_format;
+    std::uint64_t dcc_cb_register_clear_color;
+    std::uint32_t dcc_control;
+    std::uint32_t pad0;
+    std::uint64_t reserved1[3];
+};
+
+struct VideoOutBuffers {
+    const void* data;
+    const void* metadata;
+    const void* reserved[2];
+};
+
+struct VideoOutFlipStatus {
+    std::uint64_t count = 0;
+    std::uint64_t processTime = 0;
+    std::uint64_t reserved0 = 0;
+    std::int64_t flipArg = 0;
+    std::uint64_t reserved1 = 0;
+    std::uint64_t processTimeCounter = 0;
+    std::int32_t gcQueueNum = 0;
+    std::int32_t flipPendingNum = 0;
+    std::int32_t currentBuffer = 0;
+    std::uint32_t reserved2 = 0;
+    std::uint64_t submitProcessTimeCounter = 0;
+    std::uint64_t reserved3[7] = {};
+};
+
+struct VideoOutVblankStatus {
+    std::uint64_t count = 0;
+    std::uint64_t processTime = 0;
+    std::uint64_t reserved = 0;
+    std::uint64_t processTimeCounter = 0;
+    std::uint8_t flags = 0;
+    std::uint8_t phase = 0;
+    std::uint8_t pad1[6] = {};
+};
+
+struct VideoOutBufferAttribute {
+    std::uint32_t pixel_format;
+    std::uint32_t tiling_mode;
+    std::uint32_t aspect_ratio;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t pitch_in_pixel;
+    std::uint32_t option;
+    std::uint32_t reserved0;
+    std::uint64_t reserved1;
+};
+static_assert(sizeof(VideoOutBufferAttribute) == 40);
+
+struct VideoOutFlipStatusPs4 {
+    std::uint64_t count = 0;
+    std::uint64_t processTime = 0;
+    std::uint64_t tsc = 0;
+    std::int64_t flipArg = 0;
+    std::uint64_t submitTsc = 0;
+    std::uint64_t reserved0 = 0;
+    std::int32_t gcQueueNum = 0;
+    std::int32_t flipPendingNum = 0;
+    std::int32_t currentBuffer = 0;
+    std::uint32_t reserved1 = 0;
+};
+static_assert(sizeof(VideoOutFlipStatusPs4) == 64);
+
+struct VideoOutVblankStatusPs4 {
+    std::uint64_t count = 0;
+    std::uint64_t processTime = 0;
+    std::uint64_t tsc = 0;
+    std::uint8_t flags = 0;
+    std::uint8_t pad[7] = {};
+};
+static_assert(sizeof(VideoOutVblankStatusPs4) == 32);
+
+struct VideoOutOutputStatus {
+    std::uint32_t resolution = 0;
+    std::uint32_t dynamicRange = 0;
+    std::uint64_t refreshRate = 0;
+    std::uint64_t flags = 0;
+    std::uint64_t reserved[3] = {};
+};
+
+struct VideoOutResolutionStatus {
+    std::uint32_t fullWidth = 0;
+    std::uint32_t fullHeight = 0;
+    std::uint32_t paneWidth = 0;
+    std::uint32_t paneHeight = 0;
+    std::uint64_t refreshRate = 0;
+    float screenSizeInInch = 0.0f;
+    std::uint16_t flags = 0;
+    std::uint16_t reserved0 = 0;
+    std::uint32_t reserved1[3] = {};
+};
+static_assert(sizeof(VideoOutResolutionStatus) == 48 && offsetof(VideoOutResolutionStatus, refreshRate) == 16 && offsetof(VideoOutResolutionStatus, screenSizeInInch) == 24);
+
+struct VideoOutOutputOptions { std::uint32_t internalData[16] = {}; };
+
+struct VideoOutColorSettings {
+    float gamma = 1.0f;
+    std::uint32_t reserved[3] = {};
+};
+
+struct VideoOutColorSpaceConversionSettings {
+    std::uint32_t internalData[8] = {};
+};
+static_assert(sizeof(VideoOutColorSpaceConversionSettings) == 32);
+
+
+using atexit_func_t = void (*)();
+
+struct InitEnvParams {
+    int argc;
+    std::uint32_t pad;
+    const char* argv[3];
+};
+
+struct LibcHeapInfo {
+    std::uint64_t size;
+    std::uint32_t unknown1;
+    std::uint32_t unknown2;
+    std::uint64_t* mspace_atomic_id_mask;
+    std::uint64_t* mstate_table;
+};
+
+using Info = LibcHeapInfo;
+
+struct Packet {
+    std::uint32_t* addr;
+    std::uint32_t dw_num;
+    std::uint8_t flags;
+    std::uint8_t reserved[3];
+};
+
+#endif

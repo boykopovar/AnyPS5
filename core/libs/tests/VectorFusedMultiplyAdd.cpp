@@ -1,0 +1,159 @@
+#include "Translation/TranslationContext.hpp"
+#include "RdnaDecoder/RdnaVectorOpDecoder.hpp"
+#include <array>
+#include <cstdint>
+#include <iostream>
+#include <span>
+#include <stdexcept>
+#include <string>
+
+using namespace ShaderRecompiler;
+
+namespace {
+
+constexpr std::uint32_t Destination = 5u;
+constexpr std::uint32_t Source0 = 6u;
+constexpr std::uint32_t Source1 = 7u;
+constexpr std::uint32_t Literal = 0x3fc00001u;
+
+struct Term {
+    bool literal;
+    std::uint32_t value;
+};
+
+constexpr Term Register(std::uint32_t index) { return {false, index}; }
+constexpr Term Constant() { return {true, Literal}; }
+
+void Require(bool value, const std::string& message) {
+    if (!value) throw std::runtime_error("vop2 multiply-add: " + message);
+}
+
+Term Leaf(const IrValue* value, const std::string& name) {
+    Require(value->Opcode() == IrOpcode::BitCastF32U32, name + " operand is not a plain f32 read");
+    const IrValue* bits = value->Argument(0);
+    if (bits->HasImmediate()) {
+        return {true, bits->ImmediateU32()};
+    }
+    Require(bits->Opcode() == IrOpcode::GetVectorRegister, name + " operand is neither a literal nor a vector register");
+    return {false, bits->Argument(0)->Register().index};
+}
+
+void Check(const std::string& name, std::uint32_t encoding, std::uint32_t wordCount, RdnaOpcode opcode, IrOpcode expected, const std::array<Term, 3>& terms) {
+    const std::array<std::uint32_t, 2> words{(encoding << 25u) | (Destination << 17u) | (Source1 << 9u) | (256u + Source0), Literal};
+    const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words).first(wordCount), 0u);
+    Require(instruction.family == RdnaInstructionFamily::VOP2, name + " is not decoded as VOP2");
+    Require(instruction.opcodeId == encoding, name + " lost its encoding");
+    Require(instruction.op == opcode, name + " decodes to another opcode");
+    Require(instruction.wordCount == wordCount, name + " has the wrong length");
+    Require(instruction.sourceCount == (wordCount == 2u ? 3u : 2u), name + " has the wrong source count");
+
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.SetFloatMode(ShaderFloatMode{0xf0u, false, false, false});
+    context.TranslateInstruction(instruction);
+
+    const IrOpcode rejected = expected == IrOpcode::FPFma32 ? IrOpcode::FPMad32 : IrOpcode::FPFma32;
+    const IrValue* result = nullptr;
+    for (const auto* value : block.Instructions()) {
+        Require(value->Opcode() != rejected, name + (expected == IrOpcode::FPFma32 ? " rounds the product separately" : " is fused"));
+        if (value->Opcode() == expected) {
+            Require(result == nullptr, name + " emits more than one multiply-add");
+            result = value;
+        }
+    }
+    Require(result != nullptr, name + " emits no multiply-add");
+    for (std::uint32_t index = 0u; index < terms.size(); ++index) {
+        const Term term = Leaf(result->Argument(index), name);
+        Require(term.literal == terms[index].literal && term.value == terms[index].value, name + " reads the wrong operand " + std::to_string(index));
+    }
+}
+
+void CheckMix(const std::string& name, const std::array<std::uint32_t, 2>& words) {
+    const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words), 0u);
+    Require(instruction.family == RdnaInstructionFamily::VOP3P, name + " is not decoded as VOP3P");
+    Require(instruction.op == RdnaOpcode::VFmaF32, name + " decodes to another opcode");
+
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.SetFloatMode(ShaderFloatMode{0xf0u, false, false, false});
+    context.TranslateInstruction(instruction);
+
+    std::uint32_t fused = 0u;
+    for (const auto* value : block.Instructions()) {
+        Require(value->Opcode() != IrOpcode::FPMad32, name + " rounds the product separately");
+        if (value->Opcode() == IrOpcode::FPFma32) ++fused;
+    }
+    Require(fused == 1u, name + " emits " + std::to_string(fused) + " fused multiply-adds");
+}
+
+void CheckMixHalf(const std::string& name, const std::array<std::uint32_t, 2>& words, RdnaOpcode opcode, std::uint32_t floatMode) {
+    const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words), 0u);
+    Require(instruction.family == RdnaInstructionFamily::VOP3P, name + " is not decoded as VOP3P");
+    Require(instruction.op == opcode, name + " decodes to another opcode");
+
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.SetFloatMode(ShaderFloatMode{floatMode, false, false, false});
+    context.TranslateInstruction(instruction);
+
+    std::uint32_t exact = 0u;
+    for (const auto* value : block.Instructions()) {
+        Require(value->Opcode() != IrOpcode::FPFma32 && value->Opcode() != IrOpcode::FPMad32, name + " rounds to f32 before rounding to f16");
+        if (value->Opcode() != IrOpcode::FPInterpolateF16) continue;
+        ++exact;
+        const std::uint32_t rounding = (value->Argument(3)->ImmediateU32() >> InterpolationRound16Shift) & 3u;
+        Require(rounding == ((floatMode >> 2u) & 3u), name + " rounds in f16 mode " + std::to_string(rounding));
+    }
+    Require(exact == 1u, name + " emits " + std::to_string(exact) + " product-sums rounded once to f16");
+}
+
+void RejectMixHalf(const std::string& name, const std::array<std::uint32_t, 2>& words, std::uint32_t floatMode) {
+    const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words), 0u);
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.SetFloatMode(ShaderFloatMode{floatMode, false, false, false});
+    try {
+        context.TranslateInstruction(instruction);
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find("FLOAT_MODE " + std::to_string(floatMode)) != std::string::npos, name + " fails with another error: " + error.what());
+        return;
+    }
+    Require(false, name + " is translated in FLOAT_MODE " + std::to_string(floatMode));
+}
+
+}
+
+int main() {
+    try {
+        const std::array<Term, 3> accumulate{Register(Source0), Register(Source1), Register(Destination)};
+        const std::array<Term, 3> multiplyLiteral{Register(Source0), Constant(), Register(Source1)};
+        const std::array<Term, 3> addLiteral{Register(Source0), Register(Source1), Constant()};
+        Check("v_mac_f32", 0x1fu, 1u, RdnaOpcode::VMacF32, IrOpcode::FPMad32, accumulate);
+        Check("v_madmk_f32", 0x20u, 2u, RdnaOpcode::VMadmkF32, IrOpcode::FPMad32, multiplyLiteral);
+        Check("v_madak_f32", 0x21u, 2u, RdnaOpcode::VMadakF32, IrOpcode::FPMad32, addLiteral);
+        Check("v_fmac_f32", 0x2bu, 1u, RdnaOpcode::VMacF32, IrOpcode::FPFma32, accumulate);
+        Check("v_fmamk_f32", 0x2cu, 2u, RdnaOpcode::VMadmkF32, IrOpcode::FPFma32, multiplyLiteral);
+        Check("v_fmaak_f32", 0x2du, 2u, RdnaOpcode::VMadakF32, IrOpcode::FPFma32, addLiteral);
+        CheckMix("v_fma_mix_f32", {0xcc200005u, 0x04220f06u});
+        CheckMix("v_fma_mix_f32 op_sel_hi:[1,0,1]", {0xcc204005u, 0x0c220f06u});
+        CheckMixHalf("v_fma_mixlo_f16", {0xcc210005u, 0x04220f06u}, RdnaOpcode::VMadMixloF16, 0xc0u);
+        CheckMixHalf("v_fma_mixhi_f16", {0xcc220005u, 0x04220f06u}, RdnaOpcode::VMadMixhiF16, 0xc0u);
+        CheckMixHalf("v_fma_mixlo_f16 op_sel_hi:[1,1,1]", {0xcc214005u, 0x1c220f06u}, RdnaOpcode::VMadMixloF16, 0xc0u);
+        CheckMixHalf("v_fma_mixlo_f16 with f32 round toward zero", {0xcc210005u, 0x04220f06u}, RdnaOpcode::VMadMixloF16, 0xf3u);
+        RejectMixHalf("v_fma_mixlo_f16 with f16 denormals flushed", {0xcc210005u, 0x04220f06u}, 0x30u);
+        CheckMixHalf("v_fma_mixhi_f16 with f16 round toward -inf", {0xcc220005u, 0x04220f06u}, RdnaOpcode::VMadMixhiF16, 0xf8u);
+        CheckMixHalf("v_fma_mixlo_f16 with f16 round toward zero", {0xcc210005u, 0x04220f06u}, RdnaOpcode::VMadMixloF16, 0xccu);
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

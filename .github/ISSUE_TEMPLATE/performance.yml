@@ -1,0 +1,65 @@
+name: Performance report
+description: A slow scene or a change in speed, measured with a performance trace so that reports can be compared.
+title: "perf: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Capture the scene with `APS5_TRACE_FRAMES=<start>:<count>` (presents; `APS5_TRACE_SECONDS=<start>:<length>` also works), as described under [Performance trace](https://github.com/boykopovar/AnyPS5/blob/main/docs/dev/BUILD.md#performance-trace). It writes `aps5-trace-<commit>-<pid>.json.gz` and appends one line to `aps5-summary.jsonl`.
+
+        - Run the scene once and restart the title, so the shader and pipeline caches are warm.
+        - Use the same scene, window, resolution and settings for every capture you compare.
+        - Set no other `APS5_TRACE_*` or `APS5_PROFILE_*` switch and do not redirect the log; they cost time.
+        - Capture the base and the change on the same machine in the same session.
+
+        A trace holds timings, scope and thread names and counts, no game data. The summary line names the GPU, driver and OS.
+  - type: input
+    id: scene
+    attributes:
+      label: Title and scene
+      description: Title ID and what the window covers (menu, level, position, cutscene).
+      placeholder: PPSA01325, main menu after the intro
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What is slow or what changed
+      description: What you see (frame time, stutter, a phase that grew) and, for a comparison, the two commits.
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary lines
+      description: The line of aps5-summary.jsonl for each capture. It holds the commit, the APS5_* switches, GPU, driver, OS, resolution and frame times.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: trace
+    attributes:
+      label: Traces
+      description: Attach each aps5-trace-<commit>-<pid>.json.gz (drag it into this field). They open in ui.perfetto.dev.
+    validations:
+      required: true
+  - type: textarea
+    id: digest
+    attributes:
+      label: Digest
+      description: The output of `python3 tools/trace_digest.py <trace>` (with `--stacks <file>.collapsed.txt` if you sampled the worker).
+  - type: textarea
+    id: stacks
+    attributes:
+      label: Worker stacks
+      description: Optional. The collapsed-stack file of APS5_SAMPLE_WORKER (<file stem>.collapsed.txt), attached. It opens in speedscope.app.
+  - type: checkboxes
+    id: protocol
+    attributes:
+      label: Capture
+      options:
+        - label: The caches were warm (the scene ran once and the title was restarted)
+          required: true
+        - label: No other APS5_TRACE_* or APS5_PROFILE_* switch was set and the log was not redirected
+          required: true
+        - label: Captures compared here come from the same machine, scene and settings

@@ -1,0 +1,84 @@
+#include <Cli.hpp>
+#include <io/NativePath.hpp>
+#include <domain/Types.hpp>
+#include <filesystem>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <string_view>
+#include <cstdlib>
+#include <cerrno>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+namespace Cli {
+
+int Autorun(const std::string& absPath, bool toWindows) {
+    if (!toWindows) {
+        const auto path = Io::NativePath(absPath);
+        constexpr auto executable = std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
+        if ((std::filesystem::status(path).permissions() & executable) != executable)
+            std::filesystem::permissions(path, executable, std::filesystem::perm_options::add);
+    }
+
+    int rawCode = 0;
+    int exitCode = 0;
+
+#ifdef _WIN32
+    std::wstring command = L"\"" + Io::NativePath(absPath).wstring() + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process))
+        throw Domain::RelinkerException("Cannot run the output executable: " + absPath);
+    if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0) {
+        const unsigned long waitError = GetLastError();
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        throw Domain::RelinkerException("Cannot wait for the output executable: " + absPath + " (error " + std::to_string(waitError) + ")");
+    }
+    unsigned long rawExitCode = 0;
+    if (!GetExitCodeProcess(process.hProcess, &rawExitCode)) {
+        const unsigned long exitError = GetLastError();
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        throw Domain::RelinkerException("Cannot read the output executable exit code: " + absPath + " (error " + std::to_string(exitError) + ")");
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    rawCode = static_cast<int>(rawExitCode);
+    exitCode = rawCode;
+    std::cout << "\nExit code: " << rawCode << '\n';
+#else
+    std::string cmd = "'";
+    for (const char character : absPath) {
+        if (character == '\'') cmd += "'\\''";
+        else cmd += character;
+    }
+    cmd += '\'';
+    rawCode = std::system(cmd.c_str());
+
+    if (rawCode == -1) {
+        const int runError = errno;
+        throw Domain::RelinkerException("Cannot run or wait for the output executable: " + absPath + " (error " + std::to_string(runError) + ")");
+    }
+    const int signal = rawCode & 0x7F;
+    exitCode = signal ? 128 + signal : (rawCode >> 8) & 0xFF;
+    std::cout << "\nRaw exit code: " << rawCode << "; Unpacked: " << exitCode << '\n';
+#endif
+
+    const char* noPause = std::getenv("ANYPS5_AUTORUN_NO_PAUSE");
+    if (!noPause || std::string_view(noPause) != "1") {
+        std::cout << "\nPress Enter to exit...\n";
+        std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
+    }
+
+    return exitCode;
+}
+
+}

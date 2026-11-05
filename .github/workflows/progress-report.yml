@@ -1,0 +1,41 @@
+name: Progress report
+
+on:
+  pull_request:
+    paths:
+      - 'core/libs/prx/**'
+      - 'core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp'
+      - 'tools/nid_names.py'
+      - 'tools/progress.py'
+      - 'tools/rdna_isa.txt'
+      - '.github/workflows/progress-report.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          out=$RUNNER_TEMP/out report=$RUNNER_TEMP/report
+          git worktree add --detach "$RUNNER_TEMP/base" HEAD^1
+          python3 tools/progress.py --root "$RUNNER_TEMP/base" "$out/base"
+          python3 tools/progress.py "$out/head"
+          mkdir "$report"
+          echo "$PR" > "$report/pr"
+          body=$(python3 tools/progress.py --compare "$out/base/progress.json" "$out/head/progress.json")
+          if [ -n "$body" ]; then
+            printf '### Progress report (%s → %s)\n\n%s\n' "$(git rev-parse --short HEAD^1)" "${HEAD_SHA::7}" "$body" > "$report/report.md"
+            cat "$report/report.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: progress-report
+          path: ${{ runner.temp }}/report

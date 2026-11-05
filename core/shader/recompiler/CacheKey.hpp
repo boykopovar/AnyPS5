@@ -1,0 +1,387 @@
+#ifndef CORE_SHADER_RECOMPILER_CACHEKEY_HPP
+#define CORE_SHADER_RECOMPILER_CACHEKEY_HPP
+
+#include "Recompiler.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
+#include <algorithm>
+#include <bit>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+#include <type_traits>
+
+namespace ShaderRecompiler {
+
+class RecompileCacheKey {
+public:
+    static void Build(const RecompileRequest& request, std::vector<std::uint64_t>& key) {
+        key.clear();
+        append(key, RuntimeAbi::Version);
+        append(key, request.shader.stage);
+        // The code enters as a hash rather than word by word: the key is built, hashed and compared
+        // on every dispatch and draw. The cache verifies a match against the code it stored.
+        // Debug aid: APS5_NO_CODE_HASH_KEY=1 appends every code word, as before.
+        static const bool hashedCode = std::getenv("APS5_NO_CODE_HASH_KEY") == nullptr;
+        if (hashedCode) {
+            append(key, request.shader.code.size());
+            append(key, HashCode(request.shader.code));
+        } else {
+            append(key, request.shader.code);
+        }
+        appendInterface(key, request);
+    }
+
+    static void BuildInterface(const RecompileRequest& request, std::vector<std::uint64_t>& key) {
+        key.clear();
+        append(key, RuntimeAbi::Version);
+        append(key, request.shader.stage);
+        appendInterface(key, request);
+    }
+
+    // A hash over every field Build appends except the code, the target and the probe flag: the
+    // key of a source memo whose owner fixes the code (a registered shader at an offset) and the
+    // device itself, and which is bypassed while the probe is active.
+    static std::uint64_t ContextHash(const RecompileRequest& request) {
+        struct ContextKeyStorage {};
+        auto& key = HostThreadLocal<std::vector<std::uint64_t>, ContextKeyStorage>();
+        key.clear();
+        append(key, RuntimeAbi::Version);
+        append(key, request.shader.stage);
+        append(key, request.context.waveSize);
+        append(key, request.context.userDataBaseRegister);
+        append(key, request.context.userData.size());
+        append(key, request.context.compute);
+        append(key, request.context.pixel);
+        append(key, request.context.vertex);
+        append(key, request.context.floatMode);
+        append(key, request.context.convertedSamples);
+        append(key, request.context.layerRowSamples);
+        appendFallbacks(key, request);
+        appendMesh(key, request);
+        appendTessellation(key, request);
+        std::uint64_t hash = 0xcbf29ce484222325ull;
+        for (const auto value : key) {
+            hash ^= value;
+            hash *= 0x100000001b3ull;
+        }
+        return hash;
+    }
+
+    static void SealFeatureDigest(SpirvTarget& target) {
+        target.featureDigest = digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+        target.featureDigestSpans = featureSpans(target);
+        target.featureDigestSealed = true;
+    }
+
+    // A 64-bit hash of the code, two dwords per step; collisions are resolved by comparing the code.
+    static std::uint64_t HashCode(std::span<const std::uint32_t> code) {
+        std::uint64_t hash = 0x9e3779b97f4a7c15ull ^ (static_cast<std::uint64_t>(code.size()) * 0x100000001b3ull);
+        const auto mix = [&](std::uint64_t chunk) {
+            hash = (hash ^ chunk) * 0x9e3779b97f4a7c15ull;
+            hash ^= hash >> 29u;
+        };
+        std::size_t index = 0;
+        for (; index + 2 <= code.size(); index += 2) mix(code[index] | (static_cast<std::uint64_t>(code[index + 1]) << 32u));
+        if (index < code.size()) mix(code[index]);
+        return hash;
+    }
+
+private:
+    static void appendInterface(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        append(key, request.context.waveSize);
+        append(key, request.context.userDataBaseRegister);
+        append(key, request.context.userData.size());
+        append(key, request.context.compute);
+        append(key, request.context.pixel);
+        append(key, request.context.vertex);
+        append(key, request.context.floatMode);
+        append(key, request.context.convertedSamples);
+        append(key, request.context.layerRowSamples);
+        appendFallbacks(key, request);
+        appendMesh(key, request);
+        appendTessellation(key, request);
+        append(key, request.target);
+        append(key, DebugProbeActive());
+        append(key, RayTracingStrict());
+        append(key, RayTracingMiss());
+    }
+
+    static void appendFallbacks(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        append(key, request.context.linkedCallFallbacks.size());
+        for (const auto programCounter : request.context.linkedCallFallbacks) append(key, programCounter);
+    }
+
+    static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        if (request.shader.stage == ShaderStage::Fragment) {
+            append(key, request.graphics && request.graphics->mesh);
+            return;
+        }
+        const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
+        if (request.shader.stage == ShaderStage::TessellationEvaluation && mesh != nullptr) {
+            append(key, mesh->esgsItemSize);
+            return;
+        }
+        if (request.shader.stage != ShaderStage::Mesh) return;
+        append(key, mesh != nullptr);
+        if (mesh == nullptr) return;
+        for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize}) append(key, value);
+        if (request.graphics->tessellation) append(key, 0x63617074ull);
+        const auto& barycentrics = request.graphics->meshBarycentrics;
+        append(key, barycentrics.has_value());
+        if (!barycentrics.has_value()) return;
+        append(key, barycentrics->emulation.active);
+        append(key, barycentrics->emulation.smooth);
+        append(key, barycentrics->emulation.linear);
+        append(key, barycentrics->parameters.size());
+        for (const auto& parameter : barycentrics->parameters) {
+            append(key, parameter.location);
+            append(key, parameter.sourceLocation);
+            append(key, parameter.perVertex);
+        }
+    }
+
+    static void appendTessellation(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        if (request.shader.stage != ShaderStage::Local && request.shader.stage != ShaderStage::TessellationControl && request.shader.stage != ShaderStage::TessellationEvaluation) return;
+        const auto* tessellation = request.graphics && request.graphics->tessellation ? &*request.graphics->tessellation : nullptr;
+        append(key, tessellation != nullptr);
+        if (tessellation == nullptr) return;
+        for (const auto value : {tessellation->inputControlPoints, tessellation->outputControlPoints, tessellation->domain, tessellation->partitioning, tessellation->outputTopology}) append(key, value);
+        if (request.shader.stage != ShaderStage::TessellationEvaluation) append(key, tessellation->mergedHull);
+        if (request.shader.stage == ShaderStage::Local) return;
+        append(key, tessellation->patchesPerGroup);
+        append(key, tessellation->primitiveGroupSize);
+        append(key, TessellationInstancePatches(request));
+    }
+
+    template<typename TValue>
+    static void append(std::vector<std::uint64_t>& key, TValue value) requires (std::is_integral_v<TValue> || std::is_enum_v<TValue>) {
+        key.push_back(static_cast<std::uint64_t>(value));
+    }
+
+    template<typename TValue, std::size_t TSize>
+    static void append(std::vector<std::uint64_t>& key, const std::array<TValue, TSize>& values) {
+        for (const auto value : values) append(key, value);
+    }
+
+    template<typename TValue>
+    static void append(std::vector<std::uint64_t>& key, std::span<TValue> values) {
+        append(key, values.size());
+        for (const auto value : values) append(key, value);
+    }
+
+    template<typename TValue>
+    static void append(std::vector<std::uint64_t>& key, const std::optional<TValue>& value) {
+        append(key, value.has_value());
+        if (value) append(key, *value);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, std::string_view value) {
+        append(key, value.size());
+        for (const unsigned char byte : value) append(key, byte);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const ShaderFloatMode& value) {
+        append(key, value.floatMode);
+        append(key, value.dx10Clamp);
+        append(key, value.ieeeMode);
+        append(key, value.fp16Overflow);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const ShaderComputeStageInfo& value) {
+        append(key, value.numThreads);
+        append(key, value.ldsSizeDwords);
+        append(key, value.groupIdEnable);
+        append(key, value.tgSizeEnable);
+        append(key, value.threadIdComponentCount);
+        append(key, value.PartialGroups());
+        append(key, value.scratchDwords);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const ShaderPixelStageInfo& value) {
+        append(key, value.interpolatorCount);
+        if (value.interpolatorCount > value.interpolatorSettings.size()) throw std::runtime_error("Shader cache: invalid interpolator count");
+        for (std::uint32_t i = 0; i < value.interpolatorCount; ++i) append(key, value.interpolatorSettings[i]);
+        append(key, value.wave32);
+        append(key, value.inputAddr);
+        append(key, value.hasPerspectiveCenterVgpr);
+        append(key, value.perspectiveCentroid);
+        append(key, value.posX);
+        append(key, value.posY);
+        append(key, value.posZ);
+        append(key, value.posW);
+        append(key, value.frontFace);
+        append(key, value.frontFaceAllBits);
+        append(key, value.ancillary);
+        append(key, value.sampleShading);
+        append(key, value.noPerspective);
+        append(key, value.linearCentroid);
+        append(key, value.pixelKillEnable);
+        append(key, value.depthExportEnable);
+        if (value.depthExportEnable) {
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMin));
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMax));
+        }
+        append(key, value.sampleMaskExportEnable);
+        append(key, value.earlyZ);
+        append(key, value.executeOnNoop);
+        append(key, value.conservativeZExport);
+        append(key, value.orderedPixelShader);
+        append(key, value.alphaToCoverage);
+        append(key, value.stencilRefExportEnable);
+        append(key, value.stencilOperationValueExport);
+        append(key, value.ditheredAlphaToCoverage);
+        append(key, value.ditheredAlphaSamples);
+        append(key, value.quadPixelMask);
+        append(key, value.quadSampleMask);
+        append(key, value.iteratesSamples);
+        append(key, value.positionLocation);
+        append(key, value.sampleLocations);
+        append(key, value.targetOutputMode);
+        append(key, value.targetMerges.size());
+        for (const auto& merge : value.targetMerges) {
+            append(key, merge.target);
+            append(key, merge.mask);
+            append(key, merge.samples);
+            append(key, merge.depthStencilWrites);
+            append(key, merge.depthStencilTests);
+            if (!merge.blend.enabled) continue;
+            const auto& blend = merge.blend;
+            append(key, blend.snorm);
+            append(key, blend.colorSource);
+            append(key, blend.colorDestination);
+            append(key, blend.colorOperation);
+            append(key, blend.alphaSource);
+            append(key, blend.alphaDestination);
+            append(key, blend.alphaOperation);
+            append(key, blend.writeMask);
+            append(key, blend.constants);
+        }
+        append(key, value.sampleOrder);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const ShaderVertexResourceDestination& value) {
+        append(key, value.registerStart);
+        append(key, value.registersNum);
+        append(key, value.attrId);
+        append(key, value.fetchIndex);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const ShaderVertexStageInfo& value) {
+        append(key, value.fetchAttribReg);
+        append(key, value.fetchBufferReg);
+        append(key, value.fetchEmbedded);
+        append(key, value.paClVsOutCntl);
+        append(key, value.depthRemapMode);
+        append(key, value.pointList);
+        append(key, std::bit_cast<std::uint32_t>(value.pointSize));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMin));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMax));
+        if (value.resourcesNum > value.resources.size()) throw std::runtime_error("Shader cache: invalid vertex resource count");
+        append(key, value.resourcesNum);
+        for (std::uint32_t i = 0; i < value.resourcesNum; ++i) {
+            if (!value.fetchEmbedded) append(key, VertexInputNumericClass(static_cast<IrBufferFormat>((value.resources[i].fields[3] >> 12u) & 0x7fu)));
+            auto destination = value.resourcesDst[i];
+            if (value.fetchEmbedded) destination.fetchIndex = 0;
+            append(key, destination);
+        }
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const MeshTargetLimits& value) {
+        append(key, value.maxWorkgroupSize);
+        append(key, value.maxWorkgroupInvocations);
+        append(key, value.maxSharedMemoryBytes);
+        append(key, value.maxOutputVertices);
+        append(key, value.maxOutputPrimitives);
+        append(key, value.maxOutputComponents);
+        append(key, value.maxOutputMemoryBytes);
+        append(key, value.outputPerVertexGranularity);
+        append(key, value.outputPerPrimitiveGranularity);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const TessellationTargetLimits& value) {
+        append(key, value.maxPatchSize);
+        append(key, value.maxControlPerVertexInputComponents);
+        append(key, value.maxControlPerVertexOutputComponents);
+        append(key, value.maxControlPerPatchOutputComponents);
+        append(key, value.maxControlTotalOutputComponents);
+        append(key, value.maxEvaluationInputComponents);
+        append(key, value.maxEvaluationOutputComponents);
+    }
+
+    static std::array<std::uintptr_t, 4> featureSpans(const SpirvTarget& target) {
+        return {reinterpret_cast<std::uintptr_t>(target.supportedCapabilities.data()), target.supportedCapabilities.size(), reinterpret_cast<std::uintptr_t>(target.supportedExtensions.data()), target.supportedExtensions.size()};
+    }
+
+    static std::array<std::uint64_t, 2> digestFeatures(std::span<const std::uint32_t> capabilities, std::span<const std::string_view> extensions) {
+        std::uint64_t low = 0xcbf29ce484222325ull;
+        std::uint64_t high = 0x6a09e667f3bcc909ull;
+        const auto mix = [&](std::uint64_t value) {
+            low = (low ^ value) * 0x100000001b3ull;
+            high = (high ^ (value * 0x9e3779b97f4a7c15ull)) * 0xff51afd7ed558ccdull;
+            high ^= high >> 29u;
+        };
+        mix(capabilities.size());
+        for (const auto capability : capabilities) mix(capability);
+        mix(extensions.size());
+        for (const auto extension : extensions) {
+            mix(extension.size());
+            for (std::size_t offset = 0; offset < extension.size(); offset += sizeof(std::uint64_t)) {
+                std::uint64_t chunk = 0;
+                std::memcpy(&chunk, extension.data() + offset, std::min(sizeof(std::uint64_t), extension.size() - offset));
+                mix(chunk);
+            }
+        }
+        return {low, high};
+    }
+
+    static void appendFeatureDigest(std::vector<std::uint64_t>& key, const SpirvTarget& target) {
+        const auto digest = target.featureDigestSealed && target.featureDigestSpans == featureSpans(target) ? target.featureDigest : digestFeatures(target.supportedCapabilities, target.supportedExtensions);
+        key.push_back(digest[0]);
+        key.push_back(digest[1]);
+    }
+
+    static void append(std::vector<std::uint64_t>& key, const SpirvTarget& value) {
+        append(key, value.vulkanVersion);
+        append(key, value.spirvVersion);
+        append(key, value.subgroupSize);
+        append(key, value.bdaAbiVersion);
+        appendFeatureDigest(key, value);
+        append(key, value.fragmentShaderBarycentricEnabled);
+        append(key, value.maxWorkgroupSize);
+        append(key, value.maxWorkgroupInvocations);
+        append(key, value.maxWorkgroupSharedMemoryBytes);
+        append(key, value.mesh);
+        append(key, value.tessellation);
+        append(key, value.nonConstantImageOffsets);
+        append(key, value.srgbDecodeFormats);
+        append(key, value.maxImageArrayLayers);
+        append(key, value.narrowSubgroupClock);
+        append(key, value.fragmentBarycentricBuiltins);
+        append(key, value.float64DenormPreserve);
+        append(key, value.depthRangeRemap);
+        append(key, value.registrationModules);
+        append(key, value.registrationWordLimit);
+        append(key, value.vertexSubgroups);
+        append(key, value.tessellationEvaluationSubgroups);
+        append(key, value.float16DenormPreserve);
+        append(key, value.spannedWaves);
+        append(key, value.robustBufferAccess2);
+        append(key, value.float32FlushToZero);
+        append(key, value.waveLdsMemoryBarriers);
+        append(key, value.float32DenormPreserve);
+        append(key, value.exactRobustLoads);
+        append(key, value.fusedExactArithmetic);
+        append(key, value.largePixelFunctionLdsBuffer);
+        append(key, value.pixelFunctionStorageDwords);
+        append(key, value.deviceScopeLdsMemoryBarriers);
+        append(key, value.ldsLockFences);
+        append(key, value.meshWindowBuffer);
+        append(key, value.hostInterpolationFirst);
+        append(key, value.shaderImageMinLod);
+    }
+};
+
+}
+
+#endif

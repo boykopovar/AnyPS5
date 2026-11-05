@@ -1,0 +1,349 @@
+#version 450
+#ifdef LINEAR_IMAGE
+#extension GL_EXT_shader_image_load_formatted : require
+#endif
+
+layout(constant_id = 0) const uint ELEMENT_BYTES = 4u;
+layout(constant_id = 1) const uint BLOCK_BYTES = 256u;
+layout(constant_id = 2) const uint TILE_FAMILY = 0u;
+// 0: tiled input -> linear output (detile); 1: linear input -> tiled output (retile).
+layout(constant_id = 3) const uint RETILE = 0u;
+// TILE_FAMILY 2: XOR swizzle given per byte-address bit as masks of x (bits 0-11), y (12-23) and
+// slice (24-31) element-coordinate bits.
+layout(constant_id = 4) const uint EQ0 = 0u;
+layout(constant_id = 5) const uint EQ1 = 0u;
+layout(constant_id = 6) const uint EQ2 = 0u;
+layout(constant_id = 7) const uint EQ3 = 0u;
+layout(constant_id = 8) const uint EQ4 = 0u;
+layout(constant_id = 9) const uint EQ5 = 0u;
+layout(constant_id = 10) const uint EQ6 = 0u;
+layout(constant_id = 11) const uint EQ7 = 0u;
+layout(constant_id = 12) const uint EQ8 = 0u;
+layout(constant_id = 13) const uint EQ9 = 0u;
+layout(constant_id = 14) const uint EQ10 = 0u;
+layout(constant_id = 15) const uint EQ11 = 0u;
+layout(constant_id = 16) const uint EQ12 = 0u;
+layout(constant_id = 17) const uint EQ13 = 0u;
+layout(constant_id = 18) const uint EQ14 = 0u;
+layout(constant_id = 19) const uint EQ15 = 0u;
+// Nonzero: block extent in elements (thick 3D blocks are not the thin 2D shape derived below).
+layout(constant_id = 20) const uint BLOCK_WIDTH = 0u;
+layout(constant_id = 21) const uint BLOCK_HEIGHT = 0u;
+layout(constant_id = 22) const uint SPLIT0 = 0u;
+layout(constant_id = 23) const uint SPLIT1 = 0u;
+layout(constant_id = 24) const uint SPLIT2 = 0u;
+layout(constant_id = 25) const uint SPLIT3 = 0u;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+#ifdef LINEAR_IMAGE
+layout(set = 0, binding = 0, std430) buffer Tiled { uint data[]; } tiledBuffer;
+layout(set = 0, binding = 1) uniform uimage2D linearImage;
+#else
+layout(set = 0, binding = 0, std430) readonly buffer Input { uint data[]; } inputBuffer;
+layout(set = 0, binding = 1, std430) buffer Output { uint data[]; } outputBuffer;
+#endif
+
+layout(push_constant) uniform Push {
+    uint srcBase;
+    uint dstBase;
+    uint width;
+    uint height;
+    uint pitchBytes;
+    uint blocksPerRow;
+    uint tail;
+    uint tailX;
+    uint tailY;
+    uint elementBytes;
+    uint slice;
+    // Only elements whose tiled offset (the linear offset for kLinear) lies in [rangeBegin,
+    // rangeEnd) are moved; tiledBase and linearBase are subtracted from the tiled and linear
+    // offsets of those elements (a window of the mip in each buffer; both 0 for the whole mip).
+    uint rangeBegin;
+    uint rangeEnd;
+    uint tiledBase;
+    uint linearBase;
+    // The first element column and row of the dispatched grid (a window's rectangle; 0 for the
+    // whole mip).
+    uint columnBegin;
+    uint rowBegin;
+    uint pipeBankXor;
+    uint splitStride;
+} params;
+
+uint equationBit(uint mask, uvec2 p) {
+    uint selected = (p.x & (mask & 0xfffu)) ^ ((p.y << 12) & (mask & 0xfff000u)) ^ ((params.slice << 24) & (mask & 0xff000000u));
+    return bitCount(selected) & 1u;
+}
+
+uint equationOffset(uvec2 p) {
+    const uint eq[16] = uint[16](EQ0, EQ1, EQ2, EQ3, EQ4, EQ5, EQ6, EQ7, EQ8, EQ9, EQ10, EQ11, EQ12, EQ13, EQ14, EQ15);
+    uint offset = 0u;
+    for (uint bit = 0u; bit < 16u; ++bit) {
+        offset |= equationBit(eq[bit], p) << bit;
+    }
+    return offset;
+}
+
+uint standardOffset(uint x, uint y) {
+    switch (ELEMENT_BYTES) {
+        case 1u:
+            return ((y << 4) & 0x1f0u) ^ ((y << 5) & 0x400u) ^ (x & 0x00fu) ^
+                   ((x << 5) & 0x200u) ^ ((x << 6) & 0x800u);
+        case 2u:
+            return ((y << 4) & 0x070u) ^ ((y << 5) & 0x100u) ^ ((y << 6) & 0x400u) ^
+                   ((x << 1) & 0x00eu) ^ ((x << 4) & 0x080u) ^
+                   ((x << 5) & 0x200u) ^ ((x << 6) & 0x800u);
+        case 4u:
+            return ((y << 4) & 0x070u) ^ ((y << 5) & 0x100u) ^ ((y << 6) & 0x400u) ^
+                   ((x << 2) & 0x00cu) ^ ((x << 5) & 0x080u) ^
+                   ((x << 6) & 0x200u) ^ ((x << 7) & 0x800u);
+        case 8u:
+            return ((y << 4) & 0x030u) ^ ((y << 6) & 0x100u) ^ ((y << 7) & 0x400u) ^
+                   ((x << 3) & 0x008u) ^ ((x << 5) & 0x0c0u) ^
+                   ((x << 6) & 0x200u) ^ ((x << 7) & 0x800u);
+        default:
+            return ((y << 4) & 0x030u) ^ ((y << 6) & 0x100u) ^ ((y << 7) & 0x400u) ^
+                   ((x << 6) & 0x0c0u) ^ ((x << 7) & 0x200u) ^ ((x << 8) & 0x800u);
+    }
+}
+
+uint standard64Extra(uint x, uint y) {
+    switch (ELEMENT_BYTES) {
+        case 1u:
+            return ((x << 7) & 0x2000u) ^ ((x << 8) & 0x8000u) ^
+                   ((y << 6) & 0x1000u) ^ ((y << 7) & 0x4000u);
+        case 2u:
+            return ((x << 7) & 0x2000u) ^ ((x << 8) & 0x8000u) ^
+                   ((y << 7) & 0x1000u) ^ ((y << 8) & 0x4000u);
+        case 4u:
+            return ((x << 8) & 0x2000u) ^ ((x << 9) & 0x8000u) ^
+                   ((y << 7) & 0x1000u) ^ ((y << 8) & 0x4000u);
+        case 8u:
+            return ((x << 8) & 0x2000u) ^ ((x << 9) & 0x8000u) ^
+                   ((y << 8) & 0x1000u) ^ ((y << 9) & 0x4000u);
+        default:
+            return ((x << 9) & 0x2000u) ^ ((x << 10) & 0x8000u) ^
+                   ((y << 8) & 0x1000u) ^ ((y << 9) & 0x4000u);
+    }
+}
+
+
+uint blockOffset(uvec2 p) {
+    if (TILE_FAMILY == 2u) {
+        return equationOffset(p) ^ params.pipeBankXor;
+    }
+    uint offset = standardOffset(p.x, p.y);
+    if (BLOCK_BYTES > 4096u) {
+        offset ^= standard64Extra(p.x, p.y);
+    }
+    return offset & (BLOCK_BYTES - 1u);
+}
+
+uvec2 blockExtent() {
+    if (BLOCK_WIDTH != 0u) {
+        return uvec2(BLOCK_WIDTH, BLOCK_HEIGHT);
+    }
+    uint width;
+    if (BLOCK_BYTES <= 256u) {
+        width = ELEMENT_BYTES <= 2u ? 16u : (ELEMENT_BYTES <= 8u ? 8u : 4u);
+    } else if (BLOCK_BYTES <= 4096u) {
+        width = ELEMENT_BYTES <= 2u ? 64u : (ELEMENT_BYTES <= 8u ? 32u : 16u);
+    } else {
+        width = ELEMENT_BYTES <= 2u ? 256u : (ELEMENT_BYTES <= 8u ? 128u : 64u);
+    }
+    return uvec2(width, BLOCK_BYTES / (width * ELEMENT_BYTES));
+}
+
+#ifdef LINEAR_IMAGE
+void storeElement(uint src, uvec2 p) {
+    uvec4 value = uvec4(0u);
+    uint word = src >> 2;
+    if (ELEMENT_BYTES == 1u) {
+        value.x = (tiledBuffer.data[word] >> ((src & 3u) * 8u)) & 0xffu;
+    } else if (ELEMENT_BYTES == 2u) {
+        value.x = (tiledBuffer.data[word] >> ((src & 3u) * 8u)) & 0xffffu;
+    } else {
+        value.x = tiledBuffer.data[word];
+        if (ELEMENT_BYTES >= 8u) value.y = tiledBuffer.data[word + 1u];
+        if (ELEMENT_BYTES >= 16u) {
+            value.z = tiledBuffer.data[word + 2u];
+            value.w = tiledBuffer.data[word + 3u];
+        }
+    }
+    imageStore(linearImage, ivec2(p), value);
+}
+
+void loadElement(uvec2 p, uint dst) {
+    uvec4 value = imageLoad(linearImage, ivec2(p));
+    uint word = dst >> 2;
+    if (ELEMENT_BYTES >= 4u) {
+        tiledBuffer.data[word] = value.x;
+        if (ELEMENT_BYTES >= 8u) tiledBuffer.data[word + 1u] = value.y;
+        if (ELEMENT_BYTES >= 16u) {
+            tiledBuffer.data[word + 2u] = value.z;
+            tiledBuffer.data[word + 3u] = value.w;
+        }
+    } else {
+        uint mask = ELEMENT_BYTES == 1u ? 0xffu : 0xffffu;
+        uint shift = (dst & 3u) * 8u;
+        atomicAnd(tiledBuffer.data[word], ~(mask << shift));
+        atomicOr(tiledBuffer.data[word], (value.x & mask) << shift);
+    }
+}
+#else
+void copyElement(uint src, uint dst) {
+    if (ELEMENT_BYTES >= 4u) {
+        for (uint i = 0u; i < ELEMENT_BYTES; i += 4u) {
+            outputBuffer.data[(dst + i) >> 2] = inputBuffer.data[(src + i) >> 2];
+        }
+    } else {
+        uint mask = ELEMENT_BYTES == 1u ? 0xffu : 0xffffu;
+        uint value = (inputBuffer.data[src >> 2] >> ((src & 3u) * 8u)) & mask;
+        uint shift = (dst & 3u) * 8u;
+        atomicAnd(outputBuffer.data[dst >> 2], ~(mask << shift));
+        atomicOr(outputBuffer.data[dst >> 2], value << shift);
+    }
+}
+#endif
+
+bool locate(uvec2 p, out uint src, out uint dst, out uint ranged) {
+    uint linearOffset = p.y * params.pitchBytes + p.x * ELEMENT_BYTES;
+
+    if (TILE_FAMILY == 0u) {
+        ranged = linearOffset;
+        if (linearOffset < params.rangeBegin || linearOffset >= params.rangeEnd) {
+            return false;
+        }
+#ifdef LINEAR_IMAGE
+        src = params.srcBase + linearOffset - params.tiledBase;
+        dst = params.dstBase + linearOffset - params.tiledBase;
+#else
+        if (RETILE != 0u) {
+            src = params.srcBase + linearOffset - params.linearBase;
+            dst = params.dstBase + linearOffset - params.tiledBase;
+        } else {
+            src = params.srcBase + linearOffset - params.tiledBase;
+            dst = params.dstBase + linearOffset - params.linearBase;
+        }
+#endif
+        return true;
+    }
+
+    uvec2 swizzle = p;
+    uvec2 block = uvec2(0u);
+    if (params.tail != 0u) {
+        swizzle += uvec2(params.tailX, params.tailY);
+    } else {
+        block = p / blockExtent();
+    }
+
+    uint blockIndex = block.y * params.blocksPerRow + block.x;
+    uint tiledOffset = blockIndex * BLOCK_BYTES + blockOffset(swizzle);
+    if (SPLIT0 != 0u) {
+        uint split = equationBit(SPLIT0, p) | (equationBit(SPLIT1, p) << 1) | (equationBit(SPLIT2, p) << 2) | (equationBit(SPLIT3, p) << 3);
+        tiledOffset += split * params.splitStride;
+    }
+    ranged = tiledOffset;
+    if (tiledOffset < params.rangeBegin || tiledOffset >= params.rangeEnd) {
+        return false;
+    }
+    tiledOffset -= params.tiledBase;
+    linearOffset -= params.linearBase;
+
+#ifdef LINEAR_IMAGE
+    src = params.srcBase + tiledOffset;
+    dst = params.dstBase + tiledOffset;
+#else
+    if (RETILE != 0u) {
+        src = params.srcBase + linearOffset;
+        dst = params.dstBase + tiledOffset;
+    } else {
+        src = params.srcBase + tiledOffset;
+        dst = params.dstBase + linearOffset;
+    }
+#endif
+    return true;
+}
+
+void moveElement(uvec2 p) {
+    uint src;
+    uint dst;
+    uint ranged;
+    if (!locate(p, src, dst, ranged)) {
+        return;
+    }
+#ifdef LINEAR_IMAGE
+    if (RETILE != 0u) {
+        loadElement(p, dst);
+    } else {
+        storeElement(src, p);
+    }
+#else
+    copyElement(src, dst);
+#endif
+}
+
+#ifdef WORD_GROUPS
+shared uint groupWords[32];
+shared uint groupLanes[32];
+shared uint groupDestinations[64];
+
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy + uvec2(params.columnBegin, params.rowBegin);
+    bool inside = p.x < params.width && p.y < params.height;
+    uint lane = gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    uint count = 4u / ELEMENT_BYTES;
+    uint slot = lane / count;
+    uint index = lane % count;
+    uint src = 0u;
+    uint dst = 0u;
+    uint ranged = 0u;
+    bool valid = inside && locate(p, src, dst, ranged);
+    if (index == 0u) {
+        groupWords[slot] = 0u;
+        groupLanes[slot] = 0u;
+    }
+    groupDestinations[lane] = dst;
+    barrier();
+    if (valid) {
+        uint mask = ELEMENT_BYTES == 1u ? 0xffu : 0xffffu;
+#ifdef LINEAR_IMAGE
+        uint value = imageLoad(linearImage, ivec2(p)).x & mask;
+#else
+        uint value = (inputBuffer.data[src >> 2] >> ((src & 3u) * 8u)) & mask;
+#endif
+        atomicOr(groupWords[slot], value << (index * ELEMENT_BYTES * 8u));
+        atomicOr(groupLanes[slot], 1u << index);
+    }
+    barrier();
+    uint first = groupDestinations[slot * count];
+    bool whole = groupLanes[slot] == (1u << count) - 1u && (first & 3u) == 0u;
+    for (uint i = 1u; i < count; ++i) {
+        whole = whole && groupDestinations[slot * count + i] == first + i * ELEMENT_BYTES;
+    }
+    if (whole) {
+        if (index == 0u) {
+#ifdef LINEAR_IMAGE
+            tiledBuffer.data[first >> 2] = groupWords[slot];
+#else
+            outputBuffer.data[first >> 2] = groupWords[slot];
+#endif
+        }
+    } else if (valid) {
+#ifdef LINEAR_IMAGE
+        loadElement(p, dst);
+#else
+        copyElement(src, dst);
+#endif
+    }
+}
+#else
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy + uvec2(params.columnBegin, params.rowBegin);
+    if (p.x >= params.width || p.y >= params.height) {
+        return;
+    }
+    moveElement(p);
+}
+#endif

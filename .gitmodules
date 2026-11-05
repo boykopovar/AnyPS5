@@ -1,0 +1,78 @@
+[submodule "3rdparty/jxrlib"]
+	path = 3rdparty/jxrlib
+	url = https://github.com/4creators/jxrlib.git
+[submodule "3rdparty/libfvad"]
+	path = 3rdparty/libfvad
+	url = https://github.com/dpirch/libfvad.git
+[submodule "3rdparty/SDL2"]
+	path = 3rdparty/SDL2
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "3rdparty/libressl-openbsd"]
+	path = 3rdparty/libressl-openbsd
+	url = https://github.com/libressl/openbsd.git
+[submodule "3rdparty/Vulkan-Headers"]
+	path = 3rdparty/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "3rdparty/SPIRV-Headers"]
+	path = 3rdparty/SPIRV-Headers
+	url = https://github.com/KhronosGroup/SPIRV-Headers.git
+[submodule "3rdparty/SPIRV-Tools"]
+	path = 3rdparty/SPIRV-Tools
+	url = https://github.com/KhronosGroup/SPIRV-Tools.git
+[submodule "3rdparty/glslang"]
+	path = 3rdparty/glslang
+	url = https://github.com/KhronosGroup/glslang.git
+[submodule "3rdparty/VulkanMemoryAllocator"]
+	path = 3rdparty/VulkanMemoryAllocator
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "3rdparty/LibAtrac9"]
+	path = 3rdparty/LibAtrac9
+	url = https://github.com/shadps4-emu/ext-LibAtrac9.git
+[submodule "3rdparty/ffmpeg-core"]
+	path = 3rdparty/ffmpeg-core
+	url = https://github.com/KytyPS5/ext-ffmpeg-core.git
+[submodule "3rdparty/opus"]
+	path = 3rdparty/opus
+	url = https://github.com/xiph/opus.git
+[submodule "3rdparty/freetype"]
+	path = 3rdparty/freetype
+	url = https://github.com/freetype/freetype.git
+[submodule "3rdparty/stb"]
+	path = 3rdparty/stb
+	url = https://github.com/nothings/stb.git
+[submodule "3rdparty/tracy"]
+	path = 3rdparty/tracy
+	url = https://github.com/wolfpld/tracy.git
+[submodule "3rdparty/mimalloc"]
+	path = 3rdparty/mimalloc
+	url = https://github.com/microsoft/mimalloc.git
+[submodule "3rdparty/libjpeg-turbo"]
+	path = 3rdparty/libjpeg-turbo
+	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
+[submodule "3rdparty/libusb-cmake"]
+	path = 3rdparty/libusb-cmake
+	url = https://github.com/libusb/libusb-cmake.git
+[submodule "3rdparty/mbedtls"]
+	path = 3rdparty/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "3rdparty/zstd"]
+	path = 3rdparty/zstd
+	url = https://github.com/facebook/zstd.git
+[submodule "3rdparty/ZArchive"]
+	path = 3rdparty/ZArchive
+	url = https://github.com/Exzap/ZArchive.git
+[submodule "3rdparty/vgmstream"]
+	path = 3rdparty/vgmstream
+	url = https://github.com/vgmstream/vgmstream.git
+[submodule "3rdparty/ogg"]
+	path = 3rdparty/ogg
+	url = https://github.com/xiph/ogg.git
+[submodule "3rdparty/vorbis"]
+	path = 3rdparty/vorbis
+	url = https://github.com/xiph/vorbis.git
+[submodule "3rdparty/nghttp2"]
+	path = 3rdparty/nghttp2
+	url = https://github.com/nghttp2/nghttp2.git
+[submodule "3rdparty/quickjs"]
+	path = 3rdparty/quickjs
+	url = https://github.com/quickjs-ng/quickjs.git

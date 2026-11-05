@@ -1,0 +1,17 @@
+add_library(libScePngEnc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libScePngEnc PRIVATE ${LIBS_INCLUDE_DIR})
+set_target_properties(libScePngEnc PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(libScePngEnc)
+target_link_libraries(libScePngEnc PRIVATE decoder_png)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_png_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestPngEnc.cpp)
+    target_include_directories(guest_png_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_png_enc_tests PRIVATE libScePngEnc decoder_png libc)
+    configure_windows_unwind(guest_png_enc_tests)
+    add_test(NAME guest_png_enc COMMAND guest_png_enc_tests)
+    if(WIN32)
+        set_tests_properties(guest_png_enc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePngEnc>")
+    endif()
+endif()

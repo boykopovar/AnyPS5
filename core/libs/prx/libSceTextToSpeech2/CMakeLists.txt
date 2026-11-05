@@ -1,0 +1,15 @@
+add_library(libSceTextToSpeech2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceTextToSpeech2 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceTextToSpeech2)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_text_to_speech2_tests ${LIBS_INCLUDE_DIR}/tests/GuestTextToSpeech2.cpp)
+    target_include_directories(guest_text_to_speech2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_text_to_speech2_tests PRIVATE libSceTextToSpeech2 libc)
+    configure_windows_unwind(guest_text_to_speech2_tests)
+    add_test(NAME guest_text_to_speech2 COMMAND guest_text_to_speech2_tests)
+    if(WIN32)
+        set_tests_properties(guest_text_to_speech2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceTextToSpeech2>")
+    endif()
+endif()

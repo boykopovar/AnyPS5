@@ -1,0 +1,611 @@
+#include "GraphicsTests.hpp"
+#include "Optimization/DescriptorBindingBuilder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <type_traits>
+
+namespace {
+
+using namespace AgcDriver::Graphics;
+
+struct Fields {
+    std::uint32_t clampX = 2;
+    std::uint32_t clampY = 2;
+    std::uint32_t clampZ = 2;
+    std::uint32_t maxAnisoRatio = 0;
+    std::uint32_t depthCompareFunc = 0;
+    bool forceUnormCoords = false;
+    std::uint32_t anisoThreshold = 0;
+    bool forceSrgb = false;
+    std::uint32_t anisoBias = 0;
+    bool truncCoord = false;
+    bool disableCubeWrap = false;
+    std::uint32_t filterMode = 0;
+    bool disableDegamma = false;
+    std::uint32_t minLodRaw = 0;
+    std::uint32_t maxLodRaw = 0xc00;
+    std::uint32_t perfMip = 0;
+    std::uint32_t perfZ = 0;
+    std::uint32_t lodBiasRaw = 0;
+    std::uint32_t lodBiasSec = 0;
+    std::uint32_t xyMagFilter = 1;
+    std::uint32_t xyMinFilter = 1;
+    std::uint32_t zFilter = 1;
+    std::uint32_t mipFilter = 2;
+    bool pointPreclamp = false;
+    bool anisoOverride = false;
+    bool blendZeroPrt = false;
+    std::uint32_t borderColorType = 0;
+};
+
+std::array<std::uint32_t, 4> pack(const Fields& f) {
+    std::array<std::uint32_t, 4> words{};
+    words[0] = (f.clampX & 0x7u) | ((f.clampY & 0x7u) << 3u) | ((f.clampZ & 0x7u) << 6u) | ((f.maxAnisoRatio & 0x7u) << 9u)
+        | ((f.depthCompareFunc & 0x7u) << 12u) | ((f.forceUnormCoords ? 1u : 0u) << 15u) | ((f.anisoThreshold & 0x7u) << 16u)
+        | ((f.forceSrgb ? 1u : 0u) << 20u) | ((f.anisoBias & 0x3fu) << 21u) | ((f.truncCoord ? 1u : 0u) << 27u)
+        | ((f.disableCubeWrap ? 1u : 0u) << 28u) | ((f.filterMode & 0x3u) << 29u) | ((f.disableDegamma ? 1u : 0u) << 31u);
+    words[1] = (f.minLodRaw & 0xfffu) | ((f.maxLodRaw & 0xfffu) << 12u) | ((f.perfMip & 0xfu) << 24u) | ((f.perfZ & 0xfu) << 28u);
+    words[2] = (f.lodBiasRaw & 0x3fffu) | ((f.lodBiasSec & 0x3fu) << 14u) | ((f.xyMagFilter & 0x3u) << 20u)
+        | ((f.xyMinFilter & 0x3u) << 22u) | ((f.zFilter & 0x3u) << 24u) | ((f.mipFilter & 0x3u) << 26u)
+        | ((f.pointPreclamp ? 1u : 0u) << 28u) | ((f.anisoOverride ? 1u : 0u) << 29u) | ((f.blendZeroPrt ? 1u : 0u) << 30u);
+    words[3] = (f.borderColorType & 0x3u) << 30u;
+    return words;
+}
+
+template<typename TAction>
+void reject(TAction action, std::string_view reason) {
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected guest sampler test error: ") + error.what());
+        return;
+    }
+    throw std::runtime_error(std::string("expected guest sampler rejection: ") + std::string(reason));
+}
+
+void rejectFields(const Fields& f, std::string_view reason) {
+    const auto words = pack(f);
+    reject([&] { DecodeSamplerResource(words); }, reason);
+}
+
+void rejectUnnormalized(const Fields& f, std::string_view reason) {
+    const auto words = pack(f);
+    reject([&] { DecodeSamplerResource(words, true); }, reason);
+}
+
+void requireUnnormalized(const GuestSamplerResource& result, const char* what) {
+    Require(result.unnormalizedCoordinates, std::string(what) + ": unnormalized coordinates were not decoded");
+    Require(result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST && result.minLod == 0.0f && result.maxLod == 0.0f, std::string(what) + ": unnormalized coordinates need nearest mips and a zero LOD range");
+    Require(result.lodBias == 0.0f && !result.anisotropyEnable && result.maxAnisotropy == 1.0f, std::string(what) + ": unnormalized coordinates need no LOD bias and no anisotropy");
+}
+
+bool nearlyEqual(float a, float b) {
+    return std::fabs(a - b) < 0.001f;
+}
+
+struct SamplerCapture {
+    bool created = false;
+    const void* next = nullptr;
+    VkSamplerReductionMode reductionMode = VK_SAMPLER_REDUCTION_MODE_MAX_ENUM;
+    VkSamplerCreateFlags flags = 0;
+    bool anisotropyEnable = false;
+    float maxAnisotropy = 0.0f;
+    VkSamplerAddressMode addressModeU = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
+    VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
+    VkSamplerAddressMode addressModeW = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
+};
+SamplerCapture samplerCapture;
+
+template<typename THandle>
+THandle fakeHandle(std::uint64_t value) {
+    if constexpr (std::is_pointer_v<THandle>) return reinterpret_cast<THandle>(static_cast<std::uintptr_t>(value));
+    else return static_cast<THandle>(value);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL captureCreateSampler(VkDevice, const VkSamplerCreateInfo* info, const VkAllocationCallbacks*, VkSampler* sampler) {
+    samplerCapture.created = true;
+    samplerCapture.next = info->pNext;
+    samplerCapture.flags = info->flags;
+    samplerCapture.anisotropyEnable = info->anisotropyEnable == VK_TRUE;
+    samplerCapture.maxAnisotropy = info->maxAnisotropy;
+    samplerCapture.addressModeU = info->addressModeU;
+    samplerCapture.addressModeV = info->addressModeV;
+    samplerCapture.addressModeW = info->addressModeW;
+    const auto* reduction = static_cast<const VkSamplerReductionModeCreateInfoEXT*>(info->pNext);
+    if (reduction != nullptr && reduction->sType == VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT && reduction->pNext == nullptr) samplerCapture.reductionMode = reduction->reductionMode;
+    *sampler = fakeHandle<VkSampler>(0x5a);
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL captureDestroySampler(VkDevice, VkSampler, const VkAllocationCallbacks*) {}
+
+PFN_vkVoidFunction VKAPI_CALL captureProc(VkDevice, const char* name) {
+    if (std::strcmp(name, "vkCreateSampler") == 0) return reinterpret_cast<PFN_vkVoidFunction>(captureCreateSampler);
+    if (std::strcmp(name, "vkDestroySampler") == 0) return reinterpret_cast<PFN_vkVoidFunction>(captureDestroySampler);
+    return nullptr;
+}
+
+SamplerCapture createSampler(const Context& context, const GuestSamplerResource& resource) {
+    samplerCapture = {};
+    const Sampler sampler(context, resource);
+    Require(sampler.Handle() != VK_NULL_HANDLE, "sampler test did not create a sampler");
+    return samplerCapture;
+}
+
+void RunSamplerReductionTests(const Fields& base) {
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    context.samplerFilterMinmax = true;
+
+    const std::array<std::uint32_t, 4> capturedSampler{0x20000092u, 0x00fff000u, 0x05500000u, 0u};
+    const auto captured = DecodeSamplerResource(capturedSampler);
+    Require(captured.reductionMode == VK_SAMPLER_REDUCTION_MODE_MIN_EXT, "captured min-reduction sampler decoded to another reduction mode");
+    Require(captured.magFilter == VK_FILTER_LINEAR && captured.minFilter == VK_FILTER_LINEAR && captured.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST, "captured min-reduction sampler filters decoded incorrectly");
+    Require(captured.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && captured.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && captured.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "captured min-reduction sampler address modes decoded incorrectly");
+    Require(!captured.anisotropyEnable && captured.compareOp == VK_COMPARE_OP_NEVER && nearlyEqual(captured.maxLod, 4095.0f / 256.0f), "captured min-reduction sampler fields decoded incorrectly");
+
+    const std::array modes{VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT, VK_SAMPLER_REDUCTION_MODE_MIN_EXT, VK_SAMPLER_REDUCTION_MODE_MAX_EXT};
+    for (std::uint32_t mode = 0; mode < modes.size(); ++mode) {
+        for (const std::uint32_t filter : {0u, 1u}) {
+            Fields reduced = base;
+            reduced.filterMode = mode;
+            reduced.xyMagFilter = filter;
+            reduced.xyMinFilter = filter;
+            reduced.mipFilter = 1;
+            const auto decoded = DecodeSamplerResource(pack(reduced));
+            Require(decoded.reductionMode == modes.at(mode), "sampler reduction mode decoded incorrectly");
+            const auto created = createSampler(context, decoded);
+            Require(created.created, "sampler test did not reach vkCreateSampler");
+            if (mode == 0u) Require(created.next == nullptr, "a weighted-average sampler chained a reduction mode");
+            else Require(created.reductionMode == modes.at(mode), "a min or max sampler did not chain its reduction mode");
+            const Sampler sampler(context, decoded);
+            Require(sampler.RequiresFilterMinmax() == (mode != 0u && filter == 1u), "sampler min/max format requirement is wrong");
+        }
+    }
+    Fields noMip = base;
+    noMip.filterMode = 2;
+    noMip.mipFilter = 0;
+    Require(DecodeSamplerResource(pack(noMip)).reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX_EXT, "a max sampler without mip filtering was not decoded");
+    Fields linearMip = base;
+    linearMip.filterMode = 1;
+    rejectFields(linearMip, "min or max reduction with a linear mip filter");
+    linearMip.xyMagFilter = 0;
+    linearMip.xyMinFilter = 0;
+    rejectFields(linearMip, "min or max reduction with a linear mip filter");
+
+    Fields badFilterMode = base;
+    badFilterMode.filterMode = 3;
+    rejectFields(badFilterMode, "unknown reduction filter mode 3");
+    Fields anisoReduction = base;
+    anisoReduction.maxAnisoRatio = 2;
+    anisoReduction.mipFilter = 1;
+    context.samplerAnisotropy = true;
+    context.limits.maxSamplerAnisotropy = 16.0f;
+    for (std::uint32_t mode = 1; mode < modes.size(); ++mode) {
+        for (const std::uint32_t filter : {2u, 3u}) {
+            anisoReduction.filterMode = mode;
+            anisoReduction.xyMagFilter = filter;
+            anisoReduction.xyMinFilter = filter;
+            const auto decoded = DecodeSamplerResource(pack(anisoReduction));
+            Require(decoded.reductionMode == modes.at(mode) && decoded.anisotropyEnable && decoded.maxAnisotropy == 4.0f, "anisotropic min or max sampler decoded incorrectly");
+            const auto created = createSampler(context, decoded);
+            Require(created.reductionMode == modes.at(mode), "an anisotropic min or max sampler did not chain its reduction mode");
+            Require(created.anisotropyEnable && created.maxAnisotropy == 4.0f, "an anisotropic min or max sampler lost its anisotropy");
+            Require(Sampler(context, decoded).RequiresFilterMinmax() == (filter == 3u), "anisotropic sampler min/max format requirement is wrong");
+        }
+    }
+    context.samplerAnisotropy = false;
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    anisoReduction.filterMode = 0;
+    Require(DecodeSamplerResource(pack(anisoReduction)).anisotropyEnable, "anisotropic weighted-average sampler was rejected");
+    anisoReduction.filterMode = 1;
+    anisoReduction.mipFilter = 2;
+    rejectFields(anisoReduction, "min or max reduction with a linear mip filter");
+
+    auto compared = captured;
+    compared.compareEnable = true;
+    reject([&] { createSampler(context, compared); }, "min or max reduction with depth comparison");
+    auto weightedCompare = DecodeSamplerResource(pack(base));
+    weightedCompare.compareEnable = true;
+    Require(createSampler(context, weightedCompare).created, "weighted-average comparison sampler was rejected");
+    context.samplerFilterMinmax = false;
+    reject([&] { createSampler(context, captured); }, "min or max reduction which the device does not support");
+    Require(createSampler(context, DecodeSamplerResource(pack(base))).created, "weighted-average sampler needs min/max support");
+
+    context.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+        *properties = {};
+        if (format == VK_FORMAT_R32_SFLOAT) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT_EXT;
+        if (format == VK_FORMAT_R32G32_SFLOAT) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        if (format == VK_FORMAT_R8G8B8A8_UNORM) properties->linearTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT_EXT;
+    };
+    context.samplerFilterMinmax = true;
+    Fields minPoint = base;
+    minPoint.filterMode = 1;
+    minPoint.xyMagFilter = 0;
+    minPoint.xyMinFilter = 0;
+    minPoint.mipFilter = 1;
+    const std::array samplers{std::make_shared<Sampler>(context, DecodeSamplerResource(pack(base))), std::make_shared<Sampler>(context, captured), std::make_shared<Sampler>(context, DecodeSamplerResource(pack(minPoint)))};
+    RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, 0b010u, samplers);
+    RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0u, samplers);
+    RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0b101u, samplers);
+    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0b010u, samplers); }, "format 37 does not support min/max filtering is sampled through a min or max reduction sampler");
+    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32G32_SFLOAT, 0b011u, samplers); }, "does not support min/max filtering");
+    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, 0b1000u, samplers); }, "sampler element 3, which its shader does not bind");
+
+    const auto borderSampler = [&](std::uint32_t clamp, std::uint32_t borderColorType) {
+        Fields fields = base;
+        fields.clampY = clamp;
+        fields.borderColorType = borderColorType;
+        return std::make_shared<Sampler>(context, DecodeSamplerResource(pack(fields)));
+    };
+    const std::array borderSamplers{borderSampler(6u, 0u), borderSampler(6u, 1u), borderSampler(6u, 2u), borderSampler(2u, 1u)};
+    Require(!borderSamplers[0]->ReadsOpaqueBlackBorder() && borderSamplers[1]->ReadsOpaqueBlackBorder() && !borderSamplers[2]->ReadsOpaqueBlackBorder() && !borderSamplers[3]->ReadsOpaqueBlackBorder(), "opaque black border detection is wrong");
+    for (std::uint32_t swizzle = 0; swizzle <= 5u; ++swizzle) RequireBorderSwizzle(swizzle, 0b1101u, borderSamplers);
+    RequireBorderSwizzle(0u, 0b0010u, borderSamplers);
+    RequireBorderSwizzle(4u, 0b0010u, borderSamplers);
+    for (std::uint32_t swizzle : {1u, 2u, 3u, 5u}) reject([&] { RequireBorderSwizzle(swizzle, 0b0010u, borderSamplers); }, "moves the alpha channel is sampled through an opaque black border");
+    reject([&] { RequireBorderSwizzle(1u, 0b10000u, borderSamplers); }, "sampler element 4, which its shader does not bind");
+
+    const auto pointFiltered = [](const std::array<std::uint32_t, 4>& words) { return ShaderRecompiler::PointFilteredSamplerWord(words[0], words[2]); };
+    Require(pointFiltered(pack(base)) == 0x05000000u, "a point-filtered weighted-average sampler kept its bilinear or linear mip filter");
+    Require(pointFiltered(pack(minPoint)) == pack(minPoint)[2], "a point-filtered min sampler that already point-samples changed");
+    reject([&] { pointFiltered(capturedSampler); }, "needs point filtering");
+    Fields maxLinearMip = minPoint;
+    maxLinearMip.filterMode = 2;
+    maxLinearMip.mipFilter = 2;
+    reject([&] { pointFiltered(pack(maxLinearMip)); }, "needs point filtering");
+    Fields minAnisoPoint = minPoint;
+    minAnisoPoint.xyMagFilter = 2;
+    minAnisoPoint.xyMinFilter = 2;
+    minAnisoPoint.maxAnisoRatio = 1;
+    reject([&] { pointFiltered(pack(minAnisoPoint)); }, "needs point filtering");
+}
+
+void RunNonSeamlessCubeTests(const Fields& base) {
+    Fields nonSeamless = base;
+    nonSeamless.disableCubeWrap = true;
+    const auto decoded = DecodeSamplerResource(pack(nonSeamless));
+    Require(decoded.nonSeamlessCube, "DISABLE_CUBE_WRAP was not decoded as a non-seamless cube sampler");
+    Require(!DecodeSamplerResource(pack(base)).nonSeamlessCube, "a sampler without DISABLE_CUBE_WRAP decoded as non-seamless");
+
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    context.nonSeamlessCubeMap = true;
+    Require((createSampler(context, decoded).flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT) != 0u, "a non-seamless cube sampler was created without VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT");
+    Require(createSampler(context, DecodeSamplerResource(pack(base))).flags == 0u, "a seamless sampler was created with flags");
+    const std::array honored{std::make_shared<Sampler>(context, decoded)};
+    Require(!honored[0]->RequiresNonSeamlessCube(), "a sampler created with the non-seamless flag still restricts cube textures");
+    RequireNonSeamlessCube(true, 0b1u, honored);
+
+    context.nonSeamlessCubeMap = false;
+    Require(createSampler(context, decoded).flags == 0u, "a sampler set the non-seamless flag without the device feature");
+    const std::array unsupported{std::make_shared<Sampler>(context, DecodeSamplerResource(pack(base))), std::make_shared<Sampler>(context, decoded)};
+    Require(unsupported[1]->RequiresNonSeamlessCube(), "a non-seamless sampler without the device feature does not restrict cube textures");
+    RequireNonSeamlessCube(false, 0b11u, unsupported);
+    RequireNonSeamlessCube(true, 0b01u, unsupported);
+    reject([&] { RequireNonSeamlessCube(true, 0b10u, unsupported); }, "disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
+}
+
+void RunMirrorOnceTests(const Fields& base) {
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    for (const std::uint32_t clamp : {3u, 5u, 7u}) {
+        for (int axis = 0; axis < 3; ++axis) {
+            Fields mirrored = base;
+            (axis == 0 ? mirrored.clampX : axis == 1 ? mirrored.clampY : mirrored.clampZ) = clamp;
+            const auto decoded = DecodeSamplerResource(pack(mirrored));
+            context.samplerMirrorClampToEdge = false;
+            reject([&] { createSampler(context, decoded); }, "mirror-once clamp mode which the device does not support");
+            context.samplerMirrorClampToEdge = true;
+            const auto created = createSampler(context, decoded);
+            Require(created.created, "a mirror-once sampler was rejected on a device with VK_KHR_sampler_mirror_clamp_to_edge");
+            const auto mode = axis == 0 ? created.addressModeU : axis == 1 ? created.addressModeV : created.addressModeW;
+            Require(mode == VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE, "a mirror-once sampler was created with another address mode");
+        }
+    }
+    context.samplerMirrorClampToEdge = false;
+    Require(createSampler(context, DecodeSamplerResource(pack(base))).created, "a sampler without mirror-once modes needs VK_KHR_sampler_mirror_clamp_to_edge");
+}
+
+void RunSamplerCacheDegammaTests(const Fields& base) {
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    Fields forcedSrgb = base;
+    forcedSrgb.forceSrgb = true;
+    const auto words = pack(forcedSrgb);
+    SamplerCache unpaired;
+    reject([&] { unpaired.Get(context, words, false); }, "forces sRGB decoding");
+    SamplerCache cache;
+    const auto paired = cache.Get(context, words, false, false, true);
+    Require(paired->ForcesDegamma() && cache.Get(context, words, false, false, true) == paired && cache.Misses() == 1u, "a paired FORCE_DEGAMMA sampler must be created once and then served from the cache");
+    reject([&] { cache.Get(context, words, false); }, "forces sRGB decoding");
+}
+
+}
+
+void RunGuestSamplerResourceTests() {
+    Fields base;
+    auto result = DecodeSamplerResource(pack(base));
+    Require(result.magFilter == VK_FILTER_LINEAR && result.minFilter == VK_FILTER_LINEAR, "linear filter fields decoded incorrectly");
+    Require(result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR, "linear mip filter must decode to linear mipmap mode");
+    Require(result.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "clamp mode 2 must decode to clamp-to-edge");
+    Require(!result.anisotropyEnable && result.maxAnisotropy == 1.0f, "non-anisotropic filter must leave anisotropy disabled");
+    Require(nearlyEqual(result.maxLod, 12.0f), "max LOD decoded incorrectly");
+    Require(result.borderColor == VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, "border color type 0 must decode to transparent black");
+
+    Fields nearest = base;
+    nearest.xyMagFilter = 0;
+    nearest.xyMinFilter = 0;
+    nearest.zFilter = 0;
+    nearest.mipFilter = 0;
+    result = DecodeSamplerResource(pack(nearest));
+    Require(result.magFilter == VK_FILTER_NEAREST && result.minFilter == VK_FILTER_NEAREST, "filter 0 must decode to nearest");
+    Require(result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST, "mip filter 0 must decode to nearest mipmap mode");
+    Require(result.minLod == 0.0f && result.maxLod == 0.0f, "disabled mip filtering must clear LOD range");
+
+    Fields addressModes = base;
+    addressModes.clampX = 0;
+    addressModes.clampY = 1;
+    addressModes.clampZ = 4;
+    result = DecodeSamplerResource(pack(addressModes));
+    Require(result.addressModeU == VK_SAMPLER_ADDRESS_MODE_REPEAT, "clamp mode 0 must decode to repeat");
+    Require(result.addressModeV == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT, "clamp mode 1 must decode to mirrored repeat");
+    Require(result.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "clamp mode 4 must decode to clamp-to-border");
+
+    Fields aniso = base;
+    aniso.xyMagFilter = 2;
+    aniso.xyMinFilter = 2;
+    aniso.zFilter = 2;
+    aniso.maxAnisoRatio = 3;
+    result = DecodeSamplerResource(pack(aniso));
+    Require(result.anisotropyEnable, "anisotropic filter must enable anisotropy");
+    Require(nearlyEqual(result.maxAnisotropy, 8.0f), "anisotropy ratio 3 must decode to 8x");
+    aniso.maxAnisoRatio = 5;
+    rejectFields(aniso, "unknown anisotropy ratio");
+
+    Fields badLod = base;
+    badLod.minLodRaw = 100;
+    badLod.maxLodRaw = 50;
+    rejectFields(badLod, "minimum LOD past its maximum LOD");
+
+    const std::array<std::uint32_t, 4> capturedSampler{0u, 0x00fff000u, 0x09000000u, 0u};
+    const auto captured = DecodeSamplerResource(capturedSampler);
+    Require(captured.magFilter == VK_FILTER_NEAREST && captured.minFilter == VK_FILTER_NEAREST, "captured 2D sampler filters decoded incorrectly");
+    Require(captured.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR && nearlyEqual(captured.maxLod, 4095.0f / 256.0f), "captured 2D sampler mip settings decoded incorrectly");
+    Require(captured.addressModeU == VK_SAMPLER_ADDRESS_MODE_REPEAT && captured.addressModeV == VK_SAMPLER_ADDRESS_MODE_REPEAT, "captured 2D sampler address modes decoded incorrectly");
+    for (std::uint32_t zFilter = 0; zFilter < 4; ++zFilter) {
+        Fields twoDimensional = base;
+        twoDimensional.zFilter = zFilter;
+        const auto decoded = DecodeSamplerResource(pack(twoDimensional));
+        Require(decoded.magFilter == VK_FILTER_LINEAR && decoded.minFilter == VK_FILTER_LINEAR, "Z filter changed 2D filtering");
+    }
+
+    Fields badMipFilter = base;
+    badMipFilter.mipFilter = 3;
+    rejectFields(badMipFilter, "unknown mip filter");
+
+    const std::array compareOps{VK_COMPARE_OP_NEVER, VK_COMPARE_OP_LESS, VK_COMPARE_OP_EQUAL, VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL, VK_COMPARE_OP_GREATER_OR_EQUAL, VK_COMPARE_OP_ALWAYS};
+    for (std::uint32_t function = 0; function < compareOps.size(); ++function) {
+        Fields comparison = base;
+        comparison.depthCompareFunc = function;
+        const auto decoded = DecodeSamplerResource(pack(comparison));
+        Require(decoded.compareOp == compareOps.at(function), "sampler depth comparison function decoded incorrectly");
+        Require(!decoded.compareEnable, "sampler descriptor enabled comparison without shader metadata");
+    }
+
+    Fields badUnorm = base;
+    badUnorm.forceUnormCoords = true;
+    rejectFields(badUnorm, "unnormalized coordinates");
+
+    const std::array<std::uint32_t, 4> capturedUnnormalized{0x00008092u, 0x00fff000u, 0x05500000u, 0u};
+    reject([&] { DecodeSamplerResource(capturedUnnormalized); }, "uses unnormalized coordinates which are not implemented");
+    const auto unnormalized = DecodeSamplerResource(capturedUnnormalized, true);
+    requireUnnormalized(unnormalized, "captured unnormalized S#");
+    Require(unnormalized.magFilter == VK_FILTER_LINEAR && unnormalized.minFilter == VK_FILTER_LINEAR, "captured unnormalized S# filters decoded incorrectly");
+    Require(unnormalized.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && unnormalized.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "captured unnormalized S# clamp modes decoded incorrectly");
+    Require(unnormalized.borderColor == VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, "captured unnormalized S# border color decoded incorrectly");
+    Require(!DecodeSamplerResource(pack(base)).unnormalizedCoordinates, "a normalized S# decoded to unnormalized coordinates");
+
+    Fields unnormalizedBase = base;
+    unnormalizedBase.forceUnormCoords = true;
+    Fields unnormalizedPoint = unnormalizedBase;
+    unnormalizedPoint.xyMagFilter = 0;
+    unnormalizedPoint.xyMinFilter = 0;
+    const auto point = DecodeSamplerResource(pack(unnormalizedPoint), true);
+    requireUnnormalized(point, "unnormalized point S#");
+    Require(point.magFilter == VK_FILTER_NEAREST && point.minFilter == VK_FILTER_NEAREST, "unnormalized point S# filters decoded incorrectly");
+    const std::array borders{VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK, VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE};
+    for (std::uint32_t type = 0; type < borders.size(); ++type) {
+        Fields border = unnormalizedBase;
+        border.clampX = 6;
+        border.clampY = 6;
+        border.borderColorType = type;
+        const auto decoded = DecodeSamplerResource(pack(border), true);
+        requireUnnormalized(decoded, "unnormalized clamp-to-border S#");
+        Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && decoded.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && decoded.borderColor == borders[type], "unnormalized clamp-to-border S# decoded incorrectly");
+    }
+    for (std::uint32_t mipFilter = 0; mipFilter < 3; ++mipFilter) {
+        Fields mips = unnormalizedBase;
+        mips.mipFilter = mipFilter;
+        requireUnnormalized(DecodeSamplerResource(pack(mips), true), "unnormalized S# mip filter");
+    }
+    Fields unnormalizedBias = unnormalizedBase;
+    unnormalizedBias.lodBiasRaw = 256;
+    requireUnnormalized(DecodeSamplerResource(pack(unnormalizedBias), true), "unnormalized S# with a LOD bias");
+    Fields unnormalizedMinLod = unnormalizedBase;
+    unnormalizedMinLod.minLodRaw = 0x100;
+    unnormalizedMinLod.maxLodRaw = 0x400;
+    requireUnnormalized(DecodeSamplerResource(pack(unnormalizedMinLod), true), "unnormalized S# with a minimum LOD");
+
+    Fields unequalFilters = unnormalizedBase;
+    unequalFilters.xyMinFilter = 0;
+    const auto unequal = DecodeSamplerResource(pack(unequalFilters), true);
+    requireUnnormalized(unequal, "unnormalized S# with different min and mag filters");
+    Require(unequal.magFilter == VK_FILTER_LINEAR && unequal.minFilter == VK_FILTER_LINEAR, "unnormalized coordinates must use mag filter for both filters");
+    Fields unnormalizedAniso = unnormalizedBase;
+    unnormalizedAniso.xyMagFilter = 2;
+    unnormalizedAniso.xyMinFilter = 2;
+    rejectUnnormalized(unnormalizedAniso, "unnormalized coordinates with anisotropic filtering");
+    Fields clampZero = unnormalizedBase;
+    clampZero.clampX = 0;
+    clampZero.clampY = 0;
+    const auto zeroDecoded = DecodeSamplerResource(pack(clampZero), true);
+    requireUnnormalized(zeroDecoded, "unnormalized S# with clamp mode 0");
+    Require(zeroDecoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && zeroDecoded.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "unnormalized clamp mode 0 must decode to clamp-to-edge");
+    for (const std::uint32_t clamp : {1u, 3u}) {
+        Fields mirrored = unnormalizedBase;
+        mirrored.clampX = clamp;
+        mirrored.clampY = clamp;
+        const auto decoded = DecodeSamplerResource(pack(mirrored), true);
+        requireUnnormalized(decoded, clamp == 1u ? "unnormalized S# with clamp mode 1" : "unnormalized S# with clamp mode 3");
+        Require(decoded.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && decoded.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "unnormalized clamp mode " + std::to_string(clamp) + " must decode to clamp-to-edge after the shader mirrors the coordinate");
+    }
+    Fields unnormalizedBiased = unnormalizedBase;
+    unnormalizedBiased.lodBiasRaw = 256;
+    unnormalizedBiased.lodBiasSec = 8;
+    const auto unnormalizedBiasedResult = DecodeSamplerResource(pack(unnormalizedBiased), true);
+    requireUnnormalized(unnormalizedBiasedResult, "unnormalized S# with primary and secondary LOD bias");
+    Require(unnormalizedBiasedResult.lodBias == 0.0f, "unnormalized coordinates must zero host lodBias");
+    for (const std::uint32_t filter : {0u, 1u}) {
+        Fields unnormalizedUntruncated = unnormalizedBase;
+        unnormalizedUntruncated.xyMagFilter = filter;
+        unnormalizedUntruncated.xyMinFilter = filter;
+        Fields unnormalizedTruncated = unnormalizedUntruncated;
+        unnormalizedTruncated.truncCoord = true;
+        const auto truncatedResult = DecodeSamplerResource(pack(unnormalizedTruncated), true);
+        const auto untruncatedResult = DecodeSamplerResource(pack(unnormalizedUntruncated), true);
+        requireUnnormalized(truncatedResult, "unnormalized S# with TRUNC_COORD");
+        Require(truncatedResult.magFilter == untruncatedResult.magFilter && truncatedResult.minFilter == untruncatedResult.minFilter
+                && truncatedResult.addressModeU == untruncatedResult.addressModeU && truncatedResult.addressModeV == untruncatedResult.addressModeV
+                && truncatedResult.borderColor == untruncatedResult.borderColor,
+            "TRUNC_COORD must not change the host sampler of an unnormalized S#");
+    }
+    auto truncatedBlend = pack(unnormalizedBase);
+    truncatedBlend[0] |= 1u << 19u;
+    reject([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized coordinates with MC_COORD_TRUNC");
+    rejectUnnormalized(base, "bound as unnormalized without FORCE_UNNORMALIZED");
+
+    Fields forcedSrgb = base;
+    forcedSrgb.forceSrgb = true;
+    rejectFields(forcedSrgb, "forces sRGB decoding");
+    const auto forced = DecodeSamplerResource(pack(forcedSrgb), false, true);
+    const auto plain = DecodeSamplerResource(pack(base));
+    Require(forced.forceDegamma && !plain.forceDegamma, "FORCE_DEGAMMA must be decoded into forceDegamma");
+    Require(forced.magFilter == plain.magFilter && forced.minFilter == plain.minFilter && forced.mipmapMode == plain.mipmapMode && forced.maxLod == plain.maxLod, "FORCE_DEGAMMA must not change the host sampler state");
+    RunSamplerCacheDegammaTests(base);
+
+    Fields truncated = base;
+    truncated.truncCoord = true;
+    truncated.perfMip = 1;
+    truncated.perfZ = 1;
+    truncated.anisoThreshold = 1;
+    truncated.anisoBias = 1;
+    static_cast<void>(DecodeSamplerResource(pack(truncated)));
+
+    RunNonSeamlessCubeTests(base);
+    RunMirrorOnceTests(base);
+    RunSamplerReductionTests(base);
+
+    Fields badDegamma = base;
+    badDegamma.disableDegamma = true;
+    rejectFields(badDegamma, "disables degamma");
+
+    Fields secLodBias = base;
+    secLodBias.lodBiasSec = 1;
+    const auto secResult = DecodeSamplerResource(pack(secLodBias));
+    Require(nearlyEqual(secResult.lodBias, 0.0f), "secondary LOD bias must not alter host lodBias");
+    secLodBias.lodBiasSec = 0x3f;
+    const auto negSecResult = DecodeSamplerResource(pack(secLodBias));
+    Require(nearlyEqual(negSecResult.lodBias, 0.0f), "negative secondary LOD bias must not alter host lodBias");
+    secLodBias.lodBiasRaw = 256;
+    secLodBias.lodBiasSec = 8;
+    const auto combinedResult = DecodeSamplerResource(pack(secLodBias));
+    Require(nearlyEqual(combinedResult.lodBias, 1.0f), "nonzero secondary LOD bias must leave primary lodBias unaffected");
+
+    Fields badPreclamp = base;
+    badPreclamp.pointPreclamp = true;
+    rejectFields(badPreclamp, "point preclamping");
+
+    Fields anisoOverride = base;
+    anisoOverride.xyMagFilter = 2;
+    anisoOverride.xyMinFilter = 2;
+    anisoOverride.zFilter = 2;
+    anisoOverride.maxAnisoRatio = 3;
+    const auto withoutOverride = DecodeSamplerResource(pack(anisoOverride));
+    anisoOverride.anisoOverride = true;
+    const auto withOverride = DecodeSamplerResource(pack(anisoOverride));
+    Require(withOverride.anisotropyEnable == withoutOverride.anisotropyEnable && withOverride.maxAnisotropy == withoutOverride.maxAnisotropy && withOverride.magFilter == withoutOverride.magFilter && withOverride.minFilter == withoutOverride.minFilter, "ANISO_OVERRIDE changed the decoded sampler");
+    const auto overrideWords = pack(anisoOverride);
+    Require(!SingleLevelSamplerWords(overrideWords, false, true).has_value(), "ANISO_OVERRIDE changed a sampler of mipmapped images");
+    Require(!SingleLevelSamplerWords(overrideWords, false, false).has_value(), "ANISO_OVERRIDE changed a sampler with no paired image");
+    const auto singleLevel = SingleLevelSamplerWords(overrideWords, true, false);
+    Require(singleLevel.has_value() && (*singleLevel)[0] == overrideWords[0] && (*singleLevel)[1] == overrideWords[1] && (*singleLevel)[3] == overrideWords[3], "ANISO_OVERRIDE did not keep the sampler's other words");
+    const auto singleLevelSampler = DecodeSamplerResource(*singleLevel);
+    Require(!singleLevelSampler.anisotropyEnable && singleLevelSampler.maxAnisotropy == 1.0f && singleLevelSampler.magFilter == withOverride.magFilter && singleLevelSampler.minFilter == withOverride.minFilter && singleLevelSampler.mipmapMode == withOverride.mipmapMode, "ANISO_OVERRIDE left anisotropy on a single-level image's sampler");
+    reject([&] { SingleLevelSamplerWords(overrideWords, true, true); }, "both single-level and mipmapped");
+    Require(!SingleLevelSamplerWords(pack(base), true, false).has_value(), "a sampler without ANISO_OVERRIDE changed");
+    Fields linearOverride = base;
+    linearOverride.anisoOverride = true;
+    Require(!SingleLevelSamplerWords(pack(linearOverride), true, true).has_value(), "ANISO_OVERRIDE changed a sampler without anisotropy");
+    anisoOverride.xyMagFilter = 3;
+    anisoOverride.xyMinFilter = 3;
+    const auto linearPlain = DecodeSamplerResource(*SingleLevelSamplerWords(pack(anisoOverride), true, false));
+    Require(!linearPlain.anisotropyEnable && linearPlain.magFilter == VK_FILTER_LINEAR && linearPlain.minFilter == VK_FILTER_LINEAR, "ANISO_OVERRIDE did not keep linear filtering");
+
+    Fields badBlendZero = base;
+    badBlendZero.blendZeroPrt = true;
+    rejectFields(badBlendZero, "PRT blend-zero");
+
+    Fields unusedTable = base;
+    unusedTable.borderColorType = 3;
+    const auto unread = DecodeSamplerResource(pack(unusedTable));
+    Require(unread.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && unread.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && unread.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        "a table border colour with clamp-to-edge addressing must decode");
+    for (std::uint32_t mode : {0u, 1u, 2u, 3u}) {
+        Fields unreadMode = base;
+        unreadMode.borderColorType = 3;
+        unreadMode.clampX = mode;
+        DecodeSamplerResource(pack(unreadMode));
+    }
+    for (std::uint32_t mode : {4u, 5u, 6u, 7u}) {
+        for (int axis = 0; axis < 3; ++axis) {
+            Fields readTable = base;
+            readTable.borderColorType = 3;
+            (axis == 0 ? readTable.clampX : axis == 1 ? readTable.clampY : readTable.clampZ) = mode;
+            rejectFields(readTable, "border color table");
+        }
+    }
+    const std::array<std::uint32_t, 4> capturedTable{0x00007092u, 0x00fff000u, 0x05000000u, 0xc0000000u};
+    const auto capturedUnread = DecodeSamplerResource(capturedTable);
+    Require(capturedUnread.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && capturedUnread.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "captured table-border sampler decoded incorrectly");
+
+    Fields opaqueBlack = base;
+    opaqueBlack.borderColorType = 1;
+    Require(DecodeSamplerResource(pack(opaqueBlack)).borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK, "border color type 1 must decode to opaque black");
+    Require(DecodeSamplerResource(pack(opaqueBlack), false, false, true).borderColor == VK_BORDER_COLOR_INT_OPAQUE_BLACK, "border color type 1 of a sampler for integer images must decode to integer opaque black");
+    Fields opaqueWhite = base;
+    opaqueWhite.borderColorType = 2;
+    Require(DecodeSamplerResource(pack(opaqueWhite)).borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE, "border color type 2 must decode to opaque white");
+    Require(DecodeSamplerResource(pack(opaqueWhite), false, false, true).borderColor == VK_BORDER_COLOR_INT_OPAQUE_WHITE, "border color type 2 of a sampler for integer images must decode to integer opaque white");
+    Require(DecodeSamplerResource(pack(base), false, false, true).borderColor == VK_BORDER_COLOR_INT_TRANSPARENT_BLACK, "border color type 0 of a sampler for integer images must decode to integer transparent black");
+
+    Fields positiveBias = base;
+    positiveBias.lodBiasRaw = 256;
+    Require(nearlyEqual(DecodeSamplerResource(pack(positiveBias)).lodBias, 1.0f), "positive LOD bias decoded incorrectly");
+    Fields negativeBias = base;
+    negativeBias.lodBiasRaw = static_cast<std::uint32_t>(-256) & 0x3fffu;
+    Require(nearlyEqual(DecodeSamplerResource(pack(negativeBias)).lodBias, -1.0f), "negative LOD bias decoded incorrectly");
+
+    std::array<std::uint32_t, 3> shortWords{};
+    reject([&] { DecodeSamplerResource(shortWords); }, "4 dwords");
+}

@@ -1,0 +1,20 @@
+#ifndef CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_SHADERSTAGE_HPP
+#define CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_SHADERSTAGE_HPP
+
+namespace ShaderRecompiler {
+
+enum class IrShaderStage {
+    Unknown,
+    Vertex,
+    Pixel,
+    Fetch,
+    Compute,
+    Mesh,
+    Local,
+    TessellationControl,
+    TessellationEvaluation
+};
+
+}
+
+#endif

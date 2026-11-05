@@ -1,0 +1,34 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+
+layout(local_size_x = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint words[]; };
+layout(push_constant) uniform Parameters {
+    Words record;
+    Words arguments;
+    uint indexCount;
+    uint inputSize;
+    uint step;
+    uint primitivesPerGroup;
+    uint maxGroups;
+    uint maxInstances;
+    uint maxTotal;
+    uint unused;
+} parameters;
+
+void main() {
+    uint count = parameters.record.words[0];
+    uint instances = parameters.record.words[1];
+    uint first = parameters.record.words[2];
+    uint effective = first < parameters.indexCount ? min(count, parameters.indexCount - first) : 0u;
+    uint groups = 0u;
+    if (effective >= parameters.inputSize && instances != 0u) {
+        groups = (effective - parameters.inputSize) / parameters.step / parameters.primitivesPerGroup + 1u;
+        if (groups > parameters.maxGroups || instances > parameters.maxInstances || groups > parameters.maxTotal / instances) groups = 0u;
+    }
+    parameters.arguments.words[0] = groups;
+    parameters.arguments.words[1] = groups != 0u ? instances : 0u;
+    parameters.arguments.words[2] = groups != 0u ? 1u : 0u;
+    parameters.arguments.words[3] = effective;
+    parameters.arguments.words[4] = first;
+}
