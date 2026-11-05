@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <charconv>
 #include <cstring>
+#include <optional>
+#include <cstdarg>
+#include "prx/libc/include/Api.hpp"
 #include <limits>
 #include <new>
 #include <stdexcept>
@@ -1071,6 +1074,267 @@ String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self,
     if (view.length <= length) return String(Retain(url.impl));
     const StringView parts[] = {LeftView(view, length / 2 - 1), {"...", 3, true}, RightView(view, length / 2 - 2)};
     return ConcatViews(parts, 3);
+}
+
+}
+
+namespace {
+
+using NKWebKit::WtfAbi::PrintStream;
+using NKWebKit::WtfAbi::StringPrintStream;
+
+void StreamVprintf(PrintStream* self, const char* format, void* args) {
+    auto& stream = Checked(self);
+    if (!stream.vtable || !stream.vtable[2]) throw std::invalid_argument("WTF PrintStream has no vprintf callback");
+    reinterpret_cast<void (APS5_VABI *)(PrintStream*, const char*, void*)>(stream.vtable[2])(self, format, args);
+}
+
+void StreamAtomicText(PrintStream* self, const char* text) {
+    auto& stream = Checked(self);
+    if (!stream.vtable || !stream.vtable[4] || !stream.vtable[5]) throw std::invalid_argument("WTF PrintStream has no begin/end callbacks");
+    auto& output = reinterpret_cast<PrintStream& (APS5_VABI *)(PrintStream*)>(stream.vtable[4])(self);
+    _ZN3WTF11PrintStream6printfEPKcz(&output, "%s", text);
+    reinterpret_cast<void (APS5_VABI *)(PrintStream*)>(stream.vtable[5])(self);
+}
+
+void StreamPrintString(PrintStream* self, StringView view, const char* type) {
+    std::optional<CString> text;
+    try {
+        text.emplace(ToUTF8(view, 0));
+    } catch (const std::bad_alloc&) {
+        _ZN3WTF11PrintStream6printfEPKcz(self, "%s", "(Out of memory while converting ");
+        _ZN3WTF11PrintStream6printfEPKcz(self, "%s", type);
+        _ZN3WTF11PrintStream6printfEPKcz(self, "%s", " to utf8)");
+        return;
+    }
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%s", Bytes(*text));
+}
+
+void APS5_VABI StringStreamDestroy_nid_no_patch(PrintStream* self) {
+    _ZN3WTF17StringPrintStreamD1Ev(reinterpret_cast<StringPrintStream*>(self));
+}
+
+void APS5_VABI StringStreamDelete_nid_no_patch(PrintStream* self) {
+    _ZN3WTF17StringPrintStreamD0Ev(reinterpret_cast<StringPrintStream*>(self));
+}
+
+void APS5_VABI StringStreamVprintf_nid_no_patch(PrintStream* self, const char* format, void* args) {
+    _ZN3WTF17StringPrintStream7vprintfEPKcP13__va_list_tag(reinterpret_cast<StringPrintStream*>(self), format, args);
+}
+
+void APS5_VABI StreamNoOp_nid_no_patch(PrintStream*) {}
+
+void* const StringStreamVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&StringStreamDestroy_nid_no_patch), reinterpret_cast<void*>(&StringStreamDelete_nid_no_patch),
+    reinterpret_cast<void*>(&StringStreamVprintf_nid_no_patch), reinterpret_cast<void*>(&StreamNoOp_nid_no_patch),
+    reinterpret_cast<void*>(&_ZN3WTF11PrintStream5beginEv), reinterpret_cast<void*>(&StreamNoOp_nid_no_patch)
+};
+
+}  // namespace
+
+extern "C" {
+void APS5_VABI _ZN3WTF17StringPrintStreamC1Ev(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    stream.stream.vtable = StringStreamVtable + 2;
+    stream.buffer = stream.inlineBuffer;
+    stream.next = 0;
+    stream.size = sizeof(stream.inlineBuffer);
+    stream.buffer[0] = 0;
+}
+
+void APS5_VABI _ZN3WTF17StringPrintStreamC2Ev(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    stream.stream.vtable = StringStreamVtable + 2;
+    stream.buffer = stream.inlineBuffer;
+    stream.next = 0;
+    stream.size = sizeof(stream.inlineBuffer);
+    stream.buffer[0] = 0;
+}
+
+void APS5_VABI _ZN3WTF17StringPrintStreamD1Ev(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    if (stream.buffer != stream.inlineBuffer) NKWebKit::Deallocate(stream.buffer);
+}
+
+void APS5_VABI _ZN3WTF17StringPrintStreamD2Ev(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    if (stream.buffer != stream.inlineBuffer) NKWebKit::Deallocate(stream.buffer);
+}
+
+void APS5_VABI _ZN3WTF17StringPrintStreamD0Ev(NKWebKit::WtfAbi::StringPrintStream* self) {
+    _ZN3WTF17StringPrintStreamD1Ev(self);
+    NKWebKit::Deallocate(self);
+}
+
+void APS5_VABI _ZN3WTF17StringPrintStream5resetEv(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    stream.next = 0;
+    stream.buffer[0] = 0;
+}
+
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF17StringPrintStream9toCStringEv(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    return CopyCString(stream.buffer, stream.next);
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF17StringPrintStream8toStringEv(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    return FromUTF8(reinterpret_cast<const unsigned char*>(stream.buffer), stream.next);
+}
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF17StringPrintStream26toStringWithLatin1FallbackEv(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    auto result = FromUTF8(reinterpret_cast<const unsigned char*>(stream.buffer), stream.next);
+    if (result.impl) return result;
+    return String(CopyImpl({stream.buffer, static_cast<unsigned>(stream.next), true}));
+}
+
+NKWebKit::WtfAbi::ExpectedString APS5_VABI _ZN3WTF17StringPrintStream11tryToStringEv(NKWebKit::WtfAbi::StringPrintStream* self) {
+    auto& stream = Checked(self);
+    if (stream.next > MaxStringLength) return NKWebKit::WtfAbi::ExpectedString(std::uint8_t{0});
+    return NKWebKit::WtfAbi::ExpectedString(FromUTF8(reinterpret_cast<const unsigned char*>(stream.buffer), stream.next));
+}
+
+void APS5_VABI _ZN3WTF17StringPrintStream7vprintfEPKcP13__va_list_tag(NKWebKit::WtfAbi::StringPrintStream* self, const char* format, void* args) {
+    auto& stream = Checked(self);
+    if (!format || !args || !stream.buffer || stream.next >= stream.size) throw std::invalid_argument("invalid WTF StringPrintStream formatting state");
+    auto measureArgs = *static_cast<VaList*>(args);
+    const int count = vsnprintf_nid_postfix(nullptr, 0, format, &measureArgs);
+    if (count < 0) throw std::runtime_error("WTF StringPrintStream formatting failed");
+    const auto length = static_cast<std::size_t>(count);
+    if (length > std::numeric_limits<std::size_t>::max() - stream.next - 1)
+        throw std::length_error("WTF StringPrintStream buffer overflow");
+    const auto required = stream.next + length + 1;
+    if (required > stream.size) {
+        auto* buffer = static_cast<char*>(NKWebKit::Allocate(required));
+        std::memcpy(buffer, stream.buffer, stream.next + 1);
+        if (stream.buffer != stream.inlineBuffer) NKWebKit::Deallocate(stream.buffer);
+        stream.buffer = buffer;
+        stream.size = required;
+    }
+    auto writeArgs = *static_cast<VaList*>(args);
+    const int written = vsnprintf_nid_postfix(stream.buffer + stream.next, stream.size - stream.next, format, &writeArgs);
+    if (written != count) throw std::runtime_error("WTF StringPrintStream formatting changed between passes");
+    stream.next += length;
+}
+
+void APS5_VABI _ZN3WTF11PrintStream6printfEPKcz(NKWebKit::WtfAbi::PrintStream* self, const char* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    StreamVprintf(self, format, args);
+    __builtin_sysv_va_end(args);
+#else
+    std::va_list args;
+    va_start(args, format);
+    StreamVprintf(self, format, args);
+    va_end(args);
+#endif
+}
+
+void APS5_VABI _ZN3WTF11PrintStream20printfVariableFormatEPKcz(NKWebKit::WtfAbi::PrintStream* self, const char* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    StreamVprintf(self, format, args);
+    __builtin_sysv_va_end(args);
+#else
+    std::va_list args;
+    va_start(args, format);
+    StreamVprintf(self, format, args);
+    va_end(args);
+#endif
+}
+
+NKWebKit::WtfAbi::PrintStream& APS5_VABI _ZN3WTF11PrintStream5beginEv(NKWebKit::WtfAbi::PrintStream* self) {
+    return Checked(self);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKc(NKWebKit::WtfAbi::PrintStream* self, const char* value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%s", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEa(NKWebKit::WtfAbi::PrintStream* self, signed char value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%d", static_cast<int>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEh(NKWebKit::WtfAbi::PrintStream* self, unsigned char value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%u", static_cast<unsigned>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEs(NKWebKit::WtfAbi::PrintStream* self, short value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%d", static_cast<int>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEt(NKWebKit::WtfAbi::PrintStream* self, unsigned short value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%u", static_cast<unsigned>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEi(NKWebKit::WtfAbi::PrintStream* self, int value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%d", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEj(NKWebKit::WtfAbi::PrintStream* self, unsigned value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%u", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEl(NKWebKit::WtfAbi::PrintStream* self, std::int64_t value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%ld", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEm(NKWebKit::WtfAbi::PrintStream* self, std::uint64_t value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%lu", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEx(NKWebKit::WtfAbi::PrintStream* self, long long value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%lld", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEy(NKWebKit::WtfAbi::PrintStream* self, unsigned long long value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%llu", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEf(NKWebKit::WtfAbi::PrintStream* self, float value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%lf", static_cast<double>(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEd(NKWebKit::WtfAbi::PrintStream* self, double value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%lf", value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE(NKWebKit::WtfAbi::PrintStream* self, NKWebKit::WtfAbi::RawPointer value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%p", value.value);
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEb(NKWebKit::WtfAbi::PrintStream* self, bool value) {
+    StreamAtomicText(self, value ? "true" : "false");
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE(NKWebKit::WtfAbi::PrintStream* self, WTF::ClockType value) {
+    switch (value) {
+    case WTF::ClockType::Wall: StreamAtomicText(self, "Wall"); return;
+    case WTF::ClockType::Monotonic: StreamAtomicText(self, "Monotonic"); return;
+    case WTF::ClockType::Approximate: StreamAtomicText(self, "Approximate"); return;
+    }
+    throw std::invalid_argument("invalid WTF ClockType");
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_7CStringE(NKWebKit::WtfAbi::PrintStream* self, const NKWebKit::WtfAbi::CString& value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%s", Bytes(value));
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamERKNS_6StringE(NKWebKit::WtfAbi::PrintStream* self, const NKWebKit::WtfAbi::String& value) {
+    StreamPrintString(self, View(value.impl), "String");
+}
+
+void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE(NKWebKit::WtfAbi::PrintStream* self, const NKWebKit::WtfAbi::StringImpl* value) {
+    if (!value) { _ZN3WTF11PrintStream6printfEPKcz(self, "%s", "(null StringImpl*)"); return; }
+    StreamPrintString(self, View(value), "StringImpl*");
+}
+
+void APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc(NKWebKit::WtfAbi::PrintStream* self, char value) {
+    _ZN3WTF11PrintStream6printfEPKcz(self, "%c", static_cast<int>(value));
 }
 
 }

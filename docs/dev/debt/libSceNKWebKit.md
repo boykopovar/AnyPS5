@@ -5,7 +5,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 ### Unknown function info
 
 - [WebKit API objects](../../../core/libs/prx/libSceNKWebKit/src/Object.hpp) (libSceNKWebKit) - `WK*` objects are host objects numbered with `API::Object::Type` as [APIObject.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/APIObject.h) builds for PlayStation, with ApplicationManifest, InspectorExtension, WebExtension and WebAuthn types off and PopupMenuItem and AccessibilityObject on per [OptionsPlayStation.cmake](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/cmake/OptionsPlayStation.cmake); the console module version, its type numbers and its object layouts are unverified, so these objects cannot be passed to a console WebKit module. A null or wrong-type reference throws where WebKit dereferences it.
-- [WTF and WebCore value layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfStringAbi.hpp) (libSceNKWebKit) - `WTF::String`, `StringImpl`, `StringView`, `CString`, `URL` and the WebCore geometry, transform and `Color` layouts follow the release 64-bit headers at the [pinned source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h) and are pinned with `static_assert`; they are tested on Windows, not against console binaries. `StringImpl::destroy`, atom and symbol strings and external buffers still throw, so a string whose last reference guest code drops terminates.
+- [WTF and WebCore value layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfStringAbi.hpp) (libSceNKWebKit) - `WTF::String`, `StringImpl`, `StringView`, `CString`, `URL`, `PrintStream`, `StringPrintStream`, `Expected<String, UTF8ConversionError>` and the WebCore geometry, transform and `Color` layouts follow the release 64-bit headers at the [pinned source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h) and are pinned with `static_assert`; the stream layouts and no-RTTI vtable are unverified on Windows and against console binaries; the other layouts are tested on Windows. `StringImpl::destroy`, atom and symbol strings and external buffers still throw, so a string whose last reference guest code drops terminates.
 - [Media preferences](../../../core/libs/prx/libSceNKWebKit/src/Preferences.cpp) (libSceNKWebKit) - unset `MediaSourceEnabled`, `EncryptedMediaAPIEnabled` and `SourceBufferChangeTypeEnabled` getters throw, and feature-key setters for `EncryptedMediaAPIEnabled`, `SourceBufferChangeTypeEnabled` and `WebMParserEnabled` throw, because the PlayStation media player configuration behind `ENABLE_MEDIA_SOURCE` and `ENABLE_ENCRYPTED_MEDIA` is not in the pinned source. Other defaults evaluate [UnifiedWebPreferences.yaml](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml) for PlayStation; downstream console overrides are unverified.
 
 - [FastBitVector exports](../../../core/libs/prx/libSceNKWebKit/src/WtfFastBitVector.cpp) have no console ABI or behavior verification. The 16-byte owner (word pointer at 0, 64-bit bit count at 8), range clearing, growth and copying follow the paired header and [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastBitVector.cpp). `resizeSlow` preserves the stored bit count and unused bits of existing words; new words are zeroed. Allocation uses the module's `fastMalloc` and `fastFree`. Invalid ranges, null accessed storage, shrinking the word count and overflowing the upstream round-up throw instead of reproducing assertion failures or invalid memory access. Closes when: compared with a console module.
@@ -1576,10 +1576,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF11Persistence7EncoderlsEm` | `xGGfdp3gJME` |
 | `_ZN3WTF11Persistence7EncoderlsEs` | `2WpUBRnLMNg` |
 | `_ZN3WTF11Persistence7EncoderlsEt` | `jS+3kWmWE3I` |
-| `_ZN3WTF11PrintStream20printfVariableFormatEPKcz` | `wdbdMn2JHZc` |
 | `_ZN3WTF11PrintStream3endEv` | `FyOMUdXa5Tc` |
-| `_ZN3WTF11PrintStream5beginEv` | `EMO8fbfieRI` |
-| `_ZN3WTF11PrintStream6printfEPKcz` | `Idp+8dpnrr8` |
 | `_ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv` | `ycxHHEa11OI` |
 | `_ZN3WTF11ThreadGroup3addERKNS_14AbstractLockerERNS_6ThreadE` | `wxOWH7WVHa0` |
 | `_ZN3WTF11ThreadGroup3addERNS_6ThreadE` | `yI8ZKsn2NmU` |
@@ -1611,31 +1608,11 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF13StringBuilder16appendCharactersEPKhj` | `E2TkkVyRubQ` |
 | `_ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE` | `xJRNEp2d-Wg` |
 | `_ZN3WTF13aboutBlankURLEv` | `3nmBMeZtd+Y` |
-| `_ZN3WTF13dumpCharacterERNS_11PrintStreamEc` | `rpsD9ynfjc0` |
 | `_ZN3WTF13isMainRunLoopEv` | `5K-9Y7aFV60` |
 | `_ZN3WTF13normalizedNFCENS_10StringViewE` | `bgrxJM-HmMM` |
 | `_ZN3WTF13normalizedNFCERKNS_6StringE` | `2LUk8Ch0mJY` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEN3JSC14TypedArrayModeE` | `DwwpqTcKG0Q` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE` | `bwThPa6WtDc` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE` | `6cO1aKnHM64` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE` | `iZmKEESJ3mw` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEPKc` | `P-HGfOZxkgU` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEPN3JSC9CodeBlockE` | `RFKbaZAsHKs` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamERKNS_6StringE` | `KDRPZeaauUQ` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamERKNS_7CStringE` | `dY5HI1HhX8Q` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEa` | `ejLjAkmwuMc` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEb` | `laF+cd2rvw8` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEd` | `yHE4d2C-Ius` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEf` | `Nvu+-KKztN4` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEh` | `j4qPZlQyJUc` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEi` | `YzM19lL-JGU` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEj` | `BEzuHMRRYIs` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEl` | `OwyHvMkCWP8` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEm` | `d4mB8nRN2tU` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEs` | `TGBn8YLhSro` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEt` | `7WVXLziXGtM` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEx` | `tTW6TdBv6wo` |
-| `_ZN3WTF13printInternalERNS_11PrintStreamEy` | `BiM6ri5fwo8` |
 | `_ZN3WTF14AtomStringImpl10addLiteralEPKcj` | `m+-AT4JRFBw` |
 | `_ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE` | `47H3Xt0ke9s` |
 | `_ZN3WTF14AtomStringImpl11addSlowCaseERNS_15AtomStringTableERNS_10StringImplE` | `cUU3-6ewPWM` |
@@ -1716,17 +1693,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE` | `9NbKoZNi0Jo` |
 | `_ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE` | `jRKHSzq25WA` |
 | `_ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE` | `S6NzIicbleU` |
-| `_ZN3WTF17StringPrintStream11tryToStringEv` | `TrwAHMfEpsw` |
-| `_ZN3WTF17StringPrintStream26toStringWithLatin1FallbackEv` | `cE9rGwgKhic` |
-| `_ZN3WTF17StringPrintStream5resetEv` | `6PPm2rZiMcs` |
-| `_ZN3WTF17StringPrintStream7vprintfEPKcP13__va_list_tag` | `iXgnlJmCSP4` |
-| `_ZN3WTF17StringPrintStream8toStringEv` | `52xCgnSgAkY` |
-| `_ZN3WTF17StringPrintStream9toCStringEv` | `7RZABO0cMFI` |
-| `_ZN3WTF17StringPrintStreamC1Ev` | `wNhdQWqZALM` |
-| `_ZN3WTF17StringPrintStreamC2Ev` | `zQLVD+vqI0Y` |
-| `_ZN3WTF17StringPrintStreamD0Ev` | `eSdAHApUsso` |
-| `_ZN3WTF17StringPrintStreamD1Ev` | `EOmLhk6TiW4` |
-| `_ZN3WTF17StringPrintStreamD2Ev` | `DyzD9dy1J9M` |
 | `_ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE` | `9v4s2WAlWKI` |
 | `_ZN3WTF17double_conversion23DoubleToStringConverter19EcmaScriptConverterEv` | `vYLd9fXeOkc` |
 | `_ZN3WTF17languageDidChangeEv` | `6kL-6MlnOos` |
