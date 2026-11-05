@@ -115,11 +115,13 @@ void Apply(Dialog& dialog, ImeHostInputKind kind, const char16_t* units, std::si
         case ImeHostInputKind::End:
             dialog.caret = dialog.text.size();
             return;
-        case ImeHostInputKind::Enter:
-            std::copy(dialog.text.begin(), dialog.text.end(), dialog.buffer);
-            dialog.buffer[dialog.text.size()] = u'\0';
-            Finish(EndStatusOk);
+        case ImeHostInputKind::Enter: {
+            std::u16string output = dialog.text;
+            output.push_back(u'\0');
+            const bool written = GuestCopyOut_nid_no_patch(dialog.buffer, output.data(), output.size() * sizeof(char16_t));
+            Finish(written ? EndStatusOk : EndStatusAborted);
             return;
+        }
         case ImeHostInputKind::Escape:
             Finish(EndStatusUserCanceled);
             return;
