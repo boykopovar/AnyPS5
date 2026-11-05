@@ -321,9 +321,6 @@ std::optional<TrampolineSite> relocateLeaf(
         return std::nullopt;
     }
 
-    // A branch whose target is a rip-relative memory word (jmp/jcc qword [rip+disp]) is decoded with
-    // HasBranchTarget, so the emit loop below would turn it into a direct branch to the pointer's
-    // address instead of through it. Refuse it whole.
     for (const auto& insn : body) {
         const auto& info = insn.Info;
         if ((info.FlowKind == ControlFlowKind::UnconditionalJump || info.FlowKind == ControlFlowKind::ConditionalBranch) && info.HasRipRelativeDisp) {
@@ -332,13 +329,6 @@ std::optional<TrampolineSite> relocateLeaf(
         }
     }
 
-    // The copy keeps every explicit stack operand at its address and runs with rsp lowered by the shift,
-    // so what the leaf pushes lands one shift lower than in the original. The shift covers the deepest
-    // stack the leaf reaches plus its red zone, so the pushed registers sit below every byte the leaf
-    // addresses. An explicit operand that starts in a slot a pop later restores (a saved register read
-    // through rsp or rbp), or an indexed stack operand in a leaf that pops, would miss the moved value;
-    // refuse those. A slot an rsp adjustment frees instead (push %rax used to allocate a local) holds no
-    // value the leaf restores, so explicit accesses to it are fine.
     std::int64_t deepest = 0;
     {
         std::vector<std::optional<std::int64_t>> depthAt(body.size());
