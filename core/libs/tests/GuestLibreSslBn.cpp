@@ -43,6 +43,19 @@ static std::string Hex(const Bn* value) {
     return value->neg ? "-" + text : text;
 }
 
+static std::string Printed(const Bn* value) {
+    auto* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(bio != nullptr);
+    const int result = BN_print_nid_postfix(bio, value);
+    Require(result == 1);
+    char* output = nullptr;
+    const std::int64_t length = BIO_ctrl_nid_postfix(bio, 3, 0, &output);
+    Require(length >= 0);
+    std::string text(output, static_cast<std::size_t>(length));
+    BIO_free_nid_postfix(bio);
+    return text;
+}
+
 static void InitializeHeap() {
     void* const api[10] {};
     ApplicationHeapRegister_nid_no_patch(api);
@@ -198,6 +211,20 @@ int main() {
 
         Bn* all[] = {r, three, eleven, seven, forty, four, eight, allocated, minusThree, fifteen, inPlace, prime, a, inverse, product, quotient, check};
         for (Bn* value : all) BN_free_nid_postfix(value);
+    }
+    {
+        Bn* zero = FromHex("0");
+        Require(Printed(zero) == "0");
+        Bn* value = FromHex("00ABCDEF0123");
+        Require(Printed(value) == "ABCDEF0123");
+        Bn* negative = FromHex("-ABCDEF0123");
+        Require(Printed(negative) == "-ABCDEF0123");
+        Bn* wide = FromHex("10000000000000000");
+        Require(Printed(wide) == "10000000000000000");
+        BN_free_nid_postfix(zero);
+        BN_free_nid_postfix(value);
+        BN_free_nid_postfix(negative);
+        BN_free_nid_postfix(wide);
     }
     BN_CTX_free_nid_postfix(ctx);
     return 0;
