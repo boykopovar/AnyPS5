@@ -511,6 +511,14 @@ static void CheckDates() {
     SceFiosTm normalized{};
     sceFiosDateToComponents(sceFiosDateFromComponents(&overflow), &normalized);
     REQUIRE(normalized.tm_year == 100 && normalized.tm_mon == 1 && normalized.tm_mday == 2 && normalized.tm_hour == 1 && normalized.tm_min == 1 && normalized.tm_sec == 0);
+    SceFiosTm far{};
+    far.tm_year = 500;
+    far.tm_mday = 1;
+    const SceFiosDate farDate = sceFiosDateFromComponents(&far);
+    SceFiosTm farBack{};
+    REQUIRE(farDate != 0 && sceFiosDateToComponents(farDate, &farBack) == &farBack && farBack.tm_year == 500 && farBack.tm_mon == 0 && farBack.tm_mday == 1);
+    far.tm_year = 1000;
+    REQUIRE(sceFiosDateFromComponents(&far) == 0);
     SceFiosTm negative{};
     negative.tm_year = 70;
     negative.tm_mon = -1;
