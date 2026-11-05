@@ -591,10 +591,6 @@ int APS5_VABI RSA_pkey_ctx_ctrl_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI ASN1_get_object_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI SSL_provide_quic_data_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
