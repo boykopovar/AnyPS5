@@ -416,8 +416,15 @@ int APS5_VABI sceNpWebApiIntCreateRequest(int titleUserCtxId, const char* apiGro
     return createRequest(titleUserCtxId, false, requestId);
 }
 
-int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum) {
+    (void)npServiceLabel;
+    if (!filterParam || filterParamNum == 0) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto context = contexts.find(libCtxId);
+    if (context == contexts.end()) return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_NOT_FOUND;
+    if (!context->second.handles.contains(handleId)) return SCE_NP_WEBAPI_ERROR_HANDLE_NOT_FOUND;
+    if (!npServiceName) NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_WEBAPI_ERROR_SIGNED_IN_USER_NOT_FOUND;
 }
 
 int APS5_VABI sceNpWebApiIntInitialize(const NpWebApiIntInitializeArgs* args) {

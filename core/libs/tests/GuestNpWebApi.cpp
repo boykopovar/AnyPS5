@@ -99,6 +99,24 @@ void TestLibraryContexts() {
     Require(sceNpWebApiTerminate(other) == 0, "terminate the second library context");
 }
 
+void TestIntServicePushEventFilter() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    Require(context > 0 && other > 0, "library contexts for int service filter");
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(handle > 0, "handle for int service filter");
+
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, nullptr, 1) == InvalidArgument, "int service filter without filter parameter");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, filterParam, 0) == InvalidArgument, "int service filter with count 0");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(0x7fff + 1, handle, "service", 0, filterParam, 1) == LibContextNotFound, "int service filter of an unknown context");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(other, handle, "service", 0, filterParam, 1) == HandleNotFound, "int service filter with another context's handle");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0xffffffffu, filterParam, 1) == SignedInUserNotFound, "int service filter with invalid service label");
+    Require(sceNpWebApiIntCreateServicePushEventFilter(context, handle, "service", 0, filterParam, 1) == SignedInUserNotFound, "int service filter without signed-in user");
+
+    Require(sceNpWebApiDeleteHandle(context, handle) == 0, "delete the handle for int service filter");
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the int service filter library contexts");
+}
+
 void TestUserContexts() {
     const int context = sceNpWebApiInitialize(1, 0x10000);
     const int other = sceNpWebApiInitialize(1, 0x10000);
@@ -432,6 +450,7 @@ int main() {
     InstallProcessParameters();
     SetSdkVersion(0x04508001);
     TestLibraryContexts();
+    TestIntServicePushEventFilter();
     TestUserContexts();
     TestRequests();
     TestResponses();
