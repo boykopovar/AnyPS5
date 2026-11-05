@@ -148,8 +148,8 @@ struct Connection {
         internal.writeHash = nullptr;
     }
 
-    LibreSsl* Ssl() {
-        return reinterpret_cast<LibreSsl*>(&ssl);
+    LibreSslSsl* Ssl() {
+        return reinterpret_cast<LibreSslSsl*>(&ssl);
     }
 };
 

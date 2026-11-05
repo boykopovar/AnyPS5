@@ -34,8 +34,8 @@ static_assert(sizeof(TestSslInternal) == 432 && offsetof(TestSslInternal, rwstat
 static_assert(sizeof(TestSsl) == 232 && offsetof(TestSsl, session) == 128 && offsetof(TestSsl, ctx) == 152);
 static_assert(offsetof(TestSsl, verifyResult) == 160 && offsetof(TestSsl, internal) == 224);
 
-static const LibreSsl* Ssl(const TestSsl* ssl) {
-    return reinterpret_cast<const LibreSsl*>(ssl);
+static const LibreSslSsl* Ssl(const TestSsl* ssl) {
+    return reinterpret_cast<const LibreSslSsl*>(ssl);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
