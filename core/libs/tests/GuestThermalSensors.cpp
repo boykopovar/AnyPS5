@@ -4,6 +4,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 
 extern "C" {
 void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]);
+bool StorageDescriptorAllowsTemperatureQuery_nid_no_patch(const void* descriptor, std::size_t bytes);
 
 }
 
@@ -25,6 +27,14 @@ static void Require(bool value) {
 }
 
 int main() {
+    unsigned char storageDescriptor[32]{};
+    storageDescriptor[28] = 8;
+    Require(!StorageDescriptorAllowsTemperatureQuery_nid_no_patch(storageDescriptor, sizeof(storageDescriptor)));
+    storageDescriptor[28] = 17;
+    Require(StorageDescriptorAllowsTemperatureQuery_nid_no_patch(storageDescriptor, sizeof(storageDescriptor)));
+    Require(!StorageDescriptorAllowsTemperatureQuery_nid_no_patch(storageDescriptor, sizeof(storageDescriptor) - 1));
+    Require(!StorageDescriptorAllowsTemperatureQuery_nid_no_patch(nullptr, sizeof(storageDescriptor)));
+
     const auto root = std::filesystem::path("anyps5-thermal-sensors-test");
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "hwmon" / "hwmon0");
