@@ -777,4 +777,4 @@ class PathResolutionTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))
