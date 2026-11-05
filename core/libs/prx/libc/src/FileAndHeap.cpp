@@ -134,6 +134,7 @@ static bool MoveAppendingHandle(int descriptor, HANDLE handle, DWORD access, DWO
 }
 
 static bool AppendThroughDescriptor(int descriptor) {
+    const GuestDescriptorAccess access(descriptor, GuestDescriptorAccess::Mode::Update);
     const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
     if (handle == INVALID_HANDLE_VALUE) return false;
     if (descriptor <= 2 || GetFileType(handle) != FILE_TYPE_DISK) return true;
@@ -141,6 +142,7 @@ static bool AppendThroughDescriptor(int descriptor) {
 }
 
 static bool AppendOnlyDescriptor(int descriptor) {
+    const GuestDescriptorAccess admission(descriptor, GuestDescriptorAccess::Mode::Update);
     const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
     if (handle == INVALID_HANDLE_VALUE) return false;
     if (GetFileType(handle) != FILE_TYPE_DISK) return true;

@@ -67,6 +67,13 @@ int APS5_VABI sigismember_nid_postfix(const GuestSignalSet* set, int signal) {
 
 asm(".text\n"
     APS5_SIGNAL_ASM_FUNCTION("sigsetjmp_nid_postfix")
+    "    pushq %rdi\n"
+    "    pushq %rsi\n"
+    "    subq $8, %rsp\n"
+    APS5_SIGNAL_ASM_CALL("JumpBufferSaveContext_nid_no_patch")
+    "    addq $8, %rsp\n"
+    "    popq %rsi\n"
+    "    popq %rdi\n"
     "    movl %esi, 88(%rdi)\n"
     "    testl %esi, %esi\n"
     "    jz 2f\n"
@@ -106,6 +113,15 @@ asm(".text\n"
     "    popq %rsi\n"
     "    popq %rdi\n"
     "2:\n"
+    "    pushq %rdi\n"
+    "    pushq %rsi\n"
+    "    movl 92(%rdi), %esi\n"
+    "    movq 16(%rdi), %rdi\n"
+    "    subq $8, %rsp\n"
+    APS5_SIGNAL_ASM_CALL("GuestIoStackRestore_nid_no_patch")
+    "    addq $8, %rsp\n"
+    "    popq %rsi\n"
+    "    popq %rdi\n"
 #ifdef _WIN32
     "    pushq %rdi\n"
     "    pushq %rsi\n"

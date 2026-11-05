@@ -20,6 +20,7 @@
 #include "prx/libkernel/File/include/HostStreams.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "SceTypes.hpp"
 
@@ -74,30 +75,35 @@ static int NativeRead(int fd, void* buf, std::size_t n) {
         errno = EISDIR;
         return -1;
     }
-    const auto positioned = File::LockPositionedTransfer(fd);
-    const int result = ::_read(fd, buf, static_cast<unsigned int>(n));
+    const auto positioned = File::IoPositionedTransfer(fd);
+    if (!positioned) return -1;
+    const int result = ThreadCancel::Native([&] { return ::_read(fd, buf, static_cast<unsigned int>(n)); });
+    if (result < 0 && _doserrno == ERROR_OPERATION_ABORTED) errno = EINTR;
     if (result < 0 && _doserrno == ERROR_NO_DATA) errno = EAGAIN;
     return result;
 }
-static int NativeWrite(int fd, const void* buf, std::size_t n) {
+static std::int64_t NativeWrite(int fd, const void* buf, std::size_t n) {
     if (n > static_cast<std::size_t>(std::numeric_limits<unsigned int>::max())) {
         throw std::runtime_error("sceKernelWrite: nbytes exceeds platform limit");
     }
-    const auto positioned = File::LockPositionedTransfer(fd);
+    const auto positioned = File::IoPositionedTransfer(fd);
+    if (!positioned) return -1;
     if (File::HasFixedSizeWrites(fd)) {
-        const auto position = ::_lseeki64(fd, 0, SEEK_CUR);
+        const auto position = ThreadCancel::Native([&] { return ::_lseeki64(fd, 0, SEEK_CUR); });
         if (position < 0 || !File::LimitSharedMemoryWrite_nid_no_patch(fd, n, position)) return -1;
         if (n == 0) return 0;
     }
     const auto shared = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
-    if (shared != -2) return static_cast<int>(shared);
+    if (shared != -2) return shared;
     if (File::Appends(fd)) {
         const auto appended = File::WriteAtEnd(fd, buf, n);
-        if (appended != -2) return static_cast<int>(appended);
+        if (appended != -2) return appended;
     }
-    const int result = ::_write(fd, buf, static_cast<unsigned int>(n));
-    if (result < 0 && errno == ENOSPC && _doserrno == 0 && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) == FILE_TYPE_PIPE) errno = EAGAIN;
-    if (result < 0 && (_doserrno == ERROR_NO_DATA || _doserrno == ERROR_BROKEN_PIPE) && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) == FILE_TYPE_PIPE) errno = EPIPE;
+    const auto result = File::IoWriteNative(fd, buf, n);
+    if (!ThreadCancel::IoActive()) {
+        if (result < 0 && errno == ENOSPC && _doserrno == 0 && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) == FILE_TYPE_PIPE) errno = EAGAIN;
+        if (result < 0 && (_doserrno == ERROR_NO_DATA || _doserrno == ERROR_BROKEN_PIPE) && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) == FILE_TYPE_PIPE) errno = EPIPE;
+    }
     return result;
 }
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
@@ -155,11 +161,11 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
     return result == -2 ? ::lseek(fd, static_cast<off_t>(offset), whence) : result;
 }
 static std::int64_t NativeRead(int fd, void* buf, std::size_t n) {
-    return ::read(fd, buf, n);
+    return ThreadCancel::Native([&] { return ::read(fd, buf, n); });
 }
 static std::int64_t NativeWrite(int fd, const void* buf, std::size_t n) {
     const auto result = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
-    return result == -2 ? ::write(fd, buf, n) : result;
+    return result == -2 ? ThreadCancel::Native([&] { return ::write(fd, buf, n); }) : result;
 }
 static int NativeClose(int fd) { return ::close(fd); }
 static int NativeUnlink(const std::filesystem::path& p) {
@@ -394,12 +400,14 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
 
 int APS5_VABI sceKernelClose(int d) {
     if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EPERM;
+    const GuestDescriptorAccess descriptorLock(d, GuestDescriptorAccess::Mode::Close);
     int socketError = 0;
     if (KernelCloseSocket_nid_no_patch(d, &socketError)) return socketError == 0 ? 0 : SceKernelError(socketError);
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
     EqueueDescriptorClosed(d);
 #ifdef _WIN32
-    const auto positioned = File::LockPositionedTransfer(d);
+    std::optional<File::PositionedTransferLock> positioned;
+    if (GetFileType(WindowsDescriptorHandle_nid_no_patch(d)) != FILE_TYPE_PIPE) positioned.emplace(File::LockPositionedTransfer(d));
 #endif
     File::ForgetClosedDescriptor(d);
     if (NativeClose(d) != 0) {
@@ -444,7 +452,7 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
     }
     const File::WriteSync sync(d);
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbytes);
-    auto n = NativeWrite(d, buf, nbytes);
+    auto n = sync.Complete(NativeWrite(d, buf, nbytes));
     if (n < 0) return SceIoErrorFromErrno(errno);
     return static_cast<std::int64_t>(n);
 }
