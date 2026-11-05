@@ -539,24 +539,32 @@ static void TestUnconfiguredReverbAlias() {
 }
 
 static void TestRoutedReverbMasks() {
-    for (const auto size : {0u, 1u}) {
-        for (const bool maskedInputOnly : {false, true}) {
-            ReverbRoutingGraph graph(2, 4, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 1, 3, 2, size}});
-            graph.Signal(1).activeChannels = maskedInputOnly ? 2u : 3u;
-            auto param = RoutingReverb(1, 0);
-            param.reserved[0] = 2;
-            graph.SetReverb(param);
-            float energy = 0;
-            for (std::uint32_t grain = 0; grain < 80; ++grain) {
-                const auto actual = graph.Render();
-                for (std::uint32_t frame = 0; frame < RenderGrain; ++frame) {
-                    Require(actual[3][frame * 2 + 1] == 0.0f);
-                    if (maskedInputOnly) Require(actual[3][frame * 2] == 0.0f);
-                    energy += std::abs(actual[3][frame * 2]);
+    for (const auto channels : {1u, 2u, 6u, 8u}) {
+        for (const auto size : {0u, 1u}) {
+            for (const auto mask : {0u, 1u << (channels - 1)}) {
+                for (const bool maskedInputOnly : {false, true}) {
+                    if (mask == 0 && maskedInputOnly) continue;
+                    ReverbRoutingGraph graph(channels, 4, {{SCE_NGS2_CUSTOM_MODULE_ID_REVERB, 1, 3, 2, size}});
+                    graph.Signal(1).activeChannels = maskedInputOnly ? mask : (1u << channels) - 1;
+                    auto param = RoutingReverb(1, 0);
+                    param.reserved[0] = mask;
+                    graph.SetReverb(param);
+                    std::array<float, 8> energy{};
+                    for (std::uint32_t grain = 0; grain < 80; ++grain) {
+                        const auto actual = graph.Render();
+                        for (std::uint32_t frame = 0; frame < RenderGrain; ++frame) {
+                            for (std::uint32_t channel = 0; channel < channels; ++channel) {
+                                const auto sample = actual[3][frame * channels + channel];
+                                if (maskedInputOnly || (mask & (1u << channel)) != 0) Require(sample == 0.0f);
+                                energy[channel] += std::abs(sample);
+                            }
+                        }
+                        ExpectSignal(actual[1], graph.Signal(1), grain * RenderGrain, channels);
+                    }
+                    for (std::uint32_t channel = 0; channel < channels; ++channel)
+                        if (!maskedInputOnly && (mask & (1u << channel)) == 0) Require(energy[channel] > 1e-5f);
                 }
-                ExpectSignal(actual[1], graph.Signal(1), grain * RenderGrain, 2);
             }
-            if (!maskedInputOnly) Require(energy > 1e-5f);
         }
     }
 }
