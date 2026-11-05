@@ -238,12 +238,16 @@ const char* Reader::Entity(std::uint64_t node) const {
 }
 
 const char* Reader::Attribute(std::uint64_t node, const char* name) const {
+    return Attribute(node, [name](const char* attributeName) { return std::strcmp(attributeName, name) == 0; });
+}
+
+const char* Reader::Attribute(std::uint64_t node, const std::function<bool(const char*)>& matches) const {
     std::set<std::uint64_t> seen;
     for (std::uint64_t attribute = FirstAttribute(node); attribute != 0; attribute = NextAttribute(attribute)) {
         if (!seen.insert(attribute).second) throw std::logic_error("libSceXml: an attribute cycle was not measured");
         const char* attributeName = AttributeName(attribute);
         if (attributeName == nullptr) throw std::logic_error("libSceXml: getAttribute on a record that is not an attribute was not measured");
-        if (std::strcmp(attributeName, name) == 0) return AttributeValue(attribute);
+        if (matches(attributeName)) return AttributeValue(attribute);
     }
     return nullptr;
 }

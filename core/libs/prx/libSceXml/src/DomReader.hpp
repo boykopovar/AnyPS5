@@ -3,6 +3,7 @@
 #include "prx/libSceXml/src/DomParser.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <set>
 
 namespace XmlDom {
@@ -32,6 +33,7 @@ public:
     const char* AttributeValue(std::uint64_t attribute) const;
     const char* Entity(std::uint64_t node) const;
     const char* Attribute(std::uint64_t node, const char* name) const;
+    const char* Attribute(std::uint64_t node, const std::function<bool(const char*)>& matches) const;
 
 private:
     void CheckNode(std::uint64_t node) const;

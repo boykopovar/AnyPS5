@@ -6,8 +6,19 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -222,6 +233,64 @@ void TestStatusAndAttributes() {
     _ZN3sce3Xml3Dom8DocumentD1Ev(&document);
 }
 
+class GuardedPage {
+public:
+    char* data = nullptr;
+    std::size_t size = 0;
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        data = static_cast<char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr, "allocate two pages");
+        DWORD previous = 0;
+        Require(VirtualProtect(data + size, size, PAGE_NOACCESS, &previous) != 0, "make the second page inaccessible");
+#else
+        const auto pageSize = sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0, "the page size");
+        size = static_cast<std::size_t>(pageSize);
+        auto* mapping = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED, "allocate two pages");
+        data = static_cast<char*>(mapping);
+        Require(mprotect(data + size, size, PROT_NONE) == 0, "make the second page inaccessible");
+#endif
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, size * 2);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    char* End(const char* bytes, std::size_t count) {
+        char* start = data + size - count;
+        std::memcpy(start, bytes, count);
+        return start;
+    }
+};
+
+void TestAttributeNameAtPageEnd() {
+    Fixture f;
+    Require(f.Parse("<r a=\"1\" ab=\"2\" b=\"&amp;\"/>") == 0, "parse");
+    XmlHandle document{nullptr};
+    _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+    const XmlNodeId root = Root(&document);
+    GuardedPage page;
+    Require(Attribute(&document, root, page.End("ab", 3), 3) == "2", "a name whose zero byte is the last readable byte");
+    Require(Attribute(&document, root, page.End("z", 1), 1) == "<null>", "a name compared only up to its first differing byte, which is the last readable byte");
+    bool faulted = false;
+    try {
+        Attribute(&document, root, page.End("ab", 2), 2);
+    } catch (const std::logic_error&) {
+        faulted = true;
+    }
+    Require(faulted, "a name that matches up to the end of the readable page is read past it, where 13.42 faults");
+    _ZN3sce3Xml3Dom8DocumentD1Ev(&document);
+}
+
 void TestAllocationFailures() {
     for (std::size_t k = 0; k < 9; ++k) {
         Fixture f;
@@ -248,6 +317,7 @@ int main() {
     TestLifecycle();
     TestEmptyDocument();
     TestStatusAndAttributes();
+    TestAttributeNameAtPageEnd();
     TestAllocationFailures();
     std::puts("guest_xml_document: all checks passed");
     return 0;

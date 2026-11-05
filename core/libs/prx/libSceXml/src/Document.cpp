@@ -1,11 +1,13 @@
 #include "prx/libSceXml/src/Document.hpp"
 
 #include "prx/libSceXml/src/DomReader.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -235,7 +237,22 @@ XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNo
     Live(document);
     Generation& generation = *RefOf(document)->generation;
     const Reader reader(generation.buffers);
-    const char* text = reader.Attribute(OffsetOf(node), name->buffer);
+    std::string read;
+    const auto nameByte = [&](std::size_t index) {
+        while (read.size() <= index) {
+            char byte = 0;
+            if (!GuestCopyIn_nid_no_patch(&byte, name->buffer + read.size(), 1)) throw std::logic_error("sce::Xml::Dom::Document: getAttribute reading the name where it is not readable faults in 13.42");
+            read.push_back(byte);
+        }
+        return read[index];
+    };
+    const char* text = reader.Attribute(OffsetOf(node), [&](const char* attributeName) {
+        for (std::size_t i = 0;; ++i) {
+            const char byte = nameByte(i);
+            if (attributeName[i] != byte) return false;
+            if (byte == 0) return true;
+        }
+    });
     if (text != nullptr) generation.lent = true;
     SetString(result, text);
     return result;
