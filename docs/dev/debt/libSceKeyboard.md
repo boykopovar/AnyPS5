@@ -3,6 +3,7 @@
 ### Functional
 
 - [sceKeyboardGetKey2Char](../../../core/libs/prx/libSceKeyboard/src/keyboard_impl.cpp): initialization, output length and reserved bytes remain unverified on a console; unconverted keys retain the host's length of 0. One title (PPSA15246) disassembled for this entry calls it after clearing the first 20 bytes of its output buffer (16-byte store 0x69942d, 32-bit store 0x699435; no size argument), uses a character only when the result is 0 and the first output byte is nonzero, and then reads the 16-bit value at offset 8. Which other output fields it reads and what its other arguments mean are not shown.
+- [sceKeyboardOpen](../../../core/libs/prx/libSceKeyboard/src/keyboard_impl.cpp): a PS5 on system software 12.40 returned `0x809B0001` for user `-1` and `0x809B0081` for user 0, with type and index 0 after `sceKeyboardInit`. Every other id that is not a registered user gets `0x809B0081` too, and other negative ids keep `INVALID_ARG`; neither was probed, nor was the order of the user check against a bad type or index.
 
 ### Unknown function info
 
