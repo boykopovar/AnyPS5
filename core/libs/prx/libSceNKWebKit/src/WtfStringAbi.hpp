@@ -59,6 +59,45 @@ struct String {
     ~String() { Release(impl); }
 };
 
+struct ExpectedString {
+    union { StringImpl* value; std::uint8_t error; };
+    bool hasValue;
+    explicit ExpectedString(String&& string) : value(std::exchange(string.impl, nullptr)), hasValue(true) {}
+    explicit ExpectedString(std::uint8_t code) : error(code), hasValue(false) {}
+    ExpectedString(const ExpectedString&) = delete;
+    ~ExpectedString() { if (hasValue) Release(value); }
+};
+
+struct PrintStream {
+    void* const* vtable;
+};
+
+struct StringPrintStream {
+    PrintStream stream;
+    char* buffer;
+    std::size_t next;
+    std::size_t size;
+    char inlineBuffer[128];
+};
+
+struct RawPointer {
+    const void* value;
+};
+
+static_assert(sizeof(ExpectedString) == 16);
+static_assert(offsetof(ExpectedString, value) == 0);
+static_assert(offsetof(ExpectedString, error) == 0);
+static_assert(offsetof(ExpectedString, hasValue) == 8);
+static_assert(!std::is_trivially_destructible_v<ExpectedString>);
+static_assert(sizeof(PrintStream) == 8);
+static_assert(sizeof(RawPointer) == 8);
+static_assert(sizeof(StringPrintStream) == 160);
+static_assert(offsetof(StringPrintStream, stream) == 0);
+static_assert(offsetof(StringPrintStream, buffer) == 8);
+static_assert(offsetof(StringPrintStream, next) == 16);
+static_assert(offsetof(StringPrintStream, size) == 24);
+static_assert(offsetof(StringPrintStream, inlineBuffer) == 32);
+
 struct CString {
     CStringBuffer* buffer;
     explicit CString(CStringBuffer* value = nullptr) : buffer(value) {}
@@ -66,6 +105,13 @@ struct CString {
     CString(CString&& other) noexcept : buffer(std::exchange(other.buffer, nullptr)) {}
     ~CString() { Release(buffer); }
 };
+
+struct ASCIILiteral {
+    const char* characters;
+};
+
+static_assert(sizeof(ASCIILiteral) == 8);
+static_assert(offsetof(ASCIILiteral, characters) == 0);
 
 struct ProcessPrivileges {
     unsigned storage;
