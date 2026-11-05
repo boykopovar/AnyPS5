@@ -404,9 +404,12 @@ static void RejectUnsupportedActions(Unlocks& unlocks) {
     Require(Trophy(context, 1).progress.value == 3 && Trophy(context, 2).progress.value == 4 &&
                 Read("_trophy/268435456_7.stats.txt") == "10 3\n20 4\n" && unlocks.trophies.size() == before,
             "an unsupported or filtered action replaced saved progress, or max progress decreased");
-    Post(uds, "_UnlockTrophy", [](NpUniversalDataSystemEventPropertyObject* properties) {
-        Require(sceNpUniversalDataSystemEventPropertyObjectSetInt32(properties, "_trophy_id", 3) == 0, "direct trophy id was not set");
-    });
+    const auto direct = [&uds] {
+        Post(uds, "_UnlockTrophy", [](NpUniversalDataSystemEventPropertyObject* properties) {
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetInt32(properties, "_trophy_id", 3) == 0, "direct trophy id was not set");
+        });
+    };
+    direct();
     Require(Trophy(context, 3).unlocked && unlocks.trophies.size() == before + 1, "unsupported extraction rules disabled direct unlocks");
     steps("LATEST", 5);
     steps("MAX", 7);
@@ -415,6 +418,20 @@ static void RejectUnsupportedActions(Unlocks& unlocks) {
                 unlocks.trophies.size() == before + expected.size() &&
                 std::vector<std::pair<std::uint32_t, std::int32_t>>(unlocks.trophies.begin() + before, unlocks.trophies.end()) == expected,
             "supported actions did not unlock their trophies and platinum exactly once");
+    const std::vector<std::uint64_t> ticks{Trophy(context, 0).timestamp_tick, Trophy(context, 1).timestamp_tick,
+                                         Trophy(context, 2).timestamp_tick, Trophy(context, 3).timestamp_tick};
+    const auto record = Read("_trophy/268435456_7.txt");
+    const auto statRecord = Read("_trophy/268435456_7.stats.txt");
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        direct();
+        steps("LATEST", 5);
+        steps("MAX", 7);
+    }
+    Require(unlocks.trophies.size() == before + expected.size() &&
+                ticks == std::vector<std::uint64_t>{Trophy(context, 0).timestamp_tick, Trophy(context, 1).timestamp_tick,
+                                                   Trophy(context, 2).timestamp_tick, Trophy(context, 3).timestamp_tick} &&
+                Read("_trophy/268435456_7.txt") == record && Read("_trophy/268435456_7.stats.txt") == statRecord,
+            "repeated successful events changed unlock notifications, timestamps or saved records");
 }
 
 int main() {

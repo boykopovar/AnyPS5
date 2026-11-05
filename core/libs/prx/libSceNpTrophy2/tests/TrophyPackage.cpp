@@ -418,7 +418,11 @@ void testUnsupportedStatActions() {
         {R"({"conversion":{},"input":"$.counter","output":{"statId":40}})", "conversion"},
         {R"({"input":"$.counter","extension":[],"output":{"statId":40}})", "extension"},
         {R"({"input":"$.counter","output":{"statId":40,"conversion":{}}})", "conversion"},
-        {R"({"input":"$.counter","output":{"extension":false,"statId":40}})", "extension"}
+        {R"({"input":"$.counter","output":{"extension":false,"statId":40}})", "extension"},
+        {R"({"input":"$.counter","output":{"statId":40},"line\nbreak":null})", R"(line\u000abreak)"},
+        {R"({"input":"$.counter","output":{"statId":40},"nul\u0000key":null})", R"(nul\u0000key)"},
+        {R"({"input":"$.counter","output":{"statId":40,"quote\"\\name":null}})", R"(quote\"\\name)"},
+        {R"({"input":"$.counter","output":{"statId":40,"del\u007fkey":null}})", R"(del\u007fkey)"}
     };
     const auto package = NpTrophy2::ParseTrophyPackage(trophyPackage(), "en-US");
     const NpTrophy2::UnlockedQuery locked = [](std::int32_t) { return false; };
@@ -430,6 +434,8 @@ void testUnsupportedStatActions() {
         check(rules.skipped.size() == 1 && contains(rules.skipped[0], "statsExtractionRuleArray[0]") && contains(rules.skipped[0], "GUARDED") &&
                   contains(rules.skipped[0], member.c_str()),
               "an unsupported action member was not reported with its rule and event");
+        check(rules.skipped[0].find_first_of(std::string("\0\n\r", 3)) == std::string::npos,
+              "an unsupported member inserted a control character into its diagnostic");
         check(rules.events.size() == 1 && rules.events.at("GUARDED").size() == 1 && rules.events.at("GUARDED")[0].statId == 10,
               "an unsupported action was kept, or a supported action in the same package was dropped");
         const auto directory = "unsupported-action-" + std::to_string(index);
