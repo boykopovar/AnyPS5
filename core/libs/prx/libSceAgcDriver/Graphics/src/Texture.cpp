@@ -4577,7 +4577,10 @@ void waitForIdlePublish(const char* reason) {
 }
 
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited, VkDevice device) {
-    static_cast<void>(FlushDepthPlanes(address, bytes));
+    if (!FlushDepthPlanes(address, bytes).empty()) {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        waitForIdlePublish(reason);
+    }
     if (published != nullptr) *published = false;
     const auto nothingToStore = [&] {
         auto& pending = Pending();
@@ -4753,8 +4756,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     // import, so they are published under the same hold, after every store.
     if (scope != PublishScope::None) {
         const auto units = PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited);
-        if (units != 0) waitForIdlePublish(reason);
+        if (units != 0 || !flush.empty()) waitForIdlePublish(reason);
         if (published != nullptr) *published = units != 0;
+    } else if (!flush.empty()) {
+        waitForIdlePublish(reason);
     }
     return true;
 }
