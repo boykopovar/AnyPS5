@@ -170,6 +170,7 @@ public:
     }
 
     void Join() { Release(); if (worker.joinable()) worker.join(); }
+    void ExpectClientClose() { clientCloses = true; }
     const std::multimap<std::string, std::string>& Headers() const { return headers; }
     const std::string& Upload() const { return upload; }
     bool Negotiated() const { return negotiated; }
@@ -191,6 +192,7 @@ private:
     std::mutex mutex;
     std::condition_variable changed;
     bool released = false;
+    std::atomic<bool> clientCloses = false;
     int stage = 0;
     std::uint16_t port;
     bool negotiated = false;
@@ -390,6 +392,7 @@ private:
             for (std::size_t sent = 0; sent < bytes.size();) {
                 const auto* data = reinterpret_cast<const unsigned char*>(bytes.data() + sent);
                 const int count = ssl ? mbedtls_ssl_write(ssl, data, bytes.size() - sent) : mbedtls_net_send(&client, data, bytes.size() - sent);
+                if (count <= 0 && clientCloses) return;
                 Require(count > 0, "HTTP1 response write");
                 sent += static_cast<std::size_t>(count);
             }
@@ -654,6 +657,7 @@ void CookieBoxDelete(int ssl, Mode mode = Mode::CookieFlood) {
         Require(std::chrono::steady_clock::now() < deadline, "first response cookie stored");
         std::this_thread::yield();
     }
+    server.ExpectClientClose();
     auto deleting = std::async(std::launch::async, [&] { return sceHttp2DeleteRequest(client.request); });
     Require(deleting.wait_for(std::chrono::seconds(2)) == std::future_status::ready, "delete returns while the transport stores response cookies");
     Require(deleting.get() == 0, "delete a request whose transport stores response cookies");
