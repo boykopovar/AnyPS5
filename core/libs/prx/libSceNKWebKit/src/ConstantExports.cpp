@@ -402,7 +402,35 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient29hasFrameSpecificStorageAccess
     return 0;
 }
 
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidStartProvisionalLoadEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31prepareForDataSourceReplacementEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31transitionToCommittedForNewPageEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient32updateGlobalHistoryRedirectLinksEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient33dispatchDidReplaceStateWithinPageEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv() {
+    return 0;
+}
+
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient38dispatchDidLoadResourceFromMemoryCacheEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseEi() {
+    return 0;
+}
+
+int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient50dispatchDidReceiveServerRedirectForProvisionalLoadEv() {
     return 0;
 }
 

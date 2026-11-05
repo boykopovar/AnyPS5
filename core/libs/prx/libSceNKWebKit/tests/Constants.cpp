@@ -114,7 +114,14 @@ int main() {
     Require(_ZN7WebCore21PlatformKeyboardEvent20currentCapsLockStateEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient17objectContentTypeERKN3WTF3URLERKNS1_6StringE() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient29hasFrameSpecificStorageAccessEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidStartProvisionalLoadEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient31prepareForDataSourceReplacementEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient31transitionToCommittedForNewPageEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient32updateGlobalHistoryRedirectLinksEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient33dispatchDidReplaceStateWithinPageEv() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv() == 0);
     Require(_ZN7WebCore22EmptyFrameLoaderClient38dispatchDidLoadResourceFromMemoryCacheEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseEi() == 0);
+    Require(_ZN7WebCore22EmptyFrameLoaderClient50dispatchDidReceiveServerRedirectForProvisionalLoadEv() == 0);
     Require(_ZN7WebCore23ISOSchemeInformationBox11boxTypeNameEv() == static_cast<int>(0x73636869u));
     Require(_ZN7WebCore26ISOProtectionSchemeInfoBox11boxTypeNameEv() == static_cast<int>(0x73696e66u));
     Require(_ZN7WebCore27screenSupportsExtendedColorEPNS_6WidgetE() == 0);
