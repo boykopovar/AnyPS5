@@ -36,7 +36,6 @@ int APS5_VABI __std_max_d_nid_postfix();
 int APS5_VABI __std_max_element_f_nid_postfix();
 int APS5_VABI __std_minmax_4u_nid_postfix();
 int APS5_VABI sceLibcInternalPrimitiveMallocStats_nid_postfix();
-int APS5_VABI _ZNSt8__sce_v236_Mtx_init_with_default_name_overrideEPP13pthread_mutexiPKc_nid_postfix();
 int APS5_VABI __std_minmax_2u_nid_postfix();
 int APS5_VABI __std_minmax_2i_nid_postfix();
 int APS5_VABI __std_max_f_nid_postfix();
