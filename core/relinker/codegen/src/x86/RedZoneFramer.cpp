@@ -2,6 +2,9 @@
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <algorithm>
+#include <cstdio>
+#include <functional>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <limits>
@@ -241,6 +244,225 @@ struct ExitSite {
     std::size_t Operands = 0;
 };
 
+std::vector<std::uint8_t> leaWithDisplacement(const std::uint8_t destination, const std::uint8_t base, const std::int32_t disp) {
+    std::vector<std::uint8_t> bytes{static_cast<std::uint8_t>(0x48 | ((destination & 8) != 0 ? 4 : 0) | ((base & 8) != 0 ? 1 : 0)), 0x8d, static_cast<std::uint8_t>(0x80 | ((destination & 7) << 3) | (base & 7))};
+    if ((base & 7) == kRegRsp) bytes.push_back(0x24);
+    const auto value = static_cast<std::uint32_t>(disp);
+    for (std::size_t index = 0; index < 4; ++index) bytes.push_back(static_cast<std::uint8_t>(value >> (8 * index)));
+    return bytes;
+}
+
+struct RegisterMove {
+    std::uint8_t Destination;
+    std::uint8_t Source;
+};
+
+std::optional<RegisterMove> quadRegisterMove(const std::uint8_t* code, const Insn& insn) {
+    const auto& info = insn.Info;
+    if (info.IsTwoByteOpcode || !info.HasModRm || (info.RexPrefix & 8) == 0 || (info.ModRmByte >> 6) != 3) return std::nullopt;
+    if (info.Opcode != 0x89 && info.Opcode != 0x8b) return std::nullopt;
+    if (code[info.OpcodeOffset] != info.Opcode) return std::nullopt;
+    const auto reg = static_cast<std::uint8_t>(((info.ModRmByte >> 3) & 7) | ((info.RexPrefix & 4) != 0 ? 8 : 0));
+    const auto rm = static_cast<std::uint8_t>((info.ModRmByte & 7) | ((info.RexPrefix & 1) != 0 ? 8 : 0));
+    return info.Opcode == 0x89 ? RegisterMove{rm, reg} : RegisterMove{reg, rm};
+}
+
+std::optional<TrampolineSite> relocateLeaf(
+    const std::vector<std::uint8_t>& seg,
+    const Domain::ProgramHeader& ph,
+    const std::size_t start,
+    const std::vector<Insn>& body,
+    const std::set<std::size_t>& targets,
+    const std::function<bool(std::size_t, std::size_t)>& overlapsExisting,
+    const char*& refusal,
+    std::size_t& operands
+) {
+    refusal = nullptr;
+    operands = 0;
+    if (body.empty()) {
+        refusal = "empty body";
+        return std::nullopt;
+    }
+    const auto end = body.back().Offset + body.back().Length;
+    std::map<std::size_t, std::size_t> index;
+    for (std::size_t k = 0; k < body.size(); ++k) index.emplace(body[k].Offset, k);
+    std::set<std::size_t> internal;
+    for (const auto& insn : body) {
+        if (!insn.Info.HasBranchTarget || insn.Info.FlowKind == ControlFlowKind::Call || insn.Info.HasRipRelativeDisp) continue;
+        const auto target = static_cast<std::int64_t>(insn.Offset + insn.Length) + insn.Info.BranchDisp;
+        if (target < static_cast<std::int64_t>(start) || target >= static_cast<std::int64_t>(end)) continue;
+        if (!index.contains(static_cast<std::size_t>(target))) {
+            refusal = "branch into an instruction";
+            return std::nullopt;
+        }
+        internal.insert(static_cast<std::size_t>(target));
+    }
+    for (auto it = targets.upper_bound(start); it != targets.end() && *it < end; ++it) {
+        if (!internal.contains(*it)) {
+            refusal = "branch into the function from outside";
+            return std::nullopt;
+        }
+    }
+    if (overlapsExisting(start, end)) {
+        refusal = "overlaps another stub";
+        return std::nullopt;
+    }
+    std::size_t entryEnd = start;
+    for (const auto& insn : body) {
+        if (entryEnd - start >= kJumpBytes) break;
+        entryEnd = insn.Offset + insn.Length;
+    }
+    if (entryEnd - start < kJumpBytes) {
+        refusal = "function shorter than a jump";
+        return std::nullopt;
+    }
+
+    constexpr std::int64_t shift = kRedZoneBytes;
+    std::vector<std::uint8_t> out = lowerRsp(shift);
+    std::vector<StubRelocation> relocations;
+    struct Fixup {
+        std::size_t Field;
+        std::size_t End;
+        std::size_t Target;
+    };
+    std::vector<Fixup> fixups;
+    std::map<std::size_t, std::size_t> placed;
+    const auto raise = raiseRsp(shift);
+    const auto emitOutsideJump = [&](const std::int64_t target) {
+        out.insert(out.end(), raise.begin(), raise.end());
+        out.push_back(0xe9);
+        const auto field = out.size();
+        out.insert(out.end(), 4, 0);
+        relocations.push_back({field, out.size(), target - static_cast<std::int64_t>(start), false});
+    };
+    for (const auto& insn : body) {
+        placed.emplace(insn.Offset, out.size());
+        const auto* code = seg.data() + insn.Offset;
+        const auto& info = insn.Info;
+        const auto flow = info.FlowKind;
+        const auto lead = code[info.OpcodeOffset];
+        if (flow == ControlFlowKind::Call || flow == ControlFlowKind::IndirectCall) {
+            refusal = "call in a leaf";
+            return std::nullopt;
+        }
+        if (flow == ControlFlowKind::IndirectJump) {
+            refusal = "indirect jump";
+            return std::nullopt;
+        }
+        if (info.AddressSize32 && info.HasRipRelativeDisp) {
+            refusal = "eip-relative operand";
+            return std::nullopt;
+        }
+        if (!info.IsTwoByteOpcode && (info.Opcode == 0xc8 || (info.Opcode >= 0xe0 && info.Opcode <= 0xe3))) {
+            refusal = info.Opcode == 0xc8 ? "enter" : "loop or jrcxz";
+            return std::nullopt;
+        }
+        if (flow == ControlFlowKind::Return) {
+            out.insert(out.end(), raise.begin(), raise.end());
+            out.insert(out.end(), code, code + insn.Length);
+            continue;
+        }
+        if ((flow == ControlFlowKind::UnconditionalJump || flow == ControlFlowKind::ConditionalBranch) && info.HasBranchTarget) {
+            const auto target = static_cast<std::int64_t>(insn.Offset + insn.Length) + info.BranchDisp;
+            const bool inside = target >= static_cast<std::int64_t>(start) && target < static_cast<std::int64_t>(end);
+            if (flow == ControlFlowKind::UnconditionalJump) {
+                if (!inside) {
+                    emitOutsideJump(target);
+                    continue;
+                }
+                out.push_back(0xe9);
+            } else {
+                const auto condition = static_cast<std::uint8_t>(info.Opcode & 0x0f);
+                if (!inside) {
+                    out.push_back(static_cast<std::uint8_t>(0x70 | (condition ^ 1)));
+                    out.push_back(static_cast<std::uint8_t>(raise.size() + 5));
+                    emitOutsideJump(target);
+                    continue;
+                }
+                out.push_back(0x0f);
+                out.push_back(static_cast<std::uint8_t>(0x80 | condition));
+            }
+            const auto field = out.size();
+            out.insert(out.end(), 4, 0);
+            fixups.push_back({field, out.size(), static_cast<std::size_t>(target)});
+            continue;
+        }
+        if (!info.IsTwoByteOpcode && info.Opcode == 0xc9 && lead == 0xc9 && insn.Length == 1) {
+            const auto lea = leaWithDisplacement(kRegRsp, kRegRbp, static_cast<std::int32_t>(-shift));
+            out.insert(out.end(), lea.begin(), lea.end());
+            out.push_back(0x5d);
+            continue;
+        }
+        const auto use = memoryUse(code, insn);
+        if (use.RegisterRsp) {
+            if (const auto move = quadRegisterMove(code, insn)) {
+                if (move->Source == kRegRsp && move->Destination != kRegRsp) {
+                    const auto lea = leaWithDisplacement(move->Destination, kRegRsp, static_cast<std::int32_t>(shift));
+                    out.insert(out.end(), lea.begin(), lea.end());
+                    continue;
+                }
+                if (move->Destination == kRegRsp && move->Source != kRegRsp) {
+                    const auto lea = leaWithDisplacement(kRegRsp, move->Source, static_cast<std::int32_t>(-shift));
+                    out.insert(out.end(), lea.begin(), lea.end());
+                    continue;
+                }
+            }
+            const bool leaIntoRsp = !info.IsTwoByteOpcode && info.Opcode == 0x8d && use.RspBased && ((info.ModRmByte >> 3) & 7) == kRegRsp && (info.RexPrefix & 4) == 0;
+            if (!rspAdjustment(code, insn) && !leaIntoRsp && !(info.Opcode == 0x83 && !info.IsTwoByteOpcode && ((info.ModRmByte >> 3) & 7) == 4 && (info.ModRmByte >> 6) == 3)) {
+                refusal = "register use of rsp";
+                return std::nullopt;
+            }
+            out.insert(out.end(), code, code + insn.Length);
+            continue;
+        }
+        if (use.RspBased) {
+            if (lead == 0x62) {
+                refusal = "EVEX rsp operand";
+                return std::nullopt;
+            }
+            const auto bytes = withDisplacement(code, insn, use, use.RspDisp + shift);
+            if (!bytes) {
+                refusal = "rsp operand that cannot move";
+                return std::nullopt;
+            }
+            out.insert(out.end(), bytes->begin(), bytes->end());
+            ++operands;
+            continue;
+        }
+        if (info.HasRipRelativeDisp) {
+            if (info.RipRelativeDispOffset + 4 > insn.Length) {
+                refusal = "rip-relative operand outside its instruction";
+                return std::nullopt;
+            }
+            std::int32_t disp = 0;
+            std::memcpy(&disp, code + info.RipRelativeDispOffset, 4);
+            const auto field = out.size() + info.RipRelativeDispOffset;
+            out.insert(out.end(), code, code + insn.Length);
+            relocations.push_back({field, out.size(), static_cast<std::int64_t>(insn.Offset + insn.Length) + disp - static_cast<std::int64_t>(start), false});
+            continue;
+        }
+        out.insert(out.end(), code, code + insn.Length);
+    }
+    if (body.back().Info.FlowKind != ControlFlowKind::Return && body.back().Info.FlowKind != ControlFlowKind::UnconditionalJump) {
+        refusal = "falls off its end";
+        return std::nullopt;
+    }
+    for (const auto& fixup : fixups) {
+        const auto value = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int64_t>(placed.at(fixup.Target)) - static_cast<std::int64_t>(fixup.End)));
+        for (std::size_t byte = 0; byte < 4; ++byte) out[fixup.Field + byte] = static_cast<std::uint8_t>(value >> (8 * byte));
+    }
+    TrampolineSite site;
+    site.Offset = ph.Offset + start;
+    site.Address = ph.MappedAddress + start;
+    site.Length = entryEnd - start;
+    site.OriginalBytes.assign(seg.begin() + static_cast<std::ptrdiff_t>(start), seg.begin() + static_cast<std::ptrdiff_t>(entryEnd));
+    site.ReturnBranchOffset = out.size();
+    out.insert(out.end(), std::begin(kJumpBack), std::end(kJumpBack));
+    site.Body = std::move(out);
+    site.Relocations = std::move(relocations);
+    return site;
+}
+
 void frameSegment(
     const std::vector<std::uint8_t>& fileBytes,
     const Domain::ProgramHeader& ph,
@@ -248,7 +470,8 @@ void frameSegment(
     const std::vector<TrampolineSite>& existing,
     std::vector<TrampolineSite>& sites,
     std::vector<RedZoneDisplacement>& displacements,
-    RedZoneFrameReport& report
+    RedZoneFrameReport& report,
+    const bool relocateRefused
 ) {
     const auto segOffset = static_cast<std::size_t>(ph.Offset);
     const auto segSize = static_cast<std::size_t>(ph.FileSize);
@@ -319,6 +542,7 @@ void frameSegment(
         bool leaf = true;
         bool redZone = false;
         const char* reason = nullptr;
+        std::size_t reasonAt = body.size();
         std::vector<ExitSite> exits;
         std::map<std::size_t, std::pair<std::size_t, std::vector<std::uint8_t>>> moves;
         std::vector<std::size_t> stubbed;
@@ -347,9 +571,9 @@ void frameSegment(
             if (!rbpPrologue && pushed.empty() && allocation == 0 && pushesOrPops(code, insn)) { reason = "push or pop in a leaf without pushes"; continue; }
             if (!rbpPrologue && pushesOrPops(code, insn)) stackMoves.push_back(k);
             if (rbpPrologue) {
-                if (use.UsesRsp) { reason = "other use of rsp"; continue; }
+                if (use.UsesRsp) { reason = "other use of rsp"; reasonAt = k; continue; }
             } else {
-                if (use.RegisterRsp) { reason = "other use of rsp"; continue; }
+                if (use.RegisterRsp) { reason = "other use of rsp"; reasonAt = k; continue; }
                 if (use.RspBased) {
                     if (code[insn.Info.OpcodeOffset] == 0x62) { reason = "rsp operand that cannot move with rsp"; continue; }
                     if (overlapsExisting(insn.Offset, insn.Offset + insn.Length)) { reason = "overlaps another stub"; continue; }
@@ -458,7 +682,33 @@ void frameSegment(
             if (stub.End - stub.Begin < kJumpBytes || targetInside(stub.Begin, stub.End) || overlapsSite(stub.Begin, stub.End) || overlapsExisting(stub.Begin, stub.End)) reason = "rsp operand that cannot move and has no room for a stub";
             else stubs.push_back(std::move(stub));
         }
-        if (reason != nullptr) { skip(reason); continue; }
+        if (reason != nullptr) {
+            static const bool describe = std::getenv("APS5_RELINK_REDZONE_SKIPS") != nullptr;
+            if (describe) {
+                std::fprintf(stderr, "red-zone skip 0x%llx-0x%llx: %s", static_cast<unsigned long long>(ph.MappedAddress + start), static_cast<unsigned long long>(ph.MappedAddress + limit), reason);
+                if (reasonAt < body.size()) {
+                    std::fprintf(stderr, " at +0x%llx:", static_cast<unsigned long long>(body[reasonAt].Offset - start));
+                    for (std::size_t index = 0; index < body[reasonAt].Length; ++index) std::fprintf(stderr, " %02x", at(reasonAt)[index]);
+                }
+                std::fprintf(stderr, "\n");
+            }
+            const char* refusal = nullptr;
+            std::size_t operands = 0;
+            if (!relocateRefused) {
+                skip(reason);
+                continue;
+            }
+            if (auto site = relocateLeaf(seg, ph, start, body, targets, overlapsExisting, refusal, operands)) {
+                taken.emplace_back(start, site->Length + start);
+                sites.push_back(std::move(*site));
+                ++report.Relocated;
+                report.RelocatedOperands += operands;
+                continue;
+            }
+            ++report.NotRelocated[refusal];
+            skip(reason);
+            continue;
+        }
         for (const auto& stub : stubs)
             for (auto k = stub.First; k < stub.Last; ++k) moves.erase(k);
 
@@ -513,10 +763,11 @@ std::vector<TrampolineSite> FrameRedZoneFunctions(
     const std::vector<RedZoneFunction>& functions,
     const std::vector<TrampolineSite>& existing,
     RedZoneFrameReport& report,
-    std::vector<RedZoneDisplacement>& displacements
+    std::vector<RedZoneDisplacement>& displacements,
+    const bool relocateRefused
 ) {
     std::vector<TrampolineSite> sites;
-    for (const auto& ph : codeSegments) frameSegment(fileBytes, ph, functions, existing, sites, displacements, report);
+    for (const auto& ph : codeSegments) frameSegment(fileBytes, ph, functions, existing, sites, displacements, report, relocateRefused);
     return sites;
 }
 
