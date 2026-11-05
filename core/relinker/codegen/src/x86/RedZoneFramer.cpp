@@ -410,6 +410,13 @@ std::optional<TrampolineSite> relocateLeaf(
                 }
                 continue;
             }
+            if (flow == ControlFlowKind::IndirectJump) {
+                if (depth != 0) {
+                    refusal = "indirect jump at another stack depth";
+                    return std::nullopt;
+                }
+                continue;
+            }
             std::optional<std::int64_t> target;
             if ((flow == ControlFlowKind::UnconditionalJump || flow == ControlFlowKind::ConditionalBranch) && info.HasBranchTarget) {
                 const auto at = static_cast<std::int64_t>(insn.Offset + insn.Length) + info.BranchDisp;
@@ -479,8 +486,13 @@ std::optional<TrampolineSite> relocateLeaf(
             return std::nullopt;
         }
         if (flow == ControlFlowKind::IndirectJump) {
-            refusal = "indirect jump";
-            return std::nullopt;
+            if (info.HasRipRelativeDisp) {
+                refusal = "rip-relative indirect branch";
+                return std::nullopt;
+            }
+            out.insert(out.end(), raise.begin(), raise.end());
+            out.insert(out.end(), code, code + insn.Length);
+            continue;
         }
         if (info.AddressSize32 && info.HasRipRelativeDisp) {
             refusal = "eip-relative operand";
@@ -587,7 +599,7 @@ std::optional<TrampolineSite> relocateLeaf(
     }
     if (trace) traceStep(body.back());
     const bool endsInUd2 = body.back().Info.IsTwoByteOpcode && body.back().Info.Opcode == 0x0b;
-    if (body.back().Info.FlowKind != ControlFlowKind::Return && body.back().Info.FlowKind != ControlFlowKind::UnconditionalJump && !endsInUd2) {
+    if (body.back().Info.FlowKind != ControlFlowKind::Return && body.back().Info.FlowKind != ControlFlowKind::UnconditionalJump && body.back().Info.FlowKind != ControlFlowKind::IndirectJump && !endsInUd2) {
         refusal = "falls off its end";
         return std::nullopt;
     }

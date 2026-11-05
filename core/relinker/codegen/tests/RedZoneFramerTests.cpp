@@ -387,6 +387,32 @@ void relocatesLeavesEndingInTheSdkAssertTrap() {
     require(sites.size() == 1 && report.Relocated == 1, "a leaf whose failure path ends in int 0x41 and ud2 was not relocated");
 }
 
+void relocatesLeavesTailJumpingThroughARegister() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53, 0x5b});
+    append(body, LoadBelowRsp);
+    const std::vector<std::uint8_t> jumpThroughRdi{0xff, 0xe7};
+    const auto input = image({framelessLeaf({}, body, jumpThroughRdi)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.size() == 1 && report.Relocated == 1, "a leaf tail-jumping through rdi at depth 0 was not relocated");
+    const auto& stub = sites[0].Body;
+    const std::vector<std::uint8_t> raiseThenJump{0x48, 0x8d, 0xa4, 0x24, 0x90, 0x00, 0x00, 0x00, 0xff, 0xe7};
+    require(std::search(stub.begin(), stub.end(), raiseThenJump.begin(), raiseThenJump.end()) != stub.end(), "the relocated leaf does not raise rsp back before its indirect jump");
+}
+
+void refusesRelocatingIndirectJumpsAtADepth() {
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, {0x53});
+    append(body, LoadBelowRsp);
+    const auto input = image({framelessLeaf({}, body, {0xff, 0xe7})});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements, true);
+    require(sites.empty() && report.Relocated == 0, "a leaf jumping through rdi with a register still pushed was relocated");
+}
+
 void refusesRelocatingRipRelativeBranches() {
     std::vector<std::uint8_t> body = StoreBelowRsp;
     append(body, LoadBelowRsp);
@@ -955,6 +981,8 @@ int main() {
         refusesRelocatingSegmentOperands();
         refusesRelocatingRipRelativeBranches();
         relocatesLeavesEndingInTheSdkAssertTrap();
+        relocatesLeavesTailJumpingThroughARegister();
+        refusesRelocatingIndirectJumpsAtADepth();
         relocatesFrameLocalsBelowTheSavedRegisterWithADeeperShift();
         refusesRelocatingStackReadsOfAPushedRegister();
         skipsWideningOverBranchTargets();
