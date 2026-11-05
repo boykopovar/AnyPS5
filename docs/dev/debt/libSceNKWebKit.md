@@ -24,6 +24,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
 - [WebCore::ResourceResponseBase](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponse.cpp) (libSceNKWebKit) - the object layout in [ResourceResponseAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponseAbi.hpp) comes from [ResourceResponseBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceResponseBase.h) and is not checked against the PS5 module: `URL` at 0, four `AtomString` and the 64-bit expected length up to offset 80, then a 32-byte `HTTPHeaderMap` (two vectors of inline capacity 0 as in [HTTPHeaderMap.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPHeaderMap.h)). Only these fields are modelled because `std::optional<CertificateInfo>` follows the `Box<NetworkLoadMetrics>` and the size of the PS5 `CertificateInfo` is unknown, so the offsets of `m_httpStatusCode`, `m_isNull`, `m_initLevel`, `m_type`, `m_source` and the flags are not established. The getters (`url`, `mimeType`, `expectedContentLength`, `textEncodingName`, `httpStatusText`, `httpVersion`, `httpHeaderFields`, `isInHTTPFamily`) skip `lazyInit` because the curl [ResourceResponse.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/curl/ResourceResponse.h) has no `platformLazyInit`; the PS5 `ResourceResponse` is not known to match. `isInHTTPFamily` reads the valid bit of `URL::bits` and the scheme text, not the cached `m_protocolIsInHTTPFamily` bit, whose position is unknown. The 30 other exports (`ResourceResponseBase` constructors, `setURL`, `setType`, `setExpectedContentLength`, `setHTTPStatusCode`, `httpStatusCode`, `source`, `isSuccessful`, `isRedirection`, `isHTTP09`, `isAttachment*`, `suggestedFilename`, `sanitize*`, `syntheticRedirectResponse`, `cacheControlContains*`, `hasCacheValidatorFields`, `lazyInit`, `httpHeaderField*`, `addHTTPHeaderField*`, `setHTTPHeaderField*`) still throw `NotImplemented_nid_no_patch`: they write `m_isNull`, read fields after `CertificateInfo`, or need `HTTPHeaderMap`, `CertificateInfo`, `Vector` or `ResourceResponse` layouts.
 
+- [WTF parking and locks](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `ParkingLot::forEachImpl` still throws because the guest `Thread` layout is not modelled. Parking queues share one host mutex; FIFO wakeups, callback ordering and the one-byte `Lock` protocol follow [ParkingLot.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/ParkingLot.cpp) and `LockAlgorithmInlines.h` in that source. Fairness intervals and deadlines use host clocks; scheduling and contention costs are not console-measured. The callback and result layouts are source-derived, not verified against console binaries.
+
 ### Known export names; ABI prototypes unverified
 
 - The 127 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
@@ -1498,11 +1500,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF10AtomString6numberEm` | `58J79QECdTA` |
 | `_ZN3WTF10AtomString6numberEy` | `YWAonY+kUEQ` |
 | `_ZN3WTF10ParkingLot11forEachImplERKNS_12ScopedLambdaIFvRNS_6ThreadEPKvEEE` | `5yXyWGB2WNE` |
-| `_ZN3WTF10ParkingLot11unparkCountEPKvj` | `o1Tw6r1096E` |
-| `_ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12UnparkResultEEEE` | `spOa93PWZk8` |
-| `_ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE` | `NRUy9MCPBJI` |
-| `_ZN3WTF10ParkingLot9unparkAllEPKv` | `ocD3Wh0yT1E` |
-| `_ZN3WTF10ParkingLot9unparkOneEPKv` | `56Wsrmx3txk` |
 | `_ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE` | `NvD7vqlu22E` |
 | `_ZN3WTF10StringImpl17utf8ForCharactersEPKhj` | `o5VwYgTgLtU` |
 | `_ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE` | `5SrekqH5TJQ` |
@@ -1844,9 +1841,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF3absERKNS_9MediaTimeE` | `qcwPekjtvyE` |
 | `_ZN3WTF40clearDefaultPortForProtocolMapForTestingEv` | `AuhjTeWbn5Y` |
 | `_ZN3WTF40registerDefaultPortForProtocolForTestingEtRKNS_6StringE` | `Sn3WBciBmSE` |
-| `_ZN3WTF4Lock10unlockSlowEv` | `e4I+fGvwugs` |
-| `_ZN3WTF4Lock13safepointSlowEv` | `UX5VJ-OZdTg` |
-| `_ZN3WTF4Lock8lockSlowEv` | `GciZ5UdsizU` |
 | `_ZN3WTF4SHA116computeHexDigestEv` | `Ow27qMGiCBU` |
 | `_ZN3WTF4SHA1C1Ev` | `f4Y+BVScAcc` |
 | `_ZN3WTF4SHA1C2Ev` | `Dq5bk2mU2xw` |
