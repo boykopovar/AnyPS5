@@ -12,7 +12,7 @@
 
 Включает [relinker](../../core/relinker), который преобразует исполняемый файл в нативный формат целевой системы, и реализации [системных prx-библиотек](../../core/libs/prx), подходящие для динамической линковки. Без эмуляции и отдельного процесса среды выполнения.
 
-[**Discord**](https://discord.gg/BHFztBPUe), [Использование](USAGE.md), [Инструкции по сборке](../dev/BUILD.md), [Архитектура](../dev/ARCHITECTURE.md), [Технический долг проекта](../dev/TechnicalDebt.md), [соглашения о стиле кода](../dev/CONVENTIONS.md), [участие в разработке](../../CONTRIBUTING.md)
+[**Discord**](https://discord.gg/x9naWVzC6A), [Использование](USAGE.md), [Инструкции по сборке](../dev/BUILD.md), [Архитектура](../dev/ARCHITECTURE.md), [Технический долг проекта](../dev/TechnicalDebt.md), [соглашения о стиле кода](../dev/CONVENTIONS.md), [участие в разработке](../../CONTRIBUTING.md)
 
 ## Статус
 

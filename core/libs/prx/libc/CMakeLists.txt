@@ -104,6 +104,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FailureReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LogFilePlatform.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LogFile.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/RunReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/GuestGs.cpp
@@ -177,6 +178,26 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
 )
 
+find_package(Git QUIET)
+set(runReportRevisionRoot ${CMAKE_CURRENT_BINARY_DIR}/run_report_generated)
+add_custom_target(run_report_revision
+        COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${runReportRevisionRoot}/RunReportRevision.hpp -P ${CMAKE_CURRENT_SOURCE_DIR}/run_report_revision.cmake
+        BYPRODUCTS ${runReportRevisionRoot}/RunReportRevision.hpp
+        VERBATIM
+)
+add_dependencies(libc run_report_revision)
+target_include_directories(libc PRIVATE ${runReportRevisionRoot})
+
+function(run_report_stamp_components root)
+    foreach(component libkernel libSceVideoOut libSceAgcDriver)
+        if(TARGET ${component})
+            target_include_directories(${component} PRIVATE ${root})
+            add_dependencies(${component} run_report_revision)
+        endif()
+    endforeach()
+endfunction()
+cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL run_report_stamp_components [[${runReportRevisionRoot}]])")
+
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 
@@ -214,7 +235,44 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
+if(WIN32)
+    target_link_libraries(libc PRIVATE shell32)
+endif()
+
 if(BUILD_TESTING)
+    add_test_executable(run_report_tests ${LIBS_INCLUDE_DIR}/tests/RunReport.cpp)
+    target_include_directories(run_report_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(run_report_tests PRIVATE libc)
+    if(WIN32)
+        target_link_libraries(run_report_tests PRIVATE shell32)
+    endif()
+    configure_windows_unwind(run_report_tests)
+    add_test(NAME run_report COMMAND run_report_tests)
+    set_tests_properties(run_report PROPERTIES TIMEOUT 60)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        execute_process(COMMAND ${Python3_EXECUTABLE} -c "import jsonschema" RESULT_VARIABLE runReportHasJsonschema OUTPUT_QUIET ERROR_QUIET)
+        if(runReportHasJsonschema EQUAL 0)
+            add_test(NAME run_report_schema COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/validate_run_report_dump.py $<TARGET_FILE:run_report_tests>)
+            set_tests_properties(run_report_schema PROPERTIES TIMEOUT 60)
+            if(WIN32)
+                set_tests_properties(run_report_schema PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            endif()
+        endif()
+    endif()
+    if(GIT_FOUND)
+        add_test(NAME run_report_revision COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE}
+                -DSCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/run_report_revision.cmake
+                -DWORK=${CMAKE_CURRENT_BINARY_DIR}/run_report_revision_test
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests_run_report_revision.cmake)
+        set_tests_properties(run_report_revision PROPERTIES TIMEOUT 120)
+    endif()
+    if(WIN32)
+        set_tests_properties(run_report PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_memcmp_protected_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemcmpProtected.cpp)
     target_include_directories(guest_memcmp_protected_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_memcmp_protected_tests PRIVATE libc)
@@ -1266,6 +1324,19 @@ if(BUILD_TESTING)
         set_tests_properties(guest_cxa_guard PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_timespec_getres_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimespecGetres.cpp)
+    target_include_directories(guest_timespec_getres_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_timespec_getres_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_timespec_getres_tests)
+    foreach(mode unsupported forwarding errors integration)
+        add_test(NAME guest_timespec_getres_${mode} COMMAND guest_timespec_getres_tests ${mode})
+        set_tests_properties(guest_timespec_getres_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_timespec_getres_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
     add_test_executable(guest_strftime_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrftime.cpp)
     target_include_directories(guest_strftime_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_strftime_tests PRIVATE libc)

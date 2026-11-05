@@ -705,17 +705,26 @@ static void CheckTriggerEffect(int user, int handle) {
     for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetTriggerEffect(other, nullptr) == PAD_ERROR_INVALID_HANDLE);
     param[0] = 0x4;
     Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
-    param[0] = 0;
+    param[0] = 0x1;
     command(0, 7, {0, 0, 0});
     Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
     command(0, 0, {0, 0, 0});
+    param[0] = 0x2;
     command(1, 7, {0, 0, 0});
     Require(scePadSetTriggerEffect(handle, param.data()) == PAD_ERROR_INVALID_ARG);
     command(1, 0, {0, 0, 0});
+    param[0] = 0;
+    command(0, 0xb65951b8u, {0, 0, 0});
+    command(1, 0xffffffffu, {0, 0, 0});
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 0, {}, 0) && TriggerIs(1, false, 0, {}, 0));
+    command(1, 0, {0, 0, 0});
+    param[0] = 0x2;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 0, {}, 0) && TriggerIs(1, false, 0, off, 0));
+    command(0, 0, {0, 0, 0});
     command(0, 2, {2, 5, 8});
     command(1, 1, {7, 3, 0});
     param[0] = 0x1;
-    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 2, weapon, 255) && TriggerIs(1, false, 0, {}, 0));
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 2, weapon, 255) && TriggerIs(1, false, 0, off, 0));
     command(0, 0, {0, 0, 0});
     param[0] = 0x2;
     Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 2, weapon, 255) && TriggerIs(1, true, 1, feedback, 96));
@@ -962,6 +971,7 @@ int main() {
     Require(scePadGetBluetoothAddress(PAD_HANDLE, &earlyAddress) == PAD_ERROR_NOT_INITIALIZED && earlyAddress == 7);
     Require(scePadParseUniqueDataLeonardo(PAD_HANDLE, reinterpret_cast<const PadLeonardoData*>(earlyLeonardo.data()), reinterpret_cast<PadLeonardoUniqueData*>(earlyUnique.data())) == PAD_ERROR_NOT_INITIALIZED && earlyUnique[0] == 0xaa);
     Require(scePadUnknown_n3kSX62fgNo() == static_cast<int>(0x80920005));
+    Require(scePadSetConnection(PAD_HANDLE, false) == PAD_ERROR_NOT_INITIALIZED);
     Require(!scePadIsValidHandle(PAD_HANDLE, PAD_PORT_TYPE_STANDARD));
     const PadVibrationParam earlyVibration{1, 2};
     for (const PadVibrationParam* param : {static_cast<const PadVibrationParam*>(nullptr), &earlyVibration}) Require(scePadSetVibrationForce(PAD_HANDLE, param) == PAD_ERROR_NOT_INITIALIZED);
@@ -1165,6 +1175,10 @@ int main() {
     Require(scePadSetVibration(handle2 + 99, nullptr) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
 
+    const PadLightBarBlinkingParameter blinkParam{};
+    Require(scePadSetLightBarBlinking(handle2 + 99, &blinkParam) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBlinking(-1, &blinkParam) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBlinking(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
     const PadLightBarParam lightOff{0, 0, 0};
     const PadLightBarParam lightFull{255, 255, 255};
     const PadLightBarParam lightColor{100, 150, 200};
