@@ -101,26 +101,17 @@ public:
     bool valid = false;
 };
 
-class BackForwardListItem final : public ObjectOf<ObjectType::BackForwardListItem> {
+class HitTestResult final : public ObjectOf<ObjectType::HitTestResult> {
 public:
-    BackForwardListItem() = default;
-    BackForwardListItem(std::optional<std::string> url, Retained<String> title, std::optional<std::string> originalURL)
-        : title(std::move(title)), url(std::move(url)), originalURL(std::move(originalURL)) {}
-
-    Retained<String> title;
-    std::optional<std::string> url;
-    std::optional<std::string> originalURL;
-};
-
-class BackForwardList final : public ObjectOf<ObjectType::BackForwardList> {
-public:
-    BackForwardList() = default;
-    BackForwardList(std::vector<Retained<BackForwardListItem>> entries, std::optional<std::size_t> currentIndex)
-        : entries(std::move(entries)), currentIndex(currentIndex) {}
-
-    std::vector<Retained<BackForwardListItem>> entries;
-    std::optional<std::size_t> currentIndex;
-    bool attached = true;
+    std::string absoluteImageURL;
+    std::string absoluteLinkURL;
+    std::string absoluteMediaURL;
+    std::string absolutePDFURL;
+    std::u16string linkLabel;
+    std::u16string linkTitle;
+    std::u16string lookupText;
+    RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
+    bool isContentEditable = false;
 };
 
 }  // namespace NKWebKit

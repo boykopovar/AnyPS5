@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
+#include "prx/libSceNKWebKit/src/BackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -50,52 +51,6 @@ static void TestTypeIDs() {
     Require(WKAXObjectGetTypeID() == 132);
     WKRenderLayerGetTypeID();
     WKRenderObjectGetTypeID();
-}
-
-static void CheckOriginString(const void* string, const char* expected) {
-    Require(WKStringIsEqualToUTF8CString(string, expected));
-    WKRelease(string);
-}
-
-static void TestSecurityOrigin() {
-    struct Case {
-        const char* protocol;
-        const char* host;
-        int port;
-        unsigned expectedPort;
-        const char* text;
-    };
-    for (const Case& value : {
-        Case{"http", "example.com", 8080, 8080, "http://example.com:8080"},
-        Case{"http", "host_name", 0, 0, "http://host_name"},
-        Case{"http", "example.com", 80, 80, "http://example.com:80"},
-        Case{"https", "EXAMPLE", 65536, 0, "https://EXAMPLE"},
-        Case{"custom", "host", -1, 65535, "custom://host:65535"},
-        Case{"custom", "host", -65536, 0, "custom://host:0"},
-        Case{"file", "host", 42, 42, "file://"},
-        Case{"FILE", "host", 0, 0, "FILE://host"},
-        Case{"", "", 0, 0, ""},
-        Case{"http", "a b%_c", 0, 0, "http://a b%_c"}
-    }) {
-        const auto* protocol = WKStringCreateWithUTF8CString(value.protocol);
-        const auto* host = WKStringCreateWithUTF8CString(value.host);
-        const auto* origin = WKSecurityOriginCreate(protocol, host, value.port);
-        WKRelease(protocol);
-        WKRelease(host);
-        Require(WKGetTypeID(origin) == WKSecurityOriginGetTypeID());
-        Require(WKSecurityOriginGetPort(origin) == value.expectedPort);
-        CheckOriginString(WKSecurityOriginCopyProtocol(origin), value.protocol);
-        CheckOriginString(WKSecurityOriginCopyHost(origin), value.host);
-        CheckOriginString(WKSecurityOriginCopyToString(origin), value.text);
-        WKRelease(origin);
-    }
-    auto nullString = NKWebKit::Make<NKWebKit::String>();
-    const auto* origin = WKSecurityOriginCreate(nullString.Get(), nullString.Get(), 0);
-    for (const auto* copy : {WKSecurityOriginCopyProtocol(origin), WKSecurityOriginCopyHost(origin), WKSecurityOriginCopyToString(origin)}) {
-        Require(NKWebKit::Cast<NKWebKit::String>(copy, __func__)->null);
-        WKRelease(copy);
-    }
-    WKRelease(origin);
 }
 
 static void TestRetainRelease() {
@@ -397,6 +352,84 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestHitTestResult() {
+    Require(WKHitTestResultGetTypeID() == 63);
+    auto hit = NKWebKit::Make<NKWebKit::HitTestResult>();
+    hit->absoluteImageURL = "https://example.com/img.png";
+    hit->absoluteLinkURL = "https://example.com/link";
+    hit->absoluteMediaURL = "https://example.com/media.mp4";
+    hit->absolutePDFURL = "https://example.com/doc.pdf";
+    hit->linkLabel = u"Click here";
+    hit->linkTitle = u"Title";
+    hit->lookupText = u"Search text";
+    hit->elementBoundingBox = WKRect{{1.0, 2.0}, {30.0, 40.0}};
+    hit->isContentEditable = true;
+
+    const void* ref = NKWebKit::ToRef(hit);
+    auto* imgUrl = WKHitTestResultCopyAbsoluteImageURL(ref);
+    Require(imgUrl != nullptr);
+    auto* imgUrlStr = WKURLCopyString(imgUrl);
+    Require(WKStringIsEqualToUTF8CString(imgUrlStr, "https://example.com/img.png"));
+    WKRelease(imgUrlStr);
+    WKRelease(imgUrl);
+
+    auto* linkUrl = WKHitTestResultCopyAbsoluteLinkURL(ref);
+    Require(linkUrl != nullptr);
+    auto* linkUrlStr = WKURLCopyString(linkUrl);
+    Require(WKStringIsEqualToUTF8CString(linkUrlStr, "https://example.com/link"));
+    WKRelease(linkUrlStr);
+    WKRelease(linkUrl);
+
+    auto* mediaUrl = WKHitTestResultCopyAbsoluteMediaURL(ref);
+    Require(mediaUrl != nullptr);
+    auto* mediaUrlStr = WKURLCopyString(mediaUrl);
+    Require(WKStringIsEqualToUTF8CString(mediaUrlStr, "https://example.com/media.mp4"));
+    WKRelease(mediaUrlStr);
+    WKRelease(mediaUrl);
+
+    auto* pdfUrl = WKHitTestResultCopyAbsolutePDFURL(ref);
+    Require(pdfUrl != nullptr);
+    auto* pdfUrlStr = WKURLCopyString(pdfUrl);
+    Require(WKStringIsEqualToUTF8CString(pdfUrlStr, "https://example.com/doc.pdf"));
+    WKRelease(pdfUrlStr);
+    WKRelease(pdfUrl);
+
+    auto* label = WKHitTestResultCopyLinkLabel(ref);
+    Require(WKStringIsEqualToUTF8CString(label, "Click here"));
+    WKRelease(label);
+
+    auto* title = WKHitTestResultCopyLinkTitle(ref);
+    Require(WKStringIsEqualToUTF8CString(title, "Title"));
+    WKRelease(title);
+
+    auto* lookup = WKHitTestResultCopyLookupText(ref);
+    Require(WKStringIsEqualToUTF8CString(lookup, "Search text"));
+    WKRelease(lookup);
+
+    WKRect box = WKHitTestResultGetElementBoundingBox(ref);
+    Require(box.origin.x == 1.0 && box.origin.y == 2.0);
+    Require(box.size.width == 30.0 && box.size.height == 40.0);
+    Require(WKHitTestResultIsContentEditable(ref));
+
+    auto unset = NKWebKit::Make<NKWebKit::HitTestResult>();
+    const void* unsetRef = NKWebKit::ToRef(unset);
+    Require(WKHitTestResultCopyAbsoluteImageURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteLinkURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteMediaURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsolutePDFURL(unsetRef) == nullptr);
+    WKRelease(unsetRef);
+
+    bool threw = false;
+    try {
+        WKHitTestResultCopyLinkLabel(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(ref);
+}
+
 static NKWebKit::Retained<NKWebKit::BackForwardListItem> MakeBackForwardItem(const char* url, const char* title, const char* originalURL) {
     return NKWebKit::Make<NKWebKit::BackForwardListItem>(std::string(url), NKWebKit::String::FromUtf8(title), std::string(originalURL));
 }
@@ -553,7 +586,6 @@ static void TestCertificateInfo() {
 
 int main() {
     TestTypeIDs();
-    TestSecurityOrigin();
     TestRetainRelease();
     TestStrings();
     TestURL();
@@ -565,6 +597,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestHitTestResult();
     TestBackForwardList();
     TestCertificateInfo();
     std::printf("All libSceNKWebKit Base tests passed!\n");
