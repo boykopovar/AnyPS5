@@ -170,6 +170,9 @@ int NativeSignal(int guest) {
         case 6: return SIGABRT;
         case 8: return SIGFPE;
         case 11: return SIGSEGV;
+#ifndef _WIN32
+        case 13: return SIGPIPE;
+#endif
         case 15: return SIGTERM;
         default: return 0;
     }
@@ -211,7 +214,7 @@ void RunHandler(int guest, GuestHandler handler) {
 }
 void Dispatch(int native, bool asynchronous) {
     int guest = 0;
-    for (int candidate : {2, 4, 6, 8, 11, 15})
+    for (int candidate : {2, 4, 6, 8, 11, 13, 15})
         if (NativeSignal(candidate) == native) { guest = candidate; break; }
     if (!guest) return;
     if (SignalBlocked(guest)) {
@@ -874,11 +877,4 @@ namespace {
     JumpBuffer::GuestSigprocmaskRegister_nid_no_patch(sigprocmask_nid_postfix);
     return true;
 }();
-
-struct RegisterSignalsOnLoad {
-    RegisterSignalsOnLoad() {
-        RegisterSigaction_nid_no_patch(reinterpret_cast<SigactionFn_nid_no_patch>(sigaction_nid_postfix), _sigintr_nid_postfix.bits);
-    }
-};
-const RegisterSignalsOnLoad gRegisterSignals;
 }
