@@ -63,6 +63,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/RunReport.hpp"
+#include "prx/libc/include/RunReportComponent.hpp"
+#include "RdnaDecoder/DiagnosticSink.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -142,6 +145,8 @@ DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> famili
     return plan;
 }
 
+APS5_RUN_REPORT_COMPONENT("libSceAgcDriver")
+
 namespace {
 
 std::optional<std::uint32_t> ActiveValidationLayerVersion(PFN_vkGetInstanceProcAddr instanceProc) {
@@ -182,6 +187,22 @@ bool DescriptorHeapAvailable(const std::vector<VkExtensionProperties>& available
     }
     return true;
 }
+
+std::atomic<unsigned long long> descriptorUse[7 * 4];
+
+void CountDescriptor(int type, int, int usage) {
+    if (!LibcRunReportEnabled_nid_no_patch()) return;
+    if (type >= 0 && type < 7 && usage >= 0 && usage < 4) descriptorUse[type * 4 + usage].fetch_add(1, std::memory_order_relaxed);
+}
+
+const ShaderRecompiler::DiagnosticSink runReportSink{
+    .enabled = LibcRunReportEnabled_nid_no_patch,
+    .shader = LibcRunReportShader_nid_no_patch,
+    .unsupportedInstruction = LibcRunReportUnsupportedInstruction_nid_no_patch,
+    .imageFormat = LibcRunReportImageFormat_nid_no_patch,
+    .descriptor = CountDescriptor,
+};
+[[maybe_unused]] const bool runReportSinkInstalled = (LibcRunReportSetDescriptorCounters_nid_no_patch(descriptorUse), ShaderRecompiler::SetDiagnosticSink(&runReportSink), true);
 
 std::uint64_t fillCompletionSyncs = 0;
 
@@ -622,6 +643,7 @@ struct VulkanDevice::State {
     bool samplerAnisotropy = false;
     bool textureCompressionBC = false;
     bool samplerFilterMinmax = false;
+    bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
@@ -765,6 +787,8 @@ struct VulkanDevice::State {
     AgcDriver::Mutex presentMutex;
     // The presentation present() submitted and QueuePresent has not handed to the swapchain.
     bool queuePending = false;
+    bool queueGuestFrame = false;
+    bool presentingGuestFrame = false;
     std::uint32_t queueIndex = 0;
     int nextDumpIndex = 0;
     bool nextDumpScreenshot = false;
@@ -1576,6 +1600,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->ldsLockFences = LdsLockFencesRequired(driver.driverID);
     }
     {
+        const auto driverText = state->driverInfo.empty() ? std::to_string(state->properties.driverVersion) : state->driverInfo;
+        LibcRunReportSetGpu_nid_no_patch(state->properties.vendorID, state->properties.deviceName, driverText.c_str(), state->properties.apiVersion);
         HostGpuQuery hostQuery;
         hostQuery.instanceProc = state->instanceProc;
         hostQuery.instance = state->instance;
@@ -1827,6 +1853,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->samplerFilterMinmax = minmaxProperties.filterMinmaxSingleComponentFormats == VK_TRUE && minmaxProperties.filterMinmaxImageComponentMapping == VK_TRUE;
         if (state->samplerFilterMinmax) deviceExtensions.push_back(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME);
     }
+    state->samplerMirrorClampToEdge = hasExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
+    if (state->samplerMirrorClampToEdge) deviceExtensions.push_back(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
     if (hasExtension(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME)) {
         VkPhysicalDeviceConservativeRasterizationPropertiesEXT conservativeProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT};
         VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &conservativeProperties};
@@ -3634,6 +3662,7 @@ bool VulkanDevice::Presentable() const {
 }
 
 bool VulkanDevice::PresentClear(std::uint32_t width, std::uint32_t height, bool opaque, const DisplayBuffer* plane) {
+    state->presentingGuestFrame = false;
     APS5_LOG_OUT_DEBUG("PresentClear width=%u height=%u opaque=%u", width, height, static_cast<unsigned>(opaque));
     return present(width, height, opaque, {}, nullptr, nullptr, VK_FILTER_LINEAR, false, false, nullptr, 0, false, plane);
 }
@@ -3654,6 +3683,7 @@ void VulkanDevice::PresentPixels(std::uint32_t width, std::uint32_t height, std:
         frameDumpOutput.Write_nid_no_patch(name, width, height, pixels);
     }
     // Tests and tools present pixels synchronously; the game path splits the steps (see Driver::Present).
+    state->presentingGuestFrame = false;
     if (!present(width, height, true, pixels)) return;
     FinishPresent();
     QueuePresent();
@@ -3847,6 +3877,11 @@ FrameDumps& Dumps() {
 }
 
 bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const DisplayBuffer* plane) {
+    state->presentingGuestFrame = true;
+    struct ClearGuestFrame {
+        bool& flag;
+        ~ClearGuestFrame() { flag = false; }
+    } clearGuestFrame{state->presentingGuestFrame};
     state->presentedAddress = buffer.address;
     if (buffer.dccAddress != 0 && buffer.tilingMode == 0) {
         static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -4273,6 +4308,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         state->lastPresentSerial = batchesAtBlit;
         state->presentCursor = (state->presentCursor + 1) % state->presentSlots.size();
         state->queuePending = true;
+        state->queueGuestFrame = state->presentingGuestFrame;
         state->queueIndex = index;
         ++presentCounters.presents;
         if (plane != nullptr) ++presentCounters.planes;
@@ -4384,6 +4420,8 @@ void VulkanDevice::QueuePresent() {
     const auto presented = state->DeviceFunction<PFN_vkQueuePresentKHR>("vkQueuePresentKHR")(state->presentQueue != VK_NULL_HANDLE ? state->presentQueue : state->queue, &present);
     if (presented == VK_ERROR_OUT_OF_DATE_KHR) state->extent = {0, 0};
     else if (presented != VK_SUBOPTIMAL_KHR) check(presented, "vkQueuePresentKHR");
+    if (state->queueGuestFrame && (presented == VK_SUCCESS || presented == VK_SUBOPTIMAL_KHR)) LibcRunReportFramePresented_nid_no_patch();
+    state->queueGuestFrame = false;
     timing.Mark("queue_present");
     APS5_LOG_OUT_DEBUG("vkQueuePresentKHR queued imageIndex=%u", index);
 }
@@ -4527,6 +4565,10 @@ bool VulkanDevice::SamplerFilterMinmax() const {
     return state->samplerFilterMinmax;
 }
 
+bool VulkanDevice::SamplerMirrorClampToEdge() const {
+    return state->samplerMirrorClampToEdge;
+}
+
 bool VulkanDevice::ConservativeRasterization() const {
     return state->conservativeRasterization;
 }
@@ -4620,6 +4662,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.depthBounds = state->depthBounds;
     context.depthBiasClamp = state->depthBiasClamp;
     context.samplerFilterMinmax = state->samplerFilterMinmax;
+    context.samplerMirrorClampToEdge = state->samplerMirrorClampToEdge;
     context.nonSeamlessCubeMap = state->nonSeamlessCubeMap;
     context.mergedCoverageSampleCounts = state->mergedCoverageSampleCounts;
     context.truncatedCoverageSampleCounts = state->truncatedCoverageSampleCounts;
@@ -5801,6 +5844,8 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             Graphics::CmdPushConstants(context, commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, pushed);
         }
     }
+    static const bool reportingDispatch = LibcRunReportEnabled_nid_no_patch();
+    if (reportingDispatch) recorder.NoteGuestWork(commands);
     const auto gpuTiming = recorder.BeginGpuTiming(record.programAddress != 0 ? record.programAddress : record.shader->program->variantId);
     if (state->checkpointMarker != nullptr) state->checkpointMarker(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(record.programAddress)));
     const auto marker = state->bufferMarker != nullptr ? state->markerLog.Next(record.programAddress) : 0u;
