@@ -34,6 +34,7 @@ extern std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14];
 extern std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18];
 extern std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[13];
 extern std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11];
+extern std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9];
 
 }
 
@@ -106,6 +107,15 @@ static void CheckCollateVtableObject() {
 
 static void CheckNumpunctVtableObject() {
     for (std::uintptr_t& slot : _ZTVSt8numpunctIcE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
+static void CheckMessagesVtableObject() {
+    for (std::uintptr_t& slot : _ZTVSt8messagesIcE_nid_postfix) {
         Require(slot == 0);
         slot = 0x1111;
         Require(slot == 0x1111);
@@ -632,6 +642,7 @@ int main() {
     CheckWideCtypeVtableObject();
     CheckCodecvtVtableObject();
     CheckNumpunctVtableObject();
+    CheckMessagesVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
