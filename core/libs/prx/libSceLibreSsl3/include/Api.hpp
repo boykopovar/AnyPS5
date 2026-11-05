@@ -67,9 +67,9 @@ static_assert(offsetof(Asn1Object_nid_no_patch, flags) == 32);
 
 extern "C" {
 
-int APS5_VABI ASN1_INTEGER_free_nid_postfix(void);
+void APS5_VABI ASN1_INTEGER_free_nid_postfix(Asn1String* integer);
 void APS5_VABI ASN1_OBJECT_free_nid_postfix(Asn1Object_nid_no_patch* object);
-int APS5_VABI ASN1_STRING_get0_data_nid_postfix(void);
+const unsigned char* APS5_VABI ASN1_STRING_get0_data_nid_postfix(const Asn1String* string);
 int APS5_VABI BIO_up_ref_nid_postfix(void);
 int APS5_VABI BIO_vfree_nid_postfix(void);
 int APS5_VABI CRYPTO_memcmp_nid_postfix(const void* first, const void* second, std::size_t length);
