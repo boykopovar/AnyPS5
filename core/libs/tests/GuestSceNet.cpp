@@ -23,6 +23,7 @@
 #include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -331,9 +332,14 @@ static void CheckPoolErrors() {
 
 static void CheckStatisticsInfo() {
     Require(Failed(sceNetGetStatisticsInfo(nullptr, 0), 14));
+    Require(errno == 14);
+    Require(Failed(sceNetGetStatisticsInfo(reinterpret_cast<NetStatisticsInfo*>(std::uintptr_t{0x10}), 0), 14));
+    Require(errno == 14);
     NetStatisticsInfo info;
     std::memset(&info, 0xaa, sizeof(info));
+    errno = 71;
     Require(sceNetGetStatisticsInfo(&info, 0) == 0);
+    Require(errno == 71);
     Require(sizeof(info) == 24);
     Require(info.kernel_mem_free_size > 0 && info.kernel_mem_free_min > 0);
     Require(info.libnet_mem_free_size > 0 && info.libnet_mem_free_min > 0);
@@ -342,6 +348,7 @@ static void CheckStatisticsInfo() {
     Require(info.packet_count == 0 && info.packet_qos_count == 0);
     NetStatisticsInfo again;
     Require(sceNetGetStatisticsInfo(&again, 0x1234) == 0);
+    Require(errno == 71);
     Require(std::memcmp(&again, &info, sizeof(info)) == 0);
 }
 
@@ -484,11 +491,16 @@ static void CheckDefaultRoute() {
 
 static void CheckRandom() {
     Require(Failed(sceNetGetRandom(nullptr), 22));
+    Require(errno == 22);
     std::array<std::uint32_t, 8> values{};
+    errno = 71;
     for (auto& value : values) Require(sceNetGetRandom(&value) == 0);
+    Require(errno == 71);
     std::array<std::uint32_t, 2> guarded{0x5a5a5a5au, 0x5a5a5a5au};
-    Require(sceNetGetRandom(guarded.data()) == 0 && guarded[1] == 0x5a5a5a5au && *sceNetErrnoLoc() == 22);
+    Require(sceNetGetRandom(guarded.data()) == 0 && guarded[1] == 0x5a5a5a5au && *sceNetErrnoLoc() == 22 && errno == 71);
     Require(std::any_of(values.begin() + 1, values.end(), [&](std::uint32_t value) { return value != values[0]; }));
+    Require(Failed(sceNetGetRandom(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})), 14));
+    Require(errno == 14);
 }
 
 static void CheckByteOrderConversion() {
