@@ -22,6 +22,23 @@ std::size_t lastCount = 0;
 std::size_t lastSize = 0;
 void* lastAllocated = nullptr;
 int callocCalls = 0;
+using JxrCopyCallback = std::int64_t (APS5_VABI*)(void*, const void*, std::uint8_t*, std::uint32_t);
+JxrGuestFormatConverter* activeCopyConverter = nullptr;
+const void* observedCopyRectangle = nullptr;
+std::uint8_t* observedCopyBuffer = nullptr;
+std::uint32_t observedCopyStride = 0;
+void* observedDecoderCopy = nullptr;
+void* observedConverterConvert = nullptr;
+std::int64_t decoderCopyResult = 0;
+std::int64_t converterConvertResult = 0;
+int decoderCopyCalls = 0;
+int converterConvertACalls = 0;
+int converterConvertBCalls = 0;
+std::array<int, 4> copyEventOrder{};
+std::size_t copyEventCount = 0;
+bool replaceConverterCallback = false;
+
+std::int64_t APS5_VABI ConverterConvertB(void* converter, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride);
 
 void* APS5_VABI Allocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI Free(void* pointer) {
@@ -44,6 +61,44 @@ void* APS5_VABI Realign(void* pointer, std::size_t size, std::size_t) { return s
 int APS5_VABI PosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
+}
+
+std::int64_t APS5_VABI DecoderCopyProbe(void* decoder, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    ++decoderCopyCalls;
+    copyEventOrder[copyEventCount++] = 1;
+    observedDecoderCopy = decoder;
+    observedCopyRectangle = rectangle;
+    observedCopyBuffer = buffer;
+    observedCopyStride = stride;
+    if (buffer) {
+        buffer[0] = 0x41;
+        buffer[1] = 0x42;
+    }
+    if (replaceConverterCallback) {
+        const JxrCopyCallback callback = &ConverterConvertB;
+        std::memcpy(reinterpret_cast<std::byte*>(activeCopyConverter) + 7 * sizeof(void*), &callback, sizeof(callback));
+    }
+    return decoderCopyResult;
+}
+
+std::int64_t APS5_VABI ConverterConvertA(void* converter, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    ++converterConvertACalls;
+    copyEventOrder[copyEventCount++] = 2;
+    observedConverterConvert = converter;
+    observedCopyRectangle = rectangle;
+    observedCopyBuffer = buffer;
+    observedCopyStride = stride;
+    return converterConvertResult;
+}
+
+std::int64_t APS5_VABI ConverterConvertB(void* converter, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    ++converterConvertBCalls;
+    copyEventOrder[copyEventCount++] = 3;
+    observedConverterConvert = converter;
+    observedCopyRectangle = rectangle;
+    observedCopyBuffer = buffer;
+    observedCopyStride = stride;
+    return converterConvertResult;
 }
 
 void InitializeHeap() {
@@ -111,5 +166,103 @@ int main() {
     try { PKAlloc_nid_postfix(nullptr, 1); }
     catch (const std::invalid_argument&) { threw = true; }
     Require(threw);
+
+    alignas(8) std::array<std::byte, 80> decoder{};
+    std::memset(decoder.data(), 0x6b, decoder.size());
+    const JxrCopyCallback decoderCopyCallback = &DecoderCopyProbe;
+    std::memcpy(decoder.data() + 7 * sizeof(void*), &decoderCopyCallback, sizeof(decoderCopyCallback));
+    const auto decoderBefore = decoder;
+    const JxrCopyCallback converterCallbackA = &ConverterConvertA;
+    const JxrCopyCallback converterCallbackB = &ConverterConvertB;
+    JxrGuestFormatConverter converter{};
+    std::memset(converter.beforeDecoder, 0x5a, sizeof(converter.beforeDecoder));
+    converter.decoder = decoder.data();
+    std::memcpy(reinterpret_cast<std::byte*>(&converter) + 7 * sizeof(void*), &converterCallbackA, sizeof(converterCallbackA));
+    const auto converterBeforeCopy = converter;
+    auto converterAfterExpectedMutation = converterBeforeCopy;
+    std::memcpy(reinterpret_cast<std::byte*>(&converterAfterExpectedMutation) + 7 * sizeof(void*), &converterCallbackB, sizeof(converterCallbackB));
+    activeCopyConverter = &converter;
+    struct GuardedBuffer {
+        std::uint8_t before[8];
+        std::uint8_t bytes[8];
+        std::uint8_t after[8];
+    } output;
+    std::memset(&output, 0xa5, sizeof(output));
+    std::array<std::uint8_t, 16> rectangle{};
+    for (std::size_t i = 0; i < rectangle.size(); ++i) rectangle[i] = static_cast<std::uint8_t>(i + 1);
+    const auto rectangleBefore = rectangle;
+    constexpr std::uint32_t copyStride = 0x12345678;
+    decoderCopyResult = 0x123456789abcdef0;
+    converterConvertResult = -0x123456789abcdef;
+    replaceConverterCallback = true;
+    copyEventCount = 0;
+    auto copyCalls = decoderCopyCalls;
+    auto convertACalls = converterConvertACalls;
+    auto convertBCalls = converterConvertBCalls;
+    Require(PKFormatConverter_Copy_nid_postfix(&converter, rectangle.data(), output.bytes, copyStride) == converterConvertResult);
+    Require(decoderCopyCalls == copyCalls + 1 && converterConvertACalls == convertACalls && converterConvertBCalls == convertBCalls + 1);
+    Require(copyEventCount == 2 && copyEventOrder[0] == 1 && copyEventOrder[1] == 3);
+    Require(observedDecoderCopy == decoder.data() && observedConverterConvert == &converter);
+    Require(observedCopyRectangle == rectangle.data() && observedCopyBuffer == output.bytes && observedCopyStride == copyStride);
+    Require(output.bytes[0] == 0x41 && output.bytes[1] == 0x42);
+    for (const auto value : output.before) Require(value == 0xa5);
+    for (const auto value : output.after) Require(value == 0xa5);
+    Require(rectangle == rectangleBefore);
+    Require(std::memcmp(decoder.data(), decoderBefore.data(), decoder.size()) == 0);
+    Require(std::memcmp(&converter, &converterAfterExpectedMutation, sizeof(converter)) == 0);
+
+    const JxrCopyCallback nullConverterCallback = nullptr;
+    std::memcpy(reinterpret_cast<std::byte*>(&converter) + 7 * sizeof(void*), &nullConverterCallback, sizeof(nullConverterCallback));
+    replaceConverterCallback = false;
+    decoderCopyResult = -0x123456789abcdef;
+    copyEventCount = 0;
+    copyCalls = decoderCopyCalls;
+    convertACalls = converterConvertACalls;
+    convertBCalls = converterConvertBCalls;
+    Require(PKFormatConverter_Copy_nid_postfix(&converter, nullptr, nullptr, copyStride) == decoderCopyResult);
+    Require(decoderCopyCalls == copyCalls + 1 && converterConvertACalls == convertACalls && converterConvertBCalls == convertBCalls);
+    Require(copyEventCount == 1 && copyEventOrder[0] == 1);
+    Require(observedDecoderCopy == decoder.data() && observedCopyRectangle == nullptr && observedCopyBuffer == nullptr && observedCopyStride == copyStride);
+    Require(converter.decoder == decoder.data());
+
+    std::memcpy(reinterpret_cast<std::byte*>(&converter) + 7 * sizeof(void*), &converterCallbackA, sizeof(converterCallbackA));
+    decoderCopyResult = 0x123456789abcdef0;
+    converterConvertResult = 0x23456789abcdef01;
+    copyEventCount = 0;
+    copyCalls = decoderCopyCalls;
+    convertACalls = converterConvertACalls;
+    Require(PKFormatConverter_Copy_nid_postfix(&converter, nullptr, nullptr, copyStride) == converterConvertResult);
+    Require(decoderCopyCalls == copyCalls + 1 && converterConvertACalls == convertACalls + 1);
+    Require(copyEventCount == 2 && copyEventOrder[0] == 1 && copyEventOrder[1] == 2);
+    Require(observedDecoderCopy == decoder.data() && observedConverterConvert == &converter);
+    Require(observedCopyRectangle == nullptr && observedCopyBuffer == nullptr && observedCopyStride == copyStride);
+    Require(std::memcmp(decoder.data(), decoderBefore.data(), decoder.size()) == 0);
+
+    copyCalls = decoderCopyCalls;
+    convertACalls = converterConvertACalls;
+    threw = false;
+    try { PKFormatConverter_Copy_nid_postfix(nullptr, nullptr, nullptr, copyStride); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && decoderCopyCalls == copyCalls && converterConvertACalls == convertACalls);
+    JxrGuestFormatConverter invalidConverter{};
+    threw = false;
+    try { PKFormatConverter_Copy_nid_postfix(&invalidConverter, nullptr, nullptr, copyStride); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && decoderCopyCalls == copyCalls && converterConvertACalls == convertACalls);
+    invalidConverter.decoder = decoder.data();
+    std::memcpy(reinterpret_cast<std::byte*>(&invalidConverter) + 7 * sizeof(void*), &nullConverterCallback, sizeof(nullConverterCallback));
+    copyEventCount = 0;
+    decoderCopyResult = 0;
+    threw = false;
+    try { PKFormatConverter_Copy_nid_postfix(&invalidConverter, nullptr, nullptr, copyStride); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && decoderCopyCalls == copyCalls + 1 && converterConvertACalls == convertACalls);
+    const JxrCopyCallback nullDecoderCallback = nullptr;
+    std::memcpy(decoder.data() + 7 * sizeof(void*), &nullDecoderCallback, sizeof(nullDecoderCallback));
+    copyCalls = decoderCopyCalls;
+    threw = false;
+    try { PKFormatConverter_Copy_nid_postfix(&invalidConverter, nullptr, nullptr, copyStride); }
+    catch (const std::invalid_argument&) { threw = true; }
+    Require(threw && decoderCopyCalls == copyCalls);
     return 0;
 }

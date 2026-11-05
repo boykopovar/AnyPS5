@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include "Stream.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
@@ -209,8 +210,37 @@ int APS5_VABI PKFormatConverter_Convert_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI PKFormatConverter_Copy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI PKFormatConverter_Copy_nid_postfix(JxrGuestFormatConverter* converter, const void* rectangle, std::uint8_t* buffer, std::uint32_t stride) {
+    if (!converter) APS5_INVALID_ARG_EX;
+    constexpr auto decoderOffset = offsetof(JxrGuestFormatConverter, decoder);
+    const auto converterAddress = reinterpret_cast<std::uintptr_t>(converter);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - decoderOffset) APS5_INVALID_ARG_EX;
+    void* decoder = nullptr;
+    const auto* decoderField = reinterpret_cast<const void*>(converterAddress + decoderOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoder, decoderField, sizeof(decoder)) || !decoder) APS5_INVALID_ARG_EX;
+
+    constexpr std::size_t decoderCopyOffset = 7 * sizeof(void*);
+    const auto decoderAddress = reinterpret_cast<std::uintptr_t>(decoder);
+    if (decoderAddress > std::numeric_limits<std::uintptr_t>::max() - decoderCopyOffset) APS5_INVALID_ARG_EX;
+    using DecoderCopy = std::int64_t (APS5_VABI*)(void*, const void*, std::uint8_t*, std::uint32_t);
+    static_assert(sizeof(DecoderCopy) == sizeof(void*));
+    DecoderCopy decoderCopy = nullptr;
+    const auto* decoderCopyField = reinterpret_cast<const void*>(decoderAddress + decoderCopyOffset);
+    if (!GuestCopyIn_nid_no_patch(&decoderCopy, decoderCopyField, sizeof(decoderCopy)) || !decoderCopy) APS5_INVALID_ARG_EX;
+
+    auto result = decoderCopy(decoder, rectangle, buffer, stride);
+    if (result < 0) return result;
+
+    constexpr std::size_t converterConvertOffset = 7 * sizeof(void*);
+    if (converterAddress > std::numeric_limits<std::uintptr_t>::max() - converterConvertOffset) APS5_INVALID_ARG_EX;
+    using ConverterConvert = std::int64_t (APS5_VABI*)(void*, const void*, std::uint8_t*, std::uint32_t);
+    static_assert(sizeof(ConverterConvert) == sizeof(void*));
+    ConverterConvert converterConvert = nullptr;
+    const auto* converterConvertField = reinterpret_cast<const void*>(converterAddress + converterConvertOffset);
+    if (!GuestCopyIn_nid_no_patch(&converterConvert, converterConvertField, sizeof(converterConvert)) || !converterConvert) APS5_INVALID_ARG_EX;
+
+    result = converterConvert(converter, rectangle, buffer, stride);
+    return result;
 }
 
 int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix() {
