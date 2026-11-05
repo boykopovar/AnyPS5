@@ -540,6 +540,47 @@ void TestUnsupported() {
     Require(BIO_free_nid_postfix(bio) == 1, "free after method errors");
 }
 
+#ifndef ANYPS5_BIO_DYNAMIC
+void TestPkcs12BioReadErrors() {
+    constexpr std::uint64_t bioUnsupported = 0x20fff079;
+    constexpr std::uint64_t notEnoughData = 0x0dfff08e;
+    constexpr std::uint64_t headerTooLong = 0x0dfff07b;
+    void* sentinel = reinterpret_cast<void*>(std::uintptr_t{1});
+    void* output = sentinel;
+
+    ERR_clear_error_nid_postfix();
+    Require(d2i_PKCS12_bio_nid_postfix(nullptr, &output) == nullptr && output == sentinel, "null BIO leaves PKCS12 output untouched");
+    Require(ERR_get_error_nid_postfix() == bioUnsupported && ERR_get_error_nid_postfix() == notEnoughData
+        && ERR_get_error_nid_postfix() == 0, "null BIO publishes its BIO and ASN.1 errors");
+
+    Bio* bio = BIO_new_nid_postfix(BIO_s_mem_nid_postfix());
+    Require(d2i_PKCS12_bio_nid_postfix(bio, &output) == nullptr && output == sentinel, "empty retrying BIO leaves PKCS12 output untouched");
+    Require(ERR_get_error_nid_postfix() == notEnoughData && ERR_get_error_nid_postfix() == 0, "negative initial read publishes NOT_ENOUGH_DATA");
+    Require(BIO_ctrl_nid_postfix(bio, 130, 0, nullptr) == 1, "set zero BIO EOF result");
+    Require(d2i_PKCS12_bio_nid_postfix(bio, &output) == nullptr && output == sentinel, "zero EOF BIO leaves PKCS12 output untouched");
+    Require(ERR_get_error_nid_postfix() == headerTooLong && ERR_get_error_nid_postfix() == 0, "zero initial read publishes HEADER_TOO_LONG");
+    bio->initialized = 0;
+    CallbackState state;
+    state.veto = -7;
+    bio->callback = Callback;
+    bio->callbackArgument = reinterpret_cast<char*>(&state);
+    Require(d2i_PKCS12_bio_nid_postfix(bio, &output) == nullptr && output == sentinel, "read callback veto preserves output");
+    Require(state.events == std::vector<int>{2}, "read callback runs before initialization check");
+    Require(ERR_get_error_nid_postfix() == notEnoughData && ERR_get_error_nid_postfix() == 0, "veto bypasses uninitialized BIO error");
+    bio->callback = nullptr;
+    Require(d2i_PKCS12_bio_nid_postfix(bio, nullptr) == nullptr, "initial read errors do not require an output pointer");
+    Require(ERR_get_error_nid_postfix() == 0x20fff078 && ERR_get_error_nid_postfix() == notEnoughData
+        && ERR_get_error_nid_postfix() == 0, "uninitialized BIO error precedes ASN.1 read error");
+    bio->initialized = 1;
+    Require(BIO_free_nid_postfix(bio) == 1, "free empty PKCS12 BIO");
+
+    bio = BIO_new_mem_buf_nid_postfix("nonempty", 8);
+    RequireUnsupported([&] { d2i_PKCS12_bio_nid_postfix(bio, &output); });
+    Require(output == sentinel, "unsupported nonempty PKCS12 input leaves output untouched");
+    Require(BIO_free_nid_postfix(bio) == 1, "free nonempty PKCS12 BIO");
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -559,6 +600,9 @@ int main(int argc, char** argv) {
     TestWriteBoundaries();
     TestDispatchAndReferences();
     TestUnsupported();
+#ifndef ANYPS5_BIO_DYNAMIC
+    TestPkcs12BioReadErrors();
+#endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");
 }

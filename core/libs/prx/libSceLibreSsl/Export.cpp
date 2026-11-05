@@ -9,6 +9,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl/include/Bio.hpp"
+#include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/General.hpp"
 #include "mbedtls/des.h"
 
@@ -974,9 +975,38 @@ int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI d2i_PKCS12_bio_nid_postfix(void) {
+void* APS5_VABI d2i_PKCS12_bio_nid_postfix(LibreSsl::Bio* bio, void** output) {
+    ERR_clear_error_nid_postfix();
+    constexpr int HeaderSize = 8;
+    char header[HeaderSize]{};
+    int count = 0;
+    if (!bio || !bio->method || !bio->method->read) {
+        LibreSslPutError_nid_no_patch(32, 0xfff, 121, __FILE__, __LINE__);
+        count = -2;
+    } else {
+        const auto callback = bio->callback;
+        count = callback ? static_cast<int>(callback(bio, 2, header, HeaderSize, 0, 1)) : 1;
+        if (count > 0) {
+            if (!bio->initialized) {
+                LibreSslPutError_nid_no_patch(32, 0xfff, 120, __FILE__, __LINE__);
+                count = -2;
+            } else {
+                count = bio->method->read(bio, header, HeaderSize);
+                if (count > 0) bio->bytesRead += static_cast<std::uint64_t>(count);
+                if (callback) count = static_cast<int>(callback(bio, 0x82, header, HeaderSize, 0, count));
+            }
+        }
+    }
+    if (count < 0) {
+        LibreSslPutError_nid_no_patch(13, 0xfff, 142, __FILE__, __LINE__);
+        return nullptr;
+    }
+    if (count == 0) {
+        LibreSslPutError_nid_no_patch(13, 0xfff, 123, __FILE__, __LINE__);
+        return nullptr;
+    }
+    static_cast<void>(output);
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI d2i_PKCS12_fp_nid_postfix(void) {
