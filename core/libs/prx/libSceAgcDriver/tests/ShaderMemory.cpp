@@ -21,6 +21,7 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "SpirvBackend/SpirvEmitter.hpp"
 #include "SavedExecMaskLoop.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
@@ -6201,6 +6202,50 @@ void verifySingleLaneCrossLaneReads() {
     for (const auto& [name, code, reason] : rejected) {
         expectFailure([&] { static_cast<void>(compiled(code, false)); }, (std::string(reason) + "is outside the 1-lane host subgroup").c_str(), (std::string("single-lane cross-lane reads: ") + name + " built without vertex subgroups").c_str());
         require(!compiled(code, true).empty(), (std::string("single-lane cross-lane reads: ") + name + " did not build on a 32-lane vertex subgroup").c_str());
+    }
+    enum class FirstActiveAddress { Translated, ShiftedBy3, NextQuad };
+    const auto emitted = [](FirstActiveAddress shape) {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.SetWaveSize(64);
+        program.Resources().stage = IrShaderStage::Vertex;
+        program.Resources().srtPlanComplete = true;
+        program.Resources().resourceTrackingComplete = true;
+        program.Metadata().shaderInfoComplete = true;
+        program.Metadata().bindingLayoutComplete = true;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = block.Id();
+        program.Metadata().blockInfo.push_back(info);
+        builder.SetInsertionPoint(block);
+        auto& ballot = builder.Emit(IrOpcode::Ballot, IrType::U32x4, {&builder.ConstantBool(true)});
+        auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& quad = builder.BitwiseAnd(lane, builder.Constant(~3u));
+        auto& word = builder.Select(builder.ULessThan(lane, builder.Constant(32u)), builder.CompositeExtract(ballot, 0u), builder.CompositeExtract(ballot, 1u));
+        auto& active = builder.BitwiseAnd(builder.ShiftRightLogical(word, builder.BitwiseAnd(quad, builder.Constant(31u))), builder.Constant(15u));
+        auto& first = builder.Emit(IrOpcode::FindILsb32, IrType::U32, {&active});
+        auto& base = shape == FirstActiveAddress::NextQuad ? builder.IAdd(quad, builder.Constant(4u)) : quad;
+        auto& source = builder.Select(builder.INotEqual(active, builder.Constant(0u)), builder.IAdd(base, first), lane);
+        auto& address = builder.ShiftLeftLogical(source, builder.Constant(shape == FirstActiveAddress::ShiftedBy3 ? 3u : 2u));
+        auto& read = builder.Emit(IrOpcode::BpermuteU32, IrType::U32, {&lane, &address, &builder.ConstantBool(true)});
+        static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&read}));
+        ShaderVertexInputInfo vertex;
+        ShaderStageInputInfo inputs;
+        inputs.vertex = &vertex;
+        CompiledBindingLayout bindings;
+        bindings.layout = program.Metadata().bindings;
+        SpirvTargetOptions target{};
+        target.vulkanVersion = 0x00401000u;
+        target.spirvVersion = 0x00010300u;
+        target.subgroupSize = 1u;
+        return SpirvEmitter().Emit(program, inputs, bindings, target);
+    };
+    require(!emitted(FirstActiveAddress::Translated).empty(), "single-lane cross-lane reads: the image_sample_*_cd address did not build in a one-lane IR program");
+    const std::array<std::pair<FirstActiveAddress, const char*>, 2> addresses{{{FirstActiveAddress::ShiftedBy3, "the quad's first active lane shifted left by 3"}, {FirstActiveAddress::NextQuad, "the next quad's first active lane"}}};
+    for (const auto& [shape, name] : addresses) {
+        expectFailure([&] { static_cast<void>(emitted(shape)); }, "ds_bpermute_b32 of a register-selected lane is outside the 1-lane host subgroup", (std::string("single-lane cross-lane reads: ds_bpermute_b32 of ") + name + " built in a one-lane IR program").c_str());
     }
 }
 
