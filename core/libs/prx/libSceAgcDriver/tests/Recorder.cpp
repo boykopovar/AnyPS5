@@ -7472,6 +7472,78 @@ void importWatchTests(const Device& device) {
 #endif
 }
 
+void copyDestinationImportTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+#ifdef _WIN32
+    static_cast<void>(device);
+#else
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: a copy destination's import not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t gap = surfaceBytes + unit;
+    constexpr std::size_t bytes = gap + surfaceBytes;
+    void* block = AllocateWatched(bytes, unit);
+    if (block == nullptr) {
+        std::cout << "no write watching: a copy destination's import not tested\n";
+        return;
+    }
+    const auto decided = PrepareImportWatch(base);
+    SetImportWatch(base, ImportWatch::Unwatch, true);
+    Require(HostImportsUnwatch(base), "the copy destination fixture device does not unwatch its imports");
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, surfaceBytes, true, true, true);
+        mutation.Add(static_cast<std::uint8_t*>(block) + gap, surfaceBytes, true, true, true);
+    }
+    struct Cleanup {
+        const Context& context;
+        void* block;
+        ImportWatch decided;
+        ~Cleanup() {
+            ClearCachedTextures(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+                mutation.Remove(static_cast<std::uint8_t*>(block) + gap);
+            }
+            SetImportWatch(context, decided);
+            ReleaseWatched(block, bytes);
+        }
+    } cleanup{base, block, decided};
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the copy destination surface has an unexpected size");
+    auto sourceResource = resource;
+    sourceResource.baseAddress = address;
+    Require(Watched(address + gap, surfaceBytes), "the copy destination fixture is not write-watched");
+    const auto source = CachedStorageSurface(context, sourceResource);
+    Require(Watched(address + gap, surfaceBytes), "the copy destination fixture left the watch with the source surface");
+    Require(ExistingHostImportFor(context, address + gap, surfaceBytes) == nullptr, "the copy destination fixture already has an import");
+    const char* refusal = StorageTexture::CopyRefusal(context, nullptr, *source, address + gap);
+    Require(refusal == nullptr || std::string_view(refusal) != "not imported", "a watched copy destination was refused for lacking an import instead of taking one");
+    Require(ExistingHostImportFor(context, address + gap, surfaceBytes) != nullptr, "a copy destination did not take the import of its range");
+    std::cout << "copy destination import: ok\n";
+#endif
+}
+
 void staleGenerationTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
 #ifdef _WIN32
@@ -15351,6 +15423,7 @@ int main(int argc, char** argv) {
         keptUnitSettleTests(device, recorder);
         settledBaselineTests(device, recorder);
         importWatchTests(device);
+        copyDestinationImportTests(device);
         staleGenerationTests(device, recorder);
         pendingAfterLeavingWatchTests(device, recorder);
         importWindowTests(device, recorder);
