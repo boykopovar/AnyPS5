@@ -1963,7 +1963,21 @@ static void CheckHyperbolic() {
     Require(atanh_nid_postfix(0.) == 0. && atanh_nid_postfix(1.) == infinity && atanh_nid_postfix(-1.) == -infinity);
     Require(std::isnan(acosh_nid_postfix(0.5)) && std::isnan(acoshf_nid_postfix(0.5f)) && std::isnan(atanh_nid_postfix(2.)));
     Require(Near(sinh_nid_postfix(1.), 1.1752011936438014, 1e-15));
-    Require(Near(cosh_nid_postfix(1.), 1.5430806348152437, 1e-15));
+    for (const double x : {1., -1.}) {
+        errno = 7;
+        Require(std::bit_cast<std::uint64_t>(cosh_nid_postfix(x)) == 0x3ff8b07551d9f550ull && errno == 7);
+    }
+    for (const auto& [x, expected] : {std::pair{0x1p-56, 0x1p+0}, std::pair{0x1.3333333333333p-2, 0x1.0b9b4e0b6ec4cp+0},
+             std::pair{0x1.5e66666666666p+4, 0x1.82afcca727c18p+30}, std::pair{0x1.68p+4, 0x1.604b68cf05f66p+31},
+             std::pair{-0x1.91p+6, 0x1.8c39b9134bac4p+143}, std::pair{-0x1.63p+9, 0x1.3e21a464507fap+1023},
+             std::pair{0x1.633ce8fb9aa5dp+9, 0x1.ffffffec77d3ap+1023}}) {
+        errno = 7;
+        Require(std::bit_cast<std::uint64_t>(cosh_nid_postfix(x)) == std::bit_cast<std::uint64_t>(expected) && errno == 7);
+    }
+    errno = 7;
+    Require(std::isinf(cosh_nid_postfix(0x1.633d70a3d70a4p+9)) && errno == ERANGE);
+    errno = 7;
+    Require(std::isinf(cosh_nid_postfix(-INFINITY)) && std::isnan(cosh_nid_postfix(NAN)) && errno == 7);
     Require(Near(coshf_nid_postfix(1.f), 1.5430806348152437, 1e-6));
     Require(Near(asinh_nid_postfix(1.), 0.881373587019543, 1e-15));
     Require(Near(asinhf_nid_postfix(1.f), 0.881373587019543, 1e-6));
@@ -3017,7 +3031,31 @@ static void CheckAtanConsoleBits() {
     Require(std::isnan(atan2_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 1.0)) && std::isnan(atan2_nid_postfix(1.0, std::numeric_limits<double>::quiet_NaN())));
 }
 
+
+static void CheckFdimFlags() {
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (const double same : {infinity, -infinity}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(same, same)) == 0 && std::fetestexcept(FE_INVALID) != 0);
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(static_cast<float>(same), static_cast<float>(same))) == 0 && std::fetestexcept(FE_INVALID) != 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(fdim_nid_postfix(3.0, 1.0) == 2.0 && fdim_nid_postfix(1.0, 3.0) == 0.0 && fdim_nid_postfix(infinity, 1.0) == infinity && fdim_nid_postfix(-infinity, 1.0) == 0.0);
+    Require(fdimf_nid_postfix(3.0f, 1.0f) == 2.0f && fdimf_nid_postfix(1.0f, 3.0f) == 0.0f);
+    Require(std::isnan(fdim_nid_postfix(nan, 1.0)) && std::isnan(fdim_nid_postfix(1.0, nan)) && std::isnan(fdimf_nid_postfix(1.0f, std::numeric_limits<float>::quiet_NaN())));
+    Require(std::fetestexcept(FE_INVALID) == 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(-1e308, 1e308)) == 0 && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(fdim_nid_postfix(1e308, -1e308) == infinity && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(-3e38f, 3e38f)) == 0 && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+}
+
 int main() {
+    CheckFdimFlags();
     CheckRemainderConsoleBits();
     CheckFloatClassification();
     CheckDinkumwareConstants();
