@@ -278,6 +278,8 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
     if (param == nullptr) return ErrorInvalidAddress;
     Param localParam{};
     if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) return ErrorInvalidAddress;
+    ExtendedParam localExtended{};
+    if (extended != nullptr && !GuestCopyIn_nid_no_patch(&localExtended, extended, sizeof(localExtended))) return ErrorInvalidAddress;
     if (localParam.max_text_length == 0 || localParam.max_text_length > MaxTextLength) return ErrorInvalidMaxTextLength;
     if (localParam.input_text_buffer == nullptr) return ErrorInvalidInputTextBuffer;
     g_dialog = Dialog{};
@@ -287,7 +289,7 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
     while (length < localParam.max_text_length && localParam.input_text_buffer[length] != u'\0') ++length;
     g_dialog.text.assign(localParam.input_text_buffer, length);
     g_dialog.caret = length;
-    g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(localParam, extended));
+    g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(localParam, extended != nullptr ? &localExtended : nullptr));
     g_dialog.status = StatusRunning;
     ImeSetHostTextSink_nid_no_patch(&Receive);
     ImeSetHostPreeditSink_nid_no_patch(&ReceivePreedit);
