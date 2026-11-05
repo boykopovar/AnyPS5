@@ -4,6 +4,8 @@
 - [`X509_PUBKEY_get0_param`](../../../core/libs/prx/libSceLibreSsl3/src/X509PubkeyParam.cpp) follows LibreSSL 4.0.0 `crypto/asn1/x_pubkey.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/x_pubkey.c) and its `x509_local.h`, `x509.h` and `asn1.h` layouts. The function returns borrowed pointers and writes the encoded key length only when the key output is requested. The PS5 layout and malformed-object behavior are not verified on hardware; layout assertions match the pinned x86-64 source declarations.
 ### Functional
 
+- [EC_POINT_clear_free and EVP_PKEY_CTX_free](../../../core/libs/prx/libSceLibreSsl3/src/NullFrees.cpp) - not measured on a PS5; non-null point or key-context disposal remains unsupported and throws before dereference. The null no-ops follow LibreSSL 4.0.0 [`EC_POINT_free` and its `EC_POINT_clear_free` wrapper](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/ec/ec_lib.c#L697-L716) and [`EVP_PKEY_CTX_free`](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/pmeth_lib.c#L201-L212).
+
 - [OpenSSL_version](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - other firmware revisions are unverified. Selectors 0 through 5 follow the public firmware 13.40 measurements in [discussion #8981](https://github.com/boykopovar/AnyPS5/discussions/8981#discussioncomment-19111214); unknown selectors follow LibreSSL 4.0.0 and return `not available`. No independent console test was run.
 
 - [ERR_load_crypto_strings and ERR_peek_last_error](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) have no console execution verification. [Firmware 13.42 modules run on a PC](https://github.com/boykopovar/AnyPS5/pull/9535#issuecomment-6407060914) retained numeric-only output after loaders and matched queue order/overflow; whether the two firmware modules share a queue was not tested. This implementation reads libSceLibreSsl's calling-thread queue. `ERR_print_errors_cb` remains throwing because guest thread identifiers and diagnostic metadata are unverified.
@@ -34,7 +36,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 173 callable exports: 163 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 171 callable exports: 161 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -142,7 +144,6 @@
 | `X509_gmtime_adj` | `ZQ3b6SakHkc` |
 | `SSL_process_quic_post_handshake` | `aKGUCnoiE+k` |
 | `unknown` | `aLdgrI2jAF0` |
-| `EC_POINT_clear_free` | `aSO3Svp7umY` |
 | `tls_config_set_protocols` | `agQxMaXVE8o` |
 | `d2i_PKCS8_PRIV_KEY_INFO` | `as+t2ZOg5fw` |
 | `ECDSA_do_sign` | `ba4o0Ih6kSs` |
@@ -191,7 +192,6 @@
 | `HKDF` | `uJ2ZXq4z3As` |
 | `EVP_aes_128_ccm` | `uM9UnC8KFjY` |
 | `RSA_set0_key` | `uihDBp74nLI` |
-| `EVP_PKEY_CTX_free` | `ulzAPWCIBkw` |
 | `tls_free` | `uz3bWkbHZu4` |
 | `tls_config_verify_client` | `v1vHv4jOJxQ` |
 | `EVP_PKEY_cmp` | `vLuIwBfrxrk` |

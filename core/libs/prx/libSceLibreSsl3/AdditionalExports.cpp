@@ -23,10 +23,6 @@ int APS5_VABI ERR_func_error_string_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_PKEY_CTX_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_assign_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -506,10 +502,6 @@ int APS5_VABI Unknown_aLdgrI2jAF0_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("aLdgrI2jAF0", Unknown_aLdgrI2jAF0_nid_no_patch);
-
-int APS5_VABI EC_POINT_clear_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI tls_config_set_protocols_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
