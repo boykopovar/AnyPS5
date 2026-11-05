@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <new>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -56,7 +57,9 @@ int CallBusy(void* hooks, int count) {
 
 int CallAuthorizer(void* hooks, int action, const char* first, const char* second, const char* schema,
     const char* trigger) {
+    if (action == SQLITE_ATTACH && first != nullptr && *first != '\0') return SQLITE_DENY;
     auto* guest = static_cast<GuestHooks*>(hooks);
+    if (guest->authorizer == nullptr) return SQLITE_OK;
     return guest->authorizer(guest->authorizerArgument, action, first, second, schema, trigger);
 }
 
@@ -286,19 +289,47 @@ sqlite3_stmt* APS5_VABI sqlite3_next_stmt_nid_postfix(sqlite3* db, sqlite3_stmt*
     return sqlite3_next_stmt(db, statement);
 }
 
+static bool MemoryUri(const char* filename) {
+    const char* path = filename + 5;
+    if (std::strchr(path, '%') != nullptr) return false;
+    const char* end = path + std::strcspn(path, "?#");
+    if (std::string_view(path, static_cast<std::size_t>(end - path)) == ":memory:") return true;
+    if (*end != '?') return false;
+    bool memory = false;
+    for (const char* parameter = end + 1; *parameter != '\0' && *parameter != '#';) {
+        const char* stop = parameter + std::strcspn(parameter, "&#");
+        const std::string_view text(parameter, static_cast<std::size_t>(stop - parameter));
+        if (text.substr(0, 5) == "mode=") memory = text.substr(5) == "memory";
+        parameter = *stop == '&' ? stop + 1 : stop;
+    }
+    return memory;
+}
+
+static int GuardAttach(int result, sqlite3** db) {
+    if (result != SQLITE_OK || db == nullptr || *db == nullptr) return result;
+    sqlite3_mutex_enter(sqlite3_db_mutex(*db));
+    GuestHooks* hooks = Hooks(*db);
+    const int installed = hooks ? sqlite3_set_authorizer(*db, CallAuthorizer, hooks) : SQLITE_NOMEM;
+    sqlite3_mutex_leave(sqlite3_db_mutex(*db));
+    if (installed == SQLITE_OK) return SQLITE_OK;
+    sqlite3_close(*db);
+    *db = nullptr;
+    return installed;
+}
+
 int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, int flags, const char* vfs) {
     static_cast<void>(vfs);
     const bool uri = filename && (flags & SQLITE_OPEN_URI) && std::strncmp(filename, "file:", 5) == 0;
-    const bool memory = !filename || !*filename || std::strcmp(filename, ":memory:") == 0 || (flags & SQLITE_OPEN_MEMORY) ||
-        (uri && (std::strncmp(filename, "file::memory:", 13) == 0 || std::strstr(filename, "mode=memory")));
+    const bool memory = uri ? MemoryUri(filename) :
+        (!filename || !*filename || std::strcmp(filename, ":memory:") == 0 || (flags & SQLITE_OPEN_MEMORY));
     if (memory) {
-        return sqlite3_open_v2(filename, db, flags, nullptr);
+        return GuardAttach(sqlite3_open_v2(filename, db, flags, nullptr), db);
     }
     if (uri) {
         NotImplemented_nid_no_patch("sqlite3_open_v2 file URI");
     }
     const std::filesystem::path host = ResolvePath_nid_no_patch(filename);
-    const int result = sqlite3_open_v2(reinterpret_cast<const char*>(host.u8string().c_str()), db, flags, nullptr);
+    const int result = GuardAttach(sqlite3_open_v2(reinterpret_cast<const char*>(host.u8string().c_str()), db, flags, nullptr), db);
     if (result == SQLITE_OK && (flags & SQLITE_OPEN_READWRITE)) {
         for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
             std::filesystem::path file = host;
@@ -324,7 +355,7 @@ void APS5_VABI sqlite3_result_error_nid_postfix(sqlite3_context* context, const 
 
 int APS5_VABI sqlite3_set_authorizer_nid_postfix(sqlite3* db, NKWebKit::GuestSqliteAuthorizer authorizer,
     void* argument) {
-    if (!db || !authorizer) {
+    if (!db) {
         return sqlite3_set_authorizer(db, nullptr, nullptr);
     }
     sqlite3_mutex_enter(sqlite3_db_mutex(db));

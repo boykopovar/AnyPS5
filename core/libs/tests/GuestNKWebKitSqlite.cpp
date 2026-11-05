@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <random>
 #include <string>
@@ -24,6 +25,7 @@ constexpr int SQLITE_CONSTRAINT_UNIQUE = 2067;
 constexpr int SQLITE_OPEN_READWRITE = 0x2;
 constexpr int SQLITE_OPEN_CREATE = 0x4;
 constexpr int SQLITE_OPEN_URI = 0x40;
+constexpr int SQLITE_OPEN_MEMORY = 0x80;
 constexpr int SQLITE_UTF8 = 1;
 constexpr int SQLITE_UTF16LE = 2;
 constexpr int SQLITE_INTEGER = 1;
@@ -101,6 +103,10 @@ void APS5_VABI CountFinal(sqlite3_context*) {
 int APS5_VABI DenyDelete(void* argument, int action, const char*, const char*, const char*, const char*) {
     Require(*static_cast<int*>(argument) == 0xA7, "authorizer argument");
     return action == SQLITE_DELETE ? SQLITE_DENY : SQLITE_OK;
+}
+
+int APS5_VABI AllowAll(void*, int, const char*, const char*, const char*, const char*) {
+    return SQLITE_OK;
 }
 
 int APS5_VABI GiveUp(void* argument, int count) {
@@ -352,6 +358,60 @@ int main() {
     const auto directory = std::filesystem::temp_directory_path() / ("nk_sqlite_" + std::to_string(random()));
     std::filesystem::create_directories(directory);
     std::filesystem::current_path(directory);
+    constexpr int uriFlags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI;
+    for (const char* name : {"file:mode=memory.db?mode=rwc", "file:mode=memory.db", "file::memory:x", "file:later.db?mode=memory&mode=rwc", "file:encoded.db?mode=memory&mod%65=rwc", "file:m1.db?mode=rwc", "file:plain.db"}) {
+        for (const int flags : {uriFlags, uriFlags | SQLITE_OPEN_MEMORY}) {
+            sqlite3* host = nullptr;
+            try {
+                sqlite3_open_v2_nid_postfix(name, &host, flags, nullptr);
+            } catch (const std::exception&) {
+            }
+            if (host != nullptr) sqlite3_close_nid_postfix(host);
+            Require(std::filesystem::is_empty(directory), "a URI that only mentions mode=memory in its path creates no host file");
+        }
+    }
+    for (const char* name : {"file:one?mode=memory", "file:two?cache=shared&mode=memory", "file::memory:?cache=private", "file:three?mode=rwc&mode=memory"}) {
+        sqlite3* inMemory = nullptr;
+        Require(sqlite3_open_v2_nid_postfix(name, &inMemory, uriFlags, nullptr) == SQLITE_OK, "memory URI parameter");
+        Execute(inMemory, "CREATE TABLE t(v)");
+        Require(sqlite3_close_nid_postfix(inMemory) == SQLITE_OK, "close memory URI parameter");
+        Require(std::filesystem::is_empty(directory), "a memory URI creates no host file");
+    }
+    const auto refused = [](sqlite3* connection, const char* sql) {
+        sqlite3_stmt* statement = nullptr;
+        const char* tail = nullptr;
+        int result = sqlite3_prepare_v2_nid_postfix(connection, sql, -1, &statement, &tail);
+        if (result == SQLITE_OK) {
+            do {
+                result = sqlite3_step_nid_postfix(statement);
+            } while (result == SQLITE_ROW);
+        }
+        if (statement != nullptr) sqlite3_finalize_nid_postfix(statement);
+        return result != SQLITE_OK && result != SQLITE_DONE;
+    };
+    sqlite3* guard = Open(":memory:");
+    Require(refused(guard, "ATTACH DATABASE 'attached.db' AS other"), "ATTACH is refused on an in-memory connection");
+    Require(refused(guard, "VACUUM INTO 'vacuumed.db'"), "VACUUM INTO is refused on an in-memory connection");
+    Require(std::filesystem::is_empty(directory), "ATTACH and VACUUM INTO create no host file");
+    Execute(guard, "VACUUM");
+    Require(sqlite3_close_nid_postfix(guard) == SQLITE_OK, "close in-memory guard");
+    sqlite3* limited = nullptr;
+    Require(sqlite3_open_v2_nid_postfix("limited.db", &limited, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) == SQLITE_OK, "open limited.db");
+    Require(refused(limited, "ATTACH DATABASE 'attached.db' AS other"), "ATTACH is refused on a file connection");
+    Require(refused(limited, "VACUUM INTO 'vacuumed.db'"), "VACUUM INTO is refused on a file connection");
+    Require(!std::filesystem::exists(directory / "attached.db") && !std::filesystem::exists(directory / "vacuumed.db"), "ATTACH and VACUUM INTO create no host file from a file connection");
+    Execute(limited, "VACUUM");
+    Execute(limited, "ATTACH DATABASE '' AS scratch");
+    Execute(limited, "DETACH DATABASE scratch");
+    Require(sqlite3_set_authorizer_nid_postfix(limited, AllowAll, nullptr) == SQLITE_OK, "set a permissive guest authorizer");
+    Require(refused(limited, "ATTACH DATABASE 'attached.db' AS other"), "ATTACH is refused with a guest authorizer set");
+    Require(refused(limited, "VACUUM INTO 'vacuumed.db'"), "VACUUM INTO is refused with a guest authorizer set");
+    Require(sqlite3_set_authorizer_nid_postfix(limited, nullptr, nullptr) == SQLITE_OK, "clear the guest authorizer");
+    Require(refused(limited, "ATTACH DATABASE 'attached.db' AS other"), "ATTACH is refused after the guest clears its authorizer");
+    Require(refused(limited, "VACUUM INTO 'vacuumed.db'"), "VACUUM INTO is refused after the guest clears its authorizer");
+    Require(!std::filesystem::exists(directory / "attached.db") && !std::filesystem::exists(directory / "vacuumed.db"), "no host file after the guest sets and clears an authorizer");
+    Require(sqlite3_close_nid_postfix(limited) == SQLITE_OK, "close limited.db");
+    std::filesystem::remove(directory / "limited.db");
     CheckFileDatabase(directory);
     Require(std::filesystem::is_regular_file(directory / "wal.db"), "guest path maps into the root");
     const auto written = WrittenPaths_nid_no_patch();
