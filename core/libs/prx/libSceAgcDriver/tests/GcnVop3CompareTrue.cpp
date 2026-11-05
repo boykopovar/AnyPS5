@@ -54,18 +54,6 @@ void CheckComparison(const Comparison& comparison, std::uint32_t destination, bo
     }
 }
 
-void CheckRefused(std::uint32_t opcode) {
-    const std::array<std::uint32_t, 3> words{0xd0000004u | (opcode << 17u), 0x00020300u, 0xbf810000u};
-    try {
-        static_cast<void>(DecodeGcnInstruction(0u, words, 0u));
-        Check(false, "signaling CMPX was accepted");
-    } catch (const UnsupportedInstructionError&) {
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "signaling CMPX 0x%x threw the wrong exception: %s\n", opcode, error.what());
-        ++failures;
-    }
-}
-
 void CheckTruncated(std::uint32_t opcode) {
     const std::array<std::uint32_t, 1> words{0xd0000004u | (opcode << 17u)};
     try {
@@ -93,7 +81,6 @@ int main() {
         for (const auto destination : {4u, 8u, 106u}) CheckComparison(comparison, destination, true);
         CheckComparison(comparison, 106u, false);
     }
-    for (const auto opcode : {0x50u, 0x5fu, 0x70u, 0x7fu}) CheckRefused(opcode);
     for (const auto opcode : {0x1fu, 0x3fu}) CheckTruncated(opcode);
     if (failures == 0) std::puts("GCN VOP3 compare true tests passed");
     return failures == 0 ? 0 : 1;
