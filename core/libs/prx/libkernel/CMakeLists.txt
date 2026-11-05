@@ -1445,6 +1445,7 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_exception_fault_tests)
     add_test(NAME guest_exception_fault COMMAND guest_exception_fault_tests)
     set_tests_properties(guest_exception_fault PROPERTIES TIMEOUT 30)
+    add_asan_test_options(guest_exception_fault handle_segv=0)
     if(WIN32)
         set_tests_properties(guest_exception_fault PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
