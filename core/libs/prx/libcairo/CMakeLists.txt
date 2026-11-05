@@ -1,4 +1,4 @@
-add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp)
+add_library(libcairo SHARED EXCLUDE_FROM_ALL Export.cpp Matrix.cpp Surface.cpp)
 target_include_directories(libcairo PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libcairo)
 
@@ -12,5 +12,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_cairo_matrix PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libcairo>")
+    endif()
+    add_test_executable(guest_cairo_surface_tests ${LIBS_INCLUDE_DIR}/tests/GuestCairoSurface.cpp Surface.cpp)
+    target_include_directories(guest_cairo_surface_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cairo_surface_tests PRIVATE libc)
+    configure_windows_unwind(guest_cairo_surface_tests)
+    add_test(NAME guest_cairo_surface COMMAND guest_cairo_surface_tests)
+    set_tests_properties(guest_cairo_surface PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cairo_surface PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
