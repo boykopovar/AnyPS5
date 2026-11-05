@@ -391,12 +391,17 @@ static void TestLeaderboardEntryAccessors() {
     std::memset(objects, 0xa5, sizeof(objects));
     constexpr std::uint32_t values[] = {0, 1, 0x80000000u, 0xffffffffu, 0x12345678u};
     for (const auto value : values) {
-        for (unsigned int flags = 0; flags < 4; ++flags) {
+        for (unsigned int flags = 0; flags < 8; ++flags) {
             for (unsigned int index = 0; index < 3; ++index) {
                 auto* object = objects[index] + 0x10;
                 const auto highest = value ^ (index * 0x13579bdu);
                 const auto serial = ~highest;
                 const auto highestSerial = highest ^ 0xa55a5aa5u;
+                const auto pcBits = value ^ (index * 0x2468ace1u);
+                std::int32_t pcId;
+                std::memcpy(&pcId, &pcBits, sizeof(pcId));
+                std::memcpy(object + 0x80, &pcId, sizeof(pcId));
+                object[0x38] = (flags >> 2) & 1;
                 std::memcpy(object + 0x3c, &highest, sizeof(highest));
                 std::memcpy(object + 0x40, &highestSerial, sizeof(highestSerial));
                 std::memcpy(object + 0x98, &serial, sizeof(serial));
@@ -404,6 +409,8 @@ static void TestLeaderboardEntryAccessors() {
                 object[0xb8] = (flags >> 1) & 1;
                 unsigned char before[sizeof(objects)];
                 std::memcpy(before, objects, sizeof(before));
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12commentIsSetEv(object) == ((flags & 4) != 0), "comment presence does not read its own flag");
+                Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry7getPcIdEv(object) == pcId, "PcId does not read its stored signed field");
                 Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14getHighestRankEv(object) == highest, "highest rank does not read the entry field");
                 Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13getSerialRankEv(object) == serial, "serial rank does not read the entry field");
                 Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry20getHighestSerialRankEv(object) == highestSerial, "highest serial rank does not read the entry field");
