@@ -9,8 +9,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using WKPoint = NKWebKit::PointValue;
@@ -370,16 +373,20 @@ static void TestURLRequestResponse() {
     WKRelease(filename);
 
     Require(WKURLResponseIsAttachment(responseRef));
-    Require(WKURLResponseGetExpectedContentLength(responseRef) == 123456789LL);
+    Require(WKURLResponseGetExpectedContentLength(responseRef) == 123456789u);
+    WKRelease(responseRef);
+
+    for (const auto& [stored, expected] : {std::pair<std::int64_t, std::uint32_t>{4294967297LL, 1u}, std::pair<std::int64_t, std::uint32_t>{-1LL, std::numeric_limits<std::uint32_t>::max()}}) {
+        auto lengthObj = NKWebKit::Make<NKWebKit::URLResponse>(NKWebKit::Make<NKWebKit::URL>("https://example.com/"), NKWebKit::String::FromUtf8(""), 200, NKWebKit::String::FromUtf8(""), false, stored);
+        const void* lengthRef = NKWebKit::ToRef(lengthObj);
+        Require(WKURLResponseGetExpectedContentLength(lengthRef) == expected);
+        WKRelease(lengthRef);
+    }
 
     auto defaultObj = NKWebKit::Make<NKWebKit::URLResponse>();
     const void* defaultRef = NKWebKit::ToRef(defaultObj);
 
-    auto* emptyUrl = WKURLResponseCopyURL(defaultRef);
-    auto* emptyUrlString = WKURLCopyString(emptyUrl);
-    Require(WKStringIsEmpty(emptyUrlString));
-    WKRelease(emptyUrlString);
-    WKRelease(emptyUrl);
+    Require(WKURLResponseCopyURL(defaultRef) == nullptr);
 
     auto* emptyMime = WKURLResponseCopyMIMEType(defaultRef);
     Require(WKStringIsEmpty(emptyMime));
@@ -393,6 +400,7 @@ static void TestURLRequestResponse() {
 
     Require(!WKURLResponseIsAttachment(defaultRef));
     Require(WKURLResponseGetExpectedContentLength(defaultRef) == 0);
+    WKRelease(defaultRef);
 
     bool threw = false;
     try {

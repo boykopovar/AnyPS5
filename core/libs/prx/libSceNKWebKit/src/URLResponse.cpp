@@ -5,7 +5,7 @@ extern "C" {
 
 const void* APS5_VABI WKURLResponseCopyURL(const void* responseRef) {
     const auto* response = NKWebKit::Cast<NKWebKit::URLResponse>(responseRef, __func__);
-    if (!response->url) return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(""));
+    if (!response->url) return nullptr;
     return NKWebKit::ToRef(NKWebKit::Retained<NKWebKit::URL>::Share(response->url.Get()));
 }
 
@@ -31,9 +31,9 @@ bool APS5_VABI WKURLResponseIsAttachment(const void* responseRef) {
     return response->isAttachment;
 }
 
-std::int64_t APS5_VABI WKURLResponseGetExpectedContentLength(const void* responseRef) {
+std::uint32_t APS5_VABI WKURLResponseGetExpectedContentLength(const void* responseRef) {
     const auto* response = NKWebKit::Cast<NKWebKit::URLResponse>(responseRef, __func__);
-    return response->expectedContentLength;
+    return static_cast<std::uint32_t>(response->expectedContentLength);
 }
 
 }

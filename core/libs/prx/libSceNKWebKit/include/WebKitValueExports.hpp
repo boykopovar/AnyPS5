@@ -160,7 +160,7 @@ std::uint32_t APS5_VABI WKURLRequestGetTypeID();
 const void* APS5_VABI WKURLResponseCopyMIMEType(const void* responseRef);
 const void* APS5_VABI WKURLResponseCopySuggestedFilename(const void* responseRef);
 const void* APS5_VABI WKURLResponseCopyURL(const void* responseRef);
-std::int64_t APS5_VABI WKURLResponseGetExpectedContentLength(const void* responseRef);
+std::uint32_t APS5_VABI WKURLResponseGetExpectedContentLength(const void* responseRef);
 std::uint32_t APS5_VABI WKURLResponseGetTypeID();
 int APS5_VABI WKURLResponseHTTPStatusCode(const void* responseRef);
 bool APS5_VABI WKURLResponseIsAttachment(const void* responseRef);
