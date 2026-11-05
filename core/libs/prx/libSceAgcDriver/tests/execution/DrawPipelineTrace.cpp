@@ -1,11 +1,16 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 int main(int argc, char** argv) {
     try {
@@ -18,6 +23,35 @@ int main(int argc, char** argv) {
         const bool finisher = mode.starts_with("finisher");
         const char* worker = finisher ? "draw finisher" : "draw committer";
         if (finisher && !DrawFinisher::Enabled()) throw std::runtime_error("draw finisher is disabled");
+        if (mode == "finisher-overlap") {
+            constexpr std::uint64_t Begin = 0x10000;
+            std::mutex gate;
+            std::condition_variable opened;
+            bool open = false;
+            DrawFinisher::Pending held;
+            held.unknown = false;
+            held.writes = {{Begin, Begin + 4096}};
+            std::thread([&] {
+                DrawFinisher::Get().Enqueue([&] {
+                    std::unique_lock lock(gate);
+                    opened.wait(lock, [&] { return open; });
+                }, held);
+            }).join();
+            const std::array inside{std::pair<std::uint64_t, std::uint64_t>{Begin, Begin + 4096}};
+            const std::array outside{std::pair<std::uint64_t, std::uint64_t>{Begin + 4096, Begin + 8192}};
+            const bool seen = DrawPipeline::Queue0().OverlapsAny(inside);
+            const bool unrelated = DrawPipeline::Queue0().OverlapsAny(outside);
+            {
+                std::lock_guard lock(gate);
+                open = true;
+            }
+            opened.notify_all();
+            DrawFinisher::Get().Drain();
+            if (!seen) throw std::runtime_error("a thread that hands no work to the draw finisher does not see a write the finisher still holds");
+            if (unrelated) throw std::runtime_error("the draw finisher's held write overlaps a range it does not write");
+            std::cout << "draw finisher overlap checked\n";
+            return 0;
+        }
         if (PerformanceTrace::Configured() == disabled) throw std::runtime_error("unexpected trace configuration");
         if (!disabled) PerformanceTrace::Present(1, 1, nullptr);
         bool checked = false;

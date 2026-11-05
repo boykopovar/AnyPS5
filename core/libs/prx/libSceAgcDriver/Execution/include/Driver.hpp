@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
+#include <vector>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "SceShaders.hpp"
@@ -20,6 +22,19 @@ struct AwaitedWait {
     std::uint32_t bytes = 0;
 };
 
+struct StartedProgressSnapshot {
+    std::uint64_t accepted = 0;
+    std::uint64_t completed = 0;
+    std::vector<std::uint64_t> started;
+    std::uint64_t queued = 0;
+};
+
+struct AwaitedDwordsSnapshot {
+    bool title = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unfinished;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> finished;
+};
+
 }
 
 extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes);
@@ -33,7 +48,13 @@ extern "C" void AgcDriverShutdown_nid_postfix();
 extern "C" void AgcDriverRequestScreenshot_nid_postfix();
 extern "C" void AgcDriverSuspendPoint_nid_postfix();
 extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std::uint64_t* completed);
+extern "C" bool AgcDriverSerialDone_nid_postfix(std::uint64_t serial);
+extern "C" std::uint64_t AgcDriverQueuedSerials_nid_postfix();
+extern "C" bool AgcDriverHoldSettled_nid_postfix(std::int64_t milliseconds);
+extern "C" void AgcDriverReleaseSettled_nid_postfix();
+extern "C" bool AgcDriverSettled_nid_postfix();
 extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait* waits, std::size_t capacity);
+extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix();
 extern "C" std::uint64_t AgcDriverDispatchesAdoptedAhead_nid_postfix();
 extern "C" std::uint64_t AgcDriverDispatchesRejectedAhead_nid_postfix();
 extern "C" void AgcDriverSetAheadAdoptHook_nid_postfix(void (*hook)());

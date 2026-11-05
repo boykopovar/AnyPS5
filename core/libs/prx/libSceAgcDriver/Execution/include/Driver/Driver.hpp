@@ -76,9 +76,23 @@ public:
     std::uint32_t ReserveEopFlipAt(const FlipInfo& info, std::uint32_t token);
     std::vector<std::uint32_t> PendingEopFlipTokens();
     std::pair<std::uint64_t, std::uint64_t> SerialProgress();
+    StartedProgressSnapshot StartedProgress();
+    bool UnfinishedLabelOverlaps(std::uint64_t begin, std::uint64_t end);
+    AwaitedDwordsSnapshot TakeAwaitedDwords();
+    void TrackAwaitedDwords(bool tracking);
+    bool SerialDone(std::uint64_t serial);
+    void HoldForRecorder();
+    void ReleaseForRecorder();
+    void ParkForRecorder() { if (recorderHold.load(std::memory_order_acquire)) parkForRecorder(); }
     std::uint64_t FlipSubmissions() const;
     std::vector<AwaitedWait> AwaitedWaits();
+    void WaitForPipelineJournal();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
+    bool WaitCompletedFor(std::uint64_t serial, std::chrono::milliseconds timeout);
+    void WaitDeviceIdle();
+    bool WaitSettledFor(std::chrono::milliseconds timeout);
+    void ReleaseSettled();
+    bool Settled();
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);
@@ -147,17 +161,23 @@ private:
     void waitForFlipRoom(const Submission& submission);
     void holdFlipBehindWorker(const Submission& submission, bool cpuFlip);
     bool awaitsTitle(std::uint64_t awaited) const;
+    bool parkedOnTitle() const;
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
     void releaseFlipHold();
     void finishFlipWork(std::uint64_t workSerial);
     std::uint64_t submitFlipWork(std::uint32_t queue);
     void waitFlipWork(std::uint64_t workSerial);
+    void parkForRecorder();
     void reserveOutputs(Submission& submission);
     void executeRewindTail(const Submission& stalled);
     void enqueue(Submission submission);
-    void noteHeldAtSubmit(Submission& submission, std::size_t cursor);
+    void noteHeldAtSubmit(Submission& submission, std::size_t cursor, bool tracking);
     static void forgetUnfinishedWrites(QueueWorker& worker, const Submission& submission);
     static void forgetUnfinishedWrites(QueueWorker& worker, std::span<const std::uint64_t> labelWrites);
+    void passAwaited(const Submission& submission, std::span<const std::uint32_t> packet);
+    void passAwaitedLocked(std::uint64_t serial, std::uint64_t address);
+    void finishAwaited(std::uint64_t serial);
+    bool gpuSatisfies(std::uint64_t serial, const AwaitedDword& wait) const;
     static bool& completionDeferred();
     void deferCompletion(const Submission& submission);
     void submitOpenWork(const std::shared_ptr<SubmissionProgress>& progress = {});
@@ -416,7 +436,9 @@ private:
         std::atomic<std::uint64_t> shape{0};
     };
     std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
+    static bool stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
+    std::atomic<bool> captureHold{false};
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};
 
@@ -469,7 +491,7 @@ private:
     std::map<std::uint32_t, QueueState> queues;
     std::map<std::uint32_t, std::shared_ptr<IVideoOutput>> outputs;
     struct EopFlip {
-        std::uint32_t handle;
+        FlipInfo info;
         std::shared_ptr<IFlipRequest> request;
     };
     std::map<std::uint32_t, EopFlip> eopFlips;
@@ -486,10 +508,16 @@ private:
     std::uint64_t accepted = 0;
     std::uint64_t completed = 0;
     std::set<std::uint64_t> completedOutOfOrder;
+    std::set<std::uint64_t> startedAhead;
+    std::map<std::uint64_t, std::vector<AwaitedDword>> unfinishedWaits;
+    std::map<std::uint64_t, std::pair<std::uint32_t, std::vector<LabelValue>>> unfinishedLabels;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> finishedWaits;
+    std::atomic<bool> awaitedTracking{false};
     std::exception_ptr failure;
 
     std::atomic<bool> failed{false};
     std::atomic<bool> stopping{false};
+    std::atomic<bool> recorderHold{false};
     bool stopped = false;
     bool resetGraphics = false;
 

@@ -1,12 +1,24 @@
 if(BUILD_TESTING)
     add_test_executable(agc_driver_frame_replay_state_tests tests/FrameReplayState.cpp Execution/src/FrameCapture.cpp)
-    target_include_directories(agc_driver_frame_replay_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_include_directories(agc_driver_frame_replay_state_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
     target_link_libraries(agc_driver_frame_replay_state_tests PRIVATE libSceAgcDriver libkernel libc libzstd_static)
     set_target_properties(agc_driver_frame_replay_state_tests PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(agc_driver_frame_replay_state_tests)
-    set(agcFrameReplayModes order tokens blocking)
+    add_dependencies(agc_driver_frame_replay_state_tests agc_frame_replay)
+    foreach(mode IN ITEMS submits shader_output)
+        add_test(NAME agc_driver_frame_replay_${mode} COMMAND ${CMAKE_COMMAND}
+                "-DTOOL=$<TARGET_FILE:agc_frame_replay>" "-DWRITER=$<TARGET_FILE:agc_driver_frame_replay_state_tests>"
+                "-DDIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-${mode}" "-DMODE=${mode}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/FrameReplayTool.cmake")
+        set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    set(agcFrameReplayModes order tokens blocking reservations reservation_failure environment gate_failure unverified gate_settled depth_submits depth_passes in_flight_breaker previous_breaker serial_diverged serial_flip_in_order flip_serial_neutral)
     if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        list(APPEND agcFrameReplayModes zero shader shader_host shader_prologue_code shader_prologue_header shader_prologue_readonly)
+        list(APPEND agcFrameReplayModes zero shader shader_host shader_host_rewritten shader_host_restored shader_unaligned_restored shader_hole delta_hole shader_prologue_code shader_prologue_header shader_prologue_readonly)
     endif()
     if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND agcFrameReplayModes unwatched)
@@ -25,6 +37,14 @@ if(BUILD_TESTING)
         if(mode STREQUAL "unwatched")
             set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT
                     "APS5_NO_WRITE_WATCH=1;APS5_FRAME_CAPTURE=${capture};APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0")
+        endif()
+        if(mode STREQUAL "environment")
+            set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT
+                    "APS5_HEADLESS_PIPELINE_CACHE=1;APS5_FRAME_CAPTURE=${capture};APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0")
+        endif()
+        if(mode STREQUAL "serial_flip_in_order")
+            set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT
+                    "APS5_CPU_FLIP_IN_ORDER=1")
         endif()
         if(WIN32)
             set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT_MODIFICATION

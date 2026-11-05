@@ -118,6 +118,7 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
     } clear{labels, queue};
     bool first = true;
     for (const auto& label : labels) {
+        const GuestMemory::StoreSerialScope stores(label.serial);
         const auto bytes = std::span<const std::byte>(label.bytes).first(label.size);
         const auto stamp = ++eventSerial;
         const int reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label.address, bytes, stamp, queue, first) : 4;
