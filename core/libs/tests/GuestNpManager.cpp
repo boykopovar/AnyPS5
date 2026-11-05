@@ -408,6 +408,28 @@ void CheckManagerIntUserLookups() {
     Require(sceNpManagerIntGetUserIdByNpId(nullptr, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByNpId must refuse a null NpId");
     Require(sceNpManagerIntGetUserIdByNpId(&npId, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByNpId must refuse a null output");
     Require(sceNpManagerIntGetUserIdByNpId(&npId, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByNpId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(nullptr, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByOnlineIdSdk must refuse a null online id");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(&onlineId, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByOnlineIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetUserIdByOnlineIdSdk(&onlineId, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByOnlineIdSdk must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetNpIdByOnlineId(nullptr, &npId) == InvalidArgument, "sceNpManagerIntGetNpIdByOnlineId must refuse a null online id");
+    Require(sceNpManagerIntGetNpIdByOnlineId(&onlineId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpIdByOnlineId must refuse a null output");
+    Require(sceNpManagerIntGetNpIdByOnlineId(&onlineId, &npId) == SignedOut, "sceNpManagerIntGetNpIdByOnlineId must report NP as signed out");
+    Require(sceNpManagerIntGetUserIdByAccountId(0, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByAccountId must refuse a zero account id");
+    Require(sceNpManagerIntGetUserIdByAccountId(1, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByAccountId must refuse a null output");
+    Require(sceNpManagerIntGetUserIdByAccountId(1, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByAccountId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(0, &onlineId) == InvalidArgument, "sceNpManagerIntGetOnlineIdByAccountId must refuse a zero account id");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(1, nullptr) == InvalidArgument, "sceNpManagerIntGetOnlineIdByAccountId must refuse a null output");
+    Require(sceNpManagerIntGetOnlineIdByAccountId(1, &onlineId) == SignedOut, "sceNpManagerIntGetOnlineIdByAccountId must report NP as signed out");
+    Require(sceNpManagerIntGetNpIdSdk(-1, &npId) == InvalidArgument, "sceNpManagerIntGetNpIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetNpIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetNpIdSdk(InitialUserId, &npId) == SignedOut, "sceNpManagerIntGetNpIdSdk must report NP as signed out");
+    Require(sceNpManagerIntGetOnlineIdSdk(-1, &onlineId) == InvalidArgument, "sceNpManagerIntGetOnlineIdSdk must refuse user id -1");
+    Require(sceNpManagerIntGetOnlineIdSdk(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetOnlineIdSdk must refuse a null output");
+    Require(sceNpManagerIntGetOnlineIdSdk(InitialUserId, &onlineId) == SignedOut, "sceNpManagerIntGetOnlineIdSdk must report NP as signed out");
+    SentinelBuffer parentalFlag;
+    Require(sceNpManagerIntGetParentalControlFlag(-1, parentalFlag.bytes) == InvalidArgument && parentalFlag.Untouched(), "sceNpManagerIntGetParentalControlFlag must refuse user id -1");
+    Require(sceNpManagerIntGetParentalControlFlag(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetParentalControlFlag must refuse a null output");
+    Require(sceNpManagerIntGetParentalControlFlag(InitialUserId, parentalFlag.bytes) == SignedOut && parentalFlag.Untouched(), "sceNpManagerIntGetParentalControlFlag must report NP as signed out and write nothing");
 }
 
 void CheckManagerIntAuthorization() {
