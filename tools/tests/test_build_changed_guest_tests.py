@@ -1,7 +1,6 @@
 import contextlib
 import io
 import json
-import re
 from pathlib import Path
 import subprocess
 import sys
@@ -60,6 +59,21 @@ class GuestTestTargets(unittest.TestCase):
         product = self.target("libScePad", target_type="SHARED_LIBRARY", source="core/libs/prx/libScePad/Export.cpp")
         self.assertEqual(self.selections(self.fixture([guest, host, product]), None), ["guest_pad_tests"])
 
+    def test_selects_changed_guest_test_with_mingw_libc_import_library(self):
+        for fragment in (
+            "core/libs/libs/implib/liblibc.dll.a",
+            r'"C:\build with spaces\core\libs\libs\implib\liblibc.dll.a"',
+        ):
+            with self.subTest(fragment=fragment):
+                guest = self.target("guest_mktime_tests", source="core/libs/tests/GuestMktime.cpp", fragment=fragment)
+                targets = {guest["id"]: guest}
+                source_root = Path(self.temporary.name).resolve()
+                for changed in (["core/libs/tests/GuestMktime.cpp"], ["core/libs/prx/libc/include/SonyCrt.hpp"]):
+                    self.assertEqual(
+                        build_changed_guest_tests.guest_test_targets(source_root, targets, changed),
+                        ["guest_mktime_tests"],
+                    )
+
     def test_changed_source_selects_only_the_changed_target(self):
         guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
@@ -74,12 +88,41 @@ class GuestTestTargets(unittest.TestCase):
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest_a, guest_b]), ["core/libs/prx/libScePad/include/Pad.hpp"]), ["guest_a_tests", "guest_b_tests"])
 
+    def test_a_cmake_fragment_change_selects_every_guest_test(self):
+        guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
+        guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
+        fragment = "core/libs/prx/libSceAgcDriver/tests/cmake/agc_driver_flip_tests.cmake"
+        self.assertEqual(self.selections(self.fixture([guest_a, guest_b]), [fragment]), ["guest_a_tests", "guest_b_tests"])
+
+    def test_a_build_wide_input_selects_every_guest_test_and_reaches_the_libs(self):
+        guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
+        guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
+        build = self.fixture([guest_a, guest_b])
+        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", "core/CMakeLists.txt", ".gitmodules"):
+            with self.subTest(path=path):
+                self.assertTrue(build_changed_guest_tests.reaches_libs({path}))
+                self.assertEqual(self.selections(build, [path]), ["guest_a_tests", "guest_b_tests"])
+
     def test_an_unrelated_change_selects_nothing(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
 
 
 class OwnerResolution(unittest.TestCase):
+    def test_cmake_owner_marker_precedes_tool_options_and_client_arguments(self):
+        owner = build_changed_guest_tests.test_owner(
+            ["C:/cmake.exe", "-DPATCHER=C:/b/nid_patcher.exe", "-P", "wrapper.cmake", "--",
+             "C:/b/guest_owner_tests.exe", "C:/b/guest_client_tests.exe"],
+            {"nid_patcher": "nid_patcher", "guest_owner_tests": "guest_owner_tests",
+             "guest_client_tests": "guest_client_tests"})
+        self.assertEqual(owner, "guest_owner_tests")
+
+    def test_cmake_owner_marker_also_resolves_extensionless_executables(self):
+        owner = build_changed_guest_tests.test_owner(
+            ["/usr/bin/cmake", "-P", "wrapper.cmake", "--", "/build/guest_owner_tests", "/build/guest_client_tests"],
+            {"guest_owner_tests": "guest_owner_tests", "guest_client_tests": "guest_client_tests"})
+        self.assertEqual(owner, "guest_owner_tests")
+
     def test_resolves_the_executable_not_a_test_argument(self):
         owner = build_changed_guest_tests.test_owner(
             ["C:/b/tests/guest_np_common_tests.exe", "build"], {"guest_np_common_tests": "guest_np_common_tests"})
@@ -147,16 +190,109 @@ class Main(unittest.TestCase):
             self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx"),
         ])
         calls = []
-        with mock.patch.object(build_changed_guest_tests.subprocess, "run",
-                               side_effect=lambda cmd, **_: calls.append(cmd) or run_result(self.listing() if cmd[:3] == ["ctest", "--test-dir", str(build)] and "--show-only=json-v1" in cmd else "")):
+        selections = []
+        def execute(cmd, **_):
+            calls.append(cmd)
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(self.listing() if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             code = self.main(build, ["core/libs/tests/GuestNp.cpp", "core/libs/tests/Guest.cpp"])
         self.assertEqual(code, 0)
         run_cmd = [cmd for cmd in calls if cmd[0] == "ctest" and not any("--show-only" in part for part in cmd)][0]
-        pattern = run_cmd[run_cmd.index("-R") + 1]
-        self.assertIn(re.escape("guest_np_common_build"), pattern)
-        self.assertIn(re.escape("guest_np_common_fetch"), pattern)
-        self.assertIn(re.escape("guest_pad"), pattern)
+        self.assertEqual(selections, ["0,0,0,1,2,3\n"])
         self.assertIn("--no-tests=error", run_cmd)
+
+    def test_cmake_wrapper_is_not_owned_by_its_guest_client_argument(self):
+        build = self.fixture([
+            self.target("guest_http_client_tests", source="core/libs/tests/HttpClient.cpp", fragment="libc.prx"),
+            self.target("guest_avplayer_tests", source="core/libs/tests/AvPlayer.cpp", fragment="libc.prx"),
+            self.target("avplayer_http_patched_modules_tests", source="core/libs/tests/AvPlayerHttpModules.cpp"),
+            self.target("nid_patcher", source="core/nid_patcher/main.cpp"),
+        ])
+        listing = json.dumps({"tests": [
+            {"name": "guest_http_client", "command": ["C:/b/tests/guest_http_client_tests.exe"]},
+            {"name": "guest_avplayer", "command": ["C:/b/tests/guest_avplayer_tests.exe"]},
+            {"name": "avplayer_http_patched_modules", "command": [
+                "C:/cmake/bin/cmake.exe", "-DPATCHER=C:/b/nid_patcher.exe",
+                "-P", "AvPlayerHttpModules.cmake", "--",
+                "C:/b/tests/avplayer_http_patched_modules_tests.exe",
+                "C:/b/tests/guest_http_client_tests.exe", "C:/b/tests/guest_avplayer_tests.exe",
+            ]},
+        ]})
+        selections = []
+        builds = []
+        def execute(cmd, **_):
+            if cmd[0] == "cmake":
+                builds.append(cmd[cmd.index("--target") + 1:])
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            code = self.main(build, ["core/libs/include/Changed.hpp"])
+        self.assertEqual(code, 0)
+        self.assertEqual(selections, ["0,0,0,1,2,3\n"])
+        self.assertIn(["avplayer_http_patched_modules_tests"], builds)
+
+    def test_output_log_reaches_the_ctest_run(self):
+        build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_text("core/libs/tests/Guest.cpp", encoding="utf-8")
+        calls = []
+        def execute(cmd, **_):
+            calls.append(cmd)
+            return run_result(self.listing() if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            code = build_changed_guest_tests.main([str(build), str(changed), "--output-log", "ctest.log"])
+        self.assertEqual(code, 0)
+        run_cmd = [cmd for cmd in calls if cmd[0] == "ctest" and "-I" in cmd]
+        self.assertEqual(len(run_cmd), 1)
+        self.assertEqual(run_cmd[0][run_cmd[0].index("--output-log") + 1], "ctest.log")
+
+    def test_large_selection_fits_windows_commands_and_preserves_every_test(self):
+        selected = ["guest_" + "long_name_" * 8 + str(index) for index in range(600)]
+        tests = [{"name": "unrelated", "command": ["other.exe"]}]
+        tests += [{"name": f"case [{index}].+ \U0001f600", "command": [f"C:/b/{name}.exe"]}
+                  for index, name in enumerate(selected)]
+        listing = json.dumps({"tests": tests})
+        calls = []
+        seen_indices = []
+        def execute(cmd, **_):
+            length = len(subprocess.list2cmdline(cmd).encode("utf-16-le")) // 2
+            if length >= 32767:
+                raise OSError(206, "Windows command line is too long")
+            calls.append(cmd)
+            if "-I" in cmd:
+                content = Path(cmd[cmd.index("-I") + 1]).read_text()
+                seen_indices.extend(map(int, content.split(",")[3:]))
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), \
+                mock.patch("select_tests.sys.platform", "win32"):
+            build_changed_guest_tests.run(Path(self.temporary.name), selected, {name: name for name in selected})
+        builds = [cmd[cmd.index("--target") + 1:] for cmd in calls if cmd[0] == "cmake"]
+        self.assertEqual(builds[0], ["libs"])
+        self.assertGreater(len(builds), 2)
+        self.assertEqual([name for batch in builds[1:] for name in batch], selected)
+        self.assertEqual(seen_indices, list(range(2, len(tests) + 1)))
+        self.assertEqual(len([cmd for cmd in calls if "-I" in cmd]), 1)
+
+    def test_ctest_index_file_runs_every_resolved_test(self):
+        build = Path(self.temporary.name) / "ctest-build"
+        build.mkdir()
+        python = Path(sys.executable).as_posix()
+        body = 'add_test("unrelated" "cmake" "-E" "touch" "unrelated")\n'
+        for index in range(11):
+            body += f'add_test("selected [{index}].+" "{python}" "-c" "open(\'ran-{index}\', \'w\')")\n'
+        (build / "CTestTestfile.cmake").write_text(body)
+        real_run = subprocess.run
+        def execute(cmd, **kwargs):
+            if cmd[0] == "cmake":
+                return run_result()
+            return real_run(cmd, **{**kwargs, "capture_output": True})
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            build_changed_guest_tests.run(build, ["python_target"], {Path(sys.executable).stem: "python_target"})
+        self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
+        self.assertFalse((build / "unrelated").exists())
 
     def test_a_production_only_change_still_builds_libs_and_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
@@ -173,13 +309,18 @@ class Main(unittest.TestCase):
         build = self.fixture([guest])
         listing = json.dumps({"tests": [{"name": "guest_pad", "command": ["C:/b/tests/pad-renamed.exe"]}]})
         calls = []
-        with mock.patch.object(build_changed_guest_tests.subprocess, "run",
-                               side_effect=lambda cmd, **_: calls.append(cmd) or run_result(listing if "--show-only=json-v1" in cmd else "")):
+        selections = []
+        def execute(cmd, **_):
+            calls.append(cmd)
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             code = self.main(build, ["core/libs/tests/Guest.cpp"])
         self.assertEqual(code, 0)
         commands = [cmd for cmd in calls if cmd[0] == "ctest" and "--show-only=json-v1" not in cmd]
         self.assertEqual(len(commands), 1)
-        self.assertEqual(commands[0][commands[0].index("-R") + 1], "^(guest_pad)$")
+        self.assertEqual(selections, ["0,0,0,1\n"])
 
     def test_an_unrelated_change_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
@@ -215,6 +356,20 @@ class Main(unittest.TestCase):
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=subprocess.CalledProcessError(2, "cmake")):
             code = self.main(build, ["core/libs/prx/libc/src/FloatBuiltins.cpp"])
         self.assertEqual(code, 1)
+
+    def test_symbolic_link_loop_build_directory_is_reported_cleanly(self):
+        root = Path(self.temporary.name)
+        loop = root / "build"
+        try:
+            loop.symlink_to(root / "other")
+            (root / "other").symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertEqual(build_changed_guest_tests.main([str(loop)]), 1)
+        self.assertIn("no CMake File API index", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
 
 
 if __name__ == "__main__":

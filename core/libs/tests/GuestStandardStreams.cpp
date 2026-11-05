@@ -89,6 +89,28 @@ static bool CheckFileBytes(const std::string& filename, const std::string& expec
     return false;
 }
 
+static void CheckGetcharPutchar() {
+    auto* const savedInput = __stdinp_nid_postfix;
+    auto* const savedOutput = __stdoutp_nid_postfix;
+    FileStream input(TemporaryFile::Open());
+    Require(fputc_nid_postfix('T', &input) == 'T' && fputc_nid_postfix(0xff, &input) == 0xff);
+    rewind_nid_postfix(&input);
+    __stdinp_nid_postfix = &input;
+    Require(getchar_nid_postfix() == 'T' && getchar_nid_postfix() == 0xff);
+    Require(getchar_nid_postfix() == EOF && feof_nid_postfix(&input) != 0 && ferror_nid_postfix(&input) == 0);
+    FileStream output(TemporaryFile::Open());
+    __stdoutp_nid_postfix = &output;
+    const int written[] = {putchar_nid_postfix('U'), putchar_nid_postfix(0x141), putchar_nid_postfix(-1)};
+    __stdinp_nid_postfix = savedInput;
+    __stdoutp_nid_postfix = savedOutput;
+    Require(written[0] == 'U' && written[1] == 0x41 && written[2] == 0xff);
+    rewind_nid_postfix(&output);
+    Require(fgetc_nid_postfix(&output) == 'U' && fgetc_nid_postfix(&output) == 0x41 && fgetc_nid_postfix(&output) == 0xff);
+    Require(fgetc_nid_postfix(&output) == EOF);
+    input.Close();
+    output.Close();
+}
+
 static void CheckGetcPutc() {
     FileStream stream(TemporaryFile::Open());
     Require(putc_nid_postfix('A', &stream) == 'A');
@@ -281,16 +303,30 @@ static void CheckFgetsSize() {
         std::memset(buffer, '!', sizeof(buffer));
         *__error_nid_postfix() = 0;
         Require(fgets_nid_postfix(buffer, size, &stream) == nullptr);
-        Require(*__error_nid_postfix() == 22 && ferror_nid_postfix(&stream) != 0 && feof_nid_postfix(&stream) == 0);
+        Require(*__error_nid_postfix() == 0 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
         Require(buffer[0] == '!' && ftello_nid_postfix(&stream) == 0);
-        Require(ferror_nid_postfix(&stream) != 0);
-        clearerr_nid_postfix(&stream);
-
-        Require(ferror_nid_postfix(&stream) == 0);
     }
     char line[8]{};
     Require(fgets_nid_postfix(line, sizeof(line), &stream) == line && std::strcmp(line, "line\n") == 0);
     Require(ferror_nid_postfix(&stream) == 0);
+    stream.Close();
+}
+
+static void CheckFgetsSizeOne() {
+    FileStream stream(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("line\n", 1, 5, &stream) == 5);
+    rewind_nid_postfix(&stream);
+    char buffer[8];
+    std::memset(buffer, '!', sizeof(buffer));
+    *__error_nid_postfix() = 0;
+    Require(fgets_nid_postfix(buffer, 1, &stream) == nullptr && buffer[0] == '!' && *__error_nid_postfix() == 0);
+    Require(ftello_nid_postfix(&stream) == 0 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
+    Require(fgets_nid_postfix(buffer, sizeof(buffer), &stream) == buffer && std::strcmp(buffer, "line\n") == 0);
+    Require(fgets_nid_postfix(buffer, sizeof(buffer), &stream) == nullptr && feof_nid_postfix(&stream) != 0);
+    std::memset(buffer, '!', sizeof(buffer));
+    *__error_nid_postfix() = 0;
+    Require(fgets_nid_postfix(buffer, 1, &stream) == nullptr && buffer[0] == '!' && *__error_nid_postfix() == 0);
+    Require(ftello_nid_postfix(&stream) == 5 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) != 0);
     stream.Close();
 }
 
@@ -929,6 +965,10 @@ int main(int argc, char** argv) {
     clearerr_nid_postfix(&wideIo);
 
     Require(fgetws_nid_postfix(wideBuf, 16, nullptr) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(u't', nullptr) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(0x100, nullptr) == -1 && *__error_nid_postfix() == 22);
     wideBuf[0] = u'X';
     wideBuf[1] = u'Y';
     std::rewind(wideIo.GetHandle());
@@ -1090,9 +1130,11 @@ int main(int argc, char** argv) {
     CheckRewind();
     CheckUngetcEndOfFile();
     CheckFgetsSize();
+    CheckFgetsSizeOne();
     CheckSupplementaryWideCharacters();
     CheckUnlockedStreams();
     CheckGetcPutc();
+    CheckGetcharPutchar();
     CheckUnlockedStreamLock(false);
     CheckUnlockedStreamLock(true);
     CheckUnlockedStreamLock(false, feof_unlocked_nid_postfix);
