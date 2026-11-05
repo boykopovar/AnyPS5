@@ -326,6 +326,15 @@ static void CheckStrictMemoryProtectionBits() {
         Require(sceKernelGetDirectMemoryType(physical, &type, &start, &end) == 0 && type == 0);
         Require(bytes[0] == 5 && bytes[length - 1] == 7);
     }
+    for (const int flags : {0x1000000, 0x40000000, -1}) {
+        void* invalid = nullptr;
+        Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, flags, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    }
+    for (const std::size_t alignment : {std::size_t{1}, std::size_t{0x2000}, std::size_t{0x3000}, std::size_t{0x6000}, std::size_t{0x80000000}}) {
+        void* invalid = nullptr;
+        Require(sceKernelMapDirectMemory2(&invalid, length, 0, 3, 0, physical, alignment) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+    }
+    Require(bytes[0] == 5 && bytes[length - 1] == 7);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
     Require(sceKernelReleaseDirectMemory(physical, length) == 0);
 }
