@@ -4,6 +4,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
+#include "prx/libSceFreeTypeOt/include/OutlineTransform.hpp"
 #include "prx/libSceFreeTypeOt/include/Polar.hpp"
 #include "prx/libSceFreeTypeOt/include/Raccess.hpp"
 
