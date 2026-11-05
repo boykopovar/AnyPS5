@@ -802,6 +802,18 @@ void frameSegment(
                 skip(reason);
                 continue;
             }
+            static const char* rangeText = std::getenv("APS5_RELINK_RELOCATE_RANGE");
+            const auto ordinal = report.Relocated + [&] { std::size_t count = 0; for (const auto& [why, n] : report.NotRelocated) count += n; return count; }() + report.OutOfRange;
+            if (rangeText != nullptr) {
+                char* split = nullptr;
+                const auto low = std::strtoull(rangeText, &split, 0);
+                const auto high = split != nullptr && *split == ':' ? std::strtoull(split + 1, nullptr, 0) : ~0ull;
+                if (ordinal < low || ordinal >= high) {
+                    ++report.OutOfRange;
+                    skip(reason);
+                    continue;
+                }
+            }
             if (auto site = relocateLeaf(seg, ph, start, body, targets, overlapsExisting, refusal, operands)) {
                 taken.emplace_back(start, site->Length + start);
                 sites.push_back(std::move(*site));

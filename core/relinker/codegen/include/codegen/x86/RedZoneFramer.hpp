@@ -30,6 +30,7 @@ struct RedZoneFrameReport {
     std::size_t StubbedOperands = 0;
     std::size_t Relocated = 0;
     std::size_t RelocatedOperands = 0;
+    std::size_t OutOfRange = 0;
     std::map<std::string, std::size_t> Skipped;
     std::map<std::string, std::size_t> NotRelocated;
 };
