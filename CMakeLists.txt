@@ -251,9 +251,15 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_wrappers.py)
         add_test(NAME progress_read_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_read_encoding.py)
+        add_test(NAME tools_audit_strict_partial COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_strict_partial.py)
+        set_tests_properties(tools_audit_strict_partial PROPERTIES TIMEOUT 20)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
+            add_test(NAME tools_catalog_json COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_catalog_json.py)
+            set_tests_properties(tools_catalog_json PROPERTIES TIMEOUT 20)
             add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
         endif()
@@ -360,6 +366,9 @@ if(BUILD_TESTING)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
+        add_test(NAME relinker_seed_manifest COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_seed_manifest.py)
+        set_tests_properties(relinker_seed_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME sanitizer_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
         add_test(NAME relinker_fuzz_fixture_warnings COMMAND ${Python3_EXECUTABLE}
