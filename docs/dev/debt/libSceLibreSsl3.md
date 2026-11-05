@@ -31,6 +31,7 @@
 - [sk_new, sk_push and sk_free](../../../core/libs/prx/libSceLibreSsl3/src/Stack.cpp) (libSceLibreSsl3) - follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/stack/stack.c) `stack.c` with libSceLibreSsl's 32-byte `_STACK` layout, which `stack_local.h` keeps there. Stacks and element arrays come from the guest heap, so the forwarded `sk_pop_free` can release them. Nothing is checked on the console. Where LibreSSL faults or overflows, they throw: `sk_push` on a null stack, on a negative element count, on a null element array it does not regrow, or when the element array cannot double without overflowing `int`
 
 - [ASN1_TIME_diff](../../../core/libs/prx/libSceLibreSsl3/src/Time.cpp) has no console ABI or behavior verification. Its signature and date rules follow LibreSSL 4.0.0 [a_time.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time.c), [a_time_tm.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) and [a_time_posix.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_posix.c), using the existing 24-byte string layout. Null inputs use the host wall clock; the console clock relationship is unverified. Null output pointers throw after valid input parsing, where the reference dereferences them. Closes when: measured on a PS5.
+- [ASN1_TIME_new and X509_gmtime_adj](../../../core/libs/prx/libSceLibreSsl3/src/TimeNew.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1/a_time_tm.c) `a_time_tm.c` and `tasn_new.c`, `ASN1_TIME_new` returns a zeroed 24-byte string from the guest heap with type -1 and the multi-string flag, queueing two ASN1 malloc failures when the allocation fails, and `X509_gmtime_adj` writes the host wall clock plus the offset as UTCTime for 1950 to 2049 and GeneralizedTime otherwise, reusing the given string or a new one, and returns null without an error outside years 0 to 9999. The console clock and the heap the guest frees these with are unverified. Closes when: compared with the console.
 
 ### Additional callable export inventory
 
@@ -129,7 +130,6 @@
 | `BIO_get_data` | `U3AsZ-9e2MI` |
 | `SSL_CTX_set0_chain` | `UHkYqkyfwOs` |
 | `EVP_PKEY2PKCS8` | `UT6E1YgI8mw` |
-| `ASN1_TIME_new` | `UmAPG5bxYYk` |
 | `X509_STORE_load_locations` | `V3JtebYui1A` |
 | `ERR_func_error_string` | `VXuysR7ySzw` |
 | `EVP_get_digestbyname` | `Wm24hhTLqWM` |
@@ -139,7 +139,6 @@
 | `X509_add_ext` | `YJ7bfxMHniE` |
 | `tls_connect_socket` | `ZERQN8ewpgk` |
 | `SSL_CTX_set_quic_method` | `ZFeTGo4ybcw` |
-| `X509_gmtime_adj` | `ZQ3b6SakHkc` |
 | `SSL_process_quic_post_handshake` | `aKGUCnoiE+k` |
 | `unknown` | `aLdgrI2jAF0` |
 | `EC_POINT_clear_free` | `aSO3Svp7umY` |
