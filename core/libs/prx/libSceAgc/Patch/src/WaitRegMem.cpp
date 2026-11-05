@@ -49,6 +49,7 @@ int APS5_VABI sceAgcWaitRegMemPatchAddress(std::uint32_t* cmd, const volatile vo
     const auto is32Bit = ((wait[0] >> 8u) & 0xffu) == 0x3cu;
     const auto lowMask = is32Bit ? 3u : 7u;
     if (guestAddress != 0) Agc::Command::CheckAddress(guestAddress, is32Bit ? 4 : 8, __func__);
+    Agc::Command::CheckBits(guestAddress, 0xffffffffffffull, __func__);
     cmd[2] =(cmd[2] & 0xffff0000u) | (static_cast<std::uint32_t>(guestAddress >> 32u) & 0xffffu);
     cmd[3] = static_cast<std::uint32_t>(guestAddress);
     wait[2] = (static_cast<std::uint32_t>(guestAddress) & ~lowMask) | (wait[2] & lowMask);
