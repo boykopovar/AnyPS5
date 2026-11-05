@@ -1,7 +1,20 @@
-add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Bignum.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Aes.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Error.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ocsp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Stack.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ui.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Rsa.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509StoreContext.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Pkey.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherCtx.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Evp.cpp)
+add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Bignum.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Aes.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Error.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ocsp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Stack.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ui.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Rsa.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509StoreContext.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Pkey.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipherCtx.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Evp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Ec.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/OcspResponse.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpCipher.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpAes.cpp)
 target_include_directories(libSceLibreSsl PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl PRIVATE mbedcrypto)
 configure_windows_unwind(libSceLibreSsl)
+if(BUILD_TESTING)
+    add_test_executable(guest_libre_ssl_des_answers_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslDesAnswers.cpp)
+    target_include_directories(guest_libre_ssl_des_answers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libre_ssl_des_answers_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libre_ssl_des_answers_tests)
+    add_test(NAME guest_libre_ssl_des_answers COMMAND guest_libre_ssl_des_answers_tests)
+    set_tests_properties(guest_libre_ssl_des_answers PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libre_ssl_des_answers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp)
 
 if(BUILD_TESTING)
@@ -81,6 +94,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_aes PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_aes PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libre_ssl_error_model_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslErrorModel.cpp)
+    target_include_directories(guest_libre_ssl_error_model_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libre_ssl_error_model_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libre_ssl_error_model_tests)
+    add_test(NAME guest_libre_ssl_error_model COMMAND guest_libre_ssl_error_model_tests)
+    set_tests_properties(guest_libre_ssl_error_model PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libre_ssl_error_model PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
@@ -181,9 +205,55 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl_evp_cipher_ctx PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
+
+    add_test_executable(guest_libressl_ec_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEc.cpp)
+    target_include_directories(guest_libressl_ec_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ec_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_ec_tests)
+    add_test(NAME guest_libressl_ec COMMAND guest_libressl_ec_tests)
+    set_tests_properties(guest_libressl_ec PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ec PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_evp_cipher_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEvpCipher.cpp)
+    target_include_directories(guest_libressl_evp_cipher_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_evp_cipher_tests PRIVATE libSceLibreSsl)
+    configure_windows_unwind(guest_libressl_evp_cipher_tests)
+    add_test(NAME guest_libressl_evp_cipher COMMAND guest_libressl_evp_cipher_tests)
+    set_tests_properties(guest_libressl_evp_cipher PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_evp_cipher PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_ocsp_response_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslOcspResponse.cpp)
+    target_include_directories(guest_libressl_ocsp_response_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ocsp_response_tests PRIVATE libSceLibreSsl)
+    configure_windows_unwind(guest_libressl_ocsp_response_tests)
+    add_test(NAME guest_libressl_ocsp_response COMMAND guest_libressl_ocsp_response_tests)
+    set_tests_properties(guest_libressl_ocsp_response PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ocsp_response PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Cipher.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_digest_extents_tests ${LIBS_INCLUDE_DIR}/tests/GuestDigestExtents.cpp)
+    target_include_directories(guest_digest_extents_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_digest_extents_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_digest_extents_tests)
+    add_test(NAME guest_digest_extents COMMAND guest_digest_extents_tests)
+    set_tests_properties(guest_digest_extents PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_digest_extents PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_cipher_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslCipher.cpp)
