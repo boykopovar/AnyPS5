@@ -2,6 +2,11 @@
 
 - [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
 
+### IdMapper and in-game messages
+
+- [sceNpIdMapperAccountIdToNpId and sceNpIdMapperAccountIdToOnlineId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) validate the request id, user, input, output and 1..1000 payload size like the two reverse lookups and then report `SCE_NP_ERROR_SIGNED_OUT`. The seven-argument ABI comes from firmware 11.00 `libSceNpManager.sprx`, which shares one 334-byte body between the four conversions.
+- [The in-game message exports](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) model an offline queue: `Prepare` and `PrepareA` keep the callback address and user data per handle, `PrepareA` and `SendDataA` use the 0x200-byte message block while `SendData` uses the 0x80-byte one, and `SendData`/`SendDataA` accept 1..0x200 payload bytes and then return `0x80552B08` because no transport is connected. `GetMemoryPoolStatistics` zeroes 0x20 bytes and `CheckCallback` reports no queued message. The callback itself is never invoked, the pool size passed to `Initialize` is not accounted, and the `A`-variant argument mapping is inferred from the firmware thunks only; no dump imports these NIDs.
+
 ### Silent stubs
 
 - [sceNpUnregisterPlusEventCallback](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 whether or not a callback was registered, as `sceNpUnregisterPremiumEventCallback` does: `sceNpRegisterPlusEventCallback` keeps no callback, and a signed-out user gets no plus events

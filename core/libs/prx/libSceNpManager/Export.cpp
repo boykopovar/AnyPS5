@@ -39,12 +39,20 @@ static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
 static std::atomic<int> g_nextRequest{1};
 
+static constexpr int NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80552B02);
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND = static_cast<int>(0x80552B03);
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND = static_cast<int>(0x80552B05);
+static constexpr int NP_IN_GAME_MESSAGE_ERROR_NOT_CONNECTED = static_cast<int>(0x80552B08);
 
 namespace {
+struct InGameMessageCallback {
+    std::uint64_t address = 0;
+    void* userdata = nullptr;
+};
+
 struct InGameMessageContext {
     std::set<std::int32_t> handles;
+    std::map<std::int32_t, InGameMessageCallback> callbacks;
 };
 
 std::mutex inGameMessageMutex;
@@ -330,13 +338,19 @@ int APS5_VABI sceNpIdMapperAbortRequest(int reqId) {
     std::lock_guard lock(idMapperMutex);
     return idMapperRequests.count(reqId) ? 0 : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
-int APS5_VABI sceNpIdMapperAccountIdToNpId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperAccountIdToNpId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra) {
+    (void)flag;
+    (void)extra;
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
-int APS5_VABI sceNpIdMapperAccountIdToOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpIdMapperAccountIdToOnlineId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra) {
+    (void)flag;
+    (void)extra;
+    if (reqId <= 0) return NP_ID_MAPPER_REFUSED_REQUEST_ID;
+    if (userId == USER_SERVICE_USER_ID_INVALID || !input || !output || value < 1 || value > 1000) return NP_ID_MAPPER_REFUSED_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 int APS5_VABI sceNpIdMapperCreateRequest(void) {
     std::lock_guard lock(idMapperMutex);
@@ -370,20 +384,34 @@ int APS5_VABI sceNpInGameMessageAbortHandle(std::int32_t libCtxId, std::int32_t 
     return context->handles.count(handleId) == 1 ? 0 : NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
 }
 int APS5_VABI sceNpInGameMessageCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpInGameMessageGetMemoryPoolStatistics(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpInGameMessageGetMemoryPoolStatistics(std::int32_t libCtxId, void* statistics) {
+    if (statistics == nullptr) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(inGameMessageMutex);
+    if (!FindInGameMessageContext(libCtxId)) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    std::uint8_t empty[0x20] {};
+    if (!GuestCopyOut_nid_no_patch(statistics, empty, sizeof(empty))) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
     return 0;
 }
-int APS5_VABI sceNpInGameMessagePrepareA(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpInGameMessagePrepareA(std::int32_t libCtxId, std::int32_t handleId, std::int32_t userId, std::uint64_t callbackAddress, void* userdata) {
+    (void)userId;
+    if (callbackAddress == 0) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(inGameMessageMutex);
+    InGameMessageContext* context = FindInGameMessageContext(libCtxId);
+    if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    if (context->handles.count(handleId) != 1) return NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
+    context->callbacks[handleId] = {callbackAddress, userdata};
     return 0;
 }
-int APS5_VABI sceNpInGameMessageSendDataA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpInGameMessageSendDataA(std::int32_t libCtxId, const void* destination, const void* source, const void* message) {
+    if (!destination || !source || !message) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    std::uint64_t size = 0;
+    if (!GuestCopyIn_nid_no_patch(&size, static_cast<const std::uint8_t*>(message) + 0x200, sizeof(size))) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    if (size == 0 || size > 0x200) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(inGameMessageMutex);
+    if (!FindInGameMessageContext(libCtxId)) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    return NP_IN_GAME_MESSAGE_ERROR_NOT_CONNECTED;
 }
 int APS5_VABI sceNpIntGetAppType(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -1108,6 +1136,7 @@ int APS5_VABI sceNpInGameMessageDeleteHandle(std::int32_t libCtxId, std::int32_t
     std::lock_guard lock(inGameMessageMutex);
     InGameMessageContext* context = FindInGameMessageContext(libCtxId);
     if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    context->callbacks.erase(handleId);
     return context->handles.erase(handleId) == 1 ? 0 : NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
 }
 
@@ -1120,14 +1149,25 @@ int APS5_VABI sceNpInGameMessageInitialize(std::size_t poolSize, void* option) {
     return libCtxId;
 }
 
-int APS5_VABI sceNpInGameMessagePrepare() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpInGameMessagePrepare(std::int32_t libCtxId, std::int32_t handleId, std::int32_t userId, std::uint64_t callbackAddress, void* userdata) {
+    (void)userId;
+    if (callbackAddress == 0) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(inGameMessageMutex);
+    InGameMessageContext* context = FindInGameMessageContext(libCtxId);
+    if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    if (context->handles.count(handleId) != 1) return NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
+    context->callbacks[handleId] = {callbackAddress, userdata};
     return 0;
 }
 
-int APS5_VABI sceNpInGameMessageSendData() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpInGameMessageSendData(std::int32_t libCtxId, const void* destination, const void* source, const void* message) {
+    if (!destination || !source || !message) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    std::uint64_t size = 0;
+    if (!GuestCopyIn_nid_no_patch(&size, static_cast<const std::uint8_t*>(message) + 0x80, sizeof(size))) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    if (size == 0 || size > 0x200) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(inGameMessageMutex);
+    if (!FindInGameMessageContext(libCtxId)) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
+    return NP_IN_GAME_MESSAGE_ERROR_NOT_CONNECTED;
 }
 
 int APS5_VABI sceNpInGameMessageTerminate(std::int32_t libCtxId) {
