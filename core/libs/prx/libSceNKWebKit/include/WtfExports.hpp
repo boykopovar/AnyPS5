@@ -1,7 +1,9 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/PalTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
 #include <cstddef>
@@ -50,6 +52,9 @@ void APS5_VABI _ZN3JSC30waitForAsynchronousDisassemblyEv();
 unsigned int APS5_VABI _ZN3JSC31numberOfStaticOSRExitFuzzChecksEv();
 unsigned int APS5_VABI _ZN3JSC38numberOfExecutableAllocationFuzzChecksEv();
 void APS5_VABI _ZN3PAL10systemBeepEv();
+void APS5_VABI _ZN3PAL9SessionID26enableGenerationProtectionEv();
+PAL::SessionID APS5_VABI _ZN3PAL9SessionID26generateEphemeralSessionIDEv();
+PAL::SessionID APS5_VABI _ZN3PAL9SessionID27generatePersistentSessionIDEv();
 std::size_t APS5_VABI _ZN3WTF10StringImpl11reverseFindEDsj(const NKWebKit::WtfAbi::StringImpl* self, char16_t value, unsigned start);
 std::int32_t APS5_VABI _ZN3WTF10StringImpl19characterStartingAtEj(const NKWebKit::WtfAbi::StringImpl* self, unsigned index);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPDs(unsigned length, char16_t*& data);
@@ -60,6 +65,24 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl23convertToASCIIUppercaseE
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKhj(const unsigned char* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl9substringEjj(const NKWebKit::WtfAbi::StringImpl* self, unsigned start, unsigned length);
+void APS5_VABI _ZN3WTF10TextStream10startGroupEv(NKWebKit::WtfAbi::TextStream* self);
+void APS5_VABI _ZN3WTF10TextStream11writeIndentEv(NKWebKit::WtfAbi::TextStream* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10TextStream7releaseEv(NKWebKit::WtfAbi::TextStream* self);
+void APS5_VABI _ZN3WTF10TextStream8endGroupEv(NKWebKit::WtfAbi::TextStream* self);
+void APS5_VABI _ZN3WTF10TextStream8nextLineEv(NKWebKit::WtfAbi::TextStream* self);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEPKc(NKWebKit::WtfAbi::TextStream* self, const char* string);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEPKv(NKWebKit::WtfAbi::TextStream* self, const void* pointer);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsERKNS_6StringE(NKWebKit::WtfAbi::TextStream* self, const NKWebKit::WtfAbi::String& string);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEb(NKWebKit::WtfAbi::TextStream* self, bool value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEc(NKWebKit::WtfAbi::TextStream* self, char value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEd(NKWebKit::WtfAbi::TextStream* self, double value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEf(NKWebKit::WtfAbi::TextStream* self, float value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEi(NKWebKit::WtfAbi::TextStream* self, int value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEj(NKWebKit::WtfAbi::TextStream* self, unsigned value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEl(NKWebKit::WtfAbi::TextStream* self, std::int64_t value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEm(NKWebKit::WtfAbi::TextStream* self, std::uint64_t value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEx(NKWebKit::WtfAbi::TextStream* self, long long value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEy(NKWebKit::WtfAbi::TextStream* self, unsigned long long value);
 void* APS5_VABI _ZN3WTF10fastCallocEmm(std::size_t count, std::size_t size);
 void* APS5_VABI _ZN3WTF10fastMallocEm(std::size_t size);
 char* APS5_VABI _ZN3WTF10fastStrDupEPKc(const char* str);
@@ -67,7 +90,14 @@ bool APS5_VABI _ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(const WTF::T
 bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 void* APS5_VABI _ZN3WTF11fastReallocEPvm(void* ptr, std::size_t size);
 void APS5_VABI _ZN3WTF11jsValueFreeEPv(void* ptr);
+bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const NKWebKit::WtfAbi::URL* url);
 WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv();
+void APS5_VABI _ZN3WTF13StringBuilder11shrinkToFitEv(NKWebKit::WtfAbi::StringBuilder* self);
+void APS5_VABI _ZN3WTF13StringBuilder12appendNumberEf(NKWebKit::WtfAbi::StringBuilder* self, float number);
+void APS5_VABI _ZN3WTF13StringBuilder15reserveCapacityEj(NKWebKit::WtfAbi::StringBuilder* self, unsigned newCapacity);
+void APS5_VABI _ZN3WTF13StringBuilder16appendCharactersEPKDsj(NKWebKit::WtfAbi::StringBuilder* self, const char16_t* characters, unsigned length);
+void APS5_VABI _ZN3WTF13StringBuilder16appendCharactersEPKhj(NKWebKit::WtfAbi::StringBuilder* self, const unsigned char* characters, unsigned length);
+void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(NKWebKit::WtfAbi::StringBuilder* self, const NKWebKit::WtfAbi::String& string);
 NKWebKit::WtfAbi::ProcessPrivileges APS5_VABI _ZN3WTF13allPrivilegesEv();
 void* APS5_VABI _ZN3WTF13jsValueMallocEm(std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastCallocEmm(WTF::TryMallocReturnValue* result, std::size_t count, std::size_t size);
@@ -80,6 +110,7 @@ void* APS5_VABI _ZN3WTF16fastZeroedMallocEm(std::size_t size);
 void* APS5_VABI _ZN3WTF16tryJSValueMallocEm(std::size_t size);
 void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::GregorianDateTime* self);
 void* APS5_VABI _ZN3WTF17fastAlignedMallocEmm(std::size_t alignment, std::size_t size);
+void APS5_VABI _ZN3WTF17languageDidChangeEv();
 int APS5_VABI _ZN3WTF18constantTimeMemcmpEPKvS1_m(const void* voidA, const void* voidB, std::size_t length);
 void APS5_VABI _ZN3WTF18fastEnableMiniModeEv();
 std::size_t APS5_VABI _ZN3WTF18fastMallocGoodSizeEm(std::size_t size);
@@ -102,13 +133,19 @@ void APS5_VABI _ZN3WTF22removeProcessPrivilegeENS_16ProcessPrivilegeE(unsigned p
 void APS5_VABI _ZN3WTF23fastCommitAlignedMemoryEPvm(void*, std::size_t);
 WTF::TimeWithDynamicClockType APS5_VABI _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(WTF::ClockType type);
 WTF::LocalTimeOffset APS5_VABI _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(double, WTF::TimeType);
+void APS5_VABI _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(void* context, void (APS5_VABI *observer)(void*));
 void APS5_VABI _ZN3WTF25fastDecommitAlignedMemoryEPvm(void*, std::size_t);
 void APS5_VABI _ZN3WTF25fastMallocDumpMallocStatsEv();
 void APS5_VABI _ZN3WTF27releaseFastMallocFreeMemoryEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(const NKWebKit::WtfAbi::String* localeName);
+void APS5_VABI _ZN3WTF28removeLanguageChangeObserverEPv(void* context);
 void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::size_t length);
 bool APS5_VABI _ZN3WTF29equalIgnoringASCIICaseNonNullEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);
+void APS5_VABI _ZN3WTF30overrideUserPreferredLanguagesERKNS_6VectorINS_6StringELm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(const NKWebKit::WtfAbi::StringVector* languages);
+NKWebKit::WtfAbi::StringVector APS5_VABI _ZN3WTF30userPreferredLanguagesOverrideEv();
 bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const NKWebKit::WtfAbi::URL* a, const NKWebKit::WtfAbi::URL* b);
 unsigned APS5_VABI _ZN3WTF31sixCharacterHashStringToIntegerEPKc(const char* data);
+std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(const NKWebKit::WtfAbi::String* language, const NKWebKit::WtfAbi::StringVector* languageList, bool* exactMatch);
 void APS5_VABI _ZN3WTF3URL10invalidateEv(NKWebKit::WtfAbi::URL* self);
 double APS5_VABI _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool& isLocalTime);
 void APS5_VABI _ZN3WTF40releaseFastMallocFreeMemoryForThisThreadEv();
@@ -156,6 +193,8 @@ std::size_t APS5_VABI _ZN3WTF8pageSizeEv();
 void APS5_VABI _ZN3WTF9dataLogFVEPKcP13__va_list_tag(const char* format, void* argList);
 bool APS5_VABI _ZN3WTFeqERKNS_7CStringEPKc(const NKWebKit::WtfAbi::CString& a, const char* b);
 bool APS5_VABI _ZN3WTFeqERKNS_7CStringES2_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTFlsERNS_10TextStreamENS_7SecondsE(NKWebKit::WtfAbi::TextStream& stream, WTF::Seconds seconds);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTFlsERNS_10TextStreamERKNS_3URLE(NKWebKit::WtfAbi::TextStream& stream, const NKWebKit::WtfAbi::URL& url);
 bool APS5_VABI _ZN3WTFltERKNS_7CStringES2_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 bool APS5_VABI _ZN7WebCore21isBackForwardLoadTypeENS_13FrameLoadTypeE(std::uint8_t type);
 bool APS5_VABI _ZN7WebCore8isReloadENS_13FrameLoadTypeE(std::uint8_t type);
@@ -182,6 +221,8 @@ void* APS5_VABI _ZN8Gigacage29tryAllocateZeroedVirtualPagesENS_4KindEm(std::uint
 void APS5_VABI _ZN8Gigacage4freeENS_4KindEPv(std::uint32_t, void* ptr);
 void* APS5_VABI _ZN8Gigacage6mallocENS_4KindEm(std::uint32_t, std::size_t size);
 void* APS5_VABI _ZN8Gigacage9tryMallocENS_4KindEm(std::uint32_t, std::size_t size);
+NKWebKit::WtfAbi::String APS5_VABI _ZN9Inspector18IdentifiersFactory16createIdentifierEv();
+NKWebKit::WtfAbi::String APS5_VABI _ZN9Inspector18IdentifiersFactory9requestIdEm(std::uint64_t identifier);
 bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEDs(const NKWebKit::WtfAbi::StringImpl* self, char16_t value);
 bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEPKcj(const NKWebKit::WtfAbi::StringImpl* self, const char* data, unsigned length);
 std::size_t APS5_VABI _ZNK3WTF10StringImpl11sizeInBytesEv(const NKWebKit::WtfAbi::StringImpl* self);
@@ -199,6 +240,7 @@ std::size_t APS5_VABI _ZNK3WTF10StringView4findES0_j(const NKWebKit::WtfAbi::Str
 NKWebKit::WtfAbi::CString APS5_VABI _ZNK3WTF10StringView4utf8ENS_14ConversionModeE(const NKWebKit::WtfAbi::StringView* self, unsigned mode);
 bool APS5_VABI _ZNK3WTF10StringView8endsWithEDs(const NKWebKit::WtfAbi::StringView* self, char16_t value);
 WTF::WallTime APS5_VABI _ZNK3WTF13MonotonicTime19approximateWallTimeEv(const WTF::MonotonicTime* self);
+void APS5_VABI _ZNK3WTF13StringBuilder11reifyStringEv(const NKWebKit::WtfAbi::StringBuilder* self);
 WTF::MonotonicTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(const WTF::TimeWithDynamicClockType* self);
 WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(const WTF::TimeWithDynamicClockType* self);
 WTF::WallTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(const WTF::TimeWithDynamicClockType* self);
@@ -210,14 +252,19 @@ bool APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypeleERKS0_(const WTF::TimeWithDyn
 WTF::Seconds APS5_VABI _ZNK3WTF24TimeWithDynamicClockTypemiERKS0_(const WTF::TimeWithDynamicClockType* self, const WTF::TimeWithDynamicClockType& other);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF19mimeTypeFromDataURLENS_10StringViewE(NKWebKit::WtfAbi::StringView dataURL);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const NKWebKit::WtfAbi::URL* self, unsigned length);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(const NKWebKit::WtfAbi::String* input);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE(const NKWebKit::WtfAbi::String* input);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE(const NKWebKit::WtfAbi::String* input);
 bool APS5_VABI _ZNK3WTF3URL10protocolIsENS_10StringViewE(const NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView protocol);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL11encodedUserEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL12isAboutBlankEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL13isAboutSrcDocEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL14isHierarchicalEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL15encodedPasswordEv(const NKWebKit::WtfAbi::URL* self);
+NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL17lastPathComponentEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL18fragmentIdentifierEv(const NKWebKit::WtfAbi::URL* self);
 bool APS5_VABI _ZNK3WTF3URL20protocolIsJavaScriptEv(const NKWebKit::WtfAbi::URL* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF3URL24strippedForUseAsReferrerEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL28queryWithLeadingQuestionMarkEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL39fragmentIdentifierWithLeadingNumberSignEv(const NKWebKit::WtfAbi::URL* self);
 NKWebKit::WtfAbi::StringView APS5_VABI _ZNK3WTF3URL4hostEv(const NKWebKit::WtfAbi::URL* self);

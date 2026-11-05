@@ -244,6 +244,7 @@ void Ngs2Voice::ResetSetup() {
     sampleRate = 0;
     waveformType = 0;
     atrac9 = {};
+    vag = {};
     pitch = 1.0f;
     phase = 0;
     blocks.clear();
@@ -300,7 +301,8 @@ static bool EmptySamplerFormat(const Ngs2WaveformFormat& format) {
 }
 
 static void ValidateSamplerFormat(const Ngs2WaveformFormat& format) {
-    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2PcmSampleBytes(format.waveform_type);
+    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_VAG) Ngs2PcmSampleBytes(format.waveform_type);
+    if (format.waveform_type == SCE_NGS2_WAVEFORM_TYPE_VAG && format.config_data != 0) throw std::runtime_error("NGS2: configured VAG waveforms are not implemented");
     if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && format.config_data != 0) {
         throw std::runtime_error("NGS2: configured PCM waveforms are not implemented");
     }
@@ -400,9 +402,12 @@ static void CheckBlocks(const Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWav
     if (!shape.accepts && !reset) throw Ngs2ReturnCode{FULL_WAVEFORM_BLOCKS};
     if (PS4_LIBRARY && shape.channels == 0 && param.num_blocks != 0) throw Ngs2ReturnCode{FULL_WAVEFORM_BLOCKS};
     ValidateBlocks(shape.channels, shape.waveformType, param);
-    const bool compressed = shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9;
+    const bool atrac9 = shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9;
+    const bool vag = shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG;
+    const bool compressed = atrac9 || vag;
     const std::size_t frameBytes = shape.channels == 0 || compressed ? 0 : shape.channels * Ngs2PcmSampleBytes(shape.waveformType);
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
+        if (vag) throw std::runtime_error("NGS2: appending VAG data is not implemented");
         const bool leadingPiece = !reset && !compressed && shape.channels == 1 && param.num_blocks == 1 && param.blocks[0].data_size != 0;
         if (param.num_blocks != 0 && (reset || shape.blocks == 0) && !shape.decodePending && !leadingPiece) throw std::invalid_argument("NGS2: appending data requires a waveform");
         for (std::uint32_t i = 0; i < param.num_blocks; ++i) {
@@ -421,13 +426,16 @@ static void CheckBlocks(const Ngs2SamplerShape& shape, const Ngs2SamplerVoiceWav
             if (shape.waveformType != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) throw std::runtime_error("NGS2: a dataless waveform block under the silence flag is not implemented for this format");
             continue;
         }
-        const std::uint64_t bytes = compressed ? Ngs2Atrac9BlockBytes(shape.frame, block) : (static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples) * frameBytes;
+        const std::uint64_t bytes = atrac9 ? Ngs2Atrac9BlockBytes(shape.frame, block)
+                                  : vag ? Ngs2VagBlockBytes(shape.channels, block)
+                                  : (static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples) * frameBytes;
         const bool streaming = block.num_samples != 0 && bytes > block.data_size && shape.waveformType == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L &&
                                block.num_skip_samples == 0 && block.num_repeats == 0 && block.data_size >= frameBytes && block.data_size % frameBytes == 0;
-        const bool compressedStream = compressed && accepts && block.num_repeats == 0;
+        const bool compressedStream = atrac9 && accepts && block.num_repeats == 0;
         if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream)) {
             throw std::invalid_argument("NGS2: waveform block " + std::to_string(i) + " does not fit its data");
         }
+        if (vag) Ngs2CheckVag(shape.channels, static_cast<const std::uint8_t*>(param.data) + block.data_offset, block);
     }
 }
 
@@ -552,7 +560,7 @@ static void CheckFilter(const Ngs2Voice& voice, const Ngs2SamplerVoiceFilterPara
 }
 
 static Ngs2SamplerVoiceFilterParam SamplerFilterParam(const Ngs2VoiceParamHeader& param) {
-    if (!PS4_LIBRARY) {
+    if (!PS4_LIBRARY || param.size == sizeof(Ngs2SamplerVoiceFilterParam)) {
         if (param.size < sizeof(Ngs2SamplerVoiceFilterParam)) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_CONTROL_SIZE};
         return reinterpret_cast<const Ngs2SamplerVoiceFilterParam&>(param);
     }
@@ -895,6 +903,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         voice.blocks.clear();
         voice.samplerReplayBlocks.clear();
         voice.samplerWritePosition = 0;
+        voice.vag = {};
     }
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
         AppendStreamData(voice, param);
@@ -913,6 +922,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
             continue;
         }
         voice.blocks.push_back({static_cast<const std::uint8_t*>(param.data) + block.data_offset, block});
+        if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_VAG) Ngs2DecodeVag(voice, voice.blocks.back());
         Ngs2SaveSamplerBlock(voice, voice.blocks.back());
     }
     if (preservePcm && !voice.blocks.empty()) {
@@ -1092,6 +1102,11 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
     if (voice.rack->system == nullptr && !voice.pendingControls.empty()) voice.ApplyPendingControls();
     try {
         for (const auto* param = param_list;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
+            if (!PS4_LIBRARY && voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && (param->id & 0xffff00e0u) == 0x40000000u) {
+                const auto& modules = voice.rack->customModuleIds;
+                const auto index = param->id & 0x1fu;
+                if (index >= modules.size() || modules[index] != ((param->id >> 8) & 0xffu)) return SCE_NGS2_ERROR_INVALID_PARAM_ID;
+            }
             if ((param->id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_PITCH_SHIFT) {
                 const auto index = param->id & 0x1fu;
                 if (index >= voice.customPitchShift.size() || voice.rack->customModuleIds[index] != SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) {
