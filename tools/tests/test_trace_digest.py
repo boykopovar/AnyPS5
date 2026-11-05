@@ -1429,6 +1429,17 @@ class CaptureSchemaTests(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(result.stdout, "")
 
+    def test_null_dirty_state_is_accepted_in_both_output_modes(self):
+        self.write(dict(SUMMARY, dirty=None), line=1)
+        self.assertIsNone(trace_digest.load_summary(self.summary, self.trace)["dirty"])
+        for options in ([], ["--json"]):
+            with self.subTest(options=options):
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), *options],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("(dirty)", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))

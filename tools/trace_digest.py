@@ -493,8 +493,8 @@ def validate_capture(record):
         capture_string(record.get(field), field)
     if type(record.get("trace_dropped")) is not bool:
         raise ValueError("trace_dropped must be a boolean")
-    if "dirty" in record and type(record["dirty"]) is not bool:
-        raise ValueError("dirty must be a boolean")
+    if record.get("dirty") is not None and type(record.get("dirty")) is not bool:
+        raise ValueError("dirty must be a boolean or null")
 
 
 def validate_interval(record):
