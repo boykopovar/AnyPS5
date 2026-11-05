@@ -108,6 +108,7 @@ int main() {
     constexpr int notFound = static_cast<int>(0x80412805);
 
     Require(sceGameUpdateTerminate() == notInitialized);
+    Require(sceGameUpdateCheckTitle() == notInitialized);
     TestRequestArguments(notInitialized, invalidArgument, invalidSize, notFound);
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
@@ -116,6 +117,7 @@ int main() {
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, nullptr) == invalidArgument);
     Require(sceGameUpdateInitialize() == 0);
     Require(sceGameUpdateInitialize() == alreadyInitialized);
+    Require(sceGameUpdateCheckTitle() == 0);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
 
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
@@ -127,6 +129,7 @@ int main() {
 
     Require(sceGameUpdateTerminate() == 0);
     Require(sceGameUpdateTerminate() == notInitialized);
+    Require(sceGameUpdateCheckTitle() == notInitialized);
     info.size = sizeof(info);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
