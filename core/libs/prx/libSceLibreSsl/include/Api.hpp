@@ -368,8 +368,6 @@ struct LibreSslOcspSingleResponse {
     void* singleExtensions;
 };
 
-struct EcPoint;
-
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
