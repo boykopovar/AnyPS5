@@ -874,7 +874,9 @@ static void AppendStreamData(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlo
         auto info = param.blocks[i];
         if (info.data_size == 0) continue;
         const auto* data = static_cast<const std::uint8_t*>(param.data) + info.data_offset;
-        if (!voice.blocks.empty() && voice.blocks.back().data + voice.blocks.back().info.data_size == data && voice.blocks.back().info.user_data == info.user_data) {
+        const bool midSuperframe = voice.waveformType != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 || voice.atrac9.superframeBytes == 0 ||
+            (!voice.blocks.empty() && voice.blocks.back().info.data_size % voice.atrac9.superframeBytes != 0);
+        if (midSuperframe && !voice.blocks.empty() && voice.blocks.back().data + voice.blocks.back().info.data_size == data && voice.blocks.back().info.user_data == info.user_data) {
             voice.blocks.back().info.data_size += info.data_size;
             if (!voice.samplerReplayBlocks.empty()) {
                 const auto last = voice.samplerWritePosition == 0 ? voice.samplerReplayBlocks.size() - 1 : voice.samplerWritePosition - 1;

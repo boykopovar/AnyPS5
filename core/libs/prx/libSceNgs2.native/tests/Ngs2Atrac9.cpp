@@ -572,6 +572,20 @@ static void TestRefill(const std::vector<float>& reference) {
     }
 }
 
+static void TestAlignedStreamChunksEndSeparately() {
+    const auto system = CreateSystem();
+    const auto voice = EmptySampler(system);
+    std::vector<std::uint8_t> data(Superframe, Superframe + SuperframeBytes);
+    for (int i = 0; i < 3; ++i) data.insert(data.end(), Superframe, Superframe + SuperframeBytes);
+    callbackFlags.clear();
+    Control(voice, SCE_NGS2_VOICE_PARAM_CALLBACK, Ngs2VoiceCallbackParam{{}, OnBlock, 0, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END, 0});
+    Queue(voice, data.data(), SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, SuperframeSamples, 0);
+    for (std::uint32_t i = 1; i < 4; ++i) Queue(voice, data.data() + i * SuperframeBytes, SuperframeBytes, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, SuperframeSamples, 0);
+    Render(system, SuperframeSamples * 4);
+    Require(callbackFlags.size() == 4);
+    Require(sceNgs2SystemDestroy(system, nullptr) == 0);
+}
+
 static void TestStarvationAndTruncation(const std::vector<float>& reference) {
     for (bool truncate : {false, true}) {
         const auto system = CreateSystem();
@@ -767,6 +781,7 @@ int main() {
     TestCorruptSuperframeAtPageEnd();
     TestStreamPartitions();
     TestRefill(reference);
+    TestAlignedStreamChunksEndSeparately();
     TestReplacement();
     TestStreamingReplay();
     TestStarvationAndTruncation(reference);
