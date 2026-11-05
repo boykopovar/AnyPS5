@@ -5944,6 +5944,14 @@ std::uint64_t SampledLookupKeyProofs() {
     return sampledLookupKeyProofs;
 }
 
+namespace {
+std::atomic<std::uint64_t> drawInputCopies{0};
+}
+
+std::uint64_t DrawInputCopies() {
+    return drawInputCopies.load(std::memory_order_relaxed);
+}
+
 std::uint64_t SampledTexturesCleared() {
     return TextureCounts().cleared.load(std::memory_order_relaxed);
 }
@@ -6197,6 +6205,14 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return std::nullopt;
                 if (guestMemory.WritesOverlap(begin, bytes) || recorder.PendingWriteOverlaps(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
+                if (usesBda && heapStage) {
+                    // Heap stages of an address draw read a moved buffer in place, as the build does;
+                    // where the build's memory cannot view it that way, the draw is built again.
+                    std::uint32_t adjustment = 0;
+                    const auto inPlace = guestMemory.TryDescriptor(address, static_cast<std::size_t>(size), adjustment);
+                    const bool classic = std::any_of(bindings.begin(), bindings.end(), [&](const Binding& other) { return !(other.heap && other.addressed) && std::find(other.allocations.begin(), other.allocations.end(), index) != other.allocations.end(); });
+                    if (!inPlace.has_value() || adjustment != item.adjustment || classic) return std::nullopt;
+                }
                 if (moved.empty()) moved.reserve(allocations.size());
                 moved.push_back({index, address, static_cast<std::size_t>(size)});
             }
@@ -6280,10 +6296,18 @@ std::size_t ShaderResources::DrawUploadLimit() {
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved, bool movedOnly, const BdaResources* faultRecord) const {
     requireGuestBuffers(moved);
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE && !heapStage) || (usesBda && !spaceReuse)) return {};
+    // Heap stages of an address draw read guest memory in place, at execution, as the BDA table
+    // and the hardware do: nothing is snapshotted, and a buffer that moved is viewed at its new
+    // address (MovedReadOnlyBuffers checked that the build's memory holds that view).
+    const bool readsInPlace = usesBda && heapStage;
+    movedOnly = movedOnly || readsInPlace;
+    thread_local std::vector<std::pair<std::size_t, VkDescriptorBufferInfo>>* inPlaceSlot = nullptr;
+    auto& inPlace = ShaderRecompiler::ThreadOwned(inPlaceSlot);
+    inPlace.clear();
     prepareFaultSlot();
     thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* readsSlot = nullptr;
     auto& reads = ShaderRecompiler::ThreadOwned(readsSlot);
-    guestMemory.InPlaceReads(reads);
+    if (!readsInPlace) guestMemory.InPlaceReads(reads);
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
     const auto uploadLimit = DrawUploadLimit();
     std::size_t totalSnapshotBytes = 0;
@@ -6300,6 +6324,12 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     for (std::size_t index = 0; index < allocations.size(); ++index) {
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
+        if (override != moved.end() && override->words.empty() && readsInPlace) {
+            std::uint32_t adjustment = 0;
+            inPlace.push_back({index, wholeDwordRange(guestMemory.Descriptor(override->address, override->size, adjustment))});
+            Require(adjustment == item.adjustment, "a moved buffer read in place lost its view's alignment");
+            continue;
+        }
         if (override != moved.end() && !override->words.empty()) {
             auto slice = recorder.DrawUpload(override->size);
             std::memcpy(slice.bytes, override->words.data(), override->size);
@@ -6359,19 +6389,21 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             if (GuestMemory::TrackerGeneration() != stamp[0]) stamped = false;
             else if (!uploaded || stamp[1] != 0) recorder.NoteUnwrittenDrawSnapshot(begin, bytes, stamp, buffer, offset);
         }
+        drawInputCopies.fetch_add(1, std::memory_order_relaxed);
         selected.push_back(index);
         keep({begin, std::move(buffer), offset, bytes});
         totalSnapshotBytes += bytes;
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }
-    if (selected.empty()) return {};
-    writeDrawSets(*result, selected, faultRecord);
+    if (selected.empty() && inPlace.empty()) return {};
+    Require(inPlace.empty() || addressedBuffers, "a moved buffer read in place has no addressed binding");
+    writeDrawSets(*result, selected, faultRecord, inPlace);
     recorder.Keep(result);
     for (const auto& snapshot : result->snapshots) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
     return result;
 }
 
-void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const {
+void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDescriptorBufferInfo>> inPlace) const {
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
     std::array<bool, 2> described{};
     thread_local std::array<std::vector<VkDescriptorPoolSize>, 2>* countsSlot = nullptr;
@@ -6441,6 +6473,7 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
             const auto& snapshot = result.snapshots[index];
             overrides[selected[index]] = {snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes};
         }
+        for (const auto& [index, info] : inPlace) overrides[index] = info;
         for (const auto& binding : bindings) {
             if (!binding.addressed) continue;
             for (const auto allocation : binding.allocations) overridden = overridden || overrides[allocation].buffer != VK_NULL_HANDLE;

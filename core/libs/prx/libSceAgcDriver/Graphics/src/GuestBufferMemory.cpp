@@ -6702,34 +6702,47 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
 }
 
 VkDescriptorBufferInfo GuestBufferMemory::Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const {
-    Require(uploaded && !committed, "guest GPU memory is not available");
-    Require(bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest buffer view");
+    std::string failure;
+    const auto info = TryDescriptor(address, bytes, adjustment, &failure);
+    if (!info.has_value()) Require(false, failure);
+    return *info;
+}
+
+std::optional<VkDescriptorBufferInfo> GuestBufferMemory::TryDescriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment, std::string* failure) const {
+    const auto fail = [failure](std::string text) -> std::optional<VkDescriptorBufferInfo> {
+        if (failure != nullptr) *failure = std::move(text);
+        return std::nullopt;
+    };
+    if (!uploaded || committed) return fail("guest GPU memory is not available");
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return fail("invalid guest buffer view");
     const auto* found = owner(address, address + bytes);
-    Require(found != nullptr, "guest buffer has no GPU owner");
+    if (found == nullptr) return fail("guest buffer has no GPU owner");
     const auto& region = *found;
     const auto describe = [&](const char* what) {
+        if (failure == nullptr) return std::string();
         char text[256];
         std::snprintf(text, sizeof(text), "guest buffer view 0x%llx+0x%llx %s its GPU owner 0x%llx-0x%llx (buffer %d, direct %d, mirror %d)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), what, static_cast<unsigned long long>(region.begin), static_cast<unsigned long long>(region.end), region.buffer != nullptr, region.direct != nullptr, region.mirror != nullptr);
         return std::string(text);
     };
-    if (!(address >= region.begin && address + bytes <= region.end && (region.buffer != nullptr || region.direct != nullptr || region.mirror != nullptr))) Require(false, describe("exceeds"));
+    if (!(address >= region.begin && address + bytes <= region.end && (region.buffer != nullptr || region.direct != nullptr || region.mirror != nullptr))) return fail(describe("exceeds"));
     const auto base = region.direct != nullptr ? region.direct->base - region.direct->lead : region.mirror != nullptr ? mirrorStart(*region.mirror) : region.begin;
     const auto offset = address - base;
     Require(context.limits.minStorageBufferOffsetAlignment != 0, "no storage buffer offset alignment");
-    Require(base % 4 == 0, "a guest buffer view in a GPU owner that does not start at a DWORD boundary is not implemented");
+    if (base % 4 != 0) return fail("a guest buffer view in a GPU owner that does not start at a DWORD boundary is not implemented");
     adjustment = static_cast<std::uint32_t>(offset % std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4));
+    if (bytes / 4 + adjustment / 4 + 2 > std::numeric_limits<std::uint64_t>::max() / 4) return fail("guest buffer view range overflow");
     auto range = ViewBytes(bytes, adjustment);
     const auto end = region.direct != nullptr ? region.direct->base + region.direct->bytes : servedEnd(region);
     const bool cut = (region.direct == nullptr || region.runCut) && end < region.end;
     if (cut) {
-        Require(address - adjustment < end, "guest buffer view starts past its copy");
+        if (address - adjustment >= end) return fail("guest buffer view starts past its copy");
         range = std::min<std::uint64_t>(range, end - (address - adjustment));
     }
     if (bytes <= context.limits.maxStorageBufferRange) range = std::min<std::uint64_t>(range, context.limits.maxStorageBufferRange & ~std::uint64_t{3});
-    if (address - adjustment + range > end) Require(false, describe("rounded up to its view range exceeds"));
-    Require(range <= context.limits.maxStorageBufferRange, "guest buffer view exceeds descriptor range limit");
+    if (address - adjustment + range > end) return fail(describe("rounded up to its view range exceeds"));
+    if (range > context.limits.maxStorageBufferRange) return fail("guest buffer view exceeds descriptor range limit");
     const auto handle = region.direct != nullptr ? region.direct->buffer : region.mirror != nullptr ? mirrorHandle(*region.mirror) : region.buffer->Handle();
-    return {handle, offset - adjustment, range};
+    return VkDescriptorBufferInfo{handle, offset - adjustment, range};
 }
 
 std::uint64_t GuestBufferMemory::ViewBytes(std::uint64_t bytes, std::uint32_t adjustment) {

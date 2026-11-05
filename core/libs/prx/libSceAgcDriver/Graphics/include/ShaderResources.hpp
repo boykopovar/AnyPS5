@@ -170,6 +170,8 @@ ImageTableReuseCounts ImageTableReuses();
 std::uint64_t SampledTexturesCleared();
 std::uint64_t SampledLookupKeyScans();
 std::uint64_t SampledLookupKeyProofs();
+// Copies of guest memory taken for draws to read instead of the memory itself (all time).
+std::uint64_t DrawInputCopies();
 
 struct PresyncSurface {
     std::uint64_t address;
@@ -743,7 +745,7 @@ private:
     };
     std::vector<FaultDescriptor> faultDescriptors;
     void prepareFaultSlot() const;
-    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const;
+    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord, std::span<const std::pair<std::size_t, VkDescriptorBufferInfo>> inPlace = {}) const;
     std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
