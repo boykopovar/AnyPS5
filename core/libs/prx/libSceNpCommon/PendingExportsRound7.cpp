@@ -39,11 +39,6 @@ int APS5_VABI _ZN3sce2np10CancelableC2Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np4CondD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np8WorkItem6CancelEi(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -70,11 +65,6 @@ int APS5_VABI _ZN3sce2np10MemoryFileD0Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np10EventQueueC2EP16SceNpAllocatorEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np4Cond4ctorEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -185,11 +175,6 @@ int APS5_VABI _ZN3sce2np20BufferedStreamReaderD1Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient7ConnectEPKvm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -416,11 +401,6 @@ int APS5_VABI _ZN3sce2np14CalloutContextD1Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np5Mutex7DestroyEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np14JsonDocBuilderC1ERKNS0_9JsonValueE(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -512,11 +492,6 @@ int APS5_VABI _ZN3sce2np9LocalFileC1Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np4PathD2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np4CondD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
