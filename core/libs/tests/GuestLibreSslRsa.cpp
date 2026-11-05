@@ -530,6 +530,12 @@ static void TestPublicDecrypt() {
     for (int padding : {0, PaddingSslv23, PaddingOaep, 6, 7}) Require(RSA_public_decrypt_nid_postfix(256, signature.data(), out.data(), rsa, padding) == -1);
     RequireThrows([&] { RSA_public_decrypt_nid_postfix(256, nullptr, out.data(), rsa, PaddingPkcs1); });
     RequireThrows([&] { RSA_public_decrypt_nid_postfix(256, signature.data(), nullptr, rsa, PaddingPkcs1); });
+    const auto payload = Pattern(245, 5);
+    const auto sevenPadding = Recover(Concat({{0x00, 0x01}, Bytes(7, 0xFF), {0x00}, Pattern(246, 5)}));
+    const auto eightPadding = Recover(Concat({{0x00, 0x01}, Bytes(8, 0xFF), {0x00}, payload}));
+    Require(RSA_public_decrypt_nid_postfix(256, sevenPadding.data(), out.data(), rsa, PaddingPkcs1) == -1);
+    Require(RSA_public_decrypt_nid_postfix(256, eightPadding.data(), out.data(), rsa, PaddingPkcs1) == 245);
+    Require(Bytes(out.begin(), out.begin() + 245) == payload);
     RSA_free_nid_postfix(rsa);
 }
 
