@@ -410,6 +410,14 @@ static void TestHitTestResult() {
     Require(box.size.width == 30.0 && box.size.height == 40.0);
     Require(WKHitTestResultIsContentEditable(ref));
 
+    auto unset = NKWebKit::Make<NKWebKit::HitTestResult>();
+    const void* unsetRef = NKWebKit::ToRef(unset);
+    Require(WKHitTestResultCopyAbsoluteImageURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteLinkURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsoluteMediaURL(unsetRef) == nullptr);
+    Require(WKHitTestResultCopyAbsolutePDFURL(unsetRef) == nullptr);
+    WKRelease(unsetRef);
+
     bool threw = false;
     try {
         WKHitTestResultCopyLinkLabel(nullptr);

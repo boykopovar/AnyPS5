@@ -1,26 +1,34 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 
+namespace {
+
+const void* UrlOrNull(const std::string& url) {
+    return url.empty() ? nullptr : NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(url));
+}
+
+}
+
 extern "C" {
 
 const void* APS5_VABI WKHitTestResultCopyAbsoluteImageURL(const void* hitTestResultRef) {
     const auto* hitTest = NKWebKit::Cast<NKWebKit::HitTestResult>(hitTestResultRef, __func__);
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(hitTest->absoluteImageURL));
+    return UrlOrNull(hitTest->absoluteImageURL);
 }
 
 const void* APS5_VABI WKHitTestResultCopyAbsoluteLinkURL(const void* hitTestResultRef) {
     const auto* hitTest = NKWebKit::Cast<NKWebKit::HitTestResult>(hitTestResultRef, __func__);
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(hitTest->absoluteLinkURL));
+    return UrlOrNull(hitTest->absoluteLinkURL);
 }
 
 const void* APS5_VABI WKHitTestResultCopyAbsoluteMediaURL(const void* hitTestResultRef) {
     const auto* hitTest = NKWebKit::Cast<NKWebKit::HitTestResult>(hitTestResultRef, __func__);
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(hitTest->absoluteMediaURL));
+    return UrlOrNull(hitTest->absoluteMediaURL);
 }
 
 const void* APS5_VABI WKHitTestResultCopyAbsolutePDFURL(const void* hitTestResultRef) {
     const auto* hitTest = NKWebKit::Cast<NKWebKit::HitTestResult>(hitTestResultRef, __func__);
-    return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::URL>(hitTest->absolutePDFURL));
+    return UrlOrNull(hitTest->absolutePDFURL);
 }
 
 const void* APS5_VABI WKHitTestResultCopyLinkLabel(const void* hitTestResultRef) {
