@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 
 namespace Hmd2 {
 
@@ -53,6 +54,26 @@ void InstallProcessParameters() {
     std::memcpy(process.data(), &size, sizeof(size));
     std::memcpy(process.data() + 8, &magic, sizeof(magic));
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "process parameters were not installed");
+}
+
+void TestNamedCallsBeforeInitialize() {
+    Require(sceHmd2SetIpdOffset(1, 0.5f) == 0, "IPD offset before initialization");
+    Require(sceHmd2GazeStartUserCalibration() == Hmd2::Error0004, "gaze calibration start before initialization");
+    Require(sceHmd2GazeStopUserCalibration() == Hmd2::Error0004, "gaze calibration stop before initialization");
+    Require(sceHmd2GazeSetUserCalibrationPoint(Hmd2::CalibrationPoint{}) == Hmd2::Error0004, "gaze calibration point before initialization");
+    Require(sceHmd2GazeSetEnabledEye(0) == Hmd2::Error0004, "gaze eye before initialization");
+    Require(sceHmd2GazeGetCalibrationData(0, nullptr) == Hmd2::ParameterNull, "gaze calibration data before initialization");
+    Require(sceHmd2GazeSetUserCalibrationData(nullptr) == Hmd2::ParameterNull, "gaze user calibration data before initialization");
+    Require(sceHmd2GazeObjectSelectionInitialize(nullptr) == Hmd2::ParameterNull, "gaze object selection before initialization");
+    Require(sceHmd2GazeObjectSelectionTerminate() == Hmd2::Error002C, "gaze object selection terminate before initialization");
+    Require(sceHmd2ReprojectionSetUserEventStart(0, 0) == Hmd2::ReprojectionNotInitialized, "reprojection user event start before initialization");
+    Require(sceHmd2ReprojectionSetUserEventEnd(0, 0) == Hmd2::ReprojectionNotInitialized, "reprojection user event end before initialization");
+    Require(sceHmd2ReprojectionClearUserEventStart() == Hmd2::ReprojectionNotInitialized, "reprojection user event start clear before initialization");
+    Require(sceHmd2ReprojectionClearUserEventEnd() == Hmd2::ReprojectionNotInitialized, "reprojection user event end clear before initialization");
+    Require(sceHmd2InternalTrackingOpen() == 0 && sceHmd2InternalTrackingClose() == 0, "tracking open and close before initialization");
+    Require(sceHmd2InternalLedDetectorOpen() == 0 && sceHmd2InternalLedDetectorClose() == 0, "LED detector open and close before initialization");
+    Require(sceHmd2InternalTrackingStart() == -1 && sceHmd2InternalTrackingStop() == -1, "tracking start and stop before initialization");
+    Require(sceHmd2InternalLedDetectorStart() == -1 && sceHmd2InternalLedDetectorStop() == -1, "LED detector start and stop before initialization");
 }
 
 void TestBeforeInitialize() {
@@ -275,6 +296,33 @@ void SizeQueriesReturnTheConsoleSizes() {
     Require(work.size == 0x4000 && work.align == 0x100, "mirroring work memory size");
 }
 
+template <typename Call>
+bool AnswersNoSession(Call call) {
+    try {
+        return call() == Hmd2::ReprojectionNotInitialized;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void TestGatedCallsInsideReprojectionSession() {
+    std::array<std::uint8_t, 64> memory;
+    memory.fill(0xaa);
+    const Hmd2::MirroringParameter mirroring{memory.data(), memory.data() + 32};
+    std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionEnableMirroring(&mirroring); }), "mirroring inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionGetPredictedDisplayTime(1, &time); }), "predicted display time inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1, 0, 0); }), "render config inside a reprojection session answered as without one");
+    Require(!AnswersNoSession([&] { return sceHmd2ReprojectionSetRenderConfig(1ull << 32, 0, 0); }), "render config with the second accepted bit inside a reprojection session answered as without one");
+    for (const std::uint64_t frameId : {0ull, 1ull, 0x123456789ull}) {
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ParameterNull, "predicted display time into a null output inside a reprojection session");
+    }
+    Require(sceHmd2ReprojectionSetRenderConfig(0, 1, 1) == Hmd2::ParameterInvalid, "render config with nonzero reserved arguments inside a reprojection session");
+    Require(sceHmd2ReprojectionSetRenderConfig(2, 0, 0) == Hmd2::ParameterInvalid, "render config with a bit outside the accepted ones inside a reprojection session");
+    Require(sceHmd2ReprojectionSetRenderConfig(1, 1, 0) == Hmd2::ParameterInvalid && sceHmd2ReprojectionSetRenderConfig(1, 0, 1) == Hmd2::ParameterInvalid, "render config with one nonzero reserved argument inside a reprojection session");
+    Require(sceHmd2ReprojectionSetRenderConfig(~0ull, 0, 0) == Hmd2::ParameterInvalid && sceHmd2ReprojectionSetRenderConfig(3, 0, 0) == Hmd2::ParameterInvalid, "render config with several bits inside a reprojection session");
+}
+
 void TestReprojection() {
     Require(sceHmd2ReprojectionSetAllowPositionalReprojection(2) == 0,
             "the positional setting without a session did not succeed");
@@ -356,7 +404,9 @@ void TestReprojection() {
     const Hmd2::SizeAlign cleared = sceHmd2ReprojectionQueryBufferSizeAlign();
     Require(cleared.size == Hmd2::ReprojectionBufferSize && cleared.align == Hmd2::ReprojectionBufferAlign,
             "clearing the positional setting did not restore the work-size answer");
+    TestGatedCallsInsideReprojectionSession();
     Require(sceHmd2ReprojectionTerminate() == 0, "terminate did not succeed");
+    TestCallsWithoutReprojectionSession();
     Require(sceHmd2ReprojectionSetTiming(3000) == Hmd2::ReprojectionNotInitialized,
             "setting the timing after terminate");
     Require(sceHmd2ReprojectionEnableVrMode(Hmd2::OutputMode89_91Hz) == Hmd2::ReprojectionNotInitialized,
@@ -370,6 +420,7 @@ int main() {
     SizeQueriesReturnTheConsoleSizes();
     InstallProcessParameters();
     TestBeforeInitialize();
+    TestNamedCallsBeforeInitialize();
     TestWithoutHeadset();
     TestReprojection();
     Require(sceHmd2GazeActivateGazeTracking(0) == 0, "gaze activation before initialization");

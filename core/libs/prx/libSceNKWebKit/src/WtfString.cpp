@@ -1,3 +1,29 @@
+/*
+ * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2012 Research In Motion Limited. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
@@ -10,6 +36,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -165,6 +192,7 @@ double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(
 
 namespace NKWebKit {
 void* Allocate(std::size_t size, std::size_t alignment = 16);
+void* TryAllocate(std::size_t size, std::size_t alignment = 16);
 void Deallocate(void* ptr);
 }  // namespace NKWebKit
 
@@ -242,17 +270,26 @@ StringImpl* Retain(StringImpl* impl) {
     return impl;
 }
 
+bool ExceedsMaxLength(unsigned length, bool is8Bit) {
+    return length > std::min<std::size_t>(MaxStringLength, (0xFFFFFFFFULL - sizeof(StringImpl)) / (is8Bit ? 1 : 2));
+}
+
+std::size_t ImplAllocationSize(unsigned length, bool is8Bit) {
+    return std::max<std::size_t>(sizeof(StringImpl), 20 + (is8Bit ? 1 : 2) * std::size_t(length));
+}
+
+StringImpl* ConstructImpl(void* storage, unsigned length, bool is8Bit, void*& characters) {
+    characters = static_cast<unsigned char*>(storage) + 20;
+    return new (storage) StringImpl{2, length, characters, is8Bit ? 4U : 0U};
+}
+
 StringImpl* NewImpl(unsigned length, bool is8Bit, void*& characters) {
     if (!length) {
         characters = nullptr;
         return EmptyImpl();
     }
-    const std::size_t width = is8Bit ? 1 : 2;
-    if (length > std::min<std::size_t>(MaxStringLength, (0xFFFFFFFFULL - sizeof(StringImpl)) / width))
-        throw std::length_error("WTF string exceeds maximum length");
-    auto* storage = static_cast<unsigned char*>(NKWebKit::Allocate(std::max<std::size_t>(sizeof(StringImpl), 20 + width * length)));
-    characters = storage + 20;
-    return new (storage) StringImpl{2, length, characters, is8Bit ? 4U : 0U};
+    if (ExceedsMaxLength(length, is8Bit)) throw std::length_error("WTF string exceeds maximum length");
+    return ConstructImpl(NKWebKit::Allocate(ImplAllocationSize(length, is8Bit)), length, is8Bit, characters);
 }
 
 StringImpl* CopyImpl(StringView view, bool narrow = false) {
@@ -461,6 +498,31 @@ template<typename T> String IntegerString(T value) {
 }
 
 }  // namespace
+
+namespace NKWebKit::WtfAbi {
+
+StringImpl* EmptyStringImpl() {
+    return EmptyImpl();
+}
+
+StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
+    if (!length) {
+        characters = nullptr;
+        return EmptyImpl();
+    }
+    void* storage = ExceedsMaxLength(length, is8Bit) ? nullptr : NKWebKit::TryAllocate(ImplAllocationSize(length, is8Bit));
+    if (!storage) {
+        characters = nullptr;
+        return nullptr;
+    }
+    return ConstructImpl(storage, length, is8Bit, characters);
+}
+
+String SubstringSharingImpl(const String& string, unsigned start, unsigned length) {
+    return SharedSubstring(&string, start, length);
+}
+
+}  // namespace NKWebKit::WtfAbi
 
 extern "C" {
 String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length) {
@@ -916,9 +978,92 @@ StringView ViewWithoutFragment(const URL& url) {
     return Slice(view, 0, std::min(url.queryEnd, view.length));
 }
 
+std::size_t FindUnit(StringView view, char16_t value, unsigned start) {
+    for (unsigned i = start; i < view.length; ++i) {
+        if (Unit(view, i) == value) return i;
+    }
+    return NotFound;
+}
+
+StringView LeftView(StringView view, unsigned length) {
+    return Slice(view, 0, length);
+}
+
+StringView RightView(StringView view, unsigned length) {
+    return Slice(view, view.length - length, length);
+}
+
+String ConcatViews(const StringView* parts, unsigned count) {
+    std::size_t total = 0;
+    bool is8Bit = true;
+    for (unsigned i = 0; i < count; ++i) {
+        total += parts[i].length;
+        is8Bit &= parts[i].is8Bit;
+    }
+    if (total > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    void* data;
+    auto* impl = NewImpl(static_cast<unsigned>(total), is8Bit, data);
+    unsigned offset = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        for (unsigned j = 0; j < parts[i].length; ++j, ++offset) {
+            if (is8Bit) static_cast<unsigned char*>(data)[offset] = static_cast<unsigned char>(Unit(parts[i], j));
+            else static_cast<char16_t*>(data)[offset] = Unit(parts[i], j);
+        }
+    }
+    return String(impl);
+}
+
+bool IsUnicodeCompatibleASCIIWhitespace(char32_t c) {
+    return c <= ' ' && (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\f');
+}
+
+std::optional<std::uint16_t> URLPort(const URL& url) {
+    unsigned portLength = (url.bits >> 3) & 7;
+    if (portLength <= 1) return std::nullopt;
+    auto view = View(url.impl);
+    if (url.hostEnd > view.length || portLength > view.length - url.hostEnd) return std::nullopt;
+    auto portView = Slice(view, url.hostEnd + 1, portLength - 1);
+    if (!portView.length) return std::nullopt;
+    unsigned i = 0;
+    while (i < portView.length && IsUnicodeCompatibleASCIIWhitespace(Unit(portView, i))) ++i;
+    if (i < portView.length && Unit(portView, i) == '+') ++i;
+    if (i == portView.length) return std::nullopt;
+    auto firstChar = Unit(portView, i);
+    if (firstChar < '0' || firstChar > '9') return std::nullopt;
+    std::uint32_t val = 0;
+    while (i < portView.length) {
+        auto ch = Unit(portView, i);
+        if (ch < '0' || ch > '9') break;
+        val = val * 10 + (ch - '0');
+        if (val > 65535) return std::nullopt;
+        ++i;
+    }
+    while (i < portView.length && IsUnicodeCompatibleASCIIWhitespace(Unit(portView, i))) ++i;
+    if (i != portView.length) return std::nullopt;
+    return static_cast<std::uint16_t>(val);
+}
+
 }  // namespace
 
 extern "C" {
+bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const URL* urlPtr) {
+    const auto& url = Checked(urlPtr);
+    auto port = URLPort(url);
+    if (!port) return true;
+    static constexpr std::uint16_t blockedPortList[] = {
+        1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69,
+        77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123,
+        135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530,
+        531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719,
+        1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666,
+        6667, 6668, 6669, 6679, 6697, 10080
+    };
+    if (!std::binary_search(std::begin(blockedPortList), std::end(blockedPortList), *port)) return true;
+    if ((*port == 21 || *port == 22) && URLProtocol(url, {"ftp", 3, true})) return true;
+    if (URLProtocol(url, {"file", 4, true})) return true;
+    return false;
+}
+
 bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const URL* a, const URL* b) {
     const auto& first = Checked(a);
     const auto& second = Checked(b);
@@ -1020,6 +1165,22 @@ bool APS5_VABI _ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE(StringView view)
     if (view.length < 5) return false;
     if ((Unit(view, 0) | 32) != 'h' || (Unit(view, 1) | 32) != 't' || (Unit(view, 2) | 32) != 't' || (Unit(view, 3) | 32) != 'p') return false;
     return Unit(view, 4) == ':' || ((Unit(view, 4) | 32) == 's' && view.length >= 6 && Unit(view, 5) == ':');
+}
+
+String APS5_VABI _ZN3WTF19mimeTypeFromDataURLENS_10StringViewE(StringView dataURL) {
+    auto index = FindUnit(dataURL, u';', 5);
+    if (index == NotFound) index = FindUnit(dataURL, u',', 5);
+    if (index == NotFound) return String(EmptyImpl());
+    if (index == 5) return String(CopyImpl({"text/plain", 10, true}));
+    return String(ConvertCase(Slice(dataURL, 5, static_cast<unsigned>(index - 5)), true));
+}
+
+String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self, unsigned length) {
+    const auto& url = Checked(self);
+    auto view = View(url.impl);
+    if (view.length <= length) return String(Retain(url.impl));
+    const StringView parts[] = {LeftView(view, length / 2 - 1), {"...", 3, true}, RightView(view, length / 2 - 2)};
+    return ConcatViews(parts, 3);
 }
 
 }
