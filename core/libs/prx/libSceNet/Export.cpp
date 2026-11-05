@@ -1036,6 +1036,17 @@ bool ControlSocketStatusForKernel(int descriptor, int command, int flags, int* r
 
 const bool g_socketStatusControlRegistered = (KernelSetSocketStatusControl_nid_no_patch(&ControlSocketStatusForKernel), true);
 
+bool ControlSocketIoctlForKernel(int descriptor, std::uint32_t request, void* argument, int* error) {
+    {
+        std::lock_guard lk(g_mutex);
+        if (g_socks.find(descriptor) == g_socks.end()) return false;
+    }
+    *error = sceNetIoctl(descriptor, request, argument) == 0 ? 0 : *errno_slot();
+    return true;
+}
+
+const bool g_socketIoctlControlRegistered = (KernelSetSocketIoctlControl_nid_no_patch(&ControlSocketIoctlForKernel), true);
+
 bool FindSocketNativeForKernel(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native) {
     std::lock_guard lk(g_mutex);
     const auto it = g_socks.find(descriptor);
