@@ -265,21 +265,6 @@ struct LibreSslX509StoreContext {
     void* exData;
 };
 
-struct LibreSslX509NameEntry {
-    void* object;
-    void* value;
-    int set;
-    int size;
-};
-
-struct LibreSslX509Name {
-    LibreSslStack* entries;
-    int modified;
-    void* bytes;
-    unsigned char* canonEnc;
-    int canonEnclen;
-};
-
 struct EvpMdContext;
 
 struct EvpMd {
