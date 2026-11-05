@@ -354,6 +354,9 @@ if(BUILD_TESTING)
         add_test(NAME tools_sanitizer_json COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_json.py)
         set_tests_properties(tools_sanitizer_json PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_compare_test_results COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_compare_test_results.py)
+        set_tests_properties(tools_compare_test_results PROPERTIES TIMEOUT 20)
         add_test(NAME build_eligibility COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_eligibility.py)
         add_test(NAME tools_release_notes_check COMMAND ${Python3_EXECUTABLE}
