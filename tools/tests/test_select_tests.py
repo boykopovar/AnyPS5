@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import re
@@ -503,6 +504,25 @@ class BuildErrorTests(unittest.TestCase):
                     self.assertIn("not a configured CMake build directory", result.stderr)
                     self.assertNotIn("Traceback", result.stderr)
 
+    def test_ctest_reports_an_unreadable_selection_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            selected = build / "select.tests"
+            for shape in ("non-UTF-8", "directory"):
+                with self.subTest(shape):
+                    if shape == "directory":
+                        selected.unlink()
+                        selected.mkdir()
+                    else:
+                        selected.write_bytes(b"\xff\xfe0,0,0,1\n")
+                    with mock.patch.object(select_tests.subprocess, "run") as run, \
+                            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                        with self.assertRaises(SystemExit) as raised:
+                            select_tests.main(["ctest", str(build)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(str(selected), stderr.getvalue())
+                    run.assert_not_called()
+
     def test_cache_without_the_build_locations_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "CMakeCache.txt").write_text("# empty\n", encoding="utf-8")
@@ -716,6 +736,20 @@ class MissingCommandTests(unittest.TestCase):
             commands = {test["name"]: test.get("command") for test in recovered}
             self.assertEqual(commands, {"absolute": [executable, helper], "relative": None, "path": None,
                                         "ambiguous": None, "existing": [helper], "stale": None})
+
+    def test_looping_subdirectory_is_skipped_when_recovering_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "nested").mkdir()
+            os.symlink("second", root / "first")
+            os.symlink("first", root / "second")
+            (root / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
+            (root / "nested/CTestTestfile.cmake").write_text('add_test(kept "/bin/kept")\n', encoding="utf-8")
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            self.assertEqual(dict(build.test_commands({"kept"})), {"kept": {("/bin/kept",)}})
+            build.path = str(root / "first")
+            self.assertEqual(dict(build.test_commands({"kept"})), {})
 
 
     def test_main_reconfigures_streams(self):
