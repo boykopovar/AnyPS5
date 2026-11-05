@@ -1,3 +1,4 @@
+#include "prx/libSceFreeTypeOt/include/Bitmap.hpp"
 #include "prx/libSceFreeTypeOt/include/GlyphSlot.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -6,6 +7,7 @@
 
 namespace {
 
+using FreeType::GuestBitmapLibrary;
 using FreeType::GuestFaceRec;
 using FreeType::GuestGlyphSlotRec;
 using FreeType::GuestMemoryRec;
@@ -48,12 +50,15 @@ void* APS5_VABI RecordRealloc(GuestMemoryRec*, std::int64_t, std::int64_t size, 
 struct Fixture {
     Recorder recorder;
     GuestFaceRec face{};
+    GuestBitmapLibrary library{};
     GuestSlotInternalRec internal{};
     GuestGlyphSlotRec slot{};
 
     Fixture() {
         recorder.memory = {&recorder, RecordAlloc, RecordFree, RecordRealloc};
         face.memory = &recorder.memory;
+        library.memory = &recorder.memory;
+        slot.library = &library;
         slot.face = &face;
         slot.internal = &internal;
     }
@@ -142,6 +147,61 @@ void Replacement() {
     Require(!fixture.slot.bitmap.buffer && fixture.internal.flags == 0, "set_bitmap accepts a null buffer");
 }
 
+
+void Ownership() {
+    Fixture fixture;
+    unsigned char pixels[12];
+    for (unsigned i = 0; i < sizeof(pixels); ++i) pixels[i] = static_cast<unsigned char>(i + 1);
+    int palette = 0;
+    fixture.slot.format = FreeType::GlyphFormatBitmap;
+    fixture.slot.bitmap = {3, 5, -4, pixels, 256, 2, 1, &palette};
+    fixture.internal.flags = 0x40;
+    Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot) == 0, "Own_Bitmap copies a borrowed bitmap");
+    const auto& bitmap = fixture.slot.bitmap;
+    Require(fixture.recorder.allocs == 1 && fixture.recorder.lastSize == 12, "Own_Bitmap allocates |pitch| * rows bytes");
+    Require(bitmap.buffer != pixels && std::memcmp(bitmap.buffer, pixels, sizeof(pixels)) == 0, "Own_Bitmap copies the pixels");
+    Require(bitmap.rows == 3 && bitmap.width == 5 && bitmap.pitch == -4 && bitmap.num_grays == 256, "Own_Bitmap keeps the bitmap geometry");
+    Require(bitmap.pixel_mode == 2 && bitmap.palette_mode == 1 && bitmap.palette == &palette, "Own_Bitmap keeps the pixel mode and palette");
+    Require(fixture.internal.flags == (0x40 | FreeType::GlyphOwnBitmap), "Own_Bitmap marks the bitmap owned");
+    unsigned char* owned = bitmap.buffer;
+    Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot) == 0 && bitmap.buffer == owned && fixture.recorder.allocs == 1, "Own_Bitmap leaves an owned bitmap alone");
+    ft_glyphslot_free_bitmap_nid_postfix(&fixture.slot);
+    Require(fixture.recorder.frees == 1 && fixture.recorder.lastFreed == owned, "free_bitmap releases the copy made by Own_Bitmap");
+}
+
+void OwnershipSkips() {
+    Fixture fixture;
+    Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(nullptr) == 0, "Own_Bitmap of a null slot returns 0");
+    unsigned char pixels[4]{};
+    fixture.slot.bitmap = {1, 4, 4, pixels, 256, 2, 0, nullptr};
+    fixture.slot.format = 0x6F75746C;
+    fixture.slot.internal = nullptr;
+    Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot) == 0 && fixture.slot.bitmap.buffer == pixels, "Own_Bitmap ignores an outline slot");
+    fixture.slot.internal = &fixture.internal;
+    fixture.slot.format = FreeType::GlyphFormatBitmap;
+    fixture.slot.bitmap = {7, 9, 2, nullptr, 256, 2, 0, nullptr};
+    Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot) == 0, "Own_Bitmap of a null buffer succeeds");
+    Require(!fixture.slot.bitmap.buffer && fixture.slot.bitmap.rows == 7 && fixture.recorder.allocs == 0, "Own_Bitmap of a null buffer allocates nothing");
+    Require(fixture.internal.flags == FreeType::GlyphOwnBitmap, "Own_Bitmap of a null buffer marks the bitmap owned");
+}
+
+void OwnershipErrors() {
+    Fixture fixture;
+    unsigned char pixels[8]{};
+    fixture.slot.format = FreeType::GlyphFormatBitmap;
+    fixture.slot.bitmap = {2, 4, 4, pixels, 256, 2, 0, nullptr};
+    fixture.recorder.fail = true;
+    Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot) == 0x40, "a failed Own_Bitmap returns Out_Of_Memory");
+    Require(fixture.slot.bitmap.buffer == pixels && fixture.internal.flags == 0, "a failed Own_Bitmap leaves the slot unchanged");
+    fixture.recorder.fail = false;
+    fixture.slot.bitmap.rows = 0xFFFFFFFE;
+    Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot) == 0x06, "Own_Bitmap of a negative int size returns Invalid_Argument");
+    Require(fixture.slot.bitmap.buffer == pixels && fixture.internal.flags == 0 && fixture.recorder.allocs == 1, "Own_Bitmap of a negative size leaves the slot unchanged");
+    fixture.slot.bitmap.rows = 0;
+    Require(sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch(&fixture.slot) == 0, "Own_Bitmap of an empty bitmap succeeds");
+    Require(!fixture.slot.bitmap.buffer && fixture.internal.flags == FreeType::GlyphOwnBitmap, "Own_Bitmap of an empty bitmap stores null and marks it owned");
+}
+
 }
 
 int main() {
@@ -149,6 +209,9 @@ int main() {
     AllocationErrors();
     Release();
     Replacement();
+    Ownership();
+    OwnershipSkips();
+    OwnershipErrors();
     std::puts("Guest FreeType Ot glyph slot tests passed");
     return 0;
 }
