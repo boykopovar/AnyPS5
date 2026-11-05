@@ -479,14 +479,6 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
         if (kind == ForbiddenInstruction::None)
             return;
 
-        if (kind == ForbiddenInstruction::Invocation && IsInterruptTableEntry(codeSection, opcode, limit, recent, codeSectionOffset)) {
-            trapped.push_back(opcode);
-            std::ostringstream message;
-            message << "Trapping int 0x80 in a software interrupt table at code offset 0x" << std::hex << match.Offset << '\n';
-            progress.Message(message.str());
-            return;
-        }
-
         if (trapSdkStubs && kind == ForbiddenInstruction::Invocation &&
             (IsSdkSyscallStub(codeSection, opcode, limit) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
             trapped.push_back(opcode);
@@ -504,6 +496,14 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
         if (!unwindRanges.empty() && !number && !insideFunction(start)) {
             ++skipped;
             if (!firstSkipped) firstSkipped = match.Offset;
+            return;
+        }
+
+        if (kind == ForbiddenInstruction::Invocation && IsInterruptTableEntry(codeSection, opcode, limit, recent, codeSectionOffset)) {
+            trapped.push_back(opcode);
+            std::ostringstream message;
+            message << "Trapping int 0x80 in a software interrupt table at code offset 0x" << std::hex << match.Offset << '\n';
+            progress.Message(message.str());
             return;
         }
 
