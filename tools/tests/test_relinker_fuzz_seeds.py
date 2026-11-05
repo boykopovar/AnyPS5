@@ -64,6 +64,16 @@ class RelinkerFuzzSeedsTests(unittest.TestCase):
             self.assertNotIn("Traceback", stderr)
             self.assertEqual(stdout, "")
 
+    def test_rejects_unwritable_seed_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "seeds"
+            name, _ = next(relinker_fuzz_seeds.images())
+            (output / f"{name}-{relinker_fuzz_seeds.SELECTORS[0]}").mkdir(parents=True)
+            code, stdout, stderr = self.run_main(output)
+            self.assertEqual(code, 2)
+            self.assertNotIn("Traceback", stderr)
+            self.assertEqual(stdout, "")
+
     def test_cli_subprocess_invocation(self):
         with tempfile.TemporaryDirectory() as directory:
             existing = Path(directory) / "file.txt"
