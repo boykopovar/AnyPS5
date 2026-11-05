@@ -1374,6 +1374,11 @@ export function diagnostic(locale, message) {
         .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.');
     if (locale !== 'ar-EG') return message;
     return message
+        .replace(/(\w+) is set more than once\./gu, '$1 متكرر ومش لازم يتحدد أكتر من مرة.')
+        .replace(/(\w+) must be a whole percentage from 0 to 90\./gu, '$1 لازم يكون رقم صحيح من 0 لـ 90.')
+        .replace(/(\w+) must be a number greater than 0 and at most 10\./gu, '$1 لازم يكون رقم أكبر من 0 وبحد أقصى 10.')
+        .replace(/(\w+) must be a number from ([\d.]+) to ([\d.]+)\./gu, '$1 لازم يكون رقم من $2 لـ $3.')
+        .replace(/(\w+): unknown input setting\./gu, 'الإعداد $1 مش معروف.')
         .replace('Configuration must be a list of bindings.', 'الإعدادات لازم تكون قائمة روابط أزرار.')
         .replace('Unknown or empty action.', 'الحركة مش معروفة أو فاضية.')
         .replace('Input type must be KEY, MOUSE or WHEEL.', 'نوع الإدخال لازم يكون KEY أو MOUSE أو WHEEL.')

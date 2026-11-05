@@ -9,7 +9,6 @@
 #include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
-#include <cerrno>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <fcntl.h>
@@ -25,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <climits>
 #include <chrono>
 #include <condition_variable>
@@ -157,7 +157,18 @@ constexpr int NET_SOL_SOCKET = 0xFFFF;
 constexpr int NET_IPPROTO_TCP = 6;
 constexpr int NET_IPPROTO_IPV6 = 41;
 constexpr int NET_TCP_NODELAY = 1;
+constexpr int NET_TCP_MAXSEG = 2;
+constexpr int NET_TCP_KEEPIDLE = 0x100;
+constexpr int NET_TCP_KEEPINTVL = 0x200;
+constexpr int NET_TCP_KEEPCNT = 0x400;
 constexpr int NET_TF_NODELAY = 4;
+constexpr int NET_TCP_MINIMUM_SEGMENT = 216;
+constexpr int NET_TCP_DEFAULT_MAXSEG = 536;
+constexpr int NET_TCP_DEFAULT_MAXSEG6 = 1220;
+constexpr std::uint32_t NET_TCP_TICKS_PER_SECOND = 1000;
+constexpr std::uint32_t NET_TCP_DEFAULT_KEEPIDLE = 7200;
+constexpr std::uint32_t NET_TCP_DEFAULT_KEEPINTVL = 75;
+constexpr std::uint32_t NET_TCP_DEFAULT_KEEPCNT = 8;
 constexpr int NET_SO_SNDTIMEO = 0x1005;
 constexpr int NET_SO_RCVTIMEO = 0x1006;
 constexpr int NET_SO_ERROR = 0x1007;
@@ -165,6 +176,7 @@ constexpr int NET_SO_PROTOCOL = 0x1016;
 constexpr int NET_SO_NBIO = 0x1200;
 constexpr int NET_SO_REUSEADDR = 0x4;
 constexpr int NET_SO_KEEPALIVE = 0x8;
+constexpr int NET_SO_DONTROUTE = 0x10;
 constexpr int NET_SO_BROADCAST = 0x20;
 constexpr int NET_SO_ONESBCAST = 0x10000;
 constexpr int NET_SO_OOBINLINE = 0x100;
@@ -298,6 +310,10 @@ struct Sock {
     int rcv_buffer = 0;
     int onesbcast = 0;
     int keepalive = 0;
+    int tcpMaximumSegment = NET_TCP_DEFAULT_MAXSEG;
+    std::uint32_t tcpKeepIdle = 0;
+    std::uint32_t tcpKeepInterval = 0;
+    std::uint32_t tcpKeepCount = 0;
     std::string name;
 };
 
@@ -1106,6 +1122,7 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
     s.protocol = protocol;
     if (protocol == 0 && type == NET_SOCK_STREAM) s.protocol = IPPROTO_TCP;
     if (protocol == 0 && type == NET_SOCK_DGRAM) s.protocol = IPPROTO_UDP;
+    s.tcpMaximumSegment = family == NET_AF_INET6 ? NET_TCP_DEFAULT_MAXSEG6 : NET_TCP_DEFAULT_MAXSEG;
     s.native = std::move(handle);
     if (name != nullptr) s.name = std::string(name).substr(0, 31);
     g_socks[fd] = s;
@@ -1231,6 +1248,10 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     connection.type = NET_SOCK_STREAM;
     connection.protocol = listener.protocol;
     connection.connectAttempted = true;
+    connection.tcpMaximumSegment = listener.family == NET_AF_INET6 ? NET_TCP_DEFAULT_MAXSEG6 : NET_TCP_DEFAULT_MAXSEG;
+    connection.tcpKeepIdle = listener.tcpKeepIdle;
+    connection.tcpKeepInterval = listener.tcpKeepInterval;
+    connection.tcpKeepCount = listener.tcpKeepCount;
     connection.native = std::move(handle);
 #ifdef _WIN32
     connection.native->receiveTimeout = listener.native->receiveTimeout.load();
@@ -1240,6 +1261,12 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
     if (descriptor < 0) return fail(-descriptor);
     {
         std::lock_guard lk(g_mutex);
+        const auto current = g_socks.find(s);
+        if (current != g_socks.end() && current->second.native == listener.native) {
+            connection.tcpKeepIdle = current->second.tcpKeepIdle;
+            connection.tcpKeepInterval = current->second.tcpKeepInterval;
+            connection.tcpKeepCount = current->second.tcpKeepCount;
+        }
         g_socks.emplace(descriptor, connection);
     }
     if (listener.native->nonblock) {
@@ -1651,6 +1678,35 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
             return fail(native_error());
         return 0;
     }
+    if (level == NET_IPPROTO_TCP &&
+        (optname == NET_TCP_MAXSEG || optname == NET_TCP_KEEPIDLE || optname == NET_TCP_KEEPINTVL || optname == NET_TCP_KEEPCNT)) {
+        if (!optval || optlen < sizeof(std::int32_t)) return fail(NET_EINVAL);
+        std::int32_t value = 0;
+        std::memcpy(&value, optval, sizeof(value));
+        const auto unsignedValue = static_cast<std::uint32_t>(value);
+        bool connected = false;
+        if (optname == NET_TCP_MAXSEG && !socket.listening) {
+            sockaddr_storage peer{};
+            NativeLength length = sizeof(peer);
+            connected = ::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&peer), &length) == 0;
+        }
+        std::lock_guard lk(g_mutex);
+        const auto it = g_socks.find(s);
+        if (it == g_socks.end() || it->second.native != socket.native) return fail(NET_EBADF);
+        if (optname == NET_TCP_MAXSEG) {
+            if (!connected || it->second.listening || value <= 0 || value > it->second.tcpMaximumSegment || value + 40 < NET_TCP_MINIMUM_SEGMENT)
+                return fail(NET_EINVAL);
+            it->second.tcpMaximumSegment = std::max(value, NET_TCP_MINIMUM_SEGMENT);
+            return 0;
+        }
+        if (optname == NET_TCP_KEEPCNT) {
+            it->second.tcpKeepCount = unsignedValue;
+            return 0;
+        }
+        if (unsignedValue > UINT32_MAX / NET_TCP_TICKS_PER_SECOND) return fail(NET_EINVAL);
+        (optname == NET_TCP_KEEPIDLE ? it->second.tcpKeepIdle : it->second.tcpKeepInterval) = unsignedValue;
+        return 0;
+    }
     if (level == NET_IPPROTO_TCP) return fail(NET_ENOPROTOOPT);
     if (level != NET_SOL_SOCKET) return fail(NET_EOPNOTSUPP);
     if (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO) {
@@ -1675,9 +1731,9 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
     } else if (optname == NET_SO_RCVTIMEO || optname == NET_SO_SNDTIMEO) {
         if (value < 0) return fail(NET_EINVAL);
         if (set_native_timeout(socket.native->value, optname, value) != 0) return fail(native_error());
-    } else if (optname == NET_SO_REUSEADDR || optname == NET_SO_BROADCAST || optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) {
+    } else if (optname == NET_SO_REUSEADDR || optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST || optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) {
         if ((optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF) && value < 1) return fail(NET_EINVAL);
-        const int native_option = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
+        const int native_option = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_DONTROUTE ? SO_DONTROUTE : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
         if (::setsockopt(socket.native->value, SOL_SOCKET, native_option, reinterpret_cast<const char*>(&value), sizeof(value)) != 0)
             return fail(native_error());
     } else if (optname == NET_SO_KEEPALIVE) {
@@ -1789,17 +1845,28 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         std::memcpy(optval, &value, *optlen);
         return 0;
     }
+    if (level == NET_IPPROTO_TCP &&
+        (optname == NET_TCP_MAXSEG || optname == NET_TCP_KEEPIDLE || optname == NET_TCP_KEEPINTVL || optname == NET_TCP_KEEPCNT)) {
+        const std::uint32_t value = optname == NET_TCP_MAXSEG ? static_cast<std::uint32_t>(socket.tcpMaximumSegment)
+            : optname == NET_TCP_KEEPIDLE ? (socket.tcpKeepIdle != 0 ? socket.tcpKeepIdle : NET_TCP_DEFAULT_KEEPIDLE)
+            : optname == NET_TCP_KEEPINTVL ? (socket.tcpKeepInterval != 0 ? socket.tcpKeepInterval : NET_TCP_DEFAULT_KEEPINTVL)
+            : (socket.tcpKeepCount != 0 ? socket.tcpKeepCount : NET_TCP_DEFAULT_KEEPCNT);
+        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
+        std::memcpy(optval, &value, *optlen);
+        return 0;
+    }
     if (*optlen < sizeof(int) &&
-        !(level == NET_SOL_SOCKET && (optname == NET_SO_REUSEADDR || optname == NET_SO_BROADCAST))) return fail(NET_EINVAL);
+        !(level == NET_SOL_SOCKET && (optname == NET_SO_REUSEADDR || optname == NET_SO_DONTROUTE || optname == NET_SO_BROADCAST))) return fail(NET_EINVAL);
     if (level == NET_IPPROTO_TCP) return fail(NET_ENOPROTOOPT);
     if (level != NET_SOL_SOCKET) return fail(NET_EOPNOTSUPP);
     int value = 0;
     switch (timeout_option(optname)) {
         case NET_SO_REUSEADDR:
+        case NET_SO_DONTROUTE:
         case NET_SO_BROADCAST: {
             int enabled = 0;
             NativeLength size = sizeof(enabled);
-            const int nativeOption = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : SO_BROADCAST;
+            const int nativeOption = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_DONTROUTE ? SO_DONTROUTE : SO_BROADCAST;
             if (::getsockopt(socket.native->value, SOL_SOCKET, nativeOption, reinterpret_cast<char*>(&enabled), &size) != 0)
                 return fail(native_error());
             value = enabled != 0 ? optname : 0;
@@ -1926,25 +1993,46 @@ static_assert(sizeof(NetSockInfo6) == sizeof(NetSockInfo) && offsetof(NetSockInf
     offsetof(NetSockInfo6, recv_buffer_size) == offsetof(NetSockInfo, recv_buffer_size) && offsetof(NetSockInfo6, local_adr6) == 0x6C &&
     offsetof(NetSockInfo6, remote_adr6) == 0x7C && offsetof(NetSockInfo6, tx_drops) == offsetof(NetSockInfo, tx_drops));
 
-static int sock_buffer_size(const Sock& socket, bool send, std::int32_t& value) {
-    value = send ? socket.snd_buffer : socket.rcv_buffer;
-    if (value != 0) return 0;
-    NativeLength size = sizeof(value);
-    return ::getsockopt(socket.native->value, SOL_SOCKET, send ? SO_SNDBUF : SO_RCVBUF, reinterpret_cast<char*>(&value), &size) == 0 ? 0 : native_error();
-}
+struct SockInfoSource {
+    std::shared_ptr<void> owner;
+    NativeSocket native;
+    int family;
+    int type;
+    bool nonblock;
+    int rcv_buffer;
+    int snd_buffer;
+};
 
-static int fill_sock_info(int s, NetSockInfo& record) {
-    Sock socket;
+static bool find_sock_info_source(int s, SockInfoSource& source) {
     {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
-        if (it == g_socks.end()) return NET_EBADF;
-        socket = it->second;
+        if (it != g_socks.end()) {
+            const Sock& socket = it->second;
+            source = {socket.native, socket.native->value, socket.family, socket.type, socket.native->nonblock, socket.rcv_buffer, socket.snd_buffer};
+            return true;
+        }
     }
+    KernelSocketPoll::Description kernel;
+    if (!KernelDescribeSocket_nid_no_patch(s, &kernel)) return false;
+    source = {kernel.owner, static_cast<NativeSocket>(kernel.native), kernel.family, kernel.type, kernel.nonblocking, 0, 0};
+    return true;
+}
+
+static int sock_buffer_size(const SockInfoSource& socket, bool send, std::int32_t& value) {
+    value = send ? socket.snd_buffer : socket.rcv_buffer;
+    if (value != 0) return 0;
+    NativeLength size = sizeof(value);
+    return ::getsockopt(socket.native, SOL_SOCKET, send ? SO_SNDBUF : SO_RCVBUF, reinterpret_cast<char*>(&value), &size) == 0 ? 0 : native_error();
+}
+
+static int fill_sock_info(int s, NetSockInfo& record) {
+    SockInfoSource socket;
+    if (!find_sock_info_source(s, socket)) return NET_EBADF;
     if (socket.family != NET_AF_INET) return NET_EAFNOSUPPORT;
     sockaddr_in local{};
     NativeLength length = sizeof(local);
-    if (::getsockname(socket.native->value, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
+    if (::getsockname(socket.native, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
 #ifdef _WIN32
         if (WSAGetLastError() != WSAEINVAL) return native_error();
 #else
@@ -1953,7 +2041,7 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     }
     sockaddr_in remote{};
     length = sizeof(remote);
-    if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
+    if (::getpeername(socket.native, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
         const int error = native_error();
         if (error != NET_ENOTCONN) return error;
     }
@@ -1966,13 +2054,13 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     record.remote_adr = remote.sin_addr.s_addr;
     record.local_port = local.sin_port;
     record.remote_port = remote.sin_port;
-    record.flags = NET_SOCKINFO_F_SELF | (socket.native->nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
+    record.flags = NET_SOCKINFO_F_SELF | (socket.nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
 #ifdef _WIN32
     u_long pending = 0;
-    if (::ioctlsocket(socket.native->value, FIONREAD, &pending) == 0) record.recv_queue_length = static_cast<std::int32_t>(pending);
+    if (::ioctlsocket(socket.native, FIONREAD, &pending) == 0) record.recv_queue_length = static_cast<std::int32_t>(pending);
 #else
     int pending = 0;
-    if (::ioctl(socket.native->value, FIONREAD, &pending) == 0) record.recv_queue_length = pending;
+    if (::ioctl(socket.native, FIONREAD, &pending) == 0) record.recv_queue_length = pending;
 #endif
     return 0;
 }
@@ -1981,10 +2069,19 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
     if ((flags & ~NET_SOCKINFO_TIME_WAIT) != 0) return fail(NET_EINVAL);
     std::vector<int> listed;
     if (s < 0) {
-        std::lock_guard lk(g_mutex);
-        for (const auto& [descriptor, socket] : g_socks) {
-            if (socket.family == NET_AF_INET) listed.push_back(descriptor);
+        {
+            std::lock_guard lk(g_mutex);
+            for (const auto& [descriptor, socket] : g_socks) {
+                if (socket.family == NET_AF_INET) listed.push_back(descriptor);
+            }
         }
+        std::vector<int> kernel;
+        KernelListSockets_nid_no_patch(&kernel);
+        for (const int descriptor : kernel) {
+            KernelSocketPoll::Description description;
+            if (KernelDescribeSocket_nid_no_patch(descriptor, &description) && description.family == NET_AF_INET) listed.push_back(descriptor);
+        }
+        std::sort(listed.begin(), listed.end());
     }
     if (!info) return s < 0 ? static_cast<int>(listed.size()) : fail(NET_EINVAL);
     if (n < 1) return fail(NET_EINVAL);
@@ -2007,18 +2104,19 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
 }
 
 static int fill_sock_info6(int s, NetSockInfo6& record, bool includeIpv4) {
-    Sock socket;
+    SockInfoSource socket;
     {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
         if (it == g_socks.end()) return NET_EBADF;
-        socket = it->second;
+        const Sock& registered = it->second;
+        socket = {registered.native, registered.native->value, registered.family, registered.type, registered.native->nonblock, registered.rcv_buffer, registered.snd_buffer};
     }
     const bool ipv6 = socket.family == NET_AF_INET6;
     if (!ipv6 && !(includeIpv4 && socket.family == NET_AF_INET)) return NET_EAFNOSUPPORT;
     sockaddr_storage local{};
     NativeLength length = sizeof(local);
-    if (::getsockname(socket.native->value, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
+    if (::getsockname(socket.native, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
 #ifdef _WIN32
         if (WSAGetLastError() != WSAEINVAL) return native_error();
 #else
@@ -2027,7 +2125,7 @@ static int fill_sock_info6(int s, NetSockInfo6& record, bool includeIpv4) {
     }
     sockaddr_storage remote{};
     length = sizeof(remote);
-    if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
+    if (::getpeername(socket.native, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
         const int error = native_error();
         if (error != NET_ENOTCONN) return error;
     }
@@ -2036,7 +2134,7 @@ static int fill_sock_info6(int s, NetSockInfo6& record, bool includeIpv4) {
     if (const int error = sock_buffer_size(socket, true, record.send_buffer_size)) return error;
     record.s = s;
     record.socket_type = static_cast<std::int8_t>(socket.type);
-    record.flags = NET_SOCKINFO_F_SELF | (socket.native->nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
+    record.flags = NET_SOCKINFO_F_SELF | (socket.nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
     if (ipv6) {
         const auto& local6 = reinterpret_cast<const sockaddr_in6&>(local);
         const auto& remote6 = reinterpret_cast<const sockaddr_in6&>(remote);
@@ -2136,10 +2234,11 @@ int APS5_VABI sceNetShowNetstat(void) {
             const bool connected = ::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&remote), &length) == 0;
             if (!connected) remote = {};
             local.ss_family = remote.ss_family = socket.family == NET_AF_INET6 ? AF_INET6 : AF_INET;
+            const SockInfoSource source{socket.native, socket.native->value, socket.family, socket.type, socket.native->nonblock, socket.rcv_buffer, socket.snd_buffer};
             std::int32_t send = 0;
             std::int32_t receive = 0;
-            if (sock_buffer_size(socket, true, send) != 0) send = 0;
-            if (sock_buffer_size(socket, false, receive) != 0) receive = 0;
+            if (sock_buffer_size(source, true, send) != 0) send = 0;
+            if (sock_buffer_size(source, false, receive) != 0) receive = 0;
             const char* kind = type == NET_SOCK_STREAM ? "tcp" : type == NET_SOCK_DGRAM ? "udp" : "raw";
             const char* state = type != NET_SOCK_STREAM ? "OPENED" : socket.listening ? "LISTEN" : connected ? "ESTABLISHED" : "CLOSED";
             std::printf("ID: %4d (%5s,  0) *....-%c %s pid=0x%08x %s\n", id, kind, socket.native->nonblock ? '*' : '.', state, static_cast<unsigned>(pid), socket.name.c_str());
@@ -2709,7 +2808,11 @@ int APS5_VABI sceNetClearDnsCache(int flags) {
 int APS5_VABI sceNetGetStatisticsInfo(NetStatisticsInfo* info, std::uint32_t flags) {
     if (info == nullptr) return fail(NET_EFAULT);
     constexpr std::int32_t FREE_BYTES = 16 * 1024 * 1024;
-    *info = {FREE_BYTES, FREE_BYTES, 0, 0, FREE_BYTES, FREE_BYTES};
+    const NetStatisticsInfo stats{FREE_BYTES, FREE_BYTES, 0, 0, FREE_BYTES, FREE_BYTES};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &stats, sizeof(stats));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 0;
 }
 
@@ -2904,10 +3007,17 @@ int APS5_VABI sceNetGetNameToIndex(std::uint32_t interfaceId) {
 int APS5_VABI sceNetGetRandom(std::uint32_t* output) {
     if (!g_net_inited) return fail(NET_ENOTINIT);
     if (output == nullptr) return fail(NET_EINVAL);
-    static std::mutex mutex;
-    static std::random_device device;
-    const std::lock_guard<std::mutex> lock(mutex);
-    *output = static_cast<std::uint32_t>(device());
+    const int savedErrno = errno;
+    std::uint32_t value{};
+    {
+        static std::mutex mutex;
+        static std::random_device device;
+        const std::lock_guard<std::mutex> lock(mutex);
+        value = static_cast<std::uint32_t>(device());
+    }
+    const bool copied = GuestCopyOut_nid_no_patch(output, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return fail(NET_EFAULT);
     return 0;
 }
 
