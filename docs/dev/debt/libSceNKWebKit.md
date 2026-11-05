@@ -13,6 +13,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [PAL::SessionID exports](../../../core/libs/prx/libSceNKWebKit/src/PalSessionID.cpp) have no console ABI or behavior verification. They follow the [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/PAL/pal/SessionID.cpp). The generators throw after `enableGenerationProtection` instead of reproducing the `RELEASE_ASSERT` crash. Closes when: compared with a console module.
 
 ### Functional
+- [WTF main thread and run loop helpers](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `WTF::initializeMainThread` records the calling thread as the main thread; `WTF::isMainThread`, `WTF::isMainRunLoop` and `WTF::isMainThreadOrGCThread` return true when called on the main thread and false on worker threads.
+
 - [HitTestResult getters](../../../core/libs/prx/libSceNKWebKit/src/HitTestResult.cpp) (libSceNKWebKit) - WKHitTestResult* getters return image/link/media/PDF URLs, link text, bounding box and content editable flag from the host object.
 
 - [Constant-return exports](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 137 exports answer with a fixed value in the PS5 11.00 module: 111 execute `xor eax,eax; ret`, 13 `mov eax,imm32; ret` and 13 `mov al,1; ret` (addresses and bodies from the 11.00 `libSceNKWebKit.sprx`, SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`; NIDs recomputed from the declared names). The 124 EAX-writing bodies measure the 32-bit return; the 13 `mov al,1` bodies write only the low byte, so for them only AL is measured and the upper bits are unspecified. The declared prototypes stay the no-parameter `int` placeholders, so no other width, pointer or floating-point return is claimed. Only 11.00 was measured.
@@ -1590,7 +1592,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF11setNonBlockEi` | `ZH232ViZnko` |
 | `_ZN3WTF12CountingLock10unlockSlowEv` | `y9CL7tutRKQ` |
 | `_ZN3WTF12CountingLock8lockSlowEv` | `QSRjO+sqoFU` |
-| `_ZN3WTF12isMainThreadEv` | `MKhFWAdCyCw` |
 | `_ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm` | `RPLKRR7vgYE` |
 | `_ZN3WTF13MetaAllocator17currentStatisticsERKNS_6LockerINS_4LockEEE` | `3SW2Rs+BCYE` |
 | `_ZN3WTF13MetaAllocator17freeFreeSpaceNodeEPNS0_13FreeSpaceNodeE` | `sIQ2j-9PjgU` |
@@ -1612,7 +1613,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE` | `xJRNEp2d-Wg` |
 | `_ZN3WTF13aboutBlankURLEv` | `3nmBMeZtd+Y` |
 | `_ZN3WTF13dumpCharacterERNS_11PrintStreamEc` | `rpsD9ynfjc0` |
-| `_ZN3WTF13isMainRunLoopEv` | `5K-9Y7aFV60` |
 | `_ZN3WTF13normalizedNFCENS_10StringViewE` | `bgrxJM-HmMM` |
 | `_ZN3WTF13normalizedNFCERKNS_6StringE` | `2LUk8Ch0mJY` |
 | `_ZN3WTF13printInternalERNS_11PrintStreamEN3JSC14TypedArrayModeE` | `DwwpqTcKG0Q` |
@@ -1762,7 +1762,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF20ParallelHelperClient6finishEv` | `X+GUHRxWSq4` |
 | `_ZN3WTF20ParallelHelperClientD1Ev` | `pCPHOY0VhUY` |
 | `_ZN3WTF20ParallelHelperClientD2Ev` | `80LTtL71Ics` |
-| `_ZN3WTF20initializeMainThreadEv` | `IDANRncW4HU` |
 | `_ZN3WTF20resetAccumulatedLogsEv` | `v4r2uz0R1ys` |
 | `_ZN3WTF21MemoryPressureHandler12setPageCountEj` | `AAkVf-cyiwM` |
 | `_ZN3WTF21MemoryPressureHandler13releaseMemoryENS_8CriticalENS_11SynchronousE` | `LiJyR7R9j9s` |
@@ -1794,7 +1793,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF22CrossThreadTaskHandlerD1Ev` | `RQGUZHWVCLY` |
 | `_ZN3WTF22CrossThreadTaskHandlerD2Ev` | `F9bDxOEGeA8` |
 | `_ZN3WTF22TextBreakIteratorCache9singletonEv` | `m9nEKMAp80k` |
-| `_ZN3WTF22isMainThreadOrGCThreadEv` | `UHbf2fZIrxk` |
 | `_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE` | `95FhkfvoGQM` |
 | `_ZN3WTF24AutomaticThreadCondition4waitERNS_4LockE` | `4Xe0NrWsndM` |
 | `_ZN3WTF24AutomaticThreadCondition7waitForERNS_4LockENS_7SecondsE` | `6VIC0pMsv30` |
