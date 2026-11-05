@@ -104,6 +104,28 @@ int main() {
     Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_NONE, "terminated state");
     Require(sceSaveDataDialogTerminate() == SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED, "terminate after terminate");
 
+    Require(sceSaveDataDialogInitialize() == 0, "re-initialize for unreadable items");
+    SaveDataDialogParam selectionParam{};
+    selectionParam.size = sizeof(selectionParam);
+    selectionParam.mode = 1;
+    selectionParam.items = &items;
+    Require(sceSaveDataDialogOpen(&selectionParam) == 0, "open selection dialog with items");
+    SaveDataDialogParam unreadableItemsParam{};
+    unreadableItemsParam.size = sizeof(unreadableItemsParam);
+    unreadableItemsParam.mode = 0;
+    unreadableItemsParam.items = reinterpret_cast<void*>(0x10);
+    Require(sceSaveDataDialogOpen(&unreadableItemsParam) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+            "open with unreadable items");
+    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
+            "unreadable items must leave the previous result finished");
+    SaveDataDirName keptDir{};
+    SaveDataDialogResult keptResult{};
+    keptResult.dir_name = &keptDir;
+    Require(sceSaveDataDialogGetResult(&keptResult) == 0, "read result after unreadable items");
+    Require(keptResult.mode == 1 && std::strcmp(keptDir.data, "SDU1") == 0,
+            "unreadable items must not change the previous result");
+    Require(sceSaveDataDialogTerminate() == 0, "terminate after unreadable items");
+
     Require(sceSaveDataDialogInitialize() == 0, "re-initialize");
     param.mode = 1;
     Require(sceSaveDataDialogOpen(&param) == 0, "open selection dialog");
