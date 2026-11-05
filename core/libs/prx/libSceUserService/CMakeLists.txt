@@ -1,4 +1,4 @@
-add_library(libSceUserService SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
+add_library(libSceUserService SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp Inventory1360Exports.cpp)
 target_include_directories(libSceUserService PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceUserService PRIVATE libSceSystemService)
 configure_windows_unwind(libSceUserService)

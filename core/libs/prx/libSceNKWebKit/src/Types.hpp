@@ -101,15 +101,17 @@ public:
     bool valid = false;
 };
 
-class NavigationData final : public ObjectOf<ObjectType::NavigationData> {
+class HitTestResult final : public ObjectOf<ObjectType::HitTestResult> {
 public:
-    NavigationData() = default;
-    NavigationData(Retained<String> title, std::optional<std::string> url, std::optional<std::string> originalRequestURL)
-        : title(std::move(title)), url(std::move(url)), originalRequestURL(std::move(originalRequestURL)) {}
-
-    Retained<String> title;
-    std::optional<std::string> url;
-    std::optional<std::string> originalRequestURL;
+    std::string absoluteImageURL;
+    std::string absoluteLinkURL;
+    std::string absoluteMediaURL;
+    std::string absolutePDFURL;
+    std::u16string linkLabel;
+    std::u16string linkTitle;
+    std::u16string lookupText;
+    RectValue elementBoundingBox{{0.0, 0.0}, {0.0, 0.0}};
+    bool isContentEditable = false;
 };
 
 }  // namespace NKWebKit
