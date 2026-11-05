@@ -48,6 +48,8 @@ static void CheckTimedlockInvalidDeadline() {
 
 static void CheckType() {
     PthreadMutexattr attr = nullptr;
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
     Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
     int type = -1;
     Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == 1);
@@ -55,10 +57,13 @@ static void CheckType() {
         Require(pthread_mutexattr_settype_nid_postfix(&attr, set) == 0);
         Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == set);
     }
+    Require(pthread_mutexattr_settype_nid_postfix(nullptr, 1) == GUEST_EINVAL);
     Require(pthread_mutexattr_settype_nid_postfix(&attr, 5) == GUEST_EINVAL);
     Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == 1);
     Require(Throws([&] { pthread_mutexattr_gettype_nid_postfix(&attr, nullptr); }));
     Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
     type = -1;
     Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == GUEST_EINVAL && type == -1);
     Require(pthread_mutexattr_gettype_nid_postfix(nullptr, &type) == GUEST_EINVAL && type == -1);
@@ -82,10 +87,35 @@ static void CheckKind() {
     }
     Require(pthread_mutexattr_settype_nid_postfix(&attr, 2) == 0);
     Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 2);
-    for (const int invalid : {0, 5, -1})
-        Require(Throws([&] { pthread_mutexattr_setkind_np_nid_postfix(&attr, invalid); }));
-    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 2);
     PthreadMutex mutex = nullptr;
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 0) == 0);
+    Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == 0);
+    for (const int invalid : {0, 5, -1}) {
+        Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, invalid) == 0);
+        Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == invalid);
+        type = -1;
+        if (invalid == 5) Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == GUEST_EINVAL && type == -1);
+        if (invalid != 5) Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == invalid);
+        Require(pthread_mutex_init_nid_postfix(&mutex, &attr) == GUEST_EINVAL && mutex == nullptr);
+    }
+    for (const int negative : {-2, -32768}) {
+        Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, negative) == 0);
+        type = 0;
+        Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == negative);
+    }
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 0x8000) == 0);
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == -32768);
+    for (const int large : {32767, 0x12345}) {
+        Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, large) == 0);
+        type = -1;
+        Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == GUEST_EINVAL && type == -1);
+    }
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 0x2345);
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 0x10001) == 0);
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 1);
+    Require(pthread_mutex_init_nid_postfix(&mutex, &attr) == 0);
+    Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0);
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 2) == 0);
     Require(pthread_mutex_init_nid_postfix(&mutex, &attr) == 0);
     Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);
     Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);
@@ -100,6 +130,8 @@ static void CheckKind() {
 static void CheckSceAccessors() {
     PthreadMutexattr attr = nullptr;
     int value = -1;
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrGettype(nullptr, &value) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrGettype(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSetprotocol(&attr, PRIO_NONE) == SCE_KERNEL_ERROR_EINVAL);
@@ -133,12 +165,16 @@ static void CheckSceAccessors() {
     Require(scePthreadMutexattrSetpshared(&attr, 0) == SCE_OK);
     Require(scePthreadMutexattrGetpshared(&attr, &value) == SCE_OK && value == 0);
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrGettype(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 static void CheckProcessSharing() {
     PthreadMutexattr attr = nullptr;
     int sharing = -1;
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
     Require(pthread_mutexattr_getpshared_nid_postfix(nullptr, &sharing) == GUEST_EINVAL && sharing == -1);
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == GUEST_EINVAL && sharing == -1);
     Require(pthread_mutexattr_setpshared_nid_postfix(nullptr, 0) == GUEST_EINVAL);
@@ -164,6 +200,8 @@ static void CheckProcessSharing() {
     Require(pthread_mutexattr_setpshared_nid_postfix(&attr, 0) == 0);
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
     Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
     sharing = -1;
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == GUEST_EINVAL && sharing == -1);
     Require(pthread_mutexattr_setpshared_nid_postfix(&attr, 0) == GUEST_EINVAL);
@@ -172,6 +210,8 @@ static void CheckProcessSharing() {
 static void CheckInvalidPriorityAttribute(PthreadMutexattr* attr) {
     int ceiling = -1;
     int protocol = -1;
+    Require(pthread_mutexattr_destroy_nid_postfix(attr) == GUEST_EINVAL);
+    Require(scePthreadMutexattrDestroy(attr) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_mutexattr_setprotocol_nid_postfix(attr, PRIO_PROTECT) == GUEST_EINVAL);
     Require(pthread_mutexattr_setprotocol_nid_postfix(attr, -1) == GUEST_EINVAL);
     Require(pthread_mutexattr_getprotocol_nid_postfix(attr, &protocol) == GUEST_EINVAL && protocol == -1);
@@ -181,12 +221,33 @@ static void CheckInvalidPriorityAttribute(PthreadMutexattr* attr) {
     Require(pthread_mutexattr_getprioceiling_nid_postfix(attr, nullptr) == GUEST_EINVAL);
 }
 
+static void CheckDestroy() {
+    PthreadMutexattr attr = nullptr;
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == GUEST_EINVAL);
+    Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrDestroy(&attr) == SCE_KERNEL_ERROR_EINVAL);
+}
+
 int main() {
     CheckType();
     CheckKind();
     CheckSceAccessors();
     CheckProcessSharing();
     CheckTimedlockInvalidDeadline();
+    CheckDestroy();
     PthreadMutexattr attr = nullptr;
     CheckInvalidPriorityAttribute(nullptr);
     CheckInvalidPriorityAttribute(&attr);

@@ -66,7 +66,10 @@ int main() {
     Require(sceVrServiceDialogTerminate() == 0);
     Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
     Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(&param) == kErrNotInitialized);
+    Require(sceVrServiceDialogClose() == kErrNotInitialized);
     Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(result) == kErrNotInitialized);
     Require(sceVrServiceDialogGetStatus() == kStatusNone);
     Require(sceVrServiceDialogUpdateStatus() == kStatusNone);
 }

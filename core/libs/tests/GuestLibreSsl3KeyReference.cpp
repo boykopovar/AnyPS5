@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl/include/Ec.hpp"
 
 #include <array>
 #include <atomic>
@@ -7,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <thread>
 
 static void Require(bool condition, const char* message) {
@@ -33,6 +35,25 @@ static void CheckKey(TRetain retain, std::size_t referenceOffset) {
         Require(retain(&guarded.key) == (next > 1), "retain return value");
         Require(std::memcmp(&guarded, expected.data(), sizeof(guarded)) == 0, "retain changed bytes outside reference count");
     }
+    std::memset(&guarded, 0x3C, sizeof(guarded));
+    guarded.key.references = std::numeric_limits<std::int32_t>::max();
+    std::array<unsigned char, sizeof(guarded)> unchanged;
+    std::memcpy(unchanged.data(), &guarded, sizeof(guarded));
+    bool overflowThrown = false;
+    try {
+        retain(&guarded.key);
+    } catch (const std::overflow_error&) {
+        overflowThrown = true;
+    }
+    Require(overflowThrown, "retain at maximum count did not throw");
+    Require(std::memcmp(&guarded, unchanged.data(), sizeof(guarded)) == 0, "overflowing retain changed bytes");
+    bool nullThrown = false;
+    try {
+        retain(nullptr);
+    } catch (const std::invalid_argument&) {
+        nullThrown = true;
+    }
+    Require(nullThrown, "retain of null did not throw");
     std::memset(&guarded, 0x5A, sizeof(guarded));
     guarded.key.references = 1;
     std::array<unsigned char, sizeof(guarded)> expected;
@@ -59,10 +80,63 @@ static void CheckKey(TRetain retain, std::size_t referenceOffset) {
     Require(std::memcmp(&guarded, expected.data(), sizeof(guarded)) == 0, "concurrent count or adjacent bytes changed");
 }
 
+static_assert(sizeof(EcKey) == sizeof(LibreSsl3EcKey));
+static_assert(offsetof(EcKey, references) == offsetof(LibreSsl3EcKey, references));
+
+static LibreSsl3EcKey* Shared(EcKey* key) {
+    return reinterpret_cast<LibreSsl3EcKey*>(key);
+}
+
+static void RequireP256(const EcKey* key, const char* message) {
+    const EcGroup* group = EC_KEY_get0_group_nid_postfix(key);
+    Require(group && EC_GROUP_get_degree_nid_postfix(group) == 256 && ECDSA_size_nid_postfix(key) == 72, message);
+}
+
+static void CheckEcLifetime(bool named) {
+    EcKey* key = named ? EC_KEY_new_by_curve_name_nid_postfix(415) : EC_KEY_new_nid_postfix();
+    Require(key && key->references == 1, "new EC key reference count");
+    Require(key->version == 1 && key->conversionForm == 4, "new EC key version or conversion form");
+    Require(!key->method && !key->publicKey && !key->privateKey && key->encodingFlags == 0 && key->flags == 0 && !key->extraData, "new EC key fields");
+    if (!named) {
+        Require(EC_KEY_get0_group_nid_postfix(key) == nullptr, "new EC key has a group");
+        EcGroup* group = EC_GROUP_new_by_curve_name_nid_postfix(415);
+        Require(group && EC_KEY_set_group_nid_postfix(key, group) == 1, "set EC key group");
+        EC_GROUP_free_nid_postfix(group);
+    }
+    Require(EC_KEY_up_ref_nid_postfix(Shared(key)) == 1 && key->references == 2, "retain EC key");
+    EC_KEY_free_nid_postfix(key);
+    Require(key->references == 1, "EC free did not release one reference");
+    RequireP256(key, "retained EC key is unusable after free");
+    std::atomic<bool> start = false;
+    std::array<std::thread, 4> threads;
+    for (auto& thread : threads) {
+        thread = std::thread([&] {
+            while (!start.load())
+                std::this_thread::yield();
+            for (int index = 0; index < 1000; ++index) {
+                Require(EC_KEY_up_ref_nid_postfix(Shared(key)) == 1, "concurrent EC retain failed");
+                EC_KEY_free_nid_postfix(key);
+            }
+        });
+    }
+    start = true;
+    for (auto& thread : threads)
+        thread.join();
+    Require(key->references == 1, "balanced concurrent EC references");
+    RequireP256(key, "EC key is unusable after concurrent release");
+    EC_KEY_free_nid_postfix(key);
+}
+
 int main(int argc, char** argv) {
     if (argc == 1 || std::strcmp(argv[1], "evp") == 0)
         CheckKey<LibreSsl3EvpPkey>(EVP_PKEY_up_ref_nid_postfix, 4);
-    if (argc == 1 || std::strcmp(argv[1], "ec") == 0)
+    if (argc == 1 || std::strcmp(argv[1], "ec") == 0) {
         CheckKey<LibreSsl3EcKey>(EC_KEY_up_ref_nid_postfix, 48);
+        EC_KEY_free_nid_postfix(nullptr);
+        CheckEcLifetime(false);
+        CheckEcLifetime(true);
+    }
+    if (argc == 1 || std::strcmp(argv[1], "rsa") == 0)
+        CheckKey<LibreSsl3Rsa>(RSA_up_ref_nid_postfix, 104);
     return 0;
 }

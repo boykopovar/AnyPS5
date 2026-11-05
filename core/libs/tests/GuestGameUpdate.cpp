@@ -113,6 +113,7 @@ int main() {
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
     Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, nullptr) == invalidArgument);
     Require(sceGameUpdateInitialize() == 0);
     Require(sceGameUpdateInitialize() == alreadyInitialized);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
@@ -133,4 +134,15 @@ int main() {
     Require(sceGameUpdateTerminate() == notInitialized);
     info.size = sizeof(info);
     Require(sceGameUpdateGetAddcontLatestVersion(0, &label, &info) == notInitialized);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, &label, nullptr) == invalidArgument);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, &info) == invalidArgument);
+    Require(sceGameUpdateGetAddcontLatestVersion(0, nullptr, nullptr) == invalidArgument);
+    Require(sceGameUpdateCreateRequest() == notInitialized);
+    GameUpdateCheckParam postParam{};
+    postParam.size = sizeof(postParam);
+    GameUpdateCheckResult postResult{};
+    postResult.size = sizeof(postResult);
+    Require(sceGameUpdateCheck(0x20000000, &postParam, &postResult) == notInitialized);
+    Require(sceGameUpdateAbortRequest(0x20000000) == notInitialized);
+    Require(sceGameUpdateDeleteRequest(0x20000000) == notInitialized);
 }

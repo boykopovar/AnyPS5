@@ -1,0 +1,26 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libSceTtsCoreG3BcUnknown__plus_b5_minus_z8Ff4cw_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_1scTM6aHK5I_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_9tnCCarXqdY_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_EmF4qOwLp5w_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_H0VOaNk61es_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_LQ65KkmJ48g_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_PRmv_minus_UzXa1w_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_RByzVVv6e0A_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_Sq5GSDo_minus_Rhk_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_V_plus_nR_plus_xHS2ag_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_bapD6H6e7Yk_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_fF3Q3LdPUtk_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_iW0DoaHZE5Y_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_k1_minus_orvzQrHw_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_lQLzsMt_minus_6NU_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_pacG6ffHAvU_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_pzhkpUfnlqY_nid_no_patch();
+int APS5_VABI libSceTtsCoreG3BcUnknown_stLW2n_minus_xJ6M_nid_no_patch();
+
+}

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import errno
 import os
 import re
 import stat
@@ -8,9 +9,9 @@ import tempfile
 from pathlib import Path
 
 try:
-    from tools.nid_names import CHARSET, SUFFIX, compute_nid
+    from tools.nid_names import SUFFIX, compute_nid
 except ImportError:
-    from nid_names import CHARSET, SUFFIX, compute_nid
+    from nid_names import SUFFIX, compute_nid
 
 
 def strip_nid_token(raw):
@@ -177,9 +178,61 @@ def generate(module, nids, db, td_path=None, td_lib=None):
     return (code, td_text)
 
 
+def case_insensitive_directory(directory):
+    directory = Path(directory)
+    while not directory.is_dir():
+        if directory.parent == directory:
+            return False
+        directory = directory.parent
+    try:
+        handle, name = tempfile.mkstemp(dir=str(directory))
+    except OSError:
+        return False
+    try:
+        os.close(handle)
+        flipped = Path(name).with_name(Path(name).name.swapcase())
+        return flipped.name != Path(name).name and flipped.exists()
+    finally:
+        os.unlink(name)
+
+
+LOOP_MESSAGE = "Too many levels of symbolic links"
+
+
+def resolved_path(path):
+    original = path = Path(path)
+    for _ in range(40):
+        if not path.is_symlink():
+            break
+        target = Path(link_target(os.readlink(path)))
+        path = target if target.is_absolute() else path.parent / target
+    if path.is_symlink():
+        raise OSError(errno.ELOOP, LOOP_MESSAGE, str(original))
+    try:
+        return path.resolve()
+    except RuntimeError as error:
+        raise OSError(errno.ELOOP, LOOP_MESSAGE, str(original)) from error
+
+
+def link_target(text):
+    if os.name != "nt":
+        return text
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[8:]
+    if text.startswith("\\\\?\\"):
+        return text[4:]
+    return text
+
+
 def same_file(left, right):
-    left, right = Path(left), Path(right)
-    return left.resolve() == right.resolve() or (left.exists() and right.exists() and left.samefile(right))
+    left, right = resolved_path(left), resolved_path(right)
+    if str(left) == str(right):
+        return True
+    if left.exists() and right.exists() and left.samefile(right):
+        return True
+    if str(left).casefold() == str(right).casefold():
+        return case_insensitive_directory(left.parent)
+    return False
 
 
 def write_outputs(outputs):

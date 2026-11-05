@@ -3,8 +3,11 @@
 #include <array>
 #include <atomic>
 #include <cstdlib>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 
+static constexpr int GUEST_EBUSY = 16;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int PROCESS_PRIVATE = 0;
 static constexpr int PROCESS_SHARED = 1;
@@ -42,7 +45,30 @@ static void RunWaiters(Context& context) {
     Require(context.serial == 1 && context.released == static_cast<int>(WAITERS) - 1);
 }
 
+static void DestroyWhileWaiting() {
+    Context context;
+    Require(pthread_barrier_init_nid_postfix(&context.barrier, nullptr, 2) == 0);
+    auto* const barrier = context.barrier;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, Waiter, &context, nullptr) == 0);
+    for (;;) {
+        {
+            std::lock_guard lock(barrier->mutex);
+            if (barrier->arrived == 1) break;
+        }
+        std::this_thread::yield();
+    }
+    Require(pthread_barrier_destroy_nid_postfix(&context.barrier) == GUEST_EBUSY && context.barrier == barrier);
+    Require(pthread_barrier_wait_nid_postfix(&context.barrier) == BARRIER_SERIAL_THREAD);
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(context.released == 1 && context.serial == 0);
+    Require(pthread_barrier_destroy_nid_postfix(&context.barrier) == 0 && context.barrier == nullptr);
+    Require(pthread_barrier_wait_nid_postfix(&context.barrier) == GUEST_EINVAL);
+    Require(pthread_barrier_destroy_nid_postfix(&context.barrier) == GUEST_EINVAL);
+}
+
 int main() {
+    DestroyWhileWaiting();
     PthreadBarrierattrPrivate* missing = nullptr;
     int pshared = -1;
     Require(pthread_barrierattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
@@ -75,10 +101,16 @@ int main() {
     Require(rejected);
 
     PthreadBarrierPrivate* invalid = nullptr;
+    Require(pthread_barrier_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
+    Require(pthread_barrier_destroy_nid_postfix(&invalid) == GUEST_EINVAL);
     Require(pthread_barrier_init_nid_postfix(nullptr, &attr, 1) == GUEST_EINVAL);
+    Require(pthread_barrier_init_nid_postfix(nullptr, nullptr, 1) == GUEST_EINVAL);
+    Require(pthread_barrier_init_nid_postfix(nullptr, nullptr, 0) == GUEST_EINVAL);
+    Require(pthread_barrier_init_nid_postfix(&invalid, nullptr, 0) == GUEST_EINVAL && invalid == nullptr);
     Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0) == GUEST_EINVAL && invalid == nullptr);
     Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0x80000000u) == GUEST_EINVAL && invalid == nullptr);
     Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0xffffffffu) == GUEST_EINVAL && invalid == nullptr);
+    Require(pthread_barrier_destroy_nid_postfix(&invalid) == GUEST_EINVAL);
 
     Context withAttr;
     Require(pthread_barrier_init_nid_postfix(&withAttr.barrier, &attr, WAITERS) == 0 && withAttr.barrier != nullptr);
@@ -107,8 +139,10 @@ int main() {
     }
 
     PthreadBarrierPrivate* single = nullptr;
+    Require(pthread_barrier_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
     Require(pthread_barrierattr_init_nid_postfix(&attr) == 0);
     Require(pthread_barrier_init_nid_postfix(&single, &attr, 1) == 0);
+    Require(pthread_barrier_wait_nid_postfix(nullptr) == GUEST_EINVAL);
     Require(pthread_barrier_wait_nid_postfix(&single) == BARRIER_SERIAL_THREAD);
     Require(pthread_barrier_wait_nid_postfix(&single) == BARRIER_SERIAL_THREAD);
     Require(pthread_barrier_destroy_nid_postfix(&single) == 0);

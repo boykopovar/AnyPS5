@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <csignal>
 #include <initializer_list>
@@ -66,8 +67,49 @@ void APS5_VABI MaskCallback(int value) {
 
 }
 static void Require(bool value) { if (!value) std::abort(); }
+static void CheckSignalPointerFaults() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page, 3, 0) == 0 && memory != nullptr);
+    Require(sceKernelMprotect(memory, page, 1) == 0);
+    const auto readOnly = memory;
+    const auto unreadable = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    const auto fails = [](int result) { return result == -1 && *__error_nid_postfix() == 14; };
+    constexpr int user = 30;
+    GuestSigaction previous{};
+    Require(fails(sigaction_nid_postfix(user, static_cast<const GuestSigaction*>(unreadable), nullptr)));
+    Require(fails(sigaction_nid_postfix(0, static_cast<const GuestSigaction*>(unreadable), nullptr)));
+    Require(fails(sigaction_nid_postfix(user, nullptr, static_cast<GuestSigaction*>(unreadable))));
+    Require(fails(sigaction_nid_postfix(user, nullptr, static_cast<GuestSigaction*>(readOnly))));
+    Require(sigaction_nid_postfix(0, nullptr, &previous) == -1 && *__error_nid_postfix() == 22);
+    Require(sigaction_nid_postfix(user, nullptr, &previous) == 0);
+    GuestSignalSet blocked{}, set{{1u << (user - 1), 0, 0, 0}}, none{};
+    Require(sigprocmask_nid_postfix(3, nullptr, &blocked) == 0);
+    Require(fails(sigprocmask_nid_postfix(1, unreadable, nullptr)));
+    Require(fails(sigprocmask_nid_postfix(9, unreadable, nullptr)));
+    Require(sigprocmask_nid_postfix(9, &set, nullptr) == -1 && *__error_nid_postfix() == 22);
+    Require(fails(sigprocmask_nid_postfix(1, nullptr, unreadable)));
+    Require(fails(sigprocmask_nid_postfix(1, nullptr, readOnly)));
+    Require(sigprocmask_nid_postfix(1, nullptr, &none) == 0 && std::memcmp(&none, &blocked, sizeof(none)) == 0);
+    Require(fails(sigprocmask_nid_postfix(1, &set, readOnly)));
+    Require(sigprocmask_nid_postfix(1, nullptr, &none) == 0 && (none.bits[0] & set.bits[0]) != 0);
+    Require(sigprocmask_nid_postfix(3, &blocked, nullptr) == 0);
+    Require(pthread_sigmask_nid_postfix(1, static_cast<const GuestSignalSet*>(unreadable), nullptr) == 14);
+    Require(pthread_sigmask_nid_postfix(1, nullptr, static_cast<GuestSignalSet*>(readOnly)) == 14);
+    Require(pthread_sigmask_nid_postfix(9, static_cast<const GuestSignalSet*>(unreadable), nullptr) == 14);
+    Require(pthread_sigmask_nid_postfix(9, &set, nullptr) == 22);
+    Require(sigprocmask_nid_postfix(3, &blocked, nullptr) == 0);
+    Require(fails(sigaltstack_nid_postfix(static_cast<const GuestStack*>(unreadable), nullptr)));
+    Require(fails(sigaltstack_nid_postfix(nullptr, static_cast<GuestStack*>(unreadable))));
+    Require(fails(sigaltstack_nid_postfix(nullptr, static_cast<GuestStack*>(readOnly))));
+    Require(fails(sigpending_nid_postfix(static_cast<GuestSignalSet*>(unreadable))));
+    Require(fails(sigpending_nid_postfix(static_cast<GuestSignalSet*>(readOnly))));
+    Require(fails(sigpending_nid_postfix(nullptr)));
+}
+
 int main() {
     const auto invalid = reinterpret_cast<Handler>(static_cast<std::uintptr_t>(-1));
+    CheckSignalPointerFaults();
     const auto ignore = reinterpret_cast<Handler>(std::uintptr_t{1});
     Require(signal_nid_postfix(9, Callback) == invalid);
     Require(*__error_nid_postfix() == 22);
@@ -277,7 +319,7 @@ int main() {
     Require(GuestAlarm_nid_no_patch(1) == 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     Require(GuestAlarm_nid_no_patch(0) == 0);
-    for (int unmapped : {1, 13, 30, 31, 32, 128}) {
+    for (int unmapped : {1, 12, 30, 31, 32, 128}) {
         *__error_nid_postfix() = 0;
         Require(signal_nid_postfix(unmapped, ignore) == nullptr);
         Require(sigaction_nid_postfix(unmapped, nullptr, &current) == 0 && current.handler == 1 && current.flags == 0x2);

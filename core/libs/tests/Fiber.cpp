@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <xmmintrin.h>
@@ -272,6 +274,16 @@ void RunAttachedContext() {
     FiberInfo info{};
     info.size = sizeof(info);
     Require(sceFiberGetInfo(g_attached, &info) == 0 && info.addr_context == nullptr && info.size_context == 0, "fiber without a context reports none");
+    alignas(16) unsigned char notFiber[512] = {};
+    Require(sceFiberRename(nullptr, "renamed") == FiberErrorNull, "rename a null fiber");
+    Require(sceFiberRename(g_attached, nullptr) == FiberErrorNull, "rename to a null name");
+    Require(sceFiberRename(reinterpret_cast<FiberObject*>(notFiber), "renamed") == FiberErrorInvalid, "rename an object that is not a fiber");
+    Require(sceFiberRename(g_attached, "renamed") == 0, "rename a fiber");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strcmp(info.name, "renamed") == 0, "the new name is reported");
+    const std::string longName(FIBER_MAX_NAME_LENGTH + 8, 'n');
+    Require(sceFiberRename(g_attached, longName.c_str()) == 0, "rename to a long name");
+    Require(sceFiberGetInfo(g_attached, &info) == 0 && std::strlen(info.name) == FIBER_MAX_NAME_LENGTH && longName.compare(0, FIBER_MAX_NAME_LENGTH, info.name) == 0, "a long name is cut at the limit");
+    Require(sceFiberRename(g_attached, "attached") == 0, "restore the fiber's name");
     Require(_sceFiberAttachContextAndRun(nullptr, g_attachedContext.data(), g_attachedContext.size(), 0, nullptr) == FiberErrorNull, "attach and run a null fiber");
     Require(_sceFiberAttachContextAndRun(g_attached, nullptr, g_attachedContext.size(), 0, nullptr) == FiberErrorInvalid, "attach a null context with a size");
     Require(_sceFiberAttachContextAndRun(g_attached, g_attachedContext.data(), 0, 0, nullptr) == FiberErrorRange, "attach a context without a size");

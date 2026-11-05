@@ -34,7 +34,6 @@ int main() {
         sceGnmGetResourceUserData,
         sceGnmQueryResourceRegistrationUserMemoryRequirements,
         sceGnmRegisterGdsResource,
-        sceGnmRegisterOwner,
         sceGnmRegisterOwnerForSystem,
         sceGnmRegisterResource,
         sceGnmSetResourceRegistrationUserMemory,
@@ -54,6 +53,7 @@ int main() {
         sceGnmSetSpiEnableSqCounters,
         sceGnmSetSpiEnableSqCountersForUnitInstance,
     });
+    if (sceGnmRegisterOwner(nullptr, nullptr) != Failure) std::abort();
     RequireAll(NoInterface, {
         sceGnmDriverInternalRetrieveGnmInterface,
         sceGnmDriverInternalRetrieveGnmInterfaceForGpuDebugger,
