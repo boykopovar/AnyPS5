@@ -76,3 +76,7 @@
 [submodule "3rdparty/quickjs"]
 	path = 3rdparty/quickjs
 	url = https://github.com/quickjs-ng/quickjs.git
+[submodule "3rdparty/icu"]
+	path = 3rdparty/icu
+	url = https://github.com/unicode-org/icu.git
+	shallow = true
