@@ -123,6 +123,8 @@ static void TestWebSockets() {
     RequireNotWebSocket(orphan);
     Require(CreateWebSocket(tmpl, url) == InvalidId);
     Require(sceHttp2Term(context) == 0);
+}
+
 static int callbackCalls = 0;
 
 static int APS5_VABI RejectRedirect(int, int, const char**, const char*, void*) {
