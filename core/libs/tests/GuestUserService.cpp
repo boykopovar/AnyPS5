@@ -24,6 +24,10 @@ void SetLanguage(const char* value) {
 }
 
 int main() {
+    int foreground = -1;
+    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_ERROR_NOT_INITIALIZED && foreground == -1);
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     int32_t userNumber = -1;
     Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -40,7 +44,7 @@ int main() {
     Require(privacy == -1);
     Require(sceUserServiceGetPlatformPrivacyWs1(123, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
 
-    int foreground = -1;
+    foreground = -1;
     Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_OK);
     Require(foreground == USER_SERVICE_INITIAL_USER_ID);
 
@@ -295,4 +299,5 @@ int main() {
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, &presets) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(presets.difficulty == 0x5a);
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 }
