@@ -15,8 +15,9 @@ void ValidateWriteData(const std::uint32_t* cmd, const char* function) {
     Agc::Command::Require(((cmd[0] >> 8u) & 0xffu) == 0x37u, function, "not a WRITE_DATA packet");
 }
 
-int SetWriteDataAddress(std::uint32_t* cmd, std::uint64_t address, const char* function) {
+int SetWriteDataAddress(std::uint32_t* cmd, std::uint64_t address, bool compute, const char* function) {
     ValidateWriteData(cmd, function);
+    Agc::Command::Require(compute || (address & 3u) == 0, function, "misaligned write address");
     cmd[2] = static_cast<std::uint32_t>(address);
     cmd[3] = static_cast<std::uint32_t>(address >> 32u);
     return 0;
@@ -77,11 +78,11 @@ int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint
 }
 
 int APS5_VABI sceAgcWriteDataPatchSetAddressOrOffset(std::uint32_t* cmd, std::uint64_t address) {
-    return SetWriteDataAddress(cmd, address, __func__);
+    return SetWriteDataAddress(cmd, address, false, __func__);
 }
 
 int APS5_VABI sceAgcAsyncWriteDataPatchSetAddressOrOffset(std::uint32_t* cmd, std::uint64_t address) {
-    return SetWriteDataAddress(cmd, address, __func__);
+    return SetWriteDataAddress(cmd, address, true, __func__);
 }
 
 int APS5_VABI sceAgcWriteDataPatchSetDst(std::uint32_t* cmd, std::uint8_t dst) {
