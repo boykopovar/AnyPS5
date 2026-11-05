@@ -50,14 +50,10 @@ void CheckDeviceIdConversion() {
 
 void CheckInit() {
     Require(sceMbusInit() == 0, "the first initialization failed");
-    bool threw = false;
-    try {
-        sceMbusInit();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw, "a second initialization, whose console answer is not measured, did not throw");
+    Require(sceMbusInit() == 0, "a second initialization failed");
     Require(sceMbusTerm() == 0, "termination failed");
+    Require(sceMbusInit() == 0, "an initialization after termination failed");
+    Require(sceMbusTerm() == 0, "a second termination failed");
 }
 
 }

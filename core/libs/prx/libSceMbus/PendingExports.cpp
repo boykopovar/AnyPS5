@@ -1,10 +1,8 @@
 #include "prx/libSceMbus/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <atomic>
 #include <cstddef>
 #include <cstring>
-#include <stdexcept>
 
 static_assert(sizeof(MbusDeviceFunctionState) == 180);
 
@@ -406,8 +404,6 @@ int APS5_VABI sceMbusGetSparkState(std::uint64_t deviceId, MbusSparkState* state
 }
 
 int APS5_VABI sceMbusInit() {
-    static std::atomic<bool> initialized{false};
-    if (initialized.exchange(true)) throw std::runtime_error("sceMbusInit: what a console returns once the first call has set the module's state is not measured");
     return 0;
 }
 
