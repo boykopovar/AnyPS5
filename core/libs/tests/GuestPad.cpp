@@ -971,6 +971,7 @@ int main() {
     Require(scePadGetBluetoothAddress(PAD_HANDLE, &earlyAddress) == PAD_ERROR_NOT_INITIALIZED && earlyAddress == 7);
     Require(scePadParseUniqueDataLeonardo(PAD_HANDLE, reinterpret_cast<const PadLeonardoData*>(earlyLeonardo.data()), reinterpret_cast<PadLeonardoUniqueData*>(earlyUnique.data())) == PAD_ERROR_NOT_INITIALIZED && earlyUnique[0] == 0xaa);
     Require(scePadUnknown_n3kSX62fgNo() == static_cast<int>(0x80920005));
+    Require(scePadSetConnection(PAD_HANDLE, false) == PAD_ERROR_NOT_INITIALIZED);
     Require(!scePadIsValidHandle(PAD_HANDLE, PAD_PORT_TYPE_STANDARD));
     const PadVibrationParam earlyVibration{1, 2};
     for (const PadVibrationParam* param : {static_cast<const PadVibrationParam*>(nullptr), &earlyVibration}) Require(scePadSetVibrationForce(PAD_HANDLE, param) == PAD_ERROR_NOT_INITIALIZED);
@@ -1174,6 +1175,10 @@ int main() {
     Require(scePadSetVibration(handle2 + 99, nullptr) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
 
+    const PadLightBarBlinkingParameter blinkParam{};
+    Require(scePadSetLightBarBlinking(handle2 + 99, &blinkParam) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBlinking(-1, &blinkParam) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBlinking(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
     const PadLightBarParam lightOff{0, 0, 0};
     const PadLightBarParam lightFull{255, 255, 255};
     const PadLightBarParam lightColor{100, 150, 200};
