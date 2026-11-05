@@ -50,6 +50,8 @@ FrameTiming* Driver::includeTimingSubmission(const Submission& submission, bool 
 }
 
 void Driver::markCompleted(std::uint64_t serial) {
+    static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
+    if (traceGpu) std::fprintf(stderr, "[gpu] %.1f completed serial=%llu (in order up to %llu)\n", TraceMs(), static_cast<unsigned long long>(serial), static_cast<unsigned long long>(completed));
     completedOutOfOrder.insert(serial);
     while (!completedOutOfOrder.empty() && *completedOutOfOrder.begin() == completed + 1) {
         completed = *completedOutOfOrder.begin();
@@ -70,8 +72,10 @@ void Driver::deferCompletion(const Submission& submission) {
         queue0Uncommitted.push_back(received);
     }
     completionDeferred() = true;
-    DrawPipeline::Queue0().Enqueue([this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress] {
-        completeSubmission(serial, received, labelWrites, progress);
+    static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
+    if (traceGpu) std::fprintf(stderr, "[gpu] %.1f deferred completion serial=%llu to the draw pipeline\n", TraceMs(), static_cast<unsigned long long>(submission.serial));
+    DrawPipeline::Queue0().Enqueue([this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress, holdsFlip = submission.holdsFlip] {
+        completeSubmission(serial, received, labelWrites, progress, holdsFlip);
     }, {});
 }
 
@@ -95,7 +99,15 @@ void Driver::wakeQueueZeroForCompletions() {
     changed.notify_all();
 }
 
-void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress) {
+std::uint64_t Driver::submitFlipWork(std::uint32_t queue) {
+    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::End);
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    const auto localDevice = device.Load();
+    recordDeferredLabels(localDevice.get(), queue);
+    return localDevice != nullptr ? localDevice->SubmitAndEpoch() : 0;
+}
+
+void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress, bool holdsFlip) {
     struct Complete {
         Driver& driver;
         std::uint64_t serial, received;
@@ -113,7 +125,8 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
             if (notify) driver.changed.notify_all();
         }
     } complete{*this, serial, received, labelWrites};
-    submitOpenWork(progress);
+    if (holdsFlip) finishFlipWork(submitFlipWork(0));
+    else submitOpenWork(progress);
 }
 
 const std::atomic<std::uint64_t>*& Driver::workerQueued() {
@@ -144,6 +157,7 @@ void Driver::run(std::uint32_t id) noexcept {
     StartWorkerSampler(id);
     Submission submission;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    static const bool idleStore = std::getenv("APS5_NO_IDLE_STORE") == nullptr;
     auto& costs = submissionCosts(id);
     try {
         PerformanceTrace::BindThread(role);
@@ -183,7 +197,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         && std::all_of(workers.begin(), workers.end(), [](const auto& item) { return item.second.pending.empty(); });
                 };
                 const auto idleResultsPending = [&] {
-                    return id == 0 && Graphics::StorageTexture::AnyPending() && allQueuesIdle() && !completionsPending();
+                    return idleStore && id == 0 && Graphics::StorageTexture::AnyPending() && allQueuesIdle() && !completionsPending();
                 };
                 const auto poll = [&](const auto& done) {
 #ifdef _WIN32
@@ -221,13 +235,12 @@ void Driver::run(std::uint32_t id) noexcept {
                         lock.lock();
                         if (ready()) break;
                         if (id == 0 && allQueuesIdle() && !completionsPending()
-                            && ((!storeIdleResults && Graphics::StorageTexture::AnyPending()) || idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck)) continue;
+                            && ((idleStore && !storeIdleResults && Graphics::StorageTexture::AnyPending()) || idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck)) continue;
                         if (id == 0) queue0Dormant.store(true, std::memory_order_relaxed);
                         const auto idleEpochAtWait = idleEpoch.load(std::memory_order_acquire);
                         changed.wait(lock, [&] { return ready() || (id == 0 && (idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait || completionsPending())); });
                         if (id == 0) queue0Dormant.store(false, std::memory_order_relaxed);
-                        if (id == 0 && !ready() && (idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait || completionsPending())) continue;
-                        break;
+                        continue;
                     }
                     if (poll(ready)) break;
                     lock.unlock();
