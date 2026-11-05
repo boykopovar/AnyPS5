@@ -31,6 +31,7 @@ constexpr std::int32_t SCE_FIOS_ERROR_BAD_IOVCNT = static_cast<std::int32_t>(0x8
 constexpr std::int32_t SCE_FIOS_ERROR_BAD_OP = static_cast<std::int32_t>(0x8082000Au);
 constexpr std::int32_t SCE_FIOS_ERROR_BAD_FH = static_cast<std::int32_t>(0x8082000Bu);
 constexpr std::int32_t SCE_FIOS_ERROR_BAD_DH = static_cast<std::int32_t>(0x8082000Cu);
+constexpr std::int32_t SCE_FIOS_ERROR_BAD_ALIGNMENT = static_cast<std::int32_t>(0x8082000Du);
 constexpr std::int32_t SCE_FIOS_ERROR_NOT_A_FILE = static_cast<std::int32_t>(0x8082000Eu);
 constexpr std::int32_t SCE_FIOS_ERROR_NOT_A_DIRECTORY = static_cast<std::int32_t>(0x8082000Fu);
 constexpr std::int32_t SCE_FIOS_ERROR_BAD_OVERLAY = static_cast<std::int32_t>(0x8082001Au);

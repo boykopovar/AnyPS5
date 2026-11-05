@@ -38,6 +38,47 @@ static int APS5_VABI CountEvents(void* context, SceFiosOp op, SceFiosOpEvent eve
     return 0;
 }
 
+static int APS5_VABI FilterCallback(void*, std::int32_t, void*) {
+    return 0;
+}
+
+struct OverlayRecordTest {
+    std::uint8_t type;
+    std::uint8_t order;
+    std::uint16_t destinationLength;
+    std::uint16_t sourceLength;
+    std::uint16_t reserved;
+    std::int32_t processId;
+    std::int32_t id;
+    char destination[292];
+    char source[292];
+};
+
+static_assert(sizeof(OverlayRecordTest) == 0x258);
+
+struct CacheFilterConfigTest {
+    std::uint64_t size;
+    std::uint64_t workBufferSize;
+    std::uint64_t blockSize;
+    void* workBuffer;
+    const char* path;
+    std::uint64_t flags;
+    std::uint64_t reserved[3];
+};
+
+struct RamCacheContextTest {
+    std::uint64_t size;
+    std::uint64_t workBufferSize;
+    std::uint64_t blockSize;
+    void* workBuffer;
+    const char* path;
+    std::uint64_t flags;
+    std::uint64_t reserved[3];
+};
+
+static_assert(sizeof(CacheFilterConfigTest) == 0x48);
+static_assert(sizeof(RamCacheContextTest) == 0x48);
+
 static SceFiosOpAttr CountingAttr() {
     SceFiosOpAttr attr{};
     attr.pCallback = CountEvents;
@@ -58,20 +99,99 @@ static void CheckInitialization() {
     params[3] = 0x1;
     sceFiosUpdateParameters(reinterpret_cast<const SceFiosParams*>(params));
     REQUIRE(sceFiosIsInitialized(reinterpret_cast<SceFiosParams*>(copy)) && copy[3] == 0x1);
+    REQUIRE(sceFiosDLLInitialize() != nullptr);
+    REQUIRE(sceFiosDLLTerminate() == 0);
+    REQUIRE(sceFiosIsInitialized(nullptr));
 }
 
 static void CheckQueries(const std::string& directory, const std::string& file) {
+    REQUIRE(sceFiosIOFilterAdd(0, nullptr, nullptr) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosIOFilterAdd(-1, FilterCallback, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
+    REQUIRE(sceFiosIOFilterAdd(256, FilterCallback, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
+    REQUIRE(sceFiosIOFilterAdd(0, FilterCallback, reinterpret_cast<void*>(0x1234)) == SCE_FIOS_OK);
+    REQUIRE(sceFiosIOFilterAdd(0, FilterCallback, reinterpret_cast<void*>(0x5678)) == SCE_FIOS_ERROR_BAD_INDEX);
+    void* filterCallback = nullptr;
+    void* filterContext = nullptr;
+    REQUIRE(sceFiosIOFilterGetInfo(0, &filterCallback, &filterContext) == SCE_FIOS_OK);
+    REQUIRE(filterCallback != nullptr && filterContext == reinterpret_cast<void*>(0x1234));
+    REQUIRE(sceFiosIOFilterGetInfo(0, nullptr, nullptr) == SCE_FIOS_OK);
+    REQUIRE(sceFiosIOFilterGetInfo(256, &filterCallback, &filterContext) == SCE_FIOS_ERROR_BAD_INDEX);
+    std::uint8_t resolveRequest[0x410]{};
+    std::uint8_t resolveResult[0x410]{};
+    resolveRequest[0] = 0x10;
+    REQUIRE(sceFiosResolveSync(nullptr, resolveRequest, resolveResult) == SCE_FIOS_OK);
+    REQUIRE(std::memcmp(resolveRequest, resolveResult, sizeof(resolveRequest)) == 0);
+    std::memset(resolveResult, 0, sizeof(resolveResult));
+    const SceFiosOp resolveOp = sceFiosResolve(nullptr, resolveRequest, resolveResult);
+    REQUIRE(resolveOp != 0);
+    REQUIRE(sceFiosOpSyncWait(resolveOp) == SCE_FIOS_OK);
+    REQUIRE(std::memcmp(resolveRequest, resolveResult, sizeof(resolveRequest)) == 0);
+    sceFiosOpDelete(resolveOp);
     int cacheConfig = 0;
     int cacheContext = 0;
     REQUIRE(sceFiosIOFilterCache(nullptr, 0, &cacheContext) == SCE_FIOS_ERROR_BAD_PTR);
-    REQUIRE(sceFiosIOFilterCache(&cacheConfig, 0, nullptr) == SCE_FIOS_ERROR_BAD_OVERLAY);
+    REQUIRE(sceFiosIOFilterCache(&cacheConfig, 0, &cacheContext) == SCE_FIOS_ERROR_BAD_SIZE);
+    REQUIRE(sceFiosIOFilterCache(&cacheConfig, 0, nullptr) == SCE_FIOS_ERROR_BAD_SIZE);
+    alignas(64) std::uint8_t psarcWork[0x100]{};
+    std::uint64_t psarc[7]{0x38, sizeof(psarcWork), reinterpret_cast<std::uint64_t>(psarcWork), 0, 0, 0, 0};
+    std::uint64_t psarcBad[7]{};
+    std::memcpy(psarcBad, psarc, sizeof(psarc));
+    psarcBad[0] = 0x30;
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarcBad, 0, nullptr) == SCE_FIOS_ERROR_BAD_SIZE);
+    std::memcpy(psarcBad, psarc, sizeof(psarc));
+    psarcBad[2] += 8;
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarcBad, 0, nullptr) == SCE_FIOS_ERROR_BAD_ALIGNMENT);
+    std::memcpy(psarcBad, psarc, sizeof(psarc));
+    psarcBad[3] = 2;
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarcBad, 0, nullptr) == SCE_FIOS_ERROR_BAD_FLAGS);
+    std::memcpy(psarcBad, psarc, sizeof(psarc));
+    psarcBad[6] = 1;
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarcBad, 0, nullptr) == SCE_FIOS_ERROR_BAD_SIZE);
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 0, nullptr) == SCE_FIOS_OK);
+    char psarcText[0x100]{};
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 2, psarcText) == SCE_FIOS_OK);
+    REQUIRE(std::strcmp(psarcText, "description not implemented") == 0);
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 2, nullptr) == static_cast<std::int32_t>(0x8082001Du));
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, -1, nullptr) == static_cast<std::int32_t>(0x8082001Du));
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 3, psarcText) == static_cast<std::int32_t>(0x8082001Du));
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 1, nullptr) == SCE_FIOS_OK);
     REQUIRE(sceFiosIOFilterPsarcDearchiver(nullptr, 0, nullptr) == SCE_FIOS_ERROR_BAD_PTR);
     REQUIRE(sceFiosIOFilterPsarcDearchiver(nullptr, 1, nullptr) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosIOFilterPsarcDearchiver(psarc, 2, psarcText) == SCE_FIOS_ERROR_BAD_PTR);
     char overlayResult[64]{};
     REQUIRE(sceFiosOverlayResolveSync(0, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
     REQUIRE(sceFiosOverlayResolveSync(1, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
     REQUIRE(sceFiosOverlayResolveSync(64, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_OVERLAY);
     REQUIRE(sceFiosOverlayResolveSync(0x401, directory.c_str(), file.c_str(), overlayResult) == SCE_FIOS_ERROR_BAD_SIZE);
+    OverlayRecordTest overlay{};
+    overlay.type = 0;
+    overlay.order = 1;
+    std::memcpy(overlay.destination, directory.c_str(), directory.size() + 1);
+    std::memcpy(overlay.source, file.c_str(), file.size() + 1);
+    std::int32_t overlayId = 0;
+    REQUIRE(sceFiosOverlayAdd(nullptr, &overlayId) == SCE_FIOS_ERROR_BAD_PTR);
+    REQUIRE(sceFiosOverlayAdd(&overlay, &overlayId) == SCE_FIOS_OK);
+    REQUIRE(overlayId > 0);
+    OverlayRecordTest overlayInfo{};
+    REQUIRE(sceFiosOverlayGetInfo(overlayId, &overlayInfo) == SCE_FIOS_OK);
+    REQUIRE(overlayInfo.id == overlayId && overlayInfo.type == overlay.type && overlayInfo.order == overlay.order);
+    REQUIRE(overlayInfo.destinationLength == directory.size() && overlayInfo.sourceLength == file.size());
+    std::int32_t overlayIds[4]{};
+    std::uint64_t overlayCount = 0;
+    REQUIRE(sceFiosOverlayGetList(overlayIds, 4, &overlayCount) == SCE_FIOS_OK);
+    REQUIRE(overlayCount == 1 && overlayIds[0] == overlayId);
+    alignas(64) std::uint8_t cacheWork[0x20000]{};
+    CacheFilterConfigTest validCacheConfig{sizeof(CacheFilterConfigTest), sizeof(cacheWork), 0x10000, cacheWork, directory.c_str(), 0, {}};
+    RamCacheContextTest validCacheContext{sizeof(RamCacheContextTest), sizeof(cacheWork), 0x10000, cacheWork, directory.c_str(), 0, {}};
+    REQUIRE(sceFiosIOFilterCache(&validCacheConfig, 0, &validCacheContext) == SCE_FIOS_OK);
+    REQUIRE(sceFiosIOFilterCache(&validCacheConfig, 1, &validCacheContext) == SCE_FIOS_ERROR_BAD_INDEX);
+    overlay.type = 2;
+    REQUIRE(sceFiosOverlayModify(overlayId, &overlay) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOverlayGetInfo(overlayId, &overlayInfo) == SCE_FIOS_OK && overlayInfo.type == 2);
+    REQUIRE(sceFiosOverlayRemove(overlayId) == SCE_FIOS_OK);
+    REQUIRE(sceFiosOverlayGetInfo(overlayId, &overlayInfo) == SCE_FIOS_ERROR_BAD_OVERLAY);
+    REQUIRE(sceFiosOverlayRemove(overlayId) == SCE_FIOS_ERROR_BAD_OVERLAY);
+    REQUIRE(sceFiosOverlayGetList(overlayIds, 4, &overlayCount) == SCE_FIOS_OK && overlayCount == 0);
     SceFiosSize mountSize = 0;
     SceFiosFH archive = 0;
     REQUIRE(sceFiosArchiveGetMountBufferSize(nullptr, file.c_str(), &mountSize) == 0);
@@ -213,6 +333,10 @@ static void CheckSuspension(const std::string& file) {
     const SceFiosOp first = sceFiosFileGetSize(&attr, file.c_str());
     const SceFiosOp second = sceFiosFileGetSize(&attr, file.c_str());
     REQUIRE(!sceFiosOpIsDone(first) && !sceFiosOpIsDone(second) && !sceFiosIsIdle());
+    sceFiosOpRescheduleWithPriority(first, nullptr, 127);
+    sceFiosOpRescheduleWithPriority(second, nullptr, -127);
+    sceFiosOpReschedule(INT32_MAX, nullptr);
+    REQUIRE(!sceFiosOpIsDone(first) && !sceFiosOpIsDone(second));
     REQUIRE(sceFiosOpGetError(first) == 1 && g_completed == 0);
     sceFiosResume();
     REQUIRE(!sceFiosOpIsDone(first) && sceFiosGetSuspendCount() == 1);
@@ -588,6 +712,7 @@ int main() {
     CheckMutations(directory.generic_string());
     CheckFileHandles(directory.generic_string());
     CheckDirectories(directory.generic_string());
+    REQUIRE(sceFiosIOFilterGetInfo(0, nullptr, nullptr) == SCE_FIOS_ERROR_BAD_INDEX);
     CheckDates();
     CheckBadPointers(file);
     sceFiosTerminate();

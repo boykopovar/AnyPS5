@@ -3,11 +3,111 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <cstring>
+#include <mutex>
 #include <vector>
 
 namespace {
 std::atomic<std::uint8_t> g_decompressorThreads{0};
+
+struct IOFilter {
+    SceFiosIOFilterCallback callback{};
+    void* context{};
+};
+
+struct OverlayRecord {
+    std::uint8_t type{};
+    std::uint8_t order{};
+    std::uint16_t destinationLength{};
+    std::uint16_t sourceLength{};
+    std::uint16_t reserved{};
+    std::int32_t processId{};
+    std::int32_t id{};
+    char destination[292]{};
+    char source[292]{};
+};
+
+static_assert(sizeof(OverlayRecord) == 0x258);
+
+struct CacheFilterConfig {
+    std::uint64_t size{};
+    std::uint64_t workBufferSize{};
+    std::uint64_t blockSize{};
+    void* workBuffer{};
+    const char* path{};
+    std::uint64_t flags{};
+    std::uint64_t reserved[3]{};
+};
+
+struct RamCacheContext {
+    std::uint64_t size{};
+    std::uint64_t workBufferSize{};
+    std::uint64_t blockSize{};
+    void* workBuffer{};
+    const char* path{};
+    std::uint64_t flags{};
+    std::uint64_t reserved[3]{};
+};
+
+struct CacheFilterRegistration {
+    CacheFilterConfig config;
+    RamCacheContext context;
+    std::string path;
+};
+
+static_assert(sizeof(CacheFilterConfig) == 0x48);
+static_assert(sizeof(RamCacheContext) == 0x48);
+
+std::array<IOFilter, 256> g_ioFilters{};
+std::mutex g_ioFiltersMutex;
+std::vector<CacheFilterRegistration> g_cacheFilters;
+std::mutex g_cacheFiltersMutex;
+std::vector<OverlayRecord> g_overlays;
+std::mutex g_overlaysMutex;
+std::int32_t g_lastOverlayId = 0;
+
+struct PsarcDescriptor {
+    std::uint64_t size;
+    std::uint64_t workBufferSize;
+    std::uint64_t workBuffer;
+    std::uint64_t flags;
+    std::uint64_t reserved[3];
+};
+
+static_assert(sizeof(PsarcDescriptor) == 0x38);
+
+constexpr std::int32_t kPsarcBadMode = static_cast<std::int32_t>(0x8082001Du);
+constexpr char kPsarcDescription[] = "description not implemented";
+std::mutex g_psarcMutex;
+std::int32_t g_psarcUsers = 0;
+bool g_psarcRejected = false;
+
+int StartPsarcDearchiver(const PsarcDescriptor* descriptor) {
+    if (descriptor == nullptr || descriptor->workBuffer == 0) return SCE_FIOS_ERROR_BAD_PTR;
+    if (descriptor->size != sizeof(PsarcDescriptor) || descriptor->workBufferSize == 0) return SCE_FIOS_ERROR_BAD_SIZE;
+    if ((descriptor->workBuffer & 0x3f) != 0) return SCE_FIOS_ERROR_BAD_ALIGNMENT;
+    if ((descriptor->flags & ~std::uint64_t{1}) != 0) return SCE_FIOS_ERROR_BAD_FLAGS;
+    for (const std::uint64_t word : descriptor->reserved)
+        if (word != 0) return SCE_FIOS_ERROR_BAD_SIZE;
+    const std::lock_guard lock(g_psarcMutex);
+    ++g_psarcUsers;
+    return SCE_FIOS_OK;
+}
+
+bool PsarcDescriptorAccepted(const PsarcDescriptor* descriptor) {
+    return descriptor != nullptr && descriptor->reserved[1] <= 7 && (descriptor->reserved[0] & 7) == 0 && descriptor->flags <= 1 &&
+           descriptor->size == sizeof(PsarcDescriptor) && descriptor->workBufferSize != 0 && descriptor->workBuffer != 0 &&
+           (descriptor->workBuffer & 0x3f) == 0;
+}
+
+void ClearIOFilters() {
+    const std::lock_guard lock(g_ioFiltersMutex);
+    g_ioFilters.fill({});
+    const std::lock_guard cacheLock(g_cacheFiltersMutex);
+    g_cacheFilters.clear();
+}
 }
 
 extern "C" {
@@ -57,15 +157,33 @@ int APS5_VABI sceFiosArchiveUnmountSync(const SceFiosOpAttr*, SceFiosFH) {
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
 
-int APS5_VABI sceFiosIOFilterAdd(std::int32_t index, SceFiosIOFilterCallback callback, void*) {
+int APS5_VABI sceFiosIOFilterAdd(std::int32_t index, SceFiosIOFilterCallback callback, void* context) {
     if (callback == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
     if (index < 0 || index >= 256) return SCE_FIOS_ERROR_BAD_INDEX;
-    NotImplemented_nid_no_patch(__func__);
-    return SCE_FIOS_ERROR_UNIMPLEMENTED;
+    const std::lock_guard lock(g_ioFiltersMutex);
+    IOFilter& filter = g_ioFilters[static_cast<std::size_t>(index)];
+    if (filter.callback != nullptr) return SCE_FIOS_ERROR_BAD_INDEX;
+    filter.callback = callback;
+    filter.context = context;
+    return SCE_FIOS_OK;
 }
 
-int APS5_VABI sceFiosIOFilterPsarcDearchiver(void* descriptor, std::int32_t mode, void*) {
-    if (descriptor == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
+int APS5_VABI sceFiosIOFilterPsarcDearchiver(void* descriptor, std::int32_t mode, void* data) {
+    const auto* psarc = static_cast<const PsarcDescriptor*>(descriptor);
+    if (mode == 0) return StartPsarcDearchiver(psarc);
+    {
+        const std::lock_guard lock(g_psarcMutex);
+        if (g_psarcRejected || !PsarcDescriptorAccepted(psarc)) {
+            g_psarcRejected = true;
+            return SCE_FIOS_ERROR_BAD_PTR;
+        }
+        if (mode == 1) {
+            --g_psarcUsers;
+            return SCE_FIOS_OK;
+        }
+    }
+    if (data == nullptr || (mode != 2 && mode != -1)) return kPsarcBadMode;
+    if (mode == 2) return Fios::CopyOut(data, kPsarcDescription, sizeof(kPsarcDescription)) ? SCE_FIOS_OK : SCE_FIOS_ERROR_BAD_PTR;
     NotImplemented_nid_no_patch(__func__);
     return SCE_FIOS_ERROR_UNIMPLEMENTED;
 }
@@ -76,6 +194,7 @@ int APS5_VABI sceFiosInitialize(const SceFiosParams* params) {
 
 void APS5_VABI sceFiosTerminate() {
     Fios::Terminate();
+    ClearIOFilters();
 }
 
 bool APS5_VABI sceFiosIsInitialized(SceFiosParams* outParams) {
@@ -136,6 +255,7 @@ void APS5_VABI sceFiosCancelAllOps() {
 
 void APS5_VABI sceFiosShutdownAndCancelOps() {
     Fios::Terminate();
+    ClearIOFilters();
 }
 
 void APS5_VABI sceFiosCloseAllFiles() {
@@ -173,7 +293,6 @@ bool APS5_VABI sceFiosIsValidHandle(SceFiosHandle handle) {
 
 void APS5_VABI sceFiosOpRescheduleWithPriority(SceFiosOp op, const void*, std::int32_t) {
     if (Fios::OpAttr(op) == nullptr || Fios::OpDone(op)) return;
-    NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI sceFiosOpReschedule(SceFiosOp op, const void* scheduler) {
@@ -192,19 +311,47 @@ std::int64_t APS5_VABI sceFiosCacheContainsFileRangeSync(const char*, std::uint6
     return SCE_FIOS_ERROR_BAD_INDEX;
 }
 
-int APS5_VABI sceFiosIOFilterGetInfo(std::int32_t, void**, void**) {
-    return SCE_FIOS_ERROR_BAD_INDEX;
+int APS5_VABI sceFiosIOFilterGetInfo(std::int32_t index, void** callback, void** context) {
+    if (index < 0 || index >= 256) return SCE_FIOS_ERROR_BAD_INDEX;
+    const std::lock_guard lock(g_ioFiltersMutex);
+    const IOFilter& filter = g_ioFilters[static_cast<std::size_t>(index)];
+    if (filter.callback == nullptr) return SCE_FIOS_ERROR_BAD_INDEX;
+    if (callback != nullptr && !Fios::CopyOut(callback, &filter.callback, sizeof(filter.callback))) return SCE_FIOS_ERROR_BAD_PTR;
+    if (context != nullptr && !Fios::CopyOut(context, &filter.context, sizeof(filter.context))) return SCE_FIOS_ERROR_BAD_PTR;
+    return SCE_FIOS_OK;
 }
 
-int APS5_VABI sceFiosIOFilterRemove(std::int32_t) {
-    return SCE_FIOS_ERROR_BAD_INDEX;
+int APS5_VABI sceFiosIOFilterRemove(std::int32_t index) {
+    if (index < 0 || index >= 256) return SCE_FIOS_ERROR_BAD_INDEX;
+    const std::lock_guard lock(g_ioFiltersMutex);
+    IOFilter& filter = g_ioFilters[static_cast<std::size_t>(index)];
+    if (filter.callback == nullptr) return SCE_FIOS_ERROR_BAD_INDEX;
+    filter = {};
+    return SCE_FIOS_OK;
 }
 
-int APS5_VABI sceFiosIOFilterCache(const void* config, std::int32_t, const void* context) {
+int APS5_VABI sceFiosIOFilterCache(const void* config, std::int32_t index, const void* context) {
     if (config == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
-    if (context == nullptr) return SCE_FIOS_ERROR_BAD_OVERLAY;
-    NotImplemented_nid_no_patch(__func__);
-    return SCE_FIOS_ERROR_UNIMPLEMENTED;
+    CacheFilterRegistration registration{};
+    if (!Fios::CopyIn(&registration.config, config, sizeof(registration.config))) return SCE_FIOS_ERROR_BAD_PTR;
+    if (registration.config.size != sizeof(CacheFilterConfig) || registration.config.workBufferSize < 0x20000 || registration.config.blockSize == 0 || registration.config.blockSize > registration.config.workBufferSize) return SCE_FIOS_ERROR_BAD_SIZE;
+    if (registration.config.workBuffer == nullptr || (reinterpret_cast<std::uintptr_t>(registration.config.workBuffer) & 7) != 0 || registration.config.path == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
+    if ((registration.config.flags & ~0xe17ull) != 0) return SCE_FIOS_ERROR_BAD_FLAGS;
+    if (index != 0) return SCE_FIOS_ERROR_BAD_INDEX;
+    if (context == nullptr || !Fios::CopyIn(&registration.context, context, sizeof(registration.context))) return SCE_FIOS_ERROR_BAD_PTR;
+    if (registration.context.size != sizeof(RamCacheContext) || registration.context.workBufferSize < 0x20000 || registration.context.blockSize != registration.config.blockSize || registration.context.workBuffer == nullptr || (reinterpret_cast<std::uintptr_t>(registration.context.workBuffer) & 0x3f) != 0 || registration.context.path == nullptr) return SCE_FIOS_ERROR_BAD_SIZE;
+    if (const std::int32_t error = Fios::CopyPath(registration.config.path, registration.path)) return error;
+    std::string contextPath;
+    if (const std::int32_t error = Fios::CopyPath(registration.context.path, contextPath)) return error;
+    if (registration.path != contextPath) return SCE_FIOS_ERROR_BAD_OVERLAY;
+    {
+        const std::lock_guard lock(g_overlaysMutex);
+        const auto found = std::find_if(g_overlays.begin(), g_overlays.end(), [&registration](const OverlayRecord& overlay) { return registration.path == overlay.destination; });
+        if (found == g_overlays.end()) return SCE_FIOS_ERROR_BAD_OVERLAY;
+    }
+    std::lock_guard lock(g_cacheFiltersMutex);
+    g_cacheFilters.push_back(std::move(registration));
+    return SCE_FIOS_OK;
 }
 
 SceFiosOp APS5_VABI sceFiosCachePrefetchFH(const SceFiosOpAttr*, SceFiosFH) {
@@ -252,26 +399,70 @@ std::int64_t APS5_VABI sceFiosCacheContainsFileSync(const char* path, std::uint6
 
 int APS5_VABI sceFiosOverlayGetList(std::int32_t* ids, std::uint64_t capacity, std::uint64_t* count) {
     if (count == nullptr || (capacity != 0 && ids == nullptr)) return SCE_FIOS_ERROR_BAD_PTR;
-    const std::uint64_t empty = 0;
-    return Fios::CopyOut(count, &empty, sizeof(empty)) ? SCE_FIOS_OK : SCE_FIOS_ERROR_BAD_PTR;
+    const std::lock_guard lock(g_overlaysMutex);
+    const std::uint64_t total = g_overlays.size();
+    if (!Fios::CopyOut(count, &total, sizeof(total))) return SCE_FIOS_ERROR_BAD_PTR;
+    const std::uint64_t copied = std::min<std::uint64_t>(capacity, total);
+    for (std::uint64_t i = 0; i < copied; ++i) {
+        if (!Fios::CopyOut(ids + i, &g_overlays[i].id, sizeof(g_overlays[i].id))) return SCE_FIOS_ERROR_BAD_PTR;
+    }
+    return SCE_FIOS_OK;
 }
 
-int APS5_VABI sceFiosOverlayGetInfo(std::int32_t, void* outInfo) {
-    return outInfo == nullptr ? SCE_FIOS_ERROR_BAD_PTR : SCE_FIOS_ERROR_BAD_OVERLAY;
+int APS5_VABI sceFiosOverlayGetInfo(std::int32_t id, void* outInfo) {
+    if (outInfo == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
+    const std::lock_guard lock(g_overlaysMutex);
+    const auto found = std::find_if(g_overlays.begin(), g_overlays.end(), [id](const OverlayRecord& overlay) { return overlay.id == id; });
+    if (found == g_overlays.end()) return SCE_FIOS_ERROR_BAD_OVERLAY;
+    return Fios::CopyOut(outInfo, &*found, sizeof(*found)) ? SCE_FIOS_OK : SCE_FIOS_ERROR_BAD_PTR;
 }
 
-int APS5_VABI sceFiosOverlayRemove(std::int32_t) {
-    return SCE_FIOS_ERROR_BAD_OVERLAY;
+int APS5_VABI sceFiosOverlayRemove(std::int32_t id) {
+    const std::lock_guard lock(g_overlaysMutex);
+    const auto found = std::find_if(g_overlays.begin(), g_overlays.end(), [id](const OverlayRecord& overlay) { return overlay.id == id; });
+    if (found == g_overlays.end()) return SCE_FIOS_ERROR_BAD_OVERLAY;
+    g_overlays.erase(found);
+    return SCE_FIOS_OK;
 }
 
-int APS5_VABI sceFiosOverlayModify(std::int32_t, const void* overlay) {
-    return overlay == nullptr ? SCE_FIOS_ERROR_BAD_PTR : SCE_FIOS_ERROR_BAD_OVERLAY;
-}
-
-int APS5_VABI sceFiosOverlayAdd(const void* overlay, void*) {
+int APS5_VABI sceFiosOverlayModify(std::int32_t id, const void* overlay) {
     if (overlay == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
-    NotImplemented_nid_no_patch(__func__);
-    return SCE_FIOS_ERROR_UNIMPLEMENTED;
+    OverlayRecord record{};
+    if (!Fios::CopyIn(&record, overlay, sizeof(record))) return SCE_FIOS_ERROR_BAD_PTR;
+    const auto destinationEnd = std::find(std::begin(record.destination), std::end(record.destination), '\0');
+    const auto sourceEnd = std::find(std::begin(record.source), std::end(record.source), '\0');
+    if (destinationEnd == std::begin(record.destination) || sourceEnd == std::begin(record.source)) return SCE_FIOS_ERROR_BAD_PTR;
+    if (destinationEnd == std::end(record.destination) || sourceEnd == std::end(record.source)) return SCE_FIOS_ERROR_PATH_TOO_LONG;
+    if (record.type > 3) return SCE_FIOS_ERROR_BAD_FLAGS;
+    record.destinationLength = static_cast<std::uint16_t>(destinationEnd - std::begin(record.destination));
+    record.sourceLength = static_cast<std::uint16_t>(sourceEnd - std::begin(record.source));
+    const std::lock_guard lock(g_overlaysMutex);
+    const auto found = std::find_if(g_overlays.begin(), g_overlays.end(), [id](const OverlayRecord& item) { return item.id == id; });
+    if (found == g_overlays.end()) return SCE_FIOS_ERROR_BAD_OVERLAY;
+    record.id = id;
+    *found = record;
+    return SCE_FIOS_OK;
+}
+
+int APS5_VABI sceFiosOverlayAdd(const void* overlay, void* context) {
+    if (overlay == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
+    OverlayRecord record{};
+    if (!Fios::CopyIn(&record, overlay, sizeof(record))) return SCE_FIOS_ERROR_BAD_PTR;
+    const auto destinationEnd = std::find(std::begin(record.destination), std::end(record.destination), '\0');
+    const auto sourceEnd = std::find(std::begin(record.source), std::end(record.source), '\0');
+    if (destinationEnd == std::begin(record.destination) || sourceEnd == std::begin(record.source)) return SCE_FIOS_ERROR_BAD_PTR;
+    if (destinationEnd == std::end(record.destination) || sourceEnd == std::end(record.source)) return SCE_FIOS_ERROR_PATH_TOO_LONG;
+    if (record.type > 3) return SCE_FIOS_ERROR_BAD_FLAGS;
+    record.destinationLength = static_cast<std::uint16_t>(destinationEnd - std::begin(record.destination));
+    record.sourceLength = static_cast<std::uint16_t>(sourceEnd - std::begin(record.source));
+    std::int32_t id = 0;
+    const std::lock_guard lock(g_overlaysMutex);
+    id = ++g_lastOverlayId;
+    if (id <= 0) id = g_lastOverlayId = 1;
+    record.id = id;
+    if (context != nullptr && !Fios::CopyOut(context, &id, sizeof(id))) return SCE_FIOS_ERROR_BAD_PTR;
+    g_overlays.push_back(record);
+    return SCE_FIOS_OK;
 }
 
 int APS5_VABI sceFiosOverlayResolveSync(std::uint32_t capacity, const char*, const char*, void*) {
@@ -280,16 +471,23 @@ int APS5_VABI sceFiosOverlayResolveSync(std::uint32_t capacity, const char*, con
 }
 
 int APS5_VABI sceFiosResolveSync(const SceFiosOpAttr*, const void* request, void* result) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
     if (request == nullptr || result == nullptr) return SCE_FIOS_ERROR_BAD_PTR;
     std::uint8_t copied[0x410];
     if (!Fios::CopyIn(copied, request, sizeof(copied)) || !Fios::CopyOut(result, copied, sizeof(copied))) return SCE_FIOS_ERROR_BAD_PTR;
     return SCE_FIOS_OK;
 }
 
-SceFiosOp APS5_VABI sceFiosResolve(const SceFiosOpAttr*, const void*, void*) {
-    if (Fios::IsInitialized(nullptr)) NotImplemented_nid_no_patch(__func__);
-    return 0;
+SceFiosOp APS5_VABI sceFiosResolve(const SceFiosOpAttr* attr, const void* request, void* result) {
+    if (!Fios::IsInitialized(nullptr)) return 0;
+    Fios::OpInfo info;
+    return Fios::Submit(attr, std::move(info), [request, result](Fios::Completion& completion) {
+        if (request == nullptr || result == nullptr) {
+            completion.error = SCE_FIOS_ERROR_BAD_PTR;
+            return;
+        }
+        std::uint8_t copied[0x410];
+        if (!Fios::CopyIn(copied, request, sizeof(copied)) || !Fios::CopyOut(result, copied, sizeof(copied))) completion.error = SCE_FIOS_ERROR_BAD_PTR;
+    });
 }
 
 bool APS5_VABI sceFiosOpIsDone(SceFiosOp op) {
