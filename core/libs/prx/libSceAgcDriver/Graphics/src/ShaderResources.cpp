@@ -5123,7 +5123,6 @@ void ShaderResources::forgetShaderDataWords(const CompiledShader& shader) {
     if (HeapShader(shader)) {
         auto& stageState = heapStages[HeapStageIndex(shader.stage)];
         stageState.data.mark.entry = 0;
-        stageState.data.words.clear();
         stageState.dataInput.clear();
     }
     if (const auto allocation = shaderDataAllocation(shader)) {
@@ -6731,7 +6730,7 @@ std::pair<VkBuffer, VkDeviceSize> ShaderResources::shaderDataLocation(const Comp
     return {heap.RingBuffer(), heap.RingOffset() + offsets[DataOffsetIndex(HeapStageIndex(shader.stage), ShaderRecompiler::RuntimeAbi::Binding::ShaderData)]};
 }
 
-void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, const DrawBindings* rewritten) const {
+void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     if (!heapStage) return;
     const auto& offsets = rewritten != nullptr && rewritten->addressOffsets ? rewritten->heapOffsets : heapOffsets;
@@ -6757,41 +6756,65 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
         }
         if (faultBound) fault = of(bda->Fault());
     }
-    std::array<std::uint32_t, Abi::RootDwords> root{};
-    bool rooted = false;
-    for (const auto& shader : shaders) {
-        if (shader.program == nullptr || !shader.program->dataAddressPush) continue;
-        if (ring == 0) ring = BindlessHeap::For(context).RingAddress();
-        const auto stage = HeapStageIndex(shader.stage);
-        const auto record = [&](Abi::RootStageField field) -> std::uint32_t& { return root[Abi::RootStageDword(static_cast<Abi::Stage>(stage), field)]; };
-        record(Abi::RootStageField::ShaderData) = offsets[DataOffsetIndex(stage, Abi::Binding::ShaderData)];
-        record(Abi::RootStageField::FlattenedSrt) = offsets[DataOffsetIndex(stage, Abi::Binding::FlattenedSrt)];
-        record(Abi::RootStageField::SrtDwords) = heapSrtDwords[stage];
-        record(Abi::RootStageField::TableMap) = heapTableMapSet[stage] ? heapTableMaps[stage] : 0u;
-        rooted = true;
-    }
-    if (!rooted) return;
-    const auto split = [&](std::uint32_t at, VkDeviceAddress address) {
-        root[at] = static_cast<std::uint32_t>(address);
-        root[at + 1u] = static_cast<std::uint32_t>(address >> 32u);
-    };
-    split(Abi::RootRingAddress, ring);
-    split(Abi::RootPagetableAddress, table);
-    split(Abi::RootFaultAddress, fault);
-    root[Abi::RootPagetableDwords] = tableDwords;
-    if (gdsAllocation != std::numeric_limits<std::size_t>::max()) {
+    Require(placements.size() == shaders.size(), "the push layout does not describe the draw's stages");
+    std::optional<VkDeviceAddress> gds;
+    const auto gdsAddress = [&] {
+        if (gds) return *gds;
+        gds = VkDeviceAddress{0};
+        if (gdsAllocation == std::numeric_limits<std::size_t>::max()) return *gds;
         const auto* overrides = rewritten != nullptr && rewritten->addressOffsets ? &rewritten->addressOverrides : nullptr;
         auto adjustment = allocations[gdsAllocation].adjustment;
         const auto info = overrides != nullptr && (*overrides)[gdsAllocation].buffer != VK_NULL_HANDLE ? (*overrides)[gdsAllocation] : descriptor(allocations[gdsAllocation], adjustment);
         Require(info.buffer != VK_NULL_HANDLE, "the GDS buffer is missing");
         const auto base = BufferDeviceAddress(context, info.buffer);
         Require(base != 0, "the GDS buffer has no device address");
-        split(Abi::RootGdsAddress, base + info.offset);
+        gds = base + info.offset;
+        return *gds;
+    };
+    bool rooted = false;
+    for (std::size_t index = 0; index < shaders.size(); ++index) {
+        const auto& shader = shaders[index];
+        const auto& placement = placements[index];
+        const auto put = [&](Abi::RootItem item, std::uint32_t word, std::uint32_t value) {
+            const auto position = placement.Item(item);
+            if (position == Abi::NoPushPosition) return;
+            Require((position + word + 1u) * sizeof(std::uint32_t) <= bytes.size(), "a root item lies outside the push data");
+            std::memcpy(bytes.data() + (position + word) * sizeof(std::uint32_t), &value, sizeof(value));
+        };
+        const auto putAddress = [&](Abi::RootItem item, VkDeviceAddress address) {
+            put(item, 0u, static_cast<std::uint32_t>(address));
+            put(item, 1u, static_cast<std::uint32_t>(address >> 32u));
+        };
+        if (placement.Item(Abi::RootItem::RingAddress) != Abi::NoPushPosition) {
+            if (ring == 0) ring = BindlessHeap::For(context).RingAddress();
+            putAddress(Abi::RootItem::RingAddress, ring);
+        }
+        putAddress(Abi::RootItem::PagetableAddress, table);
+        putAddress(Abi::RootItem::FaultAddress, fault);
+        put(Abi::RootItem::PagetableDwords, 0u, tableDwords);
+        if (placement.Item(Abi::RootItem::GdsAddress) != Abi::NoPushPosition) putAddress(Abi::RootItem::GdsAddress, gdsAddress());
+        if (shader.program == nullptr || !shader.program->dataAddressPush) continue;
+        const auto stage = HeapStageIndex(shader.stage);
+        put(Abi::RootItem::ShaderData, 0u, offsets[DataOffsetIndex(stage, Abi::Binding::ShaderData)]);
+        put(Abi::RootItem::FlattenedSrt, 0u, offsets[DataOffsetIndex(stage, Abi::Binding::FlattenedSrt)]);
+        put(Abi::RootItem::SrtDwords, 0u, heapSrtDwords[stage]);
+        put(Abi::RootItem::TableMap, 0u, heapTableMapSet[stage] ? heapTableMaps[stage] : 0u);
+        writePushedData(bytes, shader, placement.pushed);
+        rooted = true;
     }
-    std::memcpy(&root[Abi::RootStencilReference], bytes.data() + (Abi::RootDword + Abi::RootStencilReference) * sizeof(std::uint32_t), sizeof(std::uint32_t));
-    static_assert((Abi::RootDword + Abi::RootDwords) * sizeof(std::uint32_t) <= PipelinePushConstantBytes);
-    std::memcpy(bytes.data() + Abi::RootDword * sizeof(std::uint32_t), root.data(), sizeof(root));
-    NoteDataAddressPush();
+    if (rooted) NoteDataAddressPush();
+}
+
+void ShaderResources::writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const {
+    const auto& program = *shader.program;
+    if (placement.count == 0u) return;
+    const auto& words = heapStages[HeapStageIndex(shader.stage)].data.words;
+    Require(placement.count <= program.pushedData.size() && (placement.base + placement.count) * sizeof(std::uint32_t) <= bytes.size(), "a stage's pushed shader data does not fit");
+    for (std::uint32_t index = 0; index < placement.count; ++index) {
+        const auto dword = program.pushedData[index];
+        Require(dword < words.size(), "a pushed shader-data dword lies outside the stage's shader data");
+        std::memcpy(bytes.data() + (placement.base + index) * sizeof(std::uint32_t), &words[dword], sizeof(std::uint32_t));
+    }
 }
 
 VkImageView ShaderResources::heapPlaceholderView(std::uint32_t kind) const {

@@ -14,6 +14,10 @@
 #include <unordered_set>
 #include <vector>
 
+namespace ShaderRecompiler {
+struct StagePushPlacement;
+}
+
 namespace AgcDriver::Graphics {
 
 class Buffer;
@@ -41,7 +45,8 @@ public:
     void BindDescriptorHeaps(VkCommandBuffer commands) const;
     bool DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings,
                                 std::uint32_t workgroupAddressOffset = ~0u, bool rootGds = false, bool rootFault = false,
-                                bool pixelLds = false, bool meshWindow = false, bool scratchPool = false) const;
+                                bool pixelLds = false, bool meshWindow = false, bool scratchPool = false,
+                                const ShaderRecompiler::StagePushPlacement* placement = nullptr) const;
     void WritePixelLdsBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     void WriteMeshWindowBuffer(VkDeviceAddress address, VkDeviceSize bytes);
     VkDeviceAddress RingAddress() const;

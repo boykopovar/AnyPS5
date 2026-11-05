@@ -2,6 +2,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -11,6 +12,23 @@ namespace {
 
 [[noreturn]] void fail(const std::string& message) {
     throw std::runtime_error(message);
+}
+
+bool PushHeapData() {
+    static const bool enabled = std::getenv("APS5_NO_HEAP_PUSHED_DATA") == nullptr;
+    return enabled;
+}
+
+void placePushedData(IrBindingLayout& layout) {
+    const auto capacity = RuntimeAbi::PushedDataWantedLimit;
+    const auto take = [&](std::uint32_t dword) {
+        if (layout.pushedData.size() < capacity && std::ranges::find(layout.pushedData, dword) == layout.pushedData.end()) layout.pushedData.push_back(dword);
+    };
+    for (auto dword = layout.SamplerSlotDword(); dword < layout.BufferAddressDword(); ++dword) take(dword);
+    for (std::uint32_t image = 0; image < layout.runtimeImageCount; ++image) take(layout.ImageFirstElementDword(image));
+    for (std::uint32_t dword = 0; dword < layout.userDataRegisters.size(); ++dword) take(dword);
+    for (auto dword = layout.memoryOffsetDword; dword < layout.memoryOffsetDword + (layout.memoryOffsetCount + 3u) / 4u; ++dword) take(dword);
+    for (auto dword = layout.ImageMetadataDword(); dword < layout.SamplerSlotDword(); ++dword) take(dword);
 }
 
 std::vector<std::uint32_t> collectUserData(const IrProgram& program) {
@@ -120,10 +138,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     }
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
     next.pushDataStartDword = !gpuResolvedImages && next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
-    if (descriptorMemory && gpuResolvedImages) next.dataAddressDword = RuntimeAbi::RootDword;
-    if (stencilReplay && next.UsesDataAddress()) {
-        next.stencilReferenceDword = RuntimeAbi::RootDword + RuntimeAbi::RootStencilReference;
-    } else if (stencilReplay) {
+    next.dataAddress = descriptorMemory && gpuResolvedImages;
+    if (stencilReplay && !next.UsesDataAddress()) {
         const auto offset = next.UsesPushData() ? next.ShaderDataDwords() : 0u;
         if (offset >= pushSize) fail("stencil replay requires an unused push constant dword");
         next.stencilReferenceDword = offset;
@@ -168,6 +184,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
     }
     if (descriptorMemory && gpuResolvedImages) next.bufferAddressDwords = static_cast<std::uint32_t>(info.buffers.size()) * RuntimeAbi::BufferAddressWords;
+    if (next.UsesDataAddress() && PushHeapData()) placePushedData(next);
 
     std::vector<std::uint32_t> samplers;
     for (std::uint32_t i = 0; i < info.samplers.size(); i++) {

@@ -290,7 +290,7 @@ const char* ComputePipelineDumpDirectory() { return std::getenv("APS5_DUMP_COMPU
 
 static_assert(Graphics::ComputePushConstantBytes + sizeof(VkDeviceAddress) == ShaderRecompiler::GpuScratchPoolAddressPushByte &&
               ShaderRecompiler::GpuScratchPoolAddressPushByte + sizeof(VkDeviceAddress) <= ShaderRecompiler::GpuScratchPoolDwordsPushByte &&
-              ShaderRecompiler::GpuScratchPoolDwordsPushByte + sizeof(std::uint32_t) <= ShaderRecompiler::RuntimeAbi::RootDword * sizeof(std::uint32_t));
+              (ShaderRecompiler::StagePushFeatures(ShaderRecompiler::ShaderStage::Compute, 0u) & ShaderRecompiler::PushBytesMask(Graphics::ComputePushConstantBytes, ShaderRecompiler::GpuScratchPoolDwordsPushByte + sizeof(std::uint32_t) - Graphics::ComputePushConstantBytes)) == ShaderRecompiler::PushBytesMask(Graphics::ComputePushConstantBytes, ShaderRecompiler::GpuScratchPoolDwordsPushByte + sizeof(std::uint32_t) - Graphics::ComputePushConstantBytes));
 
 void CreateComputeHeapPipeline(VkDevice device, PFN_vkCreateComputePipelines create, VkPipelineCache cache, VkShaderModule module, VkPipelineCreateFlags flags, VkPipelineShaderStageCreateFlags stageFlags, const VkSpecializationInfo* specialization, std::uint32_t subgroupSize, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings, VkPipeline* pipeline, Graphics::PipelineCacheSynchronization* synchronization) {
     auto flags2 = Graphics::DescriptorHeapFlags(static_cast<VkPipelineCreateFlags2KHR>(flags));
@@ -423,6 +423,7 @@ struct ComputePipelineObjects {
     VkDescriptorSetLayout resourcesLayout = VK_NULL_HANDLE;
     std::mutex splitMutex;
     std::map<std::array<std::uint32_t, 3>, VkPipeline> splitPipelines;
+    std::vector<ShaderRecompiler::StagePushPlacement> pushPlacements;
     bool descriptorHeap = false;
     ~ComputePipelineObjects() {
         for (const auto& [base, split] : splitPipelines) destroyPipeline(device, split, nullptr);
@@ -5833,7 +5834,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         const std::byte* pushed = record.pushBytes->data();
         if (resources.HeapStage() || record.objects->descriptorHeap) {
             patchedBytes = *record.pushBytes;
-            resources.PatchDataAddresses(patchedBytes, std::span<const Graphics::CompiledShader>(record.shader, 1), record.bindings.get());
+            resources.PatchDataAddresses(patchedBytes, std::span<const Graphics::CompiledShader>(record.shader, 1), record.objects->pushPlacements, record.bindings.get());
             pushed = patchedBytes.data();
         }
         if (record.objects->descriptorHeap) {
@@ -5951,7 +5952,10 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
         check(state->DeviceFunction<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(state->device, &layoutInfo, nullptr, &objects->layout), "vkCreatePipelineLayout");
     }
     const VkPipelineCreateFlags pipelineFlags = computePipelineFlags();
-    const Graphics::PipelineSpecialization specialization(shader);
+    const Graphics::CompiledShader placed{ShaderRecompiler::ShaderStage::Compute, &shader, 0u};
+    objects->pushPlacements = Graphics::PushDataPlacements(std::span(&placed, 1));
+    Graphics::PipelineSpecialization specialization(shader);
+    specialization.PlacePushData(objects->pushPlacements.front());
     const auto subgroupSize = computeSubgroupSize(shader);
     const auto stageFlags = computeStageFlags(shader);
     if (const auto* directory = ComputePipelineDumpDirectory(); directory != nullptr && *directory != 0 && !state->probingFloatControls && ComputePipelineCapture::OptionalEnabled() && CaptureComputePipeline(shader.spirv.size())) {
@@ -5987,7 +5991,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     const bool heapDevice = gpuMode && context.descriptorHeap && Graphics::DescriptorHeapEnabled();
     const auto workgroupAddressOffset = workgroupAddress ? Graphics::ComputePushConstantBytes : ~0u;
     const std::span<const std::uint32_t> spirv(shader.spirv.data(), shader.spirv.size());
-    objects->descriptorHeap = heapDevice && Graphics::BindlessHeap::For(context).DescriptorHeapMappings(spirv, heapMappings, workgroupAddressOffset, shader.dataAddressPush, false, false, false, scratchPool);
+    objects->descriptorHeap = heapDevice && Graphics::BindlessHeap::For(context).DescriptorHeapMappings(spirv, heapMappings, workgroupAddressOffset, shader.dataAddressPush, false, false, false, scratchPool, &objects->pushPlacements.front());
     require(!gpuMode || objects->descriptorHeap, "a GPU-mode compute stage does not map onto VK_EXT_descriptor_heap");
     const auto createPipelines = state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
     if (objects->descriptorHeap) CreateComputeHeapPipeline(state->device, createPipelines, context.pipelineCache, objects->module, pipelineFlags, stageFlags, specialization.Info(), subgroupSize, heapMappings, &objects->pipeline, context.pipelineCacheSynchronization);
@@ -6010,7 +6014,8 @@ VkPipeline VulkanDevice::splitComputePipeline(const Graphics::Context& context, 
     if (const auto found = objects.splitPipelines.find(base); found != objects.splitPipelines.end()) return found->second;
     std::array<ShaderRecompiler::PipelineSpecializationConstant, ShaderRecompiler::PipelineSpecialization::WorkgroupOffsetWords> offsets{};
     for (std::uint32_t component = 0; component < offsets.size(); ++component) offsets[component] = {ShaderRecompiler::PipelineSpecialization::WorkgroupOffsetBase + component, base[component]};
-    const Graphics::PipelineSpecialization specialization(shader, offsets);
+    Graphics::PipelineSpecialization specialization(shader, offsets);
+    specialization.PlacePushData(objects.pushPlacements.front());
     VkShaderModule module = Graphics::CreateShaderModule(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule"), state->device, state->graphicsPipelineLibrary, shader.spirv.data(), shader.spirv.size() * sizeof(std::uint32_t), "vkCreateShaderModule");
     VkPipeline pipeline = VK_NULL_HANDLE;
     try {

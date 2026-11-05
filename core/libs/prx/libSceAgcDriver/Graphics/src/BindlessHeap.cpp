@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "PushDataLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeapObjects.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -753,11 +754,12 @@ VkDescriptorSetAndBindingMappingEXT pushAddressMapping(std::uint32_t set, std::u
     return mapping;
 }
 
-constexpr std::uint32_t rootAddressOffset(std::uint32_t rootField) {
-    return (Abi::RootDword + rootField) * sizeof(std::uint32_t);
+std::uint32_t rootItemOffset(const ShaderRecompiler::StagePushPlacement* placement, Abi::RootItem item) {
+    Require(placement != nullptr && placement->Item(item) != Abi::NoPushPosition, "a heap mapping reads a root item its pipeline's push layout does not hold");
+    return placement->Item(item) * static_cast<std::uint32_t>(sizeof(std::uint32_t));
 }
 
-VkDescriptorSetAndBindingMappingEXT ringDescriptorMapping(std::uint32_t set, std::uint32_t binding, VkDeviceSize ringOffset) {
+VkDescriptorSetAndBindingMappingEXT ringDescriptorMapping(std::uint32_t set, std::uint32_t binding, VkDeviceSize ringOffset, const ShaderRecompiler::StagePushPlacement* placement) {
     constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
     const bool buffers = binding % bindingCount == static_cast<std::uint32_t>(Abi::Binding::Buffers);
     VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
@@ -767,14 +769,13 @@ VkDescriptorSetAndBindingMappingEXT ringDescriptorMapping(std::uint32_t set, std
     mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT;
     mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_PUSH_INDEX_EXT;
     mapping.sourceData.pushIndex.heapOffset = static_cast<std::uint32_t>(ringOffset + (buffers ? BindlessHeap::BufferSlotBytes : 0u));
-    mapping.sourceData.pushIndex.pushOffset = rootAddressOffset(Abi::RootStageDword(static_cast<Abi::Stage>(binding / bindingCount), Abi::RootStageField::FlattenedSrt));
+    mapping.sourceData.pushIndex.pushOffset = rootItemOffset(placement, Abi::RootItem::FlattenedSrt);
     mapping.sourceData.pushIndex.heapIndexStride = BindlessHeap::BufferSlotBytes;
     mapping.sourceData.pushIndex.heapArrayStride = BindlessHeap::BufferSlotBytes;
     return mapping;
 }
 
-VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, VkDeviceSize heapOffset) {
-    constexpr auto bindingCount = static_cast<std::uint32_t>(Abi::Binding::Count);
+VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, VkDeviceSize heapOffset, const ShaderRecompiler::StagePushPlacement* placement) {
     VkDescriptorSetAndBindingMappingEXT mapping{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT};
     mapping.descriptorSet = Abi::GpuDataSet;
     mapping.firstBinding = binding;
@@ -782,7 +783,7 @@ VkDescriptorSetAndBindingMappingEXT dataUniformMapping(std::uint32_t binding, Vk
     mapping.resourceMask = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT;
     mapping.source = VK_DESCRIPTOR_MAPPING_SOURCE_RESOURCE_HEAP_DATA_EXT;
     mapping.sourceData.heapData.heapOffset = static_cast<std::uint32_t>(heapOffset);
-    mapping.sourceData.heapData.pushOffset = rootAddressOffset(Abi::RootStageDword(static_cast<Abi::Stage>(binding / bindingCount), Abi::RootStageField::ShaderData));
+    mapping.sourceData.heapData.pushOffset = rootItemOffset(placement, Abi::RootItem::ShaderData);
     return mapping;
 }
 
@@ -809,7 +810,7 @@ bool DescriptorHeapMappable(std::span<const std::uint32_t> spirv, bool workgroup
 
 bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, std::vector<VkDescriptorSetAndBindingMappingEXT>& mappings,
                                           std::uint32_t workgroupAddressOffset, bool rootGds, bool rootFault, bool pixelLds, bool meshWindow,
-                                          bool scratchPool) const {
+                                          bool scratchPool, const ShaderRecompiler::StagePushPlacement* placement) const {
     mappings.clear();
     if (resourceHeap == nullptr) return false;
     HeapBindingUse use;
@@ -831,17 +832,17 @@ bool BindlessHeap::DescriptorHeapMappings(std::span<const std::uint32_t> spirv, 
                 heapMapping(Abi::FragmentDescriptorSet, binding, VK_SPIRV_RESOURCE_TYPE_SAMPLER_BIT_EXT, 0, samplerHeapStride));
         else mappings.push_back(heapMapping(Abi::FragmentDescriptorSet, binding, imageResources, 0, imageHeapStride));
     }
-    for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, ringHeapOffset));
+    for (const auto binding : use.dataUniforms) mappings.push_back(dataUniformMapping(binding, ringHeapOffset, placement));
     std::sort(use.ringDescriptors.begin(), use.ringDescriptors.end());
-    for (const auto& [set, binding] : use.ringDescriptors) mappings.push_back(ringDescriptorMapping(set, binding, ringHeapOffset));
+    for (const auto& [set, binding] : use.ringDescriptors) mappings.push_back(ringDescriptorMapping(set, binding, ringHeapOffset, placement));
     if (use.workgroupMemory)
         mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuWorkgroupMemoryDescriptorSet, 0, workgroupAddressOffset));
     if (use.scratchPoolMemory)
         mappings.push_back(pushAddressMapping(ShaderRecompiler::GpuScratchPoolDescriptorSet, 0, ShaderRecompiler::GpuScratchPoolAddressPushByte));
     if (use.gdsBinding != ~0u)
-        mappings.push_back(pushAddressMapping(Abi::GpuGdsSet, use.gdsBinding, rootAddressOffset(Abi::RootGdsAddress)));
+        mappings.push_back(pushAddressMapping(Abi::GpuGdsSet, use.gdsBinding, rootItemOffset(placement, Abi::RootItem::GdsAddress)));
     if (use.faultMemory)
-        mappings.push_back(pushAddressMapping(Abi::DescriptorSet, GeneratedFaultBinding, rootAddressOffset(Abi::RootFaultAddress)));
+        mappings.push_back(pushAddressMapping(Abi::DescriptorSet, GeneratedFaultBinding, rootItemOffset(placement, Abi::RootItem::FaultAddress)));
     if (use.pixelLdsMemory)
         mappings.push_back(heapMapping(ShaderRecompiler::PixelFunctionLdsDescriptorSet, 0,
                                        VK_SPIRV_RESOURCE_TYPE_READ_WRITE_STORAGE_BUFFER_BIT_EXT, pixelLdsHeapOffset, 0));

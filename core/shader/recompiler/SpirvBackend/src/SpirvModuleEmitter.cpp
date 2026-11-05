@@ -891,6 +891,7 @@ std::uint32_t RemapPositionDepth(SpirvEmitterState& state, std::uint32_t positio
         state.module.AddFunction(spv::OpCompositeExtract, f32, components.at(i), position, i);
     }
     const auto mode = state.module.SpecializationConstant(u32, PipelineSpecialization::DepthRemapBase, remap.mode);
+    state.pushItems |= RuntimeAbi::DepthRemapPushBit;
     if (state.pushConstantVariable == 0u) throw std::runtime_error("depth remap push constants were not declared");
     const auto pushFloat = [&](std::uint32_t dword) {
         const auto pointer = state.module.AllocateId();

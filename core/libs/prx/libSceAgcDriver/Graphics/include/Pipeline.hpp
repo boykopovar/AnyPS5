@@ -64,6 +64,7 @@ public:
     bool SampleLocationsEnabled() const { return sampleLocationsEnabled; }
     VkExtent2D HostSampleLocationGrid() const { return sampleLocationGrid; }
     void PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
+    std::span<const ShaderRecompiler::StagePushPlacement> PushPlacements() const { return pushPlacements; }
     // Forgets the Vulkan objects without destroying them: for entries of a device that is already gone.
     void Abandon() noexcept;
 
@@ -81,6 +82,7 @@ private:
     void setLibraryState(VkCommandBuffer commands, const State& state) const;
     Context context;
     std::vector<VkShaderModule> _modules;
+    std::vector<ShaderRecompiler::StagePushPlacement> pushPlacements;
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkRenderPass renderPass = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;

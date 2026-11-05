@@ -1,5 +1,6 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "Recompiler.hpp"
+#include "PushDataLayout.hpp"
 #include "HeapTemplateBudget.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
 #include "StencilReplay.hpp"
@@ -828,7 +829,9 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.bufferAddressDword = bindings.layout.bufferAddressDwords != 0u ? bindings.layout.BufferAddressDword() : 0u;
     result.bufferAddressCount = bindings.layout.bufferAddressDwords / RuntimeAbi::BufferAddressWords;
     result.dataAddressPush = bindings.layout.UsesDataAddress();
+    result.pushedData = bindings.layout.pushedData;
     result.bdaStores = emitted.bdaStores;
+    result.pushItems = emitted.pushItems;
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.windowLaneGuards = 0;
@@ -950,7 +953,7 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
             }
             const auto found = supplied.find(words[cursor + 3u]);
             if (found == supplied.end()) throw std::runtime_error("missing prepared specialization value");
-            if (found->first == PipelineSpecialization::MeshLayerBase || found->first == PipelineSpecialization::MeshLayerCount) {
+            if (found->first == PipelineSpecialization::MeshLayerBase || found->first == PipelineSpecialization::MeshLayerCount || PipelineSpecialization::IsPushPlacement(found->first)) {
                 retained.insert(words[cursor + 1u]);
                 cursor += count;
                 continue;
@@ -1287,6 +1290,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .samplerSlotDword = artifact.samplerSlotDword,
         .bufferAddressDword = artifact.bufferAddressDword,
         .bufferAddressCount = artifact.bufferAddressCount,
+        .pushedData = artifact.pushedData,
+        .pushItems = artifact.pushItems,
         .dataAddressPush = artifact.dataAddressPush,
         .bdaStores = artifact.bdaStores,
         .bdaAbiVersion = artifact.bdaAbiVersion,
@@ -1390,6 +1395,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             auto constants = plan->bindings.specialization;
             constants.push_back({PipelineSpecialization::MeshLayerBase, 0u});
             constants.push_back({PipelineSpecialization::MeshLayerCount, 0xffffffffu});
+            if (artifact.dataAddressPush) AppendPushSpecialization(constants, StandalonePushPlacement(request.shader.stage, artifact.pushItems, artifact.pushedData.size()));
             std::size_t index = 0;
             if (variant.bindings.layout.UsesPushData()) constants.push_back({PipelineSpecialization::PushDataOffset, moduleKey[index++]});
             if (StencilInPush(artifact, variant.bindings.layout)) constants.push_back({PipelineSpecialization::StencilReferenceOffset, moduleKey[index++]});
@@ -1466,6 +1472,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     if (std::ranges::none_of(result.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::BdaPagetable || binding.role == DescriptorRole::FaultBuffer; })) result.bdaAbiVersion = 0u;
     result.pushConstants = std::move(bindings.pushConstants);
     result.readsDepthRemapPush = depthRemap;
+    if ((result.pushItems & RuntimeAbi::DepthRemapPushBit) != 0u && !depthRemap) throw std::runtime_error("a stage reads the depth remap push words its request does not remap");
     if (request.shader.stage == ShaderStage::Compute) {
         for (std::uint32_t component = 0; component < PipelineSpecialization::WorkgroupOffsetWords; ++component) result.specialization.push_back({PipelineSpecialization::WorkgroupOffsetBase + component, 0u});
     }
@@ -2323,7 +2330,7 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     const bool usesPush = !prepared.gpuResolvedImages && prepared.runtimeImageCount == 0u && words != 0u && words <= layout.pushConstantSizeBytes / 4u;
     if (prepared.UsesPushData() != usesPush) return false;
     if (!handle.artifact->artifact.stencilReferences.empty()) {
-        const bool misplaced = prepared.UsesDataAddress() ? prepared.stencilReferenceDword != RuntimeAbi::RootDword + RuntimeAbi::RootStencilReference : prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u);
+        const bool misplaced = prepared.UsesDataAddress() ? prepared.stencilReferenceDword != PushData::NoStart : prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u);
         if (misplaced) return false;
     }
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;

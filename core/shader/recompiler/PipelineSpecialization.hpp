@@ -39,6 +39,9 @@ inline constexpr std::uint32_t DepthRemapBase = 8240u;
 inline constexpr std::uint32_t DepthRemapWords = 1u;
 inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
 inline constexpr std::uint32_t WorkgroupOffsetWords = 3u;
+inline constexpr std::uint32_t PushedDataBase = 8244u;
+inline constexpr std::uint32_t PushedDataCount = 8245u;
+inline constexpr std::uint32_t RootItemPositionBase = 8246u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
 inline constexpr std::uint32_t StoreQuantizeBase = 12288u;
@@ -54,6 +57,10 @@ inline constexpr std::uint32_t VolumeGatherBase = 57664u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;
+}
+
+inline constexpr bool IsPushPlacement(std::uint32_t id) {
+    return id == PushedDataBase || id == PushedDataCount || (id >= RootItemPositionBase && id < HeapCountBase);
 }
 
 inline constexpr bool IsWorkgroupOffset(std::uint32_t id) {

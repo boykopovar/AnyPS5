@@ -782,6 +782,8 @@ struct CompiledShaderArtifact {
     std::uint32_t samplerSlotDword = 0;
     std::uint32_t bufferAddressDword = 0;
     std::uint32_t bufferAddressCount = 0;
+    std::vector<std::uint32_t> pushedData;
+    std::uint32_t pushItems = 0;
     bool dataAddressPush = false;
     bool bdaStores = false;
     std::uint32_t bdaAbiVersion = 0;

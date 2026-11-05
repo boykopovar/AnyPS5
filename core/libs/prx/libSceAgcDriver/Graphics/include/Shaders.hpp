@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "Recompiler.hpp"
+#include "PushDataLayout.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -55,6 +56,36 @@ inline bool HeapShader(const CompiledShader& shader) {
 
 inline bool AnyHeapShader(std::span<const CompiledShader> shaders) {
     return std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return HeapShader(shader); });
+}
+
+inline bool RootedPushData(std::span<const CompiledShader> shaders) {
+    return std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->dataAddressPush; });
+}
+
+inline bool PushesGeneratedFaultAddress(const CompiledShader& shader, bool rooted) {
+    if (!rooted || shader.program == nullptr || shader.program->dataAddressPush || HeapShader(shader)) return false;
+    return std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer; });
+}
+
+inline std::vector<ShaderRecompiler::StagePushPlacement> PushDataPlacements(std::span<const CompiledShader> shaders) {
+    namespace Abi = ShaderRecompiler::RuntimeAbi;
+    std::vector<ShaderRecompiler::PushStage> stages(shaders.size());
+    std::uint64_t occupied = 0;
+    const bool rooted = RootedPushData(shaders);
+    for (std::size_t index = 0; index < shaders.size(); ++index) {
+        const auto* program = shaders[index].program;
+        stages[index].part = ShaderRecompiler::PushPartOf(shaders[index].stage);
+        if (program == nullptr) continue;
+        occupied |= ShaderRecompiler::StagePushFeatures(shaders[index].stage, program->pushItems);
+        if (program->dataAddressPush) {
+            stages[index].items = program->pushItems & ShaderRecompiler::RootItemMask;
+            stages[index].pushedWanted = static_cast<std::uint32_t>(program->pushedData.size());
+            continue;
+        }
+        if (!program->pushConstants.empty()) occupied |= ShaderRecompiler::PushBytesMask(shaders[index].pushConstantOffset, static_cast<std::uint32_t>(program->pushConstants.size()));
+        if (PushesGeneratedFaultAddress(shaders[index], rooted)) stages[index].items = Abi::RootItemBit(Abi::RootItem::FaultAddress);
+    }
+    return ShaderRecompiler::PlacePushData(stages, occupied);
 }
 
 inline const std::vector<std::uint32_t>& DrawGuestWords(const ShaderRecompiler::RecompileResult& program, const ShaderRecompiler::HeapStageWords* heap, const ShaderRecompiler::DescriptorBinding& binding) {

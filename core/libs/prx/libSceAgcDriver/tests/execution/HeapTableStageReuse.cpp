@@ -156,9 +156,12 @@ void RequireHeapTable(const ShaderRecompiler::RecompileResult& result) {
 std::uint32_t TableMapRoot(const ShaderResources& resources, const CompiledShader& shader) {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
     std::array<std::byte, AgcDriver::Graphics::PipelinePushConstantBytes> bytes{};
-    resources.PatchDataAddresses(bytes, std::span<const CompiledShader>(&shader, 1), nullptr);
+    const auto placements = AgcDriver::Graphics::PushDataPlacements(std::span<const CompiledShader>(&shader, 1));
+    resources.PatchDataAddresses(bytes, std::span<const CompiledShader>(&shader, 1), placements, nullptr);
     std::uint32_t value = 0;
-    std::memcpy(&value, bytes.data() + (Abi::RootDword + Abi::RootStageDword(Abi::Stage::Main, Abi::RootStageField::TableMap)) * sizeof(std::uint32_t), sizeof(value));
+    const auto position = placements.front().Item(Abi::RootItem::TableMap);
+    Require(position != Abi::NoPushPosition, "heap table stage reuse: the stage's push layout holds no table map");
+    std::memcpy(&value, bytes.data() + position * sizeof(std::uint32_t), sizeof(value));
     return value;
 }
 

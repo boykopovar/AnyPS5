@@ -334,7 +334,7 @@ void appendKey(std::vector<std::byte>& key, const TValue& value) {
     key.insert(key.end(), bytes.begin(), bytes.end());
 }
 
-bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
+bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> pushPlacements) {
     using Stage = ShaderRecompiler::ShaderStage;
     if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || (state.stages.tessellation && !context.tessellationPipelineCache) || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || UsesMeshWindow(shaders) || FragmentInterlock(shaders)) return false;
     keys = {};
@@ -348,6 +348,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, shader.pushConstantOffset);
         appendKey(key, state.meshLayerBase);
         appendKey(key, state.meshLayerCount);
+        appendKey(key, pushPlacements[static_cast<std::size_t>(&shader - shaders.data())]);
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
             if (HeapShader(shader)) {
@@ -467,7 +468,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : Pipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout) {}
 
-Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
+Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), pushPlacements(PushDataPlacements(shaders)), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
     for (const auto& color : state.colors) boundAttachments.push_back(color.partialWriteMask == 0u);
     if (state.depth) boundAttachments.push_back(true);
@@ -523,11 +524,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         std::vector<VkShaderDescriptorSetAndBindingMappingInfoEXT> heapMappingInfos(shaders.size(), VkShaderDescriptorSetAndBindingMappingInfoEXT{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT});
         if (context.descriptorHeap && DescriptorHeapEnabled() && AnyHeapShader(shaders)) {
             auto& heap = BindlessHeap::For(context);
-            const bool rooted = std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program->dataAddressPush; });
+            const bool rooted = RootedPushData(shaders);
             descriptorHeap = std::all_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) {
                 const auto index = static_cast<std::size_t>(&shader - shaders.data());
-                const bool generatedFault = !HeapShader(shader) && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer; });
-                return heap.DescriptorHeapMappings(std::span<const std::uint32_t>(shader.program->spirv.data(), shader.program->spirv.size()), heapMappings[index], ~0u, shader.program->dataAddressPush, generatedFault && rooted, shader.program->functionLdsBuffer, shader.program->meshWindowBuffer);
+                return heap.DescriptorHeapMappings(std::span<const std::uint32_t>(shader.program->spirv.data(), shader.program->spirv.size()), heapMappings[index], ~0u, shader.program->dataAddressPush, PushesGeneratedFaultAddress(shader, rooted), shader.program->functionLdsBuffer, shader.program->meshWindowBuffer, false, &pushPlacements[index]);
             });
         }
         Require(descriptorHeap || !AnyHeapShader(shaders), "a pipeline with GPU-mode stages does not map onto VK_EXT_descriptor_heap");
@@ -548,6 +548,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
                 stages[i].pNext = &heapMappingInfos[i];
             }
             specializations.emplace_back(shader, state.meshLayerBase, state.meshLayerCount);
+            specializations.back().PlacePushData(pushPlacements[i]);
             stages[i].pSpecializationInfo = specializations.back().Info();
         }
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {
@@ -656,7 +657,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         viewports.viewportCount = 1;
         viewports.scissorCount = 1;
         PipelineLibraryKeys keys;
-        libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders);
+        libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders, pushPlacements);
         std::vector<VkDynamicState> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         if (state.stencilReplayReference) dynamicStates.push_back(VK_DYNAMIC_STATE_STENCIL_REFERENCE);
         if (depthBounds) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BOUNDS);

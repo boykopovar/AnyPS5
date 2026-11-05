@@ -85,16 +85,16 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 304, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 328, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 240, "ShaderInvocation changed: update the invocation encoder");
 #if defined(__cpp_lib_atomic_shared_ptr)
-static_assert(sizeof(RecompileResult) == 624, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 648, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
 static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
-static_assert(sizeof(CompiledShaderInfo) == 368, "CompiledShaderInfo changed: update the info encoder");
+static_assert(sizeof(CompiledShaderInfo) == 400, "CompiledShaderInfo changed: update the info encoder");
 static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info encoder");
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 108, "ImageResource changed: update the info encoder");
@@ -102,10 +102,10 @@ static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update th
 static_assert(sizeof(SampledResourcePair) == 16, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
 static_assert(sizeof(StageOutput) == 48, "StageOutput changed: update the info encoder");
-static_assert(sizeof(IrBindingLayout) == 96, "IrBindingLayout changed: update the layout encoder");
+static_assert(sizeof(IrBindingLayout) == 128, "IrBindingLayout changed: update the layout encoder");
 static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: update the layout encoder");
-static_assert(sizeof(BindingAllocationResult) == 200, "BindingAllocationResult changed: update the allocation encoder");
-static_assert(sizeof(CompiledBindingLayout) == 104, "CompiledBindingLayout changed: update the allocation encoder");
+static_assert(sizeof(BindingAllocationResult) == 232, "BindingAllocationResult changed: update the allocation encoder");
+static_assert(sizeof(CompiledBindingLayout) == 136, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
 static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
@@ -527,6 +527,8 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.samplerSlotDword);
     writer.Value(result.bufferAddressDword);
     writer.Value(result.bufferAddressCount);
+    writer.Values(std::span<const std::uint32_t>(result.pushedData));
+    writer.Value(result.pushItems);
     writer.Value(result.dataAddressPush);
     writer.Value(result.bdaStores);
     writer.List(result.vertexInputPatches, [](Writer& out, const VertexInputPatch& patch) {
@@ -600,6 +602,8 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.samplerSlotDword);
     reader.Value(result.bufferAddressDword);
     reader.Value(result.bufferAddressCount);
+    reader.Values(result.pushedData);
+    reader.Value(result.pushItems);
     reader.Value(result.dataAddressPush);
     reader.Value(result.bdaStores);
     reader.List(result.vertexInputPatches, 20, [](Reader& in, VertexInputPatch& patch) {
@@ -753,7 +757,7 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.pushDataStartDword);
-    writer.Value(layout.dataAddressDword);
+    writer.Value(layout.dataAddress);
     writer.Value(layout.stencilReferenceDword);
     writer.Value(layout.memoryOffsetDword);
     writer.Value(layout.memoryOffsetCount);
@@ -763,6 +767,7 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
     writer.Value(layout.samplerSlotDwords);
     writer.Value(layout.imageSlotDwords);
     writer.Value(layout.bufferAddressDwords);
+    writer.Values(std::span<const std::uint32_t>(layout.pushedData));
     writer.Value(layout.heapStorageImages);
     writer.Value(layout.gpuResolvedImages);
     writer.Values(std::span<const std::uint32_t>(layout.userDataRegisters));
@@ -774,7 +779,7 @@ void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
 
 void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.pushDataStartDword);
-    reader.Value(layout.dataAddressDword);
+    reader.Value(layout.dataAddress);
     reader.Value(layout.stencilReferenceDword);
     reader.Value(layout.memoryOffsetDword);
     reader.Value(layout.memoryOffsetCount);
@@ -784,6 +789,7 @@ void decodeLayout(Reader& reader, IrBindingLayout& layout) {
     reader.Value(layout.samplerSlotDwords);
     reader.Value(layout.imageSlotDwords);
     reader.Value(layout.bufferAddressDwords);
+    reader.Values(layout.pushedData);
     reader.Value(layout.heapStorageImages);
     reader.Value(layout.gpuResolvedImages);
     reader.Values(layout.userDataRegisters);

@@ -9,7 +9,7 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 14u;
+inline constexpr std::uint32_t Version = 15u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t FragmentDescriptorSet = 1u;
 inline constexpr std::uint32_t StageCount = 4u;
@@ -88,18 +88,19 @@ inline constexpr std::uint32_t GpuDataSet = 2u;
 inline constexpr std::uint32_t GpuGdsSet = 4u;
 inline constexpr std::uint32_t GdsBytes = 0x10000u;
 inline constexpr std::uint32_t PushDataDwords = 64u;
-inline constexpr std::uint32_t RootDword = 38u;
-inline constexpr std::uint32_t RootRingAddress = 0u;
-inline constexpr std::uint32_t RootPagetableAddress = 2u;
-inline constexpr std::uint32_t RootFaultAddress = 4u;
-inline constexpr std::uint32_t RootGdsAddress = 6u;
-inline constexpr std::uint32_t RootPagetableDwords = 8u;
-inline constexpr std::uint32_t RootStencilReference = 9u;
-inline constexpr std::uint32_t RootStageRecords = 10u;
-enum class RootStageField : std::uint32_t { ShaderData, FlattenedSrt, SrtDwords, TableMap, Count };
-inline constexpr std::uint32_t RootStageDword(Stage stage, RootStageField field) { return RootStageRecords + static_cast<std::uint32_t>(stage) * static_cast<std::uint32_t>(RootStageField::Count) + static_cast<std::uint32_t>(field); }
-inline constexpr std::uint32_t RootDwords = RootStageRecords + StageCount * static_cast<std::uint32_t>(RootStageField::Count);
-static_assert(RootDword * 4u % 8u == 0u && RootDword + RootDwords == PushDataDwords);
+inline constexpr std::uint32_t PushedDataWantedLimit = 48u;
+enum class RootItem : std::uint32_t { RingAddress, PagetableAddress, FaultAddress, GdsAddress, PagetableDwords, StencilReference, ShaderData, FlattenedSrt, SrtDwords, TableMap, Count };
+inline constexpr std::uint32_t RootItemCount = static_cast<std::uint32_t>(RootItem::Count);
+inline constexpr std::uint32_t RootItemBit(RootItem item) { return 1u << static_cast<std::uint32_t>(item); }
+inline constexpr bool RootAddressItem(RootItem item) { return static_cast<std::uint32_t>(item) <= static_cast<std::uint32_t>(RootItem::GdsAddress); }
+inline constexpr std::uint32_t DepthRemapPushBit = 1u << 16u;
+inline constexpr std::uint32_t NoPushPosition = 0xffffffffu;
+struct PushedPlacement {
+    std::uint32_t base = 0;
+    std::uint32_t count = 0;
+
+    bool operator==(const PushedPlacement&) const = default;
+};
 struct HeapSlotWord {
     std::uint32_t dword = 0;
     std::uint32_t kind = 0;

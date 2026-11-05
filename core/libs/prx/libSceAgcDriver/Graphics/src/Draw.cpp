@@ -2498,8 +2498,11 @@ struct RecordedDraw {
 
 // A remapped viewport depth range reads its scale and offset from the draw's push block (the vertex shader's
 // RemapPositionDepth), so draws that differ only in them share one pipeline; the draw's own state supplies them.
-void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block, const State& state) {
+void patchDepthRemapPush(std::array<std::byte, PipelinePushConstantBytes>& block, const State& state, std::span<const CompiledShader> shaders) {
     if (state.depthRemap.mode == 0u) return;
+    const auto reads = [](const CompiledShader& shader) { return shader.program != nullptr && (shader.program->pushItems & ShaderRecompiler::RuntimeAbi::DepthRemapPushBit) != 0u; };
+    const auto rooted = [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->dataAddressPush; };
+    if (std::ranges::any_of(shaders, rooted) && !std::ranges::any_of(shaders, reads)) return;
     static_assert(ShaderRecompiler::DepthRemapPushOffsetBytes + ShaderRecompiler::DepthRemapPushBytes <= PipelinePushSlotBytes);
     const std::array<float, ShaderRecompiler::DepthRemapPushBytes / 4> words{state.depthRemap.scale, state.depthRemap.offset};
     std::memcpy(block.data() + ShaderRecompiler::DepthRemapPushOffsetBytes, words.data(), sizeof(words));
@@ -2512,11 +2515,15 @@ void recordStencilReplay(const Context& context, VkCommandBuffer commands, const
         resources.PatchPushConstants(block);
         stages = PushConstantStages(shaders);
     }
-    patchDepthRemapPush(block, state);
-    resources.PatchDataAddresses(block, shaders, drawBindings);
+    patchDepthRemapPush(block, state, shaders);
+    Require(!replay.empty(), "stencil replay has no pipelines");
+    const auto placements = replay.front().second->PushPlacements();
+    resources.PatchDataAddresses(block, shaders, placements, drawBindings);
     const auto fragment = std::ranges::find_if(shaders, [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment && !shader.program->stencilReferences.empty(); });
     Require(fragment != shaders.end(), "stencil replay fragment stage is missing");
-    const auto referenceOffset = (fragment->program->dataAddressPush ? 0u : fragment->pushConstantOffset) + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
+    const auto stencilItem = fragment->program->dataAddressPush ? placements[static_cast<std::size_t>(fragment - shaders.begin())].Item(ShaderRecompiler::RuntimeAbi::RootItem::StencilReference) : 0u;
+    Require(stencilItem != ShaderRecompiler::RuntimeAbi::NoPushPosition, "stencil replay fragment stage has no stencil reference in its push layout");
+    const auto referenceOffset = fragment->program->dataAddressPush ? stencilItem * sizeof(std::uint32_t) : fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
     Require(referenceOffset <= block.size() - sizeof(std::uint32_t), "stencil replay reference exceeds the push block");
     const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex) {
         std::uint32_t unusedSubdraw = 0;
@@ -2553,8 +2560,8 @@ void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const
         resources.PatchPushConstants(block);
         stages = PushConstantStages(shaders);
     }
-    patchDepthRemapPush(block, state);
-    resources.PatchDataAddresses(block, shaders, drawBindings);
+    patchDepthRemapPush(block, state, shaders);
+    resources.PatchDataAddresses(block, shaders, pipeline.PushPlacements(), drawBindings);
     if (state.stages.tessellation) {
         for (const auto& shader : shaders) Require(shader.program->pushConstants.empty() || shader.pushConstantOffset >= PipelinePushSlotBytes || shader.pushConstantOffset + shader.program->pushConstants.size() <= ShaderRecompiler::TessellationLevelPushOffsetBytes, "a stage's push constants overlap the tessellation levels");
         const std::array<float, ShaderRecompiler::TessellationLevelPushBytes / 4> levels{state.stages.minTessellationLevel, state.stages.maxTessellationLevel};

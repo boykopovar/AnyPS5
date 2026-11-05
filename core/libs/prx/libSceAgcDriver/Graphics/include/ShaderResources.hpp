@@ -368,7 +368,8 @@ public:
     void PatchPushConstants(std::span<std::byte, PipelinePushConstantBytes> bytes) const {
         for (const auto& [position, adjustment] : pushPatches) bytes[position] = static_cast<std::byte>(adjustment);
     }
-    void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, const DrawBindings* rewritten) const;
+    void PatchDataAddresses(std::span<std::byte, PipelinePushConstantBytes> bytes, std::span<const CompiledShader> shaders, std::span<const ShaderRecompiler::StagePushPlacement> placements, const DrawBindings* rewritten) const;
+    void writePushedData(std::span<std::byte, PipelinePushConstantBytes> bytes, const CompiledShader& shader, ShaderRecompiler::RuntimeAbi::PushedPlacement placement) const;
     // Whether RefreshData would record anything for `shader` (the per-word compare; verification).
     bool DataWordsDiffer(const CompiledShader& shader) const;
     std::size_t BindingCount() const { return bindings.size(); }

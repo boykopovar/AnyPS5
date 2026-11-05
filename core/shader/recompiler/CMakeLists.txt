@@ -244,6 +244,7 @@ function(add_shader_recompiler target runtimeTarget)
             BdaAbi::RangesOrdered
             RuntimeAbi::GpuHeapStorageKind
             RuntimeAbi::StageGroup
+            StagePushFeatures
             RuntimeAbi::UintStorageImageKind
             StorageElementPointer
             FirstAtomicStorageImageBinding
@@ -273,6 +274,9 @@ function(add_shader_recompiler target runtimeTarget)
             PipelineSpecialization::WorkgroupOffsetWords
             PixelInput
             PixelInputBit
+            PlacePushData
+            PushBytesMask
+            PushPartOf
             RayTracingStrict
             RayTracingMiss
             ReadWholeFile
