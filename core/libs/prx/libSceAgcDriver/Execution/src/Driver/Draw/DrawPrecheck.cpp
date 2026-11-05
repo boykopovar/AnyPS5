@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -78,6 +79,10 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         require(!drawParameters.indirect, "indirect DB depth copies are unsupported");
         auto copyDraw = DepthCopyDraw(queue, *copy);
         return draw(copyDraw, packet, submission, packetOffset, rejected);
+    }
+    if (const auto control = Graphics::DecodeDepthRenderControl(queue); control && ((control->control & 0x60u) != 0u || Graphics::DepthSurfaceAt(control->address))) {
+        if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
+        Graphics::NoteDepthRenderControl(*control);
     }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;
     rejected = Graphics::DepthMaintenanceRejection(queue);
