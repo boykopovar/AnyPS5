@@ -22,11 +22,6 @@ int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void) {
     return 0;
 }
 
-int APS5_VABI sceCesJiscsToUcs(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesRefersUcsProfileCp1253(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -38,11 +33,6 @@ int APS5_VABI sceCesRefersUcsProfileCp1255(void) {
 }
 
 int APS5_VABI sceCesRefersUcsProfileCp1257(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUcsToJiscs(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
